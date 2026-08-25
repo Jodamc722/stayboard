@@ -23,6 +23,15 @@ const ago = (iso: string | null) => {
 }
 const initials = (n: string) => String(n || '').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase()
 /** Split a Breezeway task name into its source tag and the job itself. */
+// The order pipeline's state names are for the app; the field reads plain words.
+const ORDER_WORD: Record<string, string> = {
+  submitted: 'waiting on approval', approved: 'waiting on payment', awaiting_payment: 'waiting on payment',
+  paid: 'to deliver', pushed: 'to deliver', delivered: 'delivered',
+}
+const ORDER_TONE: Record<string, string> = {
+  submitted: 'off', approved: 'off', awaiting_payment: 'warn', paid: 'warn', pushed: 'warn', delivered: 'ok',
+}
+
 function splitTask(raw: string): { tag: '' | 'GUEST' | 'FIELD'; text: string } {
   const s = String(raw || '').trim()
   const guest = /^guest\s*reported\s*(\/\s*glitch)?\s*[-/:]*\s*/i
@@ -32,7 +41,7 @@ function splitTask(raw: string): { tag: '' | 'GUEST' | 'FIELD'; text: string } {
   return { tag: '', text: s }
 }
 
-type Tab = 'today' | 'crew' | 'cleans' | 'arrivals' | 'vacant' | 'work' | 'issues'
+type Tab = 'today' | 'units' | 'crew' | 'cleans' | 'arrivals' | 'vacant' | 'work' | 'requests' | 'issues'
 
 export default function FieldBoardPage({ params }: { params: { code: string } }) {
   const code = params.code
@@ -98,7 +107,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
   // Default to the tab that has something to say.
   useEffect(() => {
     if (!d) return
-    const first: Tab | null = sec.today ? 'today' : sec.crew ? 'crew' : sec.cleans ? 'cleans'
+    const first: Tab | null = sec.today ? 'today' : sec.units ? 'units' : sec.crew ? 'crew' : sec.cleans ? 'cleans'
       : sec.verify ? 'arrivals' : sec.vacant ? 'vacant' : sec.work ? 'work' : sec.issues ? 'issues' : null
     if (first) setTab(t => (sec[t === 'arrivals' ? 'verify' : t] ? t : first))
   }, [d, sec])
@@ -180,13 +189,20 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
   const dateNice = d?.date ? new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ''
   const prios: any[] = d?.priorities || []
   const vacs: any[] = d?.vacants || []
+  const bigs: any[] = d?.bigBookings || []
+  const watch: any[] = d?.watchUnits || []
+  const unitGroups: any[] = d?.unitRows || []
+  const gOrders: any[] = d?.orders || []
+  const gReqs: any[] = d?.requests || []
   const ALL_TABS: { key: Tab; label: string; n: number }[] = [
-    { key: 'today', label: 'Today', n: prios.length },
+    { key: 'today', label: 'Priorities', n: prios.length + bigs.length + watch.length },
+    { key: 'units', label: 'Units', n: unitGroups.reduce((a: number, g: any) => a + g.rows.length, 0) },
     { key: 'crew', label: 'Crew', n: crew?.onShift ?? 0 },
     { key: 'cleans', label: 'Cleans', n: deps.length },
     { key: 'arrivals', label: 'Arrivals', n: arrs.length },
     { key: 'vacant', label: 'Vacant', n: vacs.length },
     { key: 'work', label: 'Work', n: work.filter((w: any) => w.status !== 'done').length },
+    { key: 'requests', label: 'Requests', n: gOrders.filter((o: any) => o.status !== 'delivered').length + gReqs.length },
     { key: 'issues', label: 'Issues', n: issues.length },
   ]
   const TABS = ALL_TABS.filter(t => sec[t.key === 'arrivals' ? 'verify' : t.key])
@@ -242,6 +258,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
         {/* ── TODAY: the brief's Act-now list, for these units ──────────────── */}
         {tab === 'today' && sec.today ? (
           <>
+            {prios.length ? <p className="fb-band">Do first</p> : null}
             {prios.map((p: any, i: number) => (
               <div key={i} className={'fb-card fb-pad fb-prio ' + p.tone}>
                 <div className="fb-unittop"><b className={p.lid ? 'fb-unitlink' : ''} onClick={() => p.lid && openUnit(p.lid, p.unit)}>{p.unit}</b><span className={'fb-pill ' + (p.tone === 'red' ? 'hot' : 'warn')}>{p.tone === 'red' ? 'do first' : 'watch'}</span></div>
@@ -252,9 +269,74 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
             {!prios.length && (
               <div className="fb-card fb-pad">
                 <p className="fb-good">Nothing on fire.</p>
-                <p className="fb-note" style={{ padding: 0 }}>Every clean has a name on it and nothing is waiting on a decision. Work the runs in order.</p>
+                <p className="fb-note" style={{ padding: 0 }}>Every clean has a name on it and nothing is waiting on a decision.</p>
               </div>
             )}
+
+            {bigs.length ? (
+              <>
+                <p className="fb-band">Worth knowing — arriving soon</p>
+                <div className="fb-card">
+                  {bigs.map((b: any, i: number) => (
+                    <div key={i} className="fb-unit">
+                      <div className="fb-unittop">
+                        <b className="fb-unitlink" onClick={() => openUnit(b.lid, b.unit)}>{b.unit}</b>
+                        <span className="fb-pill blue">{b.why}</span>
+                      </div>
+                      <div className="fb-unitsub">
+                        <span>{b.guest}{b.nights ? ' · ' + b.nights + ' nights' : ''}</span>
+                        <span>{b.when === d?.date ? 'lands today' : b.when.slice(5)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="fb-note">These get the extra pass — the clean, the welcome and the walk-through.</p>
+              </>
+            ) : null}
+
+            {watch.length ? (
+              <>
+                <p className="fb-band">Look out for — a guest complained recently</p>
+                <div className="fb-card">
+                  {watch.map((w: any, i: number) => (
+                    <div key={i} className="fb-unit">
+                      <div className="fb-unittop">
+                        <b className="fb-unitlink" onClick={() => openUnit(w.lid, w.unit)}>{w.unit}</b>
+                        <span className="fb-pill hot">{w.why}</span>
+                      </div>
+                      {w.said ? <p className="fb-quote">&ldquo;{w.said}…&rdquo;</p> : null}
+                    </div>
+                  ))}
+                </div>
+                <p className="fb-note">Check these while you are in the unit — the next guest should not find the same thing.</p>
+              </>
+            ) : null}
+          </>
+        ) : null}
+
+        {/* ── UNITS — the day, unit by unit, grouped by building ────────────── */}
+        {tab === 'units' && sec.units ? (
+          <>
+            {unitGroups.map((g: any) => (
+              <div key={g.building} className="fb-card">
+                <div className="fb-cardhead"><b>{g.building}</b><span className="fb-cnt">{g.rows.length}</span></div>
+                {g.rows.map((u: any, i: number) => (
+                  <div key={i} className="fb-unit" onClick={() => openUnit(u.lid, u.unit)}>
+                    <div className="fb-unittop">
+                      <b className="fb-unitlink">{u.unit}</b>
+                      {u.out ? <span className="fb-outtime">out {u.out}</span> : null}
+                    </div>
+                    <div className="fb-chips">
+                      {u.chips.map((c: string, k: number) => (
+                        <span key={k} className={'fb-chip' + (/same-day|unassigned/.test(c) ? ' hot' : /to clean|cleaning|job/.test(c) ? ' warn' : /done/.test(c) ? ' ok' : '')}>{c}</span>
+                      ))}
+                    </div>
+                    {u.clean?.assignees?.length ? <div className="fb-unitsub"><span>{u.clean.assignees.join(', ')}</span></div> : null}
+                  </div>
+                ))}
+              </div>
+            ))}
+            {!unitGroups.length && <div className="fb-card fb-pad fb-note">Nothing happening on these units today.</div>}
           </>
         ) : null}
 
@@ -399,6 +481,63 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
               </div>
             ))}
             {!work.filter(w => w.status !== 'done').length && <div className="fb-card fb-pad fb-note">Nothing open on these units.</div>}
+          </>
+        ) : null}
+
+        {/* ── REQUESTS — what a guest bought, and what the field asked for ──── */}
+        {tab === 'requests' && sec.requests ? (
+          <>
+            {gOrders.length ? (
+              <>
+                <p className="fb-band">Guest orders — already paid, take it with you</p>
+                <div className="fb-card">
+                  {gOrders.map((o: any) => (
+                    <div key={o.id} className={'fb-unit' + (o.status === 'delivered' ? ' fb-dim' : '')}>
+                      <div className="fb-unittop">
+                        <b className={o.lid ? 'fb-unitlink' : ''} onClick={() => o.lid && openUnit(o.lid, o.unit)}>{o.unit}</b>
+                        <span className={'fb-pill ' + ORDER_TONE[o.status]}>{ORDER_WORD[o.status] || o.status}</span>
+                        {o.whenLabel ? <span className={'fb-pill ' + (o.rank === 0 ? 'hot' : 'off')}>{o.whenLabel}</span> : null}
+                      </div>
+                      {o.items.length ? <p className="fb-order">{o.items.join(' · ')}</p> : null}
+                      <div className="fb-unitsub">
+                        <span>{o.guest || 'Guest'}{o.assigned.length ? ' · ' + o.assigned.join(', ') : ''}</span>
+                        <span>{o.total ? '$' + o.total.toFixed(2) + ' paid' : ''}</span>
+                      </div>
+                      {o.guestNote ? <p className="fb-quote">&ldquo;{o.guestNote}&rdquo;</p> : null}
+                    </div>
+                  ))}
+                </div>
+                <p className="fb-note">The guest has been charged already &mdash; nothing to collect. Leave it in the unit and mark it delivered.</p>
+              </>
+            ) : null}
+
+            {gReqs.length ? (
+              <>
+                <p className="fb-band">Requests from the field</p>
+                <div className="fb-card">
+                  {gReqs.map((r: any) => (
+                    <div key={r.id} className="fb-unit">
+                      <div className="fb-unittop">
+                        <b className={r.lid ? 'fb-unitlink' : ''} onClick={() => r.lid && openUnit(r.lid, r.unit)}>{r.unit}</b>
+                        {r.priority === 'urgent' || r.priority === 'high'
+                          ? <span className="fb-pill hot">{r.priority}</span>
+                          : <span className="fb-pill off">{r.status.replace(/_/g, ' ')}</span>}
+                        {r.dueLabel ? <span className={'fb-pill ' + (r.rank < 0 ? 'warn' : 'off')}>due {r.dueLabel}</span> : null}
+                      </div>
+                      <p className="fb-order">{r.title}</p>
+                      {r.detail ? <p className="fb-issue">{r.detail}</p> : null}
+                      <div className="fb-unitsub">
+                        <span>{r.who ? 'with ' + r.who : r.from ? 'from ' + r.from : 'unassigned'}{r.vendor ? ' · ' + r.vendor : ''}</span>
+                        <span>{r.age === 0 ? 'today' : r.age != null ? r.age + 'd old' : ''}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {!gOrders.length && !gReqs.length
+              ? <div className="fb-card fb-pad fb-note">No guest orders and no open requests on these units.</div> : null}
           </>
         ) : null}
 
@@ -642,6 +781,18 @@ function Style() {
 .fb-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .fb-fixed{display:flex;justify-content:space-between;align-items:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:11px;padding:11px 12px;font-size:14px}
 .fb-change{border:0;background:none;color:#4338ca;font-size:12px;font-weight:700;cursor:pointer}
+.fb-band{font-size:10.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;margin:16px 4px 8px}
+.fb-quote{margin:5px 0 0;font-size:12.5px;color:#6b7280;font-style:italic;line-height:1.5}
+/* What is actually being asked for — the basket, or the request in one line. Reads first. */
+.fb-order{margin:5px 0 0;font-size:14px;font-weight:600;color:#0b1220;line-height:1.45}
+.fb-dim{opacity:.55}
+.fb-pill.blue{background:#e0e7ff;color:#4338ca}
+.fb-chip{font-size:11px;font-weight:600;background:#f3f4f6;color:#6b7280;border-radius:7px;padding:2px 8px}
+.fb-chip.hot{background:#fee2e2;color:#b91c1c}
+.fb-chip.warn{background:#fef3c7;color:#b45309}
+.fb-chip.ok{background:#dcfce7;color:#166534}
+.fb-outtime{font-size:11.5px;color:#9ca3af;white-space:nowrap}
+.fb-unit{cursor:pointer}
 .fb-input{width:100%;font-size:16px;padding:11px 12px;border:1px solid #e5e7eb;border-radius:11px;margin-bottom:10px}
 .fb-btn{width:100%;background:#0b1220;color:#fff;border:0;border-radius:11px;padding:13px;font-size:14.5px;font-weight:700;cursor:pointer}
 .fb-err{color:#b91c1c;font-size:13px;margin:10px 0 0}
