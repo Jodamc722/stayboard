@@ -418,15 +418,13 @@ export function VaultBoard() {
     try {
       if (file.size > 4 * 1024 * 1024) throw new Error('That file is larger than 4 MB.')
       const csv = await file.text()
-      // The code is asked once here and reused for the real run of this same file.
-      const ans = await askCode('import ' + file.name)
-      if (!ans) return
+      // Import is admin-gated and logged, not code-gated: it writes entries, it never reveals one.
       const j = await fetch('/api/vault/import', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv, dryRun: true, code: ans.code }),
+        body: JSON.stringify({ csv, dryRun: true }),
       }).then(x => x.json())
       if (!j.ok) throw new Error(j.error || 'Could not read that file.')
-      setImportState({ name: file.name, csv, code: ans.code, preview: j })
+      setImportState({ name: file.name, csv, preview: j })
     } catch (e: any) { setErr(e.message || String(e)) }
   }
 
@@ -434,11 +432,9 @@ export function VaultBoard() {
     if (!importState) return
     setSaving(true); setErr(null); setMsg(null)
     try {
-      let code = importState.code
-      if (!code) { const ans = await askCode('import ' + importState.name); if (!ans) { setSaving(false); return } code = ans.code }
       const j = await fetch('/api/vault/import', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: importState.csv, code }),
+        body: JSON.stringify({ csv: importState.csv }),
       }).then(x => x.json())
       if (!j.ok) throw new Error(j.error || 'Import failed.')
       setImportState(null)
