@@ -11,7 +11,7 @@ import {
   Home, CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Sliders, Wrench, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -61,7 +61,7 @@ const SECTIONS: NavSection[] = [
       // audit-ish pages and the four order-ish pages become ONE row each; the pages keep their
       // URLs and roles and get a tab strip at the top. Registry in lib/hubs.ts.
       { to: '/audits',   label: 'Quality',  Icon: ClipboardCheck, hub: 'quality' },   // Audits · Inspections · FF&E
-      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart, hub: 'orders' },       // Purchasing · Work Orders · Guest Orders · Projects
+      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart, hub: 'orders' },       // Purchasing · Work Orders · Projects
     ],
   },
   {
@@ -73,12 +73,14 @@ const SECTIONS: NavSection[] = [
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
       { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
       { to: '/claims',       label: 'Claims',       Icon: ShieldAlert }, // Jon 2026-08-04: claims are guest-driven — lives with Guests
-      // Guest Orders moved into the Orders hub (Operations) 2026-08-24 — same page, same key.
-      // Front-Desk Notices · Guidebooks · Property FAQ = one Guest Comms hub (lib/hubs.ts).
-      { to: '/reservation-emails', label: 'Guest Comms', Icon: Mail, hub: 'guest-comms' },
-      // Guidebooks is its own row again (Jon, 2026-08-25) — it was a tab inside Guest Comms and
-      // that made it unfindable from the sidebar.
+      // The Guest Comms row is gone (Jon, 2026-08-25): it named none of the pages behind it.
+      // Front-Desk Notices, Guidebooks and Property FAQ each stand on their own now.
+      { to: '/reservation-emails', label: 'Front-Desk Notices', Icon: Mail },
       { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
+      { to: '/faq',          label: 'Property FAQ', Icon: HelpCircle },
+      // Guest Orders stands alone (Jon, 2026-08-25). It was filed under Orders with our own
+      // purchasing; it is the guest buying something for their stay, which is a Guests job.
+      { to: '/guest-orders', label: 'Guest Orders', Icon: ShoppingBag },
       // Guests directory (2026-08-18, Jon, parallel session): guest profiles aggregated from
       // reservations; VIP on a profile feeds auto-inspections.
       { to: '/guests',       label: 'Guests',       Icon: Contact },
