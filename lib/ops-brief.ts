@@ -29,6 +29,7 @@ import { laborEconomics } from './labor-econ'
 import { upcomingAutoInspections } from './auto-inspections'
 import { vacantWork, vacantWorkSummary, type VacantWork } from './vacant-work'
 import { maintData } from './maint-brief'
+import { translator, type BriefLang } from './brief-lang'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -486,14 +487,17 @@ const emptyLine = (t: string) => `<p style="font-size:13px;color:#6b7280;margin:
 // light." A brief lists units and times; it does NOT know whether a guest extended, whether a late
 // checkout was granted, or whether somebody is still inside. Nobody should read a row here as
 // permission to open a door, so every brief carries this above the footer, in plain sight.
-export const accessNotice = (): string =>
-  `<div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:12px;padding:12px 16px;margin-bottom:12px">
+export const accessNotice = (lang: BriefLang = 'en'): string => {
+  const { t } = translator(lang)
+  const body = lang === 'es'
+    ? t('ACCESS_BODY')
+    : `This brief is generated automatically from last night's data — it is <b>not a green light</b>. Guests extend, late checkouts get approved and plans change after this is sent. Always confirm the unit is clear before you enter.`
+  return `<div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:12px;padding:12px 16px;margin-bottom:12px">
     <p style="margin:0;font-size:12.5px;line-height:1.6;color:#92400e">
-      <b>Confirm access before entering any unit.</b> This brief is generated automatically from
-      last night's data — it is <b>not a green light</b>. Guests extend, late checkouts get approved
-      and plans change after this is sent. Always confirm the unit is clear before you enter.
+      <b>${t('Confirm access before entering any unit.')}</b> ${body}
     </p>
   </div>`
+}
 
 // ── A HOSPITALITY THOUGHT, ONE PER DAY ──────────────────────────────────────────────────────────
 // Picked by the DATE, not at random, so everyone who opens the brief on the same morning reads the
@@ -555,9 +559,10 @@ export const quoteBanner = (ymd: string): string => {
   </table>`
 }
 // The close keeps the thank-you only; the quote has already been read at the top.
-const closingNote = (_ymd: string): string => {
+const closingNote = (_ymd: string, lang: BriefLang = 'en'): string => {
+  const { t } = translator(lang)
   return `<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:14px;text-align:center">
-    <p style="margin:0;font-size:12.5px;color:#374151"><b>Thank you for everything you do.</b></p>
+    <p style="margin:0;font-size:12.5px;color:#374151"><b>${t('Thank you for everything you do.')}</b></p>
   </div>`
 }
 
@@ -648,7 +653,11 @@ const numBadge = (n: number, hot: boolean) =>
   `<span style="display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:999px;font-size:11px;font-weight:700;` +
   (hot ? 'background:#dc2626;color:#ffffff' : 'background:#eef2ff;color:#4338ca') + `">${n}</span>`
 
-export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
+export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en'): Promise<OpsBrief> {
+  // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets can render in Spanish per market;
+  // Ops Command and the GM brief stay English — they are management documents. Furniture
+  // translates, data never does (see lib/brief-lang).
+  const { t, locale } = translator(lang)
   const d = await gather(variant)
   // THE MORNING SYSTEM (Jon approved 2026-08-22): Miami/Broward are FIELD DAY SHEETS — run the
   // day, zero dollars, five cards. 'full' is OPS COMMAND — the manager's worklist, now carrying
@@ -683,7 +692,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   }
   const sheet: any = d.sheet || {}
   const label = variant === 'full' ? 'Full Portfolio' : variant
-  const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
+  const dateNice = new Intl.DateTimeFormat(locale, { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
 
   const arrivals: any[] = sheet.arrivals || []
   // The daysheet's ownerStays bucket mixes three signals of very different quality:
@@ -788,7 +797,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     const note = (d.arrivalNotes || {})[String(a.listingId)] || ''
     return `
     <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${a.checkInTime ? ` <span style="${S.muted};font-size:12px">· ${esc(str(a.checkInTime))}</span>` : ''}${note ? `<div style="font-size:12px;color:#4338ca;margin-top:3px">📝 ${esc(note)}</div>` : ''}</td>
-    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top"><span style="${S.muted}">${esc(str(a.guest).split(' ')[0])}${a.nights ? ` · ${a.nights}n` : ''}</span>${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed('WALK-IN') : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber(isField ? 'VIP' : 'LONG STAY') : ''}</td></tr>`
+    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top"><span style="${S.muted}">${esc(str(a.guest).split(' ')[0])}${a.nights ? ` · ${a.nights}n` : ''}</span>${str(a.ownerFlag) === 'owner booking' ? ' ' + pillBlue('OWNER') : str(a.ownerFlag) === 'name matches owner' ? ' ' + pillAmber('OWNER?') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pillRed(t('WALK-IN')) : ''}${d.bigTodayIds.has(String(a.listingId)) ? ' ' + pillAmber(isField ? t('VIP') : t('LONG STAY')) : ''}</td></tr>`
   }).join('')
 
   // YESTERDAY — the supervisor's scoreboard. Directional on purpose: hours are Breezeway's recorded
@@ -797,9 +806,9 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const yHours = Math.round(y.hours * 10) / 10
   const yMinsPerClean = y.cleans ? Math.round(y.cleanMinutes / y.cleans) : null
   const yesterdayRows = `
-    <tr><td style="${S.td}">Cleans completed</td><td style="${S.td};text-align:right"><b>${y.cleans}</b>${yMinsPerClean ? ` <span style="${S.muted}">· ${yMinsPerClean} min average</span>` : ''}</td></tr>
-    <tr><td style="${S.td}">Inspections completed</td><td style="${S.td};text-align:right"><b style="${y.inspections ? S.green : S.amber}">${y.inspections}</b>${!y.inspections ? ` <span style="${S.muted}">· none logged</span>` : ''}</td></tr>
-    <tr><td style="${S.td}">Maintenance closed</td><td style="${S.td};text-align:right"><b>${y.maintenance}</b></td></tr>
+    <tr><td style="${S.td}">${t('Cleans completed')}</td><td style="${S.td};text-align:right"><b>${y.cleans}</b>${yMinsPerClean ? ` <span style="${S.muted}">· ${yMinsPerClean} min average</span>` : ''}</td></tr>
+    <tr><td style="${S.td}">${t('Inspections completed')}</td><td style="${S.td};text-align:right"><b style="${y.inspections ? S.green : S.amber}">${y.inspections}</b>${!y.inspections ? ` <span style="${S.muted}">· none logged</span>` : ''}</td></tr>
+    <tr><td style="${S.td}">${t('Maintenance closed')}</td><td style="${S.td};text-align:right"><b>${y.maintenance}</b></td></tr>
     ${(y as any).other ? `<tr><td style="${S.td}">Other work closed <span style="${S.muted}">strips, common areas, deliveries</span></td><td style="${S.td};text-align:right"><b>${(y as any).other}</b></td></tr>` : ''}
     <tr><td style="${S.td}">Hours on the clock <span style="${S.muted}">recorded in Breezeway</span></td><td style="${S.td};text-align:right"><b>${yHours || '—'}</b>${yHours ? ' <span style="' + S.muted + '">hrs</span>' : ''}</td></tr>`
 
@@ -811,8 +820,8 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   for (const a of arrivals) if (a.checkInTime) arrTimeOf[String(a.listingId)] = str(a.checkInTime)
   const cleanRow = (c: any, n: number | null, hot: boolean) => `
     <tr><td style="${S.td};width:30px;text-align:center">${n != null ? numBadge(n, hot) : ''}</td>
-    <td style="${S.td}"><b>${esc(c.unit)}</b>${c.sameDayArrival ? ` <span style="${S.red}">← guest lands ${esc(arrTimeOf[String(c.lid)] || 'today')}</span>` : ''}</td>
-    <td style="${S.td};text-align:right;white-space:nowrap">${c.state === 'done' ? `<span style="${S.green}">done</span>` : c.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.muted}">scheduled</span>`}</td></tr>`
+    <td style="${S.td}"><b>${esc(c.unit)}</b>${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap">${c.state === 'done' ? `<span style="${S.green}">${t('done')}</span>` : c.state === 'running' ? `<span style="${S.amber}">${t('in progress')}</span>` : `<span style="${S.muted}">${t('scheduled')}</span>`}</td></tr>`
   const byPerson: Record<string, any[]> = {}
   for (const c of d.cleans) if (!/UNASSIGNED/.test(c.assignee)) (byPerson[c.assignee] = byPerson[c.assignee] || []).push(c)
   const personOrder = Object.keys(byPerson).sort((a, b) => {
@@ -826,21 +835,22 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const otherByPerson: Record<string, any[]> = {}
   for (const t of hkAll) if (!/UNASSIGNED/.test(t.assignee)) (otherByPerson[t.assignee] = otherByPerson[t.assignee] || []).push(t)
   const otherUnassigned = hkAll.filter(t => /UNASSIGNED/.test(t.assignee))
+  const tt = t
   const otherRow = (t: any) => `
     <tr><td style="${S.td};width:30px;text-align:center"><span style="${S.muted};font-size:11px">•</span></td>
     <td style="${S.td}">${esc(t.unit)} <span style="${S.muted};font-size:12px">· ${esc(t.task)}</span></td>
-    <td style="${S.td};text-align:right;white-space:nowrap">${t.state === 'done' ? `<span style="${S.green}">done</span>` : t.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.muted}">to do</span>`}</td></tr>`
+    <td style="${S.td};text-align:right;white-space:nowrap">${t.state === 'done' ? `<span style="${S.green}">${tt('done')}</span>` : t.state === 'running' ? `<span style="${S.amber}">${tt('in progress')}</span>` : `<span style="${S.muted}">${tt('to do')}</span>`}</td></tr>`
   const personBlock = (name: string) => {
     const mine = (byPerson[name] || []).slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || a.unit.localeCompare(b.unit))
     const others = otherByPerson[name] || []
     const hotN = mine.filter(c => c.sameDayArrival).length
     const doneN = mine.filter(c => c.state === 'done').length + others.filter(t => t.state === 'done').length
     const bits = [
-      mine.length ? `${mine.length} clean${mine.length === 1 ? '' : 's'}` : '',
-      others.length ? `${others.length} other job${others.length === 1 ? '' : 's'}` : '',
+      mine.length ? `${mine.length} ${mine.length === 1 ? t('clean') : t('cleans')}` : '',
+      others.length ? `${others.length} ${others.length === 1 ? t('other job') : t('other jobs')}` : '',
     ].filter(Boolean).join(' · ')
     return `
-    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b> <span style="${S.muted}">· ${bits}${hotN ? ` · <span style="${S.red}">${hotN} same-day</span>` : ''}${doneN ? ` · ${doneN} done` : ''}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b> <span style="${S.muted}">· ${bits}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
       mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival)).join('') +
       others.map(otherRow).join('')
   }
@@ -853,10 +863,10 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     })
   const cleansRows =
     (unassigned.length ? `
-    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="color:#b91c1c;opacity:.75">· ${unassigned.length} door${unassigned.length === 1 ? '' : 's'} — assign these first</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${unassigned.length} · ${t('assign these first')}</span></td></tr>` +
       unassigned.map(c => cleanRow(c, null, c.sameDayArrival)).join('') : '') +
     (otherUnassigned.length ? `
-    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="color:#b91c1c;opacity:.75">· ${otherUnassigned.length} other housekeeping job${otherUnassigned.length === 1 ? '' : 's'}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${otherUnassigned.length} ${otherUnassigned.length === 1 ? t('other housekeeping job') : t('other housekeeping jobs')}</span></td></tr>` +
       otherUnassigned.map(otherRow).join('') : '') +
     everyone.map(personBlock).join('')
 
@@ -903,7 +913,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   const depRows = departures.slice()
     .sort((a: any, b: any) => minsOfTime(a.checkOutTime) - minsOfTime(b.checkOutTime))
     .slice(0, 20).map((dep: any) => `
-    <tr><td style="${S.td}"><b>${esc(str(dep.unit))}</b>${arrivingToday2.has(String(dep.listingId)) ? ' ' + pillRed('SAME-DAY TURN') : ''}</td>
+    <tr><td style="${S.td}"><b>${esc(str(dep.unit))}</b>${arrivingToday2.has(String(dep.listingId)) ? ' ' + pillRed(t('SAME-DAY TURN')) : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap"><span style="${S.muted}">${esc(str(dep.guest).split(' ')[0])} · out ${dep.checkOutTime ? esc(str(dep.checkOutTime)) : 'today'}</span></td></tr>`).join('')
 
   // Colour carries the urgency: 3 and under is a problem to answer today, 4 and under is a watch.
@@ -1274,9 +1284,9 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     : `<b>${priorities.length} exception${priorities.length === 1 ? '' : 's'} · ${carryTot2} maintenance carryover${carryTot2 === 1 ? '' : 's'} · ${fullBlocked.length} blocked${bzPct2 != null ? ` · ${bzPct2}% of cleans closed in Breezeway` : ''}.</b> ` +
       `${todayShifts.length ? `${todayShifts.length} on shift · ` : ''}${d.cleans.length} cleans (${unassigned.length} unassigned) · ${arrivals.length} in / ${departures.length} out.`
 
-  const title = isField ? `${variant} — Day Sheet` : 'Ops Command'
+  const title = isField ? `${variant} — ${t('Day Sheet')}` : 'Ops Command'
   const subTitle = isField
-    ? `${dateNice} · run in order, same-day first`
+    ? `${dateNice} · ${t('run in order, same-day first')}`
     : `${dateNice} · all markets · ${d.activeCount} active units`
   const subject = isField
     ? `${variant} Day Sheet ${dateNice}: ${d.cleans.length} cleans${sameDay.length ? ` · ${sameDay.length} same-day` : ''}${unassigned.length ? ` · ${unassigned.length} UNASSIGNED` : ''} · ${arrivals.length} in / ${departures.length} out`
@@ -1293,18 +1303,18 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
-  ${accessNotice()}
+  ${accessNotice(lang)}
 
-  ${eyebrow('Act now')}
+  ${eyebrow(t('Act now'))}
   ${priorities.length
-    ? card('Top priorities — in order', priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
-    : card('Top priorities', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing on fire.</span> <span style="${S.muted}">Work the list below and keep the 4pm deadline in sight.</span></p>`, '#059669')}
+    ? card(t('Top priorities — in order'), priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} more on the boards</p>` : ''), '#dc2626')
+    : card(t('Top priorities'), null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">${t('Nothing on fire.')}</span> <span style="${S.muted}">${t('Work the list below and keep the 4pm deadline in sight.')}</span></p>`, '#059669')}
   ${!isField && fwdCard ? fwdCard : ''}
   ${onTodayCard}
-  ${card("Housekeeping — each person's day, in order", d.cleans.length + hkAll.length,
+  ${card(t("Housekeeping — each person's day, in order"), d.cleans.length + hkAll.length,
     (d.cleans.length || hkAll.length)
-      ? bare(cleansRows) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">Numbered rows are the departure-clean run — work them in that order. Bulleted rows are everything else assigned today: strips, linen, restocks, mid-stays and inspections.</p>`
-      : emptyLine('Nothing on the housekeeping board today.'))}
+      ? bare(cleansRows) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${lang === 'es' ? t('HK_FOOTNOTE') : 'Numbered rows are the departure-clean run — work them in that order. Bulleted rows are everything else assigned today: strips, linen, restocks, mid-stays and inspections.'}</p>`
+      : emptyLine(t('Nothing on the housekeeping board today.')))}
   ${(autoInsp.length || reviewInsp.length) ? card('Inspections Lighthouse created &amp; assigned', autoInsp.length + reviewInsp.length,
     bare(
       autoInsp.map(i => `
@@ -1319,18 +1329,18 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
     (reviewInsp.length ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">A review at or below the bar books an inspection on that unit's next checkout — the task carries what the guest wrote, and it rolls forward until it is done.</p>` : ''),
     '#7c3aed') : ''}
 
-  ${eyebrow('Today')}
-  ${departures.length ? card('Departures', departures.length, bare(depRows) + (departures.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${departures.length - 20} more on the board</p>` : ''), '#0891b2') : ''}
-  ${arrivals.length ? card('Arrivals', arrivals.length, bare(arrivalsRows) + (arrivals.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
-  ${ownerStays.length ? card('Owner stays in-house', ownerStays.length, bare(ownerRows), '#4338ca') : ''}
+  ${eyebrow(t('Today'))}
+  ${departures.length ? card(t('Departures'), departures.length, bare(depRows) + (departures.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${departures.length - 20} more on the board</p>` : ''), '#0891b2') : ''}
+  ${arrivals.length ? card(t('Arrivals'), arrivals.length, bare(arrivalsRows) + (arrivals.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
+  ${ownerStays.length ? card(t('Owner stays in-house'), ownerStays.length, bare(ownerRows), '#4338ca') : ''}
   ${!isField && glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
 
-  ${isField && fwdCard ? eyebrow('Looking ahead') + fwdCard : ''}
+  ${isField && fwdCard ? eyebrow(t('Looking ahead')) + fwdCard : ''}
 
   ${!isField && (maintCard || paperCard || laborCard) ? eyebrow('The shop — maintenance, paperwork, labor') + maintCard + paperCard + laborCard : ''}
 
-  ${eyebrow(isField ? 'Yesterday' : 'Good to know')}
-  ${card('Yesterday — what the team got done', null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
+  ${eyebrow(isField ? t('Yesterday') : 'Good to know')}
+  ${card(t('Yesterday — what the team got done'), null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
   ${!isField && d.newReviews.length ? card(d.newSinceYesterday ? 'New reviews' : 'Reviews — nothing new', d.newSinceYesterday || null,
       (lowNew.length ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${S.red}">${lowNew.length} at 3&#9733; or below</span> — answer these first.</p>` : '') +
       (d.newSinceYesterday ? '' : `<p style="margin:0 0 8px;font-size:12.5px;color:#6b7280">Nothing since the last brief. The most recent one, for context:</p>`) +
@@ -1339,7 +1349,7 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       d.newSinceYesterday
         ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
         : `Last checked ${niceDay(d.today)}`) : ''}
-  ${card('Vacant units — what to slot in', vacants.length,
+  ${card(t('Vacant units — what to slot in'), vacants.length,
       `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`
       + (workRows
         ? `<p style="font-size:12px;margin:10px 0 2px;color:#6b7280">${esc(vacantWorkSummary(vacWork))}. An empty unit is the only window some of this work has.</p>`
@@ -1353,8 +1363,8 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
       w30.lowTotal ? '#dc2626' : '#059669',
       `Last 30 days · since ${niceDay(w30.since)}`) : ''}
 
-  ${closingNote(d.today)}
-  <p style="${S.foot}">${isField ? 'Sent automatically every morning · your supervisor has the live board.' : 'Ops Command · sent automatically every morning · labor deep-dive in the Daily Labor email · the boards have the live picture.'}</p>
+  ${closingNote(d.today, lang)}
+  <p style="${S.foot}">${isField ? t('Sent automatically every morning · your supervisor has the live board.') : 'Ops Command · sent automatically every morning · labor deep-dive in the Daily Labor email · the boards have the live picture.'}</p>
   </div></body></html>`
 
   return {

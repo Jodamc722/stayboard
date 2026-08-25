@@ -36,6 +36,7 @@ import { buildDaySheet } from './daysheet'
 import { vacantWork, type VacantWork } from './vacant-work'
 import { supabaseAdmin } from './supabase-admin'
 import { ratingToStars } from './optimize-score'
+import { translator, type BriefLang } from './brief-lang'
 
 const TZ = 'America/New_York'
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
@@ -43,9 +44,9 @@ const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&l
 const money = (n: number | null | undefined) =>
   n == null ? '&mdash;' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
-const niceDay = (ymd: string) => {
+const niceDayIn = (ymd: string, locale: string) => {
   try {
-    return new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' })
+    return new Intl.DateTimeFormat(locale, { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' })
       .format(new Date(ymd + 'T12:00:00Z'))
   } catch { return ymd }
 }
@@ -103,9 +104,13 @@ function tileRow(tiles: Tile[]): string {
     </td>`).join('') + `</tr></table>`
 }
 
-export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: string; html: string; counts: { today: number; carryover: number; openToday: number; vacants: number } }> {
+export async function buildMaintBrief(market: MaintMarket, lang: BriefLang = 'en'): Promise<{ subject: string; html: string; counts: { today: number; carryover: number; openToday: number; vacants: number } }> {
+  // The crew's own language (lib/brief-lang). Furniture translates; unit names, people's names and
+  // the task text as typed in Breezeway never do — a cleaner has to be able to find that string.
+  const { t, pick, locale } = translator(lang)
+  const niceDayIn2 = (ymd: string) => niceDayIn(ymd, locale)
   const today = ymdET(new Date())
-  const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
+  const dateNice = new Intl.DateTimeFormat(locale, { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
   const d = await maintData(market)
 
   // VACANT UNITS in this market. The day sheet already knows who is empty tonight and when their
@@ -238,18 +243,18 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   const areaHead = (label: string, note: string, tone?: 'red') => `
     <tr><td colspan="2" style="padding:8px 10px;background:${tone === 'red' ? '#fef2f2' : '#f8fafc'};border-top:1px solid #e5e7eb;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${tone === 'red' ? '#b91c1c' : '#7c2d12'}">${esc(label)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9ca3af">${note}</span></td></tr>`
   const jobRow = (j: any) => `
-    <tr><td style="${S.td}"><b>${esc(j.unit)}</b>${j.occupied ? ' ' + pillRed('GUEST IN HOUSE') : ''}${j.arriving ? ' ' + pillAmber('ARRIVES TODAY') : ''}
+    <tr><td style="${S.td}"><b>${esc(j.unit)}</b>${j.occupied ? ' ' + pillRed(t('GUEST IN HOUSE')) : ''}${j.arriving ? ' ' + pillAmber(t('ARRIVES TODAY')) : ''}
       <div style="font-size:12px;color:#6b7280;margin-top:2px">${esc(j.task)}</div>
-      ${j.occupied ? `<div style="font-size:11.5px;color:#b91c1c;margin-top:2px">Call or message the guest before anyone enters.</div>` : ''}</td>
-    <td style="${S.td};text-align:right;white-space:nowrap"><b style="${j.who === 'unassigned' ? S.red : ''}">${esc(j.who === 'unassigned' ? 'nobody yet' : j.who)}</b><br>
-      <span style="font-size:11.5px">${j.state === 'done' ? `<span style="${S.green}">done</span>` : j.state === 'running' ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.muted}">open</span>`}</span></td></tr>`
+      ${j.occupied ? `<div style="font-size:11.5px;color:#b91c1c;margin-top:2px">${t('Call or message the guest before anyone enters.')}</div>` : ''}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap"><b style="${j.who === 'unassigned' ? S.red : ''}">${j.who === 'unassigned' ? t('nobody yet') : esc(j.who)}</b><br>
+      <span style="font-size:11.5px">${j.state === 'done' ? `<span style="${S.green}">${t('done')}</span>` : j.state === 'running' ? `<span style="${S.amber}">${t('in progress')}</span>` : `<span style="${S.muted}">${t('open')}</span>`}</span></td></tr>`
 
   // Unassigned first — they are nobody's list — then area by area, busiest first.
   const byArea: Record<string, any[]> = {}
   for (const j of jobs) if (j.who !== 'unassigned' || j.state === 'done') (byArea[j.building] = byArea[j.building] || []).push(j)
   const areaOrder = Object.keys(byArea).sort((a, b) => byArea[b].length - byArea[a].length || a.localeCompare(b))
   const boardRows =
-    (unassigned.length ? areaHead('Nobody assigned', `· ${unassigned.length} job${unassigned.length === 1 ? '' : 's'} — give these a name first`, 'red') + unassigned.map(jobRow).join('') : '') +
+    (unassigned.length ? areaHead(t('Nobody assigned'), `· ${unassigned.length} · ${t('give these a name first')}`, 'red') + unassigned.map(jobRow).join('') : '') +
     areaOrder.map(a => {
       const mine = byArea[a]
       const people = Array.from(new Set(mine
@@ -260,9 +265,9 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
 
   // ── VACANT UNITS = THE PM WINDOW, grouped by area as well.
   const windowLabel = (v: VacantWork) =>
-    v.daysUntilArrival == null ? 'no future booking'
-      : v.daysUntilArrival === 0 ? 'guest arriving today'
-        : `${v.daysUntilArrival} clear day${v.daysUntilArrival === 1 ? '' : 's'}`
+    v.daysUntilArrival == null ? t('no future booking')
+      : v.daysUntilArrival === 0 ? t('guest arriving today')
+        : `${v.daysUntilArrival} ${v.daysUntilArrival === 1 ? t('clear day') : t('clear days')}`
   const vacByArea: Record<string, VacantWork[]> = {}
   for (const v of vacRows) {
     const open = openByUnit[String(v.listingId)]
@@ -279,29 +284,29 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     const fix = v.suggestions.find(s => s.key === 'maintenance' || s.key === 'glitch')
     const pm = v.suggestions.find(s => PM_KEYS.indexOf(s.key) >= 0)
     if (low) return {
-      pill: pillRed(low.stars.toFixed(1) + '★ REVIEW'),
-      what: 'Walk it and fix what the guest named',
-      why: low.said ? `"${low.said}…" · ${low.channel || 'review'} ${niceDay(low.at)}` : `${low.channel || 'A guest'} scored it ${low.stars.toFixed(1)}★ on ${niceDay(low.at)}`,
+      pill: pillRed(low.stars.toFixed(1) + '★ ' + t('REVIEW')),
+      what: t('Walk it and fix what the guest named'),
+      why: low.said ? `"${low.said}…" · ${low.channel || 'review'} ${niceDayIn2(low.at)}` : `${low.channel || 'A guest'} scored it ${low.stars.toFixed(1)}★ on ${niceDayIn2(low.at)}`,
       rank: 0,
     }
     if (open) {
       const oldest = open.tasks[0]
       return {
-        pill: pillAmber('JOBS OPEN'),
+        pill: pillAmber(t('JOBS OPEN')),
         what: `Close the ${open.tasks.length} open job${open.tasks.length === 1 ? '' : 's'}`,
         // The oldest one is the argument for going: "this has been sitting 50 days".
         why: oldest ? `oldest: ${oldest.name}${oldest.age != null ? ` · ${oldest.age} days old` : ''}` : 'open work on the unit',
         rank: 1,
       }
     }
-    if (fix) return { pill: pillAmber('BACKLOG'), what: fix.label, why: fix.why, rank: 2 }
+    if (fix) return { pill: pillAmber(t('BACKLOG')), what: fix.label, why: fix.why, rank: 2 }
     const standing = pmDue(String(v.listingId))
-    if (standing) return { pill: pillBlue('PM DUE'), what: standing.label, why: standing.why, rank: 3 }
-    if (pm) return { pill: pillBlue('PM DUE'), what: pm.label, why: pm.why, rank: 4 }
+    if (standing) return { pill: pillBlue(t('PM DUE')), what: standing.label, why: standing.why, rank: 3 }
+    if (pm) return { pill: pillBlue(t('PM DUE')), what: pm.label, why: pm.why, rank: 4 }
     if (v.top) return { pill: '', what: v.top.label, why: v.top.why, rank: 5 }
     return { pill: '', what: 'Nothing outstanding', why: 'PM, audits and open work are all current', rank: 6 }
   }
-  const SRC_LABEL: Record<string, string> = { guest: 'guest', field: 'field', other: '' }
+  const SRC_LABEL: Record<string, string> = { guest: pick('guest reported', 'reportado por huésped'), field: pick('field reported', 'reportado en campo'), other: '' }
   const vacRow = (v: VacantWork) => {
     const r = reasonOf(v)
     const lid = String(v.listingId)
@@ -311,7 +316,7 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     const pmAge = daysSince(lastPm)
     // The pending list is the point of the row — name the jobs, not just the count.
     const pendList = pend.slice(0, 2).map(t =>
-      `<div style="font-size:12px;color:#374151;margin-top:2px">• ${esc(t.name)}${SRC_LABEL[t.source] ? ` <span style="${S.muted}">(${SRC_LABEL[t.source]} reported)</span>` : ''}${t.age != null && t.age >= 3 ? ` <span style="${S.red}">${t.age}d</span>` : ''}</div>`).join('')
+      `<div style="font-size:12px;color:#374151;margin-top:2px">• ${esc(t.name)}${SRC_LABEL[t.source] ? ` <span style="${S.muted}">(${SRC_LABEL[t.source]})</span>` : ''}${t.age != null && t.age >= 3 ? ` <span style="${S.red}">${t.age}d</span>` : ''}</div>`).join('')
     return `
     <tr><td style="${S.td}"><b>${esc(String(v.unit))}</b> ${r.pill}
       <div style="font-size:12px;color:#6b7280;margin-top:2px">${esc(windowLabel(v))}${v.idleDays != null && v.idleDays >= 7 ? ` · empty ${v.idleDays} days` : ''} · <span style="${pmAge == null ? S.amber : pmAge > 365 ? S.amber : S.muted}">${pmAge == null ? 'no PM on record' : `last PM ${pmAge}d ago`}</span></div>
@@ -372,9 +377,9 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   const numbers =
     `<table width="100%" cellspacing="0" cellpadding="0">
       <tr><th style="${S.th}"></th><th style="${S.th};text-align:right">Yesterday</th><th style="${S.th};text-align:right">Last 7 days</th><th style="${S.th};text-align:right">Last 30 days</th></tr>` +
-    numRow('Jobs finished', 'closed in Breezeway', w => `<b>${w.finished}</b>`) +
-    numRow('Billed', 'charges entered on the task', w => money(w.billable)) +
-    numRow('No charge entered', 'these bill $0 until somebody types the cost', w =>
+    numRow(t('Jobs finished'), t('closed in Breezeway'), w => `<b>${w.finished}</b>`) +
+    numRow(t('Billed'), t('charges entered on the task'), w => money(w.billable)) +
+    numRow(t('No charge entered'), t('these bill $0 until somebody types the cost'), w =>
       w.noCharge ? `<b style="${S.amber}">${w.noCharge}</b>` : `<span style="${S.green}">0</span>`) +
     `</table>`
 
@@ -399,8 +404,8 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
     <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
-    <p style="${S.bandTitle}">${market} — Maintenance</p>
-    <p style="${S.bandSub}">${dateNice} · today by area, empty units, what carried over</p>
+    <p style="${S.bandTitle}">${market} — ${t('Maintenance')}</p>
+    <p style="${S.bandSub}">${dateNice} · ${t("today by area, empty units, what carried over")}</p>
   </div>
   ${quoteBanner(today)}
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #7c2d12;border-radius:12px;padding:12px 18px;margin-bottom:10px">
@@ -415,43 +420,43 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   ])}</div>
   ${accessNotice()}
 
-  ${eyebrow('Today, by area')}
+  ${eyebrow(t('Today, by area'))}
   ${jobs.length
-    ? card("Today's jobs — who has what", openJobs.length, `<table width="100%" cellspacing="0" cellpadding="0">${boardRows}</table>`, unassigned.length ? '#dc2626' : '#7c2d12', `${niceDay(today)} · ${market}`)
-    : card("Today's jobs", null, `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Nothing scheduled for ${esc(market)} maintenance today — the empty units and the carryover below are the day's work.</p>`, '#7c2d12')}
+    ? card(t("Today's jobs — who has what"), openJobs.length, `<table width="100%" cellspacing="0" cellpadding="0">${boardRows}</table>`, unassigned.length ? '#dc2626' : '#7c2d12', `${niceDayIn2(today)} · ${market}`)
+    : card(t("Today's jobs"), null, `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Nothing scheduled for ${esc(market)} maintenance today — the empty units and the carryover below are the day's work.</p>`, '#7c2d12')}
 
-  ${eyebrow('Empty units — the PM window')}
+  ${eyebrow(t('Empty units — the PM window'))}
   ${vacRows.length
-    ? card('Empty units — walk these while you can', vacRows.length,
+    ? card(t('Empty units — walk these while you can'), vacRows.length,
         `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${pendingTotal} pending job${pendingTotal === 1 ? '' : 's'} across ${pendingUnits} unit${pendingUnits === 1 ? '' : 's'} you can get into today.</b> <span style="color:#6b7280">Check them and assign what the day can take.</span></p>` +
         `<p style="margin:0 0 6px;font-size:12px;color:#6b7280">The top ${Math.min(VAC_LIMIT, vacTop.length)} are below — a guest complaint first, then open jobs, then PM that is due.${vacWorth.length > vacTop.length ? ` ${vacWorth.length - vacTop.length} more are on the board.` : ''}</span></p>` +
         `<p style="margin:0 0 8px;font-size:11.5px;color:#9ca3af">PM cadence: AC filters every 60 days · AC deep clean / service every 180 · pest control every 90. Judged off each unit's own Breezeway history, so closing the task is what keeps it off this list.</p>` +
         `<table width="100%" cellspacing="0" cellpadding="0">${vacantRows}</table>`, '#0891b2', `Empty tonight · ${market}`)
     : card('Vacant units', null, `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Every unit in ${esc(market)} is occupied tonight — no PM windows today.</p>`, '#0891b2')}
 
-  ${checkoutTop.length ? card('Checking out today — get in after the clean', checkoutTop.length,
-    `<table width="100%" cellspacing="0" cellpadding="0">${checkoutRows}</table>`, '#4338ca', 'Nobody arriving behind them') : ''}
+  ${checkoutTop.length ? card(t('Checking out today — get in after the clean'), checkoutTop.length,
+    `<table width="100%" cellspacing="0" cellpadding="0">${checkoutRows}</table>`, '#4338ca', t('Nobody arriving behind them')) : ''}
 
-  ${eyebrow('Behind and repeating')}
+  ${eyebrow(t('Behind and repeating'))}
   ${carry.length
-    ? card('Carried over — oldest first', carry.length, `<table width="100%" cellspacing="0" cellpadding="0">${carryRows}</table>` +
-        (carry.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">Showing the oldest in each area — the board has the rest.</p>` : ''), '#dc2626', 'Scheduled in the last 7 days and still open')
-    : card('Carried over', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing carried over.</span> <span style="${S.muted}">Every job scheduled this past week is closed.</span></p>`, '#059669')}
-  ${(d.recurring || []).length ? card('Units that keep coming back', d.recurring.length, recurringLine, '#b45309', 'Three or more jobs in the last 30 days') : ''}
+    ? card(t('Carried over — oldest first'), carry.length, `<table width="100%" cellspacing="0" cellpadding="0">${carryRows}</table>` +
+        (carry.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">Showing the oldest in each area — the board has the rest.</p>` : ''), '#dc2626', t('Scheduled in the last 7 days and still open'))
+    : card(t('Carried over'), null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">${t('Nothing carried over.')}</span> <span style="${S.muted}">${t('Every job scheduled this past week is closed.')}</span></p>`, '#059669')}
+  ${(d.recurring || []).length ? card(t('Units that keep coming back'), d.recurring.length, recurringLine, '#b45309', t('Three or more jobs in the last 30 days')) : ''}
 
-  ${eyebrow('The numbers')}
-  ${card('Finished and billed', null, numbers +
+  ${eyebrow(t('The numbers'))}
+  ${card(t('Finished and billed'), null, numbers +
     `<p style="margin:10px 0 0;font-size:11.5px;color:#9ca3af">A finished job with no charge entered invoices nothing — the cost goes on the task in Breezeway and the owner statement picks it up from there.</p>`,
     '#047857', `${market} tasks · 17WEST and vendor buildings excluded`)}
 
   <table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 12px"><tr><td>
-  <a href="${APP_URL}/maintenance" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">Open the maintenance board &rarr;
+  <a href="${APP_URL}/maintenance" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">${t('Open the maintenance board →')}
   <span style="display:block;font-weight:400;font-size:11.5px;color:#9ca3af;margin-top:2px">Live jobs, photos and comments — this email is a 7:46am snapshot</span></a>
   </td></tr></table>
   <div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:14px;text-align:center">
-    <p style="margin:0;font-size:12.5px;color:#374151"><b>Thank you for everything you do.</b></p>
+    <p style="margin:0;font-size:12.5px;color:#374151"><b>${t('Thank you for everything you do.')}</b></p>
   </div>
-  <p style="${S.foot}">${market} maintenance · sent automatically every morning · questions: reply to this email.</p>
+  <p style="${S.foot}">${market} ${t('Maintenance').toLowerCase()} · ${t('sent automatically every morning · questions: reply to this email.')}</p>
   </div></body></html>`
 
   return { subject, html, counts: { today: jobs.length, carryover: carry.length, openToday: openJobs.length, vacants: vacRows.length } }
