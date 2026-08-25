@@ -45,6 +45,10 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
   const [showDone, setShowDone] = useState<Record<string, boolean>>({})
   // ADD A JOB (Jon, 2026-08-25). The person who finds the problem files it, from the unit, on
   // their phone — so the sheet asks four things and nothing else.
+  // TAP A UNIT, SEE THE UNIT (Jon, 2026-08-25: "should be able to add when I click into a unit on
+  // the page"). Every unit name on every tab opens the same sheet: what is happening on that unit
+  // today, and the button to file something new against it — pre-filled, no picker to hunt.
+  const [unitOpen, setUnitOpen] = useState<string>('')
   const [addOpen, setAddOpen] = useState(false)
   const [addUnit, setAddUnit] = useState('')
   const [addTitle, setAddTitle] = useState('')
@@ -98,6 +102,41 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
       : sec.verify ? 'arrivals' : sec.vacant ? 'vacant' : sec.work ? 'work' : sec.issues ? 'issues' : null
     if (first) setTab(t => (sec[t === 'arrivals' ? 'verify' : t] ? t : first))
   }, [d, sec])
+
+  // One index, built from everything the board already knows, so the sheet never fetches.
+  const unitIndex = useMemo(() => {
+    const by: Record<string, any> = {}
+    const touch = (lid: any, name: any) => {
+      const id = String(lid || '')
+      if (!id) return null
+      const u = (by[id] = by[id] || { id, name: String(name || 'Unit'), jobs: [], clean: null, arrival: null, vacant: null })
+      if (name && u.name === 'Unit') u.name = String(name)
+      return u
+    }
+    for (const u of (d?.units || [])) touch(u.id, u.name)
+    for (const r of deps) { const u = touch(r.listingId, r.unit); if (u) u.clean = r }
+    for (const a of arrs) { const u = touch(a.listingId, a.unit); if (u) u.arrival = a }
+    for (const v of (d?.vacants || [])) { const u = touch(v.listingId, v.unit); if (u) u.vacant = v }
+    for (const w of work) {
+      const u = touch(w.listingId, w.unit)
+      if (u) u.jobs.push({ id: w.id, unit: w.unit, task: w.label || w.name, state: w.status === 'done' ? 'done' : w.status === 'in progress' ? 'running' : 'open', who: (w.assignees || []).join(', ') })
+    }
+    for (const p of (crew?.people || [])) {
+      for (const j of (p.jobs || [])) {
+        const u = touch(j.lid, j.unit)
+        if (u && !u.jobs.some((x: any) => String(x.id) === String(j.id))) u.jobs.push({ ...j, who: p.name })
+      }
+    }
+    return by
+  }, [d, deps, arrs, work, crew])
+
+  const openUnit = (lid: any, name?: any) => {
+    const id = String(lid || '')
+    if (!id) return
+    if (!unitIndex[id] && name) unitIndex[id] = { id, name: String(name), jobs: [], clean: null, arrival: null, vacant: null }
+    setUnitOpen(id)
+  }
+  const addHere = (lid: string) => { setAddUnit(lid); setUnitOpen(''); setAddOpen(true); setAddMsg(null) }
 
   const submitAdd = async () => {
     setAddBusy(true); setAddMsg(null)
@@ -205,7 +244,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
           <>
             {prios.map((p: any, i: number) => (
               <div key={i} className={'fb-card fb-pad fb-prio ' + p.tone}>
-                <div className="fb-unittop"><b>{p.unit}</b><span className={'fb-pill ' + (p.tone === 'red' ? 'hot' : 'warn')}>{p.tone === 'red' ? 'do first' : 'watch'}</span></div>
+                <div className="fb-unittop"><b className={p.lid ? 'fb-unitlink' : ''} onClick={() => p.lid && openUnit(p.lid, p.unit)}>{p.unit}</b><span className={'fb-pill ' + (p.tone === 'red' ? 'hot' : 'warn')}>{p.tone === 'red' ? 'do first' : 'watch'}</span></div>
                 <p className="fb-issue">{p.what}</p>
                 {p.how ? <p className="fb-do">→ {p.how}</p> : null}
               </div>
@@ -226,7 +265,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
             {arrs.map((a: any, i: number) => (
               <div key={i} className="fb-unit">
                 <div className="fb-unittop">
-                  <b>{a.unit}</b>
+                  <b className="fb-unitlink" onClick={() => openUnit(a.listingId, a.unit)}>{a.unit}</b>
                   <span className="fb-pill off">{a.checkInTime || 'today'}</span>
                 </div>
                 <div className="fb-unitsub">
@@ -246,7 +285,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
             {vacs.map((v: any, i: number) => (
               <div key={i} className="fb-unit">
                 <div className="fb-unittop">
-                  <b>{v.unit}</b>
+                  <b className="fb-unitlink" onClick={() => openUnit(v.listingId, v.unit)}>{v.unit}</b>
                   <span className={'fb-pill ' + (v.arrivingSoon ? 'warn' : 'off')}>
                     {v.nextArrival ? 'guest in ' + (v.daysUntilArrival ?? '?') + 'd' : 'no booking'}
                   </span>
@@ -302,14 +341,14 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
                     </div>
                   ) : null}
 
-                  {left.map((j: any, k: number) => <JobRow key={'l' + k} job={j} />)}
+                  {left.map((j: any, k: number) => <JobRow key={'l' + k} job={j} onUnit={openUnit} />)}
 
                   {done.length ? (
                     <button className="fb-more" onClick={() => setShowDone(s => ({ ...s, [key]: !s[key] }))}>
                       {showDone[key] ? 'Hide' : 'Show'} {done.length} finished
                     </button>
                   ) : null}
-                  {showDone[key] ? done.map((j: any, k: number) => <JobRow key={'d' + k} job={j} />) : null}
+                  {showDone[key] ? done.map((j: any, k: number) => <JobRow key={'d' + k} job={j} onUnit={openUnit} />) : null}
                 </div>
               )
             })}
@@ -333,7 +372,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
                   return (
                     <div key={i} className="fb-unit">
                       <div className="fb-unittop">
-                        <b>{r.unit}</b>
+                        <b className="fb-unitlink" onClick={() => openUnit(r.listingId, r.unit)}>{r.unit}</b>
                         <span className={'fb-pill ' + (/done/i.test(st) ? 'ok' : /progress/i.test(st) ? 'warn' : 'off')}>{st}</span>
                       </div>
                       <div className="fb-unitsub">
@@ -356,7 +395,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
             {groupByBuilding(work.filter(w => w.status !== 'done')).map(g => (
               <div key={g.area} className="fb-card">
                 <div className="fb-cardhead"><b>{g.area}</b><span className="fb-cnt">{g.rows.length}</span></div>
-                {g.rows.map((w: any, i: number) => <JobRow key={i} job={{ id: w.id, unit: w.unit, task: w.label || w.name, state: w.status === 'in progress' ? 'running' : 'open', who: (w.assignees || []).join(', ') }} />)}
+                {g.rows.map((w: any, i: number) => <JobRow key={i} onUnit={openUnit} job={{ id: w.id, lid: w.listingId, unit: w.unit, task: w.label || w.name, state: w.status === 'in progress' ? 'running' : 'open', who: (w.assignees || []).join(', ') }} />)}
               </div>
             ))}
             {!work.filter(w => w.status !== 'done').length && <div className="fb-card fb-pad fb-note">Nothing open on these units.</div>}
@@ -377,18 +416,57 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
           </>
         ) : null}
 
+        {unitOpen && unitIndex[unitOpen] ? (() => {
+          const u = unitIndex[unitOpen]
+          const open = u.jobs.filter((j: any) => j.state !== 'done')
+          const fin = u.jobs.filter((j: any) => j.state === 'done')
+          const st = u.clean?.clean?.status
+          return (
+            <div className="fb-sheet" onClick={e => { if (e.target === e.currentTarget) setUnitOpen('') }}>
+              <div className="fb-sheetbox">
+                <div className="fb-sheettop"><b>{u.name}</b><button className="fb-x" onClick={() => setUnitOpen('')}>✕</button></div>
+
+                <div className="fb-chips">
+                  {u.clean ? <span className={'fb-pill ' + (/done/i.test(String(st)) ? 'ok' : /progress/i.test(String(st)) ? 'warn' : 'off')}>clean {st || 'not scheduled'}</span> : null}
+                  {u.clean ? <span className="fb-pill off">out {u.clean.checkOutTime || 'today'}</span> : null}
+                  {u.arrival ? <span className="fb-pill warn">guest {u.arrival.checkInTime || 'today'}</span> : null}
+                  {u.vacant ? <span className="fb-pill off">{u.vacant.nextArrival ? 'empty · guest in ' + (u.vacant.daysUntilArrival ?? '?') + 'd' : 'empty · no booking'}</span> : null}
+                  {!u.clean && !u.arrival && !u.vacant ? <span className="fb-pill off">occupied</span> : null}
+                </div>
+
+                {u.clean?.clean?.assignees?.length ? <p className="fb-note" style={{ padding: '8px 0 0' }}>Clean with {u.clean.clean.assignees.join(', ')}.</p> : null}
+
+                <p className="fb-lab" style={{ marginTop: 14 }}>Jobs on this unit today</p>
+                {open.length ? open.map((j: any, i: number) => <JobRow key={'o' + i} job={j} />) : <p className="fb-note" style={{ padding: '2px 0' }}>Nothing open right now.</p>}
+                {fin.length ? <p className="fb-note" style={{ padding: '6px 0 0' }}>{fin.length} finished today.</p> : null}
+
+                {sec.add ? (
+                  <button className="fb-btn" style={{ marginTop: 14 }} onClick={() => addHere(u.id)}>+ Add a job on {u.name}</button>
+                ) : null}
+              </div>
+            </div>
+          )
+        })() : null}
+
         {sec.add ? (
           <>
-            <button className="fb-add" onClick={() => { setAddOpen(true); setAddMsg(null) }}>+ Add a job</button>
+            <button className="fb-add" onClick={() => { setAddUnit(''); setAddOpen(true); setAddMsg(null) }}>+ Add a job</button>
             {addOpen ? (
               <div className="fb-sheet" onClick={e => { if (e.target === e.currentTarget) setAddOpen(false) }}>
                 <div className="fb-sheetbox">
                   <div className="fb-sheettop"><b>Add a job</b><button className="fb-x" onClick={() => setAddOpen(false)}>✕</button></div>
                   <label className="fb-lab">Unit</label>
-                  <select className="fb-input" value={addUnit} onChange={e => setAddUnit(e.target.value)}>
-                    <option value="">Pick the unit…</option>
-                    {(d?.units || []).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
+                  {addUnit && unitIndex[addUnit] ? (
+                    <div className="fb-fixed">
+                      <b>{unitIndex[addUnit].name}</b>
+                      <button className="fb-change" onClick={() => setAddUnit('')}>change</button>
+                    </div>
+                  ) : (
+                    <select className="fb-input" value={addUnit} onChange={e => setAddUnit(e.target.value)}>
+                      <option value="">Pick the unit…</option>
+                      {(d?.units || []).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                  )}
                   <label className="fb-lab">What needs doing</label>
                   <input className="fb-input" value={addTitle} onChange={e => setAddTitle(e.target.value)} placeholder="e.g. Shower head leaking" />
                   <div className="fb-two">
@@ -442,12 +520,13 @@ function Stat({ label, value, note, tone }: { label: string; value: string; note
   )
 }
 
-function JobRow({ job }: { job: any }) {
+function JobRow({ job, onUnit }: { job: any; onUnit?: (lid: string, name: string) => void }) {
   const t = splitTask(job.task)
   return (
     <a className="fb-job" href={job.id ? bzUrl(job.id) : undefined} target="_blank" rel="noreferrer">
       <span className="fb-jobmain">
-        <b>{job.unit}</b>
+        <b className={onUnit && job.lid ? 'fb-unitlink' : ''}
+          onClick={onUnit && job.lid ? (e) => { e.preventDefault(); e.stopPropagation(); onUnit(String(job.lid), String(job.unit)) } : undefined}>{job.unit}</b>
         <span className="fb-jobtask">{t.tag ? <i className={'fb-tag ' + t.tag.toLowerCase()}>{t.tag}</i> : null}{t.text}</span>
         {job.who ? <span className="fb-jobwho">{job.who}</span> : null}
       </span>
@@ -558,6 +637,11 @@ function Style() {
 .fb-lab{display:block;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
 .fb-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .fb-btn:disabled{opacity:.5}
+.fb-unitlink{cursor:pointer;border-bottom:1.5px dotted #c7d2fe;-webkit-tap-highlight-color:transparent}
+.fb-unitlink:active{color:#4338ca}
+.fb-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.fb-fixed{display:flex;justify-content:space-between;align-items:center;background:#f8fafc;border:1px solid #e5e7eb;border-radius:11px;padding:11px 12px;font-size:14px}
+.fb-change{border:0;background:none;color:#4338ca;font-size:12px;font-weight:700;cursor:pointer}
 .fb-input{width:100%;font-size:16px;padding:11px 12px;border:1px solid #e5e7eb;border-radius:11px;margin-bottom:10px}
 .fb-btn{width:100%;background:#0b1220;color:#fff;border:0;border-radius:11px;padding:13px;font-size:14.5px;font-weight:700;cursor:pointer}
 .fb-err{color:#b91c1c;font-size:13px;margin:10px 0 0}
