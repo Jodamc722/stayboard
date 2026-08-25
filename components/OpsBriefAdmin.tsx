@@ -7,7 +7,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { Sunrise, Loader2, Check, AlertTriangle, Save, Eye, Send, Mail } from 'lucide-react'
 
 type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string }
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; laborPlan?: { targetMarginPct?: number | null }; maint?: { enabled?: boolean; miamiTo?: string[]; browardTo?: string[] } }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; laborPlan?: { targetMarginPct?: number | null }; maint?: { enabled?: boolean; miamiTo?: string[]; browardTo?: string[]; miamiLang?: string; browardLang?: string }
+  // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets and maintenance briefs only —
+  // Ops Command and the GM brief are management documents and stay English.
+  lang?: { miami?: string; broward?: string } }
 
 // The two other daily emails, editable on the same card (Jon, 2026-08-17). Each has its own
 // on/off, its own recipient list, and sends from the ops-brief mailbox unless overridden.
@@ -58,13 +61,24 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (r.ok) {
         const c = j.config || {}
-        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, dm: c.maint?.enabled !== false }))
+        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, dm: c.maint?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward, c.maint?.miamiLang, c.maint?.browardLang]) }))
       }
     } catch { /* card stays editable with defaults */ }
   }, [])
   useEffect(() => { load(); loadMailboxes() }, [load, loadMailboxes])
 
-  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true, dm: cfg.maint?.enabled !== false }) !== saved
+  const langSig = JSON.stringify([cfg.lang?.miami, cfg.lang?.broward, cfg.maint?.miamiLang, cfg.maint?.browardLang])
+  // One control, two places: the field day sheets and the maintenance briefs. English stays the
+  // default everywhere, so nothing changes for anyone until somebody chooses.
+  const langPick = (value: string | undefined, onPick: (v: string) => void) => (
+    <select value={value || 'en'} onChange={e => onPick(e.target.value)} disabled={!isOwner}
+      className="text-[11.5px] bg-app border border-line rounded-lg px-1.5 py-1 disabled:opacity-60">
+      <option value="en">English</option>
+      <option value="es">Español</option>
+    </select>
+  )
+
+  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true, dm: cfg.maint?.enabled !== false, lg: langSig }) !== saved
   const parse = (v: string) => v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
 
   async function save() {
@@ -81,12 +95,14 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           const n = Number(t)
           return { targetMarginPct: t && Number.isFinite(n) ? n : null }
         })(),
-        maint: { enabled: cfg.maint?.enabled !== false, miamiTo: parse(raw.m_miami || ''), browardTo: parse(raw.m_broward || '') },
+        maint: { enabled: cfg.maint?.enabled !== false, miamiTo: parse(raw.m_miami || ''), browardTo: parse(raw.m_broward || ''),
+          miamiLang: cfg.maint?.miamiLang || 'en', browardLang: cfg.maint?.browardLang || 'en' },
+        lang: { miami: cfg.lang?.miami || 'en', broward: cfg.lang?.broward || 'en' },
       }
       const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       const c = j.config || config
-      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, dm: c.maint?.enabled !== false }))
+      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, dm: c.maint?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward, c.maint?.miamiLang, c.maint?.browardLang]) }))
       const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length
         + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
       setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
@@ -136,6 +152,9 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
             <div key={l.key} className={'rounded-xl border p-3 ' + (l.key === 'gm' ? 'border-brand-200 bg-brand-50/40' : 'border-line')}>
               <div className="flex items-center gap-2">
                 <span className="text-[12px] font-bold text-ink">{l.label}</span>
+                {(l.key === 'miami' || l.key === 'broward') && langPick(
+                  l.key === 'miami' ? cfg.lang?.miami : cfg.lang?.broward,
+                  v => setCfg(c => ({ ...c, lang: { ...(c.lang || {}), [l.key]: v } })))}
                 <a href={`/api/cron/ops-brief?preview=${l.key === 'gm' ? 'GM' : l.key}`} target="_blank" rel="noreferrer"
                   className="ml-auto text-[10px] font-semibold text-brand-700 hover:underline">preview</a>
               </div>
@@ -187,10 +206,14 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           <div className="grid sm:grid-cols-2 gap-3">
             {([['m_miami', 'Miami', 'Miami'], ['m_broward', 'Broward', 'Broward']] as const).map(([k, label, mk]) => (
               <div key={k}>
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-1 gap-2">
                   <span className="text-[11.5px] font-semibold text-ink">{label}</span>
-                  <a href={`/api/cron/maint-brief?preview=${mk}`} target="_blank" rel="noreferrer"
-                    className="text-[11px] text-brand-600 hover:underline">preview</a>
+                  <span className="flex items-center gap-1.5">
+                    {langPick(mk === 'Miami' ? cfg.maint?.miamiLang : cfg.maint?.browardLang,
+                      v => setCfg(c => ({ ...c, maint: { ...(c.maint || {}), [mk === 'Miami' ? 'miamiLang' : 'browardLang']: v } })))}
+                    <a href={`/api/cron/maint-brief?preview=${mk}`} target="_blank" rel="noreferrer"
+                      className="text-[11px] text-brand-600 hover:underline">preview</a>
+                  </span>
                 </div>
                 <textarea rows={2} disabled={!isOwner} value={raw[k] ?? ''} onChange={e => setRaw(x => ({ ...x, [k]: e.target.value }))}
                   placeholder="emails, comma separated"
