@@ -54,6 +54,13 @@ export type MaintData = {
   /** Maintenance crew wages, PORTFOLIO-WIDE (one Homebase location) — null when timecards were
    *  incomplete, so a rate-limited morning never prints an understated wage as truth. */
   wages: { yd: number | null; d7: number | null; d30: number | null }
+  /** Hours clocked by the maintenance crew, same source and caveat as wages. The market briefs
+   *  print hours rather than wages: completed-vs-actual is the doctrine, and the crew reads them. */
+  hours: { yd: number | null; d7: number | null; d30: number | null }
+  /** TODAY'S BOARD (added 2026-08-25 for the per-market maintenance briefs): what is scheduled
+   *  today in this market, who holds it, and whether a guest is inside — a job in an occupied
+   *  unit is a phone call before it is a work order. */
+  todayJobs: { unit: string; task: string; who: string; state: 'done' | 'running' | 'open'; occupied: boolean; arriving: boolean }[]
 }
 
 export async function maintData(market: MaintMarket): Promise<MaintData> {
@@ -168,6 +175,7 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
   // Maintenance crew wages — AUDITED timecards only (super audit, 2026-08-22): the old bare
   // getTimecards silently under-reported a rate-limited week as real wages. Incomplete ⇒ null.
   let wages: MaintData['wages'] = { yd: null, d7: null, d30: null }
+  let hours: MaintData['hours'] = { yd: null, d7: null, d30: null }
   try {
     const { getCrew } = await import('./crew')
     const crew = await getCrew()
@@ -186,8 +194,40 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
         return round2(Math.max(0, sumOf(mine, from, to) - sumOf(george, from, to) * cov.ratio))
       }
       wages = { yd: stayWage(yd, yd, 1), d7: stayWage(d7, yd, 7), d30: stayWage(d30, yd, 30) }
+      const hoursOf = (from: string, to: string) =>
+        round2(mine.filter(c => c.date != null && c.date >= from && c.date <= to).reduce((a, c) => a + (c.hours ?? 0), 0))
+      hours = { yd: hoursOf(yd, yd), d7: hoursOf(d7, yd), d30: hoursOf(d30, yd) }
     }
   } catch { /* wages stay null rather than a guess */ }
 
-  return { market, yd: win(yd, yd), d7: win(d7, yd), d30: win(d30, yd), carryover, recurring, wages }
+  // TODAY'S BOARD. Occupancy comes straight from reservations: a live stay spanning today means
+  // somebody is inside, and an arrival today means the unit has a deadline. Best-effort — if the
+  // read fails the jobs still list, just without the flags.
+  const occupied: Record<string, boolean> = {}
+  const arriving: Record<string, boolean> = {}
+  try {
+    const { data: rRows } = await db.from('guesty_reservations')
+      .select('listing_id,check_in,check_out,status')
+      .lte('check_in', today).gte('check_out', today)
+      .not('status', 'in', '("canceled","cancelled","declined")').limit(3000)
+    for (const r of (rRows || []) as any[]) {
+      const lid = String(r.listing_id)
+      const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
+      if (ci <= today && co > today) occupied[lid] = true
+      if (ci === today) arriving[lid] = true
+    }
+  } catch { /* flags are a bonus, never a blocker */ }
+  const todayJobs = maint
+    .filter(t => str(t.scheduled_date).slice(0, 10) === today)
+    .map(t => ({
+      unit: unitOf(t.reference_property_id),
+      task: str(t.name).slice(0, 70),
+      who: (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name || a)).filter(Boolean).join(', ') || 'unassigned',
+      state: (isDone(t) ? 'done' : /progress|started/i.test(str(t.status)) ? 'running' : 'open') as 'done' | 'running' | 'open',
+      occupied: !!occupied[String(t.reference_property_id)],
+      arriving: !!arriving[String(t.reference_property_id)],
+    }))
+    .sort((a, b) => (a.who === 'unassigned' ? 0 : 1) - (b.who === 'unassigned' ? 0 : 1) || a.who.localeCompare(b.who) || a.unit.localeCompare(b.unit))
+
+  return { market, yd: win(yd, yd), d7: win(d7, yd), d30: win(d30, yd), carryover, recurring, wages, hours, todayJobs }
 }
