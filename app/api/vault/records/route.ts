@@ -8,6 +8,7 @@
 // demand — nothing is duplicated, so the vault can never drift out of date.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
+import { checkVaultCode, codeFrom, codeEntered, logAccess } from '@/lib/vault'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -28,8 +29,14 @@ export async function GET(req: NextRequest) {
     if (['salato-verify', 'reservation-docs'].indexOf(bucket) < 0 || !path) {
       return NextResponse.json({ ok: false, error: 'bad ref' }, { status: 400 })
     }
+    // Guest IDs and signed forms leave the vault only with the vault code, like every secret.
+    const me = String(gate.access.email || '')
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null
+    const codeGate = await checkVaultCode({ code: codeFrom(req), email: me, ip, purpose: 'record ' + bucket })
+    if (!codeGate.ok) return NextResponse.json({ ok: false, error: codeGate.error, codeUnset: !!codeGate.codeUnset, wrongCode: !!codeGate.wrongCode }, { status: codeGate.status })
     const s = await db.storage.from(bucket).createSignedUrl(path, TTL)
     if (!s.data?.signedUrl) return NextResponse.json({ ok: false, error: s.error?.message || 'could not sign' }, { status: 500 })
+    await logAccess({ itemId: null, email: me, action: 'download', detail: codeEntered(bucket + ':' + path.slice(0, 120)), ip })
     return NextResponse.json({ ok: true, url: s.data.signedUrl })
   }
 
