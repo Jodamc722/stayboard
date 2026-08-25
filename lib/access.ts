@@ -106,6 +106,50 @@ export function isSuperadmin(email: string | null | undefined): boolean {
   return String(email || '').toLowerCase() === SUPERADMIN
 }
 
+/**
+ * The same resolution as getAccess(), but for a caller that has NO browser session — today that is
+ * Telegram (lib/eve/telegram.ts), tomorrow anything else that authenticates a person some other way.
+ *
+ * TWO DELIBERATE DIFFERENCES FROM getAccess(), both in the same direction:
+ *
+ *  1. FAIL-CLOSED. Everywhere above, a missing row or a dead table resolves to MORE access, because
+ *     locking a signed-in employee out of a board is worse than showing them one. That trade does
+ *     not survive the trip off-platform: here the caller proved nothing to Supabase, so anything
+ *     other than an active app_users row returns null and the bridge refuses to answer. A database
+ *     blip must never turn an unknown Telegram handle into a manager.
+ *
+ *  2. NO BOOTSTRAP. The "allowlist is empty, let the first person in" path exists so a fresh
+ *     install is usable. An empty allowlist reached from a chat app is just an open door.
+ *
+ * The caller is responsible for having verified WHICH email this is. This function only decides
+ * what that email is allowed to see.
+ */
+export async function accessForEmail(email: string | null | undefined): Promise<Access | null> {
+  const e = String(email || '').toLowerCase().trim()
+  if (!e) return null
+  const user = { id: `offline:${e}`, email: e }
+  if (e === SUPERADMIN) {
+    return base({ user, email: e, role: 'admin', allowed: true, workspace: 'admin', accessRole: 'admin', levels: ALL_FULL(), landing: '/command' })
+  }
+  try {
+    const sb = supabaseAdmin()
+    const { data, error } = await sb.from('app_users').select('*').eq('email', e).maybeSingle()
+    if (error || !data) return null
+    if ((data as any).status !== 'active') return null
+    const features = ((data as any).features && typeof (data as any).features === 'object') ? (data as any).features as Record<string, boolean> : {}
+    const role: Role = (data as any).role === 'admin' ? 'admin' : 'member'
+    const roles = await getRoles()
+    const { levels, landing, accessRole } = resolveLevels(data as any, roles)
+    return base({
+      user, email: e, role, allowed: true, features,
+      workspace: role === 'admin' ? 'admin' : normWorkspace((data as any).workspace),
+      profile: ((data as any).profile && typeof (data as any).profile === 'object') ? (data as any).profile : {},
+      prefs: ((data as any).prefs && typeof (data as any).prefs === 'object') ? (data as any).prefs : {},
+      accessRole, levels, landing,
+    })
+  } catch { return null }
+}
+
 // ---- Who may see dollar amounts. ---------------------------------------------------------------
 // Jon 2026-08-10: "only view of that data should be me ... meaning i should be able to toggle on
 // and off per user". So: the owner always, plus whoever the owner has explicitly switched on at
