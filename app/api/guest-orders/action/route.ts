@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: r.ok, error: r.error, order: await getOrder(id) })
       }
       case 'mark_paid': {
-        const r = await markPaid(id, actor, String(body?.note || ''), body?.recordInGuesty === true)
+        const settle = ['guesty', 'external', 'outside'].indexOf(String(body?.settle)) >= 0 ? String(body?.settle) as any : 'guesty'
+        const r = await markPaid(id, actor, String(body?.note || ''), settle)
         return NextResponse.json({ ok: r.ok, error: r.error, order: r.order })
       }
       case 'cancel': {
