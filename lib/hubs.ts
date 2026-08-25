@@ -46,10 +46,12 @@ export const HUBS: Hub[] = [
   },
   {
     key: 'owners', label: 'Owners',
-    blurb: 'Everything that goes to an owner — monthly reports, the statement audit, and next-season projections.',
+    // Owner Statement Audit left this hub on 2026-08-25 (Jon: "its own standalone tab"). It is
+    // the board somebody sits in front of for an hour with Guesty open — not a page you tab past
+    // on the way to a report — so it gets its own sidebar row in Money.
+    blurb: 'Everything that goes to an owner — monthly reports and next-season projections.',
     tabs: [
       { to: '/reports', label: 'Owner Reports' },
-      { to: '/owner-audit', label: 'Owner Audit' },
       { to: '/projections', label: 'Projections' },
     ],
   },
