@@ -244,11 +244,24 @@ export function ReportsDesk() {
                   Season projection
                 </button>
               </div>
+              {/* THE PROJECTION BUILDER LIVES HERE (Jon, 2026-08-25: "remove the projections tab,
+                  in the owner reports it should have a projection builder"). Projections stopped
+                  being a place you navigate to — it is a thing you build for an owner, so the entry
+                  point is this toggle, and the model editor is one link off it rather than a sidebar
+                  row you have to know exists. The editor keeps its page, its API and its role gate;
+                  when Eric's app connects, the budget/forecast side lands behind that same link. */}
               {kind === 'projection' && (
-                <p className="mt-1.5 text-[12px] text-muted">
-                  Next season&rsquo;s net owner revenue per unit, with property health and ADR-upside recommendations — numbers come from{' '}
-                  <a href="/projections" className="text-brand-600 font-semibold underline decoration-dotted underline-offset-2">Money → Projections</a>, where every month, unit and lever is adjustable. Generate, then edit any wording in place; hidden sections can be re-enabled on the report.
-                </p>
+                <div className="mt-1.5">
+                  <p className="text-[12px] text-muted">
+                    Next season&rsquo;s net owner revenue per unit, with property health and ADR-upside recommendations.
+                    Generate, then edit any wording in place; hidden sections can be re-enabled on the report.
+                  </p>
+                  <a href="/projections"
+                    className="mt-1.5 inline-flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:border-ink/30 text-ink"
+                    title="Every month, unit and lever behind these numbers — occupancy, ADR, length of stay, management and building splits">
+                    Adjust the model &rarr;
+                  </a>
+                </div>
               )}
             </div>
             <div>

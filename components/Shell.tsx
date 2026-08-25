@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from '@/lib/nav'
-import { HUBS, hubForPath, type Hub } from '@/lib/hubs'
+import { TAB_SETS, tabSetForPath, type TabSet } from '@/lib/tabsets'
 import { EveFloat } from '@/components/EveFloat'
 import {
   Home, CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
@@ -31,9 +31,9 @@ import {
 // Money, Team, Settings.
 // ------------------------------------------------------------------------------------------------
 
-// `hub` marks a row that stands in for several pages (lib/hubs.ts): it links to the first tab the
+// `set` marks a row that stands in for several pages (lib/tabsets.ts): it links to the first tab the
 // person can see, lights up when any tab is active, and its pages get a tab strip from Shell.
-type NavItem = { to: string; label: string; Icon: any; hub?: string }
+type NavItem = { to: string; label: string; Icon: any; set?: string }
 type NavSection = { title: string; items: NavItem[] }
 
 const SECTIONS: NavSection[] = [
@@ -57,11 +57,11 @@ const SECTIONS: NavSection[] = [
       { to: '/maintenance', label: 'Maintenance', Icon: Wrench },  // Jon 2026-08-20: "maintenance is
       // a big one, we don't always have a good grip" — the command view over W.O.s, tasks, glitches
       { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },   // Jon 2026-08-19: back to Glitches
-      // HUBS (Jon, 2026-08-24: "audits, orders and different tabs all over the place"): the four
-      // audit-ish pages and the four order-ish pages become ONE row each; the pages keep their
-      // URLs and roles and get a tab strip at the top. Registry in lib/hubs.ts.
-      { to: '/audits',   label: 'Quality',  Icon: ClipboardCheck, hub: 'quality' },   // Audits · Inspections · FF&E
-      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart, hub: 'orders' },       // Purchasing · Work Orders · Projects
+      // TAB SETS (Jon, 2026-08-24: "audits, orders and different tabs all over the place"): the
+      // audit-ish pages and the order-ish pages become ONE row each; the pages keep their URLs
+      // and roles and get a tab strip at the top. Registry in lib/tabsets.ts.
+      { to: '/audits',   label: 'Quality',  Icon: ClipboardCheck, set: 'quality' },   // Audits · Inspections · FF&E
+      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart, set: 'orders' },       // Purchasing · Work Orders · Projects
     ],
   },
   {
@@ -91,7 +91,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { to: '/buildings', label: 'Properties', Icon: Building2 },
       { to: '/vault',     label: 'Vault', Icon: Lock },
-      // Share Links hub (2026-08-18, Jon, parallel session): build + customise owner/property links.
+      // Share Links (2026-08-18, Jon, parallel session): build + customise owner/property links.
       { to: '/links',     label: 'Share Links', Icon: Share2 },
       { to: '/health',    label: 'Health Score', Icon: Activity },
       // Nav diet 2026-08-11 (Jon): Patterns folded into Guest Issues (/glitches → Patterns tab).
@@ -104,8 +104,9 @@ const SECTIONS: NavSection[] = [
       { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
       { to: '/marketing', label: 'Direct Bookings', Icon: Megaphone },
       { to: '/billing',  label: 'Billable Hours', Icon: Receipt }, // 2026-08-06 - Breezeway task billing by owner
-      // Owner Reports · Projections = one Owners hub (lib/hubs.ts), 2026-08-24.
-      { to: '/reports',  label: 'Owners', Icon: FileText, hub: 'owners' },
+      // Projections left the sidebar on 2026-08-25 (Jon): the projection builder lives inside
+      // Owner Reports now, so this is a plain row again and /projections is reached from there.
+      { to: '/reports',  label: 'Owner Reports', Icon: FileText },
       // Owner Statement Audit stands alone (Jon, 2026-08-25). It is an hour-long working session
       // against Guesty, not a tab you pass through on the way to a report.
       { to: '/owner-audit', label: 'Owner Statement Audit', Icon: ClipboardList },
@@ -114,9 +115,12 @@ const SECTIONS: NavSection[] = [
   {
     title: 'Team',
     items: [
-      // Weekly Planner · Cleaners · Labor = one Team hub (lib/hubs.ts), 2026-08-24. Labor keeps
-      // its own Board|Dashboard switcher inside.
-      { to: '/team',     label: 'Team', Icon: Users, hub: 'team' },
+      // Flat again (Jon, 2026-08-25: "just make it easier"). A section titled Team holding one row
+      // titled Team was a level of chrome that named nothing. Labor keeps its own
+      // Board|Dashboard switcher inside.
+      { to: '/team',     label: 'Weekly Planner', Icon: CalendarRange },
+      { to: '/cleaners', label: 'Cleaners', Icon: Sparkles },
+      { to: '/labor',    label: 'Labor',    Icon: Timer },
     ],
   },
   {
@@ -234,8 +238,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const initials = (email || 'U').split('@')[0].split('.').map(s => s[0]?.toUpperCase()).slice(0, 2).join('') || 'U'
 
   const isActive = (to: string) => path === to || (to !== '/' && !!path && path.startsWith(to))
-  const hubTabs = (key: string) => (HUBS.find(h => h.key === key) || { tabs: [] as { to: string; label: string }[] }).tabs
-  const itemActive = (it: NavItem) => it.hub ? hubTabs(it.hub).some(t => isActive(t.to)) : isActive(it.to)
+  const setTabs = (key: string) => (TAB_SETS.find(s => s.key === key) || { tabs: [] as { to: string; label: string }[] }).tabs
+  const itemActive = (it: NavItem) => it.set ? setTabs(it.set).some(t => isActive(t.to)) : isActive(it.to)
 
   // Hide pages outside the user's workspace bundle or toggled off for them (owner always sees all).
   // While /api/access/me is still loading (workspace === null) show everything — no nav flicker,
@@ -250,33 +254,33 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return pageAllowed(workspace, features, feat.key)
   }
 
-  // A hub row is visible when ANY of its tabs is, and it links to the FIRST visible tab.
-  const resolveHub = (it: NavItem): NavItem | null => {
-    if (!it.hub) return canSee(it.to) ? it : null
-    const first = hubTabs(it.hub).find(t => canSee(t.to))
+  // A tab-set row is visible when ANY of its tabs is, and it links to the FIRST visible tab.
+  const resolveSet = (it: NavItem): NavItem | null => {
+    if (!it.set) return canSee(it.to) ? it : null
+    const first = setTabs(it.set).find(t => canSee(t.to))
     return first ? { ...it, to: first.to } : null
   }
   const sections: NavSection[] = SECTIONS
     .map(sec => sec.title === 'Settings' && isAdmin
       ? { title: sec.title, items: sec.items.concat([{ to: '/users', label: 'Users & admin', Icon: UserCog }]) }
       : sec)
-    .map(sec => ({ title: sec.title, items: sec.items.map(it => it.to === '/users' ? it : resolveHub(it)).filter(Boolean) as NavItem[] }))
+    .map(sec => ({ title: sec.title, items: sec.items.map(it => it.to === '/users' ? it : resolveSet(it)).filter(Boolean) as NavItem[] }))
     .filter(sec => sec.items.length > 0)
 
-  // Flat lookup so a pin (a path) renders with the same icon and label as its group row. Hub tabs
-  // are registered too, so a pin made before the hubs existed (e.g. /inspections) still renders —
-  // with the hub's icon and the tab's own label.
+  // Flat lookup so a pin (a path) renders with the same icon and label as its group row. Tab-set
+  // members are registered too, so a pin made before the sets existed (e.g. /inspections) still
+  // renders — with the set's icon and the tab's own label.
   const byPath: Record<string, NavItem> = {}
   for (let i = 0; i < sections.length; i++) {
     const items = sections[i].items
     for (let j = 0; j < items.length; j++) {
       byPath[items[j].to] = items[j]
-      if (items[j].hub) for (const t of hubTabs(items[j].hub as string)) if (canSee(t.to)) byPath[t.to] = { to: t.to, label: t.label, Icon: items[j].Icon }
+      if (items[j].set) for (const t of setTabs(items[j].set as string)) if (canSee(t.to)) byPath[t.to] = { to: t.to, label: t.label, Icon: items[j].Icon }
     }
   }
   // The tab strip for the page we are on (rendered above the page content).
-  const hubHere = hubForPath(path)
-  const hubHereIcon = hubHere ? (SECTIONS.flatMap(sc => sc.items).find(it => it.hub === hubHere.hub.key) || { Icon: null }).Icon : null
+  const setHere = tabSetForPath(path)
+  const setHereIcon = setHere ? (SECTIONS.flatMap(sc => sc.items).find(it => it.set === setHere.set.key) || { Icon: null }).Icon : null
 
   const pinned: NavItem[] = []
   if (pins) {
@@ -370,8 +374,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <p className="px-2 pb-1.5 text-[11px] text-muted/70">Star any tab below and it moves up here — your own order, front and center.</p>
           )}
           {pinned.map(({ to, label, Icon }, idx) => {
-            const pinHub = hubForPath(to)
-            const active = pinHub && sections.some(sc => sc.items.some(it => it.hub === pinHub.hub.key && it.to === to)) ? itemActive({ to, label, Icon, hub: pinHub.hub.key }) : isActive(to)
+            const pinSet = tabSetForPath(to)
+            const active = pinSet && sections.some(sc => sc.items.some(it => it.set === pinSet.set.key && it.to === to)) ? itemActive({ to, label, Icon, set: pinSet.set.key }) : isActive(to)
             return (
               <div key={'pin-' + to} draggable
                 onDragStart={() => { dragFrom.current = idx }}
@@ -484,16 +488,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
         <main className="flex-1 overflow-auto overscroll-contain px-safe">
           <div className="max-w-[1600px] mx-auto px-3 py-4 sm:p-6 lg:p-8 animate-fade-in">
-            {hubHere ? (
-              // THE HUB TAB STRIP — every member page gets it for free, so the four audit pages and
+            {setHere ? (
+              // THE TAB STRIP — every member page gets it for free, so the audit pages and
               // the four order pages read as one thing with tabs instead of eight scattered entries.
               <div className="mb-4 -mt-1 flex items-center gap-2 flex-wrap">
                 <div className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] font-bold text-muted/70 mr-1">
-                  {hubHereIcon ? (() => { const I = hubHereIcon; return <I size={13} /> })() : null}{hubHere.hub.label}
+                  {setHereIcon ? (() => { const I = setHereIcon; return <I size={13} /> })() : null}{setHere.set.label}
                 </div>
                 <div className="inline-flex rounded-xl border border-line bg-white p-0.5 overflow-x-auto max-w-full">
-                  {hubHere.hub.tabs.filter(t => canSee(t.to)).map(t => {
-                    const on = t.to === hubHere.tab.to
+                  {setHere.set.tabs.filter(t => canSee(t.to)).map(t => {
+                    const on = t.to === setHere.tab.to
                     return <Link key={t.to} href={t.to} prefetch={false} className={'px-3 py-1.5 rounded-lg text-[13px] font-semibold whitespace-nowrap transition ' + (on ? 'bg-ink text-white' : 'text-muted hover:text-ink hover:bg-app')}>{t.label}</Link>
                   })}
                 </div>
@@ -563,7 +567,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {paletteOpen && <JumpPalette sections={sections.map(sc => ({ title: sc.title, items: sc.items.flatMap(it => it.hub ? hubTabs(it.hub).filter(t => canSee(t.to)).map(t => ({ to: t.to, label: it.label + ' · ' + t.label, Icon: it.Icon })) : [it]) }))} onClose={() => setPaletteOpen(false)} />}
+      {paletteOpen && <JumpPalette sections={sections.map(sc => ({ title: sc.title, items: sc.items.flatMap(it => it.set ? setTabs(it.set).filter(t => canSee(t.to)).map(t => ({ to: t.to, label: it.label + ' · ' + t.label, Icon: it.Icon })) : [it]) }))} onClose={() => setPaletteOpen(false)} />}
     </div>
   )
 }
