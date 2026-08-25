@@ -13,6 +13,9 @@
 //     the job and the name against it. A tech works a building, not a spreadsheet, so the area is
 //     the heading and the unit is the row. A GUEST IN HOUSE flag rides any occupied unit: that is
 //     a phone call before it is a work order.
+//   • DIRECTIONAL, NOT EXHAUSTIVE (Jon, 2026-08-25: "only top ones, don't need everything but a
+//     directional one"). Every list here is capped at what a crew can actually act on this
+//     morning. The board holds the rest, and the email says so rather than pretending it is all.
 //   • VACANT UNITS — the empty ones are the PM window. Each shows how many clear days it has,
 //     what maintenance is already open on it, and the best use of the window (ranked by
 //     lib/vacant-work — the same engine the ops brief uses, so nothing contradicts).
@@ -109,11 +112,24 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   // next guest lands; vacantWork ranks what each empty window is actually good for. Both are
   // best-effort: a maintenance brief without the vacant card is still a working brief.
   let vacRows: VacantWork[] = []
+  let sheet: any = {}
   try {
-    const sheet: any = await buildDaySheet(today, market)
+    sheet = await buildDaySheet(today, market)
     const vac = ((sheet.vacants || []) as any[]).filter(v => !v.vendor && !/17\s*west/i.test(String(v.unit || '')))
     vacRows = await vacantWork(vac as any, today)
   } catch { vacRows = [] }
+
+  // UNITS YOU CAN GET INTO TODAY = empty tonight, PLUS today's checkouts that have no guest
+  // arriving behind them (Jon, 2026-08-25: "based on vacant unit and checkouts"). A unit that
+  // turned this morning and sits empty tonight is the same opportunity as one that has been empty
+  // a week — the crew just has to wait for the clean.
+  const arrivingIds = new Set(((sheet.arrivals || []) as any[]).map((a: any) => String(a.listingId)))
+  const vacantIds = new Set(vacRows.map(v => String(v.listingId)))
+  const checkouts = ((sheet.departures || []) as any[])
+    .filter(dep => !arrivingIds.has(String(dep.listingId)) && !vacantIds.has(String(dep.listingId)))
+    .filter(dep => !dep.vendor && !/17\s*west/i.test(String(dep.unit || '')))
+    .map(dep => ({ listingId: String(dep.listingId), unit: String(dep.unit || 'Unit'), out: String(dep.checkOutTime || '') }))
+  const accessibleIds = Array.from(new Set([...vacRows.map(v => String(v.listingId)), ...checkouts.map(c => c.listingId)])).filter(Boolean)
 
   // WHY AN EMPTY UNIT NEEDS THE TEAM (Jon, 2026-08-25: "focus on units vacant with bad reviews,
   // PM not completed, etc"). A guest complaint is the loudest reason to walk a unit while it is
@@ -121,7 +137,7 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   // are actually empty, so this is one small read, not a portfolio scan.
   const lowByUnit: Record<string, { stars: number; channel: string; said: string; at: string }> = {}
   try {
-    const ids = vacRows.map(v => String(v.listingId)).filter(Boolean)
+    const ids = accessibleIds
     if (ids.length) {
       const db = supabaseAdmin()
       const since = new Date(Date.now() - 30 * 86400000).toISOString()
@@ -146,7 +162,13 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   // ── THE STANDING PM LIST. Matched off task NAMES in Breezeway history, because that is where
   // the work is recorded; a unit with no matching task in the window has no record of that job
   // being done, which for PM purposes is the same as due.
+  // A TRUE PM IS A REFRESH (Jon, 2026-08-25: "PM maintenance can just be a task where a true PM
+  // is — a full paint and unit is ready"). So the PM inspection is its own tracked job with the
+  // longest cadence, and the date of the last one rides every unit row: it is the single best
+  // answer to "when did we last actually go through this unit properly?"
   const PM_JOBS: { key: string; label: string; re: RegExp; everyDays: number; note: string }[] = [
+    { key: 'pm', label: 'PM — full walk, paint, unit ready', everyDays: 365, note: 'the proper refresh, not a patch',
+      re: /\bpm\b|preventive|preventative|full\s*paint|paint\s*(touch|refresh|unit)|unit\s*ready|refresh/i },
     { key: 'filter', label: 'AC filter change', everyDays: 60, note: 'central AC units — 60-day cadence',
       re: /filter/i },
     { key: 'acdeep', label: 'AC deep clean / service', everyDays: 180, note: 'coils, drain line, service',
@@ -156,7 +178,7 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   ]
   const pmByUnit: Record<string, Record<string, string | null>> = {}   // listingId → key → last done
   try {
-    const ids = vacRows.map(v => String(v.listingId)).filter(Boolean)
+    const ids = accessibleIds
     if (ids.length) {
       const db2 = supabaseAdmin()
       const since = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10)
@@ -271,24 +293,59 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     if (v.top) return { pill: '', what: v.top.label, why: v.top.why, rank: 5 }
     return { pill: '', what: 'Nothing outstanding', why: 'PM, audits and open work are all current', rank: 6 }
   }
+  const SRC_LABEL: Record<string, string> = { guest: 'guest', field: 'field', other: '' }
   const vacRow = (v: VacantWork) => {
     const r = reasonOf(v)
+    const lid = String(v.listingId)
+    const open = openByUnit[lid]
+    const pend = open?.tasks || []
+    const lastPm = (pmByUnit[lid] || {}).pm
+    const pmAge = daysSince(lastPm)
+    // The pending list is the point of the row — name the jobs, not just the count.
+    const pendList = pend.slice(0, 2).map(t =>
+      `<div style="font-size:12px;color:#374151;margin-top:2px">• ${esc(t.name)}${SRC_LABEL[t.source] ? ` <span style="${S.muted}">(${SRC_LABEL[t.source]} reported)</span>` : ''}${t.age != null && t.age >= 3 ? ` <span style="${S.red}">${t.age}d</span>` : ''}</div>`).join('')
     return `
     <tr><td style="${S.td}"><b>${esc(String(v.unit))}</b> ${r.pill}
-      <div style="font-size:12px;color:#6b7280;margin-top:2px">${esc(windowLabel(v))}${v.idleDays != null && v.idleDays >= 7 ? ` · empty ${v.idleDays} days` : ''}</div></td>
-    <td style="${S.td};text-align:right"><b${r.rank === 0 ? ` style="${S.red}"` : ''}>${esc(r.what)}</b><br><span style="${S.muted};font-size:11.5px">${esc(r.why)}</span></td></tr>`
+      <div style="font-size:12px;color:#6b7280;margin-top:2px">${esc(windowLabel(v))}${v.idleDays != null && v.idleDays >= 7 ? ` · empty ${v.idleDays} days` : ''} · <span style="${pmAge == null ? S.amber : pmAge > 365 ? S.amber : S.muted}">${pmAge == null ? 'no PM on record' : `last PM ${pmAge}d ago`}</span></div>
+      ${pendList}${pend.length > 2 ? `<div style="font-size:11.5px;color:#9ca3af;margin-top:2px">+${pend.length - 2} more on this unit</div>` : ''}</td>
+    <td style="${S.td};text-align:right;vertical-align:top">${pend.length ? `<b style="${pend.length >= 3 ? S.red : S.amber}">${pend.length} pending</b><br>` : ''}<b${r.rank === 0 ? ` style="${S.red}"` : ''}>${esc(r.what)}</b><br><span style="${S.muted};font-size:11.5px">${esc(r.why)}</span></td></tr>`
   }
   // Areas with the loudest reason come first; inside an area, the same. A tech reading top to
   // bottom is reading the right order to drive.
   const urgencyOf = (a: string) => Math.min(...vacByArea[a].map(v => reasonOf(v).rank))
-  const vacAreaOrder = Object.keys(vacByArea).sort((a, b) => urgencyOf(a) - urgencyOf(b) || vacByArea[b].length - vacByArea[a].length || a.localeCompare(b))
-  const vacantRows = vacAreaOrder.map(a => {
-    const mine = vacByArea[a].slice().sort((x, y) => reasonOf(x).rank - reasonOf(y).rank || (x.daysUntilArrival ?? 999) - (y.daysUntilArrival ?? 999))
-    const worth = mine.filter(v => reasonOf(v).rank <= 4).length
-    return areaHead(a, `· ${mine.length} empty${worth ? ` · ${worth} worth a visit` : ''}`) + mine.slice(0, 8).map(vacRow).join('')
-  }).join('')
-  const vacWithWork = vacRows.filter(v => reasonOf(v).rank <= 4).length
+  // THE TOP ONES ONLY. Units whose reason is real (a complaint, open jobs, PM due) — best six,
+  // grouped by area so the drive makes sense. Units with nothing outstanding are counted, not listed.
+  const VAC_LIMIT = 6
+  const vacWorth = vacRows.filter(v => reasonOf(v).rank <= 4)
+    .sort((a, b) => reasonOf(a).rank - reasonOf(b).rank || (a.daysUntilArrival ?? 999) - (b.daysUntilArrival ?? 999))
+  const vacTop = vacWorth.slice(0, VAC_LIMIT)
+  const topByArea: Record<string, VacantWork[]> = {}
+  for (const v of vacTop) {
+    const area = openByUnit[String(v.listingId)]?.building || 'Other'
+    ;(topByArea[area] = topByArea[area] || []).push(v)
+  }
+  const vacantRows = Object.keys(topByArea)
+    .sort((a, b) => Math.min(...topByArea[a].map(v => reasonOf(v).rank)) - Math.min(...topByArea[b].map(v => reasonOf(v).rank)) || a.localeCompare(b))
+    .map(a => areaHead(a, `· ${topByArea[a].length}`) + topByArea[a].map(vacRow).join('')).join('')
+  const vacWithWork = vacWorth.length
   const vacReviewed = vacRows.filter(v => lowByUnit[String(v.listingId)]).length
+  // The one number that turns a list into an instruction (Jon: "10 pending tasks, please check
+  // and assign for today if can") — counted across everywhere the crew can actually get in.
+  const pendingTotal = accessibleIds.reduce((a, id) => a + ((openByUnit[id]?.tasks || []).length), 0)
+  const pendingUnits = accessibleIds.filter(id => (openByUnit[id]?.tasks || []).length).length
+  // Today's checkouts worth a visit once the clean is done — top three, pending work only.
+  const checkoutTop = checkouts
+    .filter(c => (openByUnit[c.listingId]?.tasks || []).length)
+    .sort((a, b) => (openByUnit[b.listingId]?.tasks.length || 0) - (openByUnit[a.listingId]?.tasks.length || 0))
+    .slice(0, 3)
+  const checkoutRows = checkoutTop.map(c => {
+    const t = openByUnit[c.listingId]!
+    const lastPm = daysSince((pmByUnit[c.listingId] || {}).pm)
+    return `
+    <tr><td style="${S.td}"><b>${esc(c.unit)}</b> <span style="${S.muted};font-size:12px">· out ${esc(c.out || 'today')}${lastPm == null ? ' · no PM on record' : ` · last PM ${lastPm}d ago`}</span>
+      <div style="font-size:12px;color:#374151;margin-top:2px">• ${esc(t.tasks[0].name)}${t.tasks.length > 1 ? ` <span style="${S.muted}">+${t.tasks.length - 1} more</span>` : ''}</div></td>
+    <td style="${S.td};text-align:right;white-space:nowrap"><b style="${t.tasks.length >= 3 ? S.red : S.amber}">${t.tasks.length} pending</b><br><span style="${S.muted};font-size:11.5px">after the clean</span></td></tr>`
+  }).join('')
 
   // ── CARRIED OVER, by area, oldest first inside each.
   const carryByArea: Record<string, typeof carry> = {}
@@ -345,8 +402,8 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     { label: 'Jobs today', value: String(openJobs.length), note: jobs.length !== openJobs.length ? `${jobs.length - openJobs.length} already done` : 'on the board' },
     { label: 'Unassigned', value: String(unassigned.length), tone: unassigned.length ? 'red' : 'green' },
     { label: 'Carried over', value: String(carry.length), note: carry.length ? `oldest ${carry[0].ageDays}d` : 'nothing open', tone: carry.length ? 'amber' : 'green' },
-    { label: 'Empty units', value: String(vacRows.length), note: vacReviewed ? `${vacReviewed} with a bad review` : vacWithWork ? `${vacWithWork} worth a visit` : 'PM window',
-      tone: vacReviewed ? 'red' : vacWithWork ? 'amber' : undefined },
+    { label: 'Pending in reach', value: String(pendingTotal), note: pendingUnits ? `${pendingUnits} unit${pendingUnits === 1 ? '' : 's'} you can enter` : 'nothing waiting',
+      tone: pendingTotal >= 10 ? 'red' : pendingTotal ? 'amber' : 'green' },
   ])}</div>
   ${accessNotice()}
 
@@ -358,10 +415,14 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   ${eyebrow('Empty units — the PM window')}
   ${vacRows.length
     ? card('Empty units — walk these while you can', vacRows.length,
-        `<p style="margin:0 0 6px;font-size:12px;color:#6b7280">Nobody is inside these — this is the only window some of this work has. Ordered by what needs you most: a guest complaint first, then open jobs, then PM that is due.</p>` +
+        `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${pendingTotal} pending job${pendingTotal === 1 ? '' : 's'} across ${pendingUnits} unit${pendingUnits === 1 ? '' : 's'} you can get into today.</b> <span style="color:#6b7280">Check them and assign what the day can take.</span></p>` +
+        `<p style="margin:0 0 6px;font-size:12px;color:#6b7280">The top ${Math.min(VAC_LIMIT, vacTop.length)} are below — a guest complaint first, then open jobs, then PM that is due.${vacWorth.length > vacTop.length ? ` ${vacWorth.length - vacTop.length} more are on the board.` : ''}</span></p>` +
         `<p style="margin:0 0 8px;font-size:11.5px;color:#9ca3af">PM cadence: AC filters every 60 days · AC deep clean / service every 180 · pest control every 90. Judged off each unit's own Breezeway history, so closing the task is what keeps it off this list.</p>` +
         `<table width="100%" cellspacing="0" cellpadding="0">${vacantRows}</table>`, '#0891b2', `Empty tonight · ${market}`)
     : card('Vacant units', null, `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Every unit in ${esc(market)} is occupied tonight — no PM windows today.</p>`, '#0891b2')}
+
+  ${checkoutTop.length ? card('Checking out today — get in after the clean', checkoutTop.length,
+    `<table width="100%" cellspacing="0" cellpadding="0">${checkoutRows}</table>`, '#4338ca', 'Nobody arriving behind them') : ''}
 
   ${eyebrow('Behind and repeating')}
   ${carry.length

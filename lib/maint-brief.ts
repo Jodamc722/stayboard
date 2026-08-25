@@ -57,8 +57,10 @@ export type MaintData = {
   /** Hours clocked by the maintenance crew, same source and caveat as wages. The market briefs
    *  print hours rather than wages: completed-vs-actual is the doctrine, and the crew reads them. */
   hours: { yd: number | null; d7: number | null; d30: number | null }
-  /** Open (unfinished) maintenance per listing id, for the vacant-unit windows. */
-  openByUnit: Record<string, { unit: string; building: string; tasks: string[] }>
+  /** EVERY pending (unfinished) maintenance task per listing id, whatever its scheduled date,
+   *  tagged guest-reported / field-reported / other and aged. Drives the "units you can get into
+   *  today" worklist. */
+  openByUnit: Record<string, { unit: string; building: string; tasks: { name: string; source: 'guest' | 'field' | 'other'; age: number | null }[] }>
   /** TODAY'S BOARD (added 2026-08-25 for the per-market maintenance briefs): what is scheduled
    *  today in this market, who holds it, and whether a guest is inside — a job in an occupied
    *  unit is a phone call before it is a work order. */
@@ -235,15 +237,43 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
     }))
     .sort((a, b) => (a.who === 'unassigned' ? 0 : 1) - (b.who === 'unassigned' ? 0 : 1) || a.who.localeCompare(b.who) || a.unit.localeCompare(b.unit))
 
-  // OPEN MAINTENANCE BY UNIT — what is already on the books for a unit, so the vacant-unit view
-  // can say "this empty unit already has two jobs waiting" instead of only suggesting new ones.
-  const openByUnit: Record<string, { unit: string; building: string; tasks: string[] }> = {}
-  for (const t of maint) {
-    if (isDone(t)) continue
-    const lid = String(t.reference_property_id)
-    const e = (openByUnit[lid] = openByUnit[lid] || { unit: unitOf(lid), building: areaOf(lid), tasks: [] })
-    if (e.tasks.length < 4) e.tasks.push(str(t.name).slice(0, 60))
-  }
+  // EVERY PENDING MAINTENANCE TASK ON A UNIT (Jon, 2026-08-25: "all pending tasks in a unit for
+  // maintenance based on vacant unit and checkouts should show — 10 pending tasks, please check
+  // and assign for today if can"). NOT the 30-day window above: a job someone raised two months
+  // ago and nobody closed is exactly the one to catch while the unit is empty. So this is its own
+  // read — unfinished maintenance whatever its scheduled date — tagged by where it came from,
+  // because "guest reported" and "field reported" are different conversations.
+  const sourceOf = (name: string): 'guest' | 'field' | 'other' =>
+    /guest\s*report|glitch/i.test(name) ? 'guest' : /field\s*report|priority/i.test(name) ? 'field' : 'other'
+  const openByUnit: Record<string, { unit: string; building: string; tasks: { name: string; source: 'guest' | 'field' | 'other'; age: number | null }[] }> = {}
+  try {
+    const pend: any[] = []
+    for (let off = 0; off < 8000; off += 1000) {
+      const { data } = await db.from('breezeway_tasks_sync')
+        .select('id,name,type_department,status,assignees,reference_property_id,finished_at,scheduled_date')
+        .is('finished_at', null)
+        .order('scheduled_date', { ascending: true })
+        .range(off, off + 999)
+      if (!data || !data.length) break
+      pend.push(...data)
+      if (data.length < 1000) break
+    }
+    for (const t of pend) {
+      const st = str(t.status).toLowerCase()
+      if (/delete|cancel|complete|finish|close|approv/.test(st)) continue
+      if (kindOfTask(t) !== 'maintenance') continue
+      const lid = String(t.reference_property_id)
+      if (!ours(lid)) continue
+      const nm = str(t.name).slice(0, 70)
+      const sd = str(t.scheduled_date).slice(0, 10)
+      const age = sd ? Math.max(0, Math.round((new Date(today + 'T12:00:00').getTime() - new Date(sd + 'T12:00:00').getTime()) / 864e5)) : null
+      const e = (openByUnit[lid] = openByUnit[lid] || { unit: unitOf(lid), building: areaOf(lid), tasks: [] })
+      e.tasks.push({ name: nm, source: sourceOf(nm), age })
+    }
+    for (const lid of Object.keys(openByUnit)) {
+      openByUnit[lid].tasks.sort((a, b) => (b.age ?? -1) - (a.age ?? -1))
+    }
+  } catch { /* falls back to no pending list rather than a wrong one */ }
 
   return { market, yd: win(yd, yd), d7: win(d7, yd), d30: win(d30, yd), carryover, recurring, wages, hours, todayJobs, openByUnit }
 }
