@@ -1304,6 +1304,11 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
+  ${isField ? btn(`${APP_URL}/day?market=${encodeURIComponent(variant)}`,
+      pick('Open the live board →', 'Abrir el tablero en vivo →'),
+      pick(
+        'Who is clocked in, what each person is on right now, and every job — tap one to open it in Breezeway. This email is the 7am snapshot; that board is live all day.',
+        'Quién marcó entrada, en qué está cada persona ahora mismo y todos los trabajos — toque uno para abrirlo en Breezeway. Este correo es la foto de las 7am; ese tablero está en vivo todo el día.')) : ''}
   ${accessNotice(lang)}
 
   ${eyebrow(t('Act now'))}

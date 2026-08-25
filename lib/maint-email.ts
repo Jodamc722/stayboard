@@ -78,6 +78,17 @@ const S = {
 }
 const pillRed = (t: string) => `<span style="${S.pill};background:#fee2e2;color:#b91c1c">${t}</span>`
 const pillAmber = (t: string) => `<span style="${S.pill};background:#fef3c7;color:#b45309">${t}</span>`
+// Bulletproof-ish email button — a bordered table cell, because Outlook drops padding on <a>.
+function btn(href: string, label: string, sub?: string): string {
+  return `<table width="100%" cellspacing="0" cellpadding="0" style="margin:2px 0 10px"><tr><td>
+    <table cellspacing="0" cellpadding="0"><tr>
+      <td style="background:#4338ca;border-radius:10px">
+        <a href="${href}" style="display:inline-block;padding:11px 20px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;letter-spacing:.01em">${label}</a>
+      </td>
+    </tr></table>
+    ${sub ? `<div style="font-size:11.5px;color:#6b7280;margin-top:6px">${sub}</div>` : ''}
+  </td></tr></table>`
+}
 const pillBlue = (t: string) => `<span style="${S.pill};background:#e0e7ff;color:#4338ca">${t}</span>`
 const eyebrow = (t: string) =>
   `<table width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 10px"><tr>
@@ -407,7 +418,7 @@ export async function buildMaintBrief(market: MaintMarket, lang: BriefLang = 'en
     <p style="${S.bandTitle}">${market} — ${t('Maintenance')}</p>
     <p style="${S.bandSub}">${dateNice} · ${t("today by area, empty units, what carried over")}</p>
   </div>
-  ${quoteBanner(today)}
+  ${quoteBanner(today, lang)}
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #7c2d12;border-radius:12px;padding:12px 18px;margin-bottom:10px">
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
@@ -418,7 +429,11 @@ export async function buildMaintBrief(market: MaintMarket, lang: BriefLang = 'en
     { label: 'Pending in reach', value: String(pendingTotal), note: pendingUnits ? `${pendingUnits} unit${pendingUnits === 1 ? '' : 's'} you can enter` : 'nothing waiting',
       tone: pendingTotal >= 10 ? 'red' : pendingTotal ? 'amber' : 'green' },
   ])}</div>
-  ${accessNotice()}
+  ${btn(`${APP_URL}/day?market=${encodeURIComponent(market)}`,
+      pick('Open the live board →', 'Abrir el tablero en vivo →'),
+      pick('Who is clocked in and what everyone is working on right now — tap a job to open it in Breezeway.',
+           'Quién marcó entrada y en qué está trabajando cada quien ahora mismo — toque un trabajo para abrirlo en Breezeway.'))}
+  ${accessNotice(lang)}
 
   ${eyebrow(t('Today, by area'))}
   ${jobs.length
