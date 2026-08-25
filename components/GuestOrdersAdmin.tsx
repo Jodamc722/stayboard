@@ -99,8 +99,10 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
       <p className="text-[12px] text-muted -mt-2">
         <a href="/guest-orders/design" className="font-semibold text-brand-700 underline">Open the Design studio</a> to edit the form on a live phone preview — items, photos, copy, colours, stock. This card holds the plumbing.
         Hourly: every confirmed arrival within <b>{cfg.createDaysBefore} days</b> gets a private order link written into the Guesty reservation field
-        <b> “{cfg.customFieldName}”</b> — add that field to your Guesty pre-arrival message and the guest receives it. Approved orders are charged to the
-        card Guesty holds, then pushed to Breezeway + Slack + email on their delivery day.
+        <b> “{cfg.customFieldName}”</b> — add that field to your Guesty pre-arrival message and the guest receives it. A new order posts a notice to the
+        CCS/ops Slack channel; approval happens on the <a href="/guest-orders" className="font-semibold text-brand-700 underline">Guest Orders board</a>
+        {cfg.chargeMode === 'manual' ? ' (charge mode is manual: approve, collect, then Mark paid)' : ' (charge mode is auto: Approve charges the card Guesty holds)'}.
+        Paid orders are pushed to Breezeway + Slack + email on their delivery day.
       </p>
 
       <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">

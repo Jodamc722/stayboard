@@ -119,6 +119,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
   if (err) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div>
   if (!data) return <div className="text-sm text-muted py-8 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading orders…</div>
 
+  const manual = data.config.chargeMode === 'manual'
   const todayDue = data.orders.filter(o => (o.status === 'paid' || o.status === 'pushed') && o.delivery_date && o.delivery_date <= data.today).length
 
   return (
@@ -238,11 +239,11 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
                     {canEdit ? (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         {o.status === 'submitted' || (o.status === 'approved' && o.approved_at && Date.now() - new Date(o.approved_at).getTime() > 10 * 60_000) ? (<>
-                          {canMoney ? <button onClick={() => act('approve', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50">{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {o.status === 'approved' ? 'Retry charge' : 'Approve & charge'}</button> : <span className="text-[12px] text-muted">Approval needs full access</span>}
+                          {canMoney ? <button onClick={() => act('approve', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50">{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {o.status === 'approved' ? 'Retry charge' : manual ? 'Approve' : 'Approve & charge'}</button> : <span className="text-[12px] text-muted">Approval needs full access</span>}
                           {o.status === 'submitted' ? <button onClick={() => { const reason = window.prompt('Reason for the guest (optional)') || ''; act('decline', o.id, { reason }) }} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50"><X size={13} /> Decline</button> : null}
                         </>) : o.status === 'approved' ? <span className="text-[12px] text-muted inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Charging in Guesty — refresh in a moment</span> : null}
                         {o.status === 'awaiting_payment' || o.status === 'payment_failed' ? (<>
-                          {canMoney ? <button onClick={() => act('approve', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50">{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Retry charge</button> : null}
+                          {canMoney && !manual ? <button onClick={() => act('approve', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50">{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Retry charge</button> : null}
                           {canMoney ? (
                             <span className="inline-flex items-center gap-1.5">
                               <input value={paidNote[o.id] || ''} onChange={e => setPaidNote(p => ({ ...p, [o.id]: e.target.value }))} placeholder="how it was paid" className="text-[12px] px-2 py-1.5 rounded-lg border border-line w-36" />
