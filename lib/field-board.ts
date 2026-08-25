@@ -23,7 +23,7 @@ const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
 
 /** The five things a field board can carry. A board shows exactly what it was ticked for. */
-export const BOARD_SECTIONS = ['crew', 'cleans', 'verify', 'work', 'issues'] as const
+export const BOARD_SECTIONS = ['today', 'crew', 'cleans', 'verify', 'vacant', 'work', 'issues', 'add'] as const
 export type BoardSection = typeof BOARD_SECTIONS[number]
 export const isBoardLink = (sections: any): boolean =>
   !!sections && BOARD_SECTIONS.some(k => sections[k] === true)
@@ -142,6 +142,42 @@ async function crewFor(ids: Set<string> | null, scopeWords: string[]) {
   }
 }
 
+/**
+ * TODAY'S PRIORITIES — the brief's Act-now list, for this board's units.
+ * The day sheet already computes exceptions in plain English with the action attached ("checks out
+ * at 10:00 and a guest arrives at 4:00 — nothing on the board to clean it"), so the board reads
+ * the SAME source the 7am email does rather than inventing a second opinion. On top of those:
+ * doors with nobody's name on them, same-day turns not started, and work booked into an occupied
+ * unit — the three things that break a field day.
+ */
+function boardPriorities(sheet: any, keep: (r: any) => boolean) {
+  const out: { tone: 'red' | 'amber'; unit: string; what: string; how: string }[] = []
+  const arrivingToday = new Set(((sheet.arrivals || []) as any[]).filter(keep).map((a: any) => String(a.listingId)))
+  const deps = ((sheet.departures || []) as any[]).filter(keep)
+
+  for (const d of deps) {
+    const hot = arrivingToday.has(String(d.listingId))
+    const st = String(d.clean?.status || '')
+    const who = (d.clean?.assignees || []).filter(Boolean)
+    if (!d.clean) {
+      out.push({ tone: 'red', unit: String(d.unit), what: hot ? 'checks out today and a guest arrives — nothing on the board to clean it' : 'checks out today with no clean scheduled', how: 'Book the clean and put a name on it.' })
+    } else if (!who.length) {
+      out.push({ tone: 'red', unit: String(d.unit), what: 'clean has nobody assigned', how: hot ? 'Guest lands today — assign it first.' : 'Assign it before the crew splits up.' })
+    } else if (hot && /not started/i.test(st)) {
+      out.push({ tone: 'amber', unit: String(d.unit), what: 'same-day turn, not started', how: 'With ' + who.join(', ') + '. The guest lands this afternoon.' })
+    }
+  }
+  // The day sheet's own exceptions — high severity first, and never duplicating a unit already named.
+  const named = new Set(out.map(o => o.unit))
+  for (const e of ((sheet.exceptions || []) as any[]).filter(keep)) {
+    const unit = String(e.unit || '')
+    if (named.has(unit)) continue
+    out.push({ tone: e.severity === 'high' ? 'red' : 'amber', unit, what: String(e.detail || ''), how: String(e.action || '') })
+    named.add(unit)
+  }
+  return out.slice(0, 12)
+}
+
 export async function buildFieldBoard(link: BoardLink) {
   const today = ymdET(new Date())
   const { ids, label: scopeLabel } = await scopeIds(link)
@@ -152,6 +188,18 @@ export async function buildFieldBoard(link: BoardLink) {
   const keep = (r: any) => !ids || ids.has(str(r.listingId ?? r.listing_id ?? r.id))
   const sections = link.sections || {}
   const crew = sections.crew ? await crewFor(ids, link.scope_type === 'listing' ? [] : link.scope_ids).catch(() => null) : null
+
+  // The units this board may act on — the picker for Add, and the guard the add route enforces.
+  let units: { id: string; name: string }[] = []
+  if (sections.add) {
+    const db = supabaseAdmin()
+    const { data } = await db.from('guesty_listings').select('id,nickname,title').limit(3000)
+    units = ((data || []) as any[])
+      .filter(l => !ids || ids.has(str(l.id)))
+      .map(l => ({ id: str(l.id), name: l.nickname || l.title || 'Unit' }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
   return {
     ok: true,
     label: link.label,
@@ -163,7 +211,9 @@ export async function buildFieldBoard(link: BoardLink) {
     crew,
     departures: sections.cleans ? ((sheet.departures || []) as any[]).filter(keep) : [],
     arrivals: sections.cleans || sections.verify ? ((sheet.arrivals || []) as any[]).filter(keep) : [],
-    vacants: sections.work ? ((sheet.vacants || []) as any[]).filter(keep) : [],
+    vacants: sections.vacant ? ((sheet.vacants || []) as any[]).filter(keep) : [],
+    priorities: sections.today ? boardPriorities(sheet, keep) : [],
+    units,
     work: sections.work ? ((sheet.work || []) as any[]).filter(keep) : [],
     glitches: sections.issues ? ((sheet.glitches || []) as any[]).filter(keep) : [],
     exceptions: sections.issues ? ((sheet.exceptions || []) as any[]).filter(keep) : [],
