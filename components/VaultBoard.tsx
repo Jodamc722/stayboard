@@ -9,7 +9,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Loader2, Plus, Search, Trash2, X, Check, AlertTriangle, Eye, EyeOff, Copy, Download,
-  Upload, Users, Clock, KeyRound, FileText, StickyNote, ShieldCheck, History, RefreshCw, Lock, Database,
+  Upload, Users, Clock, KeyRound, FileText, StickyNote, ShieldCheck, History, RefreshCw, Lock,
+  Database, Unlock, ChevronRight, ChevronDown, MoreHorizontal, FolderLock, ArrowRightLeft,
 } from 'lucide-react'
 
 // Keep in sync with CATEGORIES in lib/vault.ts — this order is the order the shelves render in.
@@ -33,6 +34,7 @@ type AskCode = (purpose: string, opts?: { askReason?: boolean }) => Promise<Code
 
 type Item = {
   id: string; kind: 'secret' | 'file' | 'note'; category: string
+  collection_id?: string | null
   title: string; description?: string | null
   property_id?: string | null; unit_no?: string | null; reservation_id?: string | null
   secret_hint?: string | null; username?: string | null; url?: string | null
@@ -43,6 +45,12 @@ type Item = {
   level: 'view' | 'manage' | null
 }
 type Grant = { item_id: string; email: string; level: string }
+type Collection = {
+  id: string; name: string; slug: string; color?: string | null
+  level: 'view' | 'manage'; roles: string[]; myLevel?: 'view' | 'manage' | null
+  items?: number; members?: string[]
+}
+const PRIVATE = '__private__'   // the pseudo-vault for items filed nowhere: owner + named grants only
 
 const EMPTY = {
   kind: 'secret' as Item['kind'], category: 'building', title: '', description: '',
@@ -87,12 +95,17 @@ function RecordsView({ askCode }: { askCode: AskCode }) {
       .catch(e => setErr(String(e)))
   }, [])
   const open = async (ref: string) => {
-    const ans = await askCode('open this record')
-    if (!ans) return
     setBusy(ref); setErr(null)
     try {
-      const r = await fetch('/api/vault/records?sign=' + encodeURIComponent(ref), { cache: 'no-store', headers: { 'x-vault-code': ans.code } })
-      const j = await r.json()
+      let r = await fetch('/api/vault/records?sign=' + encodeURIComponent(ref), { cache: 'no-store' })
+      let j = await r.json()
+      if (!j.ok && j.wrongCode) {                     // window shut — ask once, then retry the click
+        const ans = await askCode('open this record')
+        if (!ans) { setBusy(null); return }
+        await fetch('/api/vault/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: ans.code }) })
+        r = await fetch('/api/vault/records?sign=' + encodeURIComponent(ref), { cache: 'no-store' })
+        j = await r.json()
+      }
       if (j.ok && j.url) window.open(j.url, '_blank', 'noopener')
       else setErr(j.error || 'Could not open that file.')
     } catch (e: any) { setErr(String(e?.message || e)) }
@@ -233,6 +246,16 @@ export function VaultBoard() {
   // THE VAULT CODE PROMPT. One modal, promise-based: whoever needs the code awaits askCode(), the
   // modal resolves with what was typed (or null). The code lives in this component's memory only
   // for the length of that one request — it is asked again next time, on purpose (Jon, 2026-08-25).
+  const [collections, setCollections] = useState<Collection[]>([])
+  const [vault, setVault] = useState<string>('')          // '' = every vault I can open
+  const [openShelves, setOpenShelves] = useState<Record<string, boolean>>({})
+  const [picked, setPicked] = useState<Record<string, boolean>>({})
+  const [menuFor, setMenuFor] = useState<string | null>(null)
+
+  // THE UNLOCK WINDOW. `until` is a timestamp the server gave us; the countdown here is only a
+  // display — the server re-checks its own signed cookie on every single reveal.
+  const [until, setUntil] = useState<number>(0)
+  const [now, setNow] = useState<number>(() => Date.now())
   const [codeReq, setCodeReq] = useState<{ purpose: string; askReason: boolean; resolve: (a: CodeAnswer) => void } | null>(null)
   const askCode = useCallback<AskCode>((purpose, opts) => new Promise<CodeAnswer>(resolve => {
     setCodeReq({ purpose, askReason: !!opts?.askReason, resolve })
@@ -267,11 +290,27 @@ export function VaultBoard() {
       setNeedsMigration(!!j.needsMigration)
       setKeyReady(j.keyReady !== false)
       setIsAdmin(!!j.isAdmin); setIsOwner(!!j.isOwner); setCodeSet(j.codeSet !== false)
+      setCollections(Array.isArray(j.collections) ? j.collections : [])
       if (!j.ok && !j.needsMigration && j.error) setErr(j.error)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // A reload should not claim to be locked while the server cookie is still alive.
+  useEffect(() => {
+    fetch('/api/vault/unlock', { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (j.ok && j.open) setUntil(Date.now() + (j.seconds || 60) * 1000) })
+      .catch(() => {})
+  }, [])
+
+  // One ticker for the countdown. Stops the moment the window closes, so an idle page is idle.
+  const openFor = Math.max(0, Math.ceil((until - now) / 1000))
+  useEffect(() => {
+    if (until <= Date.now()) return
+    const t = setInterval(() => setNow(Date.now()), 500)
+    return () => clearInterval(t)
+  }, [until])
 
   // Wipe every revealed secret when the component goes away, and clear pending timers so a
   // navigation cannot leave one sitting in memory waiting to be re-rendered.
@@ -299,18 +338,76 @@ export function VaultBoard() {
     const needle = q.trim().toLowerCase()
     const rank = (c: string) => (c in CAT_ORDER ? CAT_ORDER[c] : CATEGORIES.length - 1.5)
     return items.filter(i => {
+      if (vault === PRIVATE) { if (i.collection_id) return false }
+      else if (vault && i.collection_id !== vault) return false
       if (cat && i.category !== cat) return false
       if (!needle) return true
       return (i.title + ' ' + (i.description || '') + ' ' + (i.username || '') + ' ' +
         (i.doc_name || '') + ' ' + (i.property_id || '') + ' ' + (i.unit_no || '') + ' ' +
         (i.tags || []).join(' ')).toLowerCase().includes(needle)
     }).sort((a, b) => rank(a.category) - rank(b.category) || a.title.localeCompare(b.title))
-  }, [items, q, cat])
+  }, [items, q, cat, vault])
+
+  // Shelves in render order, with their counts — the jump bar and the headers read from this one list.
+  const shelves = useMemo(() => {
+    const out: { id: string; label: string; items: Item[] }[] = []
+    for (const i of shown) {
+      const last = out[out.length - 1]
+      if (last && last.id === i.category) last.items.push(i)
+      else out.push({ id: i.category, label: CATEGORIES.find(c => c.id === i.category)?.label || i.category, items: [i] })
+    }
+    return out
+  }, [shown])
+
+  // Collapsed unless the person opened it, unless they are searching — a search that hides its own
+  // hits behind closed shelves is worse than no search.
+  const searching = !!q.trim() || !!cat
+  const isOpen = (id: string) => searching || !!openShelves[id]
+  const pickedIds = Object.keys(picked).filter(k => picked[k])
+  const vaultName = (id?: string | null) =>
+    !id ? 'Private' : (collections.find(c => c.id === id)?.name || 'Vault')
+
+  async function moveTo(collectionId: string | null) {
+    if (!pickedIds.length) return
+    setErr(null); setMsg(null)
+    try {
+      const j = await fetch('/api/vault/collections', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'move', ids: pickedIds, collection_id: collectionId }),
+      }).then(r => r.json())
+      if (!j.ok) throw new Error(j.error || 'Could not move those.')
+      setPicked({})
+      setMsg('Moved ' + j.moved + ' to ' + (collectionId ? vaultName(collectionId) : 'Private (owner only)') +
+        (j.refused?.length ? ' · ' + j.refused.length + ' skipped (not yours to move)' : ''))
+      load()
+    } catch (e: any) { setErr(e.message || String(e)) }
+  }
 
   const expiring = useMemo(
     () => items.filter(i => { const d = daysUntil(i.expires_on); return d !== null && d <= 30 }).sort(
       (a, b) => (daysUntil(a.expires_on) ?? 0) - (daysUntil(b.expires_on) ?? 0)),
     [items])
+
+  /** Open the window. One code entry buys 60 seconds of clicking — never of automatic revealing. */
+  async function unlock(): Promise<boolean> {
+    setErr(null)
+    const ans = await askCode('unlock the vault for a minute')
+    if (!ans) return false
+    try {
+      const j = await fetch('/api/vault/unlock', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+        body: JSON.stringify({ code: ans.code }),
+      }).then(x => x.json())
+      if (!j.ok) throw new Error(j.error || 'Could not unlock.')
+      setUntil(Date.now() + (j.seconds || 60) * 1000); setNow(Date.now())
+      return true
+    } catch (e: any) { setErr(e.message || String(e)); return false }
+  }
+
+  async function lockNow() {
+    hideAll(); setUntil(0)
+    try { await fetch('/api/vault/unlock', { method: 'DELETE' }) } catch {}
+  }
 
   async function reveal(i: Item) {
     setErr(null)
@@ -319,14 +416,15 @@ export function VaultBoard() {
       setRevealed(r => { const n = { ...r }; delete n[i.id]; return n })
       return
     }
-    const ans = await askCode('reveal “' + i.title + '”', { askReason: true })
-    if (!ans) return
+    // Locked? Ask once, then carry on with the click they already made — being sent back to press
+    // Reveal a second time is the kind of small rudeness that makes people write codes on paper.
+    if (until <= Date.now() && !(await unlock())) return
     try {
       const j = await fetch('/api/vault/reveal', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-        body: JSON.stringify({ id: i.id, code: ans.code, reason: ans.reason }),
+        body: JSON.stringify({ id: i.id }),
       }).then(x => x.json())
-      if (!j.ok) throw new Error(j.error || 'Could not open that.')
+      if (!j.ok) { if (j.locked) setUntil(0); throw new Error(j.error || 'Could not open that.') }
       setRevealed(r => ({ ...r, [i.id]: j.secret }))
       // Auto-hide. Long enough to read and type, short enough that walking away is safe.
       timers.current[i.id] = setTimeout(() => {
@@ -341,14 +439,11 @@ export function VaultBoard() {
     try {
       let val = revealed[i.id]
       if (!val) {
-        // Something already revealed on screen was already paid for with the code; a fresh copy is
-        // a fresh reveal and asks again.
-        const ans = await askCode('copy “' + i.title + '”', { askReason: true })
-        if (!ans) return
+        if (until <= Date.now() && !(await unlock())) return
         val = await fetch('/api/vault/reveal', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-          body: JSON.stringify({ id: i.id, code: ans.code, reason: 'copied to clipboard' + (ans.reason ? ' · ' + ans.reason : '') }),
-        }).then(x => x.json()).then(j => { if (!j.ok) throw new Error(j.error); return j.secret as string })
+          body: JSON.stringify({ id: i.id, reason: 'copied to clipboard' }),
+        }).then(x => x.json()).then(j => { if (!j.ok) { if (j.locked) setUntil(0); throw new Error(j.error) } return j.secret as string })
       }
       await navigator.clipboard.writeText(val)
       setMsg('Copied. Your clipboard now holds it — paste it and move on.')
@@ -357,10 +452,9 @@ export function VaultBoard() {
 
   async function openFile(i: Item) {
     setErr(null)
-    const ans = await askCode('open “' + (i.doc_name || i.title) + '”')
-    if (!ans) return
+    if (until <= Date.now() && !(await unlock())) return
     try {
-      const j = await fetch('/api/vault/file?id=' + encodeURIComponent(i.id), { cache: 'no-store', headers: { 'x-vault-code': ans.code } }).then(x => x.json())
+      const j = await fetch('/api/vault/file?id=' + encodeURIComponent(i.id), { cache: 'no-store' }).then(x => x.json())
       if (!j.ok || !j.url) throw new Error(j.error || 'Could not open that file.')
       window.open(j.url, '_blank', 'noopener')
     } catch (e: any) { setErr(e.message || String(e)) }
@@ -479,7 +573,7 @@ export function VaultBoard() {
       {codeReq && <CodePrompt purpose={codeReq.purpose} askReason={codeReq.askReason} onAnswer={answerCode} />}
       {view === 'records' && <RecordsView askCode={askCode} />}
       {view === 'activity' && <ActivityView />}
-      {view === 'log' && <CodeLogView askCode={askCode} canExport={isOwner} />}
+      {view === 'log' && <><VaultsPanel collections={collections} onChanged={load} /><CodeLogView askCode={askCode} canExport={isOwner} /></>}
       {view === 'vault' && <>
       {!codeSet && !needsMigration && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
@@ -507,6 +601,67 @@ export function VaultBoard() {
             to the Vercel environment. Generate one with <code>openssl rand -hex 32</code>. Changing it later
             makes everything stored under the old key unreadable, so set it once and keep it.
           </p>
+        </div>
+      )}
+
+      {/* THE LOCK BAR — one code entry buys a minute of clicking. Revealing stays a per-item click,
+          and every click is still its own line in the log. */}
+      {codeSet && (
+        <div className={'rounded-2xl border px-4 py-2.5 flex items-center gap-3 flex-wrap ' +
+          (openFor > 0 ? 'border-emerald-300 bg-emerald-50' : 'border-line bg-white')}>
+          {openFor > 0 ? (
+            <>
+              <Unlock size={15} className="text-emerald-700 shrink-0" />
+              <span className="text-[13px] font-semibold text-emerald-900">Unlocked</span>
+              <span className="text-[12.5px] text-emerald-800 tabular-nums">
+                {openFor}s left — click Reveal on anything you need
+              </span>
+              <div className="h-1.5 w-24 rounded-full bg-emerald-200 overflow-hidden" aria-hidden>
+                <div className="h-full bg-emerald-600 transition-all duration-500" style={{ width: Math.round((openFor / 60) * 100) + '%' }} />
+              </div>
+              <span className="grow" />
+              <button onClick={lockNow}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 text-[12.5px] font-semibold text-emerald-900">
+                <Lock size={13} /> Lock now
+              </button>
+            </>
+          ) : (
+            <>
+              <Lock size={15} className="text-muted shrink-0" />
+              <span className="text-[13px] font-semibold text-ink">Locked</span>
+              <span className="text-[12.5px] text-muted">Enter the code once for a minute of access. Every reveal is still a click, and still recorded.</span>
+              <span className="grow" />
+              <button onClick={unlock}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-semibold hover:bg-brand-700">
+                <Unlock size={13} /> Unlock
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* WHICH VAULT. Private = filed nowhere: you and whoever you named on the item itself. */}
+      {(collections.length > 0 || isAdmin) && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <FolderLock size={14} className="text-muted shrink-0" />
+          {([['', 'Everything'], [PRIVATE, 'Private']] as const).map(([id, label]) => (
+            <button key={id || 'all'} onClick={() => setVault(id)}
+              className={'rounded-full px-3 py-1 text-[12.5px] font-semibold border ' +
+                (vault === id ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>
+              {label}{id === PRIVATE ? ' · ' + items.filter(x => !x.collection_id).length : ''}
+            </button>
+          ))}
+          {collections.map(c => (
+            <button key={c.id} onClick={() => setVault(c.id)}
+              className={'rounded-full px-3 py-1 text-[12.5px] font-semibold border ' +
+                (vault === c.id ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}
+              title={(c.roles || []).length ? 'Open to roles: ' + c.roles.join(', ') : 'Named members only'}>
+              {c.name} · {items.filter(x => x.collection_id === c.id).length}
+            </button>
+          ))}
+          {isAdmin && (
+            <button onClick={() => setView('log')} className="text-[12px] font-semibold text-brand-700 hover:underline ml-1">Manage vaults</button>
+          )}
         </div>
       )}
 
@@ -671,6 +826,39 @@ export function VaultBoard() {
         </div>
       )}
 
+      {/* JUMP BAR — 94 items is too many to scroll for; this is the table of contents. */}
+      {shelves.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
+          {shelves.map(sh => (
+            <button key={sh.id} onClick={() => setOpenShelves(o => ({ ...o, [sh.id]: true }))}
+              className="rounded-lg border border-line bg-white px-2 py-1 font-semibold text-muted hover:text-ink hover:border-brand-300">
+              {sh.label} <span className="text-ink">{sh.items.length}</span>
+            </button>
+          ))}
+          <button onClick={() => setOpenShelves(Object.fromEntries(shelves.map(sh => [sh.id, true])))}
+            className="px-2 py-1 font-semibold text-brand-700 hover:underline">Open all</button>
+          <button onClick={() => setOpenShelves({})}
+            className="px-2 py-1 font-semibold text-muted hover:text-ink">Collapse all</button>
+        </div>
+      )}
+
+      {/* BULK BAR — only when something is ticked, so it never sits there as furniture. */}
+      {pickedIds.length > 0 && (
+        <div className="rounded-2xl border border-brand-200 bg-brand-50/50 px-4 py-2.5 flex items-center gap-2 flex-wrap">
+          <ArrowRightLeft size={14} className="text-brand-700" />
+          <span className="text-[13px] font-semibold text-ink">{pickedIds.length} selected</span>
+          <span className="text-[12.5px] text-muted">Move to</span>
+          {collections.map(c => (
+            <button key={c.id} onClick={() => moveTo(c.id)}
+              className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12.5px] font-semibold hover:border-brand-300">{c.name}</button>
+          ))}
+          <button onClick={() => moveTo(null)}
+            className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12.5px] font-semibold hover:border-brand-300">Private</button>
+          <span className="grow" />
+          <button onClick={() => setPicked({})} className="text-[12.5px] font-semibold text-muted hover:text-ink">Clear</button>
+        </div>
+      )}
+
       <div className="rounded-2xl border border-line bg-white overflow-hidden">
         {loading && items.length === 0 ? (
           <div className="px-4 py-10 text-center text-[13px] text-muted"><Loader2 size={16} className="animate-spin inline mr-2" /> Loading…</div>
@@ -678,93 +866,142 @@ export function VaultBoard() {
           <div className="px-4 py-10 text-center text-[13px] text-muted">
             {items.length === 0 ? 'Nothing in the vault yet. Start with the codes people keep asking you for.' : 'Nothing matches that.'}
           </div>
-        ) : shown.map((i, n) => {
-          const mine = grants.filter(g => g.item_id === i.id)
-          const d = daysUntil(i.expires_on)
-          // A shelf header the first time a category appears — the vault reads as shelves, not a heap.
-          const newShelf = n === 0 || shown[n - 1].category !== i.category
-          const shelfCount = newShelf ? shown.filter(x => x.category === i.category).length : 0
-          return (
-            <div key={i.id} className="border-b border-line last:border-b-0">
-              {newShelf && (
-                <div className={'px-4 py-1.5 text-[10.5px] uppercase tracking-[0.14em] font-bold border-b border-line/60 ' + (i.category === 'archive' ? 'bg-neutral-100 text-muted' : 'bg-app text-muted')}>
-                  {CATEGORIES.find(c => c.id === i.category)?.label || i.category} <span className="font-semibold normal-case tracking-normal">· {shelfCount}</span>
-                </div>
+        ) : shelves.map(sh => (
+          <div key={sh.id}>
+            <button onClick={() => setOpenShelves(o => ({ ...o, [sh.id]: !o[sh.id] }))}
+              className={'w-full flex items-center gap-2 px-4 py-2 border-b border-line/60 text-left ' +
+                (sh.id === 'archive' ? 'bg-neutral-100' : 'bg-app')}>
+              {isOpen(sh.id) ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
+              <span className="text-[11px] uppercase tracking-[0.14em] font-bold text-muted">{sh.label}</span>
+              <span className="text-[12px] font-semibold text-ink">{sh.items.length}</span>
+              {!isOpen(sh.id) && (
+                <span className="text-[11.5px] text-muted truncate hidden sm:block">
+                  {sh.items.slice(0, 4).map(x => x.title).join(' · ')}{sh.items.length > 4 ? ' …' : ''}
+                </span>
               )}
-              <div className="flex items-start gap-2 px-4 py-3 flex-wrap">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted"><KindIcon k={i.kind} /></span>
-                    <span className="text-[13px] font-semibold text-ink">{i.title}</span>
-                    {i.level === 'view' && <span className="text-[10px] uppercase tracking-wider font-semibold text-muted">shared with you</span>}
-                    {d !== null && d <= 30 && (
-                      <span className={'text-[10px] uppercase tracking-wider font-semibold ' + (d < 0 ? 'text-rose-600' : 'text-amber-700')}>
-                        {d < 0 ? 'expired' : 'expires ' + fmtDate(i.expires_on)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[12px] text-muted mt-0.5">
-                    {CATEGORIES.find(c => c.id === i.category)?.label || i.category}
-                    {i.property_id ? ' · ' + i.property_id : ''}{i.unit_no ? ' ' + i.unit_no : ''}
-                    {i.username ? ' · ' + i.username : ''}
-                    {i.hasFile && i.doc_name ? ' · ' + i.doc_name + (i.doc_bytes ? ' (' + fmtBytes(i.doc_bytes) + ')' : '') : ''}
-                    {mine.length ? ' · shared with ' + mine.length : ''}
-                  </div>
-                  {i.description && <div className="text-[12px] text-ink/80 mt-1 whitespace-pre-wrap">{i.description}</div>}
-                  {i.hasSecret && (
-                    <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-                      <code className={'text-[13px] px-2 py-1 rounded border ' + (revealed[i.id] ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-line bg-app text-muted')}>
-                        {revealed[i.id] || i.secret_hint || '••••••••'}
-                      </code>
-                      {revealed[i.id] && <span className="text-[11px] text-muted">hides itself shortly</span>}
-                    </div>
-                  )}
-                </div>
+            </button>
 
-                {i.hasSecret && (
-                  <>
-                    <button onClick={() => reveal(i)}
-                      className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-                      {revealed[i.id] ? <><EyeOff size={13} /> Hide</> : <><Eye size={13} /> Reveal</>}
-                    </button>
-                    <button onClick={() => copySecret(i)}
-                      className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-                      <Copy size={13} /> Copy
-                    </button>
-                  </>
-                )}
-                {i.hasFile && (
-                  <button onClick={() => openFile(i)}
-                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
-                    <Download size={13} /> Open
-                  </button>
-                )}
-                {i.url && (
-                  <a href={i.url} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-                    Portal
-                  </a>
-                )}
-                {i.level === 'manage' && (
-                  <>
-                    <button onClick={() => setOpenShare(openShare === i.id ? null : i.id)}
-                      className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-                      <Users size={13} /> Share
-                    </button>
-                    <button onClick={() => startEdit(i)} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">Edit</button>
-                    <button onClick={() => remove(i)} className="text-muted hover:text-rose-600" title="Delete"><Trash2 size={14} /></button>
-                  </>
-                )}
-              </div>
-              {openShare === i.id && <SharePanel itemId={i.id} onClose={() => setOpenShare(null)} onChanged={load} />}
-            </div>
-          )
-        })}
+            {isOpen(sh.id) && sh.items.map(i => {
+              const mine = grants.filter(g => g.item_id === i.id)
+              const d = daysUntil(i.expires_on)
+              const canMove = i.level === 'manage'
+              return (
+                <div key={i.id} className="border-b border-line/60 last:border-b-0">
+                  <div className="flex items-start gap-2.5 px-4 py-2.5 flex-wrap">
+                    {canMove && (
+                      <input type="checkbox" checked={!!picked[i.id]} aria-label={'Select ' + i.title}
+                        onChange={e => setPicked(pk => ({ ...pk, [i.id]: e.target.checked }))}
+                        className="mt-1 shrink-0 accent-brand-600 w-3.5 h-3.5" />
+                    )}
+                    <span className="mt-0.5 text-muted shrink-0"><KindIcon k={i.kind} /></span>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[13px] font-semibold text-ink">{i.title}</span>
+                        {i.property_id && (
+                          <button onClick={() => setQ(i.property_id || '')}
+                            className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100">
+                            {i.property_id}{i.unit_no ? ' ' + i.unit_no : ''}
+                          </button>
+                        )}
+                        {i.collection_id
+                          ? <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">{vaultName(i.collection_id)}</span>
+                          : <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-neutral-100 text-muted border border-line">Private</span>}
+                        {mine.length > 0 && (
+                          <span className="text-[10.5px] text-muted inline-flex items-center gap-1"><Users size={11} /> {mine.length}</span>
+                        )}
+                        {i.level === 'view' && <span className="text-[10px] uppercase tracking-wider font-semibold text-muted">read-only</span>}
+                        {d !== null && d <= 30 && (
+                          <span className={'text-[10px] uppercase tracking-wider font-semibold ' + (d < 0 ? 'text-rose-600' : 'text-amber-700')}>
+                            {d < 0 ? 'expired' : 'expires ' + fmtDate(i.expires_on)}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Username and the masked hint on one quiet line. The shelf name is gone —
+                          the header three rows up already said it. */}
+                      <div className="text-[12px] text-muted mt-0.5 flex items-center gap-2 flex-wrap">
+                        {i.username && <span className="font-mono text-[11.5px]">{i.username}</span>}
+                        {i.hasSecret && (
+                          <code className={'text-[12px] px-1.5 py-0.5 rounded border ' + (revealed[i.id]
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-900 font-semibold'
+                            : 'border-line bg-app text-muted')}>
+                            {revealed[i.id] || i.secret_hint || '••••••••'}
+                          </code>
+                        )}
+                        {revealed[i.id] && <span className="text-[10.5px] text-emerald-700">hides itself shortly</span>}
+                        {i.hasFile && i.doc_name && <span>{i.doc_name}{i.doc_bytes ? ' (' + fmtBytes(i.doc_bytes) + ')' : ''}</span>}
+                      </div>
+
+                      {i.description && <div className="text-[12px] text-ink/70 mt-1 whitespace-pre-wrap">{i.description}</div>}
+                    </div>
+
+                    {/* Reveal and Copy stay on the row. Everything else lives behind the ⋯ */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {i.hasSecret && (
+                        <>
+                          <button onClick={() => reveal(i)}
+                            className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' +
+                              (revealed[i.id] ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-line text-muted hover:text-ink')}>
+                            {revealed[i.id] ? <><EyeOff size={13} /> Hide</> : <><Eye size={13} /> Reveal</>}
+                          </button>
+                          <button onClick={() => copySecret(i)} title="Copy"
+                            className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
+                            <Copy size={13} />
+                          </button>
+                        </>
+                      )}
+                      {i.hasFile && (
+                        <button onClick={() => openFile(i)}
+                          className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+                          <Download size={13} /> Open
+                        </button>
+                      )}
+                      <div className="relative">
+                        <button onClick={() => setMenuFor(menuFor === i.id ? null : i.id)} title="More"
+                          className="inline-flex items-center px-2 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
+                          <MoreHorizontal size={14} />
+                        </button>
+                        {menuFor === i.id && (
+                          <div className="absolute right-0 top-full mt-1 z-20 w-52 rounded-xl border border-line bg-white shadow-lg py-1 text-[12.5px]">
+                            {i.url && (
+                              <a href={i.url} target="_blank" rel="noopener noreferrer" onClick={() => setMenuFor(null)}
+                                className="block px-3 py-1.5 hover:bg-app font-semibold text-ink">Open portal ↗</a>
+                            )}
+                            {i.level === 'manage' && <>
+                              <button onClick={() => { setOpenShare(openShare === i.id ? null : i.id); setMenuFor(null) }}
+                                className="block w-full text-left px-3 py-1.5 hover:bg-app font-semibold text-ink">Share with someone…</button>
+                              <button onClick={() => { startEdit(i); setMenuFor(null) }}
+                                className="block w-full text-left px-3 py-1.5 hover:bg-app font-semibold text-ink">Edit</button>
+                              <div className="border-t border-line/60 my-1" />
+                              <div className="px-3 py-1 text-[10.5px] uppercase tracking-wider text-muted font-bold">Move to vault</div>
+                              {collections.map(c => (
+                                <button key={c.id} onClick={() => { setPicked({ [i.id]: true }); setMenuFor(null); moveTo(c.id) }}
+                                  className="block w-full text-left px-3 py-1.5 hover:bg-app text-ink">{c.name}</button>
+                              ))}
+                              <button onClick={() => { setPicked({ [i.id]: true }); setMenuFor(null); moveTo(null) }}
+                                className="block w-full text-left px-3 py-1.5 hover:bg-app text-ink">Private (owner only)</button>
+                              <div className="border-t border-line/60 my-1" />
+                              <button onClick={() => { setMenuFor(null); remove(i) }}
+                                className="block w-full text-left px-3 py-1.5 hover:bg-rose-50 font-semibold text-rose-700">Delete</button>
+                            </>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {openShare === i.id && <SharePanel itemId={i.id} onClose={() => setOpenShare(null)} onChanged={load} />}
+                </div>
+              )
+            })}
+          </div>
+        ))}
       </div>
 
       <p className="text-[11px] text-muted flex items-center gap-1.5">
         <ShieldCheck size={12} /> Secrets are encrypted before they are stored and are never included when this list loads.
-        Every reveal asks for the vault code and records who entered it; a sealed backup is written after every change.
+        The code opens a one-minute window; revealing is still a click per item, and every click is recorded against your name.
+        A sealed backup is written after every change.
       </p>
       </>}
     </div>
@@ -897,7 +1134,7 @@ function CodePrompt({ purpose, askReason, onAnswer }: { purpose: string; askReas
           <input value={reason} onChange={e => setReason(e.target.value)} maxLength={160}
             placeholder="Why? (optional — goes in the log)" className={field} />
         )}
-        <p className="text-[11px] text-muted">Your name, the time and what you opened are recorded. A wrong code is recorded too.</p>
+        <p className="text-[11px] text-muted">This opens the vault for one minute. Revealing is still a click per item, and your name, the time and what you opened are recorded on each one. A wrong code is recorded too.</p>
         <div className="flex items-center gap-2">
           <button type="submit" disabled={!code.trim()}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-40">
@@ -942,9 +1179,10 @@ function CodeLogView({ askCode, canExport }: { askCode: AskCode; canExport: bool
   }, [])
   useEffect(() => { load(days) }, [days, load])
 
-  const isEntry = (r: any) => /^code entered/.test(String(r.detail || '')) || ['reveal', 'download', 'export', 'import'].includes(r.action)
+  const isEntry = (r: any) => /^code entered|^in unlock window/.test(String(r.detail || '')) ||
+    ['unlock', 'reveal', 'download', 'export'].includes(r.action)
   const isDenied = (r: any) => r.action === 'denied'
-  const isChange = (r: any) => ['create', 'update', 'delete', 'grant', 'revoke', 'code-set', 'backup'].includes(r.action)
+  const isChange = (r: any) => ['create', 'update', 'delete', 'grant', 'revoke', 'code-set', 'backup', 'import', 'move', 'lock'].includes(r.action)
   const shown = rows.filter(r => (!who || r.email === who) && (
     only === 'all' ? true : only === 'entries' ? isEntry(r) : only === 'denied' ? isDenied(r) : isChange(r)))
   const entries = rows.filter(isEntry).length, denied = rows.filter(isDenied).length
@@ -986,7 +1224,7 @@ function CodeLogView({ askCode, canExport }: { askCode: AskCode; canExport: bool
       <div className="rounded-2xl border border-line bg-white shadow-soft">
         <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2 flex-wrap">
           <Lock size={14} className="text-amber-700" />
-          <span className="text-[13px] font-bold text-ink">Who entered the vault code</span>
+          <span className="text-[13px] font-bold text-ink">Who opened the vault, and what they looked at</span>
           <span className="text-[11.5px] text-muted">{entries} entr{entries === 1 ? 'y' : 'ies'}{denied ? <span className="text-rose-700 font-semibold"> · {denied} wrong or refused</span> : ''} in the window</span>
           <span className="grow" />
           <select value={who} onChange={e => setWho(e.target.value)} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12.5px] shadow-soft">
@@ -1043,6 +1281,163 @@ function CodeLogView({ askCode, canExport }: { askCode: AskCode; canExport: bool
           vault code every time, logged as an export — and its columns are exactly what <b>Import CSV</b> reads, so a backup is also a restore.
         </p>
       </div>
+    </div>
+  )
+}
+
+/**
+ * VAULTS — the named groups that replaced sharing ninety-four things one at a time.
+ *
+ * Two doors into a vault and they add up: named people, and app_roles keys. Roles are the reason
+ * "Managers" keeps meaning the right people after somebody is promoted, without anyone remembering
+ * to come back here. Deleting a vault never deletes credentials — its items fall back to
+ * owner-only, which is the safe direction to fail.
+ */
+function VaultsPanel({ collections, onChanged }: { collections: Collection[]; onChanged: () => void }) {
+  const [data, setData] = useState<Collection[] | null>(null)
+  const [privateCount, setPrivateCount] = useState(0)
+  const [canManage, setCanManage] = useState(false)
+  const [needsMigration, setNeedsMigration] = useState(false)
+  const [err, setErr] = useState('')
+  const [msg, setMsg] = useState('')
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [newName, setNewName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [memberDraft, setMemberDraft] = useState<Record<string, string>>({})
+
+  const load = useCallback(async () => {
+    try {
+      const j = await fetch('/api/vault/collections', { cache: 'no-store' }).then(r => r.json())
+      if (!j.ok) { setNeedsMigration(!!j.needsMigration); setErr(j.error || ''); setData([]); return }
+      setData(j.collections || []); setPrivateCount(j.privateCount || 0); setCanManage(!!j.canManage)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  async function post(body: any, okMsg: string) {
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const j = await fetch('/api/vault/collections', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }).then(r => r.json())
+      if (!j.ok) throw new Error(j.error || 'That did not work.')
+      setMsg(okMsg); load(); onChanged()
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(false) }
+  }
+
+  async function removeVault(c: Collection) {
+    if (!window.confirm('Delete the vault "' + c.name + '"? Its ' + (c.items || 0) + ' item(s) become owner-only again. Nothing is deleted.')) return
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const j = await fetch('/api/vault/collections?id=' + encodeURIComponent(c.id), { method: 'DELETE' }).then(r => r.json())
+      if (!j.ok) throw new Error(j.error || 'Could not delete that vault.')
+      setMsg('Vault deleted — its items are owner-only again.'); load(); onChanged()
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(false) }
+  }
+
+  if (needsMigration) return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900 mb-4">
+      <b>One migration to run:</b> <code>supabase/migrations/052_vault_collections.sql</code> in the Supabase SQL editor.
+      Until then everything stays private to its owner — which is exactly where it is now, so nothing is exposed by waiting.
+    </div>
+  )
+
+  return (
+    <div className="rounded-2xl border border-line bg-white shadow-soft mb-4">
+      <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2 flex-wrap">
+        <FolderLock size={14} className="text-amber-700" />
+        <span className="text-[13px] font-bold text-ink">Vaults</span>
+        <span className="text-[11.5px] text-muted">
+          Group logins once instead of sharing them one by one · <b className="text-ink">{privateCount}</b> still private to their owner
+        </span>
+      </div>
+
+      {err && <div className="mx-4 my-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-[13px] text-rose-700">{err}</div>}
+      {msg && <div className="mx-4 my-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-[12.5px] text-emerald-800">{msg}</div>}
+
+      {data === null ? <div className="px-4 py-6 text-center text-[12.5px] text-muted">Loading…</div>
+        : data.length === 0 ? <div className="px-4 py-6 text-center text-[12.5px] text-muted">No vaults yet.</div>
+        : data.map(c => (
+          <div key={c.id} className="border-b border-line/40 last:border-b-0">
+            <div className="px-4 py-2.5 flex items-center gap-2.5 flex-wrap text-[12.5px]">
+              <span className="font-semibold text-ink">{c.name}</span>
+              <span className="text-muted">{c.items || 0} item{(c.items || 0) === 1 ? '' : 's'}</span>
+              {(c.roles || []).length > 0 && (
+                <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                  role: {c.roles.join(', ')}
+                </span>
+              )}
+              <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-neutral-100 text-muted border border-line">
+                {c.level === 'manage' ? 'members can edit' : 'members can open'}
+              </span>
+              {(c.members?.length || 0) > 0 && (
+                <span className="text-muted inline-flex items-center gap-1"><Users size={11} /> {c.members!.length}</span>
+              )}
+              <span className="grow" />
+              {canManage && (
+                <>
+                  <button onClick={() => setOpenId(openId === c.id ? null : c.id)}
+                    className="text-[12px] font-semibold text-brand-700 hover:underline">
+                    {openId === c.id ? 'Close' : 'Who can open it'}
+                  </button>
+                  <button onClick={() => removeVault(c)} className="text-muted hover:text-rose-600" title="Delete vault"><Trash2 size={13} /></button>
+                </>
+              )}
+            </div>
+
+            {openId === c.id && canManage && (
+              <div className="px-4 pb-3">
+                <div className="rounded-xl border border-line bg-app/60 p-3 space-y-2">
+                  {(c.members || []).length === 0
+                    ? <div className="text-[12px] text-muted">Nobody named yet{(c.roles || []).length ? ' — but anyone with the ' + c.roles.join('/') + ' role can already open it.' : '. This vault is currently closed to everyone but the owner of each item.'}</div>
+                    : (
+                      <ul className="space-y-1">
+                        {(c.members || []).map(m => (
+                          <li key={m} className="flex items-center gap-2 text-[12px]">
+                            <span className="text-ink">{m}</span>
+                            <button onClick={() => post({ action: 'remove-member', collection_id: c.id, email: m }, 'Removed ' + m + '.')}
+                              className="text-muted hover:text-rose-600 ml-auto">Remove</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  <div className="flex items-center gap-2 flex-wrap pt-1">
+                    <input value={memberDraft[c.id] || ''} onChange={e => setMemberDraft(d => ({ ...d, [c.id]: e.target.value }))}
+                      placeholder="name@stay-hospitality.com"
+                      className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] w-60 outline-none focus:border-brand-400" />
+                    <button disabled={busy || !(memberDraft[c.id] || '').trim()}
+                      onClick={() => { post({ action: 'add-member', collection_id: c.id, email: (memberDraft[c.id] || '').trim() }, 'Added.'); setMemberDraft(d => ({ ...d, [c.id]: '' })) }}
+                      className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40">
+                      <Plus size={12} /> Add
+                    </button>
+                    <span className="grow" />
+                    <label className="text-[12px] text-muted inline-flex items-center gap-1.5">
+                      Members can
+                      <select value={c.level} onChange={e => post({ id: c.id, level: e.target.value }, 'Saved.')}
+                        className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]">
+                        <option value="view">open &amp; reveal</option>
+                        <option value="manage">open, edit &amp; re-file</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+
+      {canManage && (
+        <div className="px-4 py-3 border-t border-line/60 flex items-center gap-2 flex-wrap">
+          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="New vault name — e.g. Maintenance, or Jon only"
+            className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] w-72 outline-none focus:border-brand-400" />
+          <button disabled={busy || newName.trim().length < 2}
+            onClick={() => { post({ name: newName.trim() }, 'Vault created. Add people to it, then move items in.'); setNewName('') }}
+            className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40">
+            <Plus size={13} /> Create vault
+          </button>
+          <span className="text-[11.5px] text-muted">A vault with one member is a private vault.</span>
+        </div>
+      )}
     </div>
   )
 }

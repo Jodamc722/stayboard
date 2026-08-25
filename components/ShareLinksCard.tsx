@@ -205,7 +205,7 @@ export function ShareLinksCard() {
       </div>
       <div className="border-t border-line pt-4 mt-4">
         <label className="text-xs uppercase tracking-wide text-muted">Vault code &mdash; the second lock on the vault</label>
-        <p className="text-xs text-muted mt-0.5 mb-1">Signing in shows the shelf (names, usernames, hints). Revealing or copying a password, opening a stored document or downloading a backup asks for this code <b>every time</b>, and each entry &mdash; right or wrong &mdash; is recorded with the person&rsquo;s name in the vault log. {vcSet ? 'Currently SET.' : 'Not set yet \u2014 nothing in the vault can be revealed until you set one.'}</p>
+        <p className="text-xs text-muted mt-0.5 mb-1">Signing in shows the shelf (names, usernames, hints). Entering it opens a <b>one-minute window</b>; inside that window revealing is still a click per item, and every click is recorded with the person&rsquo;s name in the vault log. Wrong codes are recorded too, and eight in fifteen minutes locks that person out. Downloading the whole vault as a CSV always asks again. {vcSet ? 'Currently SET.' : 'Not set yet \u2014 nothing in the vault can be revealed until you set one.'}</p>
         {vcCurrent && (
           <div className="flex flex-wrap items-center gap-2 gap-y-1 mb-2 text-sm">
             <span className="text-muted">Current code:</span>
