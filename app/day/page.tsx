@@ -151,6 +151,7 @@ export default function DayLinkPage() {
                 {crew.clockedIn} of {crew.onShift} clocked in
                 {crew.openShifts ? ' · ' + crew.openShifts + ' shift' + (crew.openShifts === 1 ? '' : 's') + ' unfilled' : ''}
                 {crew.notClocked?.length ? ' · not clocked in: ' + crew.notClocked.join(', ') : ''}
+                {crew.elsewhere ? ' · ' + crew.elsewhere + ' more on shift in another market' : ''}
               </div>
               {(crew.people || []).map((p: any, i: number) => (
                 <div key={i} className="dl-card">
