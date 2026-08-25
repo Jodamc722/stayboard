@@ -27,25 +27,23 @@ export const HUBS: Hub[] = [
   },
   {
     key: 'orders', label: 'Orders',
-    blurb: 'What needs buying, fixing or delivering — purchasing from audits, field work orders, guest pre-arrival orders, and building projects.',
+    // Guest Orders left on 2026-08-25 (Jon: "Guest orders stand alone"). Everything else here is
+    // US spending money on a unit; a guest order is a GUEST spending money on their own stay. It
+    // reads as the same word and is a different business, so it sits with Guests now.
+    // Jon, same day: "orders can be one but can filter" — Purchasing already filters by stage,
+    // owner and building on the page itself, so these three stay behind one sidebar row.
+    blurb: 'What needs buying, fixing or building — purchasing from audits, field work orders, and building projects.',
     tabs: [
       { to: '/orders', label: 'Purchasing' },
       { to: '/requests', label: 'Work Orders' },
-      { to: '/guest-orders', label: 'Guest Orders' },
       { to: '/projects', label: 'Projects' },
     ],
   },
-  {
-    key: 'guest-comms', label: 'Guest Comms',
-    // Guidebooks left this hub on 2026-08-25 (Jon: "move guidebooks back to an individual tab").
-    // It is a thing you go to and work in, not a tab you pass on the way to a notice — and burying
-    // it behind another page's URL made it feel gone. It has its own sidebar row again.
-    blurb: 'What the guest and the building are told — front-desk notices and the property FAQ Eve answers from.',
-    tabs: [
-      { to: '/reservation-emails', label: 'Front-Desk Notices' },
-      { to: '/faq', label: 'Property FAQ' },
-    ],
-  },
+  // GUEST COMMS IS GONE (Jon, 2026-08-25: "just make it easier, if it does not make sense then
+  // move"). Guidebooks left it first, and what remained was a row called something you could not
+  // click, standing in front of two pages that are not the same job: Front-Desk Notices is a daily
+  // send, Property FAQ is reference material Eve reads. A label that names none of its contents is
+  // the thing that makes a sidebar hard to learn. Both are their own rows now.
   {
     key: 'owners', label: 'Owners',
     // Owner Statement Audit left this hub on 2026-08-25 (Jon: "its own standalone tab"). It is
