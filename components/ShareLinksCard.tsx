@@ -43,12 +43,20 @@ export function ShareLinksCard() {
   const [rpMsg, setRpMsg] = useState('')
   const [rpErr, setRpErr] = useState('')
   const [rpBusy, setRpBusy] = useState(false)
+  // Vault code — asked on EVERY reveal in the vault; every entry is logged against the person.
+  const [vcSet, setVcSet] = useState(false)
+  const [vcCurrent, setVcCurrent] = useState('')   // only ever sent to the Super Admin
+  const [showVc, setShowVc] = useState(false)
+  const [vcDraft, setVcDraft] = useState('')
+  const [vcMsg, setVcMsg] = useState('')
+  const [vcErr, setVcErr] = useState('')
+  const [vcBusy, setVcBusy] = useState(false)
 
   useEffect(() => { setOrigin(window.location.origin) }, [])
   useEffect(() => {
     fetch('/api/share-settings', { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setMktLinks(j.marketingLinks || []); setMktSet(!!j.marketingSet); setMktCurrent(j.marketingPassword || ''); setMktDraft(j.marketingPassword || ''); setOaLinks(j.auditLinks || []); setOaSet(!!j.auditSet); setOaCurrent(j.auditPassword || ''); setOaDraft(j.auditPassword || ''); setRpSet(!!j.rulesSet); setRpCurrent(j.rulesPassword || ''); setRpDraft(j.rulesPassword || '') } })
+      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setMktLinks(j.marketingLinks || []); setMktSet(!!j.marketingSet); setMktCurrent(j.marketingPassword || ''); setMktDraft(j.marketingPassword || ''); setOaLinks(j.auditLinks || []); setOaSet(!!j.auditSet); setOaCurrent(j.auditPassword || ''); setOaDraft(j.auditPassword || ''); setRpSet(!!j.rulesSet); setRpCurrent(j.rulesPassword || ''); setRpDraft(j.rulesPassword || ''); setVcSet(!!j.vaultSet); setVcCurrent(j.vaultCode || '') } })
       .catch(() => {})
   }, [])
 
@@ -105,6 +113,18 @@ export function ShareLinksCard() {
       setRpSet(true); setRpCurrent(j.rulesPassword || rpDraft.trim()); setRpMsg('Rules password saved. Front-desk staff can use it to edit the Salato rules from the share link.')
     } catch (e: any) { setRpErr(String(e?.message || e)) }
     setRpBusy(false)
+  }
+
+  const saveVc = async () => {
+    setVcBusy(true); setVcErr(''); setVcMsg('')
+    try {
+      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vaultCode: vcDraft.trim() }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setVcErr(j.error || 'Could not save'); setVcBusy(false); return }
+      setVcSet(true); if (j.vaultCode) setVcCurrent(j.vaultCode); setVcDraft('')
+      setVcMsg(vcSet ? 'Vault code changed. The next reveal, by anyone, needs the new code.' : 'Vault code set. Every reveal in the vault now asks for it and records who entered it.')
+    } catch (e: any) { setVcErr(String(e?.message || e)) }
+    setVcBusy(false)
   }
 
   const copy = (v: string, url: string) => { try { navigator.clipboard.writeText(url); setCopied(v); setTimeout(() => setCopied(''), 1500) } catch {} }
@@ -182,6 +202,24 @@ export function ShareLinksCard() {
         </div>
         {rpMsg && <div className="text-xs text-emerald-700 mt-2">{rpMsg}</div>}
         {rpErr && <div className="text-xs text-red-600 mt-2">{rpErr}</div>}
+      </div>
+      <div className="border-t border-line pt-4 mt-4">
+        <label className="text-xs uppercase tracking-wide text-muted">Vault code &mdash; the second lock on the vault</label>
+        <p className="text-xs text-muted mt-0.5 mb-1">Signing in shows the shelf (names, usernames, hints). Revealing or copying a password, opening a stored document, importing or downloading a backup asks for this code <b>every time</b>, and each entry &mdash; right or wrong &mdash; is recorded with the person&rsquo;s name in the vault log. {vcSet ? 'Currently SET.' : 'Not set yet \u2014 nothing in the vault can be revealed until you set one.'}</p>
+        {vcCurrent && (
+          <div className="flex flex-wrap items-center gap-2 gap-y-1 mb-2 text-sm">
+            <span className="text-muted">Current code:</span>
+            <code className="px-2 py-1 rounded-md bg-app border border-line font-mono text-ink">{showVc ? vcCurrent : '\u2022'.repeat(Math.min(vcCurrent.length, 12))}</code>
+            <button onClick={() => setShowVc(!showVc)} className="text-xs font-medium text-brand-700 hover:underline">{showVc ? 'Hide' : 'Show'}</button>
+            <span className="text-[11px] text-muted">Visible only to the Super Admin account.</span>
+          </div>
+        )}
+        <div className="flex gap-2 mt-1 max-w-md">
+          <input type="password" autoComplete="new-password" value={vcDraft} onChange={e => setVcDraft(e.target.value)} placeholder={vcSet ? 'New vault code' : 'Create vault code'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          <button onClick={saveVc} disabled={vcBusy || vcDraft.trim().length < 4} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{vcBusy ? 'Saving\u2026' : vcSet ? 'Change' : 'Set'}</button>
+        </div>
+        {vcMsg && <div className="text-xs text-emerald-700 mt-2">{vcMsg}</div>}
+        {vcErr && <div className="text-xs text-red-600 mt-2">{vcErr}</div>}
       </div>
       <div className="border-t border-line pt-4 mt-4">
         <label className="text-xs uppercase tracking-wide text-muted">Admin password &mdash; destructive actions</label>

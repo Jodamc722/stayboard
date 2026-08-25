@@ -9,15 +9,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Loader2, Plus, Search, Trash2, X, Check, AlertTriangle, Eye, EyeOff, Copy, Download,
-  Upload, Users, Clock, KeyRound, FileText, StickyNote, ShieldCheck, History, RefreshCw,
+  Upload, Users, Clock, KeyRound, FileText, StickyNote, ShieldCheck, History, RefreshCw, Lock, Database,
 } from 'lucide-react'
 
+// Keep in sync with CATEGORIES in lib/vault.ts — this order is the order the shelves render in.
 const CATEGORIES = [
-  { id: 'building', label: 'Building & vendor' },
-  { id: 'guest', label: 'Guest documents' },
+  { id: 'building', label: 'Building & access' },
+  { id: 'channel', label: 'Channel logins' },
+  { id: 'email', label: 'Email accounts' },
+  { id: 'utility', label: 'Utilities & internet' },
+  { id: 'apps', label: 'Apps, vendors & tools' },
+  { id: 'revenue', label: 'Revenue & finance' },
   { id: 'company', label: 'Company & legal' },
   { id: 'owner', label: 'Owner & payouts' },
+  { id: 'guest', label: 'Guest documents' },
+  { id: 'archive', label: 'Old / unused' },
 ]
+const CAT_ORDER: Record<string, number> = Object.fromEntries(CATEGORIES.map((c, i) => [c.id, i]))
+
+// What the vault-code prompt hands back. `null` = the person cancelled.
+type CodeAnswer = { code: string; reason: string } | null
+type AskCode = (purpose: string, opts?: { askReason?: boolean }) => Promise<CodeAnswer>
 
 type Item = {
   id: string; kind: 'secret' | 'file' | 'note'; category: string
@@ -64,7 +76,7 @@ const lbl = 'block text-[11px] uppercase tracking-wider text-muted font-semibold
 // ── RECORDS — the verification paper trail (Jon, 2026-08-22): Salato check-ins, Elser
 // registration forms, and a shelf ready for incident reports. Feeds, not copies — links are
 // minted short-lived on demand from the private buckets they already live in. ──
-function RecordsView() {
+function RecordsView({ askCode }: { askCode: AskCode }) {
   const [data, setData] = useState<any | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [q, setQ] = useState('')
@@ -75,9 +87,11 @@ function RecordsView() {
       .catch(e => setErr(String(e)))
   }, [])
   const open = async (ref: string) => {
-    setBusy(ref)
+    const ans = await askCode('open this record')
+    if (!ans) return
+    setBusy(ref); setErr(null)
     try {
-      const r = await fetch('/api/vault/records?sign=' + encodeURIComponent(ref), { cache: 'no-store' })
+      const r = await fetch('/api/vault/records?sign=' + encodeURIComponent(ref), { cache: 'no-store', headers: { 'x-vault-code': ans.code } })
       const j = await r.json()
       if (j.ok && j.url) window.open(j.url, '_blank', 'noopener')
       else setErr(j.error || 'Could not open that file.')
@@ -210,7 +224,20 @@ function ActivityView() {
 }
 
 export function VaultBoard() {
-  const [view, setView] = useState<'vault' | 'records' | 'activity'>('vault')
+  const [view, setView] = useState<'vault' | 'records' | 'activity' | 'log'>('vault')
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [isOwner, setIsOwner] = useState(false)
+  const [codeSet, setCodeSet] = useState(true)
+  const [importState, setImportState] = useState<any | null>(null)
+
+  // THE VAULT CODE PROMPT. One modal, promise-based: whoever needs the code awaits askCode(), the
+  // modal resolves with what was typed (or null). The code lives in this component's memory only
+  // for the length of that one request — it is asked again next time, on purpose (Jon, 2026-08-25).
+  const [codeReq, setCodeReq] = useState<{ purpose: string; askReason: boolean; resolve: (a: CodeAnswer) => void } | null>(null)
+  const askCode = useCallback<AskCode>((purpose, opts) => new Promise<CodeAnswer>(resolve => {
+    setCodeReq({ purpose, askReason: !!opts?.askReason, resolve })
+  }), [])
+  const answerCode = (a: CodeAnswer) => { const r = codeReq; setCodeReq(null); r?.resolve(a) }
   const [items, setItems] = useState<Item[]>([])
   const [grants, setGrants] = useState<Grant[]>([])
   const [loading, setLoading] = useState(true)
@@ -239,6 +266,7 @@ export function VaultBoard() {
       setGrants(Array.isArray(j.grants) ? j.grants : [])
       setNeedsMigration(!!j.needsMigration)
       setKeyReady(j.keyReady !== false)
+      setIsAdmin(!!j.isAdmin); setIsOwner(!!j.isOwner); setCodeSet(j.codeSet !== false)
       if (!j.ok && !j.needsMigration && j.error) setErr(j.error)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [])
@@ -265,15 +293,18 @@ export function VaultBoard() {
     setRevealed({})
   }
 
+  // Shelf order, then A–Z inside a shelf. Old/unused sinks to the bottom; unknown categories land
+  // just above it so nothing ever disappears because of a label.
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
+    const rank = (c: string) => (c in CAT_ORDER ? CAT_ORDER[c] : CATEGORIES.length - 1.5)
     return items.filter(i => {
       if (cat && i.category !== cat) return false
       if (!needle) return true
       return (i.title + ' ' + (i.description || '') + ' ' + (i.username || '') + ' ' +
         (i.doc_name || '') + ' ' + (i.property_id || '') + ' ' + (i.unit_no || '') + ' ' +
         (i.tags || []).join(' ')).toLowerCase().includes(needle)
-    })
+    }).sort((a, b) => rank(a.category) - rank(b.category) || a.title.localeCompare(b.title))
   }, [items, q, cat])
 
   const expiring = useMemo(
@@ -288,10 +319,12 @@ export function VaultBoard() {
       setRevealed(r => { const n = { ...r }; delete n[i.id]; return n })
       return
     }
+    const ans = await askCode('reveal “' + i.title + '”', { askReason: true })
+    if (!ans) return
     try {
       const j = await fetch('/api/vault/reveal', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-        body: JSON.stringify({ id: i.id }),
+        body: JSON.stringify({ id: i.id, code: ans.code, reason: ans.reason }),
       }).then(x => x.json())
       if (!j.ok) throw new Error(j.error || 'Could not open that.')
       setRevealed(r => ({ ...r, [i.id]: j.secret }))
@@ -306,10 +339,17 @@ export function VaultBoard() {
   async function copySecret(i: Item) {
     setErr(null); setMsg(null)
     try {
-      const val = revealed[i.id] || await fetch('/api/vault/reveal', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-        body: JSON.stringify({ id: i.id, reason: 'copied to clipboard' }),
-      }).then(x => x.json()).then(j => { if (!j.ok) throw new Error(j.error); return j.secret })
+      let val = revealed[i.id]
+      if (!val) {
+        // Something already revealed on screen was already paid for with the code; a fresh copy is
+        // a fresh reveal and asks again.
+        const ans = await askCode('copy “' + i.title + '”', { askReason: true })
+        if (!ans) return
+        val = await fetch('/api/vault/reveal', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+          body: JSON.stringify({ id: i.id, code: ans.code, reason: 'copied to clipboard' + (ans.reason ? ' · ' + ans.reason : '') }),
+        }).then(x => x.json()).then(j => { if (!j.ok) throw new Error(j.error); return j.secret as string })
+      }
       await navigator.clipboard.writeText(val)
       setMsg('Copied. Your clipboard now holds it — paste it and move on.')
     } catch (e: any) { setErr(e.message || String(e)) }
@@ -317,8 +357,10 @@ export function VaultBoard() {
 
   async function openFile(i: Item) {
     setErr(null)
+    const ans = await askCode('open “' + (i.doc_name || i.title) + '”')
+    if (!ans) return
     try {
-      const j = await fetch('/api/vault/file?id=' + encodeURIComponent(i.id), { cache: 'no-store' }).then(x => x.json())
+      const j = await fetch('/api/vault/file?id=' + encodeURIComponent(i.id), { cache: 'no-store', headers: { 'x-vault-code': ans.code } }).then(x => x.json())
       if (!j.ok || !j.url) throw new Error(j.error || 'Could not open that file.')
       window.open(j.url, '_blank', 'noopener')
     } catch (e: any) { setErr(e.message || String(e)) }
@@ -368,6 +410,43 @@ export function VaultBoard() {
     } catch (e: any) { setErr(e.message || String(e)) }
   }
 
+  // IMPORT — a CSV of logins (title, username, password, url, category, building, unit, notes,
+  // tags). Read in the browser, previewed first, then sent with the vault code. Nothing is written
+  // until the person has seen the preview and pressed Import.
+  async function pickImport(file: File) {
+    setErr(null); setMsg(null)
+    try {
+      if (file.size > 4 * 1024 * 1024) throw new Error('That file is larger than 4 MB.')
+      const csv = await file.text()
+      // The code is asked once here and reused for the real run of this same file.
+      const ans = await askCode('import ' + file.name)
+      if (!ans) return
+      const j = await fetch('/api/vault/import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv, dryRun: true, code: ans.code }),
+      }).then(x => x.json())
+      if (!j.ok) throw new Error(j.error || 'Could not read that file.')
+      setImportState({ name: file.name, csv, code: ans.code, preview: j })
+    } catch (e: any) { setErr(e.message || String(e)) }
+  }
+
+  async function runImport() {
+    if (!importState) return
+    setSaving(true); setErr(null); setMsg(null)
+    try {
+      let code = importState.code
+      if (!code) { const ans = await askCode('import ' + importState.name); if (!ans) { setSaving(false); return } code = ans.code }
+      const j = await fetch('/api/vault/import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: importState.csv, code }),
+      }).then(x => x.json())
+      if (!j.ok) throw new Error(j.error || 'Import failed.')
+      setImportState(null)
+      setMsg('Imported ' + j.created + (j.skipped ? ' · ' + j.skipped + ' already in the vault (skipped)' : '') + '. A backup snapshot was written.')
+      load()
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setSaving(false) }
+  }
+
   async function remove(i: Item) {
     if (!window.confirm('Delete "' + i.title + '"? It stops appearing here, and the audit trail keeps a record.')) return
     setErr(null)
@@ -394,16 +473,27 @@ export function VaultBoard() {
     <div className="space-y-4">
       {/* Vault = the locked shelf · Records = the verification paper trail · Activity = who did what */}
       <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden w-fit">
-        {([['vault', 'Vault'], ['records', 'Records'], ['activity', 'Activity']] as const).map(([k, label]) => (
+        {([['vault', 'Vault'], ['records', 'Records'], ['activity', 'Activity'], ['log', 'Code log & backups']] as const).filter(([k]) => k !== 'log' || isAdmin).map(([k, label]) => (
           <button key={k} onClick={() => setView(k)}
             className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (view === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
             {label}
           </button>
         ))}
       </div>
-      {view === 'records' && <RecordsView />}
+      {codeReq && <CodePrompt purpose={codeReq.purpose} askReason={codeReq.askReason} onAnswer={answerCode} />}
+      {view === 'records' && <RecordsView askCode={askCode} />}
       {view === 'activity' && <ActivityView />}
+      {view === 'log' && <CodeLogView askCode={askCode} canExport={isOwner} />}
       {view === 'vault' && <>
+      {!codeSet && !needsMigration && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+          <div className="font-semibold flex items-center gap-1.5"><Lock size={14} /> The vault code is not set</div>
+          <p className="mt-1">
+            Nothing here can be revealed until an admin sets the vault code at <a href="/users" className="underline font-semibold">Users &amp; admin → Share links &amp; security</a>.
+            Once set, every reveal asks for it and records who entered it.
+          </p>
+        </div>
+      )}
       {needsMigration && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
           <div className="font-semibold flex items-center gap-1.5"><AlertTriangle size={14} /> One migration to run first</div>
@@ -443,6 +533,12 @@ export function VaultBoard() {
         <button onClick={load} className="inline-flex items-center gap-1.5 text-[13px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
           <RefreshCw size={13} /> Refresh
         </button>
+        {isAdmin && (
+          <label className="inline-flex items-center gap-1.5 text-[13px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink cursor-pointer" title="Import logins from a CSV (title, username, password, url, category, building, notes)">
+            <Upload size={13} /> Import CSV
+            <input type="file" accept=".csv,text/csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) pickImport(f) }} />
+          </label>
+        )}
         {Object.keys(revealed).length > 0 && (
           <button onClick={hideAll}
             className="inline-flex items-center gap-1.5 text-[13px] font-semibold px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-900">
@@ -467,6 +563,43 @@ export function VaultBoard() {
               )
             })}
           </ul>
+        </div>
+      )}
+
+      {importState && (
+        <div className="rounded-2xl border border-brand-200 bg-brand-50/40 p-4 space-y-2">
+          <div className="text-[13px] font-bold text-ink flex items-center gap-1.5"><Upload size={14} /> Import preview — {importState.name}</div>
+          <div className="text-[12.5px] text-ink">
+            {importState.preview.total} logins found · {importState.preview.rows.filter((r: any) => r.hasPassword).length} with a password
+            {importState.preview.problems?.length ? ' · ' + importState.preview.problems.length + ' note' + (importState.preview.problems.length === 1 ? '' : 's') : ''}.
+            Rows whose name + username are already in the vault are skipped, so running this twice never doubles anything.
+          </div>
+          <div className="text-[12px] text-muted flex flex-wrap gap-x-3 gap-y-0.5">
+            {CATEGORIES.map(c => { const n = importState.preview.rows.filter((r: any) => r.category === c.id).length; return n ? <span key={c.id}><b className="text-ink">{n}</b> {c.label}</span> : null })}
+            {(() => { const n = importState.preview.rows.filter((r: any) => !CAT_ORDER.hasOwnProperty(r.category)).length; return n ? <span><b className="text-ink">{n}</b> unknown shelf → Company &amp; legal</span> : null })()}
+          </div>
+          {importState.preview.problems?.length ? (
+            <ul className="text-[11.5px] text-amber-800 max-h-32 overflow-auto space-y-0.5">
+              {importState.preview.problems.slice(0, 40).map((p: string, n: number) => <li key={n}>{p}</li>)}
+            </ul>
+          ) : null}
+          <div className="max-h-56 overflow-auto rounded-lg border border-line bg-white">
+            {importState.preview.rows.slice(0, 300).map((r: any, n: number) => (
+              <div key={n} className="px-3 py-1 border-b border-line/40 text-[12px] flex items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-muted w-24 shrink-0 truncate">{CATEGORIES.find(c => c.id === r.category)?.label || r.category}</span>
+                <span className="font-semibold text-ink truncate">{r.title}</span>
+                <span className="text-muted truncate">{r.username}</span>
+                <span className="ml-auto text-[10.5px] text-muted shrink-0">{r.hasPassword ? '••••' : r.kind}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={runImport} disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-40">
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Import {importState.preview.total} into the vault
+            </button>
+            <button onClick={() => setImportState(null)} className="text-[13px] font-semibold px-3 py-1.5 rounded-lg border border-line text-muted hover:text-ink">Cancel</button>
+          </div>
         </div>
       )}
 
@@ -549,11 +682,19 @@ export function VaultBoard() {
           <div className="px-4 py-10 text-center text-[13px] text-muted">
             {items.length === 0 ? 'Nothing in the vault yet. Start with the codes people keep asking you for.' : 'Nothing matches that.'}
           </div>
-        ) : shown.map(i => {
+        ) : shown.map((i, n) => {
           const mine = grants.filter(g => g.item_id === i.id)
           const d = daysUntil(i.expires_on)
+          // A shelf header the first time a category appears — the vault reads as shelves, not a heap.
+          const newShelf = n === 0 || shown[n - 1].category !== i.category
+          const shelfCount = newShelf ? shown.filter(x => x.category === i.category).length : 0
           return (
             <div key={i.id} className="border-b border-line last:border-b-0">
+              {newShelf && (
+                <div className={'px-4 py-1.5 text-[10.5px] uppercase tracking-[0.14em] font-bold border-b border-line/60 ' + (i.category === 'archive' ? 'bg-neutral-100 text-muted' : 'bg-app text-muted')}>
+                  {CATEGORIES.find(c => c.id === i.category)?.label || i.category} <span className="font-semibold normal-case tracking-normal">· {shelfCount}</span>
+                </div>
+              )}
               <div className="flex items-start gap-2 px-4 py-3 flex-wrap">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -627,7 +768,7 @@ export function VaultBoard() {
 
       <p className="text-[11px] text-muted flex items-center gap-1.5">
         <ShieldCheck size={12} /> Secrets are encrypted before they are stored and are never included when this list loads.
-        Every reveal, download and refused attempt is logged against the item.
+        Every reveal asks for the vault code and records who entered it; a sealed backup is written after every change.
       </p>
       </>}
     </div>
@@ -722,6 +863,189 @@ function SharePanel({ itemId, onClose, onChanged }: { itemId: string; onClose: (
             )}
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * THE CODE PROMPT. Modal, one question, no memory: the code is handed back to whoever asked and
+ * forgotten. type=password so it is not shoulder-read; autoComplete off so no browser ever offers
+ * to remember the vault code for the next person at the same laptop.
+ */
+function CodePrompt({ purpose, askReason, onAnswer }: { purpose: string; askReason: boolean; onAnswer: (a: CodeAnswer) => void }) {
+  const [code, setCode] = useState('')
+  const [reason, setReason] = useState('')
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { ref.current?.focus() }, [])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onAnswer(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onAnswer])
+  const submit = (e?: React.FormEvent) => { e?.preventDefault(); if (code.trim()) onAnswer({ code: code.trim(), reason: reason.trim() }) }
+  return (
+    <div className="fixed inset-0 z-[70] bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-3 sm:p-6" onClick={() => onAnswer(null)}>
+      <form onSubmit={submit} onClick={e => e.stopPropagation()}
+        className="w-full max-w-sm rounded-2xl border border-line bg-white shadow-xl p-4 space-y-3 pb-safe">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-amber-50 text-amber-700"><Lock size={15} /></span>
+          <div className="min-w-0">
+            <div className="text-[13.5px] font-bold text-ink">Vault code</div>
+            <div className="text-[11.5px] text-muted truncate">To {purpose}</div>
+          </div>
+        </div>
+        <input ref={ref} type="password" autoComplete="off" inputMode="text" value={code} onChange={e => setCode(e.target.value)}
+          placeholder="Enter the vault code" className={field + ' text-base sm:text-[13px] py-2.5'} />
+        {askReason && (
+          <input value={reason} onChange={e => setReason(e.target.value)} maxLength={160}
+            placeholder="Why? (optional — goes in the log)" className={field} />
+        )}
+        <p className="text-[11px] text-muted">Your name, the time and what you opened are recorded. A wrong code is recorded too.</p>
+        <div className="flex items-center gap-2">
+          <button type="submit" disabled={!code.trim()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-40">
+            <Check size={13} /> Continue
+          </button>
+          <button type="button" onClick={() => onAnswer(null)} className="text-[13px] font-semibold px-3 py-2 rounded-lg border border-line text-muted hover:text-ink">Cancel</button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+/**
+ * CODE LOG & BACKUPS (admins). The whole-vault answer to "who has been in here": every code entry,
+ * right or wrong, what it opened, from where — plus the automatic snapshot list and the owner's
+ * code-gated CSV download.
+ */
+function CodeLogView({ askCode, canExport }: { askCode: AskCode; canExport: boolean }) {
+  const [rows, setRows] = useState<any[]>([])
+  const [people, setPeople] = useState<string[]>([])
+  const [who, setWho] = useState('')
+  const [days, setDays] = useState(30)
+  const [only, setOnly] = useState<'all' | 'entries' | 'denied' | 'changes'>('all')
+  const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading')
+  const [err, setErr] = useState('')
+  const [snaps, setSnaps] = useState<{ name: string; bytes: number; at: string }[] | null>(null)
+  const [keyReady, setKeyReady] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [msg, setMsg] = useState('')
+
+  const load = useCallback(async (d: number) => {
+    setState('loading'); setErr('')
+    try {
+      const [l, b] = await Promise.all([
+        fetch('/api/vault/log?days=' + d, { cache: 'no-store' }).then(r => r.json()),
+        fetch('/api/vault/backup', { cache: 'no-store' }).then(r => r.json()),
+      ])
+      if (!l.ok) { setState('error'); setErr(l.error || l.message || 'Could not load the log.'); return }
+      setRows(l.rows || []); setPeople(l.people || []); setState('ok')
+      if (b.ok) { setSnaps(b.snapshots || []); setKeyReady(b.keyReady !== false) } else setSnaps([])
+    } catch (e: any) { setState('error'); setErr(String(e?.message || e)) }
+  }, [])
+  useEffect(() => { load(days) }, [days, load])
+
+  const isEntry = (r: any) => /^code entered/.test(String(r.detail || '')) || ['reveal', 'download', 'export', 'import'].includes(r.action)
+  const isDenied = (r: any) => r.action === 'denied'
+  const isChange = (r: any) => ['create', 'update', 'delete', 'grant', 'revoke', 'code-set', 'backup'].includes(r.action)
+  const shown = rows.filter(r => (!who || r.email === who) && (
+    only === 'all' ? true : only === 'entries' ? isEntry(r) : only === 'denied' ? isDenied(r) : isChange(r)))
+  const entries = rows.filter(isEntry).length, denied = rows.filter(isDenied).length
+  const fmtAt = (s: string) => new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })
+  const fmtSnap = (n: string) => { const m = n.match(/vault-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})/); return m ? fmtAt(m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':00Z') : n }
+
+  async function download(snapshot?: string) {
+    setMsg('')
+    const ans = await askCode(snapshot ? 'download the snapshot from ' + fmtSnap(snapshot) : 'download the whole vault as a CSV')
+    if (!ans) return
+    setBusy(snapshot || 'live')
+    try {
+      const r = await fetch('/api/vault/backup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+        body: JSON.stringify({ code: ans.code, snapshot: snapshot || undefined }),
+      })
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Could not build the backup.') }
+      const blob = await r.blob()
+      const name = (r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'stay-vault-backup.csv'
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
+      setMsg('Downloaded ' + name + '. It holds every password in clear — keep it somewhere locked, and delete it when a newer one exists.')
+      load(days)
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy(null) }
+  }
+
+  async function snapshotNow() {
+    setBusy('snap'); setMsg('')
+    try {
+      const j = await fetch('/api/vault/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'snapshot' }) }).then(r => r.json())
+      if (!j.ok) throw new Error(j.error || 'Could not write a snapshot.')
+      setMsg('Snapshot written.'); load(days)
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy(null) }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-line bg-white shadow-soft">
+        <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2 flex-wrap">
+          <Lock size={14} className="text-amber-700" />
+          <span className="text-[13px] font-bold text-ink">Who entered the vault code</span>
+          <span className="text-[11.5px] text-muted">{entries} entr{entries === 1 ? 'y' : 'ies'}{denied ? <span className="text-rose-700 font-semibold"> · {denied} wrong or refused</span> : ''} in the window</span>
+          <span className="grow" />
+          <select value={who} onChange={e => setWho(e.target.value)} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12.5px] shadow-soft">
+            <option value="">Everyone</option>
+            {people.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <select value={only} onChange={e => setOnly(e.target.value as any)} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12.5px] shadow-soft">
+            <option value="all">Everything</option><option value="entries">Code entries</option><option value="denied">Wrong / refused</option><option value="changes">Changes &amp; backups</option>
+          </select>
+          <select value={days} onChange={e => setDays(Number(e.target.value))} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12.5px] shadow-soft">
+            <option value={1}>24h</option><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
+          </select>
+          <button onClick={() => load(days)} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft inline-flex items-center gap-1.5"><RefreshCw size={12} /></button>
+        </div>
+        {err ? <div className="mx-4 my-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-[13px] text-rose-700">{err}</div> : null}
+        {state === 'loading' ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Loading…</div>
+          : shown.length ? shown.slice(0, 500).map((r, i) => (
+            <div key={r.id || i} className="px-4 py-1.5 border-b border-line/40 flex items-center gap-2.5 text-[12.5px] flex-wrap sm:flex-nowrap">
+              <span className="text-[11px] text-muted tabular-nums w-[110px] shrink-0">{fmtAt(r.created_at)}</span>
+              <span className="text-[11.5px] font-semibold text-ink truncate max-w-[200px]">{r.email || 'unknown'}</span>
+              <span className={'text-[10px] uppercase tracking-wider font-bold shrink-0 ' + (isDenied(r) ? 'text-rose-700' : isEntry(r) ? 'text-amber-700' : 'text-sky-700')}>{r.action}</span>
+              <span className="text-ink truncate">{r.title ? <b className="font-semibold">{r.title}</b> : null}{r.title && r.detail ? ' · ' : ''}{r.detail || ''}</span>
+              {r.ip ? <span className="ml-auto text-[10.5px] text-muted shrink-0">{r.ip}</span> : null}
+            </div>
+          )) : <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing in this window.</div>}
+      </div>
+
+      <div className="rounded-2xl border border-line bg-white shadow-soft">
+        <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2 flex-wrap">
+          <Database size={14} className="text-emerald-700" />
+          <span className="text-[13px] font-bold text-ink">Backups</span>
+          <span className="text-[11.5px] text-muted">A sealed copy of the whole vault is written automatically after every change · last {snaps ? snaps.length : '…'} kept</span>
+          <span className="grow" />
+          <button onClick={snapshotNow} disabled={busy === 'snap'} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft disabled:opacity-50">{busy === 'snap' ? 'Writing…' : 'Snapshot now'}</button>
+          {canExport && (
+            <button onClick={() => download()} disabled={busy === 'live'} className="rounded-xl bg-ink text-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft inline-flex items-center gap-1.5 disabled:opacity-50">
+              <Download size={12} /> {busy === 'live' ? 'Building…' : 'Download CSV backup'}
+            </button>
+          )}
+        </div>
+        {!keyReady && <div className="mx-4 my-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-[12.5px] text-amber-900">VAULT_KEY is not set on the server — snapshots cannot be sealed until it is.</div>}
+        {msg && <div className="mx-4 my-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-[12.5px] text-emerald-800">{msg}</div>}
+        {snaps === null ? <div className="px-4 py-6 text-center text-[12.5px] text-muted">Loading…</div>
+          : snaps.length ? snaps.slice(0, 60).map(sn => (
+            <div key={sn.name} className="px-4 py-1.5 border-b border-line/40 flex items-center gap-3 text-[12.5px]">
+              <span className="text-ink font-semibold tabular-nums">{fmtSnap(sn.name)}</span>
+              <span className="text-[11px] text-muted">{fmtBytes(sn.bytes)}</span>
+              <span className="grow" />
+              {canExport && <button onClick={() => download(sn.name)} disabled={busy === sn.name} className="text-[11.5px] font-semibold text-brand-700 hover:underline disabled:opacity-50">{busy === sn.name ? 'Building…' : 'Download as CSV'}</button>}
+            </div>
+          )) : <div className="px-4 py-6 text-center text-[12.5px] text-muted">No snapshots yet — the first one is written the moment anything in the vault changes.</div>}
+        <p className="px-4 py-3 text-[11px] text-muted">
+          Snapshots are sealed with the server key and stay in the private vault bucket. The CSV download is the human copy — Super Admin only,
+          vault code every time, logged as an export — and its columns are exactly what <b>Import CSV</b> reads, so a backup is also a restore.
+        </p>
       </div>
     </div>
   )
