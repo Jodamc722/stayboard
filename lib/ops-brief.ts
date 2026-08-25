@@ -407,6 +407,37 @@ function card(title: string, count: number | null, inner: string, accent = '#636
     <div style="${S.cardBody}">${inner}</div>
   </div>`
 }
+// ── BAD-REVIEW INSPECTIONS ON THE BRIEF (Jon, 2026-08-24) ───────────────────────────────────────
+// The engine is `runLowReviewInspections` in lib/auto-inspections: a review at or below the bar
+// creates a Breezeway inspection ON THE UNIT'S NEXT CHECKOUT (the unit has to be empty to walk it)
+// and rolls it forward if it goes unfinished. Those rows carry no arrival, so they cannot ride
+// `upcomingAutoInspections`'s window — they are read here by their own `rev:` key. The read lives
+// in this file rather than in the engine's because that file is under active parallel edit; if it
+// ever grows an exported reader, delete this one and use it.
+type ReviewInspection = {
+  unit_name: string; guest_name: string; reason: string; market: string
+  check_in: string; task_id: string | null; assignees: string[]; status: string | null
+}
+async function lowReviewInspections(): Promise<ReviewInspection[]> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('auto_inspections').select('*')
+    .like('reservation_id', 'rev:%').order('check_in', { ascending: true }).limit(60)
+  const rows = (data || []) as any[]
+  if (!rows.length) return []
+  const ids = rows.map(r => str(r.task_id)).filter(Boolean)
+  const st: Record<string, string> = {}
+  if (ids.length) {
+    const { data: ts } = await db.from('breezeway_tasks_sync').select('id,status').in('id', ids)
+    for (const t of (ts || []) as any[]) st[str(t.id)] = str(t.status)
+  }
+  return rows.map(r => ({
+    unit_name: str(r.unit_name), guest_name: str(r.guest_name), reason: str(r.reason),
+    market: str(r.market), check_in: str(r.check_in).slice(0, 10),
+    task_id: r.task_id ? str(r.task_id) : null, assignees: Array.isArray(r.assignees) ? r.assignees : [],
+    status: r.task_id ? (st[str(r.task_id)] || null) : null,
+  }))
+}
+
 /** "Thu, Aug 14" — the human form of a YYYY-MM-DD, for card datelines. */
 function niceDay(ymd: string): string {
   try {
@@ -687,11 +718,34 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   } catch { /* automation table may not exist yet — the brief still sends */ }
   const soonCut2 = ymdET(new Date(Date.now() + 2 * 86400000))
   const autoInsp = autoInspWide.filter(i => str(i.check_in) <= soonCut2)
+  // BAD-REVIEW WALKS (Jon, 2026-08-24: "bad review auto assigned inspections should show on the
+  // brief as well"). Same automation, no arrival attached — read by their own key, then shown in
+  // the same card so everything Lighthouse created sits in one place.
+  const isDoneStatus = (s: any) => /complet|finish|close|approv/i.test(str(s))
+  const weekBack = ymdET(new Date(Date.now() - 7 * 86400000))
+  let reviewInsp: ReviewInspection[] = []
+  try {
+    reviewInsp = (await lowReviewInspections())
+      .filter(i => variant === 'full' || variant === 'GM' || i.market === variant)
+      // Open ones always (they roll forward until somebody walks the unit); finished ones for a
+      // week, so the morning after a walk still shows it got done.
+      .filter(i => !isDoneStatus(i.status) || i.check_in >= weekBack)
+      .slice(0, 12)
+  } catch { /* the brief still sends */ }
+  const reviewOpen = reviewInsp.filter(i => !isDoneStatus(i.status))
   const inspOpen = autoInsp.filter(i => !/complet|finish|close|approv/i.test(str(i.status)))
   for (const i of inspOpen.filter(x => x.check_in <= ymdET(new Date(Date.now() + 86400000))).slice(0, 4)) {
     priorities.push(prio('amber', str(i.unit_name),
       `pre-arrival inspection — <b>${esc(str(i.reason))}</b> lands ${esc(niceDay(str(i.check_in)))}`,
       i.assignees.length ? 'With ' + i.assignees.join(' and ') + '.' : 'Not assigned — pick it up.'))
+  }
+  // A unit a guest scored badly gets walked on its next checkout — and it stays on this list
+  // until somebody does it. Only the ones due today or already overdue reach the priorities.
+  for (const i of reviewOpen.filter(i => i.check_in <= d.today).slice(0, 3)) {
+    priorities.push(prio('amber', i.unit_name,
+      `inspection after a <b>${esc(i.reason)}</b> — the unit is empty today`,
+      (i.assignees.length ? 'With ' + i.assignees.join(' and ') + '. ' : 'Not assigned — pick it up. ') +
+      'Walk it before the next guest does.'))
   }
 
   // Arrivals carry their TIME (the thing that sets the deadline) and, when somebody left one, the
@@ -1188,10 +1242,19 @@ export async function buildOpsBrief(variant: BriefVariant): Promise<OpsBrief> {
   ${!isField && fwdCard ? fwdCard : ''}
   ${onTodayCard}
   ${card("Cleans — each person's run, in order", d.cleans.length, d.cleans.length ? bare(cleansRows) : emptyLine('No departure cleans today.'))}
-  ${autoInsp.length ? card('Arrival inspections — auto-assigned', autoInsp.length, bare(autoInsp.map(i => `
-    <tr><td style="${S.td}"><b>${esc(str(i.unit_name))}</b> <span style="${S.muted}">· ${esc(str(i.guest_name).split(' ')[0])} lands ${esc(niceDay(str(i.check_in)))}</span><br>
+  ${(autoInsp.length || reviewInsp.length) ? card('Inspections Lighthouse created &amp; assigned', autoInsp.length + reviewInsp.length,
+    bare(
+      autoInsp.map(i => `
+    <tr><td style="${S.td}">${pillBlue('ARRIVAL')} <b>${esc(str(i.unit_name))}</b> <span style="${S.muted}">· ${esc(str(i.guest_name).split(' ')[0])} lands ${esc(niceDay(str(i.check_in)))}</span><br>
     <span style="font-size:12px;color:#6b7280">${esc(str(i.reason))}${i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ' · unassigned'}</span></td>
-    <td style="${S.td};text-align:right;white-space:nowrap">${/complet|finish|close|approv/i.test(str(i.status)) ? `<span style="${S.green}">done</span>` : /progress|start/i.test(str(i.status)) ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">open</span>`}</td></tr>`).join('')), '#7c3aed') : ''}
+    <td style="${S.td};text-align:right;white-space:nowrap">${/complet|finish|close|approv/i.test(str(i.status)) ? `<span style="${S.green}">done</span>` : /progress|start/i.test(str(i.status)) ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">open</span>`}</td></tr>`).join('') +
+      reviewInsp.map(i => `
+    <tr><td style="${S.td}">${pillRed('BAD REVIEW')} <b>${esc(i.unit_name)}</b> <span style="${S.muted}">· ${i.check_in <= d.today ? 'unit is empty now' : 'on the checkout ' + esc(niceDay(i.check_in))}</span><br>
+    <span style="font-size:12px;color:#6b7280">${esc(i.reason)}${i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ' · unassigned'}</span></td>
+    <td style="${S.td};text-align:right;white-space:nowrap">${isDoneStatus(i.status) ? `<span style="${S.green}">done</span>` : /progress|start/i.test(str(i.status)) ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">open</span>`}</td></tr>`).join('')
+    ) +
+    (reviewInsp.length ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">A review at or below the bar books an inspection on that unit's next checkout — the task carries what the guest wrote, and it rolls forward until it is done.</p>` : ''),
+    '#7c3aed') : ''}
 
   ${eyebrow('Today')}
   ${departures.length ? card('Departures', departures.length, bare(depRows) + (departures.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${departures.length - 20} more on the board</p>` : ''), '#0891b2') : ''}
