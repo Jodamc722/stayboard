@@ -105,44 +105,92 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
 }
 
 // TASK TEMPLATES — the formats our team actually works to (preventative maintenance, field
-// report, the inspection checklists). GET /companies/templates, per Breezeway's public API:
+// report, the inspection checklists). Breezeway documents these at
 //   https://developer.breezeway.io/reference/list-available-templates
 // Templates are what makes a created task carry OUR checklist instead of a bare title, so the
 // Add-task sheet in Today in Ops reads this and passes template_id back on create.
 //
+// WHY THIS PROBES INSTEAD OF CALLING ONE PATH. Breezeway publishes the endpoint but not its
+// response schema, and their other list endpoints disagree with each other about shape (/people
+// returns a bare array, some return {results}, some {data}). Rather than pick one guess and have
+// the picker silently come back empty in production, this walks a short list of candidates and
+// keeps the first that yields usable rows — then remembers which one won. The unwrapping is
+// equally forgiving for the same reason.
+//
+// An empty result is NOT an error state: the Add-task sheet falls back to its built-in presets, so
+// the worst case is the sheet behaving exactly as it did before templates existed.
+//
 // Cached in-module for 10 minutes: the list changes when somebody edits a template in Breezeway,
 // which is a monthly event, not a per-request one — and the ops board opens this on every mount.
 export type BzTemplate = { id: number; name: string; department: string; description: string }
-let TPL_CACHE: { at: number; list: BzTemplate[] } | null = null
+export type BzTemplateProbe = { path: string; status: number; count: number; keys: string[]; sample: string }
+const TPL_PATHS = ['/companies/templates', '/companies/templates?limit=200', '/templates', '/template']
+let TPL_CACHE: { at: number; list: BzTemplate[]; probes: BzTemplateProbe[] } | null = null
+
+/** Pull the rows out of whichever envelope Breezeway used. */
+function tplRows(d: any): any[] {
+  if (Array.isArray(d)) return d
+  for (const k of ['results', 'data', 'templates', 'items', 'records']) {
+    if (Array.isArray(d?.[k])) return d[k]
+  }
+  return []
+}
+function tplDept(t: any): string {
+  const s = String(t?.type_department?.code ?? t?.type_department?.name ?? t?.type_department ?? t?.department ?? '').toLowerCase()
+  if (/housekeep|clean/.test(s)) return 'housekeeping'
+  if (/maint/.test(s)) return 'maintenance'
+  if (/inspect/.test(s)) return 'inspection'
+  if (/safe/.test(s)) return 'safety'
+  return ''
+}
+
 export async function listBreezewayTemplates(force = false): Promise<BzTemplate[]> {
-  if (!force && TPL_CACHE && Date.now() - TPL_CACHE.at < 10 * 60_000) return TPL_CACHE.list
-  const r = await bzApi('/companies/templates')
-  if (!r.ok) {
-    // Serve the last good list rather than an empty picker if Breezeway blips.
-    if (TPL_CACHE) return TPL_CACHE.list
-    return []
+  return (await probeBreezewayTemplates(force)).list
+}
+
+/**
+ * The same fetch, with the evidence attached. The API route exposes the probe behind ?debug=1 so
+ * that "the picker is empty" is a two-second diagnosis — which path was tried, what came back —
+ * instead of a round trip through a deploy.
+ */
+export async function probeBreezewayTemplates(force = false): Promise<{ list: BzTemplate[]; probes: BzTemplateProbe[]; path: string }> {
+  if (!force && TPL_CACHE && Date.now() - TPL_CACHE.at < 10 * 60_000) {
+    return { list: TPL_CACHE.list, probes: TPL_CACHE.probes, path: TPL_CACHE.probes.find(p => p.count > 0)?.path || '' }
   }
-  const d: any = r.data
-  const arr: any[] = Array.isArray(d) ? d : (Array.isArray(d?.results) ? d.results : (Array.isArray(d?.data) ? d.data : (Array.isArray(d?.templates) ? d.templates : [])))
-  const dept = (t: any) => {
-    const s = String(t?.type_department?.code ?? t?.type_department?.name ?? t?.type_department ?? t?.department ?? '').toLowerCase()
-    if (/housekeep|clean/.test(s)) return 'housekeeping'
-    if (/maint/.test(s)) return 'maintenance'
-    if (/inspect/.test(s)) return 'inspection'
-    if (/safe/.test(s)) return 'safety'
-    return ''
+  const probes: BzTemplateProbe[] = []
+  let list: BzTemplate[] = []
+  let won = ''
+  for (const path of TPL_PATHS) {
+    let r: { ok: boolean; status: number; data: any; text: string }
+    try { r = await bzApi(path) } catch (e: any) { probes.push({ path, status: 0, count: 0, keys: [], sample: String(e?.message || e).slice(0, 200) }); continue }
+    const rows = r.ok ? tplRows(r.data) : []
+    const first = rows[0]
+    probes.push({
+      path, status: r.status, count: rows.length,
+      keys: first && typeof first === 'object' ? Object.keys(first).slice(0, 20) : [],
+      sample: (r.ok ? JSON.stringify(first ?? r.data) : String(r.text || '')).slice(0, 300),
+    })
+    if (!rows.length) continue
+    const mapped = rows
+      .map((t: any) => ({
+        id: Number(t?.id ?? t?.template_id ?? t?.templateId),
+        name: String(t?.name ?? t?.title ?? t?.template_name ?? t?.templateName ?? '').trim(),
+        department: tplDept(t),
+        description: String(t?.description ?? t?.details ?? t?.instructions ?? '').trim().slice(0, 600),
+      }))
+      .filter((t: BzTemplate) => Number.isFinite(t.id) && t.id > 0 && !!t.name)
+    if (!mapped.length) continue
+    // De-dupe by id: a paged endpoint that ignores `limit` can repeat rows.
+    const seen: Record<number, true> = {}
+    list = mapped.filter(t => (seen[t.id] ? false : (seen[t.id] = true)))
+      .sort((a: BzTemplate, b: BzTemplate) => a.name.localeCompare(b.name))
+    won = path
+    break
   }
-  const list = arr
-    .map((t: any) => ({
-      id: Number(t?.id ?? t?.template_id),
-      name: String(t?.name ?? t?.title ?? t?.template_name ?? '').trim(),
-      department: dept(t),
-      description: String(t?.description ?? t?.details ?? '').trim().slice(0, 600),
-    }))
-    .filter((t: BzTemplate) => Number.isFinite(t.id) && !!t.name)
-    .sort((a: BzTemplate, b: BzTemplate) => a.name.localeCompare(b.name))
-  TPL_CACHE = { at: Date.now(), list }
-  return list
+  // A blip must not wipe a good list — serve the last one we had.
+  if (!list.length && TPL_CACHE && TPL_CACHE.list.length) return { list: TPL_CACHE.list, probes, path: '' }
+  TPL_CACHE = { at: Date.now(), list, probes }
+  return { list, probes, path: won }
 }
 
 // Retrieve a single task by id (for status tracking / "action taken").
