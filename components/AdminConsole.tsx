@@ -58,7 +58,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
       {tab === 'roles' && <RolesAdmin isOwner={isOwner} />}
       {tab === 'settings' && (
         <div className="space-y-3">
-          <Fold title="Eve — memory, voice &amp; direction" defaultOpen><EveAdmin canEdit={isOwner} /></Fold>
+          <Fold title="Eve — memory, voice, Telegram" defaultOpen><EveAdmin canEdit={isOwner} /></Fold>
           <Fold title="Today-in-Ops presets" defaultOpen><OpsPresetsAdmin isOwner={isOwner} /></Fold>
           <Fold title="Morning Ops Brief" defaultOpen><OpsBriefAdmin isOwner={isOwner} /></Fold>
           <Fold title="Task automation" defaultOpen><TaskAutomationAdmin isOwner={isOwner} /></Fold>
