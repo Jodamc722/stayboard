@@ -75,7 +75,13 @@ export type GuestOrdersCfg = {
   hubs: Hub[]
   hubRules: Record<string, ScopeRule>
 }
-export type Hub = { id: string; label: string; buildings: string[] }
+/**
+ * A HUB IS A GROUP OF LISTINGS OR PROPERTIES (Jon, 2026-08-25) — a shared shelf.
+ * `buildings` takes a whole property in one click; `listings` names individual units, for the
+ * common case where a shelf serves some units in a building but not all, or spans buildings.
+ * A listing named directly BEATS its building, so one unit can be pulled into a different hub.
+ */
+export type Hub = { id: string; label: string; buildings: string[]; listings: string[] }
 /** What can differ by building / location (Jon, 2026-08-24: "customizable by building and by location"). */
 export type ScopeRule = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number; taxPct?: number }
 export type Timing = { enabled: boolean; orderByHoursBefore: number; leadHours: number; sameDayCutoffHour: number; checkInHour: number; taxPct: number; source: string; taxSource: string }
@@ -140,7 +146,10 @@ function normHubs(v: any): Hub[] {
     seen[id] = true
     const known = KNOWN_BUILDINGS.map(b => b.label)
     const buildings = Array.isArray(h?.buildings) ? h.buildings.map((b: any) => known.find(k => k.toLowerCase() === String(b).trim().toLowerCase())).filter(Boolean) as string[] : []
-    out.push({ id, label, buildings: Array.from(new Set(buildings)) })
+    // listing ids are Guesty's own — kept as given, deduped, and capped so one hub cannot bloat
+    // the settings row into something PostgREST refuses to write back
+    const listings = Array.isArray(h?.listings) ? h.listings.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 400) : []
+    out.push({ id, label, buildings: Array.from(new Set(buildings)), listings: Array.from(new Set(listings)) })
   }
   return out
 }
@@ -175,21 +184,27 @@ export function normalizeCfg(s: any): GuestOrdersCfg {
 }
 
 /** The hub a building belongs to (first match), or null. */
-export function hubOf(cfg: GuestOrdersCfg, building: string | null | undefined): Hub | null {
+/**
+ * The hub a stay belongs to. A LISTING named in a hub wins over the building, so a single unit can
+ * be pulled onto a different shelf than the rest of its property without splitting the building.
+ */
+export function hubOf(cfg: GuestOrdersCfg, building: string | null | undefined, listingId?: string | null): Hub | null {
+  const l = String(listingId || '')
+  if (l) { const byListing = cfg.hubs.find(h => (h.listings || []).indexOf(l) >= 0); if (byListing) return byListing }
   const b = String(building || '').toLowerCase()
   if (!b) return null
   return cfg.hubs.find(h => h.buildings.some(x => x.toLowerCase() === b)) || null
 }
 /** Where an order's stock is counted: its hub, else the global shelf. */
-export function stockScopeFor(cfg: GuestOrdersCfg, building: string | null | undefined): string {
-  const h = hubOf(cfg, building)
+export function stockScopeFor(cfg: GuestOrdersCfg, building: string | null | undefined, listingId?: string | null): string {
+  const h = hubOf(cfg, building, listingId)
   return h ? 'hub:' + h.id : 'global'
 }
 
 /** The timing that applies to one stay: building override → market override → global. */
-export function timingFor(cfg: GuestOrdersCfg, building: string | null | undefined, market: string | null | undefined): Timing {
+export function timingFor(cfg: GuestOrdersCfg, building: string | null | undefined, market: string | null | undefined, listingId?: string | null): Timing {
   const b = building ? cfg.buildingRules[building] : undefined
-  const hub = hubOf(cfg, building)
+  const hub = hubOf(cfg, building, listingId)
   const h = hub ? cfg.hubRules[hub.id] : undefined
   const m = market ? cfg.marketRules[market] : undefined
   const pick = <K extends keyof ScopeRule>(k: K, fb: NonNullable<ScopeRule[K]>): NonNullable<ScopeRule[K]> =>
@@ -424,7 +439,7 @@ async function moveStock(order: OrderRow, scope: string, kind: 'reserve' | 'rele
   return kind === 'reserve' ? 'reserved ' + notes.join(', ') : ''
 }
 export async function reserveStockFor(order: OrderRow, cfg: GuestOrdersCfg, actor: string): Promise<void> {
-  const scope = stockScopeFor(cfg, order.building)
+  const scope = stockScopeFor(cfg, order.building, order.listing_id)
   const note = await moveStock(order, scope, 'reserve', actor)
   await patch(order.id, { stock_scope: scope, stock_note: note || null })
 }
@@ -573,7 +588,7 @@ export async function createDueLinks(cfg: GuestOrdersCfg, budgetMs = 40_000): Pr
   for (const l of (ls || []) as any[]) {
     const name = l.nickname || l.title || 'Unit'
     const building = buildingOf(l.building, name)
-    scopeOk[String(l.id)] = timingFor(cfg, building, marketOf(building, l.address_city, name)).enabled
+    scopeOk[String(l.id)] = timingFor(cfg, building, marketOf(building, l.address_city, name), String(l.id)).enabled
   }
   const ids = rows.filter(r => r.listing_id && !skip.test(String(r.source || '')) && scopeOk[String(r.listing_id)] !== false).map(r => String(r.id))
   const { data: have } = ids.length ? await db.from('guest_order_links').select('code,reservation_id,sent_at,send_error').in('reservation_id', ids) : { data: [] as any[] }
@@ -644,10 +659,10 @@ async function patch(id: string, fields: Record<string, any>): Promise<void> {
 /** Guest hop: basket → order row → approvers told. */
 export async function submitOrder(link: LinkRow, basket: { sku: string; qty: number }[], guestNote: string, origin: string | null, delivery?: { mode: DeliveryMode; date?: string | null }): Promise<{ ok: boolean; order?: OrderRow; error?: string }> {
   const cfg = await getGuestOrdersCfg()
-  const hub = hubOf(cfg, link.building)
+  const hub = hubOf(cfg, link.building, link.listing_id)
   const catalog = await loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true })
   // Tax is the rate for THIS building's area (Broward ≠ Miami), resolved the same way as timing.
-  const priced = priceBasket(catalog, basket, timingFor(cfg, link.building, link.market).taxPct)
+  const priced = priceBasket(catalog, basket, timingFor(cfg, link.building, link.market, link.listing_id).taxPct)
   if (priced.problems.length) return { ok: false, error: priced.problems.join(' · ') }
   if (!priced.lines.length) return { ok: false, error: 'Pick at least one item.' }
   const db = supabaseAdmin()
@@ -790,7 +805,7 @@ export async function approveOrder(id: string, actor: string): Promise<{ ok: boo
       return { ok: false, order: await getOrder(id) || undefined, error: ch.error }
     }
     const paidAt = new Date()
-    const dd = resolveDelivery(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market), order.requested_delivery, order.requested_date)
+    const dd = resolveDelivery(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market, order.listing_id), order.requested_delivery, order.requested_date)
     await patch(id, {
       status: 'paid', paid_at: paidAt.toISOString(), paid_via: 'guesty:' + card.id, charge_error: null, charge_raw: ch.raw || null, guesty_payment_id: ch.paymentId || null,
       payment_note: 'Charged ' + cardLabel(card) + ' via Guesty (' + (ch.status || 'ok') + ')', collect_method: 'card_on_file', collect_card: cardLabel(card),
@@ -886,7 +901,7 @@ export async function markPaid(id: string, actor: string, note: string, settle: 
   }
   // Only 'outside' can leave the folio chasing money that is already in hand.
   const folioLeft = settle === 'outside' ? (order.guesty_invoice_item_ids || []).length : 0
-  const dd = resolveDelivery(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market), order.requested_delivery, order.requested_date)
+  const dd = resolveDelivery(paidAt, order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market, order.listing_id), order.requested_delivery, order.requested_date)
   await patch(id, {
     approved_at: order.approved_at || paidAt.toISOString(), approved_by: order.approved_by || actor,
     payment_note: 'Marked paid by ' + actor + (note ? ' — ' + note.slice(0, 200) : '') + extra, charge_error: null,
@@ -932,7 +947,7 @@ export async function setDeliveryDate(id: string, date: string, actor: string): 
   // 'asap' / 'arrival' re-run the rule from now; a real date is taken as given (staff override).
   if (date === 'asap' || date === 'arrival') {
     const cfg = await getGuestOrdersCfg()
-    const dd = resolveDelivery(new Date(), order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market), date, null)
+    const dd = resolveDelivery(new Date(), order.check_in || todayET(), order.check_out, await checkInTimeFor(order.link_code), timingFor(cfg, order.building, order.market, order.listing_id), date, null)
     await patch(id, { delivery_date: dd.date, delivery_note: dd.note + ' · set by ' + actor })
     return { ok: true }
   }
