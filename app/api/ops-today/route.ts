@@ -129,6 +129,40 @@ export async function GET(req: NextRequest) {
       if (!qcByListing[id]) qcByListing[id] = []
       qcByListing[id].push({ issue: q.issue_type || 'Issue', status: str(q.status), reportUrl: q.report_url || null })
     }
+    // WHO IS ACTUALLY IN THE UNIT — read BEFORE the tasks are mapped, because it decides whether a
+    // departure clean on today is a real turn, a stale one left over an extended stay, or one we
+    // moved here ourselves. Deliberately CONSERVATIVE: a unit counts as OCCUPIED if ANY live
+    // reservation spans today (check_in <= today < check_out), guests arriving today included —
+    // they'd be in the unit by 4pm, so it is not free to work in.
+    const backFrom = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(new Date(today + 'T12:00:00Z').getTime() - 21 * 86400000))
+    const [occRes, nextRes, pastRes] = await Promise.all([
+      db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name').lte('check_in', today).gt('check_out', today).limit(4000),
+      db.from('guesty_reservations').select('listing_id,check_in,status').gt('check_in', today).order('check_in', { ascending: true }).limit(4000),
+      // Recent past checkouts — the other half of "why is a departure clean sitting on today?".
+      db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', backFrom).lt('check_out', today).order('check_out', { ascending: false }).limit(4000),
+    ])
+    const occupied: Record<string, string> = {}
+    const occupiedUntil: Record<string, string> = {}
+    for (const r of (occRes.data || []) as any[]) {
+      if (!isLiveStay(r.status)) continue
+      const id = String(r.listing_id)
+      occupied[id] = r.guest_name || 'Guest'
+      const out = str(r.check_out).slice(0, 10)
+      if (out && (!occupiedUntil[id] || out > occupiedUntil[id])) occupiedUntil[id] = out
+    }
+    const nextIn: Record<string, string> = {}
+    for (const r of (nextRes.data || []) as any[]) {
+      if (!isLiveStay(r.status)) continue
+      const id = String(r.listing_id)
+      if (!nextIn[id]) nextIn[id] = str(r.check_in).slice(0, 10)
+    }
+    const lastOut: Record<string, string> = {}
+    for (const r of (pastRes.data || []) as any[]) {
+      if (!isLiveStay(r.status)) continue
+      const id = String(r.listing_id)
+      const d = str(r.check_out).slice(0, 10)
+      if (d && (!lastOut[id] || d > lastOut[id])) lastOut[id] = d
+    }
     const tasks = ((tRes.data || []) as any[]).filter(t => !isGone(str(t.status).toLowerCase())).map(t => {
       const lid = String(t.reference_property_id)
       const li = lmap[lid]
@@ -142,7 +176,30 @@ export async function GET(req: NextRequest) {
       const ppl = Array.isArray(t.assignees) ? t.assignees : []
       // the 4pm clock applies to DEPARTURE CLEANS only, and only where Breezeway completion is real
       const untracked = UNTRACKED_RE.test(li ? li.name : '')
-      const clocked = type === 'departure_clean' && !untracked
+      // ── A MOVED DEPARTURE CLEAN IS STILL A DEPARTURE CLEAN ──────────────────────────────────
+      // Jon, 2026-08-25: "moved departure clean is a departure clean, just mark as extended if
+      // extended, or if we moved and blocked the unit for scheduling."
+      //
+      // So the TYPE never changes — it stays a departure clean and it keeps counting as one. What
+      // changes is the STATE, and the state is readable from who is actually in the unit today:
+      //
+      //   normal    a guest checked out today. The ordinary turn, on the 4pm clock.
+      //   extended  nobody left today and somebody is in-house — the stay ran past the clean.
+      //             This is the "Extended · do not clean" case the vendor board already flags;
+      //             going in would mean walking into an occupied unit.
+      //   moved     nobody left today and the unit is empty. The checkout was earlier and the
+      //             clean was moved onto today — the BFC (block-for-clean) case, where we hold
+      //             the unit off the calendar so the clean has a day of its own.
+      //
+      // ONLY 'extended' leaves the 4pm clock. A clean nobody should perform cannot be "late", and
+      // counting it as late is how the deadline number stops meaning anything. A moved clean is
+      // real work on a real day and stays on the clock.
+      const moveState: 'normal' | 'extended' | 'moved' =
+        type !== 'departure_clean' ? 'normal'
+          : outToday[lid] ? 'normal'
+            : occupied[lid] ? 'extended'
+              : 'moved'
+      const clocked = type === 'departure_clean' && !untracked && moveState !== 'extended'
       const finishedMin = t.finished_at ? etMinutes(new Date(t.finished_at)) : null
       const late = clocked && !done && minsLeft < 0
       const atRisk = clocked && !done && !late && minsLeft <= AT_RISK_MIN && !running
@@ -156,27 +213,11 @@ export async function GET(req: NextRequest) {
         startedAt: t.started_at || null, finishedAt: t.finished_at || null,
         minutes: t.total_minutes ?? null, reportUrl: t.report_url || null,
         done, running, clocked, late, atRisk, missed, untracked,
+        moveState, movedFrom: moveState === 'moved' ? (lastOut[lid] || null) : null,
+        extendedTo: moveState === 'extended' ? (occupiedUntil[lid] || null) : null,
       }
     })
-    // VACANT UNITS — walk-in prevention, so this is deliberately CONSERVATIVE:
-    // a unit counts as OCCUPIED if ANY live reservation spans today (check_in <= today < check_out).
-    // That includes guests ARRIVING today — they'd be in the unit by 4pm, so it is not free to work in.
-    // Anything we're not certain is empty stays off the vacant list.
-    const [occRes, nextRes] = await Promise.all([
-      db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name').lte('check_in', today).gt('check_out', today).limit(4000),
-      db.from('guesty_reservations').select('listing_id,check_in,status').gt('check_in', today).order('check_in', { ascending: true }).limit(4000),
-    ])
-    const occupied: Record<string, string> = {}
-    for (const r of (occRes.data || []) as any[]) {
-      if (!isLiveStay(r.status)) continue
-      occupied[String(r.listing_id)] = r.guest_name || 'Guest'
-    }
-    const nextIn: Record<string, string> = {}
-    for (const r of (nextRes.data || []) as any[]) {
-      if (!isLiveStay(r.status)) continue
-      const id = String(r.listing_id)
-      if (!nextIn[id]) nextIn[id] = str(r.check_in).slice(0, 10)
-    }
+    // VACANT UNITS — built from the occupancy read above.
     const taskCount: Record<string, number> = {}
     for (const t of tasks) taskCount[t.listingId] = (taskCount[t.listingId] || 0) + 1
     const vacants = Object.keys(lmap)
