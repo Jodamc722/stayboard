@@ -35,6 +35,33 @@ function basisStrings(o: Any, b: Basis): { rev: string; adr: string; revpar: str
   const t = basisTriple({ accomNum: o.accomNum || 0, accomGrossNum: o.accomGrossNum || 0, cleaningNum: o.cleaningNum || 0, feeNum: o.feeNum == null ? undefined : (o.feeNum || 0), occNights: o.occNights || 0, availNights: o.availNights || 0 }, b)
   return { rev: fmtMoney(t.revenue), adr: '$' + t.adr, revpar: '$' + t.revpar }
 }
+// LOOKING AHEAD CARD NUMBERS — one answer for the screen, the deck and the owner.
+//
+// Jon, 2026-08-25: "need to be able to edit these numbers on owner reports". Until now the
+// Looking Ahead cards were only editable on reports old enough to have no raw components —
+// anything the current engine generated printed a derived figure with no way in, because the
+// number is recomputed from accommodation / cleaning / fees every time the basis changes.
+//
+// So an edit is stored as an OVERRIDE PER BASIS rather than overwriting the raw. The figure you
+// typed while looking at "Net + fees" is not the answer for "Gross", so switching basis falls
+// back to the computed number instead of quietly relabelling your edit. Clearing the box hands
+// the card back to the engine. Legacy months (no raw) keep editing their stored string directly.
+function aheadValues(m: Any, b: Basis): {
+  adr: string; revpar: string; adrComputed: string; revparComputed: string; adrOv: boolean; revparOv: boolean
+} {
+  const raw = hasBasisRaw(m) ? basisStrings(m, b) : null
+  const adrComputed = raw ? raw.adr : String((m && m.adr) || '')
+  const revparComputed = raw ? raw.revpar : String((m && m.revpar) || '')
+  const ovA = m && m.adrOv && typeof m.adrOv[b] === 'string' ? String(m.adrOv[b]) : null
+  const ovR = m && m.revparOv && typeof m.revparOv[b] === 'string' ? String(m.revparOv[b]) : null
+  return {
+    adr: ovA != null ? ovA : adrComputed,
+    revpar: ovR != null ? ovR : revparComputed,
+    adrComputed, revparComputed,
+    adrOv: ovA != null, revparOv: ovR != null,
+  }
+}
+
 // Edit-mode segmented control for choosing a section's revenue basis.
 function BasisPicker({ label, value, withNone, onPick, t }: Any) {
   const opts: { val: string; name: string }[] = (withNone ? [{ val: 'none', name: 'None' }] : []).concat(BASES.map((b: Basis) => ({ val: b, name: BASIS_SHORT[b] })))
@@ -420,6 +447,10 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   // looking ahead
   const s6 = pptx.addSlide()
   head(s6, 'LOOKING AHEAD', ahead.headline, ahead.subtitle)
+  // The deck used to print m.adr / m.revpar — the stored legacy strings — while the page printed
+  // the figure derived for the section's basis (and now any hand-set override). Two numbers for
+  // one card. Same helper both sides, so the export can no longer drift from the screen.
+  const aheadBasis: Basis = ((c.basis && (c.basis.ahead || c.basis.default)) || 'netota') as Basis
   const aMonths = (ahead.months || []).slice(0, 3)
   const an = Math.max(1, aMonths.length), acw = (12.13 - (an - 1) * 0.25) / an
   for (let i = 0; i < aMonths.length; i++) {
@@ -429,7 +460,8 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
     s6.addText(String(m.status || ''), { x: x + acw - 1.6, y: CT + 0.23, w: 1.4, h: 0.25, align: 'right', fontSize: 9, bold: true, color: ACC, charSpacing: 1 })
     s6.addText(String(m.occPct != null ? m.occPct : 0) + '%', { x: x + 0.24, y: CT + 0.62, w: acw - 0.4, h: 0.78, fontSize: 32, bold: true, color: INK })
     s6.addText('on the books', { x: x + 0.26, y: CT + 1.34, w: acw - 0.4, h: 0.28, fontSize: 10, color: MUT })
-    s6.addText('ADR ' + String(m.adr || '') + '  ·  RevPAR ' + String(m.revpar || ''), { x: x + 0.24, y: CT + 1.66, w: acw - 0.4, h: 0.3, fontSize: 11, bold: true, color: BODY })
+    const av6 = aheadValues(m, aheadBasis)
+    s6.addText('ADR ' + av6.adr + '  ·  RevPAR ' + av6.revpar, { x: x + 0.24, y: CT + 1.66, w: acw - 0.4, h: 0.3, fontSize: 11, bold: true, color: BODY })
     if (m.note) s6.addText(String(m.note).slice(0, 190), { x: x + 0.24, y: CT + 1.98, w: acw - 0.4, h: 0.66, fontSize: 9, color: SUB, valign: 'top' })
   }
   const strip = (ahead.strip || []).slice(0, 8)
@@ -693,6 +725,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const snapPrimary: Basis = bcfg.snapshotPrimary || bDefault
   const snapSecondary: Basis | 'none' = (bcfg.snapshotSecondary === undefined ? 'gross' : bcfg.snapshotSecondary)
   const setBasis = (field: string, val: string) => mutate((d: Any) => { d.basis = { ...(d.basis || {}), [field]: val } })
+  // Hand-set ADR / RevPAR on a Looking Ahead card, stored per basis (see aheadValues above).
+  // An empty box deletes the override, so the card goes straight back to the computed figure.
+  const setAheadOv = (i: number, field: 'adrOv' | 'revparOv', b: Basis, v: string) => mutate((d: Any) => {
+    const m = d.ahead.months[i]
+    const next = { ...(m[field] || {}) }
+    if (String(v).trim() === '') delete next[b]; else next[b] = v
+    if (Object.keys(next).length) m[field] = next; else delete m[field]
+  })
   // Listings blocked/off-market for the period — dropped from revenue AND the occupancy denominator.
   const excluded: string[] = Array.isArray(c.excludeListings) ? c.excludeListings : []
   const toggleExclude = (id: string) => mutate((d: Any) => { d.excludeListings = Array.isArray(d.excludeListings) ? d.excludeListings : []; const i = d.excludeListings.indexOf(id); if (i >= 0) d.excludeListings.splice(i, 1); else d.excludeListings.push(id) })
@@ -2203,7 +2243,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 // the raw components existed have nothing to re-derive from — those keep their
                 // stored, hand-editable strings rather than a silently wrong figure.
                 const aRaw = hasBasisRaw(m)
-                const av = aRaw ? basisStrings(m, bSection('ahead')) : null
+                const ab = bSection('ahead')
+                const av = aheadValues(m, ab)
                 return (
                 <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
@@ -2218,10 +2259,25 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <span className="text-sm font-semibold ml-2" style={{ color: t.muted }}>on the books</span>
                   </p>
                   <p className="mt-1.5 text-[13px] font-semibold" style={{ color: t.body }}>
-                    {av
-                      ? <>ADR <span className="tabular-nums">{av.adr}</span>   ·   RevPAR <span className="tabular-nums">{av.revpar}</span></>
-                      : <>ADR <Ed v={m.adr || ''} set={v => patch('ahead.months.' + i + '.adr', v)} edit={edit} />   ·   RevPAR <Ed v={m.revpar || ''} set={v => patch('ahead.months.' + i + '.revpar', v)} edit={edit} /></>}
+                    ADR <Ed v={av.adr} className="tabular-nums" edit={edit}
+                          set={v => (aRaw ? setAheadOv(i, 'adrOv', ab, v) : patch('ahead.months.' + i + '.adr', v))} />
+                    {'   ·   '}
+                    RevPAR <Ed v={av.revpar} className="tabular-nums" edit={edit}
+                          set={v => (aRaw ? setAheadOv(i, 'revparOv', ab, v) : patch('ahead.months.' + i + '.revpar', v))} />
                   </p>
+                  {/* What the engine says, kept in view the moment you depart from it — and one
+                      click back. Edit mode only: the owner sees the number, never the argument. */}
+                  {edit && aRaw && (av.adrOv || av.revparOv) && (
+                    <p className="mt-1 text-[10.5px] flex items-center gap-1.5 flex-wrap" style={{ color: t.muted }}>
+                      <span>Hand-set · {BASIS_SHORT[ab]} computes ADR {av.adrComputed} · RevPAR {av.revparComputed}</span>
+                      <button
+                        onClick={() => mutate((d: Any) => { delete d.ahead.months[i].adrOv; delete d.ahead.months[i].revparOv })}
+                        className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                        style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.accent }}>
+                        Use computed
+                      </button>
+                    </p>
+                  )}
                   {(m.note || edit) && (
                     <p className="mt-3 text-[13px]" style={{ color: t.sub }}>
                       <Ed v={m.note || ''} set={v => patch('ahead.months.' + i + '.note', v)} edit={edit} multiline placeholder="Commentary…" />
@@ -2231,7 +2287,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )})}
             </div>
             {(ahead.months || []).some((m: Any) => hasBasisRaw(m)) && (
-              <p className="mt-3 text-[11px]" style={{ color: t.muted }}>ADR / RevPAR on the books &middot; {BASIS_LABEL[bSection('ahead')]}</p>
+              <p className="mt-3 text-[11px]" style={{ color: t.muted }}>
+                ADR / RevPAR on the books &middot; {BASIS_LABEL[bSection('ahead')]}
+                {edit && (ahead.months || []).some((m: Any) => aheadValues(m, bSection('ahead')).adrOv || aheadValues(m, bSection('ahead')).revparOv)
+                  ? ' · some figures on this basis are hand-set' : ''}
+              </p>
             )}
             {Array.isArray(ahead.strip) && ahead.strip.length > 0 && (
               <div className="mt-6 rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
@@ -2246,7 +2306,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div className="flex items-end gap-3 h-full">
                     {ahead.strip.map((s: Any, i: number) => (
                       <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
-                        <span className="text-[12px] font-black tabular-nums mb-1">{s.occPct}%</span>
+                        <span className="text-[12px] font-black tabular-nums mb-1">
+                          {edit ? <Ed v={String(s.occPct ?? 0)} set={v => patch('ahead.strip.' + i + '.occPct', Number(v) || 0)} edit /> : (s.occPct)}%
+                        </span>
                         <div className="w-full rounded-t-md" style={{ height: Math.max(4, (Number(s.occPct) || 0)) + '%', background: paceBar(t, s.occPct, i === 1, Math.max(1, i - 1)), opacity: i === 0 ? 0.35 : 1 }} />
                       </div>
                     ))}
@@ -2254,7 +2316,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 </div>
                 <div className="flex gap-3 mt-1.5">
                   {ahead.strip.map((s: Any, i: number) => (
-                    <span key={i} className="flex-1 text-center text-[11px] font-semibold" style={{ color: t.sub }}>{s.month}</span>
+                    <span key={i} className="flex-1 text-center text-[11px] font-semibold" style={{ color: t.sub }}>
+                      {edit ? <Ed v={s.month || ''} set={v => patch('ahead.strip.' + i + '.month', v)} edit /> : s.month}
+                    </span>
                   ))}
                 </div>
               </div>
