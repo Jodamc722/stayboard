@@ -41,6 +41,11 @@ export type GTask = {
   startedAt: string | null; finishedAt: string | null; minutes: number | null
   reportUrl?: string | null
   done: boolean; running: boolean; late: boolean; atRisk: boolean; untracked?: boolean; guestyOnly?: boolean
+  // A departure clean that is not today's turn: 'extended' = the stay ran past it, do not go in;
+  // 'moved' = the checkout was earlier and this clean was moved onto today (the BFC hold).
+  moveState?: 'normal' | 'extended' | 'moved'
+  movedFrom?: string | null
+  extendedTo?: string | null
 }
 export type GUnit = {
   listingId: string; unit: string; market: string; market2?: string | null; building?: string | null
@@ -75,6 +80,30 @@ const CAT_BY: Record<Cat, typeof CATS[number]> = CATS.reduce((m, c) => { m[c.key
 
 /** The board's category rule is lib/task-categories.ts, so the daily briefs count the same way. */
 export const catOf = catOfTask
+
+/**
+ * The one sentence a moved or extended departure clean has to say for itself. Returns null for an
+ * ordinary turn, because a badge on every clean is a badge on nothing.
+ */
+function moveNote(t: GTask): { tag: string; cls: string; line: string } | null {
+  if (t.moveState === 'extended') return {
+    tag: 'EXTENDED', cls: 'bg-rose-600 text-white',
+    line: 'The guest is still in the unit' + (t.extendedTo ? ' until ' + niceDay(t.extendedTo) : '') + ' — do not clean it today.',
+  }
+  if (t.moveState === 'moved') return {
+    tag: 'MOVED', cls: 'bg-indigo-100 text-indigo-800',
+    // Only claim a checkout date when there actually is one on the books. Without it, say the
+    // thing we DO know — nobody left today and the unit is empty — rather than inventing a story.
+    line: t.movedFrom
+      ? 'Checked out ' + niceDay(t.movedFrom) + '. The clean was moved to today and the unit is held for it.'
+      : 'Nobody checked out today and the unit is empty — this clean was moved onto today.',
+  }
+  return null
+}
+/** "Sat Aug 23" — a date a person can place without counting. */
+function niceDay(iso: string): string {
+  try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(iso + 'T12:00:00Z')) } catch { return iso }
+}
 
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
 const isReal = (t: GTask) => !t.guestyOnly && /^\d+$/.test(String(t.id))
@@ -139,7 +168,11 @@ function unitStatus(u: GUnit): { label: string; cls: string } {
   const open = u.tasks.filter(t => !t.done)
   const clean = u.tasks.find(t => t.type === 'departure_clean')
   if (!open.length) return { label: 'Ready', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+  // AN OCCUPIED UNIT IS NOT DIRTY, IT IS OCCUPIED. A stale clean sitting on an extended stay used
+  // to read "Dirty" here, which is the one word that would send somebody to the door.
+  if (clean && !clean.done && clean.moveState === 'extended') return { label: 'Guest still in', cls: 'bg-rose-100 text-rose-800 border-rose-300' }
   if (u.tasks.some(t => t.running && !t.done)) return { label: 'In progress', cls: 'bg-amber-50 text-amber-800 border-amber-200' }
+  if (clean && !clean.done && clean.moveState === 'moved') return { label: 'Held for clean', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' }
   if (u.guestOut && clean && !clean.done) return { label: 'Dirty', cls: 'bg-rose-50 text-rose-700 border-rose-200' }
   return { label: 'Open', cls: 'bg-app text-muted border-line' }
 }
@@ -170,6 +203,7 @@ function TaskChip({ t }: { t: GTask }) {
   }
   const state = t.done ? 'done' : t.running ? 'running' : t.assignees.length ? 'open' : 'unassigned'
   const open = pinned || !!at
+  const mv = moveNote(t)
 
   return (
     <>
@@ -178,11 +212,14 @@ function TaskChip({ t }: { t: GTask }) {
         onMouseLeave={() => { if (!pinned) setAt(null) }}
         onClick={ev => { ev.stopPropagation(); place(); setPinned(p => !p) }}
         aria-label={c.label + ': ' + t.name}
-        className={'w-6 h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
+        className={'w-6 h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 relative ' +
           (state === 'done' ? c.dot + ' border-transparent text-white'
-            : state === 'running' ? 'border-amber-400 bg-amber-50 ' + c.ink
-              : state === 'unassigned' ? 'border-dashed border-rose-400 bg-white ' + c.ink
-                : 'border-slate-300 bg-white ' + c.ink)}>
+            // An extended clean gets the loudest border on the board: it is the one square where
+            // doing the work is the mistake.
+            : t.moveState === 'extended' ? 'border-rose-600 bg-rose-50 text-rose-700'
+              : state === 'running' ? 'border-amber-400 bg-amber-50 ' + c.ink
+                : state === 'unassigned' ? 'border-dashed border-rose-400 bg-white ' + c.ink
+                  : 'border-slate-300 bg-white ' + c.ink)}>
         <Glyph size={12} strokeWidth={2.4} />
       </button>
 
@@ -199,6 +236,12 @@ function TaskChip({ t }: { t: GTask }) {
             </div>
             <p className="text-[12.5px] font-bold text-ink leading-snug">{t.name}</p>
             <p className="text-[11.5px] text-muted mt-0.5">{t.unit}</p>
+            {mv && (
+              <div className="mt-1.5 rounded-lg bg-app px-2 py-1.5">
+                <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded ' + mv.cls}>{mv.tag}</span>
+                <p className="text-[11.5px] text-ink mt-1 leading-snug">{mv.line}</p>
+              </div>
+            )}
             <p className="text-[11.5px] mt-1">
               {t.done
                 ? <span className="font-bold text-emerald-700">Finished{t.finishedAt ? ' ' + shortTime(t.finishedAt) : ''}{t.minutes ? ' \u00b7 ' + t.minutes + 'm' : ''}</span>
@@ -357,6 +400,7 @@ function TaskLine({ t, roster, mode, onRefresh, comment }: {
   const [busy, setBusy] = useState(0)
   const [err, setErr] = useState('')
   const c = CAT_BY[catOf(t)]
+  const mv = moveNote(t)
   const ppl = useMemo(() => {
     const inDept = roster.filter(p => !p.departments?.length || p.departments.some(x => x.toLowerCase().includes(String(t.dept || '').toLowerCase())))
     return (inDept.length ? inDept : roster).slice(0, 14)
@@ -383,6 +427,7 @@ function TaskLine({ t, roster, mode, onRefresh, comment }: {
             ? <span className="text-[10.5px] font-bold text-amber-700">In progress{t.startedAt ? ' since ' + shortTime(t.startedAt) : ''}</span>
             : <span className="text-[10.5px] font-bold text-muted">Not started</span>}
         {t.late && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-rose-600 text-white">Late</span>}
+        {mv && <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md ' + mv.cls} title={mv.line}>{mv.tag}</span>}
         {mode === 'units' && (
           t.assignees.length
             ? <span className="text-[11.5px] text-muted">{t.assignees.join(', ')}</span>
@@ -399,6 +444,7 @@ function TaskLine({ t, roster, mode, onRefresh, comment }: {
           {isReal(t) && <a href={bzTask(t.id)} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open in Breezeway"><ExternalLink size={12} /></a>}
         </span>
       </div>
+      {mv && <p className={'mt-1 text-[11.5px] ' + (t.moveState === 'extended' ? 'font-semibold text-rose-700' : 'text-muted')}>{mv.line}</p>}
       {comment && (
         <div className="mt-1 text-[11.5px] text-muted flex items-start gap-1.5">
           <MessageSquare size={11} className="mt-0.5 shrink-0" /><span className="line-clamp-2">{comment.body}</span>
@@ -520,7 +566,13 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
             ? 'Out today' + (u.checkOutTime ? ' ' + u.checkOutTime : '') + ' · ' + u.guestOut + (u.nights ? ' · ' + u.nights + 'n stay' : '')
             : u.arrivingAt
               ? 'Arriving ' + u.arrivingAt + (u.arrivingGuest ? ' · ' + u.arrivingGuest : '')
-              : 'In-house / no movement'
+              : (() => {
+                // Nobody moved today, but there is a departure clean on the board — say which of
+                // the two reasons it is, because "no movement" reads as "nothing to know".
+                const dc = u.tasks.find(t => t.type === 'departure_clean' && !t.done)
+                const n = dc ? moveNote(dc) : null
+                return n ? n.line : 'In-house / no movement'
+              })()
         // Under a Guest issues / Glitches filter the row should show only the issues of that
         // kind — otherwise tapping "Glitches" hands back a row whose badge is counting QC items.
         const issues = cat === 'glitch'
