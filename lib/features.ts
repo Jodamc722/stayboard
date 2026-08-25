@@ -132,6 +132,11 @@ export const OPEN_PREFIXES = [
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
   '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/', '/share/',
   '/order/', '/orders-live',
+  // FIELD BOARDS (Jon, 2026-08-25). /board/<code> is a share link like any other: the code is the
+  // capability and the board carries its own passcode, checked server-side in
+  // /api/public/field-board. Open here so a cleaner with no Lighthouse account can open the link
+  // their supervisor sent; a signed-in user skips the passcode entirely.
+  '/board/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
   // whether a code worked are field techs without logins, and a question only answerable by people
   // who were not at the door is a question that never gets a true answer. The token is the auth.
