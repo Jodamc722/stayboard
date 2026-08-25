@@ -46,13 +46,15 @@ const SECTIONS: { key: string; label: string; sub: string }[] = [
 // becomes a LIVE BOARD at /board/<code> — the morning brief, alive, scoped to whatever units this
 // link covers. Sections are per board, so a vendor can get cleans only while Roberto gets the lot.
 const BOARD_SECTIONS: { key: string; label: string; sub: string }[] = [
-  { key: 'today', label: 'Today — priorities', sub: "the brief's act-now list for these units" },
+  { key: 'today', label: 'Today — priorities', sub: "the brief's act-now list, big bookings, units to watch" },
+  { key: 'units', label: 'Units — today in ops', sub: 'one row per unit with something on today, by building' },
   { key: 'crew', label: 'Crew right now', sub: 'who is on shift, who clocked in, what they are on' },
   { key: 'cleans', label: 'Cleans today', sub: 'checkouts, who has them, same-day turns' },
   { key: 'verify', label: 'Arrivals', sub: 'who lands today and when' },
   { key: 'vacant', label: 'Vacant units', sub: 'empty tonight — the window for work' },
   { key: 'work', label: 'Work today', sub: 'maintenance and other jobs on these units' },
   { key: 'issues', label: 'Issues', sub: 'exceptions and open guest issues' },
+  { key: 'requests', label: 'Guest orders & requests', sub: 'what a guest paid for, and what the field asked for' },
   { key: 'add', label: 'Let them add jobs', sub: 'the crew can file a task into Breezeway, on these units only' },
 ]
 const BOARD_KEYS = BOARD_SECTIONS.map(s => s.key)
