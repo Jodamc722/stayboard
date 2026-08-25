@@ -42,6 +42,18 @@ const SECTIONS: { key: string; label: string; sub: string }[] = [
   { key: 'team', label: 'Weekly planner — cleaning', sub: 'who works which days, and the cleans on them' },
   { key: 'team_maint', label: 'Weekly planner — maintenance', sub: 'the work orders, with a link into Breezeway' },
 ]
+// FIELD BOARD SECTIONS (Jon, 2026-08-25). Tick any of these and the link stops being a report and
+// becomes a LIVE BOARD at /board/<code> — the morning brief, alive, scoped to whatever units this
+// link covers. Sections are per board, so a vendor can get cleans only while Roberto gets the lot.
+const BOARD_SECTIONS: { key: string; label: string; sub: string }[] = [
+  { key: 'crew', label: 'Crew right now', sub: 'who is on shift, who clocked in, what they are on' },
+  { key: 'cleans', label: 'Cleans today', sub: "checkouts, who has them, same-day turns" },
+  { key: 'verify', label: 'Arrivals', sub: 'who lands today and when' },
+  { key: 'work', label: 'Work today', sub: 'maintenance and other jobs on these units' },
+  { key: 'issues', label: 'Issues', sub: 'exceptions and open guest issues' },
+]
+const BOARD_KEYS = BOARD_SECTIONS.map(s => s.key)
+const isBoard = (sections: any) => !!sections && BOARD_KEYS.some(k => sections[k] === true)
 const SCOPES = [
   { key: 'portfolio', label: 'Whole portfolio', Icon: Globe },
   { key: 'market', label: 'Market', Icon: MapPin },
@@ -123,7 +135,9 @@ export function ShareLinksHub() {
     await fetch('/api/share-links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'revoke', id }) })
     await load()
   }
-  const copy = async (code: string) => { copyPath('/share/' + code, code) }
+  // A board's link is /board/<code>; a report's is /share/<code>. Copying the wrong one hands the
+  // crew a page that asks them for a report password they do not have.
+  const copy = async (code: string, board = false) => { copyPath((board ? '/board/' : '/share/') + code, code) }
   const copyPath = async (path: string, key: string) => {
     try { await navigator.clipboard.writeText(origin + path); setCopied(key); setTimeout(() => setCopied(''), 1800) } catch { /* blocked */ }
   }
@@ -207,7 +221,23 @@ export function ShareLinksHub() {
           </div>
 
           <div>
-            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">Shows</p>
+            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">Live field board</p>
+            <p className="text-[11px] text-muted -mt-1 mb-1.5">
+              Tick any of these and this link becomes a <b>live board</b> for the crew — the morning brief,
+              alive, refreshing itself, scoped to the units above. Leave them all off for a normal report link.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-x-5 gap-y-1.5">
+              {BOARD_SECTIONS.map(s => (
+                <label key={s.key} className="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!sections[s.key]} onChange={e => setSections(x => ({ ...x, [s.key]: e.target.checked }))} className="mt-0.5" />
+                  <span className="text-[12.5px]"><span className="font-semibold text-ink">{s.label}</span> <span className="text-muted">— {s.sub}</span></span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">Report sections</p>
             <div className="grid sm:grid-cols-2 gap-x-5 gap-y-1.5">
               {SECTIONS.map(s => (
                 <label key={s.key} className="flex items-start gap-2 cursor-pointer">
@@ -261,7 +291,8 @@ export function ShareLinksHub() {
         ) : (
           <div className="divide-y divide-line">
             {links.map(l => {
-              const secs = SECTIONS.filter(s => l.sections?.[s.key]).map(s => s.label)
+              const board = isBoard(l.sections)
+              const secs = (board ? BOARD_SECTIONS : SECTIONS).filter(s => l.sections?.[s.key]).map(s => s.label)
               return (
                 <div key={l.id} className="px-4 py-3">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -270,13 +301,14 @@ export function ShareLinksHub() {
                     <span className="text-[10.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-app text-muted">
                       {l.scope_type === 'portfolio' ? 'Portfolio' : l.scope_type}
                     </span>
+                    {board ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-50 text-brand-700">Live board</span> : null}
                     {l.passcode ? <Lock size={11} className="text-muted" /> : null}
                     {l.show_money ? <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 rounded px-1.5 py-0.5">$ on</span> : null}
                     <div className="flex-1" />
-                    <button onClick={() => copy(l.code)} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1">
+                    <button onClick={() => copy(l.code, board)} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1">
                       {copied === l.code ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy link</>}
                     </button>
-                    <a href={'/share/' + l.code} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-ink">Open</a>
+                    <a href={(board ? '/board/' : '/share/') + l.code} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-ink">Open</a>
                     <button onClick={() => startEdit(l)} className="p-1 text-muted hover:text-ink" title="Edit"><Pencil size={13} /></button>
                     <button onClick={() => revoke(l.id)} className="p-1 text-muted hover:text-rose-600" title="Revoke"><Trash2 size={13} /></button>
                   </div>
