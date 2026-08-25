@@ -27,9 +27,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle, Plus, Search, ChevronDown, Users, Send, X, Loader2, Check, Phone,
-  CheckCircle2, ExternalLink, UserPlus, MessageSquare,
+  CheckCircle2, ExternalLink, UserPlus, MessageSquare, LayoutGrid,
 } from 'lucide-react'
 import { TodayInOps } from '@/components/TodayInOps'
+import { OpsGrid } from '@/components/OpsGrid'
 import { useCachedFetch } from '@/lib/swr'
 
 // ── types (mirrors of what the APIs actually send) ──────────────────────────────────────────────
@@ -269,9 +270,9 @@ export function OpsV2() {
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, 5 * 60 * 1000); return () => clearInterval(t) }, [refresh])
 
   // Which tab. Remembered per person — the research point about role-shaped views, cheaply.
-  const [tab, setTab] = useState<'board' | 'people' | 'push'>('board')
-  useEffect(() => { try { const t = localStorage.getItem('opsv2_tab'); if (t === 'people' || t === 'push') setTab(t) } catch {} }, [])
-  const pick = (t: 'board' | 'people' | 'push') => { setTab(t); try { localStorage.setItem('opsv2_tab', t) } catch {} }
+  const [tab, setTab] = useState<'board' | 'grid' | 'people' | 'push'>('board')
+  useEffect(() => { try { const t = localStorage.getItem('opsv2_tab'); if (t === 'people' || t === 'push' || t === 'grid') setTab(t) } catch {} }, [])
+  const pick = (t: 'board' | 'grid' | 'people' | 'push') => { setTab(t); try { localStorage.setItem('opsv2_tab', t) } catch {} }
 
   // null = closed; '' = open blank; a unit name = open with that unit pre-searched (the "+ Task"
   // button on a Needs-a-human row lands you one keystroke from filing, not five).
@@ -300,7 +301,8 @@ export function OpsV2() {
           always was. gap-4 on phone keeps all four items within a thumb's reach of the edge. */}
       <div className="lh-actions flex items-center gap-4 sm:gap-6 flex-wrap border-b border-line mb-4">
         {([['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
-           ['people', 'People', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
+           ['grid', 'Grid', null, 'bg-app text-muted'],
+           ['people', 'Staffing', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
            ['push', 'Push', null, 'bg-violet-100 text-violet-700']] as const).map(([k, label, n, cls]) => (
           <button key={k} onClick={() => pick(k as any)}
             className={'pb-2.5 pt-1 text-[14px] font-bold inline-flex items-center gap-2 border-b-2 -mb-px ' +
@@ -318,6 +320,9 @@ export function OpsV2() {
 
       {tab === 'board' && (
         <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} onAddTask={u => setAddFor(u)} />
+      )}
+      {tab === 'grid' && (
+        <OpsGrid data={data as any} glitches={glitches as any} roster={roster} onRefresh={refresh} onAddTask={u => setAddFor(u)} />
       )}
       {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} />}
       {tab === 'push' && <PushTab roster={roster} />}
@@ -352,7 +357,13 @@ function BoardTab({ excs, roster, onRefresh, onPeople, onAddTask }: {
   excs: Exc[]; roster: Roster[]; onRefresh: () => void; onPeople: () => void; onAddTask: (unit: string) => void
 }) {
   const [assignFor, setAssignFor] = useState('')
+  // COLLAPSED IS A CHOICE THAT STICKS (Jon, 2026-08-25: "Let's get rid of the Needs of Humans
+  // section, or just keep that collapsible"). It was already collapsible, but it re-opened on every
+  // page load, so folding it away never actually got it out of anyone's way. Remembered per device;
+  // the count stays on the header while it is shut, so nothing goes quiet just because it is folded.
   const [folded, setFolded] = useState(false)
+  useEffect(() => { try { if (localStorage.getItem('opsv2_nh_folded') === '1') setFolded(true) } catch {} }, [])
+  const toggleFold = () => setFolded(f => { const n = !f; try { localStorage.setItem('opsv2_nh_folded', n ? '1' : '0') } catch {}; return n })
   // Handled rows: hidden for today on this device, never silently — the header keeps the count
   // and one tap brings them back.
   const [acks, setAcks] = useState<Set<string>>(new Set())
@@ -369,7 +380,7 @@ function BoardTab({ excs, roster, onRefresh, onPeople, onAddTask }: {
     <div>
       {excs.length > 0 && (
         <div className="rounded-2xl border border-rose-200 bg-white overflow-hidden mb-3">
-          <button onClick={() => setFolded(f => !f)} className="w-full px-4 py-2.5 bg-rose-50/70 flex items-center gap-2 text-left">
+          <button onClick={toggleFold} className="w-full px-4 py-2.5 bg-rose-50/70 flex items-center gap-2 text-left">
             <AlertTriangle size={14} className="text-rose-700 shrink-0" />
             <span className="text-[13.5px] font-bold text-rose-800">Needs a human</span>
             <span className="text-[11px] font-bold text-white bg-rose-600 rounded-full px-2 py-0.5">{liveExcs.length}</span>
@@ -379,7 +390,8 @@ function BoardTab({ excs, roster, onRefresh, onPeople, onAddTask }: {
                 {ackedCount} handled{showAcked ? ' · hide' : ''}
               </span>
             )}
-            <ChevronDown size={14} className={'ml-auto text-rose-700/60 transition-transform shrink-0 ' + (folded ? '' : 'rotate-180')} />
+            <span className="ml-auto text-[11px] font-semibold text-rose-700/70 hidden sm:inline">{folded ? 'show' : 'hide'}</span>
+            <ChevronDown size={14} className={'text-rose-700/60 transition-transform shrink-0 ' + (folded ? '' : 'rotate-180')} />
           </button>
           {!folded && (
             <div className="border-t border-rose-200">
@@ -821,12 +833,21 @@ const SHEET_TEMPLATES: { key: string; label: string; hint: string; department: s
   { key: 'custom', label: 'Custom', hint: 'type it yourself', department: 'maintenance', priority: 'normal', title: '', base: '' },
 ]
 type Intel = { lastFeedback?: { rating: number | null; date: string | null; excerpt: string | null } | null; checklist?: string[] }
+type BzTpl = { id: number; name: string; department: string; description: string }
 
 function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roster[]; onClose: () => void; onDone: () => void; initialQuery?: string }) {
   const [listings, setListings] = useState<Listing[]>([])
   const [uq, setUq] = useState(initialQuery || '')
   const [unit, setUnit] = useState<Listing | null>(null)
   const [tpl, setTpl] = useState('custom')
+  // OUR templates, live from Breezeway (Jon, 2026-08-25). The seven presets below stay as the
+  // fallback and as the quick path, but the preventative-maintenance template, the field report and
+  // the inspection checklists are edited in Breezeway by the people who run the work — so the sheet
+  // reads them rather than keeping a stale copy in this repo. Picking one sends template_id, which
+  // is what puts the actual checklist in front of whoever opens the task in the field app.
+  const [bzTpls, setBzTpls] = useState<BzTpl[]>([])
+  const [tplId, setTplId] = useState<number | null>(null)
+  const [tplQ, setTplQ] = useState('')
   const [title, setTitle] = useState('')
   const [dept, setDept] = useState('maintenance')
   const [prio, setPrio] = useState('normal')
@@ -841,6 +862,8 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
   useEffect(() => {
     fetch('/api/listings', { cache: 'no-store' }).then(r => r.json())
       .then(j => setListings(Array.isArray(j.results) ? j.results : [])).catch(() => {})
+    fetch('/api/breezeway/templates', { cache: 'no-store' }).then(r => r.json())
+      .then(j => setBzTpls(Array.isArray(j.templates) ? j.templates : [])).catch(() => {})
     setTimeout(() => boxRef.current?.focus(), 60)
   }, [])
   useEffect(() => {
@@ -857,7 +880,7 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
 
   const useTpl = (k: string) => {
     const t = SHEET_TEMPLATES.find(x => x.key === k)!
-    setTpl(k); setTitle(t.title); setDept(t.department); setPrio(t.priority)
+    setTpl(k); setTplId(null); setTitle(t.title); setDept(t.department); setPrio(t.priority)
     let body = t.base
     if (t.useIntel && intel) {
       const cl = intel.checklist || []
@@ -868,13 +891,32 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
     setDesc(body)
   }
 
+  /** Pick a real Breezeway template: its checklist travels with the task, so the description here
+      is context for the person opening it, not a re-typing of the checklist. */
+  const useBzTpl = (t: BzTpl) => {
+    setTpl('bz:' + t.id); setTplId(t.id); setTitle(t.name)
+    if (t.department) setDept(t.department)
+    let body = t.description || ''
+    if (intel) {
+      const cl = intel.checklist || []
+      if (cl.length) body += (body ? '\n\n' : '') + 'Look specifically at (from this unit\u2019s recent guest feedback):\n' + cl.map(c => '- ' + c).join('\n')
+    }
+    setDesc(body)
+  }
+
+  const bzHits = useMemo(() => {
+    const n = tplQ.trim().toLowerCase()
+    const pool = bzTpls.filter(t => !n || (t.name + ' ' + t.department).toLowerCase().includes(n))
+    return n ? pool.slice(0, 24) : pool.slice(0, 12)
+  }, [bzTpls, tplQ])
+
   const create = async () => {
     if (!unit || !title.trim()) return
     setBusy(true); setErr('')
     try {
       const r = await fetch('/api/ops-today/add-task', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId: unit.id, title: title.trim(), department: dept, priority: prio, description: desc, date: date || undefined, assigneeIds: picked }),
+        body: JSON.stringify({ listingId: unit.id, title: title.trim(), department: dept, priority: prio, description: desc, date: date || undefined, assigneeIds: picked, templateId: tplId || undefined }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not create the task')
@@ -922,7 +964,32 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
 
         {unit && (
           <>
-            <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted mt-4 mb-1.5">What kind of work</p>
+            {bzTpls.length > 0 && (
+              <>
+                <div className="flex items-baseline gap-2 mt-4 mb-1.5">
+                  <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">Our Breezeway templates</p>
+                  <span className="text-[10.5px] text-muted">&middot; the crew gets the real checklist</span>
+                  {bzTpls.length > 12 && (
+                    <input value={tplQ} onChange={e => setTplQ(e.target.value)} placeholder="filter&hellip;"
+                      className="ml-auto w-28 rounded-lg border border-line px-2 py-1 text-[11px]" />
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {bzHits.map(t => (
+                    <button key={t.id} onClick={() => useBzTpl(t)}
+                      className={'px-3 py-2 rounded-xl border-2 text-left max-w-full ' + (tplId === t.id ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line text-ink hover:border-brand-500/50')}>
+                      <span className="block text-[12.5px] font-bold leading-tight truncate">{t.name}</span>
+                      <span className={'block text-[10px] ' + (tplId === t.id ? 'text-white/70' : 'text-muted')}>{t.department || 'Breezeway template'}</span>
+                    </button>
+                  ))}
+                  {tplQ && bzHits.length === 0 && <span className="text-[11.5px] text-muted py-2">No template matches &ldquo;{tplQ}&rdquo;.</span>}
+                </div>
+              </>
+            )}
+
+            <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted mt-4 mb-1.5">
+              {bzTpls.length > 0 ? 'Or a quick preset' : 'What kind of work'}
+            </p>
             <div className="flex flex-wrap gap-1.5">
               {SHEET_TEMPLATES.map(t => (
                 <button key={t.key} onClick={() => useTpl(t.key)}
@@ -962,6 +1029,9 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
               ))}
             </div>
 
+            {tplId != null && (
+              <p className="text-[11px] text-muted mt-2">Files with the Breezeway template attached &mdash; whoever opens it in the field app gets that checklist.</p>
+            )}
             {err && <p className="text-[12px] text-rose-600 font-semibold mt-2">{err}</p>}
             <button onClick={create} disabled={busy || !title.trim()}
               className="w-full mt-4 rounded-xl bg-ink text-white py-3 text-[14px] font-bold disabled:opacity-40 inline-flex items-center justify-center gap-2">
