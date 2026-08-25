@@ -16,6 +16,7 @@ type Cfg = {
   enabled: boolean
   bigArrivals: boolean; bigValue: number; bigNights: number
   vip: boolean; ownerStays: boolean; daysAhead: number
+  lowReviews: boolean; lowReviewMax: number
   assignAlways: string
   supervisors: { Miami: string; Broward: string; North: string }
   noticeDrafts: { enabled: boolean; fromEmail: string; slackChannel: string }
@@ -134,6 +135,12 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
           </p>
           {check('vip', 'VIP guests', 'a Guesty VIP field or tag')}
           {check('ownerStays', 'Owner stays', 'owner bookings and owner-name matches')}
+          {check('lowReviews', 'Bad reviews', 'a NEW low review fires a quality inspection on the unit&rsquo;s next checkout')}
+          <div className="flex items-center gap-2 pl-6">
+            <span className="text-[11.5px] text-muted">rating</span>
+            <input type="number" min={1} max={4} step={0.5} value={cfg.lowReviewMax} onChange={e => set({ lowReviewMax: Number(e.target.value) })} className={box + ' max-w-[64px]'} disabled={!isOwner || !cfg.lowReviews} />
+            <span className="text-[11.5px] text-muted">&#9733; and below (10-scale channels are halved) &middot; not completed by that checkout &rarr; it moves to the next one automatically</span>
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-[12.5px] text-muted">Look ahead</span>
             <input type="number" min={1} max={7} value={cfg.daysAhead} onChange={e => set({ daysAhead: Number(e.target.value) })} className={box + ' max-w-[64px]'} disabled={!isOwner} />
