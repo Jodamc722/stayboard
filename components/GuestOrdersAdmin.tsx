@@ -162,7 +162,13 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
               <option value="manual">Manual — approve, then mark paid by hand</option>
             </select></div>
           <div className="flex items-center gap-2"><span className="text-[12.5px] text-muted w-44">Sales tax</span><input type="number" min={0} max={30} step={0.5} value={cfg.taxPct} onChange={e => set({ taxPct: Number(e.target.value) })} className={box + ' max-w-[70px]'} disabled={ro} /><span className="text-[12.5px] text-muted">% (0 = prices are all-in)</span></div>
-          <div className="flex items-center gap-2"><span className="text-[12.5px] text-muted w-44">Guesty custom field</span><input value={cfg.customFieldName} onChange={e => set({ customFieldName: e.target.value })} className={box + ' max-w-[220px]'} disabled={ro} /></div>
+          <div className="flex items-start gap-2">
+            <span className="text-[12.5px] text-muted w-44 pt-1.5">Guesty custom field</span>
+            <div>
+              <input value={cfg.customFieldName} onChange={e => set({ customFieldName: e.target.value })} className={box + ' max-w-[280px]'} disabled={ro} />
+              <div className="text-[11.5px] text-muted mt-1 max-w-[380px]">The <b>reservation</b> field the link is written into. Its name, <b>or the field&rsquo;s own ID</b> (24 hex characters, from its URL in Guesty) — an ID skips the name lookup, which depends on a Guesty endpoint that rate-limits. Use <b>Test the Guesty path</b> below to confirm it resolves.</div>
+            </div>
+          </div>
           <div className="flex items-center gap-2"><span className="text-[12.5px] text-muted w-44">Email on push</span><input value={cfg.emailRecipients.join(', ')} onChange={e => set({ emailRecipients: e.target.value.split(/[,\s]+/).filter(Boolean) })} className={box} placeholder="a@…, b@…" disabled={ro} /></div>
           <div className="flex items-center gap-2"><span className="text-[12.5px] text-muted w-44">Public base URL</span><input value={cfg.publicBase} onChange={e => set({ publicBase: e.target.value })} className={box} disabled={ro} /></div>
           <div className="flex items-center gap-2"><span className="text-[12.5px] text-muted w-44">Skip sources (regex)</span><input value={cfg.skipSourcesRe} onChange={e => set({ skipSourcesRe: e.target.value })} className={box} disabled={ro} /></div>
