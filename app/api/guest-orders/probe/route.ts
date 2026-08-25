@@ -48,6 +48,11 @@ export async function GET(req: NextRequest) {
           arrays,
           found: Array.isArray(cf) ? cf.length : 0,
           names: Array.isArray(cf) ? cf.slice(0, 60).map((c: any) => ({ id: c?._id || c?.id || null, name: c?.name ?? null, key: c?.key ?? null, target: c?.target ?? c?.objectType ?? null, type: c?.type ?? null })) : [],
+          // THE WHOLE DEFINITION for the first few. These are field DEFINITIONS — labels and ids,
+          // never a guest's value — and without them there is no way to see which key carries the
+          // id when the obvious ones come back null, which is exactly what dropped all 35 rows.
+          entryKeys: Array.isArray(cf) && cf[0] && typeof cf[0] === 'object' ? Object.keys(cf[0]) : [],
+          sample: Array.isArray(cf) ? cf.slice(0, 4) : [],
         }
       } catch (e: any) { return { path, error: String(e?.message || e).slice(0, 200) } }
     }
