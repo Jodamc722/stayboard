@@ -19,7 +19,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
-import { marketOf } from './segments'
+import { marketOf, buildingOf } from './segments'
 import { kindOfTask, SEVENTEEN_WEST_PAIR, seventeenWestCoverage } from './labor-econ'
 import { nameMatches } from './homebase'
 import { getTimecardsAudited } from './homebase-labor'
@@ -49,7 +49,7 @@ export type MaintWindow = { finished: number; billable: number; noCharge: number
 export type MaintData = {
   market: MaintMarket
   yd: MaintWindow; d7: MaintWindow; d30: MaintWindow
-  carryover: { unit: string; task: string; sched: string; ageDays: number; who: string }[]
+  carryover: { unit: string; building: string; task: string; sched: string; ageDays: number; who: string }[]
   recurring: { unit: string; n: number; names: string[] }[]
   /** Maintenance crew wages, PORTFOLIO-WIDE (one Homebase location) — null when timecards were
    *  incomplete, so a rate-limited morning never prints an understated wage as truth. */
@@ -57,10 +57,12 @@ export type MaintData = {
   /** Hours clocked by the maintenance crew, same source and caveat as wages. The market briefs
    *  print hours rather than wages: completed-vs-actual is the doctrine, and the crew reads them. */
   hours: { yd: number | null; d7: number | null; d30: number | null }
+  /** Open (unfinished) maintenance per listing id, for the vacant-unit windows. */
+  openByUnit: Record<string, { unit: string; building: string; tasks: string[] }>
   /** TODAY'S BOARD (added 2026-08-25 for the per-market maintenance briefs): what is scheduled
    *  today in this market, who holds it, and whether a guest is inside — a job in an occupied
    *  unit is a phone call before it is a work order. */
-  todayJobs: { unit: string; task: string; who: string; state: 'done' | 'running' | 'open'; occupied: boolean; arriving: boolean }[]
+  todayJobs: { unit: string; building: string; task: string; who: string; state: 'done' | 'running' | 'open'; occupied: boolean; arriving: boolean }[]
 }
 
 export async function maintData(market: MaintMarket): Promise<MaintData> {
@@ -75,16 +77,19 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
   const VENDOR = vendorRegex(presets.vendorBuildings)
 
   const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000)
-  const meta: Record<string, { name: string; ours: boolean }> = {}
+  const meta: Record<string, { name: string; ours: boolean; building: string }> = {}
   for (const l of (lRows || []) as any[]) {
     const name = l.nickname || l.title || 'Unit'
     const building = str(l.building)
     const isVendor = VENDOR.test(building) || VENDOR.test(name)
     const is17 = SEVENTEEN_RE.test(building) || SEVENTEEN_RE.test(name)
     const m = String(marketOf(building, l.address_city, name) || '').toLowerCase()
-    meta[String(l.id)] = { name, ours: m === mk && !isVendor && !is17 }
+    // AREA = the canonical building rollup (lib/segments' registry — never the raw column).
+    // The maintenance brief is read building by building: a tech works an area, not a market.
+    meta[String(l.id)] = { name, ours: m === mk && !isVendor && !is17, building: buildingOf(building, name) || 'Other' }
   }
   const unitOf = (lid: any) => meta[String(lid)]?.name || 'Unknown unit'
+  const areaOf = (lid: any) => meta[String(lid)]?.building || 'Other'
   const ours = (lid: any) => !!meta[String(lid)]?.ours
 
   // Maintenance tasks, last 30 days + anything still open. Stable order so the page cap can
@@ -152,7 +157,7 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
       return sd >= d7 && sd <= yd && !isDone(t)
     })
     .map(t => ({
-      unit: unitOf(t.reference_property_id), task: str(t.name).slice(0, 60),
+      unit: unitOf(t.reference_property_id), building: areaOf(t.reference_property_id), task: str(t.name).slice(0, 60),
       sched: str(t.scheduled_date).slice(0, 10),
       ageDays: Math.max(0, Math.round((new Date(today + 'T12:00:00').getTime() - new Date(str(t.scheduled_date).slice(0, 10) + 'T12:00:00').getTime()) / 864e5)),
       who: (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name || a)).filter(Boolean).join(', ') || 'unassigned',
@@ -221,6 +226,7 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
     .filter(t => str(t.scheduled_date).slice(0, 10) === today)
     .map(t => ({
       unit: unitOf(t.reference_property_id),
+      building: areaOf(t.reference_property_id),
       task: str(t.name).slice(0, 70),
       who: (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name || a)).filter(Boolean).join(', ') || 'unassigned',
       state: (isDone(t) ? 'done' : /progress|started/i.test(str(t.status)) ? 'running' : 'open') as 'done' | 'running' | 'open',
@@ -229,5 +235,15 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
     }))
     .sort((a, b) => (a.who === 'unassigned' ? 0 : 1) - (b.who === 'unassigned' ? 0 : 1) || a.who.localeCompare(b.who) || a.unit.localeCompare(b.unit))
 
-  return { market, yd: win(yd, yd), d7: win(d7, yd), d30: win(d30, yd), carryover, recurring, wages, hours, todayJobs }
+  // OPEN MAINTENANCE BY UNIT — what is already on the books for a unit, so the vacant-unit view
+  // can say "this empty unit already has two jobs waiting" instead of only suggesting new ones.
+  const openByUnit: Record<string, { unit: string; building: string; tasks: string[] }> = {}
+  for (const t of maint) {
+    if (isDone(t)) continue
+    const lid = String(t.reference_property_id)
+    const e = (openByUnit[lid] = openByUnit[lid] || { unit: unitOf(lid), building: areaOf(lid), tasks: [] })
+    if (e.tasks.length < 4) e.tasks.push(str(t.name).slice(0, 60))
+  }
+
+  return { market, yd: win(yd, yd), d7: win(d7, yd), d30: win(d30, yd), carryover, recurring, wages, hours, todayJobs, openByUnit }
 }
