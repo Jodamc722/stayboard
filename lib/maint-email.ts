@@ -168,7 +168,9 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
   // answer to "when did we last actually go through this unit properly?"
   const PM_JOBS: { key: string; label: string; re: RegExp; everyDays: number; note: string }[] = [
     { key: 'pm', label: 'PM — full walk, paint, unit ready', everyDays: 365, note: 'the proper refresh, not a patch',
-      re: /\bpm\b|preventive|preventative|full\s*paint|paint\s*(touch|refresh|unit)|unit\s*ready|refresh/i },
+      // Deliberately NOT /preventive|preventative/: "Preventative Pest Control" is pest control,
+      // and counting it as a PM would tell the team a unit was refreshed when it was sprayed.
+      re: /\bpm\b|full\s*paint|paint\s*(the\s*)?unit|paint\s*touch\s*up|unit\s*ready|unit\s*refresh|annual\s*(walk|service|refresh)/i },
     { key: 'filter', label: 'AC filter change', everyDays: 60, note: 'central AC units — 60-day cadence',
       re: /filter/i },
     { key: 'acdeep', label: 'AC deep clean / service', everyDays: 180, note: 'coils, drain line, service',
@@ -250,7 +252,9 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     (unassigned.length ? areaHead('Nobody assigned', `· ${unassigned.length} job${unassigned.length === 1 ? '' : 's'} — give these a name first`, 'red') + unassigned.map(jobRow).join('') : '') +
     areaOrder.map(a => {
       const mine = byArea[a]
-      const people = Array.from(new Set(mine.map(j => j.who).filter((w: string) => w !== 'unassigned')))
+      const people = Array.from(new Set(mine
+        .filter(j => j.who !== 'unassigned')
+        .flatMap(j => String(j.who).split(',').map(n => n.trim()).filter(Boolean))))
       return areaHead(a, `· ${mine.length} job${mine.length === 1 ? '' : 's'}${people.length ? ' · ' + people.join(', ') : ''}`) + mine.map(jobRow).join('')
     }).join('')
 
@@ -280,11 +284,15 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
       why: low.said ? `"${low.said}…" · ${low.channel || 'review'} ${niceDay(low.at)}` : `${low.channel || 'A guest'} scored it ${low.stars.toFixed(1)}★ on ${niceDay(low.at)}`,
       rank: 0,
     }
-    if (open) return {
-      pill: pillAmber('JOBS OPEN'),
-      what: `Close the ${open.tasks.length} open job${open.tasks.length === 1 ? '' : 's'}`,
-      why: open.tasks.join(' · '),
-      rank: 1,
+    if (open) {
+      const oldest = open.tasks[0]
+      return {
+        pill: pillAmber('JOBS OPEN'),
+        what: `Close the ${open.tasks.length} open job${open.tasks.length === 1 ? '' : 's'}`,
+        // The oldest one is the argument for going: "this has been sitting 50 days".
+        why: oldest ? `oldest: ${oldest.name}${oldest.age != null ? ` · ${oldest.age} days old` : ''}` : 'open work on the unit',
+        rank: 1,
+      }
     }
     if (fix) return { pill: pillAmber('BACKLOG'), what: fix.label, why: fix.why, rank: 2 }
     const standing = pmDue(String(v.listingId))
@@ -376,7 +384,7 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     : ''
 
   const verdict =
-    `<b>${openJobs.length} job${openJobs.length === 1 ? '' : 's'} on today's board${carry.length ? ` · ${carry.length} carried over` : ''}${vacRows.length ? ` · ${vacRows.length} unit${vacRows.length === 1 ? '' : 's'} empty` : ''}.</b> ` +
+    `<b>${openJobs.length} of ${jobs.length} job${jobs.length === 1 ? '' : 's'} still open today${carry.length ? ` · ${carry.length} carried over` : ''}${vacRows.length ? ` · ${vacRows.length} unit${vacRows.length === 1 ? '' : 's'} empty` : ''}.</b> ` +
     (unassigned.length ? `<span style="${S.red}">${unassigned.length} with nobody assigned — start there.</span>` :
       vacReviewed ? `<span style="${S.red}">${vacReviewed} empty unit${vacReviewed === 1 ? '' : 's'} a guest just complained about — walk ${vacReviewed === 1 ? 'it' : 'them'} today.</span>` :
         inHouse.length ? `${inHouse.length} in occupied units — call the guest before you knock.` :
@@ -399,7 +407,7 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
   <div style="${S.tilesOuter}">${tileRow([
-    { label: 'Jobs today', value: String(openJobs.length), note: jobs.length !== openJobs.length ? `${jobs.length - openJobs.length} already done` : 'on the board' },
+    { label: 'Open today', value: String(openJobs.length), note: jobs.length !== openJobs.length ? `${jobs.length - openJobs.length} of ${jobs.length} done` : 'on the board' },
     { label: 'Unassigned', value: String(unassigned.length), tone: unassigned.length ? 'red' : 'green' },
     { label: 'Carried over', value: String(carry.length), note: carry.length ? `oldest ${carry[0].ageDays}d` : 'nothing open', tone: carry.length ? 'amber' : 'green' },
     { label: 'Pending in reach', value: String(pendingTotal), note: pendingUnits ? `${pendingUnits} unit${pendingUnits === 1 ? '' : 's'} you can enter` : 'nothing waiting',
@@ -409,7 +417,7 @@ export async function buildMaintBrief(market: MaintMarket): Promise<{ subject: s
 
   ${eyebrow('Today, by area')}
   ${jobs.length
-    ? card("Today's jobs — who has what", jobs.length, `<table width="100%" cellspacing="0" cellpadding="0">${boardRows}</table>`, unassigned.length ? '#dc2626' : '#7c2d12', `${niceDay(today)} · ${market}`)
+    ? card("Today's jobs — who has what", openJobs.length, `<table width="100%" cellspacing="0" cellpadding="0">${boardRows}</table>`, unassigned.length ? '#dc2626' : '#7c2d12', `${niceDay(today)} · ${market}`)
     : card("Today's jobs", null, `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Nothing scheduled for ${esc(market)} maintenance today — the empty units and the carryover below are the day's work.</p>`, '#7c2d12')}
 
   ${eyebrow('Empty units — the PM window')}
