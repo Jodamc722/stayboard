@@ -8,7 +8,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { ITEMS, accessFor, decryptSecret, logAccess, vaultKeyReady, checkVaultCode, codeFrom, codeEntered } from '@/lib/vault'
+import {
+  ITEMS, accessFor, decryptSecret, logAccess, vaultKeyReady, checkVaultCode, codeFrom, codeEntered,
+  unlockValid, UNLOCK_COOKIE,
+} from '@/lib/vault'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 20
@@ -30,10 +33,10 @@ export async function POST(req: NextRequest) {
   try {
     const db = supabaseAdmin()
     const { data: item } = await db.from(ITEMS)
-      .select('id, owner_email, title, secret_cipher').eq('id', id).is('deleted_at', null).maybeSingle()
+      .select('id, owner_email, collection_id, title, secret_cipher').eq('id', id).is('deleted_at', null).maybeSingle()
     if (!item) return NextResponse.json({ ok: false, error: 'That item no longer exists.' }, { status: 404 })
 
-    const level = await accessFor(item as any, me, isSuperadmin(access.email))
+    const level = await accessFor(item as any, me, isSuperadmin(access.email), { accessRole: access.accessRole })
     if (!level) {
       // A refused attempt is the single most interesting line in the log. Record it first.
       await logAccess({ itemId: id, email: me, action: 'denied', detail: 'reveal', ip: ipOf(req) })
@@ -41,13 +44,17 @@ export async function POST(req: NextRequest) {
     }
     if (!(item as any).secret_cipher) return NextResponse.json({ ok: false, error: 'This item has no stored secret.' }, { status: 404 })
 
-    // THE VAULT CODE — asked on every reveal (Jon, 2026-08-25). A wrong code is logged inside the
-    // check; a right one is logged here, against the person's login, as the record of who entered it.
-    const gate = await checkVaultCode({ code: codeFrom(req, b), email: me, ip: ipOf(req), itemId: id, purpose: 'reveal' })
-    if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error, codeUnset: !!gate.codeUnset, wrongCode: !!gate.wrongCode }, { status: gate.status })
+    // THE CODE, or an open window (Jon, 2026-08-25: "give us 1 min, still have to click reveal,
+    // that how we can track"). Either way this is a deliberate per-item click and it gets its own
+    // audit row — the window changes how often you type, never what is recorded.
+    const open = unlockValid(req.cookies.get(UNLOCK_COOKIE)?.value, me)
+    if (!open) {
+      const gate = await checkVaultCode({ code: codeFrom(req, b), email: me, ip: ipOf(req), itemId: id, purpose: 'reveal' })
+      if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error, codeUnset: !!gate.codeUnset, wrongCode: !!gate.wrongCode, locked: true }, { status: gate.status })
+    }
 
     // Log BEFORE answering: if the response never arrives, the attempt still happened.
-    await logAccess({ itemId: id, email: me, action: 'reveal', detail: codeEntered(reason), ip: ipOf(req) })
+    await logAccess({ itemId: id, email: me, action: 'reveal', detail: open ? 'in unlock window' + (reason ? ' · ' + reason : '') : codeEntered(reason), ip: ipOf(req) })
 
     let secret: string
     try {
