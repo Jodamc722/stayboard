@@ -319,14 +319,23 @@ function mapMessage(conversationId: string, m: any) {
 }
 
 function mapCustomField(c: any) {
-  // 2026-08-19: the account payload names the field `displayName` (with `key` as the slug) — NOT
-  // `fieldName` or `name`. Every row therefore mapped to an empty name and was dropped by the
-  // `r.id && r.name` filter downstream, which is why this table sat empty while Guesty happily
-  // served 28 definitions. The scope object is `object`, not `objectType`.
+  // THE SHAPE, CONFIRMED LIVE 2026-08-25 against the account endpoint:
+  //   { fieldId, key, displayName, object, type, options, isPublic }
+  //   e.g. { fieldId:'695af1454ebbdc00137c3f41', key:'Door code', displayName:'door_code',
+  //          object:'listing', type:'text' }
+  //
+  // 🔴 THE ID IS `fieldId`. It is not `_id` and not `id` — both are absent. This mapper read
+  // `c._id || c.id`, so EVERY row mapped to a null id and was dropped by the `r.id && r.name`
+  // filter downstream. Guesty served 35 definitions and the table stayed empty, which is why
+  // resolving the order-form field by name failed while the field existed the whole time.
+  //
+  // And `key`/`displayName` are the other way round from what the 2026-08-19 note claimed: `key`
+  // is the HUMAN LABEL ("Door code") and `displayName` is the MERGE-TAG SLUG ("door_code", used in
+  // Guesty templates as {{door_code}}). Both are stored so either resolves a field by name.
   return {
-    id:      c._id || c.id,
-    name:    c.displayName || c.fieldName || c.name || c.key || '',
-    slug:    c.key || c.slug || null,
+    id:      c.fieldId || c._id || c.id,
+    name:    c.key || c.displayName || c.fieldName || c.name || '',
+    slug:    c.displayName || c.key || c.slug || null,
     type:    (c.type || 'text').toLowerCase(),
     target:  String(c.object || c.objectType || c.target || 'reservation').toLowerCase().replace(/s$/, ''),
     options: c.options || c.values || null

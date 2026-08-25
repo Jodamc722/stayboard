@@ -550,8 +550,14 @@ export async function orderFormFieldId(name: string): Promise<string | null> {
   if (FIELD_ID_RE.test(direct)) return direct
   if (_fieldCache && _fieldCache.name === name && Date.now() - _fieldCache.at < 10 * 60_000 && _fieldCache.id) return _fieldCache.id
   const db = supabaseAdmin()
+  // Match the LABEL or the MERGE-TAG SLUG, so both "Guest Order Form1" and the tag Jon actually
+  // pastes into Guesty templates — {{guest_order_form1}} — find the same field. A reservation-target
+  // field always wins: the link belongs on the booking, never on the listing.
+  const bare = direct.replace(/^\{\{|\}\}$/g, '').trim()
   const find = async () => {
-    const { data } = await db.from('guesty_custom_fields').select('id,name,target').ilike('name', name).limit(10)
+    const { data } = await db.from('guesty_custom_fields').select('id,name,slug,target').or(
+      ['name.ilike.' + bare, 'slug.ilike.' + bare].join(','),
+    ).limit(20)
     const rows = (data || []) as any[]
     const res = rows.find(r => /reserv/i.test(String(r.target || ''))) || rows[0]
     return res ? String(res.id) : null
