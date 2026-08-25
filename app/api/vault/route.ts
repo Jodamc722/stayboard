@@ -6,8 +6,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
-  ITEMS, GRANTS, accessFor, grantedItemIds, logAccess, publicItem, encryptSecret, maskHint,
-  vaultKeyReady, isMissingTable, type VaultKind,
+  ITEMS, GRANTS, COLLECTIONS, accessFor, grantedItemIds, collectionsFor, logAccess, publicItem,
+  encryptSecret, maskHint, vaultKeyReady, isMissingTable, type VaultKind, type VaultLevel,
 } from '@/lib/vault'
 import { snapshotVault } from '@/lib/vault-backup'
 import { currentVaultCode } from '@/lib/shareAuth'
@@ -41,10 +41,14 @@ export async function GET(req: NextRequest) {
     }
 
     // DENY BY DEFAULT. Filter in the app, not the query, so the rule lives in one readable place:
-    // yours, or explicitly granted to you, or you are the owner of the workspace.
+    // yours, or named on it, or in a vault you belong to, or you are the owner of the workspace.
     const mine = new Set(owner ? [] : await grantedItemIds(me))
+    const myCols = await collectionsFor(me, access.accessRole, owner)
     const lower = (s: any) => String(s || '').trim().toLowerCase()
-    let rows = ((data || []) as any[]).filter(r => owner || lower(r.owner_email) === lower(me) || mine.has(String(r.id)))
+    const viaCol = (r: any): VaultLevel | null =>
+      r.collection_id ? (myCols.get(String(r.collection_id)) || null) : null
+    let rows = ((data || []) as any[]).filter(r =>
+      owner || lower(r.owner_email) === lower(me) || mine.has(String(r.id)) || !!viaCol(r))
 
     if (q) {
       rows = rows.filter(r => (
@@ -54,9 +58,18 @@ export async function GET(req: NextRequest) {
       ).toLowerCase().includes(q))
     }
 
-    const items = rows.map(r => publicItem(
-      r, owner || lower(r.owner_email) === lower(me) ? 'manage' : (mine.has(String(r.id)) ? 'view' : null),
-    ))
+    // Widest door wins, same order as accessFor(): owner, then the named grant, then the vault.
+    const items = rows.map(r => {
+      let level: VaultLevel | null = null
+      if (owner || lower(r.owner_email) === lower(me)) level = 'manage'
+      else {
+        if (mine.has(String(r.id))) level = 'view'
+        const c = viaCol(r)
+        if (c === 'manage') level = 'manage'
+        else if (c === 'view' && !level) level = 'view'
+      }
+      return publicItem(r, level)
+    })
 
     // Grants are shown only to people who can manage the item, so the card can list who else sees it.
     const manageIds = items.filter(i => i.level === 'manage').map(i => i.id)
@@ -66,8 +79,15 @@ export async function GET(req: NextRequest) {
       grants = (g.data || []) as any[]
     }
 
+    let collectionList: any[] = []
+    try {
+      const c = await db.from(COLLECTIONS).select('id, name, slug, color, level, roles').is('deleted_at', null).order('name')
+      collectionList = ((c.data || []) as any[]).map(x => ({ ...x, myLevel: myCols.get(String(x.id)) || null }))
+    } catch { /* pre-052: no vaults yet, and the page says so */ }
+
     return NextResponse.json({
       ok: true, items, grants, me, isOwner: owner, isAdmin: access.role === 'admin',
+      collections: collectionList,
       keyReady: vaultKeyReady(),
       // Whether the second lock exists yet. Without it nothing can be revealed — say so up front.
       codeSet: !!(await currentVaultCode()),
@@ -117,6 +137,7 @@ export async function POST(req: NextRequest) {
       url: trimmed(b.url, 500) || null,
       expires_on: trimmed(b.expires_on, 10) || null,
       tags: Array.isArray(b.tags) ? b.tags.map((t: any) => trimmed(t, 40)).filter(Boolean).slice(0, 12) : [],
+      collection_id: trimmed(b.collection_id, 60) || null,
       owner_email: me,
       created_by: me,
     }
@@ -148,16 +169,17 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const db = supabaseAdmin()
-    const { data: item } = await db.from(ITEMS).select('id, owner_email, title').eq('id', id).is('deleted_at', null).maybeSingle()
+    const { data: item } = await db.from(ITEMS).select('id, owner_email, collection_id, title').eq('id', id).is('deleted_at', null).maybeSingle()
     if (!item) return NextResponse.json({ ok: false, error: 'That item no longer exists.' }, { status: 404 })
 
-    const level = await accessFor(item as any, me, isSuperadmin(access.email))
+    const level = await accessFor(item as any, me, isSuperadmin(access.email), { accessRole: access.accessRole })
     if (level !== 'manage') {
       await logAccess({ itemId: id, email: me, action: 'denied', detail: 'edit', ip: ipOf(req) })
       return NextResponse.json({ ok: false, error: 'You cannot edit this item.' }, { status: 403 })
     }
 
     const patch: any = { updated_at: new Date().toISOString() }
+    if (b.collection_id !== undefined) patch.collection_id = trimmed(b.collection_id, 60) || null
     for (const f of ['title', 'description', 'category', 'property_id', 'unit_no', 'reservation_id', 'username', 'url', 'expires_on'] as const) {
       if (b[f] !== undefined) patch[f] = trimmed(b[f], 4000) || null
     }
@@ -188,9 +210,9 @@ export async function DELETE(req: NextRequest) {
 
   try {
     const db = supabaseAdmin()
-    const { data: item } = await db.from(ITEMS).select('id, owner_email, title').eq('id', id).is('deleted_at', null).maybeSingle()
+    const { data: item } = await db.from(ITEMS).select('id, owner_email, collection_id, title').eq('id', id).is('deleted_at', null).maybeSingle()
     if (!item) return NextResponse.json({ ok: false, error: 'That item no longer exists.' }, { status: 404 })
-    const level = await accessFor(item as any, me, isSuperadmin(access.email))
+    const level = await accessFor(item as any, me, isSuperadmin(access.email), { accessRole: access.accessRole })
     if (level !== 'manage') {
       await logAccess({ itemId: id, email: me, action: 'denied', detail: 'delete', ip: ipOf(req) })
       return NextResponse.json({ ok: false, error: 'You cannot delete this item.' }, { status: 403 })
