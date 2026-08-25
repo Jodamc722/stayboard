@@ -12,6 +12,7 @@ type Order = {
   submitted_at: string; approved_at: string | null; approved_by: string | null; paid_at: string | null; payment_note: string | null; charge_error: string | null; folio_note: string | null
   delivery_date: string | null; delivery_note: string | null; requested_delivery?: string; requested_date?: string | null; pushed_at: string | null; breezeway_task_id: string | null; assignee_names: string[]; assign_note: string | null
   stock_note?: string | null; push_error: string | null; delivered_at: string | null; delivered_by: string | null; decline_reason: string | null; approve_token: string | null
+  collect_method?: 'card_on_file' | 'payment_link' | 'airbnb_resolution' | null; collect_card?: string | null
 }
 type LinkRow = { code: string; url: string; reservation_id: string; unit: string | null; building: string | null; guest_name: string | null; source: string | null; check_in: string | null; check_out: string | null; sent_at: string | null; send_error: string | null; opened_at: string | null; orders: number; created_by: string | null }
 type StockScope = { id: string; label: string }
@@ -53,7 +54,13 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
   const [busy, setBusy] = useState<string | null>(null)
   const [flash, setFlash] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const [paidNote, setPaidNote] = useState<Record<string, string>>({})
+  const [settle, setSettle] = useState<Record<string, 'guesty' | 'external' | 'outside'>>({})
+  const [copied, setCopied] = useState<string>('')
   const [newRes, setNewRes] = useState('')
+
+  const copy = useCallback((key: string, text: string) => {
+    try { navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(c => (c === key ? '' : c)), 1600) } catch { /* clipboard blocked — the value is on screen anyway */ }
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -236,6 +243,35 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
                     ) : null}
                     {o.decline_reason ? <div className="mt-2 text-[12px] text-muted">Declined: {o.decline_reason}</div> : null}
 
+                    {(o.status === 'awaiting_payment' || o.status === 'payment_failed') && canMoney ? (() => {
+                      // Whoever opens this card should not have to work out what to do next. The
+                      // amount is the total INCLUDING tax — it is the figure to type into Guesty.
+                      const link = o.collect_method === 'payment_link'
+                      const airbnb = o.collect_method === 'airbnb_resolution'
+                      const head = airbnb ? 'Request through the Airbnb Resolution Center'
+                        : link ? 'Send a Guesty payment link'
+                        : o.collect_card ? 'Charge the ' + o.collect_card + ' on file' : 'Charge the card on file in Guesty'
+                      const ref = 'Guest order ' + o.id.slice(0, 8) + ' · ' + o.items.map(l => l.qty + '× ' + l.name).join(', ')
+                      return (
+                        <div className={'mt-3 rounded-xl border px-3 py-3 ' + (link || airbnb ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50')}>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-[12.5px] font-semibold text-ink">{head}</div>
+                            <a href={'https://app.guesty.com/reservations/' + o.reservation_id + '/summary'} target="_blank" rel="noreferrer" className="text-[11.5px] font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Open in Guesty <ExternalLink size={11} /></a>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-end gap-3">
+                            <div>
+                              <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Amount to charge</div>
+                              <div className="text-[24px] font-bold text-ink tabular-nums leading-tight">{money(o.total_usd)}</div>
+                              <div className="text-[11.5px] text-muted tabular-nums">{money(o.subtotal_usd)} items{o.tax_usd ? ' + ' + money(o.tax_usd) + ' tax' : ' · no tax'}</div>
+                            </div>
+                            <button onClick={() => copy('amt:' + o.id, o.total_usd.toFixed(2))} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-white border border-line text-ink"><Copy size={12} /> {copied === 'amt:' + o.id ? 'Copied' : 'Copy amount'}</button>
+                            <button onClick={() => copy('ref:' + o.id, ref)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-white border border-line text-ink"><Copy size={12} /> {copied === 'ref:' + o.id ? 'Copied' : 'Copy note'}</button>
+                          </div>
+                          <div className="mt-2 text-[11.5px] text-muted">The charge is already on the Guesty folio, so charging the card or a payment link both settle it. Mark paid here once the money lands.</div>
+                        </div>
+                      )
+                    })() : null}
+
                     {canEdit ? (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         {o.status === 'submitted' || (o.status === 'approved' && o.approved_at && Date.now() - new Date(o.approved_at).getTime() > 10 * 60_000) ? (<>
@@ -245,9 +281,14 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
                         {o.status === 'awaiting_payment' || o.status === 'payment_failed' ? (<>
                           {canMoney && !manual ? <button onClick={() => act('approve', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50">{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Retry charge</button> : null}
                           {canMoney ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <input value={paidNote[o.id] || ''} onChange={e => setPaidNote(p => ({ ...p, [o.id]: e.target.value }))} placeholder="how it was paid" className="text-[12px] px-2 py-1.5 rounded-lg border border-line w-36" />
-                              <button onClick={() => act('mark_paid', o.id, { note: paidNote[o.id] || '', recordInGuesty: window.confirm('Also record this payment on the Guesty folio?') })} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50"><Check size={13} /> Mark paid</button>
+                            <span className="inline-flex items-center gap-1.5 flex-wrap">
+                              <select value={settle[o.id] || 'guesty'} onChange={e => setSettle(p => ({ ...p, [o.id]: e.target.value as any }))} className="text-[12px] px-2 py-1.5 rounded-lg border border-line bg-white text-ink" title="Where the money was actually taken — it decides what we write back to Guesty">
+                                <option value="guesty">Taken in Guesty</option>
+                                <option value="external">Taken elsewhere — record it in Guesty</option>
+                                <option value="outside">Taken elsewhere — don’t touch Guesty</option>
+                              </select>
+                              <input value={paidNote[o.id] || ''} onChange={e => setPaidNote(p => ({ ...p, [o.id]: e.target.value }))} placeholder="note (optional)" className="text-[12px] px-2 py-1.5 rounded-lg border border-line w-32" />
+                              <button onClick={() => act('mark_paid', o.id, { note: paidNote[o.id] || '', settle: settle[o.id] || 'guesty' })} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50"><Check size={13} /> Mark paid</button>
                             </span>
                           ) : null}
                           <button onClick={() => act('decline', o.id, { reason: 'could not collect payment' })} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50"><X size={13} /> Decline</button>

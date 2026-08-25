@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ShoppingBag, Loader2, Save, Plus, Trash2, Check, AlertTriangle, ImagePlus, X } from 'lucide-react'
 
-type Scope = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number }
+type Scope = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number; taxPct?: number }
 type Cfg = {
   enabled: boolean; createDaysBefore: number; customFieldName: string; orderByHoursBefore: number; leadHours: number; sameDayCutoffHour: number
   checkInHour: number; taxPct: number; chargeMode: 'auto' | 'manual'; emailRecipients: string[]; publicBase: string; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; skipSourcesRe: string
@@ -221,10 +221,10 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
 
       <div>
         <div className="text-[11px] uppercase tracking-wide text-muted font-semibold mb-1">By location, hub & building</div>
-        <p className="text-[12px] text-muted mb-2">Switch the whole program off somewhere, or give a location / hub / building its own timing. Blank = use the default above. Building beats hub beats location beats default.</p>
+        <p className="text-[12px] text-muted mb-2">Switch the whole program off somewhere, or give a location / hub / building its own timing and <b>sales tax</b>. Blank = inherit. <b>Building beats hub beats location beats default</b> — so one building can stay on inside a location that is switched off, which is how you pilot a single property.</p>
         <div className="rounded-xl border border-line overflow-x-auto">
           <table className="w-full text-[12px] min-w-[640px]">
-            <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-muted bg-app/60"><th className="px-2 py-1.5">Scope</th><th className="px-2 py-1.5 w-20">Offered</th><th className="px-2 py-1.5 w-32">Order by (h before)</th><th className="px-2 py-1.5 w-32">Lead (h after pay)</th><th className="px-2 py-1.5 w-32">Same-day before (h)</th></tr></thead>
+            <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-muted bg-app/60"><th className="px-2 py-1.5">Scope</th><th className="px-2 py-1.5 w-20">Offered</th><th className="px-2 py-1.5 w-32">Order by (h before)</th><th className="px-2 py-1.5 w-32">Lead (h after pay)</th><th className="px-2 py-1.5 w-32">Same-day before (h)</th><th className="px-2 py-1.5 w-24">Sales tax %</th></tr></thead>
             <tbody>
               {markets.map(m => {
                 const r = cfg.marketRules[m] || {}
@@ -235,6 +235,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                     <td className="px-2 py-1"><input type="number" min={0} max={240} value={r.orderByHoursBefore ?? ''} placeholder={String(cfg.orderByHoursBefore)} onChange={e => setScope('marketRules', m, { orderByHoursBefore: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={168} value={r.leadHours ?? ''} placeholder={String(cfg.leadHours)} onChange={e => setScope('marketRules', m, { leadHours: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={23} value={r.sameDayCutoffHour ?? ''} placeholder={String(cfg.sameDayCutoffHour)} onChange={e => setScope('marketRules', m, { sameDayCutoffHour: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
+                    <td className="px-2 py-1"><input type="number" min={0} max={30} step="0.001" value={r.taxPct ?? ''} placeholder={String(cfg.taxPct)} onChange={e => setScope('marketRules', m, { taxPct: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                   </tr>
                 )
               })}
@@ -247,6 +248,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                     <td className="px-2 py-1"><input type="number" min={0} max={240} value={r.orderByHoursBefore ?? ''} placeholder={String(cfg.orderByHoursBefore)} onChange={e => setScope('hubRules', h.id, { orderByHoursBefore: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={168} value={r.leadHours ?? ''} placeholder={String(cfg.leadHours)} onChange={e => setScope('hubRules', h.id, { leadHours: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={23} value={r.sameDayCutoffHour ?? ''} placeholder={String(cfg.sameDayCutoffHour)} onChange={e => setScope('hubRules', h.id, { sameDayCutoffHour: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
+                    <td className="px-2 py-1"><input type="number" min={0} max={30} step="0.001" value={r.taxPct ?? ''} placeholder={String(cfg.taxPct)} onChange={e => setScope('hubRules', h.id, { taxPct: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                   </tr>
                 )
               })}
@@ -254,13 +256,17 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                 const r = cfg.buildingRules[b.label] || {}
                 const mr = cfg.marketRules[b.market] || {}
                 const marketOff = mr.enabled === false
+                const inherited = !marketOff                       // what this building does with no rule of its own
+                const on = r.enabled !== undefined ? r.enabled : inherited
+                const overriding = r.enabled !== undefined && r.enabled !== inherited
                 return (
-                  <tr key={'b:' + b.label} className={'border-t border-line/60 ' + (marketOff ? 'opacity-50' : '')}>
-                    <td className="px-2 py-1 text-ink">{b.label} <span className="text-[10.5px] text-muted">{b.market}{b.vendor ? ' · vendor' : ''}</span></td>
-                    <td className="px-2 py-1"><input type="checkbox" checked={r.enabled !== false && !marketOff} onChange={e => setScope('buildingRules', b.label, { enabled: e.target.checked ? undefined : false })} disabled={ro || marketOff} /></td>
+                  <tr key={'b:' + b.label} className={'border-t border-line/60 ' + (on ? '' : 'opacity-50')}>
+                    <td className="px-2 py-1 text-ink">{b.label} <span className="text-[10.5px] text-muted">{b.market}{b.vendor ? ' · vendor' : ''}</span>{overriding ? <span className="ml-1 text-[10px] font-semibold text-emerald-700">override</span> : null}</td>
+                    <td className="px-2 py-1"><input type="checkbox" checked={on} onChange={e => setScope('buildingRules', b.label, { enabled: e.target.checked === inherited ? undefined : e.target.checked })} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={240} value={r.orderByHoursBefore ?? ''} placeholder={String(mr.orderByHoursBefore ?? cfg.orderByHoursBefore)} onChange={e => setScope('buildingRules', b.label, { orderByHoursBefore: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={168} value={r.leadHours ?? ''} placeholder={String(mr.leadHours ?? cfg.leadHours)} onChange={e => setScope('buildingRules', b.label, { leadHours: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={23} value={r.sameDayCutoffHour ?? ''} placeholder={String(mr.sameDayCutoffHour ?? cfg.sameDayCutoffHour)} onChange={e => setScope('buildingRules', b.label, { sameDayCutoffHour: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
+                    <td className="px-2 py-1"><input type="number" min={0} max={30} step="0.001" value={r.taxPct ?? ''} placeholder={String(mr.taxPct ?? cfg.taxPct)} onChange={e => setScope('buildingRules', b.label, { taxPct: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                   </tr>
                 )
               })}
