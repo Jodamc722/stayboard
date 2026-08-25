@@ -23,7 +23,7 @@ const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
 
 /** The five things a field board can carry. A board shows exactly what it was ticked for. */
-export const BOARD_SECTIONS = ['today', 'crew', 'cleans', 'verify', 'vacant', 'work', 'issues', 'add'] as const
+export const BOARD_SECTIONS = ['today', 'units', 'crew', 'cleans', 'verify', 'vacant', 'work', 'issues', 'requests', 'add'] as const
 export type BoardSection = typeof BOARD_SECTIONS[number]
 export const isBoardLink = (sections: any): boolean =>
   !!sections && BOARD_SECTIONS.some(k => sections[k] === true)
@@ -178,6 +178,215 @@ function boardPriorities(sheet: any, keep: (r: any) => boolean) {
   return out.slice(0, 12)
 }
 
+/**
+ * WORTH KNOWING — the arrivals that change how a unit is treated, and the units to keep an eye on.
+ * Same thresholds as the briefs and Slack (slack_rules): one definition of a long stay and a big
+ * booking, everywhere. Reviews are the other half — a unit a guest just scored badly is a unit the
+ * next guest must not find in the same state.
+ */
+async function worthKnowing(ids: Set<string> | null, today: string, unitName: (lid: string) => string) {
+  const db = supabaseAdmin()
+  let LONG_N = 14, BIG_USD = 3000, LOOK_D = 3
+  try {
+    const { getSlackRules } = await import('./slack-rules')
+    const R: any = await getSlackRules()
+    LONG_N = R.longStayNights || 14
+    BIG_USD = R.bigBookingUsd || 3000
+  } catch { /* defaults stand */ }
+  const until = ymdET(new Date(Date.now() + LOOK_D * 86400000))
+  const big: { lid: string; unit: string; guest: string; when: string; nights: number | null; total: number; why: string }[] = []
+  try {
+    const { data } = await db.from('guesty_reservations')
+      .select('listing_id,check_in,nights,status,guest_name,money_total,source')
+      .gte('check_in', today).lte('check_in', until).limit(600)
+    for (const r of ((data || []) as any[])) {
+      const lid = str(r.listing_id)
+      if (ids && !ids.has(lid)) continue
+      if (/cancel|declin/i.test(str(r.status))) continue
+      const nights = r.nights != null ? Number(r.nights) : null
+      const total = Math.round(Number(r.money_total) || 0)
+      const owner = /^owner/i.test(str(r.source))
+      const long = nights != null && nights >= LONG_N
+      const isBig = total >= BIG_USD
+      if (!owner && !long && !isBig) continue
+      big.push({
+        lid, unit: unitName(lid), guest: str(r.guest_name).split(' ')[0] || 'Guest',
+        when: str(r.check_in).slice(0, 10), nights, total,
+        why: owner ? 'Owner stay' : long ? nights + '-night stay' : 'Big booking',
+      })
+    }
+  } catch { /* the card simply does not appear */ }
+  big.sort((a, b) => a.when.localeCompare(b.when) || b.total - a.total)
+
+  const watch: { lid: string; unit: string; why: string; said: string }[] = []
+  try {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString()
+    const { data } = await db.from('guesty_reviews')
+      .select('listing_id,rating,content,channel,created_at')
+      .gte('created_at', since).order('created_at', { ascending: false }).limit(400)
+    const { ratingToStars } = await import('./optimize-score')
+    const seen = new Set<string>()
+    for (const r of ((data || []) as any[])) {
+      const lid = str(r.listing_id)
+      if (ids && !ids.has(lid)) continue
+      if (seen.has(lid)) continue
+      const stars = ratingToStars(Number(r.rating))
+      if (stars == null || stars > 3) continue
+      seen.add(lid)
+      watch.push({
+        lid, unit: unitName(lid),
+        why: stars.toFixed(1) + '★ ' + (str(r.channel) || 'review') + ' · ' + str(r.created_at).slice(5, 10),
+        said: str(r.content).replace(/\s+/g, ' ').slice(0, 140),
+      })
+    }
+  } catch { /* reviews are a bonus */ }
+  return { big: big.slice(0, 8), watch: watch.slice(0, 6) }
+}
+
+/**
+ * GUEST ORDERS & REQUESTS (Jon, 2026-08-25: "should also have guest orders / requests tab there").
+ *
+ * Two different things the crew is asked to carry, on one tab because from the field they feel the
+ * same — somebody wants something in a unit:
+ *
+ *   ORDERS   a guest paid for water, a crib, late checkout. Already charged, already pushed to
+ *            Breezeway on the delivery date, already assigned. What the board adds is the WHY and
+ *            the WHAT — the basket itself, so the person carrying it knows what to carry, and the
+ *            date, so nobody delivers a Thursday order on Tuesday.
+ *   REQUESTS an open field request on one of these units — the ops side of "somebody wants
+ *            something", raised by staff rather than a guest.
+ *
+ * Money shows because the order is already paid; the crew is not collecting. Delivered orders stay
+ * for 36 hours so a shift that starts after one landed can still see it went.
+ */
+async function guestRequests(ids: Set<string> | null, today: string) {
+  const db = supabaseAdmin()
+  const soon = ymdET(new Date(Date.now() + 7 * 86400000))
+  const mine = (lid: any) => !ids || ids.has(str(lid))
+  const dayLabel = (d: string) => (!d ? '' : d === today ? 'today' : d < today ? 'overdue · ' + d : d === ymdET(new Date(Date.now() + 86400000)) ? 'tomorrow' : d)
+
+  const orders: any[] = []
+  try {
+    // Everything still owed (paid/pushed, due within a week or already late) plus anything a
+    // human still has to approve, plus what landed in the last 36h.
+    const { data } = await db.from('guest_orders')
+      .select('id,unit,listing_id,guest_name,status,items,total_usd,delivery_date,delivery_note,assignee_names,guest_note,submitted_at,delivered_at,check_in')
+      .in('status', ['submitted', 'approved', 'awaiting_payment', 'paid', 'pushed', 'delivered'])
+      .order('delivery_date', { ascending: true })
+      .limit(300)
+    const cut = Date.now() - 36 * 3_600_000
+    for (const o of ((data || []) as any[])) {
+      if (!mine(o.listing_id)) continue
+      const st = str(o.status)
+      const dd = str(o.delivery_date || '').slice(0, 10)
+      if (st === 'delivered') {
+        if (!o.delivered_at || new Date(o.delivered_at).getTime() < cut) continue
+      } else if (st === 'paid' || st === 'pushed') {
+        if (dd && dd > soon) continue          // further out than the board's week — not today's problem
+      }
+      const items = (Array.isArray(o.items) ? o.items : []).map((i: any) =>
+        (Number(i?.qty) > 1 ? Number(i.qty) + '× ' : '') + str(i?.name || i?.sku)).filter(Boolean)
+      orders.push({
+        id: str(o.id), lid: str(o.listing_id), unit: str(o.unit) || 'Unit',
+        guest: str(o.guest_name), status: st, items,
+        total: Number(o.total_usd) || 0,
+        when: dd, whenLabel: dayLabel(dd), note: str(o.delivery_note),
+        guestNote: str(o.guest_note),
+        assigned: (Array.isArray(o.assignee_names) ? o.assignee_names : []).map(str).filter(Boolean),
+        // Rank: late first, then today, then waiting on a human, then the rest.
+        rank: dd && dd < today && st !== 'delivered' ? 0
+          : dd === today && st !== 'delivered' ? 1
+          : st === 'submitted' || st === 'approved' || st === 'awaiting_payment' ? 2
+          : st === 'delivered' ? 9 : 4,
+      })
+    }
+  } catch { /* the orders table may not be reachable — the tab simply shows requests */ }
+  orders.sort((a, b) => a.rank - b.rank || String(a.when).localeCompare(String(b.when)) || a.unit.localeCompare(b.unit))
+
+  const requests: any[] = []
+  try {
+    const { data } = await db.from('field_requests')
+      .select('id,type,title,description,listing_id,unit,building,priority,status,assignee_email,created_by_email,due_at,created_at,vendor,amount_usd')
+      .not('status', 'in', '(done,cancelled)')
+      .order('created_at', { ascending: false })
+      .limit(400)
+    const RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
+    for (const r of ((data || []) as any[])) {
+      if (!mine(r.listing_id)) continue
+      const age = r.created_at ? Math.max(0, Math.round((Date.now() - new Date(r.created_at).getTime()) / 86400000)) : null
+      requests.push({
+        id: str(r.id), lid: str(r.listing_id), unit: str(r.unit) || 'Unit',
+        title: str(r.title) || 'Request', detail: str(r.description).slice(0, 240),
+        type: str(r.type), priority: str(r.priority) || 'medium', status: str(r.status) || 'open',
+        who: str(r.assignee_email).split('@')[0], from: str(r.created_by_email).split('@')[0],
+        due: str(r.due_at || '').slice(0, 10), dueLabel: dayLabel(str(r.due_at || '').slice(0, 10)),
+        age, vendor: str(r.vendor),
+        rank: (RANK[str(r.priority)] ?? 2) - (r.due_at && str(r.due_at).slice(0, 10) <= today ? 4 : 0),
+      })
+    }
+  } catch { /* ditto */ }
+  requests.sort((a, b) => a.rank - b.rank || (b.age ?? 0) - (a.age ?? 0))
+
+  return { orders: orders.slice(0, 60), requests: requests.slice(0, 60) }
+}
+
+/**
+ * TODAY IN OPS, SCOPED (Jon, 2026-08-25: "organized as today in ops"). One row per unit that has
+ * anything happening today — a checkout, an arrival, open work, or an empty night — carrying the
+ * chips that decide the order of the day. Grouped by building, because that is how a crew drives.
+ */
+function unitRows(sheet: any, keep: (r: any) => boolean, nameOf: Record<string, string>, buildingOf2: Record<string, string>) {
+  const by: Record<string, any> = {}
+  const touch = (lid: any, unit: any) => {
+    const id = str(lid)
+    if (!id) return null
+    return (by[id] = by[id] || {
+      lid: id, unit: nameOf[id] || str(unit) || 'Unit', building: buildingOf2[id] || 'Other',
+      chips: [] as string[], clean: null as any, arrival: null as any, out: '', guest: '',
+      jobs: 0, jobsOpen: 0, vacant: false, nextIn: null as number | null,
+    })
+  }
+  for (const d of ((sheet.departures || []) as any[]).filter(keep)) {
+    const u = touch(d.listingId, d.unit); if (!u) continue
+    u.clean = d.clean || null; u.out = str(d.checkOutTime); u.guest = str(d.guest)
+  }
+  const arriving = new Set<string>()
+  for (const a of ((sheet.arrivals || []) as any[]).filter(keep)) {
+    const u = touch(a.listingId, a.unit); if (!u) continue
+    u.arrival = { at: str(a.checkInTime), guest: str(a.guest).split(' ')[0], nights: a.nights ?? null }
+    arriving.add(str(a.listingId))
+  }
+  for (const w of ((sheet.work || []) as any[]).filter(keep)) {
+    const u = touch(w.listingId, w.unit); if (!u) continue
+    u.jobs++; if (w.status !== 'done') u.jobsOpen++
+  }
+  for (const v of ((sheet.vacants || []) as any[]).filter(keep)) {
+    const u = touch(v.listingId, v.unit); if (!u) continue
+    u.vacant = true; u.nextIn = v.daysUntilArrival ?? null
+  }
+  const rows = Object.values(by).map((u: any) => {
+    const st = str(u.clean?.status)
+    const same = !!u.clean && arriving.has(u.lid)
+    if (same) u.chips.push('same-day')
+    if (u.clean && !(u.clean.assignees || []).length) u.chips.push('unassigned')
+    if (u.clean) u.chips.push(/done/i.test(st) ? 'clean done' : /progress/i.test(st) ? 'cleaning' : 'to clean')
+    if (u.arrival) u.chips.push('arrives ' + (u.arrival.at || 'today'))
+    if (u.jobsOpen) u.chips.push(u.jobsOpen + ' job' + (u.jobsOpen === 1 ? '' : 's'))
+    if (u.vacant) u.chips.push(u.nextIn == null ? 'empty' : 'empty · guest in ' + u.nextIn + 'd')
+    // Rank: what breaks the day first.
+    u.rank = same && !/done/i.test(st) ? 0
+      : (u.clean && !(u.clean.assignees || []).length) ? 0
+        : u.clean && !/done/i.test(st) ? 1
+          : u.jobsOpen ? 2 : u.arrival ? 3 : 4
+    return u
+  }).sort((a: any, b: any) => a.rank - b.rank || a.unit.localeCompare(b.unit))
+  const groups: Record<string, any[]> = {}
+  for (const r of rows) (groups[r.building] = groups[r.building] || []).push(r)
+  return Object.keys(groups)
+    .sort((a, b) => Math.min(...groups[a].map((r: any) => r.rank)) - Math.min(...groups[b].map((r: any) => r.rank)) || a.localeCompare(b))
+    .map(building => ({ building, rows: groups[building] }))
+}
+
 export async function buildFieldBoard(link: BoardLink) {
   const today = ymdET(new Date())
   const { ids, label: scopeLabel } = await scopeIds(link)
@@ -187,7 +396,29 @@ export async function buildFieldBoard(link: BoardLink) {
   const sheet: any = await buildDaySheet(today, marketArg)
   const keep = (r: any) => !ids || ids.has(str(r.listingId ?? r.listing_id ?? r.id))
   const sections = link.sections || {}
+  // Unit names and canonical buildings, read once. DECLARED BEFORE ANY CONSUMER: worthKnowing()
+  // is handed a lookup into these maps and calls it during its own await, so a later `const`
+  // would leave it in the temporal dead zone and every big booking would vanish into a catch.
+  const nameOfUnit: Record<string, string> = {}
+  const buildingOfUnit: Record<string, string> = {}
+  try {
+    const dbU = supabaseAdmin()
+    const { data } = await dbU.from('guesty_listings').select('id,nickname,title,building').limit(3000)
+    for (const l of ((data || []) as any[])) {
+      const nm = l.nickname || l.title || 'Unit'
+      nameOfUnit[str(l.id)] = nm
+      buildingOfUnit[str(l.id)] = buildingOf(str(l.building), nm) || 'Other'
+    }
+  } catch { /* names fall back to whatever the rows carry */ }
+
   const crew = sections.crew ? await crewFor(ids, link.scope_type === 'listing' ? [] : link.scope_ids).catch(() => null) : null
+  const notable = (sections.today || sections.units)
+    ? await worthKnowing(ids, today, (lid) => nameOfUnit[lid] || 'Unit').catch(() => ({ big: [], watch: [] }))
+    : { big: [], watch: [] }
+  const asks = sections.requests
+    ? await guestRequests(ids, today).catch(() => ({ orders: [], requests: [] }))
+    : { orders: [], requests: [] }
+
 
   // The units this board may act on — the picker for Add, and the guard the add route enforces.
   // Always sent: a unit sheet needs names even when the board cannot add work.
@@ -214,6 +445,11 @@ export async function buildFieldBoard(link: BoardLink) {
     arrivals: sections.cleans || sections.verify ? ((sheet.arrivals || []) as any[]).filter(keep) : [],
     vacants: sections.vacant ? ((sheet.vacants || []) as any[]).filter(keep) : [],
     priorities: sections.today ? boardPriorities(sheet, keep) : [],
+    bigBookings: notable.big,
+    watchUnits: notable.watch,
+    orders: asks.orders,
+    requests: asks.requests,
+    unitRows: sections.units ? unitRows(sheet, keep, nameOfUnit, buildingOfUnit) : [],
     units,
     work: sections.work ? ((sheet.work || []) as any[]).filter(keep) : [],
     glitches: sections.issues ? ((sheet.glitches || []) as any[]).filter(keep) : [],
