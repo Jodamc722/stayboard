@@ -37,10 +37,12 @@ export const HUBS: Hub[] = [
   },
   {
     key: 'guest-comms', label: 'Guest Comms',
-    blurb: 'What the guest and the building are told — front-desk notices, guidebooks, and the property FAQ Eve answers from.',
+    // Guidebooks left this hub on 2026-08-25 (Jon: "move guidebooks back to an individual tab").
+    // It is a thing you go to and work in, not a tab you pass on the way to a notice — and burying
+    // it behind another page's URL made it feel gone. It has its own sidebar row again.
+    blurb: 'What the guest and the building are told — front-desk notices and the property FAQ Eve answers from.',
     tabs: [
       { to: '/reservation-emails', label: 'Front-Desk Notices' },
-      { to: '/guidebooks', label: 'Guidebooks' },
       { to: '/faq', label: 'Property FAQ' },
     ],
   },
