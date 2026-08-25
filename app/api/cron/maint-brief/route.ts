@@ -20,6 +20,7 @@ import { getSetting } from '@/lib/app-settings'
 import { buildMaintBrief } from '@/lib/maint-email'
 import type { MaintMarket } from '@/lib/maint-brief'
 import { sendGmail } from '@/lib/gmail-send'
+import { asLang, type BriefLang } from '@/lib/brief-lang'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -28,7 +29,7 @@ const OPS_BRIEF_KEY = 'ops_brief'
 const OWNER = 'jon@stay-hospitality.com'
 // Standing CC (Jon, 2026-08-09): the operations manager sees every brief that reaches a crew.
 const STANDING_CC = ['roberto@stay-hospitality.com']
-type Cfg = { fromEmail?: string; maint?: { enabled?: boolean; miamiTo?: string[]; browardTo?: string[] } }
+type Cfg = { fromEmail?: string; maint?: { enabled?: boolean; miamiTo?: string[]; browardTo?: string[]; miamiLang?: string; browardLang?: string } }
 
 const clean = (list: any): string[] => {
   const seen = new Set<string>(); const out: string[] = []
@@ -56,16 +57,17 @@ export async function GET(req: NextRequest) {
 
   const cfg = await getSetting<Cfg>(OPS_BRIEF_KEY, {}).catch(() => ({} as Cfg))
   const fromEmail = String(cfg.fromEmail || OWNER)
-  const MARKETS: { market: MaintMarket; to: string[] }[] = [
-    { market: 'Miami', to: clean(cfg.maint?.miamiTo) },
-    { market: 'Broward', to: clean(cfg.maint?.browardTo) },
+  const MARKETS: { market: MaintMarket; to: string[]; lang: BriefLang }[] = [
+    { market: 'Miami', to: clean(cfg.maint?.miamiTo), lang: asLang(cfg.maint?.miamiLang) },
+    { market: 'Broward', to: clean(cfg.maint?.browardTo), lang: asLang(cfg.maint?.browardLang) },
   ]
 
   // ---- preview: the HTML only. Signed-in, because it names units and guests' situations.
   if (preview) {
     if (!me) return NextResponse.json({ error: 'sign in to preview' }, { status: 401 })
     const m: MaintMarket = /broward/i.test(preview) ? 'Broward' : 'Miami'
-    const b = await buildMaintBrief(m)
+    // ?lang=es previews the Spanish copy without saving the setting.
+    const b = await buildMaintBrief(m, asLang(sp.get('lang') || MARKETS.find(x => x.market === m)?.lang))
     return new NextResponse(b.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
   }
 
@@ -73,9 +75,9 @@ export async function GET(req: NextRequest) {
   if (test) {
     if (!me) return NextResponse.json({ error: 'sign in to test' }, { status: 401 })
     const out: any[] = []
-    for (const { market } of MARKETS) {
+    for (const { market, lang } of MARKETS) {
       try {
-        const b = await buildMaintBrief(market)
+        const b = await buildMaintBrief(market, lang)
         const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + b.subject, html: b.html })
         out.push({ market, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
       } catch (e: any) { out.push({ market, sent: false, error: String(e?.message || e) }) }
@@ -89,10 +91,10 @@ export async function GET(req: NextRequest) {
   }
   const out: any[] = []
   // EACH MARKET ON ITS OWN — one market failing must never take the other's email down.
-  for (const { market, to } of MARKETS) {
+  for (const { market, to, lang } of MARKETS) {
     const list = to.length ? to : [OWNER]
     try {
-      const b = await buildMaintBrief(market)
+      const b = await buildMaintBrief(market, lang)
       const r = await sendGmail({ fromEmail, to: list, cc: ccFor(list), subject: b.subject, html: b.html })
       out.push({ market, to: list.length, defaulted: !to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
     } catch (e: any) {
