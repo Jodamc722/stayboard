@@ -1,18 +1,18 @@
 'use client'
-// INVENTORY — the menu and the hub in one place (Jon, 2026-08-25: "need to be edit by hub,
+// INVENTORY — the menu and the shelf in one place (Jon, 2026-08-25: "need to be edit by hub,
 // adjust cost, have the order links for easy ordering… we need to be able to update, we need to be
 // able to add descriptions… why can't I add items, or edit items or delete items").
 //
-// WHY THIS SHAPE: the old Stock tab was a matrix of every hub at once. With two hubs the
-// Global column read OUT on all nine rows — nine red badges about a hub nobody stocks — while the
+// WHY THIS SHAPE: the old Stock tab was a matrix of every shelf at once. With two shelves the
+// Global column read OUT on all nine rows — nine red badges about a shelf nobody stocks — while the
 // things that actually needed restocking were invisible. Someone restocking stands in ONE storeroom
-// with ONE list, so this shows one hub, worst-first, and puts the buy-it-again link on the row.
+// with ONE list, so this shows one shelf, worst-first, and puts the buy-it-again link on the row.
 //
 // EVERYTHING about an item is editable here: its name, the description the guest reads, category,
 // unit, photo, guest price, what we pay, the order link — plus adding and removing items. It runs
 // at 'edit' level on purpose. Only the settings card is owner-gated, because that is what switches
 // on automation that charges cards; locking the menu behind the same gate meant the people who
-// actually run the hub could not fix a typo.
+// actually run the shelf could not fix a typo.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check, Plus, Trash2, ChevronDown, ChevronRight, X, Pencil } from 'lucide-react'
 
@@ -46,13 +46,14 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
   const [removing, setRemoving] = useState<string | null>(null)   // two-step delete
   const [coverOpen, setCoverOpen] = useState(false)
   const [unitQ, setUnitQ] = useState('')
+  const [hubMenu, setHubMenu] = useState(false)
 
   const load = useCallback(async () => {
     try {
       const j = await fetch('/api/guest-orders/stock', { cache: 'no-store' }).then(r => r.json())
       if (!j?.ok) { setErr(j?.error || 'Could not load inventory'); return }
       setData(j); setErr(''); setStockEdits({}); setItemEdits({}); setAdds([]); setRemoving(null)
-      // Open on a real hub. The global one is the fallback for anything outside a hub and is
+      // Open on a real shelf. The global one is the fallback for anything outside a hub and is
       // usually empty, which is a misleading first impression.
       setScope(s => s || (j.scopes.find((x: Scope) => x.id !== 'global')?.id ?? 'global'))
     } catch { setErr('Network error') }
@@ -84,8 +85,8 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
     } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
   }
 
-  // WHICH PROPERTIES AND UNITS THIS HUB FILLS. The guest's link resolves its hub from the unit
-  // first, then the property — so a unit named here gets THIS hub even if its building is
+  // WHICH PROPERTIES AND UNITS THIS SHELF FILLS. The guest's link resolves its hub from the unit
+  // first, then the property — so a unit named here gets THIS shelf even if its building is
   // elsewhere. Saved immediately: it is a toggle, not a form.
   async function setCoverage(next: { buildings?: string[]; listings?: string[] }) {
     if (!data || scope === 'global') return
@@ -96,9 +97,22 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
       const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         rows: [], items: [], coverage: { hubId: scope.replace(/^hub:/, ''), buildings: next.buildings ?? cur.buildings, listings: next.listings ?? cur.listings },
       }) }).then(r => r.json())
-      if (!j?.ok) setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || 'Could not change what this hub covers' })
+      if (!j?.ok) setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || 'Could not change what this shelf covers' })
       await load()
     } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
+  }
+
+  // Shelves are created, renamed and removed from here too, so "where do I add a hub" has an
+  // answer on the page where hubs are used.
+  async function hubOp(payload: Record<string, any>, okText: string) {
+    setBusy('hub'); setMsg(null)
+    try {
+      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [], items: [], ...payload }) }).then(r => r.json())
+      if (j?.ok) setMsg({ tone: 'ok', text: okText })
+      else setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || 'Could not do that' })
+      if (payload.deleteHub) setScope('global')
+      await load()
+    } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null); setHubMenu(false) }
   }
 
   async function removeItem(item: Item) {
@@ -152,9 +166,15 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
         <div className="flex flex-wrap gap-1.5">
           {data.scopes.map(s => (
             <button key={s.id} onClick={() => setScope(s.id)} className={'px-3 py-1.5 rounded-lg text-[12.5px] font-semibold border ' + (scope === s.id ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:border-brand-300')}>
-              {s.id === 'global' ? 'No hub' : s.label}
+              {s.id === 'global' ? 'Global shelf' : s.label}
             </button>
           ))}
+          {canEdit ? (
+            <button onClick={() => { const label = window.prompt('Name the new shelf — a hub is a storeroom that a group of properties or units draws from.\n\ne.g. "Salato", "Downtown store", "Beach cupboard"'); if (label && label.trim()) hubOp({ newHub: { label: label.trim() } }, 'Added the ' + label.trim() + ' shelf — now say what it covers') }}
+              disabled={busy === 'hub'} className="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold border border-dashed border-line bg-white text-ink hover:border-brand-300 inline-flex items-center gap-1 disabled:opacity-50">
+              {busy === 'hub' ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} New shelf
+            </button>
+          ) : null}
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <div className="relative">
@@ -170,7 +190,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
       {scope === 'global' ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex gap-2">
           <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-          <div>Anything not assigned to a hub counts here. If this reads zero, those properties show an <b>empty order form</b> — put the property in a hub, or count it here.</div>
+          <div>This is the fallback shelf for any property not in a hub. If it reads zero, those properties show an <b>empty order form</b> — put the property in a hub, or count it here.</div>
         </div>
       ) : here ? (
         <div className="rounded-xl border border-line bg-white px-3 py-2.5">
@@ -179,16 +199,22 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
               <b>{here.label}</b> fills{' '}
               {here.buildings.length ? <>{here.buildings.length} propert{here.buildings.length === 1 ? 'y' : 'ies'}</> : 'no property'}
               {here.listings.length ? <> and {here.listings.length} individual unit{here.listings.length === 1 ? '' : 's'}</> : ''}
-              . <span className="text-muted">A guest's order link uses the hub its unit sits on.</span>
+              . <span className="text-muted">A guest's order link uses the shelf its unit sits on.</span>
             </div>
-            {canEdit ? <button onClick={() => { setCoverOpen(o => !o); setUnitQ('') }} className="text-[12px] font-semibold text-brand-700 hover:underline">{coverOpen ? 'done' : 'change what it covers'}</button> : null}
+            {canEdit ? (
+              <div className="flex items-center gap-2.5">
+                <button onClick={() => { setCoverOpen(o => !o); setUnitQ('') }} className="text-[12px] font-semibold text-brand-700 hover:underline">{coverOpen ? 'done' : 'change what it covers'}</button>
+                <button onClick={() => { const label = window.prompt('Rename this shelf', here.label); if (label && label.trim()) hubOp({ renameHub: { hubId: scope.replace(/^hub:/, ''), label: label.trim() } }, 'Renamed') }} className="text-[12px] text-muted hover:text-ink">rename</button>
+                <button onClick={() => { if (window.confirm('Remove the ' + here.label + ' shelf?\n\nIts counts go with it. The items themselves stay on the menu, and anything that pointed here falls back to the global shelf.')) hubOp({ deleteHub: { hubId: scope.replace(/^hub:/, '') } }, 'Removed the ' + here.label + ' shelf') }} className="text-[12px] text-muted hover:text-rose-700">remove shelf</button>
+              </div>
+            ) : null}
           </div>
           {here.buildings.length || here.listings.length ? (
             <div className="flex flex-wrap gap-1 mt-1.5">
               {here.buildings.map(b => <span key={b} className="px-2 py-0.5 rounded-full bg-ink text-white text-[11px]">{b}</span>)}
               {here.listings.map(id => { const u = data.listings.find(x => x.id === id); return <span key={id} className="px-2 py-0.5 rounded-full border border-ink text-ink text-[11px]">{u ? u.name : id.slice(0, 8)}</span> })}
             </div>
-          ) : <div className="text-[11.5px] text-amber-700 font-semibold mt-1">Nothing points at this hub yet — no guest will see these items.</div>}
+          ) : <div className="text-[11.5px] text-amber-700 font-semibold mt-1">Nothing points at this shelf yet — no guest will see these items.</div>}
 
           {coverOpen && canEdit ? (
             <div className="mt-2.5 border-t border-line pt-2.5">
@@ -197,7 +223,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
                 {data.buildings.map(b => {
                   const on = here.buildings.indexOf(b) >= 0
                   const elsewhere = !on && data.scopes.some(s => s.id !== scope && s.buildings.indexOf(b) >= 0)
-                  return <button key={b} type="button" disabled={elsewhere || busy === 'cover'} title={elsewhere ? 'on another hub' : ''}
+                  return <button key={b} type="button" disabled={elsewhere || busy === 'cover'} title={elsewhere ? 'on another shelf' : ''}
                     onClick={() => setCoverage({ buildings: on ? here.buildings.filter(x => x !== b) : [...here.buildings, b] })}
                     className={'px-2 py-0.5 rounded-full border text-[11.5px] ' + (on ? 'bg-ink text-white border-ink' : elsewhere ? 'bg-app text-muted border-line opacity-50' : 'bg-white border-line text-ink hover:border-brand-300')}>{b}</button>
                 })}
@@ -209,7 +235,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
                   const on = here.listings.indexOf(u.id) >= 0
                   const elsewhere = !on && data.scopes.some(s => s.id !== scope && s.listings.indexOf(u.id) >= 0)
                   const viaBuilding = !on && here.buildings.indexOf(u.building) >= 0
-                  return <button key={u.id} type="button" disabled={elsewhere || busy === 'cover'} title={elsewhere ? 'on another hub' : viaBuilding ? 'already included via its property' : ''}
+                  return <button key={u.id} type="button" disabled={elsewhere || busy === 'cover'} title={elsewhere ? 'on another shelf' : viaBuilding ? 'already included via its property' : ''}
                     onClick={() => setCoverage({ listings: on ? here.listings.filter(x => x !== u.id) : [...here.listings, u.id] })}
                     className={'w-full text-left px-2 py-1 rounded text-[12px] flex items-center gap-2 ' + (on ? 'bg-ink text-white' : elsewhere ? 'text-muted opacity-50' : 'hover:bg-app text-ink')}>
                     <span className="flex-1 truncate">{u.name}</span>
@@ -226,7 +252,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
       {adds.map((a, ai) => (
         <div key={a.key} className="rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/30 p-4">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-[12.5px] font-semibold text-ink">New item on {here ? here.label : 'this hub'}</div>
+            <div className="text-[12.5px] font-semibold text-ink">New item on {here ? here.label : 'this shelf'}</div>
             <button onClick={() => setAdds(x => x.filter((_, i) => i !== ai))} className="text-muted hover:text-rose-600" title="Discard"><X size={14} /></button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -246,7 +272,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
 
       <div className="rounded-2xl border border-line bg-white overflow-hidden">
         <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center justify-between flex-wrap gap-2">
-          <div className="text-[12.5px] font-semibold text-ink flex items-center gap-1.5"><Package size={14} /> {here ? here.label : 'Hub'} · {rows.length} item{rows.length === 1 ? '' : 's'}</div>
+          <div className="text-[12.5px] font-semibold text-ink flex items-center gap-1.5"><Package size={14} /> {here ? here.label : 'Shelf'} · {rows.length} item{rows.length === 1 ? '' : 's'}</div>
           <div className="text-[11.5px] text-muted">Use <b>Edit</b> on a row for its name, description, photo and removal.</div>
         </div>
 
