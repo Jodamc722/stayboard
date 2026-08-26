@@ -46,13 +46,17 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
   }
   return (
     <div>
-      <div className="inline-flex rounded-xl border border-line bg-white p-1 mb-5">
+      {/* Sticky on a phone: People / Roles / App settings is the only way between the three, and it
+          used to scroll off the top after the first panel. z-20 clears the cards below it. */}
+      <div className="sticky top-0 z-20 -mx-3 px-3 py-1.5 bg-app/95 backdrop-blur sm:static sm:mx-0 sm:px-0 sm:py-0 sm:bg-transparent sm:backdrop-blur-none mb-3 sm:mb-5">
+      <div className="inline-flex rounded-xl border border-line bg-white p-1">
         {TABS.map(({ key, label, Icon }) => (
           <button key={key} onClick={() => pick(key)}
             className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${tab === key ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink'}`}>
             <Icon size={14} /> {label}
           </button>
         ))}
+      </div>
       </div>
       {tab === 'people' && <UsersAdmin myEmail={myEmail} isOwner={isOwner} />}
       {tab === 'roles' && <RolesAdmin isOwner={isOwner} />}
@@ -82,11 +86,26 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
   )
 }
 
+// SIX PANELS OPEN AT ONCE IS A DESKTOP AFFORDANCE (Jon, 2026-08-24). On a wide screen having Eve,
+// the ops presets, the morning brief, task automation, the crew roster and the Slack rules all
+// expanded is a settings page you can scan. On a 390px phone it is several thousand pixels of
+// scrolling, the tab strip above is not sticky, and there is no way back to the top but swiping.
+// So on a phone every panel starts CLOSED with its title visible — you read a short list of
+// fourteen headlines and open the one you came for. Desktop is untouched.
+//
+// The collapse happens in an effect rather than in useState's initialiser on purpose: the server
+// renders these open, so deciding from `window` during the first render would make the client's
+// HTML disagree with the server's and React would throw a hydration mismatch.
 function Fold({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
   const [open, setOpen] = useState(!!defaultOpen)
+  const [touched, setTouched] = useState(false)
+  useEffect(() => {
+    if (touched || !defaultOpen) return
+    try { if (window.matchMedia('(max-width: 640px)').matches) setOpen(false) } catch { /* no matchMedia */ }
+  }, [defaultOpen, touched])
   return (
     <div className="rounded-2xl border border-line bg-white overflow-hidden">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-app/50">
+      <button onClick={() => { setTouched(true); setOpen(!open) }} className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-app/50">
         {open ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
         <span className="text-sm font-bold text-ink">{title}</span>
       </button>

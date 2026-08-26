@@ -8,7 +8,7 @@ import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from 
 import { TAB_SETS, tabSetForPath, type TabSet } from '@/lib/tabsets'
 import { EveFloat } from '@/components/EveFloat'
 import {
-  Home, CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
+  CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Sliders, Wrench, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
   ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle } from 'lucide-react'
@@ -44,7 +44,10 @@ const SECTIONS: NavSection[] = [
       // Eve left the sidebar on 2026-08-19 (Jon: "Eve does not need her own page — a floating
       // icon"). She is the bubble in the bottom-right corner of every page now; managing her
       // memory/voice/direction lives in Users & admin → Settings → Eve.
-      { to: '/',        label: 'Home',           Icon: Home },
+      //
+      // Home left it on 2026-08-24 (Jon: "home page is a bust"). '/' is now a redirect to Today in
+      // Ops, and the KPI board it used to render moved to /kpi under Money, where a page about
+      // occupancy, ADR and RevPAR belongs.
     ],
   },
   {
@@ -101,6 +104,9 @@ const SECTIONS: NavSection[] = [
   {
     title: 'Money',
     items: [
+      // The old home page (Jon, 2026-08-24). Same board, same `home` permission key, just no longer
+      // the first thing you see when you open the app.
+      { to: '/kpi',      label: 'KPI board',    Icon: Gauge },
       { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
       { to: '/marketing', label: 'Direct Bookings', Icon: Megaphone },
       { to: '/billing',  label: 'Billable Hours', Icon: Receipt }, // 2026-08-06 - Breezeway task billing by owner
@@ -487,7 +493,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </header>
 
         <main className="flex-1 overflow-auto overscroll-contain px-safe">
-          <div className="max-w-[1600px] mx-auto px-3 py-4 sm:p-6 lg:p-8 animate-fade-in">
+          {/* pb-24 on a phone: Eve's bubble floats above the bottom bar, and without room to scroll
+              past it the last row of every board sits permanently under a 56px circle. */}
+          <div className="max-w-[1600px] mx-auto px-3 pt-4 pb-24 sm:p-6 lg:p-8 animate-fade-in">
             {setHere ? (
               // THE TAB STRIP — every member page gets it for free, so the audit pages and
               // the four order pages read as one thing with tabs instead of eight scattered entries.

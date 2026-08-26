@@ -678,7 +678,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
           other controls because it scopes everything below it, counters included — a filter that
           silently changes the numbers has to be the most visible thing on the screen. ── */}
       {markets.length > 1 && (
-        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+        <div className="lh-actions mt-3 flex items-center gap-1.5 flex-wrap">
           <MapPin size={13} className="text-muted shrink-0" />
           <button onClick={() => pickMkt('all')}
             className={'px-2.5 py-1 rounded-full border text-[12px] font-bold ' + (mkt === 'all' ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
@@ -705,7 +705,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
             </button>
           ))}
         </div>
-        <div className="relative flex-1 min-w-[180px]">
+        <div className="relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[180px]">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input value={q} onChange={e => setQ(e.target.value)}
             placeholder={mode === 'units' ? 'Find a unit, a task, a name…' : 'Find a person…'}

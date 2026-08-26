@@ -300,25 +300,28 @@ export function OpsV2() {
           itself — Jon, 2026-08-17, on the stacked v2+v1 screen: "the Board tab is a mess. The
           Today in Ops board that we had was much better." So the board IS the board again; this
           layer only adds the tabs, the triage and the Add button. ── */}
-      {/* Three tabs plus the Add-task button is ~400px of chrome. Wrapping it left the Add button
-          stranded alone in a ~60px empty band under the tabs (Jon, 2026-08-22). `lh-actions` makes
-          the whole strip one swipeable line below 640px; from sm: up it is the same one-line row it
-          always was. gap-4 on phone keeps all four items within a thumb's reach of the edge. */}
-      <div className="lh-actions flex items-center gap-4 sm:gap-6 flex-wrap border-b border-line mb-4">
+      {/* Four tabs plus the Add-task button is ~400px of chrome, and this is the screen the app now
+          opens on, so it has to be right. Wrapping stranded Add task in an empty band; putting the
+          WHOLE row in one scroller pushed Add task half off the right edge, which is worse — it is
+          the primary action here. So: the tabs scroll, the button does not. It stays pinned to the
+          right at every width, and from sm: up this is the same one-line row it always was. */}
+      <div className="flex items-end gap-2 border-b border-line mb-4">
+      <div className="flex items-center gap-4 sm:gap-6 flex-1 min-w-0 overflow-x-auto sm:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {([['grid', 'Grid', null, 'bg-app text-muted'],
            ['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
            ['people', 'Staffing', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
            ['push', 'Push', null, 'bg-violet-100 text-violet-700']] as const).map(([k, label, n, cls]) => (
           <button key={k} onClick={() => pick(k as any)}
-            className={'pb-2.5 pt-1 text-[14px] font-bold inline-flex items-center gap-2 border-b-2 -mb-px ' +
+            className={'pb-2.5 pt-1 text-[14px] font-bold inline-flex shrink-0 items-center gap-2 border-b-2 -mb-px ' +
               (tab === k ? 'text-ink border-ink' : 'text-muted border-transparent hover:text-ink')}>
             {label}
             {n != null && n > 0 && <span className={'text-[11px] font-bold rounded-full px-2 py-0.5 ' + cls}>{n}</span>}
             {k === 'push' && <PushCount />}
           </button>
         ))}
+      </div>
         <button onClick={() => setAddFor('')}
-          className="ml-auto mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
+          className="shrink-0 mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 sm:px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
           <Plus size={14} /> Add task
         </button>
       </div>

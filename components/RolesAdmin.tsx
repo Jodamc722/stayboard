@@ -67,11 +67,11 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
     if (!role) return
     const p: Record<string, string> = {}
     for (const f of FEATURES) p[f.key] = lvlOf(role.perms || {}, f.key)
-    setDPerms(p); setDLanding(role.landing || '/'); setDLabel(role.label); setMsg(null)
+    setDPerms(p); setDLanding(role.landing || '/plan'); setDLabel(role.label); setMsg(null)
   }, [role?.key, roles])
 
   const dirty = role && !role.is_system && (
-    dLabel !== role.label || dLanding !== (role.landing || '/') ||
+    dLabel !== role.label || dLanding !== (role.landing || '/plan') ||
     FEATURES.some(f => dPerms[f.key] !== lvlOf(role.perms || {}, f.key))
   )
 
@@ -96,7 +96,7 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
     try {
       const src = fromKey ? roles.find(r => r.key === fromKey) : null
       const perms = src ? { ...src.perms } : { '*': 'off', home: 'view' }
-      const r = await fetch('/api/roles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: name.trim(), perms, landing: src?.landing || '/', blurb: src ? `Copy of ${src.label}` : '' }) })
+      const r = await fetch('/api/roles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: name.trim(), perms, landing: src?.landing || '/plan', blurb: src ? `Copy of ${src.label}` : '' }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to create role.')
       setMsg(`Role "${name.trim()}" created.`); await load(j.key)
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
