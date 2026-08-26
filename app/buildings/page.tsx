@@ -10,6 +10,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { unstable_cache } from 'next/cache'
+import { pageRows } from '@/lib/db-page'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess } from '@/lib/access'
@@ -49,13 +50,18 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
   const sinceIso = periodDays == null ? null : new Date(Date.now() - periodDays * 86400_000).toISOString()
   // SLIM raw: full `raw` for 285 listings is tens of MB — cold hits (every deploy resets the
   // cache) took 10s+ and the page looked dead. Pull only the sub-fields computeScore reads.
-  const [{ data: listings }, { data: work }, { data: revs }] = await Promise.all([
+  const [{ data: listings }, { data: work }, revsPage] = await Promise.all([
     sb.from('guesty_listings')
       .select("id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, last_optimized, pub:raw->publicDescription, pub2:raw->publicDescriptions, terms:raw->terms, integrations:raw->integrations, photoScore:raw->_photoScore, lastOptRaw:raw->>_lastOptimized, minN:raw->defaultListingMinNights, ib:raw->instantBookable, ib2:raw->instantBook, ci:raw->>defaultCheckInTime, ci2:raw->>checkInTime, co:raw->>defaultCheckOutTime, co2:raw->>checkOutTime, cancel:raw->>cancellationPolicy, prices:raw->prices, airbnbCancel:raw->airbnb->>cancellationPolicy, bookingCancel:raw->bookingcom->>cancellationPolicy")
       .limit(1000),
     sb.from('field_requests').select('building').in('status', ['open', 'in_progress']).limit(1000),
-    sb.from('guesty_reviews').select('listing_id, rating, created_at, excluded_from_score').limit(20000),
+    // PAGED, and ORDERED. `.limit(20000)` returned 1,000 of 3,760 reviews — an arbitrary 27% sample
+    // with no ordering at all, averaged into every building's star rating on this page. See
+    // lib/db-page.ts. Ordering by id is what makes the page boundaries stable; without it PostgREST
+    // repeats and skips rows across pages.
+    pageRows((a, b) => sb.from('guesty_reviews').select('id, listing_id, rating, created_at, excluded_from_score').order('id').range(a, b), 20),
   ])
+  const revs = revsPage.rows
   // Rebuild the slim raw object computeScore expects.
   const slimRaw = (l: any) => ({
     publicDescription: l.pub, publicDescriptions: l.pub2, terms: l.terms, integrations: l.integrations,
