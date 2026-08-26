@@ -59,6 +59,16 @@ export async function PUT(req: NextRequest) {
       track_stock: c?.track_stock === true,
       image_url: /^https?:\/\//.test(String(c?.image_url || '')) ? String(c.image_url).slice(0, 400) : null,
       updated_at: new Date().toISOString(),
+      // WHAT WE PAY, only when the caller actually sent it.
+      //
+      // This field was missing from the mapper entirely, so anything that tried to set a cost here
+      // had it silently dropped — the save reported success and the number never landed. It is
+      // spread conditionally rather than defaulted because `update()` writes every key in the
+      // object: a caller that does not mention cost (the design studio) must not have the existing
+      // cost overwritten with a zero or a NaN on its way past.
+      ...(c?.cost_usd === undefined || c?.cost_usd === null || c?.cost_usd === ''
+        ? {}
+        : { cost_usd: Math.max(0, Math.round((Number(c.cost_usd) || 0) * 100) / 100) }),
     }))
     const inserts = rows.filter((r: any) => !r.id).map((r: any) => { const { id, ...rest } = r; return rest })
     const updates = rows.filter((r: any) => r.id)
