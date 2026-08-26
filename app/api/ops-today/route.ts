@@ -10,6 +10,8 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, untrackedRegex, noBreezewayRegex } from '@/lib/ops-presets'
 import { isLiveStay } from '@/lib/stay-status'
 import { summariseBehind, fmt12, type BehindRow } from '@/lib/ops-behind'
+import { TASK_CATS_KEY, resolveCats, catOfTaskWith } from '@/lib/task-categories'
+import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -60,6 +62,11 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin()
     // Vendor buildings + the 4pm deadline are operator-editable (/users -> Ops presets).
     const presets = await getOpsPresets()
+    // THE TAXONOMY IS DECIDED HERE, ONCE. The board used to classify tasks in the browser from its
+    // own copy of the rules; now the rules are editable, and two copies of an editable rule set is
+    // two answers to the same question. The server labels every task and ships the taxonomy with
+    // the payload, so the counters, the chips and the filter are reading one decision.
+    const taskCats = resolveCats(await getSetting<any>(TASK_CATS_KEY, null).catch(() => null))
     const VENDOR_RE = vendorRegex(presets.vendorBuildings)
     const UNTRACKED_RE = untrackedRegex(presets.vendorBuildings)
     const DEADLINE_MIN = presets.timing.deadlineMin
@@ -213,6 +220,7 @@ export async function GET(req: NextRequest) {
         startedAt: t.started_at || null, finishedAt: t.finished_at || null,
         minutes: t.total_minutes ?? null, reportUrl: t.report_url || null,
         done, running, clocked, late, atRisk, missed, untracked,
+        cat: catOfTaskWith(taskCats, { name: t.name, dept, type }),
         moveState, movedFrom: moveState === 'moved' ? (lastOut[lid] || null) : null,
         extendedTo: moveState === 'extended' ? (occupiedUntil[lid] || null) : null,
       }
@@ -346,7 +354,7 @@ export async function GET(req: NextRequest) {
     // lastSync tells the coordinator how fresh the vacancy picture is — a stale list is how walk-ins happen
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
     const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-    return NextResponse.json({ ok: true, today, isToday, nowMin, lastSync, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm })
+    return NextResponse.json({ ok: true, today, isToday, nowMin, lastSync, categories: taskCats, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
