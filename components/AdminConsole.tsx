@@ -62,6 +62,7 @@ const L = {
   share: dynamic(() => import('@/components/ShareLinksCard').then(m => m.ShareLinksCard), { loading: spin, ssr: false }),
   nav: dynamic(() => import('@/components/NavLayoutAdmin').then(m => m.NavLayoutAdmin), { loading: spin, ssr: false }),
   taskCats: dynamic(() => import('@/components/TaskCategoriesAdmin').then(m => m.TaskCategoriesAdmin), { loading: spin, ssr: false }),
+  revAudit: dynamic(() => import('@/components/ReviewAuditPanel').then(m => m.ReviewAuditPanel), { loading: spin, ssr: false }),
 }
 
 // ── THE DIRECTORY ───────────────────────────────────────────────────────────────────────────────
@@ -92,6 +93,13 @@ const ENTRIES: Entry[] = [
     blurb: 'Rename any tab, move it to another section, reorder it or take it off the sidebar — no deploy, and one click back to standard.',
     find: 'sidebar nav navigation tab menu rename reorder move hide section order layout left',
     render: p => <L.nav isAdmin />,
+  },
+
+  {
+    key: 'review-audit', title: 'Review audit', group: 'Start here', Icon: Star,
+    blurb: 'Are guest reviews still arriving? Compares checkouts against reviews per channel, and names the recent stays with no review so you can spot-check one on Airbnb.',
+    find: 'review reviews audit airbnb vrbo booking missing not coming in stopped channel guesty stale',
+    render: () => <L.revAudit />,
   },
 
   {
