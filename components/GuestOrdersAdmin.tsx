@@ -48,7 +48,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
   useEffect(() => { load() }, [load])
 
   // THE COUNTS LIVE INSIDE THE HUB (Jon, 2026-08-25). One read of the stock endpoint, re-shaped
-  // scope-first so each hub card can show and edit its own shelf without a second request.
+  // scope-first so each hub card can show and edit its own hub without a second request.
   const loadStock = useCallback(async () => {
     try {
       const j = await fetch('/api/guest-orders/stock', { cache: 'no-store' }).then(r => r.json())
@@ -61,7 +61,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
         })
       }
       setStock(by); setStockEdits({})
-    } catch { /* the hub card simply shows no shelf */ }
+    } catch { /* the hub card simply shows no hub */ }
   }, [])
   useEffect(() => { loadStock() }, [loadStock])
 
@@ -245,8 +245,8 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
           <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">Location hubs · {cfg.hubs.length}</div>
           {!ro ? <button onClick={() => set({ hubs: [...cfg.hubs, { id: 'hub-' + Date.now().toString(36), label: 'New hub', buildings: [], listings: [] }] })} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={12} /> Add hub</button> : null}
         </div>
-        <p className="text-[12px] text-muted mb-2">A hub is where supplies physically sit — <b>a group of listings or whole properties that share one shelf</b>. Add a property to take all of its units, or pick individual units. <b>A unit named directly wins over its property</b>, so one apartment can sit on a different shelf than the rest of its building. Counts are kept per hub right here, and <b>an item at zero disappears from the guest form</b>. Anything outside every hub uses the global shelf.</p>
-        {cfg.hubs.length === 0 ? <div className="text-[12px] text-muted rounded-xl border border-dashed border-line px-3 py-3">No hubs yet — everything counts against one global shelf.</div> : (
+        <p className="text-[12px] text-muted mb-2">A hub is where supplies physically sit — <b>one storeroom, and the listings or whole properties it fills</b>. Add a property to take all of its units, or pick individual units. <b>A unit named directly wins over its property</b>, so one apartment can sit on a different hub than the rest of its building. Counts are kept per hub right here, and <b>an item at zero disappears from the guest form</b>. Anything not assigned to a hub falls back to a single shared count.</p>
+        {cfg.hubs.length === 0 ? <div className="text-[12px] text-muted rounded-xl border border-dashed border-line px-3 py-3">No hubs yet — every property draws on one shared count.</div> : (
           <div className="space-y-2">
             {cfg.hubs.map((h, hi) => (
               <div key={h.id} className="rounded-xl border border-line bg-white p-3">
@@ -297,7 +297,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                 {(stock['hub:' + h.id] || []).length ? (
                   <div className="mt-3 rounded-lg border border-line overflow-hidden">
                     <div className="px-2 py-1.5 bg-app/60 text-[10.5px] uppercase tracking-wide text-muted font-semibold flex items-center justify-between">
-                      <span>What is on this shelf</span>
+                      <span>What is on this hub</span>
                       {!ro ? <button type="button" onClick={() => saveHubStock('hub:' + h.id)} disabled={busy === 'stock:hub:' + h.id || !Object.keys(stockEdits).some(k => k.startsWith('hub:' + h.id + '|'))} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded border border-line bg-white disabled:opacity-40">{busy === 'stock:hub:' + h.id ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />} Save count</button> : null}
                     </div>
                     <table className="w-full text-[12px]">

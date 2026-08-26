@@ -164,7 +164,7 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
   if (err) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div>
   if (!srv || !cfg || !preview) return <div className="text-sm text-muted py-8 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading the studio…</div>
   const ro = !canEdit || !isOwner
-  const scopesForStock = [{ id: 'global', label: 'Global shelf' }, ...cfg.hubs.map(h => ({ id: 'hub:' + h.id, label: h.label }))]
+  const scopesForStock = [{ id: 'global', label: 'No hub' }, ...cfg.hubs.map(h => ({ id: 'hub:' + h.id, label: h.label }))]
   const hiddenOut = items.filter(i => i.active && i.track_stock && !preview.catalog.some(c => c.sku === i.sku) && previewCatalog([{ ...i, track_stock: false }], [], building, market, hub ? hub.id : null).length).map(i => i.name)
 
   return (
@@ -177,7 +177,7 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
           <select value={building} onChange={e => { setBuilding(e.target.value) }} className={box}>
             {srv.buildings.map(b => <option key={b.label} value={b.label}>{b.label} · {b.market}</option>)}
           </select>
-          <div className="text-[11.5px] text-muted">{hub ? 'Hub: ' + hub.label : 'No hub — uses the global shelf'} · timing: {preview.deadline.hoursBefore}h before / {preview.deadline.leadHours}h lead · tax {preview.deadline.taxPct ?? 0}%{preview.deadline.taxSource ? ' (' + preview.deadline.taxSource + ')' : ''}{scoping ? ' · checking…' : ''}</div>
+          <div className="text-[11.5px] text-muted">{hub ? 'Hub: ' + hub.label : 'No hub — uses the no hub'} · timing: {preview.deadline.hoursBefore}h before / {preview.deadline.leadHours}h lead · tax {preview.deadline.taxPct ?? 0}%{preview.deadline.taxSource ? ' (' + preview.deadline.taxSource + ')' : ''}{scoping ? ' · checking…' : ''}</div>
           <div className={'mt-1 text-[11.5px] font-semibold ' + (preview.deadline.offered === false ? 'text-amber-700' : 'text-emerald-700')}>{preview.deadline.offered === false ? 'Not offered here — switch this building on in Users → Guest orders' : 'Offered here' + (preview.deadline.source ? ' · ' + preview.deadline.source : '')}</div>
           <label className="flex items-center gap-2 text-[12.5px]"><input type="checkbox" checked={inHouse} onChange={e => setInHouse(e.target.checked)} /> Guest is already in-house</label>
           <div className="flex gap-2">
@@ -263,7 +263,7 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
               {cur.track_stock ? (
                 cur.id ? (
                   <table className="w-full text-[12px] mt-2">
-                    <thead><tr className="text-[10.5px] uppercase tracking-wide text-muted text-left"><th className="py-1">Shelf</th><th className="py-1 w-16">On hand</th><th className="py-1 w-14">Held</th><th className="py-1 w-14">Low at</th></tr></thead>
+                    <thead><tr className="text-[10.5px] uppercase tracking-wide text-muted text-left"><th className="py-1">Hub</th><th className="py-1 w-16">On hand</th><th className="py-1 w-14">Held</th><th className="py-1 w-14">Low at</th></tr></thead>
                     <tbody>{scopesForStock.map(sc => { const r = stockFor(cur.id, sc.id); const avail = Math.max(0, r.on_hand - r.reserved); return (
                       <tr key={sc.id} className="border-t border-line/60">
                         <td className="py-1">{sc.label} <span className={'text-[10.5px] font-semibold ' + (avail <= 0 ? 'text-rose-700' : avail <= r.low_at ? 'text-amber-700' : 'text-emerald-700')}>{avail <= 0 ? 'OUT' : avail <= r.low_at ? 'LOW' : avail + ' free'}</span></td>
