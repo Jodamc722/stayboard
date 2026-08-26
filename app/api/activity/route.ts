@@ -1,10 +1,17 @@
 // USER ACTIVITY — POST logs a page view (called by the app shell as people navigate);
 // GET reads the log, per user, for the Vault's Activity tab.
 //
-// READING IS OWNER/ADMIN ONLY. Watching what the team does is a management power, so the read
-// side is gated on full access to Users & admin — the same people who can change roles.
+// READING IS OWNER/ADMIN ONLY. Watching what the team does is a management power, so the read side
+// is limited to the people who can already change roles.
+//
+// THIS GATE USED TO BE UNPASSABLE. It read `requireLevel('users', 'full')` — but 'users' is not a
+// key in lib/features.ts at all (/users is in UNGATED_PAGES), so `levels['users']` was always
+// undefined, atLeast() normalised that to 'off', and the check failed for every caller INCLUDING
+// the owner. Meanwhile every gated API call kept writing an activity row, so the log filled up
+// with data nobody on earth could open. A permission check against a permission that does not
+// exist does not fail safe — it fails silent, which is worse.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, requireLevel } from '@/lib/access'
+import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { logActivity } from '@/lib/activity'
 
@@ -28,8 +35,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireLevel('users', 'full')
-  if (!gate.ok) return gate.res
+  // Admins of the app — the same bar /users itself enforces, which is the real intent.
+  const access = await getAccess()
+  if (!access.allowed) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  if (access.role !== 'admin') return NextResponse.json({ ok: false, error: 'Admins only.' }, { status: 403 })
   const sp = req.nextUrl.searchParams
   const email = String(sp.get('email') || '').trim().toLowerCase()
   const days = Math.max(1, Math.min(30, parseInt(String(sp.get('days') || '7'), 10) || 7))
