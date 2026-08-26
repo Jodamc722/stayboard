@@ -32,6 +32,7 @@ import { todayET, lc, DEAD_LISTING, shiftDay } from './ctx'
 import { auditCodes } from './code-integrity'
 import { visionCoverage } from './vision'
 import { crewScorecard } from './accountability'
+import { expectedCronPaths } from './automations'
 
 export type Severity = 'critical' | 'warn' | 'info'
 export type Area = 'pipeline' | 'guests' | 'reviews' | 'ops' | 'listings' | 'money' | 'eve'
@@ -148,13 +149,10 @@ async function auditFeeds(c: Row): Promise<AuditFinding[]> {
  * only found by chance days later. Comparing the deployed schedule against the list of jobs we
  * believe we run turns that class of accident from invisible into a line on this screen.
  */
-const EXPECTED_CRONS = [
-  '/api/cron/reservations', '/api/cron/reservations-full', '/api/sync/guesty',
-  '/api/cron/breezeway-tasks', '/api/cron/guest-comms', '/api/sentiment/scan',
-  '/api/cron/eve-metrics', '/api/eve/learn', '/api/cron/eve-audit',
-  '/api/cron/ops-brief', '/api/cron/watchdog', '/api/cron/slack', '/api/cron/slack-digest',
-  '/api/sync/owner-statements',
-]
+// Derived from the automation registry rather than retyped here. The hand-maintained version of
+// this list covered 14 of the app's ~27 scheduled jobs, so the thirteen it had never heard of were
+// outside the very safety net this audit exists to be.
+const EXPECTED_CRONS = expectedCronPaths()
 
 async function auditCrons(): Promise<AuditFinding[]> {
   const out: AuditFinding[] = []

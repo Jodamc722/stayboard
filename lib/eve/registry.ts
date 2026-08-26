@@ -21,6 +21,9 @@ import { LABOR_DOMAIN } from './labor'
 import { GUESTS_DOMAIN } from './guests'
 import { SLACK_DOMAIN } from './slack'
 import { PROPERTY_DOMAIN } from './property'
+import { SYSTEM_DOMAIN } from './system'
+import { CS_TOOLS } from './cs'
+import { DOC_TOOLS } from './docs'
 
 // The five tools that were core before and now live alongside their siblings. Built as NEW objects
 // rather than by mutating the imported domain — a module-level `.tools = .tools.concat(...)` runs
@@ -34,7 +37,12 @@ const QUALITY: EveDomain = {
 }
 const OPS: EveDomain = { ...OPS_DOMAIN, tools: OPS_DOMAIN.tools.concat([RELOCATED.field_work]) }
 
-export const DOMAINS: EveDomain[] = [OPS, MONEY_DOMAIN, QUALITY, LABOR_DOMAIN, GUESTS_DOMAIN, SLACK_DOMAIN, PROPERTY_DOMAIN]
+// The customer-service half of the guests domain, added 2026-08-26. Built as a separate module and
+// concatenated here for the same reason as the relocated tools above: mutating an imported domain
+// at module scope re-runs on every hot reload and registers duplicate tool names.
+const GUESTS: EveDomain = { ...GUESTS_DOMAIN, tools: GUESTS_DOMAIN.tools.concat(CS_TOOLS) }
+
+export const DOMAINS: EveDomain[] = [OPS, MONEY_DOMAIN, QUALITY, LABOR_DOMAIN, GUESTS, SLACK_DOMAIN, PROPERTY_DOMAIN, SYSTEM_DOMAIN]
 export const DOMAIN_KEYS = DOMAINS.map(d => d.key)
 
 const OPEN_DOMAIN: EveTool = {
@@ -45,7 +53,10 @@ const OPEN_DOMAIN: EveTool = {
 }
 
 export function coreTools(): EveTool[] {
-  return CORE_TOOLS.concat([OPEN_DOMAIN])
+  // The written documents sit in CORE rather than behind open_domain. A policy question arrives
+  // constantly ("what is our rule on…", "how do we handle…") and spending a turn opening a domain
+  // to answer one is the wrong trade — two small schemas beat a wasted round trip.
+  return CORE_TOOLS.concat(DOC_TOOLS).concat([OPEN_DOMAIN])
 }
 
 export function domainByKey(key: string): EveDomain | null {
