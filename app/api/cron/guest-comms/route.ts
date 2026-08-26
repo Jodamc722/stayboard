@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { syncConversations, syncRecentMessages } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { eveGate } from '../../agent/route'
+import { refreshResponseStats } from '@/lib/response-times'
+import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -48,6 +50,15 @@ async function run(req: NextRequest) {
     out.messagesError = String(e?.message || e).slice(0, 250)
   }
 
+  // RESPONSE TIMES (2026-08-26). Recomputed here, against the messages that were just pulled, so
+  // "how fast did we answer" is never fresher or staler than the inbox it is made of. Anything that
+  // moved in the last two days is re-derived; the rest is already settled and does not change.
+  try {
+    out.responseTimes = await refreshResponseStats({ sinceHours: 48 })
+  } catch (e: any) {
+    out.responseTimesError = String(e?.message || e).slice(0, 200)
+  }
+
   // Report the resulting freshness so this route is self-diagnosing — the whole failure mode last
   // time was that nobody could see the feed rotting.
   try {
@@ -62,5 +73,13 @@ async function run(req: NextRequest) {
   } catch { /* diagnostics only */ }
 
   out.ms = Date.now() - started
+  recordRun({
+    name: 'guest-comms', ok: !out.conversationsError && !out.messagesError,
+    itemCount: Number(out?.messages?.upserted ?? out?.messages?.messages ?? 0) || undefined,
+    detail: { conversations: out.conversations, messages: out.messages, responseTimes: out.responseTimes },
+    error: out.conversationsError || out.messagesError || null,
+    ms: Date.now() - started,
+  })
+
   return NextResponse.json({ ok: true, ...out })
 }
