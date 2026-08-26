@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { pageRows } from '@/lib/db-page'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
@@ -36,19 +37,25 @@ export default async function MessagesPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const [{ data: convos }, { data: sync }, { data: msgs }] = await Promise.all([
+  const [{ data: convos }, { data: sync }, msgsPage] = await Promise.all([
     supabase
       .from('guesty_conversations')
       .select('id, reservation_id, listing_id, guest_name, channel, last_message_at, last_message_preview, unread_count')
       .order('last_message_at', { ascending: false })
       .limit(100),
     supabase.from('guesty_sync_status').select('last_sync_at').eq('entity', 'conversations').maybeSingle(),
-    supabase
+    // PAGED. `.limit(4000)` returned 1,000 of 25,110 messages, so these KPIs were computed from a
+    // quarter of the sample they claimed. Ordered newest-first and capped at 4 pages: the header is
+    // a recent-activity readout, not an all-time one, and 4,000 messages is the window it was
+    // written for — the difference now is that it actually gets them. See lib/db-page.ts.
+    pageRows((a, b) => supabase
       .from('guesty_messages')
       .select('conversation_id, sender, sender_name, sent_at')
       .order('sent_at', { ascending: false })
-      .limit(4000)
+      .order('conversation_id')
+      .range(a, b), 4)
   ])
+  const msgs = msgsPage.rows
 
   const list = convos ?? []
   const lids = Array.from(new Set(list.map((c: any) => c.listing_id).filter(Boolean)))
