@@ -62,21 +62,45 @@ export type GRoster = { id: number; name: string; departments: string[] }
 
 // ── CATEGORIES — the one definition ─────────────────────────────────────────────────────────────
 export type Cat = TaskCat
-// EVERY CATEGORY CARRIES A GLYPH (Jon, 2026-08-25: "can you do symbols"). Seven colours alone put
-// the reader in front of a legend they have to memorise — and colour is the first thing to go on a
-// dim phone screen or for anyone colour-blind. The icon says what the work IS; the colour and the
-// fill say which category and how far along it is. Colour is now the second signal, not the only one.
-const CATS: { key: Cat; label: string; short: string; dot: string; ink: string; soft: string; Icon: any }[] = [
-  { key: 'departure', label: 'Departure', short: 'Dep', dot: 'bg-rose-500', ink: 'text-rose-600', soft: 'bg-rose-50 text-rose-700 border-rose-200', Icon: DoorOpen },
-  { key: 'cleaning', label: 'Cleaning', short: 'Clean', dot: 'bg-sky-500', ink: 'text-sky-600', soft: 'bg-sky-50 text-sky-700 border-sky-200', Icon: Sparkles },
+// ── ONE JOB PER CHANNEL (Jon, 2026-08-26: "should be color coded not by task type but by
+// completion, the symbols should be indicator of the task type") ────────────────────────────────
+//
+// He is right, and the first cut had it doing double duty: the glyph said "departure clean" and so
+// did the colour, while the thing you actually need to know at a glance — is it done? — was left to
+// whether the square was filled in. Two channels saying the same thing, and the important one
+// implied.
+//
+//   SYMBOL  = what the work is.   Never carries state.
+//   COLOUR  = how far along it is. Never carries type.
+//   RING    = an exception on top of either (today: a stay that ran past its clean).
+//
+// So the category palette is gone entirely. Categories keep a glyph and a label; nothing else here
+// is allowed to be coloured by type, or the two channels start lying to each other again.
+const CATS: { key: Cat; label: string; short: string; Icon: any }[] = [
+  { key: 'departure', label: 'Departure', short: 'Dep', Icon: DoorOpen },
+  { key: 'cleaning', label: 'Cleaning', short: 'Clean', Icon: Sparkles },
   // One category, not two (Jon, 2026-08-25): Breezeway files these as "Guest Reported / Glitch — ",
   // so splitting on which half of that prefix a task used was counting one queue twice.
-  { key: 'glitch', label: 'Glitches', short: 'Glitch', dot: 'bg-orange-500', ink: 'text-orange-600', soft: 'bg-orange-50 text-orange-700 border-orange-200', Icon: Zap },
-  { key: 'maintenance', label: 'Maintenance', short: 'Maint', dot: 'bg-amber-500', ink: 'text-amber-600', soft: 'bg-amber-50 text-amber-800 border-amber-200', Icon: Wrench },
-  { key: 'hkaudit', label: 'Housekeeping audit', short: 'HK audit', dot: 'bg-teal-500', ink: 'text-teal-600', soft: 'bg-teal-50 text-teal-700 border-teal-200', Icon: ClipboardCheck },
-  { key: 'inspection', label: 'Inspection', short: 'Inspect', dot: 'bg-violet-500', ink: 'text-violet-600', soft: 'bg-violet-50 text-violet-700 border-violet-200', Icon: ClipboardList },
+  { key: 'glitch', label: 'Glitches', short: 'Glitch', Icon: Zap },
+  { key: 'maintenance', label: 'Maintenance', short: 'Maint', Icon: Wrench },
+  { key: 'hkaudit', label: 'Housekeeping audit', short: 'HK audit', Icon: ClipboardCheck },
+  { key: 'inspection', label: 'Inspection', short: 'Inspect', Icon: ClipboardList },
 ]
 const CAT_BY: Record<Cat, typeof CATS[number]> = CATS.reduce((m, c) => { m[c.key] = c; return m }, {} as any)
+
+// THE ONLY PLACE COLOUR IS DECIDED. Four states, in the order a job moves through them, plus the
+// one that is not a stage at all: nobody has taken it. Unassigned is drawn as a dashed outline as
+// well as a colour, because "no owner" is the state most worth catching on a screen where somebody
+// is colour-blind or standing in the sun.
+type TaskState = 'done' | 'running' | 'open' | 'unassigned'
+const STATE: Record<TaskState, { label: string; chip: string; swatch: string }> = {
+  done: { label: 'Finished', chip: 'bg-emerald-500 border-emerald-500 text-white', swatch: 'bg-emerald-500 border-emerald-500' },
+  running: { label: 'In progress', chip: 'bg-amber-400 border-amber-400 text-white', swatch: 'bg-amber-400 border-amber-400' },
+  open: { label: 'Not started', chip: 'bg-white border-slate-300 text-slate-500', swatch: 'bg-white border-slate-300' },
+  unassigned: { label: 'Nobody assigned', chip: 'bg-white border-dashed border-rose-400 text-rose-500', swatch: 'bg-white border-dashed border-rose-400' },
+}
+const stateOf = (t: GTask): TaskState =>
+  t.done ? 'done' : t.running ? 'running' : t.assignees.length ? 'open' : 'unassigned'
 
 /** The board's category rule is lib/task-categories.ts, so the daily briefs count the same way. */
 export const catOf = catOfTask
@@ -147,7 +171,7 @@ function Tile({ cat, c, active, onClick }: { cat: typeof CATS[number] | null; c:
         <Donut done={c.done} running={c.running} total={c.total} />
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            {cat && <span className={'w-2 h-2 rounded-full shrink-0 ' + cat.dot} />}
+            {cat && (() => { const G = cat.Icon; return <span className="w-4 h-4 rounded-[4px] border border-slate-300 bg-white text-slate-500 shrink-0 inline-flex items-center justify-center"><G size={9} strokeWidth={2.6} /></span> })()}
             <span className="text-[12.5px] font-bold text-ink truncate">{cat ? cat.label : 'Everything open'}</span>
           </div>
           <div className="mt-1 space-y-[1px]">
@@ -201,7 +225,7 @@ function TaskChip({ t }: { t: GTask }) {
     const r = ref.current?.getBoundingClientRect()
     if (r) setAt({ x: r.left + r.width / 2, y: r.bottom + 6 })
   }
-  const state = t.done ? 'done' : t.running ? 'running' : t.assignees.length ? 'open' : 'unassigned'
+  const state = stateOf(t)
   const open = pinned || !!at
   const mv = moveNote(t)
 
@@ -212,14 +236,11 @@ function TaskChip({ t }: { t: GTask }) {
         onMouseLeave={() => { if (!pinned) setAt(null) }}
         onClick={ev => { ev.stopPropagation(); place(); setPinned(p => !p) }}
         aria-label={c.label + ': ' + t.name}
-        className={'w-6 h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 relative ' +
-          (state === 'done' ? c.dot + ' border-transparent text-white'
-            // An extended clean gets the loudest border on the board: it is the one square where
-            // doing the work is the mistake.
-            : t.moveState === 'extended' ? 'border-rose-600 bg-rose-50 text-rose-700'
-              : state === 'running' ? 'border-amber-400 bg-amber-50 ' + c.ink
-                : state === 'unassigned' ? 'border-dashed border-rose-400 bg-white ' + c.ink
-                  : 'border-slate-300 bg-white ' + c.ink)}>
+        className={'w-6 h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
+          STATE[state].chip +
+          // The exception rides ON TOP of the state rather than replacing it, so an extended clean
+          // still tells you whether anyone has touched it — it just also shouts not to.
+          (t.moveState === 'extended' ? ' ring-2 ring-rose-500 ring-offset-1' : '')}>
         <Glyph size={12} strokeWidth={2.4} />
       </button>
 
@@ -231,8 +252,8 @@ function TaskChip({ t }: { t: GTask }) {
             style={{ left: Math.min(Math.max(at.x - 128, 8), (typeof window !== 'undefined' ? window.innerWidth : 1200) - 264), top: at.y }}
             onClick={ev => ev.stopPropagation()}>
             <div className="flex items-center gap-1.5 mb-1">
-              <span className={'w-4 h-4 rounded-[4px] inline-flex items-center justify-center ' + c.dot + ' text-white'}><Glyph size={10} strokeWidth={2.6} /></span>
-              <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md border ' + c.soft}>{c.label}</span>
+              <span className={'w-4 h-4 rounded-[4px] border inline-flex items-center justify-center ' + STATE[state].chip}><Glyph size={10} strokeWidth={2.6} /></span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-line bg-app text-muted">{c.label}</span>
             </div>
             <p className="text-[12.5px] font-bold text-ink leading-snug">{t.name}</p>
             <p className="text-[11.5px] text-muted mt-0.5">{t.unit}</p>
@@ -418,9 +439,9 @@ function TaskLine({ t, roster, mode, onRefresh, comment }: {
   return (
     <div className="px-3 py-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className={'w-2 h-2 rounded-full shrink-0 ' + c.dot} />
+        <span className={'w-4 h-4 rounded-[4px] border shrink-0 inline-flex items-center justify-center ' + STATE[stateOf(t)].chip}><c.Icon size={9} strokeWidth={2.6} /></span>
         <span className="text-[12.5px] font-semibold text-ink">{t.name}</span>
-        <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md border ' + c.soft}>{c.short}</span>
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-line bg-app text-muted">{c.short}</span>
         {t.done
           ? <span className="text-[10.5px] font-bold text-emerald-700">Finished{t.finishedAt ? ' ' + shortTime(t.finishedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
           : t.running
@@ -718,7 +739,8 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
         </button>
         {cat && (
           <button onClick={() => setCat(null)}
-            className={'px-2.5 py-1.5 rounded-xl border text-[12px] font-bold inline-flex items-center gap-1 ' + CAT_BY[cat].soft}>
+            className="px-2.5 py-1.5 rounded-xl border border-ink bg-ink text-white text-[12px] font-bold inline-flex items-center gap-1.5">
+            {(() => { const G = CAT_BY[cat].Icon; return <G size={12} strokeWidth={2.6} /> })()}
             {CAT_BY[cat].label} <X size={11} />
           </button>
         )}
@@ -746,30 +768,44 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
         ))}
       </div>
 
-      {/* THE LEGEND. Symbols only work if you can learn them once — this is that once. */}
-      <div className="mt-2 flex items-center gap-x-3 gap-y-1.5 flex-wrap">
-        {CATS.map(c => {
-          const G = c.Icon
-          return (
-            <span key={c.key} className="inline-flex items-center gap-1 text-[10.5px] text-muted">
-              <span className={'w-4 h-4 rounded-[4px] border border-slate-300 bg-white inline-flex items-center justify-center ' + c.ink}><G size={9} strokeWidth={2.6} /></span>
-              {c.label}
+      {/* THE LEGEND — two rows, because there are two channels and mixing them in one line is how
+          people end up believing the colour means the category. Symbols first: they are the thing
+          you read; colour is the thing you scan. */}
+      <div className="mt-2.5 rounded-xl border border-line bg-app/50 px-3 py-2">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted shrink-0">Symbol = what it is</span>
+          <span className="flex items-center gap-x-3 gap-y-1 flex-wrap">
+            {CATS.map(c => {
+              const G = c.Icon
+              return (
+                <span key={c.key} className="inline-flex items-center gap-1 text-[10.5px] text-muted">
+                  <span className="w-4 h-4 rounded-[4px] border border-slate-300 bg-white text-slate-500 inline-flex items-center justify-center"><G size={9} strokeWidth={2.6} /></span>
+                  {c.label}
+                </span>
+              )
+            })}
+          </span>
+        </div>
+        <div className="mt-1.5 pt-1.5 border-t border-line flex items-baseline gap-2 flex-wrap">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted shrink-0">Colour = how far along</span>
+          <span className="flex items-center gap-x-3 gap-y-1 flex-wrap">
+            {(['done', 'running', 'open', 'unassigned'] as TaskState[]).map(k => (
+              <span key={k} className="inline-flex items-center gap-1 text-[10.5px] text-muted">
+                <span className={'w-4 h-4 rounded-[4px] border-2 ' + STATE[k].swatch} />
+                {STATE[k].label}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
+              <span className="w-4 h-4 rounded-[4px] border-2 bg-white border-slate-300 ring-2 ring-rose-500 ring-offset-1" />
+              Guest still in &mdash; do not clean
             </span>
-          )
-        })}
-        <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
-          <span className="w-4 h-4 rounded-[4px] bg-slate-400 inline-flex items-center justify-center text-white"><Check size={9} strokeWidth={3} /></span>
-          filled = finished
-        </span>
-        <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
-          <span className="w-4 h-4 rounded-[4px] border-2 border-dashed border-rose-400 bg-white" />
-          nobody assigned
-        </span>
+          </span>
+        </div>
       </div>
 
       <p className="mt-2 text-[11px] text-muted">
         {shown.length} {mode === 'units' ? 'unit' : 'person'}{shown.length === 1 ? '' : 's'} shown ·
-        each symbol is one task, filled in when it is finished · hover or tap a symbol for its detail, tap a row to work it.
+        each symbol is one task · hover or tap a symbol for its detail, tap a row to work it.
         {' '}Glitches count everything still open, not only what is scheduled today &mdash; they stay open until somebody fixes them.
       </p>
     </div>
