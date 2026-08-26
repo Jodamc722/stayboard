@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess } from '@/lib/access'
+import { recordRun } from '@/lib/automation-runs'
 import {
   fetchFeed, parseFeed, rowKey, pick, num, bool, ym, coverage, monthsBack,
   FEEDS_LIVE, FEEDS_REQUESTED, revenueAppConfig, type Feed, type Row,
@@ -265,6 +266,7 @@ async function run(req: NextRequest) {
   const okFeeds = Array.from(new Set(reps.filter(r => r.status === 'ok').map(r => r.feed)))
   const missing = Array.from(new Set(reps.filter(r => r.status === 'missing').map(r => r.feed)))
   const errors = reps.filter(r => r.status === 'error')
+  recordRun({ name: 'revenue-sync', ok: errors.length === 0, itemCount: okFeeds.length, detail: { okFeeds, missing, errors: errors.length }, ms: Date.now() - t0, error: errors.length ? errors.map(e => e.feed).join(', ') : null })
   return NextResponse.json({
     ok: errors.length === 0, today, ms: Date.now() - t0,
     live: FEEDS_LIVE, requested: FEEDS_REQUESTED,
