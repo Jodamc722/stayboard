@@ -7,16 +7,29 @@
 //        } — all four in one trip, all at 'edit' access
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { getGuestOrdersCfg, loadCatalog, listStock, setStock } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock } from '@/lib/guest-orders'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   const gate = await requireLevel('guest-orders', 'view')
   if (!gate.ok) return gate.res
-  const [cfg, catalog, stock] = await Promise.all([getGuestOrdersCfg(), loadCatalog({ activeOnly: false }), listStock()])
-  const scopes = [{ id: 'global', label: 'Global shelf' }, ...cfg.hubs.map(h => ({ id: 'hub:' + h.id, label: h.label }))]
+  const [cfg, catalog, stock, units] = await Promise.all([
+    getGuestOrdersCfg(), loadCatalog({ activeOnly: false }), listStock(),
+    supabaseAdmin().from('guesty_listings').select('id,nickname,title,building,address_city').limit(500),
+  ])
+  const listings = ((units.data || []) as any[]).map(l => {
+    const name = l.nickname || l.title || 'Unit'
+    return { id: String(l.id), name, building: buildingOf(l.building, name) || '' }
+  }).sort((a, b) => (a.building || 'zz').localeCompare(b.building || 'zz') || a.name.localeCompare(b.name))
+  // A shelf carries WHAT IT COVERS, so the link a guest gets can be traced back to the hub that
+  // fills it: whole properties, plus any individual units pulled onto this shelf.
+  const scopes = [
+    { id: 'global', label: 'Global shelf', buildings: [] as string[], listings: [] as string[] },
+    ...cfg.hubs.map(h => ({ id: 'hub:' + h.id, label: h.label, buildings: h.buildings, listings: h.listings || [] })),
+  ]
   // EVERY item, not only the counted ones. Filtering to `track_stock` meant an item you had not
   // started counting was INVISIBLE here — so "edit an item" only worked for some of the menu, with
   // no clue which. An untracked item simply carries no counts and offers to start counting.
@@ -35,7 +48,7 @@ export async function GET() {
     }
   })
   const alerts = items.filter(i => i.tracked).flatMap(i => i.per.filter(p => p.state === 'out' || p.state === 'low').map(p => ({ item: i.name, scope: p.label, state: p.state, available: p.available })))
-  return NextResponse.json({ ok: true, scopes, items, alerts, untracked: catalog.filter(c => !c.track_stock && c.active).length })
+  return NextResponse.json({ ok: true, scopes, items, alerts, untracked: catalog.filter(c => !c.track_stock && c.active).length, listings, buildings: KNOWN_BUILDINGS.map(b => b.label) })
 }
 
 export async function PUT(req: NextRequest) {
@@ -126,6 +139,36 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  // WHAT THIS HUB COVERS (Jon, 2026-08-25: "Salato is the hub but should be able to assign it to
+  // listing / properties so that when link send it based on that inventory hub"). The wiring already
+  // resolved a stay's hub from its listing first, then its building — but the only place to SET
+  // that was the settings card, which is owner-only and nowhere near the shelf. Same store, edited
+  // from where the person is standing.
+  let coverageSaved = false
+  const cov = body?.coverage
+  if (cov && typeof cov === 'object') {
+    const hubId = String(cov.hubId || '')
+    const cfg = await getGuestOrdersCfg()
+    const hub = cfg.hubs.find(h => h.id === hubId)
+    if (!hub) errors.push('that hub no longer exists — reload')
+    else {
+      const known = KNOWN_BUILDINGS.map(b => b.label)
+      const buildings = Array.isArray(cov.buildings)
+        ? (cov.buildings.map((b: any) => known.find(k => k.toLowerCase() === String(b).trim().toLowerCase())).filter(Boolean) as string[])
+        : hub.buildings
+      const listingIds = Array.isArray(cov.listings) ? cov.listings.map((x: any) => String(x || '').trim()).filter(Boolean) : hub.listings
+      // A property or unit lives on exactly ONE shelf — otherwise "which shelf did this order come
+      // off" has two answers and the counts drift apart.
+      const clash = cfg.hubs.find(h => h.id !== hubId && (h.buildings.some(b => buildings.indexOf(b) >= 0) || (h.listings || []).some(l => listingIds.indexOf(l) >= 0)))
+      if (clash) errors.push('some of that is already on the ' + clash.label + ' shelf — take it off there first')
+      else {
+        const next = { ...cfg, hubs: cfg.hubs.map(h => h.id === hubId ? { ...h, buildings, listings: listingIds } : h) }
+        const r = await saveGuestOrdersCfg(next, actor)
+        if (r.ok) coverageSaved = true; else errors.push(r.error || 'could not save what this hub covers')
+      }
+    }
+  }
+
   // REMOVALS. The stock rows go too — leaving them would resurrect counts against a dead item id
   // if the sku were ever reused. Past ORDERS are untouched: they store their own line snapshot,
   // so deleting an item never rewrites what a guest was charged.
@@ -138,5 +181,5 @@ export async function PUT(req: NextRequest) {
     if (error) errors.push('could not remove an item: ' + error.message); else deleted.push(id)
   }
 
-  return NextResponse.json({ ok: errors.length === 0, saved, itemsSaved, created: created.length, deleted: deleted.length, errors })
+  return NextResponse.json({ ok: errors.length === 0, saved, itemsSaved, created: created.length, deleted: deleted.length, coverageSaved, errors })
 }
