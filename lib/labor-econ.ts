@@ -237,6 +237,8 @@ export type LaborEcon = {
   bundledFeeBackfill: { checkouts: number; amount: number; basis: string }
   /** Timecard completeness. complete=false → payroll-derived numbers are understated; warn, don't print. */
   payrollAudit: { weeks: number; failedWeeks: string[]; complete: boolean }
+  /** The simple, reconcilable labor P&L: housekeeping and maintenance, by market and in total. */
+  pnl?: any
   /** How the departure-clean denominator was built, as its parts. */
   cleanAudit?: { scope: string; counted: number; countedThisMarket: number; closed: number; openCounted: number; movedExcluded: number; noAssignee: number; rule: string }
   /** Per person, day by day — the color behind every aggregate. Wages carry the day's agency share. */
@@ -868,6 +870,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.costPerClean = p.cleans > 0 && p.payroll > 0 ? round2(p.payroll / p.cleans) : null
   }
 
+  // WHERE EACH PERSON'S WORK HAPPENED, kept before `_mk` is stripped. The simple P&L below
+  // splits a technician's hours and wages across markets by his share of tasks, exactly as a
+  // housekeeper's split by her share of cleans — one rule, so the market rows add to the total.
+  const mkTasksBy: Record<string, Record<string, number>> = {}
+  for (const k of Object.keys(acc)) mkTasksBy[acc[k].name] = { ...acc[k]._mk }
   const peopleAll = Object.keys(acc).map(k => { const { _mk, ...rest } = acc[k]; return rest as PersonEcon })
 
   // ── TRAVEL BETWEEN BUILDINGS (Jon, 2026-08-22: "if it was Rustic and then they cleaned
@@ -1727,6 +1734,204 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     },
   }
 
+  // ── THE SIMPLE P&L (Jon, 2026-08-26) ────────────────────────────────────────────────────────
+  // "Housekeeping staff, their payroll and revenue, their hours worked, their cost per clean
+  //  based on their hours worked. Maintenance: payroll, billable revenue, profit. Keep it simple
+  //  and just make sure this is extremely accurate. Broken out by market and by department, and
+  //  then all housekeeping and all maintenance."
+  //
+  // TWO RULES, STATED, AND NOTHING ELSE MOVING UNDERNEATH THEM:
+  //   1. A person's hours and wages FOLLOW THE WORK. A housekeeper splits across markets by her
+  //      share of departure cleans; a technician by his share of tasks. Someone who logged
+  //      neither falls to the market on their Staffing record. So the market rows add to the
+  //      department total exactly — `reconciles` below is that check, computed, not asserted.
+  //   2. NOBODY IS QUIETLY EXCLUDED. Cost per clean is the whole department over the whole
+  //      denominator, including people who barely turned a unit. But those people are NAMED, and
+  //      the figure without them is printed beside it, because a blended number nobody can take
+  //      apart is exactly what makes an operator distrust the board.
+  //
+  // What that second rule caught the day it was written: one person carried 163 hours and $3,103
+  // of housekeeping payroll against ONE departure clean, and four more carried 73 hours between
+  // them against none. 13% of the payroll, 0.2% of the cleans — and it was sitting invisibly
+  // inside a $64.42 cost per clean that reads $55.99 without it. Neither number was wrong; the
+  // problem was that only one of them was on screen.
+  const MK_LABEL: Record<string, string> = {
+    miami: 'Miami', broward: 'Broward', north: 'North',
+    'vendor-inhouse': 'Vendor buildings', unassigned: 'No market set',
+  }
+  const MK_ORDER = ['miami', 'broward', 'north', 'vendor-inhouse', 'unassigned']
+  const mkLabel = (k: string) => MK_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1))
+  const homeMk = (p: PersonEcon) => (p.market && p.market !== 'unassigned' ? p.market : 'unassigned')
+
+  type PnlRow = {
+    key: string; label: string
+    people: number; names: string[]
+    hours: number; payroll: number; revenue: number
+    cleans: number
+    costPerClean: number | null; hoursPerClean: number | null; revPerClean: number | null
+    profit: number; marginPct: number | null
+    tasks: number; tasksBilled: number; tasksNoCharge: number
+  }
+  const emptyRow = (key: string): PnlRow => ({
+    key, label: mkLabel(key), people: 0, names: [], hours: 0, payroll: 0, revenue: 0, cleans: 0,
+    costPerClean: null, hoursPerClean: null, revPerClean: null, profit: 0, marginPct: null,
+    tasks: 0, tasksBilled: 0, tasksNoCharge: 0,
+  })
+  const finishRow = (r: PnlRow): PnlRow => {
+    r.hours = round2(r.hours); r.payroll = round2(r.payroll); r.revenue = round2(r.revenue)
+    r.people = r.names.length
+    r.costPerClean = r.cleans > 0 && r.payroll > 0 ? round2(r.payroll / r.cleans) : null
+    r.hoursPerClean = r.cleans > 0 && r.hours > 0 ? round2(r.hours / r.cleans) : null
+    r.revPerClean = r.cleans > 0 && r.revenue > 0 ? round2(r.revenue / r.cleans) : null
+    r.profit = round2(r.revenue - r.payroll)
+    r.marginPct = r.revenue > 0 ? round2(((r.revenue - r.payroll) / r.revenue) * 100) : null
+    return r
+  }
+  // Split one person across markets by a weight map, falling back to their Staffing market.
+  const spread = (
+    rows: Record<string, PnlRow>, p: PersonEcon, weights: Record<string, number> | undefined,
+    add: (row: PnlRow, share: number, mk: string) => void,
+  ) => {
+    const keys = weights ? Object.keys(weights).filter(k => (weights[k] || 0) > 0) : []
+    const total = keys.reduce((a, k) => a + weights![k], 0)
+    if (total > 0) {
+      for (const k of keys) {
+        const mk = k === 'vendor' ? 'vendor-inhouse' : k
+        const row = rows[mk] = rows[mk] || emptyRow(mk)
+        if (row.names.indexOf(p.name) < 0) row.names.push(p.name)
+        add(row, weights![k] / total, mk)
+      }
+    } else {
+      const mk = homeMk(p)
+      const row = rows[mk] = rows[mk] || emptyRow(mk)
+      if (row.names.indexOf(p.name) < 0) row.names.push(p.name)
+      add(row, 1, mk)
+    }
+  }
+
+  // ---- housekeeping, by market -------------------------------------------------------------
+  const hkRows: Record<string, PnlRow> = {}
+  const hkStaff = people.filter(p => p.dept === 'housekeeping')
+  for (const p of hkStaff) {
+    spread(hkRows, p, hkCleansByPerson[p.name], (row, share) => {
+      row.hours += p.hours * share
+      row.payroll += p.payroll * share
+      row.revenue += p.cleaningRevenue * share
+      row.tasks += Math.round(p.tasks * share)
+    })
+    // Cleans land in the market of the unit, never spread — they are counted, not allocated.
+    const mine = hkCleansByPerson[p.name] || {}
+    for (const k of Object.keys(mine)) {
+      const mk = k === 'vendor' ? 'vendor-inhouse' : k
+      const row = hkRows[mk] = hkRows[mk] || emptyRow(mk)
+      row.cleans += mine[k]
+    }
+  }
+  // ---- maintenance, by market --------------------------------------------------------------
+  const mtRows: Record<string, PnlRow> = {}
+  const mtStaff = people.filter(p => p.dept === 'maintenance')
+  for (const p of mtStaff) {
+    spread(mtRows, p, mkTasksBy[p.name], (row, share) => {
+      row.hours += p.hours * share
+      row.payroll += p.payroll * share
+      row.revenue += p.billableRevenue * share
+      row.tasks += Math.round(p.tasks * share)
+      row.tasksBilled += Math.round(p.billableTasks * share)
+      row.tasksNoCharge += Math.round(p.tasksNoCharge * share)
+    })
+  }
+  const rowList = (rows: Record<string, PnlRow>) => Object.keys(rows)
+    .sort((a, b) => (MK_ORDER.indexOf(a) < 0 ? 9 : MK_ORDER.indexOf(a)) - (MK_ORDER.indexOf(b) < 0 ? 9 : MK_ORDER.indexOf(b)))
+    .map(k => finishRow(rows[k]))
+  const totalOf = (staff: PersonEcon[], key: string, label: string, cleans: number, revenue: number): PnlRow => {
+    const r = emptyRow(key); r.label = label
+    for (const p of staff) {
+      r.names.push(p.name)
+      r.hours += p.hours; r.payroll += p.payroll
+      r.tasks += p.tasks; r.tasksBilled += p.billableTasks; r.tasksNoCharge += p.tasksNoCharge
+    }
+    r.cleans = cleans; r.revenue = revenue
+    return finishRow(r)
+  }
+  const hkMarkets = rowList(hkRows)
+  const mtMarkets = rowList(mtRows)
+  // DEPARTURE CLEANS ONLY, and taken from the market rows rather than from p.cleans — a person's
+  // clean count also carries charged cleaning jobs (a mid-stay, a linen refresh), which are real
+  // revenue but are not turnovers and must never sit in a cost-per-DEPARTURE-clean denominator.
+  // Sourcing the total from the same rows the markets use is also what makes them reconcile.
+  const hkTotal = totalOf(hkStaff, 'all', 'All housekeeping',
+    hkMarkets.reduce((a, r) => a + r.cleans, 0),
+    round2(hkStaff.reduce((a, p) => a + p.cleaningRevenue, 0)))
+  const mtTotal = totalOf(mtStaff, 'all', 'All maintenance', 0,
+    round2(mtStaff.reduce((a, p) => a + p.billableRevenue, 0)))
+
+  // ---- WHO IS BENDING COST PER CLEAN, BY NAME ----------------------------------------------
+  // Hours per clean across the crew, then anybody more than three times the middle of it — or
+  // carrying hours with no clean at all. Never removed from the headline; printed beside it.
+  const yields = hkStaff.filter(p => p.cleans > 0 && p.hours > 0).map(p => p.hours / p.cleans).sort((a, b) => a - b)
+  const medianYield = yields.length ? yields[Math.floor(yields.length / 2)] : 0
+  const lowYield = hkStaff
+    .filter(p => p.hours > 0 && (p.cleans === 0 || (medianYield > 0 && p.hours / p.cleans > medianYield * 3)))
+    .map(p => ({
+      name: p.name, hours: p.hours, payroll: p.payroll, cleans: p.cleans,
+      hoursPerClean: p.cleans > 0 ? round2(p.hours / p.cleans) : null, market: homeMk(p),
+    }))
+    .sort((a, b) => b.payroll - a.payroll)
+  const lyHours = round2(lowYield.reduce((a, x) => a + x.hours, 0))
+  const lyPayroll = round2(lowYield.reduce((a, x) => a + x.payroll, 0))
+  const lyCleans = lowYield.reduce((a, x) => a + x.cleans, 0)
+  const exCleans = hkTotal.cleans - lyCleans
+  const exPayroll = round2(hkTotal.payroll - lyPayroll)
+
+  // ---- WHAT WOULD MAKE THESE NUMBERS WRONG, MEASURED ---------------------------------------
+  // Every one of these is a data problem, not an arithmetic one, and each has a name attached
+  // so it can actually be fixed rather than discounted.
+  const paidRates = peopleAll.filter(p => !p.salaried && p.hours > 2 && p.payroll > 0).map(p => p.payroll / p.hours).sort((a, b) => a - b)
+  const medianRate = paidRates.length ? paidRates[Math.floor(paidRates.length / 2)] : 0
+  const rateOutliers = peopleAll
+    .filter(p => !p.salaried && p.hours > 2 && medianRate > 0 && (p.payroll / p.hours) < medianRate * 0.6)
+    .map(p => ({ name: p.name, dept: p.dept, hours: p.hours, payroll: p.payroll, impliedRate: round2(p.payroll / p.hours) }))
+  const workedNoPay = peopleAll
+    .filter(p => !p.salaried && p.cleans > 0 && p.hours <= 0 && p.payroll <= 0)
+    .map(p => ({ name: p.name, dept: p.dept, cleans: p.cleans }))
+
+  const pnl = {
+    basis: 'Homebase hours and wages; departure-clean fees net of the channel cut; Breezeway charges for billable work. A person’s hours and pay follow the work — housekeepers split by share of cleans, technicians by share of tasks, anyone with neither by their Staffing market.',
+    housekeeping: { markets: hkMarkets, total: hkTotal },
+    maintenance: { markets: mtMarkets, total: mtTotal },
+    // The reconciliation, computed rather than promised: markets must equal the total.
+    reconciles: {
+      housekeeping: {
+        payrollDelta: round2(hkMarkets.reduce((a, r) => a + r.payroll, 0) - hkTotal.payroll),
+        hoursDelta: round2(hkMarkets.reduce((a, r) => a + r.hours, 0) - hkTotal.hours),
+        cleansDelta: hkMarkets.reduce((a, r) => a + r.cleans, 0) - hkTotal.cleans,
+      },
+      maintenance: {
+        payrollDelta: round2(mtMarkets.reduce((a, r) => a + r.payroll, 0) - mtTotal.payroll),
+        hoursDelta: round2(mtMarkets.reduce((a, r) => a + r.hours, 0) - mtTotal.hours),
+      },
+    },
+    lowYield: {
+      people: lowYield,
+      hours: lyHours,
+      payroll: lyPayroll,
+      cleans: lyCleans,
+      pctOfPayroll: hkTotal.payroll > 0 ? round2((lyPayroll / hkTotal.payroll) * 100) : null,
+      costPerCleanExcluding: exCleans > 0 && exPayroll > 0 ? round2(exPayroll / exCleans) : null,
+      note: 'housekeeping hours that produced few or no turns — inside the headline, named here so it can be read apart',
+    },
+    quality: {
+      payrollComplete: tcAudit.complete !== false,
+      failedWeeks: tcAudit.failedWeeks,
+      rateOutliers,
+      workedNoPay,
+      cleansNoAssignee: clAudNoAssignee,
+      maintTasksNoCharge: mtTotal.tasksNoCharge,
+      maintTasks: mtTotal.tasks,
+      maintUnpricedPct: mtTotal.tasks > 0 ? round2((mtTotal.tasksNoCharge / mtTotal.tasks) * 100) : null,
+    },
+  }
+
   // THE COUNT, SHOWN AS ITS PARTS. Anyone can check the denominator against Breezeway from this.
   const cleanAudit = {
     scope: 'every departure clean in the window, by anyone — not filtered to this market tab or to housekeepers',
@@ -1745,6 +1950,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     personDays,
     daily,
     cleanAudit,
+    pnl,
     departments: DEPTS.map(d => byDept[d]),
     buckets: bucketList,
     layers,
