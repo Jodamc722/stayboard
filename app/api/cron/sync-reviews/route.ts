@@ -53,60 +53,72 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* the count is a nicety; the sync above is the job */ }
 
-    // ── EXPECTED vs ACTUAL ────────────────────────────────────────────────────────────────────
-    // Counting reviews cannot tell "the channel sent nothing" apart from "we failed to store it".
-    // Checkouts can. Every stay that ends is a chance for a review, so a review RATE that held for
-    // months and then went to zero WHILE CHECKOUTS CONTINUED is a broken pipe, not a quiet week.
+    // ── EXPECTED vs ACTUAL, COUNTED PROPERLY ──────────────────────────────────────────────────
     //
-    // Deliberately no guest names or confirmation codes here — this response is reachable on the
-    // cron path. The named list a human can spot-check on Airbnb lives behind the admin gate at
-    // /api/settings/reviews-audit.
+    // The first version of this pulled rows and summed them, and PostgREST silently capped the
+    // result at 1,000 no matter what `.limit()` asked for. It reported a 193% review rate and a
+    // "last review" six weeks older than the truth — numbers that looked like findings and were
+    // artefacts of a truncated page. Nothing said the data was short; it just was.
+    //
+    // So this counts with `head: true`, which returns a COUNT and no rows and therefore has no
+    // ceiling to hit. Slower by a few queries, honest at any size.
+    //
+    // The question it exists to answer: is a silent channel a broken pipe or just a quiet week?
+    // Reviews alone cannot say. Checkouts can — a channel with stays still ending and no reviews
+    // arriving is broken; a channel with no stays has nothing to be silent about.
     let expectedVsActual: any[] = []
     try {
       const db = supabaseAdmin()
-      const since = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10)
-      const todayY = new Date().toISOString().slice(0, 10)
-      const [rv, rs] = await Promise.all([
-        db.from('guesty_reviews').select('channel,created_at').gte('created_at', since).limit(6000),
-        db.from('guesty_reservations').select('check_out,status,source').gte('check_out', since).lte('check_out', todayY).limit(6000),
-      ])
-      const chOfSource = (v: any) => {
-        const c = String(v || '').toLowerCase()
-        if (/airbnb/.test(c)) return 'Airbnb'
-        if (/booking/.test(c)) return 'Booking.com'
-        if (/vrbo|homeaway/.test(c)) return 'Vrbo'
-        return c ? 'Direct/Other' : 'Unknown'
-      }
-      const stays = ((rs.data || []) as any[]).filter(r => !/cancel|denied|declined|expired|inquir/i.test(String(r.status || '')))
-      const revs = ((rv.data || []) as any[]).filter(r => r.created_at)
-      const agg: Record<string, { checkouts: number; reviews: number; lastReview: string | null }> = {}
-      const bump = (ch: string) => (agg[ch] = agg[ch] || { checkouts: 0, reviews: 0, lastReview: null })
-      for (const x of stays) bump(chOfSource(x.source)).checkouts++
-      for (const r of revs) {
-        const a = bump(String(r.channel || 'Other'))
-        a.reviews++
-        const at = String(r.created_at)
-        if (!a.lastReview || at > a.lastReview) a.lastReview = at
-      }
-      expectedVsActual = Object.keys(agg).sort().map(ch => {
-        const a = agg[ch]
-        const rate = a.checkouts > 0 ? a.reviews / a.checkouts : null
-        const lastDay = a.lastReview ? a.lastReview.slice(0, 10) : null
-        const coSince = lastDay ? stays.filter(x => chOfSource(x.source) === ch && String(x.check_out) > lastDay).length : 0
-        const expect = rate != null ? Math.round(coSince * rate) : null
+      const dayISO = (n: number) => new Date(Date.now() - n * 86400000).toISOString()
+      const d120 = dayISO(120)
+      const CH: { name: string; srcLike: string }[] = [
+        { name: 'Airbnb', srcLike: '%airbnb%' },
+        { name: 'Booking.com', srcLike: '%booking%' },
+        { name: 'Vrbo', srcLike: '%vrbo%' },
+      ]
+      const countOf = async (q: any) => { const { count } = await q; return count ?? 0 }
+
+      expectedVsActual = await Promise.all(CH.map(async ch => {
+        // Newest review on this channel — one row, so no ceiling in play.
+        const { data: nd } = await db.from('guesty_reviews').select('created_at')
+          .eq('channel', ch.name).order('created_at', { ascending: false }).limit(1)
+        const newest: string | null = nd && nd[0] ? String((nd[0] as any).created_at) : null
+
+        const [reviews120, checkouts120] = await Promise.all([
+          countOf(db.from('guesty_reviews').select('*', { count: 'exact', head: true })
+            .eq('channel', ch.name).gte('created_at', d120)),
+          countOf(db.from('guesty_reservations').select('*', { count: 'exact', head: true })
+            .ilike('source', ch.srcLike).gte('check_out', d120).lte('check_out', new Date().toISOString())),
+        ])
+
+        // Stays that ended AFTER the last review landed. This is the number that decides it.
+        const checkoutsSince = newest
+          ? await countOf(db.from('guesty_reservations').select('*', { count: 'exact', head: true })
+            .ilike('source', ch.srcLike).gt('check_out', newest).lte('check_out', new Date().toISOString()))
+          : 0
+
+        const daysSilent = newest ? Math.floor((Date.now() - new Date(newest).getTime()) / 86400000) : null
+        const perDay = reviews120 / 120
         return {
-          channel: ch, checkouts120d: a.checkouts, reviews120d: a.reviews,
-          reviewRatePct: rate != null ? Math.round(rate * 100) : null,
-          lastReview: lastDay,
-          checkoutsSinceLastReview: coSince,
-          reviewsExpectedSince: expect,
-          verdict: rate == null ? 'no history'
-            : coSince === 0 ? 'nothing due yet'
-              : (expect ?? 0) >= 3 ? 'BROKEN — ' + coSince + ' checkouts since, ~' + expect + ' reviews expected, 0 arrived'
-                : 'arriving',
+          channel: ch.name,
+          reviews120d: reviews120,
+          checkouts120d: checkouts120,
+          reviewsPerDay: Math.round(perDay * 10) / 10,
+          newestReview: newest ? newest.slice(0, 10) : null,
+          daysSilent,
+          checkoutsSinceLastReview: checkoutsSince,
+          verdict:
+            !newest ? 'no reviews on record'
+              : checkoutsSince === 0 ? 'no stays have ended since the last review — nothing is due'
+                : daysSilent != null && perDay > 0 && daysSilent >= 3 && checkoutsSince >= 3
+                  ? 'BROKEN — ' + checkoutsSince + ' stays ended since the last review and none produced one, against ' +
+                    (Math.round(perDay * 10) / 10) + '/day normally'
+                  : 'arriving',
         }
-      })
-    } catch { /* the sweep above is the job; this is the diagnosis riding along */ }
+      }))
+    } catch (e: any) {
+      expectedVsActual = [{ error: String(e?.message || e).slice(0, 200) }]
+    }
 
     return NextResponse.json({
       ok: true,
