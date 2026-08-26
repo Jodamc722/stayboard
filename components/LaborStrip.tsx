@@ -76,7 +76,17 @@ export function LaborStrip() {
             </thead>
             <tbody>
               {people.map((p: any) => {
-                const isIn = clocked.some((n: string) => n === p.name)
+                // ASK THE PERSON, NOT THE NAME LIST.
+                //
+                // This compared `clocked` (the TIMECARD spelling) against `p.name` (seeded from the
+                // SHIFT list) with ===, in an app that matches names fuzzily everywhere else
+                // precisely because those two lists disagree — "Shaany Christian" vs "Shaany
+                // Espinoza". Any spelling drift silently dropped the on-the-clock badge.
+                //
+                // computeLaborKpis already resolved this person's own punches with nameMatches and
+                // set `openTimecard` (open card, dated today). Reading that keeps one matcher in
+                // the codebase instead of a second, weaker one here.
+                const isIn = p.openTimecard === true || clocked.some((n: string) => n === p.name)
                 const isOver = p.scheduledHours > 0 && p.actualHours > p.scheduledHours + 0.5
                 const isNoShow = noShows.includes(p.name)
                 return (
