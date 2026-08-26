@@ -62,7 +62,10 @@ export async function GET(req: NextRequest) {
     try {
       const e = await laborEconomics({ from: w.start, to: w.end, market })
       const hk = (e.departments || []).find((d: any) => d.key === 'housekeeping')
-      const cleans = Number(e.cleans) || 0
+      // HOUSEKEEPER WAGES OVER HOUSEKEEPER CLEANS. `e.cleans` is every person's clean count —
+      // techs, supervisors, outside cleaners — so dividing HK-only payroll by it made this trend
+      // read materially cheaper than the board's own tile, directly above it on the same screen.
+      const cleans = Number(hk?.cleans) || 0
       const hkHours = Number(hk?.hours) || 0
       const hkPayroll = Number(hk?.payroll) || 0
       const revenue = Number(e.cleaningRevenue) || 0
