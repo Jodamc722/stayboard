@@ -56,7 +56,15 @@ export async function GET(req: NextRequest) {
     for (const s of shifts as any[]) if (s.name && !s.open && hbNames.indexOf(s.name) < 0) hbNames.push(s.name)
 
     const people = hbNames.map(name => {
-      const card = (timecards as any[]).find(t => nameMatches(t.name, name))
+      // ALL of this person's punches today, not the first one found.
+      //
+      // `.find()` returned whichever card happened to sort first — so somebody who clocked out for
+      // lunch and clocked back in had two cards, and if the closed one came first the board showed
+      // them as NOT on the clock while they were standing in a unit working. Every other surface in
+      // the app filters `open && date === today`; this one, the one the ops board actually reads,
+      // did not.
+      const cards = (timecards as any[]).filter(t => nameMatches(t.name, name))
+      const card = cards.find(c => c.open) || cards[0]
       const shift = (shifts as any[]).find(s => !s.open && nameMatches(s.name, name))
       // Every Breezeway spelling that resolves to THIS Homebase person (fuzzy full-name
       // match, or the unique-first-name fallback that bridges last-name drift).
@@ -72,8 +80,9 @@ export async function GET(req: NextRequest) {
       return {
         name,
         role: (shift && shift.role) || (card && card.role) || null,
-        clockedIn: !!(card && card.open),
-        worked: !!card,
+        // On the clock if ANY card today is still open; worked if any card exists at all.
+        clockedIn: cards.some(c => c.open && (!c.date || c.date === today)),
+        worked: cards.length > 0,
         shift: shift ? shift.label : null,
         bzAlias: aliases[0] || null,
         tasks: nTasks,
