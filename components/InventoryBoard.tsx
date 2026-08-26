@@ -1,45 +1,34 @@
 'use client'
-// INVENTORY — one shelf at a time.
+// INVENTORY — the menu and the shelf in one place (Jon, 2026-08-25: "need to be edit by hub,
+// adjust cost, have the order links for easy ordering… we need to be able to update, we need to be
+// able to add descriptions… why can't I add items, or edit items or delete items").
 //
-// ── WHY THIS LOOKS DIFFERENT (Jon, 2026-08-26: "the visual is so bad, can we make it cleaner and
-// easier to look at") ───────────────────────────────────────────────────────────────────────────
-// The previous version put SEVEN open input boxes on every row — count, warn-at, guest price, our
-// cost, reorder link, supplier, pack note — for every item, all the time. Twenty items meant a
-// hundred and forty form fields on one screen. It was not a list you could read; it was a
-// spreadsheet with the cursor everywhere at once, and the thing you came to find out (what is
-// running out) was the hardest thing on it to see.
+// WHY THIS SHAPE: the old Stock tab was a matrix of every shelf at once. With two shelves the
+// Global column read OUT on all nine rows — nine red badges about a shelf nobody stocks — while the
+// things that actually needed restocking were invisible. Someone restocking stands in ONE storeroom
+// with ONE list, so this shows one shelf, worst-first, and puts the buy-it-again link on the row.
 //
-// So: READ FIRST, EDIT ON PURPOSE.
-//   • A row is now a row — photo, name, one status pill, the count, the money. Aligned columns you
-//     can scan down. Nothing is an input until you ask for it.
-//   • The one number you change while physically counting a shelf — how many are on it — stays
-//     directly editable with − / + steppers, because that is the whole job and making somebody
-//     open a panel for it would be worse, not better.
-//   • Everything else lives behind the row: click it and the details open underneath.
-//   • What needs restocking is stated at the top as a sentence and sorted to the front, so the
-//     answer arrives before the list does.
-//
-// ── AND YOU CAN NOW ADD THINGS (same message: "need to be able to edit the inventory, add a hub")
-// A hub is a storeroom plus the properties it serves, and adding one used to mean going to the
-// guest-orders design studio in settings and finding the right sub-tab. Both live here now: add a
-// shelf, add an item to it. The APIs already existed; nothing about how they store changed.
+// EVERYTHING about an item is editable here: its name, the description the guest reads, category,
+// unit, photo, guest price, what we pay, the order link — plus adding and removing items. It runs
+// at 'edit' level on purpose. Only the settings card is owner-gated, because that is what switches
+// on automation that charges cards; locking the menu behind the same gate meant the people who
+// actually run the shelf could not fix a typo.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check,
-  Plus, ChevronDown, Minus, X, Warehouse,
-} from 'lucide-react'
+import { Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check, Plus, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react'
 
-type Per = { scope: string; label: string; onHand: number; reserved: number; lowAt: number; available: number; state: 'unset' | 'out' | 'low' | 'ok'; updatedAt: string | null; updatedBy: string | null }
+type Per = { scope: string; label: string; onHand: number; reserved: number; lowAt: number; available: number; state: 'unset' | 'out' | 'low' | 'ok' | 'untracked'; updatedAt: string | null; updatedBy: string | null }
 type Item = {
-  id: string; sku: string; name: string; category: string | null; image: string | null; active: boolean
+  id: string; sku: string; name: string; category: string | null; image: string | null; active: boolean; tracked: boolean
   hubs: string[] | null; buildings: string[] | null; per: Per[]
-  price: number; cost: number | null; unit: string | null; reorderUrl: string | null; supplier: string | null; packNote: string | null
+  description: string | null; unit: string | null; maxQty: number
+  price: number; cost: number | null; reorderUrl: string | null; supplier: string | null; packNote: string | null
 }
 type Scope = { id: string; label: string }
 type Data = { scopes: Scope[]; items: Item[]; untracked: number }
+type NewItem = { key: string; name: string; description: string; category: string; unit: string; price: string; cost: string; onHand: string; reorderUrl: string }
 
 const money = (n: number | null | undefined) => n === null || n === undefined ? '—' : '$' + (Math.round(n * 100) / 100).toFixed(2)
-const box = 'text-[12.5px] px-2 py-1.5 rounded-lg border border-line bg-white text-ink focus:outline-none focus:border-ink'
+const box = 'text-[12.5px] px-2 py-1.5 rounded-lg border border-line bg-white text-ink focus:outline-none focus:border-brand-300'
 
 export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
   const [data, setData] = useState<Data | null>(null)
@@ -51,287 +40,263 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const [stockEdits, setStockEdits] = useState<Record<string, { onHand?: number; lowAt?: number }>>({})
   const [itemEdits, setItemEdits] = useState<Record<string, Partial<Item>>>({})
-  const [open, setOpen] = useState<string | null>(null)
-  const [adding, setAdding] = useState<null | 'hub' | 'item'>(null)
+  const [open, setOpen] = useState<Record<string, boolean>>({})   // which rows have details expanded
+  const [adds, setAdds] = useState<NewItem[]>([])
+  const [removing, setRemoving] = useState<string | null>(null)   // two-step delete
 
   const load = useCallback(async () => {
     try {
       const j = await fetch('/api/guest-orders/stock', { cache: 'no-store' }).then(r => r.json())
       if (!j?.ok) { setErr(j?.error || 'Could not load inventory'); return }
-      setData(j); setErr(''); setStockEdits({}); setItemEdits({})
-      // Open on a real shelf, not the global one — the global shelf is the fallback for anything
-      // outside a hub and is usually empty, which is a misleading first impression.
+      setData(j); setErr(''); setStockEdits({}); setItemEdits({}); setAdds([]); setRemoving(null)
+      // Open on a real shelf. The global one is the fallback for anything outside a hub and is
+      // usually empty, which is a misleading first impression.
       setScope(s => s || (j.scopes.find((x: Scope) => x.id !== 'global')?.id ?? 'global'))
     } catch { setErr('Network error') }
   }, [])
   useEffect(() => { load() }, [load])
 
-  const dirty = Object.keys(stockEdits).length > 0 || Object.keys(itemEdits).length > 0
+  const dirty = Object.keys(stockEdits).length > 0 || Object.keys(itemEdits).length > 0 || adds.some(a => a.name.trim())
 
   async function save() {
     if (!data || !dirty) return
-    setBusy('save')
+    setBusy('save'); setMsg(null)
     const rows = Object.entries(stockEdits).map(([k, v]) => {
-      const [sc, itemId] = [k.slice(0, k.lastIndexOf('|')), k.slice(k.lastIndexOf('|') + 1)]
+      const sc = k.slice(0, k.lastIndexOf('|')), itemId = k.slice(k.lastIndexOf('|') + 1)
       const cur = data.items.find(i => i.id === itemId)?.per.find(p => p.scope === sc)
       return { itemId, scope: sc, onHand: v.onHand ?? cur?.onHand ?? 0, lowAt: v.lowAt ?? cur?.lowAt ?? 3 }
     })
-    const items = Object.entries(itemEdits).map(([id, v]) => ({ id, ...v }))
+    const items = Object.entries(itemEdits).map(([id, v]) => ({ id, name: v.name ?? data.items.find(i => i.id === id)?.name, ...v }))
+    const newItems = adds.filter(a => a.name.trim()).map(a => ({
+      name: a.name, description: a.description, category: a.category, unit: a.unit,
+      price: a.price === '' ? 0 : Number(a.price), cost: a.cost === '' ? null : Number(a.cost),
+      reorderUrl: a.reorderUrl, scope, onHand: a.onHand === '' ? 0 : Number(a.onHand), trackStock: true,
+    }))
     try {
-      const r = await fetch('/api/guest-orders/stock', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows, items }),
-      })
-      const j = await r.json()
-      if (!r.ok || j?.error) throw new Error(j?.error || 'Save failed')
-      setMsg({ tone: 'ok', text: 'Saved.' }); await load()
-    } catch (e: any) { setMsg({ tone: 'bad', text: String(e?.message || e) }) }
-    setBusy(null)
-    setTimeout(() => setMsg(null), 3500)
+      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows, items, newItems }) }).then(r => r.json())
+      const bits = [rows.length ? rows.length + ' count' + (rows.length === 1 ? '' : 's') : '', items.length ? items.length + ' edited' : '', j?.created ? j.created + ' added' : ''].filter(Boolean)
+      if (j?.ok) setMsg({ tone: 'ok', text: 'Saved · ' + (bits.join(', ') || 'nothing to do') })
+      else setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || j?.error || 'Could not save' })
+      await load()
+    } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
   }
 
-  async function uploadPhoto(i: Item, file: File) {
-    setBusy('photo:' + i.id)
+  async function removeItem(item: Item) {
+    setBusy('del:' + item.id); setMsg(null)
     try {
-      const fd = new FormData(); fd.append('file', file); fd.append('itemId', i.id)
-      const r = await fetch('/api/settings/guest-orders/photo', { method: 'POST', body: fd })
-      const j = await r.json()
-      if (!r.ok || j?.error) throw new Error(j?.error || 'Upload failed')
+      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [], items: [], deleteIds: [item.id] }) }).then(r => r.json())
+      setMsg(j?.ok ? { tone: 'ok', text: 'Removed ' + item.name } : { tone: 'bad', text: (j?.errors || []).join(' · ') || 'Could not remove it' })
       await load()
-    } catch (e: any) { setMsg({ tone: 'bad', text: String(e?.message || e) }) }
-    setBusy(null)
+    } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null); setRemoving(null) }
+  }
+
+  async function uploadPhoto(item: Item, file: File) {
+    setBusy('photo:' + item.id)
+    try {
+      const fd = new FormData(); fd.append('file', file); fd.append('sku', item.sku)
+      const up = await fetch('/api/settings/guest-orders/photo', { method: 'POST', body: fd }).then(r => r.json())
+      if (!up?.ok || !up.url) { setMsg({ tone: 'bad', text: up?.error || 'Could not upload that photo' }); return }
+      // Attach through THIS endpoint, not the settings PUT — that one is owner-only, so anyone
+      // else uploading a photo got a silent 403 after the file had already been stored.
+      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [], items: [{ id: item.id, name: item.name, imageUrl: up.url }] }) }).then(r => r.json())
+      if (j?.ok) { setMsg({ tone: 'ok', text: 'Photo added to ' + item.name }); await load() }
+      else setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || 'Photo uploaded but not attached' })
+    } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
   }
 
   const rows = useMemo(() => {
-    if (!data) return [] as { i: Item; p: Per }[]
-    const n = q.trim().toLowerCase()
-    return data.items
-      .map(i => ({ i, p: i.per.find(x => x.scope === scope) as Per }))
-      .filter(x => !!x.p)
-      .filter(x => !n || (x.i.name + ' ' + (x.i.category || '') + ' ' + x.i.sku).toLowerCase().includes(n))
-      .filter(x => !onlyLow || x.p.state === 'out' || x.p.state === 'low')
-      // Worst first — the point of the screen is what to buy, not alphabetical order.
-      .sort((a, b) => {
-        const rank = (s: string) => s === 'out' ? 0 : s === 'low' ? 1 : s === 'unset' ? 2 : 3
-        return rank(a.p.state) - rank(b.p.state) || a.i.name.localeCompare(b.i.name)
-      })
+    if (!data) return []
+    const withPer = data.items.map(i => ({ i, p: i.per.find(x => x.scope === scope) })).filter(x => !!x.p) as { i: Item; p: Per }[]
+    const rank = (i: Item, p: Per) => !i.tracked ? 4 : p.state === 'out' ? 0 : p.state === 'low' ? 1 : p.state === 'unset' ? 2 : 3
+    return withPer
+      .filter(x => !q || (x.i.name + ' ' + (x.i.category || '') + ' ' + (x.i.description || '') + ' ' + (x.i.supplier || '')).toLowerCase().includes(q.toLowerCase()))
+      .filter(x => !onlyLow || (x.i.tracked && (x.p.state === 'out' || x.p.state === 'low')))
+      .sort((a, b) => rank(a.i, a.p) - rank(b.i, b.p) || a.i.name.localeCompare(b.i.name))
   }, [data, scope, q, onlyLow])
 
-  const tally = useMemo(() => {
-    if (!data) return { out: 0, low: 0, ok: 0 }
-    let out = 0, low = 0, ok = 0
-    for (const i of data.items) {
-      const p = i.per.find(x => x.scope === scope)
-      if (!p) continue
-      if (p.state === 'out') out++; else if (p.state === 'low') low++; else ok++
-    }
-    return { out, low, ok }
-  }, [data, scope])
-
-  /** Per shelf, how many items need attention — so the switcher itself says where the problem is. */
-  const needsByScope = useMemo(() => {
-    const m: Record<string, number> = {}
-    for (const s of (data?.scopes || [])) {
-      m[s.id] = (data?.items || []).filter(i => {
-        const p = i.per.find(x => x.scope === s.id)
-        return p && (p.state === 'out' || p.state === 'low')
-      }).length
-    }
-    return m
-  }, [data])
+  const needs = useMemo(() => data ? data.items.filter(i => i.tracked).map(i => i.per.find(p => p.scope === scope)).filter(p => p && (p.state === 'out' || p.state === 'low')).length : 0, [data, scope])
 
   if (err) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800">{err}</div>
-  if (!data) return <div className="text-sm text-muted py-8 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading inventory&hellip;</div>
+  if (!data) return <div className="text-sm text-muted py-8 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading inventory…</div>
 
   const here = data.scopes.find(s => s.id === scope)
   const val = (i: Item, k: keyof Item) => (itemEdits[i.id] && (itemEdits[i.id] as any)[k] !== undefined ? (itemEdits[i.id] as any)[k] : (i as any)[k])
   const setItem = (id: string, patch: Partial<Item>) => setItemEdits(x => ({ ...x, [id]: { ...x[id], ...patch } }))
-  const setStock = (id: string, patch: { onHand?: number; lowAt?: number }) =>
-    setStockEdits(x => ({ ...x, [scope + '|' + id]: { ...x[scope + '|' + id], ...patch } }))
+  const cats = Array.from(new Set(data.items.map(i => i.category).filter(Boolean))) as string[]
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {msg ? <div className={'rounded-xl px-3 py-2 text-[12.5px] ' + (msg.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200')}>{msg.text}</div> : null}
 
-      {/* ── SHELVES. The switcher carries each shelf's problem count, so you can see where to go
-          before you go there. ── */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Warehouse size={14} className="text-muted shrink-0" />
-        {data.scopes.map(s => {
-          const n = needsByScope[s.id] || 0
-          const on = scope === s.id
-          return (
-            <button key={s.id} onClick={() => { setScope(s.id); setOpen(null) }}
-              className={'px-3 py-1.5 rounded-full text-[12.5px] font-bold border inline-flex items-center gap-1.5 ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1.5">
+          {data.scopes.map(s => (
+            <button key={s.id} onClick={() => setScope(s.id)} className={'px-3 py-1.5 rounded-lg text-[12.5px] font-semibold border ' + (scope === s.id ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:border-brand-300')}>
               {s.id === 'global' ? 'Global shelf' : s.label}
-              {n > 0 && <span className={'text-[10px] font-bold px-1.5 rounded-full ' + (on ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-700')}>{n}</span>}
             </button>
-          )
-        })}
-        {canEdit && (
-          <button onClick={() => setAdding('hub')}
-            className="px-2.5 py-1.5 rounded-full text-[12px] font-bold border border-dashed border-line text-muted hover:text-ink hover:border-ink/40 inline-flex items-center gap-1">
-            <Plus size={12} /> Add a shelf
-          </button>
-        )}
-      </div>
-
-      {/* ── THE ANSWER, BEFORE THE LIST. ── */}
-      <div className="rounded-2xl border border-line bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
-        <Package size={16} className="text-muted shrink-0" />
-        <div className="min-w-0">
-          <p className="text-[14px] font-bold text-ink">
-            {tally.out + tally.low === 0
-              ? 'Nothing needs restocking on ' + (here ? here.label : 'this shelf') + '.'
-              : (tally.out ? tally.out + ' out of stock' : '') + (tally.out && tally.low ? ' · ' : '') + (tally.low ? tally.low + ' running low' : '')}
-          </p>
-          <p className="text-[11.5px] text-muted mt-0.5">
-            {here ? here.label : 'Shelf'} &middot; {tally.out + tally.low + tally.ok} tracked item{tally.out + tally.low + tally.ok === 1 ? '' : 's'}
-            {data.untracked ? ' · ' + data.untracked + ' not stock-tracked' : ''}
-          </p>
+          ))}
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <div className="relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find an item&hellip;"
-              className="text-[12.5px] pl-7 pr-2 py-1.5 rounded-xl border border-line bg-white w-40 focus:outline-none focus:border-ink" />
+            <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find an item…" className="text-[12.5px] pl-7 pr-2 py-1.5 rounded-lg border border-line bg-white w-40" />
           </div>
-          {(tally.out + tally.low) > 0 && (
-            <button onClick={() => setOnlyLow(v => !v)}
-              className={'px-2.5 py-1.5 rounded-xl border text-[12px] font-bold ' + (onlyLow ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
-              {onlyLow ? 'Showing what to buy' : 'Just what to buy'}
-            </button>
-          )}
-          {canEdit && (
-            <button onClick={() => setAdding('item')}
-              className="px-2.5 py-1.5 rounded-xl border border-line bg-white text-[12px] font-bold text-ink hover:border-ink/40 inline-flex items-center gap-1">
-              <Plus size={12} /> Add item
-            </button>
-          )}
+          <label className="flex items-center gap-1.5 text-[12.5px] text-ink"><input type="checkbox" checked={onlyLow} onChange={e => setOnlyLow(e.target.checked)} /> Needs restocking{needs ? ' (' + needs + ')' : ''}</label>
+          {canEdit ? <button onClick={() => setAdds(a => [...a, { key: 'n' + Date.now() + a.length, name: '', description: '', category: '', unit: '', price: '', cost: '', onHand: '', reorderUrl: '' }])} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300"><Plus size={13} /> Add item</button> : null}
+          {canEdit ? <button onClick={save} disabled={!dirty || busy === 'save'} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40">{busy === 'save' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save changes</button> : null}
         </div>
       </div>
 
-      {scope === 'global' && (
+      {scope === 'global' ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex gap-2">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-          <div>The fallback shelf for any property not in a hub. If it reads zero, those properties show an <b>empty order form</b> &mdash; put the property in a shelf, or count it here.</div>
+          <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+          <div>This is the fallback shelf for any property not in a hub. If it reads zero, those properties show an <b>empty order form</b> — put the property in a hub, or count it here.</div>
         </div>
-      )}
+      ) : null}
 
-      {/* ── THE LIST ── */}
+      {adds.map((a, ai) => (
+        <div key={a.key} className="rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/30 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[12.5px] font-semibold text-ink">New item on {here ? here.label : 'this shelf'}</div>
+            <button onClick={() => setAdds(x => x.filter((_, i) => i !== ai))} className="text-muted hover:text-rose-600" title="Discard"><X size={14} /></button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input autoFocus value={a.name} onChange={e => setAdds(x => x.map((y, i) => i === ai ? { ...y, name: e.target.value } : y))} placeholder="Name the guest sees *" className={box + ' w-56'} />
+            <input value={a.category} onChange={e => setAdds(x => x.map((y, i) => i === ai ? { ...y, category: e.target.value } : y))} placeholder="Category" list="inv-cats" className={box + ' w-36'} />
+            <input value={a.unit} onChange={e => setAdds(x => x.map((y, i) => i === ai ? { ...y, unit: e.target.value } : y))} placeholder="unit (case of 12)" className={box + ' w-36'} />
+            <input type="number" min={0} step="0.01" value={a.price} onChange={e => setAdds(x => x.map((y, i) => i === ai ? { ...y, price: e.target.value } : y))} placeholder="guest pays" className={box + ' w-28'} />
+            <input type="number" min={0} step="0.01" value={a.cost} onChange={e => setAdds(x => x.map((y, i) => i === ai ? { ...y, cost: e.target.value } : y))} placeholder="we pay" className={box + ' w-24'} />
+            <input type="number" min={0} value={a.onHand} onChange={e => setAdds(x => x.map((y, i) => i === ai ? { ...y, onHand: e.target.value } : y))} placeholder="on hand" className={box + ' w-24'} />
+          </div>
+          <textarea value={a.description} onChange={e => setAdds(x => x.map((y, i) => i === ai ? { ...y, description: e.target.value } : y))} placeholder="Description the guest reads — what it is, what they get" rows={2} className={box + ' w-full mt-2 resize-y'} />
+          <input value={a.reorderUrl} onChange={e => setAdds(x => x.map((y, i) => i === ai ? { ...y, reorderUrl: e.target.value } : y))} placeholder="Where to buy it again (https://…)" className={box + ' w-full sm:w-[340px] mt-2'} />
+          <div className="text-[11.5px] text-muted mt-2">Press <b>Save changes</b> to create it. Add its photo afterwards from its row.</div>
+        </div>
+      ))}
+      <datalist id="inv-cats">{cats.map(c => <option key={c} value={c} />)}</datalist>
+
       <div className="rounded-2xl border border-line bg-white overflow-hidden">
-        {rows.length === 0 ? (
-          <div className="px-4 py-10 text-center text-[13px] text-muted">Nothing here{onlyLow ? ' needs restocking right now.' : ' yet.'}</div>
-        ) : (
-          <div className="divide-y divide-line">
+        <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center justify-between flex-wrap gap-2">
+          <div className="text-[12.5px] font-semibold text-ink flex items-center gap-1.5"><Package size={14} /> {here ? here.label : 'Shelf'} · {rows.length} item{rows.length === 1 ? '' : 's'}</div>
+          <div className="text-[11.5px] text-muted">Tap a row to edit its name, description and photo.</div>
+        </div>
+
+        {rows.length === 0 ? <div className="px-4 py-8 text-center text-[13px] text-muted">Nothing here{onlyLow ? ' needs restocking right now.' : ' yet — use Add item.'}</div> : (
+          <div className="divide-y divide-line/60">
             {rows.map(({ i, p }) => {
               const onHand = stockEdits[scope + '|' + i.id]?.onHand ?? p.onHand
               const lowAt = stockEdits[scope + '|' + i.id]?.lowAt ?? p.lowAt
               const avail = Math.max(0, onHand - p.reserved)
-              const state = avail <= 0 ? 'out' : avail <= lowAt ? 'low' : 'ok'
+              const tracked = (val(i, 'tracked') as boolean) ?? i.tracked
+              const state = !tracked ? 'untracked' : avail <= 0 ? 'out' : avail <= lowAt ? 'low' : 'ok'
               const price = Number(val(i, 'price') ?? 0)
               const cost = val(i, 'cost')
               const margin = cost === null || cost === undefined || cost === '' ? null : price - Number(cost)
               const url = val(i, 'reorderUrl') as string | null
-              const isOpen = open === i.id
+              const isOpen = !!open[i.id]
+              const active = (val(i, 'active') as boolean) ?? i.active
               return (
-                <div key={i.id}>
-                  {/* A ROW YOU READ. One pill, one count, one money column, aligned. */}
-                  <div className="px-3 py-2.5 flex items-center gap-3 hover:bg-app/40 cursor-pointer"
-                    onClick={() => setOpen(isOpen ? null : i.id)}>
-                    <div className="relative shrink-0">
+                <div key={i.id} className={'px-4 py-3 ' + (state === 'out' ? 'bg-rose-50/40' : state === 'low' ? 'bg-amber-50/40' : '')}>
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className="relative flex-shrink-0">
                       {i.image
-                        ? <img src={i.image} alt="" className="w-11 h-11 rounded-xl object-cover border border-line" />
-                        : <div className="w-11 h-11 rounded-xl border border-dashed border-line bg-app flex items-center justify-center text-muted"><ImagePlus size={15} /></div>}
+                        ? <img src={i.image} alt="" className="w-14 h-14 rounded-xl object-cover border border-line" />
+                        : <div className="w-14 h-14 rounded-xl border border-dashed border-line bg-app flex items-center justify-center text-muted"><ImagePlus size={16} /></div>}
+                      {canEdit ? (
+                        <label className="absolute inset-0 cursor-pointer rounded-xl hover:bg-ink/10 flex items-center justify-center" title={i.image ? 'Replace photo' : 'Add a photo for reference'}>
+                          <input type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(i, f); e.currentTarget.value = '' }} />
+                          {busy === 'photo:' + i.id ? <Loader2 size={14} className="animate-spin text-ink" /> : null}
+                        </label>
+                      ) : null}
                     </div>
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[13.5px] font-bold text-ink truncate">{i.name}</span>
-                        {!i.active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-app text-muted border border-line">off</span>}
+                        <button onClick={() => setOpen(o => ({ ...o, [i.id]: !o[i.id] }))} className="text-muted hover:text-ink" title={isOpen ? 'Collapse' : 'Edit name, description, photo'}>{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>
+                        <span className="text-[14px] font-semibold text-ink">{String(val(i, 'name') ?? i.name)}</span>
+                        <span className={'text-[10.5px] font-bold px-1.5 py-0.5 rounded ' + (state === 'untracked' ? 'bg-app text-muted border border-line' : state === 'out' ? 'bg-rose-100 text-rose-700' : state === 'low' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700')}>
+                          {state === 'untracked' ? 'not counted' : state === 'out' ? 'OUT — hidden from guests' : state === 'low' ? 'LOW · ' + avail + ' left' : avail + ' available'}
+                        </span>
+                        {!active ? <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-app text-muted border border-line">hidden from the form</span> : null}
                       </div>
-                      <div className="text-[11px] text-muted truncate">
-                        {i.category || 'Extras'}{i.unit ? ' · ' + i.unit : ''}
+                      <div className="text-[11.5px] text-muted mt-0.5 truncate">
+                        {String(val(i, 'category') ?? '') || 'Extras'}{val(i, 'unit') ? ' · ' + val(i, 'unit') : ''}
                         {p.reserved ? ' · ' + p.reserved + ' held for paid orders' : ''}
+                        {tracked ? (p.updatedAt ? ' · counted ' + new Date(p.updatedAt).toLocaleDateString() : ' · never counted') : ''}
+                      </div>
+                      {!isOpen && val(i, 'description') ? <div className="text-[11.5px] text-muted mt-0.5 italic truncate">{String(val(i, 'description'))}</div> : null}
+                    </div>
+
+                    <div className="flex flex-wrap items-end gap-2 flex-shrink-0">
+                      {tracked ? (<>
+                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">On hand
+                          <input type="number" min={0} value={onHand} disabled={!canEdit} onChange={e => setStockEdits(x => ({ ...x, [scope + '|' + i.id]: { ...x[scope + '|' + i.id], onHand: Number(e.target.value) } }))} className={box + ' w-20 mt-0.5'} />
+                        </label>
+                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Warn at
+                          <input type="number" min={0} value={lowAt} disabled={!canEdit} onChange={e => setStockEdits(x => ({ ...x, [scope + '|' + i.id]: { ...x[scope + '|' + i.id], lowAt: Number(e.target.value) } }))} className={box + ' w-16 mt-0.5'} />
+                        </label>
+                      </>) : (
+                        canEdit ? <button onClick={() => setItem(i.id, { tracked: true } as any)} className="text-[11.5px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300">Start counting</button> : null
+                      )}
+                      <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Guest pays
+                        <input type="number" min={0} step="0.01" value={price} disabled={!canEdit} onChange={e => setItem(i.id, { price: Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
+                      </label>
+                      <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">We pay
+                        <input type="number" min={0} step="0.01" value={cost ?? ''} placeholder="—" disabled={!canEdit} onChange={e => setItem(i.id, { cost: e.target.value === '' ? null : Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
+                      </label>
+                      <div className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold min-w-[52px]">Margin
+                        <div className={'text-[13px] font-bold tabular-nums mt-1 ' + (margin === null ? 'text-muted' : margin < 0 ? 'text-rose-700' : 'text-emerald-700')}>{margin === null ? '—' : money(margin)}</div>
                       </div>
                     </div>
-
-                    <span className={'text-[10.5px] font-bold px-2 py-0.5 rounded-full shrink-0 ' +
-                      (state === 'out' ? 'bg-rose-100 text-rose-700' : state === 'low' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700')}>
-                      {state === 'out' ? 'Out' : state === 'low' ? 'Low' : 'In stock'}
-                    </span>
-
-                    {/* The count stays live — it is the thing you are here to change. */}
-                    <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                      <button disabled={!canEdit || onHand <= 0} onClick={() => setStock(i.id, { onHand: Math.max(0, onHand - 1) })}
-                        className="w-7 h-7 rounded-lg border border-line bg-white text-muted hover:text-ink disabled:opacity-30 inline-flex items-center justify-center"><Minus size={12} /></button>
-                      <input type="number" min={0} value={onHand} disabled={!canEdit}
-                        onChange={e => setStock(i.id, { onHand: Math.max(0, Number(e.target.value)) })}
-                        className="w-14 text-center text-[13.5px] font-bold tabular-nums px-1 py-1 rounded-lg border border-line bg-white focus:outline-none focus:border-ink" />
-                      <button disabled={!canEdit} onClick={() => setStock(i.id, { onHand: onHand + 1 })}
-                        className="w-7 h-7 rounded-lg border border-line bg-white text-muted hover:text-ink disabled:opacity-30 inline-flex items-center justify-center"><Plus size={12} /></button>
-                    </div>
-
-                    <div className="hidden sm:block text-right shrink-0 w-24">
-                      <div className="text-[13px] font-bold text-ink tabular-nums">{money(price)}</div>
-                      <div className={'text-[10.5px] tabular-nums ' + (margin === null ? 'text-muted' : margin < 0 ? 'text-rose-600 font-bold' : 'text-muted')}>
-                        {margin === null ? 'cost not set' : money(margin) + ' margin'}
-                      </div>
-                    </div>
-
-                    <ChevronDown size={14} className={'text-muted shrink-0 transition-transform ' + (isOpen ? 'rotate-180' : '')} />
                   </div>
 
-                  {/* EVERYTHING ELSE, ON PURPOSE. */}
-                  {isOpen && (
-                    <div className="px-3 pb-3 pt-1 bg-app/40" onClick={e => e.stopPropagation()}>
-                      <div className="flex flex-wrap items-end gap-2">
-                        <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold">Warn at
-                          <input type="number" min={0} value={lowAt} disabled={!canEdit}
-                            onChange={e => setStock(i.id, { lowAt: Number(e.target.value) })} className={box + ' w-20 mt-0.5'} />
+                  {isOpen ? (
+                    <div className="mt-3 sm:pl-[68px] space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Name
+                          <input value={String(val(i, 'name') ?? '')} disabled={!canEdit} onChange={e => setItem(i.id, { name: e.target.value } as any)} className={box + ' w-56 mt-0.5'} />
                         </label>
-                        <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold">Guest pays
-                          <input type="number" min={0} step="0.01" value={price} disabled={!canEdit}
-                            onChange={e => setItem(i.id, { price: Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
+                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Category
+                          <input value={String(val(i, 'category') ?? '')} disabled={!canEdit} list="inv-cats" onChange={e => setItem(i.id, { category: e.target.value } as any)} className={box + ' w-36 mt-0.5'} />
                         </label>
-                        <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold">We pay
-                          <input type="number" min={0} step="0.01" value={cost ?? ''} placeholder="—" disabled={!canEdit}
-                            onChange={e => setItem(i.id, { cost: e.target.value === '' ? null : Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
+                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Unit
+                          <input value={String(val(i, 'unit') ?? '')} disabled={!canEdit} placeholder="case of 12" onChange={e => setItem(i.id, { unit: e.target.value } as any)} className={box + ' w-36 mt-0.5'} />
                         </label>
-                        <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold">Supplier
-                          <input value={(val(i, 'supplier') as string) || ''} disabled={!canEdit}
-                            onChange={e => setItem(i.id, { supplier: e.target.value } as any)} className={box + ' w-32 mt-0.5'} />
+                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Max per order
+                          <input type="number" min={1} max={99} value={Number(val(i, 'maxQty') ?? 10)} disabled={!canEdit} onChange={e => setItem(i.id, { maxQty: Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
                         </label>
-                        <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold">Arrives as
-                          <input value={(val(i, 'packNote') as string) || ''} disabled={!canEdit} placeholder="case of 24&hellip;"
-                            onChange={e => setItem(i.id, { packNote: e.target.value } as any)} className={box + ' w-36 mt-0.5'} />
+                        <label className="flex items-center gap-1.5 text-[12px] text-ink self-end pb-1.5">
+                          <input type="checkbox" checked={active} disabled={!canEdit} onChange={e => setItem(i.id, { active: e.target.checked } as any)} /> Show on the guest form
                         </label>
-                        {canEdit && (
-                          <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold cursor-pointer">Photo
-                            <span className={box + ' mt-0.5 inline-flex items-center gap-1.5 text-muted'}>
-                              {busy === 'photo:' + i.id ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
-                              {i.image ? 'Replace' : 'Add'}
-                            </span>
-                            <input type="file" accept="image/*" className="hidden"
-                              onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(i, f); e.currentTarget.value = '' }} />
-                          </label>
-                        )}
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <input value={(url as string) || ''} disabled={!canEdit}
-                          onChange={e => setItem(i.id, { reorderUrl: e.target.value } as any)}
-                          placeholder="Where to buy it again — paste the link" className={box + ' flex-1 min-w-[220px]'} />
-                        {url && /^https?:\/\//i.test(String(url))
-                          ? <a href={String(url)} target="_blank" rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700"><ShoppingCart size={12} /> Order <ExternalLink size={11} /></a>
-                          : <span className="text-[11.5px] text-muted">no order link yet</span>}
-                      </div>
-                      <p className="text-[11px] text-muted mt-2">
-                        {p.updatedAt
-                          ? 'Last counted ' + new Date(p.updatedAt).toLocaleDateString() + (p.updatedBy ? ' by ' + p.updatedBy.split('@')[0] : '')
-                          : 'Never counted on this shelf.'}
-                      </p>
+                      <label className="block text-[10.5px] uppercase tracking-wide text-muted font-semibold">Description the guest reads
+                        <textarea value={String(val(i, 'description') ?? '')} disabled={!canEdit} rows={2} placeholder="What it is and what they get — one or two lines." onChange={e => setItem(i.id, { description: e.target.value } as any)} className={box + ' w-full mt-0.5 resize-y normal-case tracking-normal'} />
+                      </label>
+                      {canEdit ? (
+                        <div className="flex items-center gap-2 pt-1">
+                          {removing === i.id ? (
+                            <>
+                              <span className="text-[12px] text-rose-700 font-semibold">Remove “{i.name}” from the menu?</span>
+                              <button onClick={() => removeItem(i)} disabled={busy === 'del:' + i.id} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-rose-600 text-white disabled:opacity-50">{busy === 'del:' + i.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />} Yes, remove</button>
+                              <button onClick={() => setRemoving(null)} className="text-[12px] text-muted hover:text-ink px-2">Keep it</button>
+                              <span className="text-[11px] text-muted">Past orders keep their own record and are not changed.</span>
+                            </>
+                          ) : (
+                            <button onClick={() => setRemoving(i.id)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-muted hover:text-rose-700"><Trash2 size={12} /> Remove this item</button>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
-                  )}
+                  ) : null}
+
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2 sm:pl-[68px]">
+                    <input value={(url as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { reorderUrl: e.target.value } as any)} placeholder="Where to buy it again — paste the link" className={box + ' w-full sm:w-[300px]'} />
+                    {url && /^https?:\/\//i.test(String(url))
+                      ? <a href={String(url)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700"><ShoppingCart size={12} /> Order <ExternalLink size={11} /></a>
+                      : <span className="text-[11.5px] text-muted">no order link yet</span>}
+                    <input value={(val(i, 'supplier') as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { supplier: e.target.value } as any)} placeholder="supplier" className={box + ' w-[130px]'} />
+                    <input value={(val(i, 'packNote') as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { packNote: e.target.value } as any)} placeholder="arrives as (case of 24…)" className={box + ' w-[165px]'} />
+                  </div>
                 </div>
               )
             })}
@@ -339,115 +304,13 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
         )}
       </div>
 
-      {canEdit && dirty && (
+      {canEdit && dirty ? (
         <div className="sticky bottom-3 flex justify-end">
-          <button onClick={save} disabled={busy === 'save'}
-            className="inline-flex items-center gap-2 text-[13px] font-bold px-4 py-2.5 rounded-xl bg-ink text-white shadow-lg disabled:opacity-50">
+          <button onClick={save} disabled={busy === 'save'} className="inline-flex items-center gap-2 text-[13px] font-semibold px-4 py-2.5 rounded-xl bg-ink text-white shadow-lg disabled:opacity-50">
             {busy === 'save' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save changes
           </button>
         </div>
-      )}
-
-      {adding && <AddSheet kind={adding} onClose={() => setAdding(null)} onDone={() => { setAdding(null); load() }} scopeLabel={here ? here.label : ''} scopeId={scope} />}
-    </div>
-  )
-}
-
-// ── ADD A SHELF, OR AN ITEM ─────────────────────────────────────────────────────────────────────
-// Both write through /api/settings/guest-orders, which is where hubs and the catalog already live.
-// A shelf is read-modify-write on the config (never a blind overwrite — the config carries timing,
-// tax and per-building rules this screen knows nothing about and must not clobber).
-function AddSheet({ kind, onClose, onDone, scopeLabel, scopeId }: {
-  kind: 'hub' | 'item'; onClose: () => void; onDone: () => void; scopeLabel: string; scopeId: string
-}) {
-  const [name, setName] = useState('')
-  const [price, setPrice] = useState('')
-  const [cost, setCost] = useState('')
-  const [category, setCategory] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-
-  const go = async () => {
-    const label = name.trim()
-    if (!label) return
-    setBusy(true); setErr('')
-    try {
-      const cur = await fetch('/api/settings/guest-orders', { cache: 'no-store' }).then(r => r.json())
-      if (!cur?.ok) throw new Error(cur?.error || 'Could not read settings')
-
-      if (kind === 'hub') {
-        const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
-        const hubs = Array.isArray(cur.config?.hubs) ? cur.config.hubs : []
-        if (hubs.some((h: any) => String(h.id) === id)) throw new Error('There is already a shelf called that.')
-        // Read-modify-write: everything else in the config travels untouched.
-        const config = { ...cur.config, hubs: [...hubs, { id, label, buildings: [], listings: [] }] }
-        const r = await fetch('/api/settings/guest-orders', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }),
-        })
-        const j = await r.json()
-        if (!r.ok || j?.error) throw new Error(j?.error || 'Could not save')
-      } else {
-        const catalog = Array.isArray(cur.catalog) ? cur.catalog : []
-        const item = {
-          sku: label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + Date.now().toString(36).slice(-4),
-          name: label,
-          price_usd: Number(price) || 0,
-          cost_usd: cost === '' ? null : Number(cost),
-          category: category.trim() || null,
-          track_stock: true,          // it is being added FROM the inventory screen
-          active: true,
-          // Scoped to the shelf you were looking at, so it appears where you added it.
-          hubs: scopeId.startsWith('hub:') ? [scopeId.slice(4)] : null,
-        }
-        const r = await fetch('/api/settings/guest-orders', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ catalog: catalog.concat([item]) }),
-        })
-        const j = await r.json()
-        if (!r.ok || j?.error) throw new Error(j?.error || 'Could not save')
-      }
-      onDone()
-    } catch (e: any) { setErr(String(e?.message || e)); setBusy(false) }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-0 sm:p-4 sm:pt-[12vh]" onClick={onClose}>
-      <div className="bg-white rounded-none sm:rounded-2xl w-full max-w-md min-h-dvh sm:min-h-0 p-4 sm:p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-2 mb-1">
-          <h2 className="text-[16px] font-bold text-ink flex-1">{kind === 'hub' ? 'Add a shelf' : 'Add an item'}</h2>
-          <button onClick={onClose} className="text-muted hover:text-ink p-1"><X size={16} /></button>
-        </div>
-        <p className="text-[12px] text-muted mb-3">
-          {kind === 'hub'
-            ? 'A shelf is a storeroom and the properties it serves. Create it here, then say which buildings it covers in Guest orders settings.'
-            : 'It will be stock-tracked and added to ' + (scopeLabel || 'this shelf') + '.'}
-        </p>
-
-        <input autoFocus value={name} onChange={e => setName(e.target.value)}
-          placeholder={kind === 'hub' ? 'Shelf name, e.g. Elser storeroom' : 'Item name, e.g. Snack box'}
-          onKeyDown={e => { if (e.key === 'Enter' && name.trim()) go() }}
-          className="w-full rounded-xl border-2 border-line px-3 py-2.5 text-[14px] focus:outline-none focus:border-ink" />
-
-        {kind === 'item' && (
-          <div className="grid grid-cols-3 gap-2 mt-2">
-            <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold">Guest pays
-              <input type="number" min={0} step="0.01" value={price} onChange={e => setPrice(e.target.value)} className={box + ' mt-0.5'} />
-            </label>
-            <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold">We pay
-              <input type="number" min={0} step="0.01" value={cost} onChange={e => setCost(e.target.value)} className={box + ' mt-0.5'} />
-            </label>
-            <label className="flex flex-col text-[10px] uppercase tracking-wide text-muted font-bold">Category
-              <input value={category} onChange={e => setCategory(e.target.value)} placeholder="Extras" className={box + ' mt-0.5'} />
-            </label>
-          </div>
-        )}
-
-        {err && <p className="text-[12px] text-rose-600 font-semibold mt-2">{err}</p>}
-        <button onClick={go} disabled={busy || !name.trim()}
-          className="w-full mt-4 rounded-xl bg-ink text-white py-2.5 text-[14px] font-bold disabled:opacity-40 inline-flex items-center justify-center gap-2">
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-          {busy ? 'Saving…' : kind === 'hub' ? 'Create the shelf' : 'Add the item'}
-        </button>
-      </div>
+      ) : null}
     </div>
   )
 }
