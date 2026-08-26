@@ -10,6 +10,7 @@
 // Auth matches the other crons: enforce the bearer token when CRON_SECRET is set.
 import { NextRequest, NextResponse } from 'next/server'
 import { getGuestOrdersCfg, createDueLinks, pushDue } from '@/lib/guest-orders'
+import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -27,6 +28,7 @@ async function run(req: NextRequest) {
   try { out.links = await createDueLinks(cfg, 50_000) } catch (e: any) { out.links = { error: String(e?.message || e).slice(0, 200) } }
   try { out.pushes = await pushDue(cfg, 50_000) } catch (e: any) { out.pushes = { error: String(e?.message || e).slice(0, 200) } }
   out.ms = Date.now() - started
+  recordRun({ name: 'guest-orders', ok: !out.links?.error && !out.pushes?.error, itemCount: (out.links?.created ?? 0) + (out.pushes?.pushed ?? 0) || undefined, detail: out, ms: out.ms, error: out.links?.error || out.pushes?.error || null })
   return NextResponse.json(out)
 }
 
