@@ -39,6 +39,7 @@ import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex, type VendorBuilding } from './ops-presets'
 import { nameMatches, nameMatchesRoster } from './homebase'
+import { getSalaried, weeklyCost, annualCost, windowCost, rateLabel, type SalaryRow } from './salary'
 import { getCrew, type Dept, type DeptSource, DEPTS, DEPT_LABEL } from './crew'
 import { resolveStaff, getAgencies } from './staffing'
 import { laborAmount } from './billing'
@@ -117,20 +118,17 @@ export function kindOfTask(t: { name?: any; type_department?: any }): TaskKind {
 export const SEVENTEEN_WEST_PAIR = ['George Paz', 'Yoslenis Rodiguez']  // Homebase spellings; matching is fuzzy
 export const SEVENTEEN_WEST_ANNUAL = 100000
 
-// ── SALARIED MANAGEMENT (Jon, 2026-08-24: "We can also add a manager (Roberto section). He is
-// salaried 80k per year.") ──────────────────────────────────────────────────────────────────
-// A salary is a FIXED cost: it accrues whether or not a single unit turns, so it is pro-rated
-// to the window (annual × days ÷ 365) and carried on its own Management line — never inside
-// cost per clean, never inside the hourly supervisor overhead. If a salaried person also has
-// Homebase punches, those wages are REMOVED from their crew's payroll: the salary already pays
-// for that time, and counting both would double their cost.
-export const SALARIED_MANAGERS = [
-  // Jon, 2026-08-24: "Roberto is Operations Manager."
-  { name: 'Roberto Chiriboga', annual: 80000, title: 'Operations Manager' },
-]
+// SALARIED STAFF NOW LIVES IN lib/salary.ts — a settings-backed roster rather than a constant,
+// because Jon (2026-08-25) intends the financial figures to come from Eric's app in time. The
+// old SALARIED_MANAGERS array was removed with it; anyone on salary is swapped onto their person
+// row before the departments are built, so their crew carries the salary and nothing is added on
+// top afterwards.
 export function seventeenWestCoverage(combinedWages: number, windowDays: number) {
   const r2 = (n: number) => Math.round(n * 100) / 100
-  const credit = r2((SEVENTEEN_WEST_ANNUAL * windowDays) / 365)
+  // Prorated BY THE WEEK, exactly like the salaries it is subtracted from (lib/salary windowCost).
+  // Mixing /365 on one side of a subtraction with /7 on the other put a 0.3% wobble on the very
+  // number that decides whether Stay pays anything at all.
+  const credit = r2(((SEVENTEEN_WEST_ANNUAL / 52) * windowDays) / 7)
   const covered = r2(Math.min(Math.max(0, combinedWages), credit))
   return {
     combined: r2(combinedWages), credit, covered,
@@ -183,8 +181,15 @@ export type PersonEcon = {
   roomMix?: Record<string, number>
   /** Same-day moves between different BUILDINGS (Rustic 1 → Rustic 2 is not a hop). */
   travel?: { hops: number; minutes: number }
-  /** Paid an annual salary — their hourly punches are excluded from crew payroll (see SALARIED_MANAGERS). */
+  /** Paid a salary — the salary IS their cost; punches never drive dollars (see lib/salary). */
   salaried?: boolean
+  /** What the salary costs for this window. Present only on salaried people. */
+  salaryWindow?: number
+  /** What the clock said, kept beside the salary so the two can be compared. */
+  punchPayroll?: number
+  /** "$29/hr × 40 h/wk = $1,160/wk" — the rate as it was stated. */
+  salaryRate?: string
+  salaryTitle?: string
 }
 
 export type DeptEcon = {
@@ -193,7 +198,12 @@ export type DeptEcon = {
   people: number
   names: string[]
   hours: number
+  /** Everything this crew costs: hourly wages (agency-loaded) PLUS any salaries carried here. */
   payroll: number
+  /** The clock-driven half of payroll, salaried people excluded. */
+  payrollHourly: number
+  /** The salaried half — separate, so "separate but then combined" is literally both numbers. */
+  salary: number
   cleans: number
   cleaningRevenue: number
   billableRevenue: number
@@ -227,6 +237,8 @@ export type LaborEcon = {
   bundledFeeBackfill: { checkouts: number; amount: number; basis: string }
   /** Timecard completeness. complete=false → payroll-derived numbers are understated; warn, don't print. */
   payrollAudit: { weeks: number; failedWeeks: string[]; complete: boolean }
+  /** How the departure-clean denominator was built, as its parts. */
+  cleanAudit?: { scope: string; counted: number; countedThisMarket: number; closed: number; openCounted: number; movedExcluded: number; noAssignee: number; rule: string }
   /** Per person, day by day — the color behind every aggregate. Wages carry the day's agency share. */
   personDays?: Record<string, { d: string; cleans: number; fee: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]>
   /** Daily housekeeping series (credited cleans, net fees, loaded HK wages) for trend charts. */
@@ -282,7 +294,7 @@ export type LaborEcon = {
 }
 
 const EMPTY_DEPT = (key: Dept): DeptEcon => ({
-  key, label: DEPT_LABEL[key], people: 0, names: [], hours: 0, payroll: 0, cleans: 0,
+  key, label: DEPT_LABEL[key], people: 0, names: [], hours: 0, payroll: 0, payrollHourly: 0, salary: 0, cleans: 0,
   cleaningRevenue: 0, billableRevenue: 0, materials: 0, revenue: 0, margin: 0, marginPct: null,
   costPerClean: null, hoursPerClean: null, billableTasks: 0, tasksNoCharge: 0, basis: '',
 })
@@ -359,8 +371,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // not a clean that never happened, and the fee it earned should not silently disappear.
   //
   // So fee matching searches a PADDED pool — pulled by scheduled date as well as finish date, two
-  // days before the window to a week after — while the cost-per-clean denominator keeps using only
-  // cleans actually finished inside the window. Revenue found; work not double-counted.
+  // days before the window to a week after. The cost-per-clean denominator is drawn from the same
+  // pool but strictly inside the window (see cleansDone below), which is what lets a clean the
+  // crew did but nobody closed still count on the day it was scheduled.
   const padFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -2))
   const padTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 7))
   const poolCols = 'id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,scheduled_date,status,total_minutes'
@@ -379,6 +392,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // The day a clean actually landed: when it was finished, else the day it was scheduled for.
   const cleanDay = (t: any): string => String(t.finished_at || '').slice(0, 10) || String(t.scheduled_date || '').slice(0, 10)
   const isClosed = (t: any) => !!t.finished_at && String(t.status || '').toLowerCase() !== 'deleted'
+  // DELETED MEANS MOVED (Jon, 2026-08-25: "if moved it means extended or we moved for a
+  // schedule"). Breezeway does not edit a clean onto a new day; it deletes the row and creates a
+  // new task, so a deleted row is the ghost of a clean that now lives somewhere else.
+  const isMoved = (t: any) => String(t.status || '').toLowerCase() === 'deleted'
 
   const ids = taskRows.map(t => String(t.id))
   const details: Record<string, any> = {}
@@ -514,7 +531,6 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // split by her share of cleans in each — and that split can only be computed if both markets'
   // cleans are visible. Filtering first made the Miami tab charge Miami for her whole week while
   // crediting it with only her Miami cleans: $102 a clean against a true $77.
-  const cleanTasksAll = taskRowsAll.filter(t => kindOfTask(t) === 'clean')
   const cleanTasks = taskRows.filter(t => kindOfTask(t) === 'clean')
   const usedTask: Record<string, boolean> = {}
   const revBy: Record<string, number> = {}
@@ -531,7 +547,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   let cleansAttributed = 0, vendorCleans = 0
   // Where a fee ended up, so nothing can quietly vanish: credited to a person, matched to a clean
   // nobody closed, matched to a clean with no assignee, or no clean found at all.
-  let feesCleanNotClosed = 0, feesCleanNoAssignee = 0, feesNoCleanFound = 0
+  let feesCleanNotClosed = 0, feesCleanNoAssignee = 0, feesNoCleanFound = 0, feesCleanOpenCredited = 0
   let movedCleans = 0
   const movedOffsets: Record<string, number> = {}
   const pending: { listingId: string; co: string; coNext: string; fee: number; inMk: boolean; source: string; unit: string }[] = []
@@ -593,13 +609,23 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     usedTask[String(t.id)] = true
     feeByTask[String(t.id)] = p.fee
     if (!p.inMk) return
-    if (isClosed(t)) {
-      const w = doer(t)
-      if (w) { cleansAttributed++; revBy[w] = round2((revBy[w] || 0) + p.fee) }
-      else feesCleanNoAssignee = round2(feesCleanNoAssignee + p.fee)
+    // ASSIGNED AND NOT MOVED MEANS IT WAS DONE (Jon, 2026-08-25: "if it was assigned in Breezeway
+    // and did not complete but was not moved it was completed — the team sometimes does not
+    // complete"). So the fee follows the person who did the work, whether or not anybody
+    // remembered to press the button. Leaving it uncredited punished the housekeeper twice: her
+    // clean vanished from the count AND her revenue vanished from her margin.
+    const w = !isMoved(t) ? doer(t) : null
+    if (w) {
+      cleansAttributed++
+      revBy[w] = round2((revBy[w] || 0) + p.fee)
+      // Still worth seeing: money riding on a task nobody closed is a hygiene problem even when
+      // the accounting is right. Counted here, never subtracted from anyone.
+      if (!isClosed(t)) feesCleanOpenCredited = round2(feesCleanOpenCredited + p.fee)
+    } else if (!isMoved(t)) {
+      feesCleanNoAssignee = round2(feesCleanNoAssignee + p.fee)
     } else {
-      // The clean is on the board but was never closed (or was deleted when it moved). The money
-      // is real and the work almost certainly happened — it just cannot be credited to a person.
+      // A moved clean with no replacement anywhere in the padded pool. The money is real, the
+      // work almost certainly happened, and there is no task left to hang it on.
       feesCleanNotClosed = round2(feesCleanNotClosed + p.fee)
       const b = notClosedBySource[p.source] = notClosedBySource[p.source] || { fees: 0, checkouts: 0 }
       b.fees = round2(b.fees + p.fee); b.checkouts++
@@ -619,7 +645,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const hits = cleanPool.filter(t => !usedTask[taskKey(t)] &&
       String(t.reference_property_id) === p.listingId &&
       (cleanDay(t) === p.co || cleanDay(t) === p.coNext))
-      .sort((t1, t2) => (cleanDay(t1) === p.co ? 0 : 1) - (cleanDay(t2) === p.co ? 0 : 1) || taskKey(t1).localeCompare(taskKey(t2)))
+      // A REAL CLEAN OUTRANKS A GHOST, ALWAYS. When a clean is moved, Breezeway leaves the
+      // original behind (deleted) and creates a new task on the new day — and the original
+      // always has the LOWER id and usually the ORIGINAL day, so both the same-day key and the
+      // id tiebreak favoured it. That handed the fee to a clean that never happened, filed it
+      // under "could not credit", and left the housekeeper who did the work with no credit and
+      // no clean. Order: not-moved first, then finished, then same-day, then lowest id.
+      .sort((t1, t2) => (isMoved(t1) ? 1 : 0) - (isMoved(t2) ? 1 : 0)
+        || (isClosed(t1) ? 0 : 1) - (isClosed(t2) ? 0 : 1)
+        || (cleanDay(t1) === p.co ? 0 : 1) - (cleanDay(t2) === p.co ? 0 : 1)
+        || taskKey(t1).localeCompare(taskKey(t2)))
     if (hits[0]) claim(p, hits[0]); else unclaimed.push(p)
   }
   for (const p of unclaimed) {
@@ -634,10 +669,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       if (off < -2 || off > 7) continue
       // Nearest day wins; a tie goes to the day AFTER the checkout (a clean follows a departure,
       // it does not precede it), and then to the lowest task id. Deterministic all the way down.
+      // Same ranking as the first pass: a moved ghost loses to anything real, then closed
+      // beats open, and only then does the day distance decide.
+      const rank = (x: any) => (isMoved(x) ? 2 : isClosed(x) ? 0 : 1)
+      const rt = rank(t), rb = best ? rank(best.t) : 9
       if (!best
-        || Math.abs(off) < Math.abs(best.off)
-        || (Math.abs(off) === Math.abs(best.off) && off > best.off)
-        || (off === best.off && String(t.id).localeCompare(String(best.t.id)) < 0)) best = { off, t }
+        || rt < rb
+        || (rt === rb && (
+             Math.abs(off) < Math.abs(best.off)
+             || (Math.abs(off) === Math.abs(best.off) && off > best.off)
+             || (off === best.off && String(t.id).localeCompare(String(best.t.id)) < 0)))) best = { off, t }
     }
     if (!best) {
       if (p.inMk) {
@@ -652,6 +693,40 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     movedOffsets[String(best.off)] = (movedOffsets[String(best.off)] || 0) + 1
     claim(p, best.t)
   }
+
+  // ── WHAT COUNTS AS A CLEAN WE DID (Jon, 2026-08-25) ──────────────────────
+  // "I want to be able to look at it by day completed in Breezeway. If it was assigned in
+  //  Breezeway and did not complete but was not moved, it was completed — the team sometimes
+  //  does not complete. If moved, it means extended or we moved for a schedule."
+  //
+  // That is the whole rule, and Breezeway records it faithfully once you know where to look:
+  //   FINISHED, not deleted   → done. Counts on the day it was FINISHED.
+  //   assigned, not deleted,
+  //   never finished          → done; nobody closed it. Counts on the day it was SCHEDULED.
+  //   deleted                 → MOVED. The stay extended or we rescheduled, and Breezeway left
+  //                             this row behind when it created the task on the new day. Not a
+  //                             clean here; the replacement counts on its own day.
+  //   no assignee             → cannot be credited to anyone, so it cannot carry a cost.
+  //
+  // The old denominator was "finished inside the window AND its guest fee matched a checkout",
+  // which threw away both populations Jon just described: the 30-odd cleans a fortnight nobody
+  // closed, and every clean whose fee failed to match. The wages stayed in the numerator, so
+  // every clean read about 14% more expensive than it was. Revenue is unaffected — a clean with
+  // no matched fee adds a clean and $0, which is exactly what happened in real life.
+  const cleanLandedDay = (t: any): string =>
+    isClosed(t) ? String(t.finished_at || '').slice(0, 10) : String(t.scheduled_date || '').slice(0, 10)
+  let clAudCounted = 0, clAudClosed = 0, clAudOpen = 0, clAudMoved = 0, clAudNoAssignee = 0
+  const cleansDone: any[] = []
+  for (const t of cleanPool) {
+    const day = cleanLandedDay(t)
+    if (!day || day < from || day > to) continue
+    if (isMoved(t)) { clAudMoved++; continue }
+    if (!doer(t)) { clAudNoAssignee++; continue }
+    clAudCounted++
+    if (isClosed(t)) clAudClosed++; else clAudOpen++
+    cleansDone.push(t)
+  }
+  const cleansDoneMk = cleansDone.filter(t => inMarketListing(t.reference_property_id))
 
   // ── per person ───────────────────────────────────────────────────────────
   type Acc = PersonEcon & { _mk: Record<string, number> }
@@ -681,17 +756,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const p = acc[k] = acc[k] || blank(w)
     p.tasks++
     const kind = kindOfTask(t)
-    if (kind === 'clean') p.cleans++
+    // Departure cleans are counted from cleansDone below, not from this loop — this loop only
+    // sees tasks FINISHED in the window, and a clean the crew did but nobody closed never
+    // appears here. Counting it in both places would double it.
     const ch = chargeOf(t)
     const li = lmap[String(t.reference_property_id)]
-    // ROOM MIX (Jon, 2026-08-22: "the type of room that they cleaned — one bedrooms, studios,
-    // two bedrooms, three bedrooms"). A 3BR turn is not a studio turn; the mix says whether a
-    // cleaner's day was heavy or light, and it rides on every per-person row.
-    if (kind === 'clean' && li && li.bedrooms != null) {
-      const bb = li.bedrooms <= 0 ? 'studio' : li.bedrooms === 1 ? '1br' : li.bedrooms === 2 ? '2br' : li.bedrooms === 3 ? '3br' : '4br+'
-      p.roomMix = p.roomMix || {}
-      p.roomMix[bb] = (p.roomMix[bb] || 0) + 1
-    }
     if (li && li.travelKey && t.finished_at) {
       const day = String(t.finished_at).slice(0, 10)
       const tr = (tripsBy[k] = tripsBy[k] || {})
@@ -705,7 +774,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
         const L = (ledgerT[k] = ledgerT[k] || {})
         const e = (L[day] = L[day] || { cleans: 0, fee: 0, billable: 0 })
         if (chargedCleanIds[String(t.id)]) { e.cleans++; e.billable = round2(e.billable + chargeOfRaw(t)) }
-        else if (kind === 'clean') { e.cleans++; e.fee = round2(e.fee + (feeByTask[String(t.id)] || 0)) }
+        else if (kind === 'clean') { /* counted on its landed day in the cleansDone pass below */ }
         else e.billable = round2(e.billable + ch.billable)
       }
     }
@@ -724,6 +793,33 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     }
     if (li) { const mk = li.vendor ? 'vendor' : li.market; p._mk[mk] = (p._mk[mk] || 0) + 1 }
   }
+  // DEPARTURE CLEANS, ON THE DAY THEY LANDED. One pass, one rule (see cleansDone above), so the
+  // person row, the room mix and the day ledger can never disagree with the headline count.
+  for (const t of cleansDoneMk) {
+    const w = doer(t)
+    if (!w) continue
+    const k = keyFor(w)
+    const p = acc[k] = acc[k] || blank(w)
+    p.cleans++
+    const li = lmap[String(t.reference_property_id)]
+    // ROOM MIX (Jon, 2026-08-22: "the type of room that they cleaned — one bedrooms, studios,
+    // two bedrooms, three bedrooms"). A 3BR turn is not a studio turn; the mix says whether a
+    // cleaner's day was heavy or light, and it rides on every per-person row.
+    if (li && li.bedrooms != null) {
+      const bb = li.bedrooms <= 0 ? 'studio' : li.bedrooms === 1 ? '1br' : li.bedrooms === 2 ? '2br' : li.bedrooms === 3 ? '3br' : '4br+'
+      p.roomMix = p.roomMix || {}
+      p.roomMix[bb] = (p.roomMix[bb] || 0) + 1
+    }
+    const day = cleanLandedDay(t)
+    if (day) {
+      const L = (ledgerT[k] = ledgerT[k] || {})
+      const e = (L[day] = L[day] || { cleans: 0, fee: 0, billable: 0 })
+      e.cleans++
+      e.fee = round2(e.fee + (feeByTask[String(t.id)] || 0))
+    }
+    if (li) { const mk = li.vendor ? 'vendor' : li.market; p._mk[mk] = (p._mk[mk] || 0) + 1 }
+  }
+
   for (const t of timecards) {
     const k = keyFor(t.name)
     const p = acc[k] = acc[k] || blank(t.name)
@@ -744,12 +840,6 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.cleaningRevenue = round2(p.cleaningRevenue + revBy[k])
   }
 
-  // A PERSON'S CREW CANNOT DEPEND ON WHICH TAB YOU ARE LOOKING AT. The fallback used to read
-  // p.cleans, which is market-scoped: on the Broward tab every Miami housekeeper showed zero
-  // cleans, fell through to 'other', and Broward's whole housekeeping payroll vanished — the tab
-  // reported no cost per clean at all. Counting their cleans across ALL markets fixes it.
-  const cleansAllBy: Record<string, number> = {}
-  for (const t of cleanTasksAll) { const w = doer(t); if (w) cleansAllBy[w] = (cleansAllBy[w] || 0) + 1 }
   // crew + market per person, then the arithmetic
   for (const k of Object.keys(acc)) {
     const p = acc[k]
@@ -807,6 +897,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // nothing, so this is inert until the contracts are typed into the People & agencies card.
   const winDays = Math.max(1, Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 864e5) + 1)
   const agenciesList = await getAgencies().catch(() => [] as Awaited<ReturnType<typeof getAgencies>>)
+  // Salaried people are on our books, so no agency ever marks them up. Resolved BEFORE the
+  // grouping below so the agency receipt never totals a load that is later zeroed out.
+  const salariedRoster = await getSalaried().catch(() => [] as SalaryRow[])
+  const salActive = salariedRoster.filter(r => r.active !== false && weeklyCost(r) > 0)
+  const isSalariedName = (n: string) => salActive.some(r => nameMatches(n, r.name))
   const agencyIdx: Record<string, { label: string; pct: number; perHour: number; flat: number }> = {}
   for (const a of agenciesList) agencyIdx[a.key] = { label: a.label, pct: a.fee_percent, perHour: a.fee_per_hour, flat: a.fee_flat }
   const byAgencyGrp: Record<string, { people: PersonEcon[]; hours: number }> = {}
@@ -814,7 +909,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.agencyLabel = p.agency ? (agencyIdx[p.agency]?.label || p.agency) : 'W-2'
     p.wagesHomebase = p.payroll
     p.agencyLoad = 0
-    if (p.agency && agencyIdx[p.agency]) {
+    if (p.agency && agencyIdx[p.agency] && !isSalariedName(p.name)) {
       const g = byAgencyGrp[p.agency] = byAgencyGrp[p.agency] || { people: [], hours: 0 }
       g.people.push(p); g.hours += p.hours
     }
@@ -836,6 +931,70 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       agencyLoad.total = round2(agencyLoad.total + load)
       agencyLoad.byAgency.push({ key, label: a.label, people: g.people.length, wages, load })
     }
+  }
+
+  // ── SALARY REPLACES THE CLOCK (Jon, 2026-08-25: "salary always") ──────────────────────────
+  // Yoslenis $29/hr × 40 h/wk, Guillermo $22/hr × 40 h/wk, George Paz $25/hr × 40 h/wk, Roberto
+  // $80k/yr. A salary is what we pay whether or not a unit turns, so from here down the person's
+  // cost IS the salary: the punches are moved aside to `punchPayroll` and kept for comparison,
+  // and every layer that reads p.payroll — departments, margins, the loaded cost per clean, the
+  // all-in line — inherits the salary without any of them needing to know.
+  //
+  // This is deliberately AFTER the agency loading: a salaried employee is on our books, so no
+  // agency markup is ever loaded onto them.
+  //
+  // Two live facts this fixes on day one:
+  //   George Paz clocked ZERO Homebase hours against 127 Breezeway tasks, so maintenance was
+  //   carrying him at $0 — a whole technician the margin could not see.
+  //   Guillermo logged 35.2 h/wk, under his 40, so his punches understated him every week.
+  const salaryDupes: string[] = []
+  for (const r of salActive) {
+    const windowSalary = windowCost(r, winDays)
+    const matches = peopleAll.filter(x => nameMatches(x.name, r.name))
+    let p = matches[0]
+    // TWO SPELLINGS, ONE PERSON. If Homebase and Breezeway disagree on how a name is written the
+    // accumulator can hold two rows. Charging the salary to the first and leaving the second on
+    // its hourly wages would bill the same human twice, so the extras are flattened to zero and
+    // named in the receipt rather than quietly paid.
+    for (const extra of matches.slice(1)) {
+      salaryDupes.push(extra.name)
+      extra.salaried = true
+      extra.punchPayroll = round2(extra.wagesHomebase ?? extra.payroll)
+      extra.salaryWindow = 0
+      extra.payroll = 0
+      extra.agencyLoad = 0
+      extra.margin = round2(extra.revenue)
+      extra.costPerClean = null
+    }
+    if (!p) {
+      // On salary but absent from both Homebase and Breezeway this window. They are still being
+      // paid, so they get a row rather than disappearing — a cost you cannot see is the bug.
+      const resolved = crew.deptOfDetailed(r.name, r.title || null, null)
+      const rec = resolveStaff(r.name, crew.staff)
+      p = {
+        name: r.name, dept: resolved.dept, declared: crew.isDeclared(r.name), deptSource: resolved.source,
+        market: (rec?.area ? String(rec.area).toLowerCase() : '') || 'unassigned',
+        role: r.title || null, hours: 0, payroll: 0, wageRate: null, cleans: 0, cleaningRevenue: 0,
+        billableRevenue: 0, materials: 0, tasks: 0, billableTasks: 0, tasksNoCharge: 0,
+        onPayroll: true, revenue: 0, margin: 0, costPerClean: null,
+        agency: null, agencyLabel: 'W-2', wagesHomebase: 0, agencyLoad: 0,
+      } as PersonEcon
+      peopleAll.push(p)
+    }
+    if (p.salaried) continue   // already swapped by an earlier roster row — never swap twice
+    p.salaried = true
+    p.salaryWindow = windowSalary
+    p.salaryRate = rateLabel(r)
+    p.salaryTitle = r.title || undefined
+    // What the CLOCK said, which is the raw Homebase wage — not the agency-loaded figure, and
+    // certainly not the salary we are about to write over p.payroll. wagesHomebase keeps holding
+    // exactly what it is documented to hold.
+    p.punchPayroll = round2(p.wagesHomebase ?? p.payroll)
+    p.agencyLoad = 0
+    p.payroll = windowSalary
+    p.onPayroll = true
+    p.margin = round2(p.revenue - p.payroll)
+    p.costPerClean = p.cleans > 0 && p.payroll > 0 ? round2(p.payroll / p.cleans) : null
   }
 
   // ── THE COLOR: per-person day ledger + daily HK series (Jon, 2026-08-23: "Daily brief can
@@ -901,6 +1060,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     d.names.push(p.name)
     d.hours = round2(d.hours + p.hours)
     d.payroll = round2(d.payroll + p.payroll)
+    // Separate, then combined (Jon, 2026-08-25). p.payroll already carries the salary for anyone
+    // on it, so the split is just a matter of saying which half is which.
+    if (p.salaried) d.salary = round2(d.salary + p.payroll)
+    else d.payrollHourly = round2(d.payrollHourly + p.payroll)
     d.cleans += p.cleans
     d.cleaningRevenue = round2(d.cleaningRevenue + p.cleaningRevenue)
     d.billableRevenue = round2(d.billableRevenue + p.billableRevenue)
@@ -911,30 +1074,55 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // 17WEST's $100k/yr toward George + Yoslenis comes off their departments HERE, before margins —
   // so maintenance, supervisors, the loaded clean cost and all-in all carry only Stay's share.
   // Per-person rows keep real wages (nobody vanishes); kpi.seventeenWest is the receipt.
+  //
+  // ON SALARY THIS CHANGES SIGN. The credit used to be weighed against the pair's PUNCHES, and
+  // George punches nothing — so the engine reported the pair fully covered and Stay paying $0.
+  // Against their real salaries ($25/hr and $29/hr, 40 h/wk each = ~$112k a year combined) the
+  // $100k credit no longer covers them, and the difference Jon described — "we pay the
+  // difference" — finally shows up as the real cost it is.
   const w17pair = people.filter(p => SEVENTEEN_WEST_PAIR.some(n => nameMatches(p.name, n)))
   const w17days = Math.max(1, Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 864e5) + 1)
   const w17 = seventeenWestCoverage(round2(w17pair.reduce((a, p) => a + p.payroll, 0)), w17days)
   if (w17.ratio > 0) for (const p of w17pair) {
     const d = byDept[p.dept]
-    if (d) d.payroll = round2(Math.max(0, d.payroll - p.payroll * w17.ratio))
+    if (!d) continue
+    const cut = round2(p.payroll * w17.ratio)
+    if (p.salaried) d.salary = round2(Math.max(0, d.salary - cut))
+    else d.payrollHourly = round2(Math.max(0, d.payrollHourly - cut))
+    d.payroll = round2(Math.max(0, d.payrollHourly + d.salary))
   }
-  // SALARIED MANAGEMENT comes off the hourly lines here too: the salary is the cost, so any
-  // punches a salaried manager clocked are pulled back out of their crew's payroll, and the
-  // pro-rated salary is carried on its own kpi.management line below.
-  const mgmtPeople: { name: string; title: string; annual: number; windowSalary: number; hours: number; hourlyRemoved: number }[] = []
-  let managementSalary = 0
-  for (const m of SALARIED_MANAGERS) {
-    const windowSalary = round2((m.annual * winDays) / 365)
-    managementSalary = round2(managementSalary + windowSalary)
-    const p = peopleAll.filter(x => nameMatches(x.name, m.name))[0]
-    let removed = 0
-    if (p) {
-      p.salaried = true
-      const d = byDept[p.dept]
-      if (d && p.payroll > 0) { removed = p.payroll; d.payroll = round2(Math.max(0, d.payroll - p.payroll)) }
-    }
-    mgmtPeople.push({ name: m.name, title: m.title, annual: m.annual, windowSalary, hours: p ? p.hours : 0, hourlyRemoved: removed })
+  // THE SALARY RECEIPT. Nothing is deducted here — the swap already happened on the person rows,
+  // so every department above is carrying salaries in `salary` and wages in `payrollHourly`.
+  // This block only names them: who, at what rate, in which crew, and what the clock said for
+  // comparison. `salaryTotal` counts only people inside the current market tab, so it always
+  // agrees with the departments printed beside it.
+  const mgmtPeople: {
+    name: string; title: string; inThisView: boolean; dept: Dept; rate: string; annual: number
+    weekly: number; windowSalary: number; hours: number; punchPayroll: number
+  }[] = []
+  let salaryTotal = 0
+  for (const r of salActive) {
+    const pAll = peopleAll.filter(x => nameMatches(x.name, r.name))[0]
+    const inTab = people.filter(x => nameMatches(x.name, r.name))[0]
+    const windowSalary = windowCost(r, winDays)
+    if (inTab) salaryTotal = round2(salaryTotal + windowSalary)
+    mgmtPeople.push({
+      name: pAll ? pAll.name : r.name,
+      title: r.title || '',
+      // On a market tab the itemised list still names everyone, but only the people actually in
+      // the tab are added to the total — so the list can legitimately sum higher than its own
+      // total, and this flag is how a reader tells which rows are counted.
+      inThisView: !!inTab,
+      dept: (pAll ? pAll.dept : 'other') as Dept,
+      rate: rateLabel(r),
+      annual: annualCost(r),
+      weekly: weeklyCost(r),
+      windowSalary,
+      hours: pAll ? pAll.hours : 0,
+      punchPayroll: pAll ? round2(pAll.punchPayroll || 0) : 0,
+    })
   }
+  const managementSalary = salaryTotal
   for (const d of DEPTS) {
     const x = byDept[d]
     x.revenue = round2(x.cleaningRevenue + x.billableRevenue)
@@ -994,19 +1182,21 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // so a clean that was genuinely done still counts in cost per clean even when the checkout
   // association fails. Counting only matched cleans made every clean look ~10% more expensive
   // than it is (94 of 103 matched in the week this was found).
-  // A CLEAN COUNTS WHEN IT EARNED SOMETHING (Jon, 2026-08-13: "the goal is to track only revenue
-  // generating cleans — either departure cleans or billable Breezeway tasks with cost").
+  // A DEPARTURE CLEAN COUNTS BECAUSE IT WAS DONE (Jon, 2026-08-25). It was earlier written as
+  // "only revenue-generating cleans" (Jon, 2026-08-13), and in a denominator that divides LABOUR
+  // that turned out to be the wrong test: an unmatched fee is an attribution failure, not an
+  // unworked unit, and dropping the clean while keeping the wage made every turn read expensive.
+  // Revenue still only counts when it was earned — an unmatched clean adds a clean and $0.
   //
-  // Two ways a clean earns:
-  //   the guest's cleaning fee, on a departure clean matched to a checkout, or
-  //   a charge typed on any cleaning task — a linen refresh, a mid-stay, a re-clean.
-  // Checked against the live month before building this: departure cleans carry a cost entry on
-  // ZERO of 310 tasks, so fee and charge never land on the same job and nothing double-counts.
+  // Charged cleaning tasks are the separate case: a linen refresh or a mid-stay is a countable
+  // job only because a charge was typed on it. Checked against the live month before building
+  // this: departure cleans carry a cost entry on ZERO of 310 tasks, so fee and charge never land
+  // on the same job and nothing double-counts.
   //
   // Everything else the housekeeping department does — strips, exterior walkthroughs, the pool,
   // common areas, trash, office cleaning — earns nothing and is deliberately outside both the
   // numerator and the denominator. It is real work, it is just not a clean we get paid for.
-  const cleanRecs = (cleanTasksAll.map(t => {
+  const cleanRecs = (cleansDone.map(t => {
     const li = lmap[String(t.reference_property_id)]
     const mk = li ? (li.vendor ? 'vendor-inhouse' : li.market) : 'unassigned'
     return { who: doer(t), market: mk, fee: feeByTask[String(t.id)] || 0, charged: false }
@@ -1016,9 +1206,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     return { who: doer(t), market: mk, fee: chargeOfRaw(t), charged: true }
   })))
     .filter(r => !!r.who)
-    // ONLY REVENUE-GENERATING CLEANS. A departure clean whose checkout never matched earned
-    // nothing measurable, so it cannot sit in a denominator that divides revenue.
-    .filter(r => r.fee > 0) as { who: string; market: string; fee: number; charged: boolean }[]
+    // A DEPARTURE CLEAN COUNTS BECAUSE IT WAS DONE, NOT BECAUSE ITS FEE MATCHED.
+    // This used to drop every row with fee 0, which quietly deleted a clean from the denominator
+    // while leaving the housekeeper's whole wage in the numerator — the single biggest reason
+    // cost per clean read high. A CHARGED cleaning task still needs its charge, because the
+    // charge is the only thing that makes it a countable job rather than housekeeping admin.
+    .filter(r => !r.charged || r.fee > 0) as { who: string; market: string; fee: number; charged: boolean }[]
 
   // DEPARTURE CLEANS ONLY IN COST PER CLEAN (Jon, 2026-08-17: "just departure").
   // A turnover and a linen refresh are different jobs at different prices; averaging them produced
@@ -1094,6 +1287,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const sup = byDept['supervision']
   const ccs = byDept['ccs']
   const mt = byDept['maintenance']
+  const othDept = byDept['other']
   const cleansTotal = people.reduce((a, p) => a + p.cleans, 0)
   // The headline cost per clean: housekeeper wages over the units housekeepers actually turned,
   // in-house markets only. Supervisors are not in it. Maintenance is not in it. Vendor is not in
@@ -1109,6 +1303,23 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const hkCleansInHouse = inHouseB.reduce((a, b) => a + b.cleans, 0)
   const costPerClean = hkCleansInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansInHouse) : null
   const hoursPerClean = hkCleansInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansInHouse) : null
+  // ONE ANSWER PER QUESTION. The housekeeping department row used to divide a person's FULL
+  // window payroll by their MARKET-filtered cleans, so on a market tab the row disagreed with the
+  // tile printed directly above it. The bucket figures already allocate a housekeeper's wages
+  // across the markets she actually cleaned in, so the department row now simply reports them.
+  if (hk) {
+    const bRev = round2(inHouseB.reduce((a, b) => a + b.cleaningRevenue, 0))
+    hk.cleans = hkCleansInHouse
+    hk.payroll = hkPayrollInHouse
+    hk.payrollHourly = round2(Math.max(0, hkPayrollInHouse - hk.salary))
+    hk.hours = hkHoursInHouse
+    hk.cleaningRevenue = bRev
+    hk.revenue = round2(bRev + hk.billableRevenue)
+    hk.margin = round2(hk.revenue - hkPayrollInHouse)
+    hk.marginPct = hk.revenue > 0 ? round2(((hk.revenue - hkPayrollInHouse) / hk.revenue) * 100) : null
+    hk.costPerClean = costPerClean
+    hk.hoursPerClean = hoursPerClean
+  }
   const costPerCleanByMarket: Record<string, number | null> = {}
   const hoursPerCleanByMarket: Record<string, number | null> = {}
   for (const b of bucketList) {
@@ -1229,6 +1440,35 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       billedOutsideCrew: maintAudit.billedOutsideCrew,
       outsideDetail: maintAudit.outsideDetail,
     },
+    // BILLABLE LABOR — HOUSEKEEPING'S OTHER REVENUE (Jon, 2026-08-25: "If housekeeping has
+    // billable labor, you can add another line item that just says 'billable labor' so that we
+    // can associate the revenue with that particular housekeeper and whether they did only
+    // departure clean revenue").
+    //
+    // Kept OUT of cost per clean on purpose — a mid-stay refresh or a charged extra is not a
+    // turnover — but named per person, so you can see at a glance whose revenue is departure
+    // cleans only and whose is departure cleans plus billable work.
+    housekeepingBillable: {
+      revenue: hk.billableRevenue,
+      chargedCleanRevenue: hkCharged,
+      chargedCleans: chargedCleanCount,
+      tasks: hk.billableTasks,
+      materials: hk.materials,
+      people: people
+        .filter(p => p.dept === 'housekeeping' && (p.billableRevenue > 0 || p.materials > 0))
+        .sort((a, b) => b.billableRevenue - a.billableRevenue)
+        .map(p => ({
+          name: p.name,
+          billable: p.billableRevenue,
+          materials: p.materials,
+          tasks: p.billableTasks,
+          cleaningRevenue: p.cleaningRevenue,
+          cleans: p.cleans,
+          // The answer to Jon's question, precomputed: is this person's money all turnovers?
+          departureCleansOnly: p.billableRevenue <= 0,
+        })),
+      note: 'housekeeping revenue that is NOT a departure clean — never inside cost per clean',
+    },
     // ── LAYER 2: HOUSEKEEPING WITH SUPERVISION LOADED ON ──────────────────
     // Jon, 2026-08-17: "cost per clean is # of cleans and payroll to get cost per DEPARTURE clean.
     // We can then take payroll and rev to get profit margins for HK, then supervisor added in, and
@@ -1254,6 +1494,24 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       costPerClean: hkCleansInHouse > 0 ? round2((hkPayrollInHouse + sup.payroll) / hkCleansInHouse) : null,
       basis: 'housekeeping + supervision vs housekeeping revenue — the loaded cost of a turnover',
     },
+    // ── LAYER 3: EVERY FIXED PERSON LOADED ON ────────────────────────────
+    // Jon, 2026-08-25, on the salaries: "It should be separate but then combined to get a sense
+    // of cost per clean." Layer 2 adds the supervisors. This adds the CCS team on top, so the
+    // number answers "what does a turnover cost once every fixed person who makes it possible is
+    // counted". The salaries are already inside sup / ccs, which is the point of the swap.
+    housekeepingAllIn: {
+      cleans: hkCleansInHouse,
+      revenue: hkAllRevenue,
+      payroll: round2(hkPayrollInHouse + sup.payroll + ccs.payroll),
+      cleanerPayroll: hkPayrollInHouse,
+      supervisorPayroll: sup.payroll,
+      ccsPayroll: ccs.payroll,
+      salaryInside: round2(sup.salary + ccs.salary + hk.salary),
+      margin: round2(hkAllRevenue - hkPayrollInHouse - sup.payroll - ccs.payroll),
+      marginPct: pct(hkAllRevenue - hkPayrollInHouse - sup.payroll - ccs.payroll, hkAllRevenue),
+      costPerClean: hkCleansInHouse > 0 ? round2((hkPayrollInHouse + sup.payroll + ccs.payroll) / hkCleansInHouse) : null,
+      basis: 'cleaners + supervision + CCS, salaries included, over the same turnovers',
+    },
     // Everyone whose pay should move with the work. Supervisors excluded on purpose.
     staff: {
       revenue: staffRevenue,
@@ -1265,6 +1523,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     },
     supervisors: {
       payroll: sup.payroll,
+      payrollHourly: sup.payrollHourly,
+      salary: sup.salary,
       hours: sup.hours,
       people: sup.people,
       names: sup.names,
@@ -1277,6 +1537,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // by management fees, never inside cost per clean, but inside the all-in line below.
     ccsTeam: {
       payroll: ccs.payroll,
+      payrollHourly: ccs.payrollHourly,
+      salary: ccs.salary,
       hours: ccs.hours,
       people: ccs.people,
       names: ccs.names,
@@ -1287,30 +1549,55 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // Paz + Yoslenis — this names what was taken off and why, so the deduction is auditable.
     seventeenWest: {
       names: w17pair.map(p => p.name),
-      wages: w17.combined,          // the pair's real Homebase wages in this window
+      wages: w17.combined,          // the pair's cost this window — SALARY now, not punches
       credit: w17.credit,           // this window's share of 17WEST's $100k/yr
       covered: w17.covered,         // what 17WEST actually absorbs (min of the two)
       stayPays: w17.stayPays,       // "we pay the difference" — still inside the lines above
       windowDays: w17days,
-      note: '17WEST pays $100k/yr toward George Paz + Yoslenis; their tasks there are unbilled by design',
+      basis: !w17pair.length ? 'nobody from the pair is in this view'
+        : w17pair.every(p => p.salaried) ? 'salary'
+        : w17pair.some(p => p.salaried) ? 'salary + punches' : 'punches',
+      note: '17WEST pays $100k/yr toward George Paz + Yoslenis; measured against their salaries, Stay pays the difference. Their tasks there are unbilled by design',
     },
     // THE AGENCY RECEIPT: the contracted markup loaded onto Homebase wages for staff who work
     // through Atlantic / CityBest / Opal — already inside every payroll line above. Empty until
     // the agency fees are entered on the People & agencies card.
     agencyLoad,
-    // SALARIED MANAGEMENT — a fixed line beside the supervisors, pro-rated to the window.
-    // Their hourly punches were already pulled out of the crew payrolls above.
+    // SALARIED STAFF — separate, and already combined. Each person's salary is named here with
+    // the rate it came from and what their clock said, while the money itself sits inside their
+    // own crew above. Jon, 2026-08-25: "It should be separate but then combined to get a sense
+    // of cost per clean."
     management: {
       people: mgmtPeople,
       salaryWindow: managementSalary,
-      note: 'salaried — fixed cost pro-rated to the window; punches excluded from crew payroll',
+      windowDays: winDays,
+      // NET OF THE 17WEST CREDIT — which is why this can total less than salaryWindow above.
+      byDept: DEPTS.map(d => ({ key: d, label: DEPT_LABEL[d], salaryAfterCredits: byDept[d].salary }))
+        .filter(x => x.salaryAfterCredits > 0),
+      duplicateRowsZeroed: salaryDupes,
+      note: 'salaried — the salary is the cost; punches are shown for comparison only and never charged',
+    },
+    salaried: {
+      people: mgmtPeople,
+      total: managementSalary,
+      windowDays: winDays,
+      note: 'inside the crew payrolls above, not on top of them',
     },
     // The whole labor line including the fixed layers, for the one number that hides nothing.
     allIn: {
       revenue: staffRevenue,
-      payroll: round2(staffPayroll + sup.payroll + ccs.payroll + managementSalary),
-      margin: round2(staffRevenue - staffPayroll - sup.payroll - ccs.payroll - managementSalary),
-      marginPct: pct(staffRevenue - staffPayroll - sup.payroll - ccs.payroll - managementSalary, staffRevenue),
+      // NO managementSalary TERM HERE, ON PURPOSE. Salaries were swapped onto the person rows
+      // before the departments were built, so sup / ccs / maintenance already carry them — and
+      // hkPayrollInHouse would carry one too if a housekeeper were ever put on salary. Adding
+      // the salary line again here would bill every salaried person twice.
+      //
+      // The one exception is `other`: its HOURLY wages are excluded from all-in on purpose
+      // (people nobody has placed on a crew), but a SALARY there is a stated, known cost — that
+      // is where Roberto sits while his crew override says 'other'. Without this term his $80k
+      // would drop out of the all-in line the moment the salaries moved onto the person rows.
+      payroll: round2(staffPayroll + sup.payroll + ccs.payroll + othDept.salary),
+      margin: round2(staffRevenue - staffPayroll - sup.payroll - ccs.payroll - othDept.salary),
+      marginPct: pct(staffRevenue - staffPayroll - sup.payroll - ccs.payroll - othDept.salary, staffRevenue),
     },
   }
 
@@ -1440,11 +1727,24 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     },
   }
 
+  // THE COUNT, SHOWN AS ITS PARTS. Anyone can check the denominator against Breezeway from this.
+  const cleanAudit = {
+    scope: 'every departure clean in the window, by anyone — not filtered to this market tab or to housekeepers',
+    counted: clAudCounted,
+    countedThisMarket: cleansDoneMk.length,
+    closed: clAudClosed,
+    openCounted: clAudOpen,
+    movedExcluded: clAudMoved,
+    noAssignee: clAudNoAssignee,
+    rule: 'a departure clean counts when it was assigned and not deleted — finished ones on their finish day, unclosed ones on the day they were scheduled. Deleted = moved (extended or rescheduled); the replacement task counts on its own day.',
+  }
+
   return {
     from, to, market,
     people,
     personDays,
     daily,
+    cleanAudit,
     departments: DEPTS.map(d => byDept[d]),
     buckets: bucketList,
     layers,
@@ -1483,6 +1783,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     feeAudit: {
       credited: round2(attributedRev),
       cleanNotClosed: round2(feesCleanNotClosed),
+      // Credited to a person AND counted as a clean — but the task is still open in Breezeway.
+      // A closing-discipline number, not a money hole.
+      cleanOpenCredited: round2(feesCleanOpenCredited),
       cleanNoAssignee: round2(feesCleanNoAssignee),
       noCleanFound: round2(feesNoCleanFound),
       movedCleansMatched: movedCleans,
