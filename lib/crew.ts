@@ -15,11 +15,18 @@
 // belongs to is a fact about employment, not about last week's task list — so it is declared.
 //
 // RESOLUTION ORDER (first hit wins):
-//   1. app_settings 'crew_roles'  — operator override, no deploy needed: {"George Paz":"maintenance"}
-//   2. DECLARED below            — the roster Jon confirmed
-//   3. the staff record (/users → Staffing)
+//   0. staff.dept              — THE ANSWER (migration 057). One record per person.
+//   1. app_settings 'crew_roles' — legacy override, still honoured so nothing breaks mid-migration
+//   2. DECLARED below            — the roster Jon confirmed, now a SEED for a blank staff row
+//   3. the staff record's role text
 //   4. the Homebase role text
 //   5. what they actually did in Breezeway (last resort, and only for people nobody has named)
+//
+// ONE SOURCE (Jon, 2026-08-26: "make sure all staff and role is pulled from one source of data").
+// Steps 1-5 all still exist, but only to fill a blank on somebody nobody has stated yet — and the
+// moment anyone is stated, step 0 answers and the rest are never consulted again. Five places to
+// look was how a houseman ended up filed as a housekeeper with 156 hours and 2 cleans inside the
+// cost per clean, and nobody could say which of the five had put him there.
 import 'server-only'
 import { getSetting } from './app-settings'
 import { nameMatchesRoster } from './homebase'
@@ -95,9 +102,10 @@ export function deptOfRoleText(role: string | null | undefined): Dept | null {
 /** WHERE a person's crew came from — the whole point of the roster editor is making this visible.
  *  Anything below `staff` is a guess, and a guess is what puts a maintenance tech's wages inside
  *  the cost per clean. */
-export type DeptSource = 'override' | 'declared' | 'staff' | 'homebase' | 'inferred' | 'unrostered'
+export type DeptSource = 'record' | 'override' | 'declared' | 'staff' | 'homebase' | 'inferred' | 'unrostered'
 
 export const SOURCE_LABEL: Record<DeptSource, string> = {
+  record: 'Staff record',
   override: 'Set here',
   declared: 'Stay roster',
   staff: 'Staffing role',
@@ -152,9 +160,13 @@ export async function getCrew(): Promise<CrewMap> {
   const deptOf = (name: string, roleText?: string | null, fallback?: Dept | null): Dept => {
     const key = String(name || '') + ' ' + String(roleText || '') + ' ' + String(fallback || '')
     if (key in cache && cache[key]) return cache[key] as Dept
+    // THE RECORD ANSWERS FIRST. Everything below it is a seed for somebody nobody has stated.
+    const recFirst = resolveStaff(String(name || ''), staff)
+    const stated = String(recFirst?.dept || '').toLowerCase() as Dept
+    if (stated && DEPTS.indexOf(stated) >= 0) { cache[key] = stated; return stated }
     const byName = lookupDeclared(name)
     if (byName) { cache[key] = byName; return byName }
-    const rec = resolveStaff(String(name || ''), staff)
+    const rec = recFirst
     const byStaff = deptOfRoleText(rec?.role)
     if (byStaff) { cache[key] = byStaff; return byStaff }
     const byRole = deptOfRoleText(roleText)
@@ -168,11 +180,14 @@ export async function getCrew(): Promise<CrewMap> {
   // threading a second return value through deptOf, which is called on every timecard row.
   const deptOfDetailed = (name: string, roleText?: string | null, fallback?: Dept | null): { dept: Dept; source: DeptSource } => {
     const n = String(name || '')
+    const recFirst = resolveStaff(n, staff)
+    const stated = String(recFirst?.dept || '').toLowerCase() as Dept
+    if (stated && DEPTS.indexOf(stated) >= 0) return { dept: stated, source: 'record' }
     const ov = overrides[n] || (nameMatchesRoster(n, overrideNames) ? overrides[nameMatchesRoster(n, overrideNames) as string] : null)
     if (ov) return { dept: ov, source: 'override' }
     const byName = lookupDeclared(n)
     if (byName) return { dept: byName, source: 'declared' }
-    const rec = resolveStaff(n, staff)
+    const rec = recFirst
     const byStaff = deptOfRoleText(rec?.role)
     if (byStaff) return { dept: byStaff, source: 'staff' }
     const byRole = deptOfRoleText(roleText)
