@@ -371,6 +371,40 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const here = byPath[path || '']
   const currentLabel = here ? here.label : (activeGroup || 'Lighthouse')
 
+  // DUPLICATE PAGE TITLE (Jon, 2026-08-26: "how do we make it visible and concise"). On a phone the
+  // app bar two inches above the content already says "Today in Ops", and then the page says it
+  // again in 30px type with an eyebrow over it — about 86px of screen, on every screen, spent
+  // repeating the bar. So: after each render, compare the page's own h1 with the bar's label and
+  // mark it (plus a short eyebrow line above it) only when they MATCH. Pages whose heading says
+  // something the bar does not — Command Center's "Mission Control" — keep their heading. The
+  // class only hides under 640px; see globals.css. Actions that live beside the h1 (the Day sheet
+  // link) are siblings, not children, so they survive.
+  useEffect(() => {
+    const norm = (v: string) => v.replace(/\s+/g, ' ').trim().toLowerCase()
+    let dead = false
+    const clear = () => { document.querySelectorAll('.lh-dupe-title').forEach(el => el.classList.remove('lh-dupe-title')) }
+    const apply = () => {
+      if (dead) return
+      clear()
+      const main = document.querySelector('main')
+      if (!main) return
+      const h1 = main.querySelector('h1')
+      if (!h1 || norm(h1.textContent || '') !== norm(currentLabel)) return
+      h1.classList.add('lh-dupe-title')
+      // The eyebrow sits either right before the h1 or right before the row that wraps it.
+      let prev = h1.previousElementSibling
+      if (!prev && h1.parentElement) prev = h1.parentElement.previousElementSibling
+      const txt = prev ? (prev.textContent || '').trim() : ''
+      if (prev && prev.tagName === 'P' && txt.length > 0 && txt.length <= 40) prev.classList.add('lh-dupe-title')
+    }
+    // Three passes: the heading is usually in the first paint, but a page that renders its header
+    // after a fetch would otherwise keep the duplicate forever.
+    apply()
+    const t1 = setTimeout(apply, 250)
+    const t2 = setTimeout(apply, 1200)
+    return () => { dead = true; clearTimeout(t1); clearTimeout(t2); clear() }
+  }, [path, currentLabel])
+
   const navBody = (onNavigate?: () => void) => (
     <>
       <button type="button" onClick={() => { setPaletteOpen(true); if (onNavigate) onNavigate() }}

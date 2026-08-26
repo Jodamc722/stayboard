@@ -191,16 +191,28 @@ const zero = (): Counts => ({ total: 0, done: 0, running: 0, open: 0 })
 function Tile({ cat, c, active, onClick }: { cat: CatMeta | null; c: Counts; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick}
-      className={'text-left rounded-2xl border-2 px-3 py-2.5 bg-white transition-colors min-w-[170px] flex-1 ' +
+      className={'text-left rounded-xl sm:rounded-2xl border-2 px-2.5 py-1.5 sm:px-3 sm:py-2.5 bg-white transition-colors min-w-[150px] sm:min-w-[170px] flex-1 ' +
         (active ? 'border-ink shadow-sm' : 'border-line hover:border-ink/25')}>
-      <div className="flex items-center gap-2.5">
-        <Donut done={c.done} running={c.running} total={c.total} />
+      <div className="flex items-center gap-2 sm:gap-2.5">
+        {/* Two donuts, one shown at a time: the size is a number, not a class, so a phone-sized
+            ring cannot be had with a breakpoint on a single instance. */}
+        <span className="shrink-0 sm:hidden"><Donut done={c.done} running={c.running} total={c.total} size={34} stroke={4.5} /></span>
+        <span className="shrink-0 hidden sm:block"><Donut done={c.done} running={c.running} total={c.total} /></span>
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             {cat && (() => { const G = cat.Icon; return <span className="w-4 h-4 rounded-[4px] border border-slate-300 bg-white text-slate-500 shrink-0 inline-flex items-center justify-center"><G size={9} strokeWidth={2.6} /></span> })()}
             <span className="text-[12.5px] font-bold text-ink truncate">{cat ? cat.label : 'Everything open'}</span>
           </div>
-          <div className="mt-1 space-y-[1px]">
+          {/* PHONE: the same three numbers on one line. Three stacked lines cost ~55px a tile, and
+              the tile row is the thing standing between the top of the screen and the first unit. */}
+          <div className="mt-0.5 flex items-center gap-1 text-[10.5px] text-muted leading-tight whitespace-nowrap sm:hidden">
+            <span><span className="font-bold text-emerald-600">{c.done}</span> done</span>
+            <span className="text-line">&middot;</span>
+            <span><span className="font-bold text-amber-600">{c.running}</span> going</span>
+            <span className="text-line">&middot;</span>
+            <span><span className="font-bold text-ink">{c.open}</span> open</span>
+          </div>
+          <div className="mt-1 space-y-[1px] hidden sm:block">
             <div className="text-[10.5px] text-muted leading-tight"><span className="font-bold text-emerald-600">{c.done}</span> finished</div>
             <div className="text-[10.5px] text-muted leading-tight"><span className="font-bold text-amber-600">{c.running}</span> in progress</div>
             <div className="text-[10.5px] text-muted leading-tight"><span className="font-bold text-ink">{c.open}</span> not started</div>
@@ -563,6 +575,12 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
   const [mode, setMode] = useState<'units' | 'people'>('units')
   const [cat, setCat] = useState<Cat | null>(null)
   const [q, setQ] = useState('')
+  // The search box is a whole line of a phone screen for something you use once a day. On a phone
+  // it starts as the magnifier next to the Units/People switch and expands when tapped; anything
+  // typed keeps it open, so a live filter is never hidden behind an icon. Desktop is unchanged.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => { if (searchOpen && searchRef.current) searchRef.current.focus() }, [searchOpen])
   const [activeOnly, setActiveOnly] = useState(true)
   // MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). Remembered per
   // device, because whoever runs Broward runs Broward every morning and should not re-pick it.
@@ -805,12 +823,20 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
             </button>
           ))}
         </div>
-        <div className="relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[180px]">
+        {!(searchOpen || q) && (
+          <button onClick={() => setSearchOpen(true)} aria-label="Search"
+            className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink">
+            <Search size={14} />
+          </button>
+        )}
+        <div className={'relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[180px] '
+          + ((searchOpen || q) ? '' : 'hidden sm:block')}>
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={q} onChange={e => setQ(e.target.value)}
+          <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)}
+            onBlur={() => { if (!q) setSearchOpen(false) }}
             placeholder={mode === 'units' ? 'Find a unit, a task, a name…' : 'Find a person…'}
             className="w-full rounded-xl border border-line bg-white pl-7 pr-7 py-1.5 text-[12.5px] focus:outline-none focus:border-ink" />
-          {q && <button onClick={() => setQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
+          {q && <button onClick={() => { setQ(''); setSearchOpen(false) }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
         </div>
         <button onClick={() => setActiveOnly(a => !a)}
           className={'px-2.5 py-1.5 rounded-xl border text-[12px] font-bold ' + (activeOnly ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>

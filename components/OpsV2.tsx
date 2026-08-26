@@ -27,7 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle, Plus, Search, ChevronDown, Users, Send, X, Loader2, Check, Phone,
-  CheckCircle2, ExternalLink, UserPlus, MessageSquare, LayoutGrid,
+  CheckCircle2, ExternalLink, UserPlus, MessageSquare, LayoutGrid, FileText,
 } from 'lucide-react'
 import { TodayInOps } from '@/components/TodayInOps'
 import { OpsGrid } from '@/components/OpsGrid'
@@ -305,7 +305,7 @@ export function OpsV2() {
           WHOLE row in one scroller pushed Add task half off the right edge, which is worse — it is
           the primary action here. So: the tabs scroll, the button does not. It stays pinned to the
           right at every width, and from sm: up this is the same one-line row it always was. */}
-      <div className="flex items-end gap-2 border-b border-line mb-4">
+      <div className="flex items-end gap-2 border-b border-line mb-2 sm:mb-4">
       <div className="flex items-center gap-4 sm:gap-6 flex-1 min-w-0 overflow-x-auto sm:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {([['grid', 'Grid', null, 'bg-app text-muted'],
            ['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
@@ -320,6 +320,14 @@ export function OpsV2() {
           </button>
         ))}
       </div>
+        {/* The day sheet lives in the page header on a desktop. On a phone that header is hidden
+            (the app bar already says "Today in Ops"), so the link rides here instead of costing a
+            whole row of screen to itself. */}
+        <Link href="/plan/print" prefetch={false} aria-label="Day sheet"
+          title="Printable day sheet"
+          className="sm:hidden shrink-0 mb-1.5 w-9 h-9 rounded-xl border border-line bg-white grid place-items-center text-muted active:bg-app">
+          <FileText size={15} />
+        </Link>
         <button onClick={() => setAddFor('')}
           className="shrink-0 mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 sm:px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
           <Plus size={14} /> Add task
