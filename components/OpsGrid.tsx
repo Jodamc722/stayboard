@@ -26,11 +26,12 @@
 // Everything actionable here reuses machinery that already works: /api/breezeway/assign for
 // assignment, /api/ops-today/add-task for creation (which now carries a Breezeway template_id),
 // /api/breezeway/comments for the last comment on a row you open.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
   LayoutGrid, Users, X, MapPin,
   DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
+  Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble,
 } from 'lucide-react'
 import { catOfTask, type TaskCat } from '@/lib/task-categories'
 
@@ -43,6 +44,8 @@ export type GTask = {
   done: boolean; running: boolean; late: boolean; atRisk: boolean; untracked?: boolean; guestyOnly?: boolean
   // A departure clean that is not today's turn: 'extended' = the stay ran past it, do not go in;
   // 'moved' = the checkout was earlier and this clean was moved onto today (the BFC hold).
+  /** The category the SERVER assigned, against the saved taxonomy. Authoritative. */
+  cat?: string
   moveState?: 'normal' | 'extended' | 'moved'
   movedFrom?: string | null
   extendedTo?: string | null
@@ -56,7 +59,8 @@ export type GUnit = {
   tasks: GTask[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; guestyOnly?: boolean
 }
 export type GVacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number; needsClean?: boolean }
-export type GData = { ok: boolean; today: string; units: GUnit[]; vacants?: GVacant[] }
+export type GCat = { key: string; label: string; icon: string }
+export type GData = { ok: boolean; today: string; units: GUnit[]; vacants?: GVacant[]; categories?: GCat[] }
 export type GGlitch = { id: string; unit: string; issue: string; rawName?: string; market?: string | null; market2?: string | null; ageDays?: number | null; running?: boolean; unassigned?: boolean; assignees?: string[]; reportUrl?: string | null; done?: boolean }
 export type GRoster = { id: number; name: string; departments: string[] }
 
@@ -76,7 +80,17 @@ export type Cat = TaskCat
 //
 // So the category palette is gone entirely. Categories keep a glyph and a label; nothing else here
 // is allowed to be coloured by type, or the two channels start lying to each other again.
-const CATS: { key: Cat; label: string; short: string; Icon: any }[] = [
+// The glyphs a category can wear. Named, because the taxonomy is data now and data cannot hold a
+// React component. An unknown name falls back to the wrench rather than rendering nothing.
+const GLYPH: Record<string, any> = {
+  door: DoorOpen, sparkles: Sparkles, bolt: Zap, wrench: Wrench,
+  'clipboard-check': ClipboardCheck, 'clipboard-list': ClipboardList,
+  droplet: Droplet, bug: Bug, hammer: Hammer, key: KeyRound, shield: ShieldCheck,
+  package: Package, star: Star, bed: BedDouble,
+}
+const glyphOf = (icon: string) => GLYPH[icon] || Wrench
+
+const FALLBACK_CATS: { key: Cat; label: string; short: string; Icon: any }[] = [
   { key: 'departure', label: 'Departure', short: 'Dep', Icon: DoorOpen },
   { key: 'cleaning', label: 'Cleaning', short: 'Clean', Icon: Sparkles },
   // One category, not two (Jon, 2026-08-25): Breezeway files these as "Guest Reported / Glitch — ",
@@ -86,7 +100,19 @@ const CATS: { key: Cat; label: string; short: string; Icon: any }[] = [
   { key: 'hkaudit', label: 'Housekeeping audit', short: 'HK audit', Icon: ClipboardCheck },
   { key: 'inspection', label: 'Inspection', short: 'Inspect', Icon: ClipboardList },
 ]
-const CAT_BY: Record<Cat, typeof CATS[number]> = CATS.reduce((m, c) => { m[c.key] = c; return m }, {} as any)
+// Kept only for the first paint, before /api/ops-today answers with the real taxonomy.
+const FALLBACK_BY: Record<string, any> = FALLBACK_CATS.reduce((m, c) => { m[c.key] = c; return m }, {} as any)
+
+// THE TAXONOMY IN FORCE, handed down rather than imported. It arrives with the day's data and can
+// be edited in Users & admin, so a module-level constant would be a second, stale opinion about
+// what a task is — which is exactly the drift that put the same task in two counters before.
+type CatMeta = { key: string; label: string; short: string; Icon: any }
+const CatsCtx = createContext<{ list: CatMeta[]; by: Record<string, CatMeta> }>({ list: FALLBACK_CATS, by: FALLBACK_BY })
+const useCats = () => useContext(CatsCtx)
+/** The server labelled it; fall back to the shipped rules only during a deploy skew. */
+const catKeyOf = (t: GTask) => String(t.cat || catOf(t))
+const metaOf = (by: Record<string, CatMeta>, key: string): CatMeta =>
+  by[key] || { key, label: key, short: key.slice(0, 8), Icon: Wrench }
 
 // THE ONLY PLACE COLOUR IS DECIDED. Four states, in the order a job moves through them, plus the
 // one that is not a stage at all: nobody has taken it. Unassigned is drawn as a dashed outline as
@@ -162,7 +188,7 @@ function Donut({ done, running, total, size = 52, stroke = 6 }: { done: number; 
 type Counts = { total: number; done: number; running: number; open: number }
 const zero = (): Counts => ({ total: 0, done: 0, running: 0, open: 0 })
 
-function Tile({ cat, c, active, onClick }: { cat: typeof CATS[number] | null; c: Counts; active: boolean; onClick: () => void }) {
+function Tile({ cat, c, active, onClick }: { cat: CatMeta | null; c: Counts; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick}
       className={'text-left rounded-2xl border-2 px-3 py-2.5 bg-white transition-colors min-w-[170px] flex-1 ' +
@@ -215,7 +241,8 @@ function unitStatus(u: GUnit): { label: string; cls: string } {
 // The card is position:fixed off the chip's own rect because the rows live inside an
 // overflow-hidden container that would otherwise clip it.
 function TaskChip({ t }: { t: GTask }) {
-  const c = CAT_BY[catOf(t)]
+  const { by } = useCats()
+  const c = metaOf(by, catKeyOf(t))
   const [at, setAt] = useState<{ x: number; y: number } | null>(null)
   const [pinned, setPinned] = useState(false)
   const ref = useRef<HTMLButtonElement | null>(null)
@@ -420,7 +447,8 @@ function TaskLine({ t, roster, mode, onRefresh, comment }: {
   const [assigning, setAssigning] = useState(false)
   const [busy, setBusy] = useState(0)
   const [err, setErr] = useState('')
-  const c = CAT_BY[catOf(t)]
+  const { by } = useCats()
+  const c = metaOf(by, catKeyOf(t))
   const mv = moveNote(t)
   const ppl = useMemo(() => {
     const inDept = roster.filter(p => !p.departments?.length || p.departments.some(x => x.toLowerCase().includes(String(t.dept || '').toLowerCase())))
@@ -513,6 +541,18 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
   const allUnits: GUnit[] = Array.isArray(data?.units) ? data!.units : []
   const today = data?.today || ''
 
+  // The taxonomy the server used to label today's tasks. Until it arrives we render the shipped
+  // one, so the board is never blank and never invents a category the server did not use.
+  const cats = useMemo(() => {
+    const src = Array.isArray(data?.categories) && data!.categories!.length ? data!.categories! : null
+    const list: CatMeta[] = src
+      ? src.map(c => ({ key: c.key, label: c.label, short: c.label.length > 9 ? c.label.slice(0, 8) + '\u2026' : c.label, Icon: glyphOf(c.icon) }))
+      : FALLBACK_CATS
+    const by: Record<string, CatMeta> = {}
+    for (const c of list) by[c.key] = c
+    return { list, by }
+  }, [data])
+
   // A unit belongs to its market AND, for vendor buildings, to the geography behind it — same
   // two-market rule the board and the API use, so picking North here shows what North shows there.
   const inMkt = (m?: string | null, m2?: string | null) => mkt === 'all' || m === mkt || m2 === mkt
@@ -539,7 +579,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
   // glitch scheduled for today is counted once, not twice.
   const counts = useMemo(() => {
     const m: Record<string, Counts> = { all: zero() }
-    for (const c of CATS) m[c.key] = zero()
+    for (const c of cats.list) m[c.key] = zero()
     const bump = (k: string, done: boolean, running: boolean) => {
       const c = m[k]; if (!c) return
       c.total++; if (done) c.done++; else if (running) c.running++; else c.open++
@@ -548,7 +588,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
     for (const t of allTasks) {
       seen[t.id] = true
       bump('all', t.done, t.running)
-      bump(catOf(t), t.done, t.running)
+      bump(catKeyOf(t), t.done, t.running)
     }
     for (const g of glitchesInMkt) {
       if (seen[g.id] || g.done) continue
@@ -556,7 +596,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
       bump('glitch', false, !!g.running)
     }
     return m
-  }, [allTasks, glitchesInMkt])
+  }, [allTasks, glitchesInMkt, cats])
 
   // Open issues per unit: the QC items the board already carries plus the open guest/glitch feed.
   const issuesByUnit = useMemo(() => {
@@ -577,7 +617,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
 
   // ── ROWS ────────────────────────────────────────────────────────────────────────────────────
   const rows: Row[] = useMemo(() => {
-    const catMatch = (t: GTask) => !cat || catOf(t) === cat
+    const catMatch = (t: GTask) => !cat || catKeyOf(t) === cat
     if (mode === 'units') {
       const rowsForUnits: Row[] = units.map(u => {
         const tasks = u.tasks.filter(catMatch)
@@ -643,7 +683,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
       const doneN = tasks.filter(t => t.done).length
       const running = tasks.filter(t => t.running && !t.done).length
       const late = tasks.filter(t => t.late).length
-      const dep = tasks.filter(t => catOf(t) === 'departure').length
+      const dep = tasks.filter(t => catKeyOf(t) === 'departure').length
       const status = doneN === tasks.length
         ? { label: 'Done for today', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
         : running
@@ -681,9 +721,10 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
     return r.slice().sort((a, b) => b.urgent - a.urgent || a.title.localeCompare(b.title))
   }, [rows, q, activeOnly, cat])
 
-  const tiles: { key: string; cat: typeof CATS[number] | null }[] = [{ key: 'all', cat: null }, ...CATS.map(c => ({ key: c.key, cat: c }))]
+  const tiles: { key: string; cat: CatMeta | null }[] = [{ key: 'all', cat: null }, ...cats.list.map(c => ({ key: c.key, cat: c }))]
 
   return (
+    <CatsCtx.Provider value={cats}>
     <div>
       {/* ── COUNTERS. Every tile is a filter — the number you are worried about is one tap from
           the list of rows behind it, which is the whole reason to put counters on a screen. ── */}
@@ -740,8 +781,8 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
         {cat && (
           <button onClick={() => setCat(null)}
             className="px-2.5 py-1.5 rounded-xl border border-ink bg-ink text-white text-[12px] font-bold inline-flex items-center gap-1.5">
-            {(() => { const G = CAT_BY[cat].Icon; return <G size={12} strokeWidth={2.6} /> })()}
-            {CAT_BY[cat].label} <X size={11} />
+            {(() => { const G = metaOf(cats.by, cat).Icon; return <G size={12} strokeWidth={2.6} /> })()}
+            {metaOf(cats.by, cat).label} <X size={11} />
           </button>
         )}
         <button onClick={() => onAddTask('')}
@@ -775,7 +816,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="text-[10px] font-bold uppercase tracking-wider text-muted shrink-0">Symbol = what it is</span>
           <span className="flex items-center gap-x-3 gap-y-1 flex-wrap">
-            {CATS.map(c => {
+            {cats.list.map(c => {
               const G = c.Icon
               return (
                 <span key={c.key} className="inline-flex items-center gap-1 text-[10.5px] text-muted">
@@ -809,5 +850,6 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
         {' '}Glitches count everything still open, not only what is scheduled today &mdash; they stay open until somebody fixes them.
       </p>
     </div>
+    </CatsCtx.Provider>
   )
 }

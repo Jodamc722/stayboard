@@ -61,6 +61,7 @@ const L = {
   salato: dynamic(() => import('@/components/SalatoVerifyEmailAdmin').then(m => m.SalatoVerifyEmailAdmin), { loading: spin, ssr: false }),
   share: dynamic(() => import('@/components/ShareLinksCard').then(m => m.ShareLinksCard), { loading: spin, ssr: false }),
   nav: dynamic(() => import('@/components/NavLayoutAdmin').then(m => m.NavLayoutAdmin), { loading: spin, ssr: false }),
+  taskCats: dynamic(() => import('@/components/TaskCategoriesAdmin').then(m => m.TaskCategoriesAdmin), { loading: spin, ssr: false }),
 }
 
 // ── THE DIRECTORY ───────────────────────────────────────────────────────────────────────────────
@@ -93,6 +94,12 @@ const ENTRIES: Entry[] = [
     render: p => <L.nav isAdmin />,
   },
 
+  {
+    key: 'task-cats', title: 'Task categories', group: 'Operations', Icon: Bot,
+    blurb: 'The counters on Today in Ops and in the daily briefs — add a category, change a symbol, or fix which task names land where.',
+    find: 'category categories counter tile departure cleaning glitch maintenance inspection audit pool pest rule regex classify type symbol icon',
+    render: () => <L.taskCats isAdmin />,
+  },
   {
     key: 'ops', title: 'Today-in-Ops presets', group: 'Operations', Icon: ListChecks, ownerOnly: true,
     blurb: 'Which vendor cleans which building, the cleaner roster and ratios, the 4pm deadline and the at-risk window.',
