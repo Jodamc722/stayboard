@@ -46,6 +46,8 @@ export type Timecard = {
   wageRate: number | null    // $/hr if exposed
   laborCost: number | null   // regular + OT cost if exposed, else rate*hours, else null
   open: boolean              // clocked in, not yet out
+  /** `hours` is time elapsed since clock-in on a card that is still running, not a settled figure. */
+  hoursSoFar?: boolean
 }
 
 // HOMEBASE CAPS ONE TIMECARD RESPONSE, SILENTLY.
@@ -155,6 +157,24 @@ function mergeTimecards(pages: Json[][]): Timecard[] {
     let hours = num(pick(lab, 'paid_hours')) ?? num(pick(t, 'hours', 'total_hours', 'worked_hours', 'duration_hours'))
     if (hours == null && clockIn && clockOut)
       hours = round2((new Date(clockOut).getTime() - new Date(clockIn).getTime()) / 36e5)
+    // SOMEBODY STILL ON THE CLOCK HAS WORKED HOURS, NOT ZERO.
+    //
+    // An open punch has no clock_out, so the derivation above cannot fire, and when Homebase sends
+    // no paid_hours on an open card `hours` stayed null. Every reducer downstream reads
+    // `(t.hours ?? 0)` — so a person who had been on the clock for nine hours contributed nothing
+    // to hours-so-far, nothing to payroll-so-far, and, worst of all, could never trip the overtime
+    // alert, which filters `hours >= threshold` on exactly these cards. The alarm for "someone is
+    // running long" was mathematically incapable of firing.
+    //
+    // Counting from clock-in to now is the honest reading of an open card: it is what the person
+    // has actually worked so far. It can only ever be an underestimate of the finished shift, and
+    // it is capped at 16h so a card somebody forgot to close cannot invent a fortune in wages —
+    // that case is already surfaced separately as a missed clock-out.
+    let openHours = false
+    if (hours == null && clockIn && !clockOut) {
+      const ms = Date.now() - new Date(clockIn).getTime()
+      if (ms > 0) { hours = round2(Math.min(ms / 36e5, 16)); openHours = true }
+    }
     const regularHours = num(pick(lab, 'regular_hours')) ?? num(pick(t, 'regular_hours', 'regularHours'))
     const otSum = (num(pick(lab, 'weekly_overtime')) ?? 0) + (num(pick(lab, 'daily_overtime')) ?? 0) + (num(pick(lab, 'double_overtime')) ?? 0)
     const overtimeHours = otSum > 0 ? round2(otSum) : num(pick(t, 'overtime_hours', 'overtimeHours'))
@@ -167,6 +187,9 @@ function mergeTimecards(pages: Json[][]): Timecard[] {
       role: pick(t, 'role', 'position', 'department'),
       date: (pick(t, 'date', 'shift_date') || clockIn || '').slice(0, 10) || null,
       clockIn, clockOut, hours, regularHours, overtimeHours, wageRate, laborCost,
+      // True when `hours` is time-so-far on an open card rather than a figure Homebase settled.
+      // Anything presenting this as final payroll should say it is still running.
+      hoursSoFar: openHours,
       open: !!clockIn && !clockOut,
     }
   })
@@ -263,9 +286,14 @@ export function computeLaborKpis(opts: {
     const wtd = opts.weekStartDate
       ? round1(myTc.filter(t => t.date && t.date >= (opts.weekStartDate as string)).reduce((a, t) => a + (t.hours ?? 0), 0))
       : actual
+    // COMPARE INSTANTS, NOT STRINGS. Homebase returns a local-offset stamp ("2026-08-26T08:00:00
+    // -04:00") and todayISO is UTC ("2026-08-26T14:30:00.000Z"). Comparing those as text is a
+    // four-hour wall-clock skew, which quietly mis-sized remaining hours, projected week hours and
+    // the overtime risk flag every day around the boundary.
+    const nowMs = new Date(todayISO).getTime()
     const remaining = round1(
       weekShifts
-        .filter(s => !s.open && nameMatches(s.name, name) && String(s.startAt) > todayISO)
+        .filter(s => !s.open && nameMatches(s.name, name) && new Date(String(s.startAt)).getTime() > nowMs)
         .reduce((a, s) => a + shiftHours(s), 0)
     )
     const shiftDates = new Set(mySh.map(s => (s.date || String(s.startAt)).slice(0, 10)))
