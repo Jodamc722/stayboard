@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess } from '@/lib/access'
-import { normWorkspace, FEATURES, LEVELS, isExtraPerm } from '@/lib/features'
+import { normWorkspace, FEATURES, LEVELS, isExtraPerm, extraPermChoices } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
 
@@ -140,10 +140,24 @@ export async function PATCH(req: NextRequest) {
     if (email !== OWNER) {
       const clean: Record<string, any> = {}
       for (const k of Object.keys(body.features)) {
-        // Extra permissions (Dollar amounts) share this column but are BOOLEAN ONLY — a level like
-        // 'view' means nothing for "may you see a dollar sign", so only an explicit true survives.
-        // Everything else, including 'edit' or a typo, stores false: default-off, never default-on.
-        if (isExtraPerm(k)) { clean[k] = body.features[k] === true; continue }
+        // Extra permissions share this column with the page levels. Most are BOOLEAN ONLY — a level
+        // like 'view' means nothing for "may you see a dollar sign", so only an explicit true
+        // survives and everything else, including 'edit' or a typo, stores false. Default-off,
+        // never default-on.
+        //
+        // Some carry a CHOICE instead (door codes: off / ask / direct). Same rule, stricter: the
+        // value has to be one this permission actually offers, or it falls back to the FIRST
+        // choice, which is always the closed one. A typo can never widen access.
+        if (isExtraPerm(k)) {
+          const choices = extraPermChoices(k)
+          if (choices) {
+            const v = String(body.features[k] ?? '').toLowerCase()
+            clean[k] = choices.includes(v) ? v : choices[0]
+          } else {
+            clean[k] = body.features[k] === true
+          }
+          continue
+        }
         if (!FEATURES.some(f => f.key === k)) continue          // unknown feature key
         const v = body.features[k]
         if (v === false || v === true) { clean[k] = v; continue }
