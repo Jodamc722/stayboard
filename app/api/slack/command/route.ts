@@ -14,7 +14,9 @@
 // five minutes (replay protection).
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
-import { runCheck, createRequest, attachSlackPost } from '@/lib/eve/door-code'
+import { runCheck, requestDoorCode, attachSlackPost } from '@/lib/eve/door-code'
+import { emailForSlackUser } from '@/lib/slack'
+import { accessForEmail, doorCodePolicy } from '@/lib/access'
 import { postDoorCodeApproval } from '@/lib/eve/approvals'
 
 export const dynamic = 'force-dynamic'
@@ -54,8 +56,30 @@ export async function POST(req: NextRequest) {
     return say(`🚫 *${check.headline}*${extra}`)
   }
 
-  const parked = await createRequest(check, { slackUserId: userId, reason: `slash command by @${userName}` })
-  if (!parked.ok) return say(`Checks passed for *${check.unit}*, but I could not park the request: ${parked.error}`)
+  // WHO IS ASKING. Slack hands us a user id and a display NAME; the name is a nickname anyone can
+  // change, so it is never used to decide anything. The id is resolved to the email on their Slack
+  // profile and then to their app user. Nobody we cannot place resolves to 'off' — which also
+  // closes the old hole where any member of the workspace could run this command.
+  const requesterEmail = await emailForSlackUser(userId)
+  const requesterAccess = requesterEmail ? await accessForEmail(requesterEmail) : null
+  const policy = requesterAccess ? doorCodePolicy(requesterAccess) : 'off'
+
+  const outcome = await requestDoorCode(check, {
+    email: requesterEmail || undefined, slackUserId: userId,
+    reason: `slash command by @${userName}`, policy,
+  })
+  if (outcome.kind === 'denied') {
+    return say(requesterEmail
+      ? `🔒 ${outcome.message}`
+      : `🔒 I could not match your Slack account to a Lighthouse user, so I cannot give you a code. Ask Jon to connect your account, or request it in the app.`)
+  }
+  if (outcome.kind === 'error') return say(`Checks passed for *${check.unit}*, but I could not park the request: ${outcome.message}`)
+  if (outcome.kind === 'released') {
+    const both = outcome.previousCode ? `\n*If that fails:* \`${outcome.previousCode}\`` : ''
+    const tn = outcome.transitionNote ? `\n_${outcome.transitionNote}_` : ''
+    return say(`✅ *${check.unit}*\n*Try this first:* \`${outcome.code}\`${both}${tn}\n\n_Sent straight to you because your access is set to Direct. It is on the audit trail._`)
+  }
+  const parked = outcome
 
   const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
   const link = `${origin}/doorcode/${parked.token}`
