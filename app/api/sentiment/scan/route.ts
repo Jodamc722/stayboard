@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { markReservationSensitive } from '@/lib/sensitive'
+import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -31,12 +33,24 @@ export async function POST(req: NextRequest) {
   // ever scanned when somebody happened to click. 392 conversations were sitting unscanned. For an
   // assistant meant to run customer service that is the difference between knowing a guest is unhappy
   // and finding out from the review.
+  // AUTH (fixed 2026-08-26). The 2026-08-19 note above says this route "had NO cron and required a
+  // session". It got its cron — and then answered it 401 every half hour, because the bearer check
+  // needs a CRON_SECRET that was never set. So the 392 unscanned conversations that prompted that
+  // note were joined by every conversation since. This scan calls Anthropic per thread, so with no
+  // secret it runs for anyone but no more often than its own schedule. See lib/cron-auth.ts.
   const authHeader = req.headers.get('authorization') || ''
   const viaCron = !!process.env.CRON_SECRET && authHeader === ('Bearer ' + process.env.CRON_SECRET)
-  if (!viaCron) {
+  const allowed = cronAllowed(req)
+  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  let signedIn = false
+  if (!allowed.viaSecret) {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    signedIn = !!user
+    if (!signedIn) {
+      const skip = await tooSoon('sentiment', 25)
+      if (skip) return NextResponse.json({ ok: true, ...skip })
+    }
   }
 
   const key = process.env.ANTHROPIC_API_KEY
@@ -168,6 +182,8 @@ Return STRICT minified JSON only, no markdown:
       }
     } catch { /* skip this conversation, continue the batch */ }
   }
+
+  recordRun({ name: 'sentiment', ok: true, itemCount: scanned, detail: { scanned, flagged, remaining: Math.max(0, todo.length - scanned), windowDays: days } })
 
   return NextResponse.json({ ok: true, scanned, flagged, remaining: Math.max(0, todo.length - scanned), windowDays: days })
 }
