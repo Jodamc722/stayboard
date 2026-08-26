@@ -1090,10 +1090,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const w17pair = people.filter(p => SEVENTEEN_WEST_PAIR.some(n => nameMatches(p.name, n)))
   const w17days = Math.max(1, Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 864e5) + 1)
   const w17 = seventeenWestCoverage(round2(w17pair.reduce((a, p) => a + p.payroll, 0)), w17days)
+  const w17CutByName: Record<string, number> = {}
   if (w17.ratio > 0) for (const p of w17pair) {
     const d = byDept[p.dept]
     if (!d) continue
     const cut = round2(p.payroll * w17.ratio)
+    w17CutByName[p.name] = cut
     if (p.salaried) d.salary = round2(Math.max(0, d.salary - cut))
     else d.payrollHourly = round2(Math.max(0, d.payrollHourly - cut))
     d.payroll = round2(Math.max(0, d.payrollHourly + d.salary))
@@ -1762,6 +1764,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const MK_ORDER = ['miami', 'broward', 'north', 'vendor-inhouse', 'unassigned']
   const mkLabel = (k: string) => MK_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1))
   const homeMk = (p: PersonEcon) => (p.market && p.market !== 'unassigned' ? p.market : 'unassigned')
+  // WHAT STAY ACTUALLY PAYS FOR THIS PERSON. George Paz's salary is real, but 17WEST reimburses
+  // most of it, and the department line above is already net of that credit. Charging him gross
+  // here would put two different maintenance payrolls on one screen — which is exactly the kind
+  // of thing that makes the board feel wrong even when every figure is defensible on its own.
+  const netCost = (p: PersonEcon) => round2(Math.max(0, p.payroll - (w17CutByName[p.name] || 0)))
+  const w17CreditInScope = round2(people.reduce((a, p) => a + (w17CutByName[p.name] || 0), 0))
 
   type PnlRow = {
     key: string; label: string
@@ -1815,7 +1823,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   for (const p of hkStaff) {
     spread(hkRows, p, hkCleansByPerson[p.name], (row, share) => {
       row.hours += p.hours * share
-      row.payroll += p.payroll * share
+      row.payroll += netCost(p) * share
       row.revenue += p.cleaningRevenue * share
       row.tasks += Math.round(p.tasks * share)
     })
@@ -1833,7 +1841,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   for (const p of mtStaff) {
     spread(mtRows, p, mkTasksBy[p.name], (row, share) => {
       row.hours += p.hours * share
-      row.payroll += p.payroll * share
+      row.payroll += netCost(p) * share
       row.revenue += p.billableRevenue * share
       row.tasks += Math.round(p.tasks * share)
       row.tasksBilled += Math.round(p.billableTasks * share)
@@ -1847,7 +1855,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const r = emptyRow(key); r.label = label
     for (const p of staff) {
       r.names.push(p.name)
-      r.hours += p.hours; r.payroll += p.payroll
+      r.hours += p.hours; r.payroll += netCost(p)
       r.tasks += p.tasks; r.tasksBilled += p.billableTasks; r.tasksNoCharge += p.tasksNoCharge
     }
     r.cleans = cleans; r.revenue = revenue
@@ -1899,6 +1907,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     basis: 'Homebase hours and wages; departure-clean fees net of the channel cut; Breezeway charges for billable work. A person’s hours and pay follow the work — housekeepers split by share of cleans, technicians by share of tasks, anyone with neither by their Staffing market.',
     housekeeping: { markets: hkMarkets, total: hkTotal },
     maintenance: { markets: mtMarkets, total: mtTotal },
+    // Already deducted from the payroll above, named so the number can be traced back.
+    seventeenWestCredit: w17CreditInScope,
     // The reconciliation, computed rather than promised: markets must equal the total.
     reconciles: {
       housekeeping: {
