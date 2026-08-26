@@ -14,7 +14,7 @@
 // on automation that charges cards; locking the menu behind the same gate meant the people who
 // actually run the shelf could not fix a typo.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check, Plus, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react'
+import { Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check, Plus, Trash2, ChevronDown, ChevronRight, X, Pencil } from 'lucide-react'
 
 type Per = { scope: string; label: string; onHand: number; reserved: number; lowAt: number; available: number; state: 'unset' | 'out' | 'low' | 'ok' | 'untracked'; updatedAt: string | null; updatedBy: string | null }
 type Item = {
@@ -247,7 +247,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
       <div className="rounded-2xl border border-line bg-white overflow-hidden">
         <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center justify-between flex-wrap gap-2">
           <div className="text-[12.5px] font-semibold text-ink flex items-center gap-1.5"><Package size={14} /> {here ? here.label : 'Shelf'} · {rows.length} item{rows.length === 1 ? '' : 's'}</div>
-          <div className="text-[11.5px] text-muted">Tap a row to edit its name, description and photo.</div>
+          <div className="text-[11.5px] text-muted">Use <b>Edit</b> on a row for its name, description, photo and removal.</div>
         </div>
 
         {rows.length === 0 ? <div className="px-4 py-8 text-center text-[13px] text-muted">Nothing here{onlyLow ? ' needs restocking right now.' : ' yet — use Add item.'}</div> : (
@@ -281,8 +281,10 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <button onClick={() => setOpen(o => ({ ...o, [i.id]: !o[i.id] }))} className="text-muted hover:text-ink" title={isOpen ? 'Collapse' : 'Edit name, description, photo'}>{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>
-                        <span className="text-[14px] font-semibold text-ink">{String(val(i, 'name') ?? i.name)}</span>
+                        <button onClick={() => setOpen(o => ({ ...o, [i.id]: !o[i.id] }))} className="text-left text-[14px] font-semibold text-ink hover:text-brand-700 inline-flex items-center gap-1.5">
+                          {isOpen ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
+                          {String(val(i, 'name') ?? i.name)}
+                        </button>
                         <span className={'text-[10.5px] font-bold px-1.5 py-0.5 rounded ' + (state === 'untracked' ? 'bg-app text-muted border border-line' : state === 'out' ? 'bg-rose-100 text-rose-700' : state === 'low' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700')}>
                           {state === 'untracked' ? 'not counted' : state === 'out' ? 'OUT — hidden from guests' : state === 'low' ? 'LOW · ' + avail + ' left' : avail + ' available'}
                         </span>
@@ -316,6 +318,16 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
                       <div className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold min-w-[52px]">Margin
                         <div className={'text-[13px] font-bold tabular-nums mt-1 ' + (margin === null ? 'text-muted' : margin < 0 ? 'text-rose-700' : 'text-emerald-700')}>{margin === null ? '—' : money(margin)}</div>
                       </div>
+                      {canEdit ? (
+                        <div className="flex items-center gap-1.5 self-end">
+                          <button onClick={() => setOpen(o => ({ ...o, [i.id]: !o[i.id] }))} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 h-9 rounded-lg border border-line bg-white text-ink hover:border-brand-300">
+                            <Pencil size={12} /> {isOpen ? 'Done' : 'Edit'}
+                          </button>
+                          <button onClick={() => { setOpen(o => ({ ...o, [i.id]: true })); setRemoving(i.id) }} title={'Remove ' + i.name} className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-line bg-white text-muted hover:text-rose-700 hover:border-rose-300">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
