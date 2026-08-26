@@ -12,6 +12,7 @@ import { postToChannel } from '@/lib/slack'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { todayET } from '@/lib/eve/ctx'
 import { eveGate } from '../../agent/route'
+import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -73,5 +74,6 @@ async function run(req: NextRequest) {
     }
   }
 
+  recordRun({ name: 'eve-audit', ok: true, itemCount: (res as any)?.open?.length ?? (res as any)?.found ?? undefined, detail: { posted, resolved: (res as any)?.resolved?.length } })
   return NextResponse.json({ ...res, ranBy: viaCron ? 'cron' : 'admin', posted })
 }
