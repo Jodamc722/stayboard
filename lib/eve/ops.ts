@@ -274,6 +274,17 @@ export const OPS_TOOLS: EveTool[] = [
         date: d, landed: 0, done: 0, not_done: 0, moved_in: 0, moved_out: 0,
         crew: {} as Record<string, number>, arrivals_from: [] as string[], left_for: [] as string[],
       })
+      // A DAY WITH NO CLEANS AND A DAY WE HAVE NO DATA FOR MUST NOT LOOK THE SAME. Build every day
+      // in the range up front, so a zero reads as a zero instead of the row quietly going missing.
+      for (let d = from; dayDiff(d, to) >= 0; d = shiftDay(d, 1)) ensure(d)
+
+      // THE ARRIVAL SIDE OF A MOVE. Breezeway does not move a task, it deletes one and creates
+      // another — so the replacement's scheduled_date IS its new day and `promised !== landed` is
+      // false for it. Reading only that field, every move showed up as a departure from the old day
+      // and never as an arrival on the new one: 36 moved out, 2 moved in, which is not a thing that
+      // can happen. The matched pair is the only place the arrival exists, so credit it from there.
+      const arrivedFrom: Record<string, string> = {}
+      for (const m of moves) if (m.toId && m.to) arrivedFrom[m.toId] = m.from
 
       for (const t of live) {
         const landed = cleanDay(t)
@@ -283,10 +294,16 @@ export const OPS_TOOLS: EveTool[] = [
         const st = taskState(t)
         if (st === 'done') d.done++; else d.not_done++
         for (const who of assigneeNames(t)) d.crew[who] = (d.crew[who] || 0) + 1
+        // Two different ways a clean can end up on a day it was not promised, and a task can be
+        // both — count it once. `arrivedFrom` is the replacement half of a delete/create move;
+        // `promised !== landed` is the same task finishing on a different day than it was booked.
+        const cameFrom = arrivedFrom[String(t.id)] || null
         const promised = promisedDay(t)
-        if (promised && promised !== landed) {
+        const drifted = promised && promised !== landed ? promised : null
+        const origin = cameFrom || drifted
+        if (origin) {
           d.moved_in++
-          d.arrivals_from.push(`${ctx.nameOf(t.reference_property_id)} from ${promised}`)
+          d.arrivals_from.push(`${ctx.nameOf(t.reference_property_id)} from ${origin}`)
         }
       }
       for (const g of ghosts) {
@@ -348,49 +365,74 @@ export const OPS_TOOLS: EveTool[] = [
     run: async (input, ctx) => {
       const from = String(input?.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.from) : ctx.today
       const to = String(input?.to || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.to) : shiftDay(from, 7)
+      // PAD THE TASK QUERY. A clean promised inside this range can land outside it and vice versa,
+      // and the replacement half of a move is a different row on a different day — ask wide, then
+      // bucket into the range. Same padding moved_cleans uses, for the same reason.
+      const pad = 12
       const [tasksRes, stagedRes, resvRes] = await Promise.all([
-        safe(ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).eq('type_department', 'housekeeping').gte('scheduled_date', from).lte('scheduled_date', to).order('scheduled_date').order('id').limit(2000), { data: [] } as any),
+        safe(ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).eq('type_department', 'housekeeping').gte('scheduled_date', shiftDay(from, -pad)).lte('scheduled_date', shiftDay(to, pad)).order('scheduled_date').order('id').limit(4000), { data: [] } as any),
         safe(ctx.db.from('schedule_staged').select('listing_id,date,cleaner_name').gte('date', from).lte('date', to).order('date'), { data: [] } as any),
         safe(ctx.db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', from).lte('check_out', to).order('check_out').limit(2000), { data: [] } as any),
       ])
-      const allHk = (tasksRes.data || []).filter((t: any) => isDepartureCleanName(t.name))
+      let allHk = (tasksRes.data || []).filter((t: any) => isDepartureCleanName(t.name))
+      // SCOPE BEFORE COUNTING. The market filter used to be applied to the unit list only, after
+      // the totals were already added up — so asking about one building returned that building's
+      // units next to the whole portfolio's counts. Filter first, and every number on the row is
+      // about the thing that was asked for.
+      if (input?.market) allHk = allHk.filter((t: any) => has(ctx.buildingOf(t.reference_property_id), input.market))
       const cleans = allHk.filter((t: any) => !isMovedClean(t) && taskState(t) !== 'gone')
       const ghosts = allHk.filter((t: any) => isMovedClean(t))
+      const moves = pairMoves(ghosts, cleans, (id) => ctx.nameOf(id))
+      const arrivedFrom: Record<string, string> = {}
+      for (const m of moves) if (m.toId && m.to) arrivedFrom[m.toId] = m.from
+
+      const inRange = (d: string) => !!d && d >= from && d <= to
       const byDay: Record<string, any> = {}
       const ensure = (d: string) => (byDay[d] = byDay[d] || { date: d, checkouts: 0, cleans: 0, assigned: 0, done: 0, staged: 0, units: [] })
+      for (let d = from; dayDiff(d, to) >= 0; d = shiftDay(d, 1)) ensure(d)
       for (const r of (resvRes.data || [])) {
         if (/cancel|declin|inquir|expire/i.test(lc((r as any).status))) continue
-        ensure(String((r as any).check_out).slice(0, 10)).checkouts++
+        const d = String((r as any).check_out).slice(0, 10)
+        if (inRange(d)) ensure(d).checkouts++
       }
       for (const t of cleans) {
         // The day the work landed, not the day it was promised — same rule as payroll.
         const landed = cleanDay(t)
-        const promised = promisedDay(t)
+        if (!inRange(landed)) continue
         const d = ensure(landed)
         d.cleans++
-        if (promised && landed && promised !== landed) {
+        // Arrived from somewhere else, either as the new half of a Breezeway move or by finishing
+        // on a different day than it was booked. Both are one arrival, never two.
+        const promised = promisedDay(t)
+        const origin = arrivedFrom[String(t.id)] || (promised && landed && promised !== landed ? promised : null)
+        if (origin) {
           d.moved_in = (d.moved_in || 0) + 1
-          d.moves = (d.moves || []).concat([`${ctx.nameOf(t.reference_property_id)} arrived from ${promised}`])
+          d.moves = (d.moves || []).concat([`${ctx.nameOf(t.reference_property_id)} arrived from ${origin}`])
         }
         const who = assigneeNames(t)
         if (who.length) d.assigned++
         if (taskState(t) === 'done') d.done++
         d.units.push({ unit: ctx.nameOf(t.reference_property_id), building: ctx.buildingOf(t.reference_property_id), assignees: who, state: taskState(t) })
       }
-      for (const s of (stagedRes.data || [])) ensure(String((s as any).date).slice(0, 10)).staged++
+      for (const s of (stagedRes.data || [])) {
+        const d = String((s as any).date).slice(0, 10)
+        if (inRange(d)) ensure(d).staged++
+      }
       // Ghosts: a clean that was taken OFF this day. Never silently absent — a day that lost two
       // cleans and a day that never had them look identical unless somebody says so.
       for (const g of ghosts) {
-        const d = ensure(promisedDay(g))
+        const p = promisedDay(g)
+        if (!inRange(p)) continue
+        const d = ensure(p)
         d.moved_out = (d.moved_out || 0) + 1
-        d.moves = (d.moves || []).concat([`${ctx.nameOf(g.reference_property_id)} moved off this day`])
+        const m = moves.find(x => x.listingId === String(g.reference_property_id) && x.from === p)
+        d.moves = (d.moves || []).concat([m?.to ? `${ctx.nameOf(g.reference_property_id)} moved off this day → ${m.to}` : `${ctx.nameOf(g.reference_property_id)} moved off this day, destination not found`])
       }
       const days = Object.keys(byDay).sort().map(k => {
         const d = byDay[k]
-        if (input?.market) d.units = d.units.filter((u: any) => has(u.building, input.market))
         return { ...d, units: d.units.slice(0, 40), unassigned: d.cleans - d.assigned }
       })
-      return { from, to, days, note: 'A departure clean is only counted when the task NAME says departure/turnover — a deep clean or oven clean is not a turnover.' }
+      return { from, to, scope: input?.market || 'whole portfolio', days, note: 'A departure clean is only counted when the task NAME says departure/turnover — a deep clean or oven clean is not a turnover. A clean counts on the day the work LANDED, and a move shows on both days: the old one says it left, the new one says where it came from.' }
     },
   },
 ]
