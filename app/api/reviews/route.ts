@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -51,14 +52,19 @@ export async function GET(req: Request) {
 
   // ── 1. Try the persisted table first ────────────────────────────
   try {
-    const { data: rows, error } = await sb
+    // PAGED. `.limit(2000)` never returned more than 1,000 rows — the default 90-day window is
+    // already 995 reviews, one away from the cliff, and ?days=365 asks for 3,472. The feed and the
+    // "awaiting reply" count above it would simply have stopped at an arbitrary cut. See
+    // lib/db-page.ts.
+    const { rows, truncated: revTruncated } = await pageRows<any>((a, b) => sb
       .from('guesty_reviews')
       .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply, excluded_from_score, exclude_reason')
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: false })
-      .limit(2000)
+      .order('id')
+      .range(a, b), 20)
 
-    if (!error && rows && rows.length) {
+    if (rows && rows.length) {
       // Join guesty_listings for status/building filtering + listing_name.
       const ids = Array.from(new Set(rows.map((r: any) => r.listing_id).filter(Boolean)))
       const meta: Record<string, { name: string; status: string; building: string | null }> = {}
