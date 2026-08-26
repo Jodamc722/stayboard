@@ -1,4 +1,4 @@
-// INVENTORY — what is on the hub per hub, what is reserved by paid orders, what is running low.
+// INVENTORY — what is on the shelf per hub, what is reserved by paid orders, what is running low.
 //   GET  every tracked item × scope, with hubs + low/out flags
 //   PUT  { rows:       [{ itemId, scope, onHand, lowAt? }]            stock-take
 //         items:      [{ id, name?, description?, price?, cost?, … }]  edit an existing item
@@ -24,10 +24,10 @@ export async function GET() {
     const name = l.nickname || l.title || 'Unit'
     return { id: String(l.id), name, building: buildingOf(l.building, name) || '' }
   }).sort((a, b) => (a.building || 'zz').localeCompare(b.building || 'zz') || a.name.localeCompare(b.name))
-  // A hub carries WHAT IT COVERS, so the link a guest gets can be traced back to the hub that
-  // fills it: whole properties, plus any individual units pulled onto this hub.
+  // A shelf carries WHAT IT COVERS, so the link a guest gets can be traced back to the hub that
+  // fills it: whole properties, plus any individual units pulled onto this shelf.
   const scopes = [
-    { id: 'global', label: 'No hub', buildings: [] as string[], listings: [] as string[] },
+    { id: 'global', label: 'Global shelf', buildings: [] as string[], listings: [] as string[] },
     ...cfg.hubs.map(h => ({ id: 'hub:' + h.id, label: h.label, buildings: h.buildings, listings: h.listings || [] })),
   ]
   // EVERY item, not only the counted ones. Filtering to `track_stock` meant an item you had not
@@ -72,7 +72,7 @@ export async function PUT(req: NextRequest) {
   //
   // This is 'edit' level, deliberately NOT owner-only. Only the settings card is owner-gated,
   // because that is what switches on automation that charges cards; keeping the menu itself behind
-  // the same lock meant the people who actually run the hub could not correct a typo.
+  // the same lock meant the people who actually run the shelf could not correct a typo.
   const db = supabaseAdmin()
 
   // Guest-facing text is trimmed and bounded; a blank string clears the field rather than storing "".
@@ -132,17 +132,58 @@ export async function PUT(req: NextRequest) {
     const newId = data && data[0] ? String((data[0] as any).id) : ''
     if (newId) {
       created.push(newId)
-      // Put it on the hub it was created from, so it appears where the person is standing
-      // instead of silently landing on the no hub.
+      // Put it on the shelf it was created from, so it appears where the person is standing
+      // instead of silently landing on the global shelf.
       const sc = String(n?.scope || 'global')
       if (/^(global|hub:[a-z0-9\-]{1,40})$/.test(sc)) await setStock(newId, sc, Math.max(0, Math.round(Number(n?.onHand) || 0)), n?.lowAt === undefined || n?.lowAt === '' ? null : Number(n.lowAt), actor)
+    }
+  }
+
+  // SHELVES THEMSELVES — create, rename, remove (Jon, 2026-08-25: "how do I add a hub"). Creating
+  // one was only possible in the owner-only settings card, which is the same discoverability trap
+  // that hid editing an item: the thing existed, just nowhere near where you stand.
+  let hubsChanged = false
+  if (body?.newHub || body?.renameHub || body?.deleteHub) {
+    const cfg = await getGuestOrdersCfg()
+    let hubs = cfg.hubs.slice()
+
+    if (body.newHub) {
+      const label = String(body.newHub.label || '').trim().slice(0, 60)
+      if (!label) errors.push('a shelf needs a name')
+      else {
+        const base = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'hub'
+        let id = base
+        for (let i = 2; hubs.some(h => h.id === id) && i < 40; i++) id = base.slice(0, 26) + '-' + i
+        hubs.push({ id, label, buildings: [], listings: [] })
+      }
+    }
+    if (body.renameHub) {
+      const id = String(body.renameHub.hubId || '')
+      const label = String(body.renameHub.label || '').trim().slice(0, 60)
+      if (!label) errors.push('a shelf needs a name')
+      else hubs = hubs.map(h => h.id === id ? { ...h, label } : h)
+    }
+    if (body.deleteHub) {
+      const id = String(body.deleteHub.hubId || '')
+      if (!hubs.some(h => h.id === id)) errors.push('that shelf is already gone')
+      else {
+        // The counts go with it. Leaving them would strand rows against a scope nothing reads, and
+        // they would silently reappear if a shelf were ever recreated with the same name.
+        await db.from('guest_order_stock').delete().eq('scope', 'hub:' + id)
+        hubs = hubs.filter(h => h.id !== id)
+      }
+    }
+
+    if (!errors.length) {
+      const r = await saveGuestOrdersCfg({ ...cfg, hubs }, actor)
+      if (r.ok) hubsChanged = true; else errors.push(r.error || 'could not save the shelves')
     }
   }
 
   // WHAT THIS HUB COVERS (Jon, 2026-08-25: "Salato is the hub but should be able to assign it to
   // listing / properties so that when link send it based on that inventory hub"). The wiring already
   // resolved a stay's hub from its listing first, then its building — but the only place to SET
-  // that was the settings card, which is owner-only and nowhere near the hub. Same store, edited
+  // that was the settings card, which is owner-only and nowhere near the shelf. Same store, edited
   // from where the person is standing.
   let coverageSaved = false
   const cov = body?.coverage
@@ -157,10 +198,10 @@ export async function PUT(req: NextRequest) {
         ? (cov.buildings.map((b: any) => known.find(k => k.toLowerCase() === String(b).trim().toLowerCase())).filter(Boolean) as string[])
         : hub.buildings
       const listingIds = Array.isArray(cov.listings) ? cov.listings.map((x: any) => String(x || '').trim()).filter(Boolean) : hub.listings
-      // A property or unit lives on exactly ONE hub — otherwise "which hub did this order come
+      // A property or unit lives on exactly ONE shelf — otherwise "which shelf did this order come
       // off" has two answers and the counts drift apart.
       const clash = cfg.hubs.find(h => h.id !== hubId && (h.buildings.some(b => buildings.indexOf(b) >= 0) || (h.listings || []).some(l => listingIds.indexOf(l) >= 0)))
-      if (clash) errors.push('some of that is already on the ' + clash.label + ' hub — take it off there first')
+      if (clash) errors.push('some of that is already on the ' + clash.label + ' shelf — take it off there first')
       else {
         const next = { ...cfg, hubs: cfg.hubs.map(h => h.id === hubId ? { ...h, buildings, listings: listingIds } : h) }
         const r = await saveGuestOrdersCfg(next, actor)
@@ -181,5 +222,5 @@ export async function PUT(req: NextRequest) {
     if (error) errors.push('could not remove an item: ' + error.message); else deleted.push(id)
   }
 
-  return NextResponse.json({ ok: errors.length === 0, saved, itemsSaved, created: created.length, deleted: deleted.length, coverageSaved, errors })
+  return NextResponse.json({ ok: errors.length === 0, saved, itemsSaved, created: created.length, deleted: deleted.length, coverageSaved, hubsChanged, errors })
 }
