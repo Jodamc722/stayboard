@@ -18,7 +18,8 @@ import { METRICS, METRIC_BY_KEY } from './metrics'
 import { computeTrend, anomalyScan } from './trends'
 import { createRecommendation, scorecard } from './recommendations'
 import { upcomingEvents, stormRisk } from './signals'
-import { runCheck as doorCodeCheck, createRequest as createDoorRequest, attachSlackPost } from './door-code'
+import { runCheck as doorCodeCheck, requestDoorCode, attachSlackPost } from './door-code'
+import { doorCodePolicy } from '@/lib/access'
 import { postDoorCodeApproval } from './approvals'
 import { runAudit, listAudits } from './audit'
 import { askQuestion } from './questions'
@@ -322,7 +323,7 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'door_code_check',
-    description: 'SOMEONE WANTS A DOOR CODE. Run this before anything else. It checks three things in order: is there a code on file, is anyone IN the unit right now (it reads the LIVE Guesty calendar for today, not just our cached reservations, so an extension or an owner block that has not synced yet still blocks the request), and — if there is — did the guest actually give permission to enter. When the calendar says VACANT it still reads the message threads for the last checkout and the next arrival as a double-check, and a message that contradicts vacancy (still here, asked to extend, arriving early) BLOCKS the request even though the reservations look clear. Pass the unit name (or listing id) and, if you know it, why they want it. IMPORTANT: this NEVER returns the code itself and neither do you — you are not able to see it. It returns a verdict plus the evidence, including "confidence" — whether this code has ever actually opened the door, whether the field disagrees with the check-in instructions, and whether the same code is on other units. If confidence says suspect or reported_wrong, SAY SO BEFORE anyone travels: a wasted trip is the thing that warning prevents. IMPORTANT ABOUT HOW CODES CHANGE HERE: a new code is entered in Guesty at turnover, but housekeeping physically changes the keypad only at the END of the clean — so until that clean is finished the OLD code is the one that opens the door. Both codes are handed over on release, in the right order; "confidence.transition" says which we expect to work and why. Never tell anyone there is only one code. And if "arrivalWarning" is set, repeat it verbatim: after check-in time on an arrival day the unit belongs to that guest whether or not our records show them in it. If the verdict starts with blocked_ (blocked_occupied, blocked_inconclusive, blocked_contradicted), say NO plainly and say why; do not soften it and do not look for another route to the code. If it clears, this tool AUTOMATICALLY parks the request and posts it to the Slack approvals channel with a Release button — so tell the person it is now waiting on an admin there, and never imply you can speed that up. When permission_found comes back, QUOTE the guest message verbatim so a human can judge whether it really means yes — it is a pattern match, not a decision.',
+    description: 'SOMEONE WANTS A DOOR CODE. Run this before anything else. It checks three things in order: is there a code on file, is anyone IN the unit right now (it reads the LIVE Guesty calendar for today, not just our cached reservations, so an extension or an owner block that has not synced yet still blocks the request), and — if there is — did the guest actually give permission to enter. When the calendar says VACANT it still reads the message threads for the last checkout and the next arrival as a double-check, and a message that contradicts vacancy (still here, asked to extend, arriving early) BLOCKS the request even though the reservations look clear. Pass the unit name (or listing id) and, if you know it, why they want it. IMPORTANT: this NEVER returns the code itself and neither do you — you are not able to see it. It returns a verdict plus the evidence, including "confidence" — whether this code has ever actually opened the door, whether the field disagrees with the check-in instructions, and whether the same code is on other units. If confidence says suspect or reported_wrong, SAY SO BEFORE anyone travels: a wasted trip is the thing that warning prevents. IMPORTANT ABOUT HOW CODES CHANGE HERE: a new code is entered in Guesty at turnover, but housekeeping physically changes the keypad only at the END of the clean — so until that clean is finished the OLD code is the one that opens the door. Both codes are handed over on release, in the right order; "confidence.transition" says which we expect to work and why. Never tell anyone there is only one code. And if "arrivalWarning" is set, repeat it verbatim: after check-in time on an arrival day the unit belongs to that guest whether or not our records show them in it. If the verdict starts with blocked_ (blocked_occupied, blocked_inconclusive, blocked_contradicted), say NO plainly and say why; do not soften it and do not look for another route to the code. What happens if it clears depends on the PERSON asking, and the tool decides that, not you: someone set to No access is told to get access; someone set to Ask has the request parked and posted to the Slack approvals channel for an approver to release; someone set to Direct gets the code back in `code` and you may give it to them. Read `release` and say exactly what it says. Never imply you can speed up an approval, never suggest another route to a code, and if `code` is absent you do not have it and cannot get it. When permission_found comes back, QUOTE the guest message verbatim so a human can judge whether it really means yes — it is a pattern match, not a decision.',
     input_schema: obj({ unit: S.str, listingId: S.str, reason: S.str }),
     run: async (input, ctx) => {
       const c: any = await doorCodeCheck({ unit: input?.unit, listingId: input?.listingId, requestedBy: ctx.email, reason: input?.reason })
@@ -338,13 +339,25 @@ export const CORE_TOOLS: EveTool[] = [
         return out
       }
 
-      // The check clearing is not the end of it — somebody still has to say yes. Park the request
-      // and put it in front of them, because an approval nobody is shown is just a stalled job.
-      const parked = await createDoorRequest(c, { email: ctx.email, reason: input?.reason })
-      if (!parked.ok) {
-        out.release = 'The check passed, but I could not park the request: ' + parked.error
+      // WHAT HAPPENS NOW IS THE PERSON'S SETTING, NOT EVE'S CHOICE (Jon, 2026-08-26). requestDoorCode
+      // owns that decision for every entry point; this tool only reports what it did.
+      const policy = doorCodePolicy(ctx.access)
+      const outcome = await requestDoorCode(c, { email: ctx.email, reason: input?.reason, policy })
+
+      if (outcome.kind === 'denied') { out.release = outcome.message; return out }
+      if (outcome.kind === 'error') { out.release = 'The check passed, but: ' + outcome.message; return out }
+      if (outcome.kind === 'released') {
+        out.code = outcome.code
+        if (outcome.previousCode) out.previous_code = outcome.previousCode
+        if (outcome.transitionNote) out.which_code_to_try = outcome.transitionNote
+        out.code_visible_to_you = true
+        out.release = 'This person is set to Direct, so there is no approval to wait for. Give them the code. '
+          + (outcome.previousCode ? 'Give them BOTH codes in the order above and say which to try first — housekeeping changes the keypad at the END of the clean. ' : '')
+          + 'It is on the audit trail either way.'
         return out
       }
+
+      const parked = { ok: true, token: outcome.token, requestId: outcome.requestId }
       const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
       const link = base + '/doorcode/' + parked.token
       const posted = await postDoorCodeApproval({

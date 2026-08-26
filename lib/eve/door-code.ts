@@ -472,10 +472,63 @@ export async function createRequest(check: DoorCheck, who: { email?: string; sla
 }
 
 /**
+ * THE ONE DOOR. Every way of asking for a code — Eve's tool, the web API, the /doorcode slash
+ * command, Telegram — comes through here, because four entry points each deciding for themselves
+ * whether a person is allowed a code is four places for the policy to drift apart. The check has
+ * already run; this decides what happens with the result.
+ *
+ * Three outcomes, from the per-person setting (Users & admin → People → Door codes):
+ *   off     the default, and what an unset or unknown person resolves to. Nothing is parked and
+ *           nothing is posted; they are told to ask someone who has access.
+ *   ask     parked as `proposed` with a one-time token and posted to the approvals channel. An
+ *           APPROVER — not them — releases it.
+ *   direct  read and returned now. Still occupancy-checked, still written to the audit trail with
+ *           a fingerprint of what was handed over. Jon is always here, by email, so no edit to any
+ *           row can lock the owner out of his own building at midnight.
+ *
+ * Note what this function does NOT do: it never decides whether the unit is safe to enter. That is
+ * runCheck()'s job and it has already happened. `direct` skips the approval, never the gates.
+ */
+export type DoorRequestOutcome =
+  | { kind: 'denied'; message: string }
+  | { kind: 'parked'; requestId?: string; token?: string; confirmToken?: string }
+  | { kind: 'released'; code: string; previousCode?: string | null; expect?: 'new' | 'old' | 'only_one'; transitionNote?: string | null; confirmToken?: string | null }
+  | { kind: 'error'; message: string }
+
+export async function requestDoorCode(
+  check: DoorCheck,
+  who: { email?: string; slackUserId?: string; reason?: string; policy: 'off' | 'ask' | 'direct' },
+): Promise<DoorRequestOutcome> {
+  if (who.policy === 'off') {
+    return { kind: 'denied', message: 'You are not set up to receive door codes. Ask Jon, or whoever handles access, to switch it on for you in Users & admin → People.' }
+  }
+  if (!check.canRelease || !check.listingId) {
+    return { kind: 'denied', message: check.note || 'That check did not clear, so there is nothing to release.' }
+  }
+
+  const parked = await createRequest(check, { email: who.email, slackUserId: who.slackUserId, reason: who.reason })
+  if (!parked.ok || !parked.token) return { kind: 'error', message: parked.error || 'Could not park the request.' }
+
+  if (who.policy === 'ask') {
+    return { kind: 'parked', requestId: parked.requestId, token: parked.token, confirmToken: parked.confirmToken }
+  }
+
+  // direct — release immediately against the row we just wrote, so the audit trail is identical to
+  // an approved one: same fingerprint, same decided_by, same executed_at, same confirm-token loop.
+  // selfReleaseOk because there is no approval being skipped here; the entitlement IS the setting.
+  const out = await releaseByToken(parked.token, who.email || who.slackUserId || 'direct', { selfReleaseOk: true })
+  if (!out.ok || !out.code) return { kind: 'error', message: out.error || 'Could not read the code.' }
+  return {
+    kind: 'released', code: out.code, previousCode: out.previousCode ?? null,
+    expect: out.expect, transitionNote: out.transitionNote ?? null, confirmToken: out.confirmToken ?? null,
+  }
+}
+
+/**
  * Release. This is the ONLY place the code is read, and it happens after a human has approved.
  * One-time: the token is cleared so a forwarded link is dead on arrival.
  */
-export async function releaseByToken(token: string, approvedBy: string): Promise<{
+export async function releaseByToken(token: string, approvedBy: string, opts?: { selfReleaseOk?: boolean }): Promise<{
   ok: boolean; code?: string; previousCode?: string | null; expect?: 'new' | 'old' | 'only_one'
   transitionNote?: string | null; arrivalWarning?: string | null
   unit?: string; slackUserId?: string | null; slackChannel?: string | null; slackTs?: string | null
@@ -488,6 +541,15 @@ export async function releaseByToken(token: string, approvedBy: string): Promise
   if (error) return { ok: false, error: 'lookup failed' }
   const row: any = (data || []).find((r: any) => r?.payload?.token === t)
   if (!row) return { ok: false, error: 'This link is no longer valid. Door-code links work once and then expire.' }
+  // NOBODY RELEASES THEIR OWN REQUEST (Jon, 2026-08-26). Until now an admin could ask for a code
+  // through the API and then open their own approval link, which made the approval step a formality
+  // rather than a control. The one exception is the direct path, where there is no approval to skip:
+  // the person is entitled to the code outright and this call is just how it gets read and audited.
+  const requester = String(row?.payload?.requesterEmail || '').trim().toLowerCase()
+  const approver = String(approvedBy || '').trim().toLowerCase()
+  if (!opts?.selfReleaseOk && requester && approver && requester === approver) {
+    return { ok: false, error: 'You asked for this one, so somebody else has to release it. That is the whole point of the approval.' }
+  }
   if (row.status === 'executed') return { ok: false, error: 'That code was already sent.' }
   if (row.status === 'rejected' || row.status === 'expired') return { ok: false, error: `This request was ${row.status}.` }
   if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
@@ -556,6 +618,48 @@ export async function confirmByToken(confirmToken: string, which: 'new' | 'old' 
   return { ok: true, unit: row.payload.unit, which }
 }
 
+
+/**
+ * Re-read a just-released code for the approver's own screen, keyed by the CONFIRM token.
+ *
+ * The release page used to carry the code home in the redirect query string, which put it in
+ * browser history, in every proxy and access log on the way, and in the Referer of anything the
+ * page then loaded. It cannot use the release token instead — that one is deliberately burned by
+ * releaseByToken so a forwarded link is dead. The confirm token survives, is already public in the
+ * DM buttons, and on its own reveals nothing: this function is only ever called from a page that
+ * has already checked the viewer is an approver.
+ *
+ * Only for a row that has actually been released, and only within a short window afterwards — this
+ * is "show me what I just released", not a way back to an old code.
+ */
+const REVEAL_WINDOW_MS = 15 * 60 * 1000
+
+export async function revealByConfirmToken(confirmToken: string): Promise<{
+  ok: boolean; unit?: string; code?: string; previousCode?: string | null
+  expect?: 'new' | 'old' | 'only_one'; transitionNote?: string | null; arrivalWarning?: string | null; error?: string
+}> {
+  const db = supabaseAdmin()
+  const t = String(confirmToken || '').trim()
+  if (!t) return { ok: false, error: 'no token' }
+  const { data } = await db.from('eve_actions').select('*').eq('kind', 'door_code').order('created_at', { ascending: false }).limit(400)
+  const row: any = (data || []).find((r: any) => r?.payload?.confirmToken === t)
+  if (!row) return { ok: false, error: 'That link is not one of ours, or it is too old to match.' }
+  if (row.status !== 'executed') return { ok: false, error: 'That request was never released.' }
+  const at = row.executed_at ? Date.parse(row.executed_at) : 0
+  if (!at || Date.now() - at > REVEAL_WINDOW_MS) {
+    return { ok: false, error: 'This page only shows a code for a few minutes after it is released. Ask again and it will re-run the checks.' }
+  }
+  const { data: ls } = await db.from('guesty_listings').select('raw').eq('id', row.payload.listingId).limit(1)
+  const code = doorCodeOf(((ls || [])[0] as any)?.raw)
+  if (!code) return { ok: false, error: 'The code is no longer on file for this unit.' }
+  const pair = await bothCodes(String(row.payload.listingId), code)
+  const tr = await transitionFor(String(row.payload.listingId), todayET())
+  return {
+    ok: true, unit: row.payload.unit, code,
+    previousCode: pair.previous ?? null, expect: tr.expect, transitionNote: tr.reason ?? null,
+    arrivalWarning: row?.evidence?.arrivalWarning ?? null,
+  }
+}
 
 /** Remember where the approval was posted, so the same message can be updated when it resolves. */
 export async function attachSlackPost(requestId: string, channel: string, ts: string): Promise<void> {
