@@ -10,6 +10,7 @@ import { computeRange, computeToday, saveMetrics } from '@/lib/eve/metrics'
 import { gradeDue } from '@/lib/eve/recommendations'
 import { todayET, shiftDay } from '@/lib/eve/ctx'
 import { eveGate } from '../../agent/route'
+import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -62,5 +63,6 @@ async function run(req: NextRequest) {
   }
 
   results.ms = Date.now() - started
+  recordRun({ name: 'eve-metrics', ok: true, itemCount: results?.state?.rows ?? undefined, detail: results, ms: results.ms })
   return NextResponse.json({ ok: true, ...results })
 }
