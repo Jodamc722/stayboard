@@ -72,6 +72,7 @@ export function LaborPanel() {
   const pay = d?.payroll || {}
   // The shared labor P&L (lib/labor-econ) — same object the briefs print from.
   const econ = (d as any)?.econ
+  const pnl = econ?.pnl
   // Per-person P&L keyed by the Homebase spelling, so the People table can show what each person
   // earned (cleaning fees + the charges typed on their tasks) beside what they cost.
   const econBy: Record<string, any> = {}
@@ -249,6 +250,183 @@ export function LaborPanel() {
       </div>
 
       {err && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err}</div>}
+
+      {/* THE SIMPLE P&L (Jon, 2026-08-26: "Something just feels off about labor... keep it simple
+          and just make sure that this is extremely accurate"). Housekeeping and maintenance, by
+          market and in total, on one allocation rule, with the reconciliation shown rather than
+          claimed and the people bending cost per clean named instead of blended away. */}
+      {pnl && (
+        <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+          <div className="px-4 pt-4 pb-2">
+            <h3 className="text-[13px] font-bold text-ink">Labor P&amp;L</h3>
+            <p className="text-[11px] text-muted mt-0.5 max-w-[86ch]">{pnl.basis}</p>
+          </div>
+
+          {/* housekeeping */}
+          <div className="px-4 pb-1">
+            <p className="text-[10px] uppercase tracking-[0.14em] text-brand-600 font-bold mt-2 mb-1">Housekeeping</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12px] tabular-nums">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wide text-muted border-b border-line">
+                    <th className="text-left font-semibold py-1.5 pr-2">Market</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Staff</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Hours</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Payroll</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Cleans</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Hrs / clean</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Cost / clean</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Revenue</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Profit</th>
+                    <th className="text-right font-semibold py-1.5 pl-2">Margin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(pnl.housekeeping?.markets || []).map((r: any) => (
+                    <tr key={r.key} className="border-b border-line/60">
+                      <td className="text-left py-1.5 pr-2 font-semibold text-ink">{r.label}</td>
+                      <td className="text-right py-1.5 px-2 text-muted">{r.people}</td>
+                      <td className="text-right py-1.5 px-2">{Math.round(r.hours).toLocaleString('en-US')}</td>
+                      <td className="text-right py-1.5 px-2">{fmt$(r.payroll)}</td>
+                      <td className="text-right py-1.5 px-2">{r.cleans}</td>
+                      <td className="text-right py-1.5 px-2">{r.hoursPerClean ?? '—'}</td>
+                      <td className="text-right py-1.5 px-2 font-bold text-ink">{fmt$(r.costPerClean)}</td>
+                      <td className="text-right py-1.5 px-2">{fmt$(r.revenue)}</td>
+                      <td className={'text-right py-1.5 px-2 font-semibold ' + (r.profit >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{fmt$(r.profit)}</td>
+                      <td className={'text-right py-1.5 pl-2 ' + (r.profit >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{pct(r.marginPct)}</td>
+                    </tr>
+                  ))}
+                  {pnl.housekeeping?.total && (
+                    <tr className="bg-app/60">
+                      <td className="text-left py-2 pr-2 font-black text-ink">{pnl.housekeeping.total.label}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{pnl.housekeeping.total.people}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{Math.round(pnl.housekeeping.total.hours).toLocaleString('en-US')}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{fmt$(pnl.housekeeping.total.payroll)}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{pnl.housekeeping.total.cleans}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{pnl.housekeeping.total.hoursPerClean ?? '—'}</td>
+                      <td className="text-right py-2 px-2 font-black text-ink">{fmt$(pnl.housekeeping.total.costPerClean)}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{fmt$(pnl.housekeeping.total.revenue)}</td>
+                      <td className={'text-right py-2 px-2 font-black ' + (pnl.housekeeping.total.profit >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{fmt$(pnl.housekeeping.total.profit)}</td>
+                      <td className={'text-right py-2 pl-2 font-black ' + (pnl.housekeeping.total.profit >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{pct(pnl.housekeeping.total.marginPct)}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* who is bending cost per clean */}
+          {pnl.lowYield?.people?.length > 0 && (
+            <div className="mx-4 my-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+              <p className="text-[11.5px] text-amber-900">
+                <b>{fmt$(pnl.lowYield.payroll)}</b> of housekeeping payroll ({pct(pnl.lowYield.pctOfPayroll)}) and{' '}
+                <b>{Math.round(pnl.lowYield.hours)}</b> hours belong to {pnl.lowYield.people.length} {pnl.lowYield.people.length === 1 ? 'person who turned' : 'people who turned'}{' '}
+                {pnl.lowYield.cleans === 0 ? 'no units' : pnl.lowYield.cleans + (pnl.lowYield.cleans === 1 ? ' unit' : ' units')} in this window.
+                They are inside the cost per clean above; without them it reads <b>{fmt$(pnl.lowYield.costPerCleanExcluding)}</b>.
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {pnl.lowYield.people.map((p: any) => (
+                  <span key={p.name} className="text-[10.5px] rounded-full bg-white border border-amber-300 px-2 py-0.5 text-amber-800">
+                    {p.name} · {Math.round(p.hours)}h · {fmt$(p.payroll)} · {p.cleans} clean{p.cleans === 1 ? '' : 's'}
+                  </span>
+                ))}
+              </div>
+              <p className="text-[10.5px] text-amber-700 mt-1.5">
+                Either they belong on another crew, or this is real housekeeping work that earns nothing — both are worth knowing, and neither should be averaged in silently.
+              </p>
+            </div>
+          )}
+
+          {/* maintenance */}
+          <div className="px-4 pb-1">
+            <p className="text-[10px] uppercase tracking-[0.14em] text-brand-600 font-bold mt-2 mb-1">Maintenance</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12px] tabular-nums">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wide text-muted border-b border-line">
+                    <th className="text-left font-semibold py-1.5 pr-2">Market</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Staff</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Hours</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Payroll</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Billable rev</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Profit</th>
+                    <th className="text-right font-semibold py-1.5 px-2">Margin</th>
+                    <th className="text-right font-semibold py-1.5 pl-2">Tasks priced</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(pnl.maintenance?.markets || []).map((r: any) => (
+                    <tr key={r.key} className="border-b border-line/60">
+                      <td className="text-left py-1.5 pr-2 font-semibold text-ink">{r.label}</td>
+                      <td className="text-right py-1.5 px-2 text-muted">{r.people}</td>
+                      <td className="text-right py-1.5 px-2">{Math.round(r.hours).toLocaleString('en-US')}</td>
+                      <td className="text-right py-1.5 px-2">{fmt$(r.payroll)}</td>
+                      <td className="text-right py-1.5 px-2">{fmt$(r.revenue)}</td>
+                      <td className={'text-right py-1.5 px-2 font-semibold ' + (r.profit >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{fmt$(r.profit)}</td>
+                      <td className={'text-right py-1.5 px-2 ' + (r.profit >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{pct(r.marginPct)}</td>
+                      <td className="text-right py-1.5 pl-2 text-muted">{r.tasksBilled}/{r.tasks}</td>
+                    </tr>
+                  ))}
+                  {pnl.maintenance?.total && (
+                    <tr className="bg-app/60">
+                      <td className="text-left py-2 pr-2 font-black text-ink">{pnl.maintenance.total.label}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{pnl.maintenance.total.people}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{Math.round(pnl.maintenance.total.hours).toLocaleString('en-US')}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{fmt$(pnl.maintenance.total.payroll)}</td>
+                      <td className="text-right py-2 px-2 font-semibold">{fmt$(pnl.maintenance.total.revenue)}</td>
+                      <td className={'text-right py-2 px-2 font-black ' + (pnl.maintenance.total.profit >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{fmt$(pnl.maintenance.total.profit)}</td>
+                      <td className={'text-right py-2 px-2 font-black ' + (pnl.maintenance.total.profit >= 0 ? 'text-emerald-700' : 'text-rose-600')}>{pct(pnl.maintenance.total.marginPct)}</td>
+                      <td className="text-right py-2 pl-2 font-semibold">{pnl.maintenance.total.tasksBilled}/{pnl.maintenance.total.tasks}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* the maintenance margin, explained by the thing that causes it */}
+          {pnl.quality?.maintUnpricedPct > 0 && (
+            <div className="mx-4 my-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+              <p className="text-[11.5px] text-amber-900">
+                <b>{pnl.quality.maintTasksNoCharge} of {pnl.quality.maintTasks} maintenance tasks ({pct(pnl.quality.maintUnpricedPct)}) have no charge entered.</b>{' '}
+                The margin above is what we billed, not what we did — a task with no price is indistinguishable from free work here, and it is the single biggest reason maintenance reads negative.
+              </p>
+            </div>
+          )}
+
+          {/* what would make these numbers wrong */}
+          <div className="mx-4 mb-4 rounded-xl border border-line bg-app/50 px-3 py-2.5">
+            <p className="text-[10px] uppercase tracking-[0.14em] text-muted font-bold mb-1.5">What could still be wrong</p>
+            <ul className="text-[11.5px] text-body space-y-1">
+              <li>
+                {pnl.reconciles?.housekeeping?.payrollDelta === 0 && pnl.reconciles?.maintenance?.payrollDelta === 0
+                  ? <span className="text-emerald-700">✓ Markets add to the totals exactly — payroll, hours and cleans all reconcile to zero.</span>
+                  : <span className="text-rose-600">Markets do not add to the totals — HK payroll off by {fmt$(pnl.reconciles?.housekeeping?.payrollDelta)}, maintenance off by {fmt$(pnl.reconciles?.maintenance?.payrollDelta)}.</span>}
+              </li>
+              <li>
+                {pnl.quality?.payrollComplete
+                  ? <span className="text-emerald-700">✓ Every Homebase week in this window came back — payroll is complete.</span>
+                  : <span className="text-rose-600">Homebase failed for {(pnl.quality?.failedWeeks || []).join(', ')} — every payroll figure above is understated.</span>}
+              </li>
+              {(pnl.quality?.rateOutliers || []).length > 0 && (
+                <li className="text-amber-800">
+                  {pnl.quality.rateOutliers.map((r: any) => `${r.name} reads $${r.impliedRate}/hr against ${Math.round(r.hours)} hours`).join('; ')} — far under everyone else, so their wage data is probably incomplete and their crew&apos;s payroll is understated.
+                </li>
+              )}
+              {(pnl.quality?.workedNoPay || []).length > 0 && (
+                <li className="text-amber-800">
+                  {pnl.quality.workedNoPay.map((r: any) => `${r.name} turned ${r.cleans} unit${r.cleans === 1 ? '' : 's'} with no Homebase hours at all`).join('; ')} — those cleans are in the denominator with no wages behind them, which pulls cost per clean down.
+                </li>
+              )}
+              {pnl.quality?.cleansNoAssignee > 0 && (
+                <li className="text-amber-800">
+                  {pnl.quality.cleansNoAssignee} departure cleans have nobody assigned in Breezeway, so they cannot be counted or credited to anyone.
+                </li>
+              )}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* TODAY — in-day decisions */}
       {tdy && (
