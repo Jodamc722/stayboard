@@ -30,7 +30,7 @@ export default function OpsPlanPage() {
         <div className="flex items-center gap-3 flex-wrap mt-1">
           <h1 className="text-3xl font-bold text-ink tracking-tight">Today in Ops</h1>
           {/* Paper copy of the day for whoever is running the field. */}
-          <Link href="/plan/print" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5 text-muted hover:text-ink"
+          <Link href="/plan/print" className="hidden sm:inline-flex text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app items-center gap-1.5 text-muted hover:text-ink"
             title="Printable day sheet: arrivals, departures, owner stays, work orders, open issues and vacant units">
             Day sheet &rarr;
           </Link>
