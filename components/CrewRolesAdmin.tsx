@@ -45,6 +45,12 @@ type Person = {
   hours: number; payroll: number | null
   homebaseRole: string | null; staffRole: string | null
   agency: string | null; area: string | null
+  // Pay rides the same record as the crew (migration 057) — one row per person, one place to edit.
+  title?: string | null
+  salaried?: boolean
+  salaryHourly?: number | null
+  salaryHoursPerWeek?: number | null
+  salaryAnnual?: number | null
   tasks: Tasks
 }
 type Opt = { key: string; label: string }
@@ -58,6 +64,8 @@ type Data = {
   outside: { people: number; names: string[]; tasks: number }
   from: string; to: string; days: number
   payrollComplete: boolean
+  /** false = migration 057 not applied, so crew and pay cannot persist to the staff row yet. */
+  singleSource?: boolean
 }
 
 const money = (n: number | null | undefined) => (n == null ? '—' : '$' + Math.round(n).toLocaleString('en-US'))
@@ -78,7 +86,12 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
   const [msg, setMsg] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [edits, setEdits] = useState<Record<string, string>>({})
-  const [staffEdits, setStaffEdits] = useState<Record<string, { agency?: string; area?: string; role?: string }>>({})
+  type StaffEdit = {
+    agency?: string; area?: string; role?: string; title?: string
+    salaried?: boolean; salaryHourly?: string; salaryHoursPerWeek?: string; salaryAnnual?: string
+  }
+  const [staffEdits, setStaffEdits] = useState<Record<string, StaffEdit>>({})
+  const [consolidating, setConsolidating] = useState(false)
   const [q, setQ] = useState('')
   const [onlyGaps, setOnlyGaps] = useState(false)
 
@@ -96,8 +109,35 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
   const agencyOf = (p: Person) => (staffEdits[p.name]?.agency ?? (p.agency || ''))
   const areaOf = (p: Person) => (staffEdits[p.name]?.area ?? (p.area || ''))
   const roleOf = (p: Person) => (staffEdits[p.name]?.role ?? (p.staffRole || ''))
-  const setStaff = (name: string, patch: { agency?: string; area?: string; role?: string }) =>
+  const setStaff = (name: string, patch: StaffEdit) =>
     setStaffEdits(s => ({ ...s, [name]: { ...s[name], ...patch } }))
+  const salariedOf = (p: Person) => (staffEdits[p.name]?.salaried ?? !!p.salaried)
+  const payOf = (p: Person, k: 'salaryHourly' | 'salaryHoursPerWeek' | 'salaryAnnual') => {
+    const pend = staffEdits[p.name]?.[k]
+    if (pend !== undefined) return pend
+    const v = p[k]
+    return v == null ? '' : String(v)
+  }
+  // What this person costs a week on the rate as stated — the same arithmetic lib/salary uses,
+  // shown live while you type so a typo is obvious before it reaches a margin.
+  const weeklyOf = (p: Person): number | null => {
+    const h = Number(payOf(p, 'salaryHourly')), hw = Number(payOf(p, 'salaryHoursPerWeek')) || 40
+    if (Number.isFinite(h) && h > 0) return Math.round(h * hw * 100) / 100
+    const a = Number(payOf(p, 'salaryAnnual'))
+    if (Number.isFinite(a) && a > 0) return Math.round((a / 52) * 100) / 100
+    return null
+  }
+
+  async function consolidate() {
+    setConsolidating(true); setErr(null); setMsg(null)
+    try {
+      const r = await fetch('/api/settings/crew-roles', { method: 'POST' })
+      const j = await r.json()
+      if (!r.ok || !j?.ok) throw new Error(j?.error || 'Could not consolidate.')
+      setMsg(`${j.written} ${j.written === 1 ? 'person now states their crew' : 'people now state their crew'} on their own record; ${j.skipped} already did or are still unplaced. Nobody changed crews.`)
+      load()
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setConsolidating(false) }
+  }
   const dirty = Object.keys(edits).length > 0 || Object.keys(staffEdits).length > 0
 
   const rows = useMemo(() => {
@@ -126,6 +166,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         j.staffSaved ? `${j.staffSaved} employment/market change${j.staffSaved === 1 ? '' : 's'}` : '',
       ].filter(Boolean)
       if (Array.isArray(j.staffErrors) && j.staffErrors.length) setErr(`Some rows did not save — ${j.staffErrors.join('; ')}`)
+      else if (j.migrationPending) setErr('Crew and pay could not be written to the staff record — migration 057 has not been applied. The crew is still held in settings, so nothing was lost, but this page is not yet the single source.')
       setMsg(`Saved${bits.length ? ' — ' + bits.join(', ') : ''}. Every labor number recalculates from here.`)
       load()
     } catch (e: any) { setErr(e.message || String(e)) } finally { setSaving(false) }
@@ -140,8 +181,23 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
           Which crew a person is on decides which margin their wages land in. It is a fact about employment,
           so it is <b className="text-ink">stated here</b>, never inferred from last week&apos;s task list.
           Hours and payroll are Homebase; the task mix beside them is Breezeway, shown as context only.
+          Crew, role, market, agency and pay all live on <b className="text-ink">one record per person</b> — this one.
         </p>
         <div className="flex items-center gap-2 shrink-0">
+          {d && d.singleSource === false && (
+            <span className="text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5">
+              Migration 057 not applied
+            </span>
+          )}
+          {d && d.singleSource !== false && (
+            <button
+              onClick={consolidate}
+              disabled={consolidating}
+              title="Write every person's current crew onto their own record. Nobody changes crews — the answer they already have stops being re-derived from five places and becomes a stated fact."
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:bg-app disabled:opacity-60">
+              {consolidating ? <Loader2 size={13} className="animate-spin" /> : <Users2 size={13} />} Pull everyone onto one record
+            </button>
+          )}
           {dirty && <span className="text-[11.5px] font-semibold text-amber-700">{new Set([...Object.keys(edits), ...Object.keys(staffEdits)]).size} unsaved</span>}
           <button
             onClick={() => {
@@ -215,11 +271,11 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
       </div>
 
       <div className="rounded-xl border border-line bg-white overflow-x-auto">
-        <table className="w-full text-[12.5px] min-w-[820px]">
+        <table className="w-full text-[12.5px] min-w-[980px]">
           <thead>
             <tr className="border-b border-line text-left">
-              {['Person', 'Crew', 'Role', 'Agency / W2', 'Market', 'Hours', 'Payroll', 'Breezeway (context only)'].map((h, i) => (
-                <th key={i} className={`px-2.5 py-2 text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap ${i === 5 || i === 6 ? 'text-right' : ''}`}>{h}</th>
+              {['Person', 'Crew', 'Role', 'Agency / W2', 'Market', 'Pay', 'Hours', 'Payroll', 'Breezeway (context only)'].map((h, i) => (
+                <th key={i} className={`px-2.5 py-2 text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap ${i === 6 || i === 7 ? 'text-right' : ''}`}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -291,6 +347,51 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
                       className={`rounded-lg border bg-white px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60 ${!areaOf(p) ? 'border-amber-300 text-amber-700' : staffEdits[p.name]?.area !== undefined ? 'border-brand-300 text-brand-700 font-semibold' : 'border-line text-ink'}`}>
                       {(d?.areas || []).map(x => <option key={x.key} value={x.key}>{x.label}</option>)}
                     </select>
+                  </td>
+                  {/* PAY — on the same record as the crew (Jon, 2026-08-26: one source of data).
+                      Salaried means the salary IS the cost: Homebase punches stay visible in the
+                      two columns to the right for comparison, and are never charged. */}
+                  <td className="px-2.5 py-2 align-top whitespace-nowrap">
+                    <label className="inline-flex items-center gap-1 text-[11px] text-muted cursor-pointer">
+                      <input
+                        type="checkbox" disabled={!isOwner}
+                        checked={salariedOf(p)}
+                        onChange={e => setStaff(p.name, { salaried: e.target.checked })}
+                        className="accent-brand-600"
+                      />
+                      Salary
+                    </label>
+                    {salariedOf(p) && (
+                      <div className="mt-1 flex items-center gap-1">
+                        <input
+                          value={payOf(p, 'salaryHourly')} disabled={!isOwner} inputMode="decimal" placeholder="$/hr"
+                          onChange={e => setStaff(p.name, { salaryHourly: e.target.value })}
+                          title="Hourly rate as stated. With hours a week, this is the weekly cost."
+                          className="w-14 rounded-lg border border-line bg-white px-1.5 py-1 text-[12px] tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60"
+                        />
+                        <span className="text-[10px] text-muted">×</span>
+                        <input
+                          value={payOf(p, 'salaryHoursPerWeek')} disabled={!isOwner} inputMode="decimal" placeholder="40"
+                          onChange={e => setStaff(p.name, { salaryHoursPerWeek: e.target.value })}
+                          title="Hours a week. Blank counts as 40 — a half-typed rate must never read as a free employee."
+                          className="w-11 rounded-lg border border-line bg-white px-1.5 py-1 text-[12px] tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60"
+                        />
+                        <span className="text-[10px] text-muted">h/wk</span>
+                      </div>
+                    )}
+                    {salariedOf(p) && (
+                      <div className="mt-1 text-[10px] text-muted">
+                        {weeklyOf(p) != null
+                          ? <>= <b className="text-ink tabular-nums">${weeklyOf(p)!.toLocaleString('en-US')}</b>/wk</>
+                          : <span className="text-amber-700">rate not set — they will cost nothing</span>}
+                        {p.hours > 0 && weeklyOf(p) != null && (
+                          <span title="What the clock said over this window, for comparison only. The salary is what gets charged.">
+                            {' '}· clock {money(p.payroll)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {!salariedOf(p) && <div className="mt-1 text-[10px] text-muted">hourly, from Homebase</div>}
                   </td>
                   <td className="px-2.5 py-2 text-right tabular-nums text-ink whitespace-nowrap align-top">{p.hours ? p.hours.toLocaleString() + 'h' : '—'}</td>
                   <td className="px-2.5 py-2 text-right tabular-nums text-ink whitespace-nowrap align-top">{money(p.payroll)}</td>
