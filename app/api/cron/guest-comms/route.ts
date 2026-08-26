@@ -54,7 +54,13 @@ async function run(req: NextRequest) {
   // "how fast did we answer" is never fresher or staler than the inbox it is made of. Anything that
   // moved in the last two days is re-derived; the rest is already settled and does not change.
   try {
-    out.responseTimes = await refreshResponseStats({ sinceHours: 48 })
+    // 48h on the schedule keeps the recurring pass cheap. `?hours=2160&convos=2000` is the
+    // backfill lever — worth running once after any change to how a reply is counted, otherwise
+    // "how fast were we last month" stays unanswerable until a month has gone by.
+    out.responseTimes = await refreshResponseStats({
+      sinceHours: Math.min(Math.max(Number(sp.get('hours')) || 48, 1), 24 * 120),
+      limit: Math.min(Math.max(Number(sp.get('convos')) || 400, 1), 2000),
+    })
   } catch (e: any) {
     out.responseTimesError = String(e?.message || e).slice(0, 200)
   }
