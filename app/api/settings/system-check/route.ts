@@ -95,6 +95,52 @@ export async function GET() {
     }
   } catch { /* the table is optional; its absence is not a finding worth shouting about */ }
 
+  // ── REVIEWS, PER CHANNEL. THE ONE THAT ACTUALLY BIT US ──────────────────────────────────────
+  //
+  // Airbnb is ~78% of every review this portfolio has ever received, and it stopped on 2026-08-14.
+  // The sync ran perfectly every two hours the whole time — it was faithfully mirroring a Guesty
+  // that had stopped receiving them. "Did the job run" stayed green while the data starved.
+  //
+  // A per-channel detector was built for exactly this on 2026-08-21 and its Slack alerts were
+  // switched off the next day at Jon's request ("get rid of the airbnb review messages"). That was
+  // the right call about Slack and it left the finding with nowhere to land. So it lands here, on
+  // the screen someone opens when they are asking why something is not working — no new noise in a
+  // channel, and no silence either.
+  //
+  // Per channel, because a portfolio-wide "newest review" is exactly the number that stayed healthy
+  // through the outage: Booking.com trickled in one every few days and covered for the silence.
+  const reviewChecks: Check[] = []
+  try {
+    const since = new Date(Date.now() - 60 * 86400000).toISOString()
+    const { data } = await db.from('guesty_reviews').select('channel,created_at').gte('created_at', since).limit(4000)
+    const newest: Record<string, string> = {}
+    for (const r of ((data || []) as any[])) {
+      const ch = String(r.channel || 'Other')
+      const at = String(r.created_at || '')
+      if (at && (!newest[ch] || at > newest[ch])) newest[ch] = at
+    }
+    for (const ch of Object.keys(newest).sort()) {
+      const days = Math.floor((Date.now() - new Date(newest[ch]).getTime()) / 86400000)
+      // Airbnb runs daily here; the smaller channels genuinely go quiet for a week without anything
+      // being wrong. One bar would either cry wolf on Vrbo or stay silent on Airbnb.
+      const limit = /airbnb/i.test(ch) ? 4 : 14
+      reviewChecks.push({
+        key: 'reviews:' + ch, label: 'Reviews arriving — ' + ch, ok: days <= limit, area: 'Reviews',
+        breaks: 'Nothing new from ' + ch + ' for ' + days + ' day' + (days === 1 ? '' : 's') +
+          '. The sync is running; the reviews are not reaching Guesty, so nothing downstream of them fires either — no reply drafts, no bad-review inspections.',
+        fix: 'Check the ' + ch + ' connection inside Guesty (channel integrations) and compare against the ' + ch +
+          ' host dashboard. If reviews exist there and not in Guesty, it is the channel link that needs re-authorising — nothing in this app will fix it.',
+      })
+    }
+    if (!Object.keys(newest).length) {
+      reviewChecks.push({
+        key: 'reviews:none', label: 'Reviews arriving', ok: false, area: 'Reviews',
+        breaks: 'No review has landed from any channel in 60 days.',
+        fix: 'Check the Guesty credentials above, then run a sync from the Integrations page.',
+      })
+    }
+  } catch { /* the table is hand-created; its absence is not a finding worth shouting about */ }
+
   // ── OPTIONAL TABLES. A missing migration reads as a broken feature to everyone but a developer. ──
   const tables: { t: string; label: string; area: string; breaks: string }[] = [
     { t: 'user_activity', label: 'Activity log table', area: 'Vault → Activity', breaks: 'Per-user activity cannot be recorded or read.' },
@@ -114,7 +160,7 @@ export async function GET() {
     } catch { /* treat an unknown failure as "not a finding" rather than crying wolf */ }
   }))
 
-  const all = env.concat(jobs).concat(tableChecks)
+  const all = env.concat(jobs).concat(reviewChecks).concat(tableChecks)
   return NextResponse.json({
     ok: true,
     checkedAt: new Date().toISOString(),
