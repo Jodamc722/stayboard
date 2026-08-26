@@ -30,7 +30,7 @@ import { upcomingAutoInspections } from './auto-inspections'
 import { vacantWork, vacantWorkSummary, type VacantWork } from './vacant-work'
 import { maintData } from './maint-brief'
 import { translator, type BriefLang } from './brief-lang'
-import { catOfTask, stateOfTask, CAT_ORDER, CAT_LABEL, type TaskCat } from './task-categories'
+import { catOfTaskWith, stateOfTask, resolveCats, TASK_CATS_KEY, type CatDef } from './task-categories'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -60,6 +60,9 @@ async function gather(variant: BriefVariant) {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const presets = await getOpsPresets()
+  // The taxonomy is editable (Users & admin -> Task categories); the brief reads the same saved
+  // rules the board does, so the email and the screen can never disagree about what a task is.
+  const taskCats = resolveCats(await getSetting<any>(TASK_CATS_KEY, null).catch(() => null))
   const VENDOR = vendorRegex(presets.vendorBuildings)
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString()
   const dayAgo = new Date(Date.now() - 26 * 3600000).toISOString()   // "new since yesterday's brief"
@@ -379,7 +382,7 @@ async function gather(variant: BriefVariant) {
   return {
     // THE BOARD, IN THE BRIEF (Jon, 2026-08-25). Computed here because this is where today's
     // Breezeway rows and the variant's market scope already are — no second query.
-    board: boardAtAGlance((tRes.data || []) as any[], inVariant),
+    board: boardAtAGlance((tRes.data || []) as any[], inVariant, taskCats),
     today, sheet, cleans, hkOther, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
     forward, lookaheadDays: LOOK_D,
     rep: { n: allRevs.length, avg, five, owed }, watch30,
@@ -456,23 +459,24 @@ function card(title: string, count: number | null, inner: string, accent = '#636
 // It is scoped by whatever the brief is already scoped to: the Broward day sheet counts Broward's
 // board, the full brief counts the portfolio. Rows with nothing on them are dropped — a table of
 // zeroes teaches nobody anything.
-type BoardRow = { cat: TaskCat; total: number; done: number; running: number; open: number }
-function boardAtAGlance(rows: any[], inScope: (lid: string) => boolean): BoardRow[] {
+type BoardRow = { cat: string; label: string; total: number; done: number; running: number; open: number }
+function boardAtAGlance(rows: any[], inScope: (lid: string) => boolean, cats: CatDef[]): BoardRow[] {
   const by: Record<string, BoardRow> = {}
-  for (const c of CAT_ORDER) by[c] = { cat: c, total: 0, done: 0, running: 0, open: 0 }
+  for (const c of cats) by[c.key] = { cat: c.key, label: c.label, total: 0, done: 0, running: 0, open: 0 }
   for (const t of rows) {
     const status = str(t.status).toLowerCase()
     if (/delete|cancel/.test(status)) continue
     if (!inScope(String(t.reference_property_id))) continue
-    const cat = catOfTask({ name: str(t.name), dept: str(t.type_department) })
+    const cat = catOfTaskWith(cats, { name: str(t.name), dept: str(t.type_department) })
     const st = stateOfTask({ status, started_at: t.started_at, finished_at: t.finished_at })
     const r = by[cat]
+    if (!r) continue
     r.total++
     if (st === 'done') r.done++
     else if (st === 'running') r.running++
     else r.open++
   }
-  return CAT_ORDER.map(c => by[c]).filter(r => r.total > 0)
+  return cats.map(c => by[c.key]).filter(r => r && r.total > 0)
 }
 
 function boardCard(rows: BoardRow[], when: string, href: string): string {
@@ -490,7 +494,7 @@ function boardCard(rows: BoardRow[], when: string, href: string): string {
   }
   const body = rows.map(r => `
     <tr><td style="${S.td};width:42%">
-      <b style="font-size:13px">${CAT_LABEL[r.cat]}</b>
+      <b style="font-size:13px">${esc(r.label)}</b>
       <div style="margin-top:4px">${bar(r)}</div>
     </td>
     <td style="${S.td};text-align:right;white-space:nowrap;font-size:12px">
