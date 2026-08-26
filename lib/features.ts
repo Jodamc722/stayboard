@@ -17,7 +17,10 @@ export const GROUP_ORDER = ['Overview', 'Guests', 'Operations', 'Portfolio', 'Mo
 
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Command Center',    path: '/command', group: 'Overview' },
-  { key: 'home',          label: 'Home',              path: '/', group: 'Overview' },
+  // Moved off '/' 2026-08-24 (Jon: "home page is a bust"). The KEY stays `home` on purpose — it is
+  // what per-role permissions are stored against, so renaming it would silently reset everyone's
+  // access to this page. Only the path, label and group moved.
+  { key: 'home',          label: 'KPI board',         path: '/kpi', group: 'Money' },
   // Eve (2026-08-19, Jon): "Eve should only be for Admin and up users." Registering her as a real
   // feature key replaces the hardcoded jon@-only check that used to live in /api/agent, so she is
   // owner + admin out of the box AND can be switched on for one more role from the Roles grid
@@ -161,7 +164,7 @@ export function isOpenPath(path: string): boolean {
 // answer, it enforces its own owner/admin check inside the page, and the token is one-time. It gets
 // no role setting because it should never appear in anyone's nav — you arrive at it or you don't.
 // NOT in OPEN_PREFIXES on purpose: releasing a door code must require a login, unlike /approve/.
-export const UNGATED_PAGES = ['/users', '/stay-window', '/welcome/password', '/doorcode']
+export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
@@ -247,6 +250,10 @@ export function legacyLevels(ws: any, features?: Record<string, any> | null): Re
 
 // Landing for a level map: preferred landing if visible, else first visible page, else /no-access.
 export function landingFor(levels: Record<string, Level>, preferred?: string | null): string {
+  // '/' is no longer a page, it is a redirect to /plan. Roles saved before 2026-08-24 still hold
+  // '/' as their landing; translate it rather than letting the lookup miss and drop them on
+  // whatever happens to be the first visible feature.
+  if (preferred === '/') preferred = '/plan'
   if (preferred) {
     const hit = FEATURES.find(f => f.path === preferred)
     if (hit && levels[hit.key] !== 'off') return hit.path
