@@ -175,6 +175,28 @@ async function syncFeed(feed: Feed, month: string, today: string): Promise<FeedR
       Object.assign(rep, coverage(rows, ['month', 'account', 'account_name', 'unit', 'kind', 'amount']))
       break
     }
+    case 'projections': {
+      // His Bear / Base / Bull month-end forecast. Every vintage is kept (`as_of` is part of the
+      // key) because a forecast that overwrites yesterday's cannot be judged later.
+      const recs: any[] = []
+      for (const r of rows) {
+        const m = ym(pick(r, 'month')); if (!m) continue
+        const asOf = (pick(r, 'as_of') || today).slice(0, 10)
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) continue
+        const lid = pick(r, 'listing_id'), b = pick(r, 'building')
+        recs.push({
+          month: m, scenario: (pick(r, 'scenario') || 'base').toLowerCase(), as_of: asOf,
+          scope: lid ? 'unit:' + lid : b ? 'building:' + b : 'portfolio',
+          nights_sold: num(pick(r, 'nights_sold')), occupancy: num(pick(r, 'occupancy')), adr: num(pick(r, 'gross_adr')),
+          net_accom: num(pick(r, 'net_accom')), net_cleaning: num(pick(r, 'net_cleaning')),
+          mgmt_fee: num(pick(r, 'mgmt_fee')), other_revenue: num(pick(r, 'other_revenue')), total: num(pick(r, 'total')),
+          raw: r, synced_at: new Date().toISOString(),
+        })
+      }
+      await upsert('rev_projection', recs, 'month,scenario,as_of,scope')
+      Object.assign(rep, coverage(rows, ['month', 'scenario', 'as_of', 'net_accom', 'total', 'occupancy']))
+      break
+    }
     default:
       // assumptions · reservations · status — raw landing only until the columns are agreed.
       break
@@ -228,6 +250,7 @@ async function run(req: NextRequest) {
   for (const f of ['official-prior', 'budget', 'owner-map', 'building-config'] as Feed[]) if (want(f)) jobs.push(() => syncFeed(f, '', today))
   if (want('unit-month')) for (const m of months) jobs.push(() => syncFeed('unit-month', m, today))
   if (want('pnl')) jobs.push(() => syncFeed('pnl', '', today))
+  if (want('projections')) jobs.push(() => syncFeed('projections', '', today))
   for (const f of ['assumptions', 'reservations', 'status'] as Feed[]) if (want(f)) jobs.push(() => syncFeed(f, '', today))
 
   const reps: FeedReport[] = []
