@@ -173,6 +173,27 @@ export function canSeeMoney(access: Pick<Access, 'email' | 'features'>): boolean
   return (access.features as any)?.money === true
 }
 
+// ---- Door codes (Jon, 2026-08-26). Same shape as canSeeMoney and for the same reason: a door code
+// is physical access to a home that may have a guest asleep in it, so the answer has to come from
+// something explicitly set for that person, never from a role default and never from a missing
+// value. An unset user, an un-migrated row, a new hire — all of them land on 'off'.
+//
+// The owner is 'direct' by email, not by the stored value, so no edit to any row can lock him out
+// of his own building at midnight. getAccess() short-circuits for SUPERADMIN before it reads
+// app_users anyway, so his `features` is always {}.
+export type DoorCodePolicy = 'off' | 'ask' | 'direct'
+export function doorCodePolicy(access: Pick<Access, 'email' | 'features'>): DoorCodePolicy {
+  if (isSuperadmin(access.email)) return 'direct'
+  const v = String((access.features as any)?.door_codes || '').toLowerCase()
+  return v === 'direct' ? 'direct' : v === 'ask' ? 'ask' : 'off'
+}
+
+/** May this person release SOMEONE ELSE'S parked request. Never their own — see releaseByToken. */
+export function canApproveDoorCodes(access: Pick<Access, 'email' | 'features'>): boolean {
+  if (isSuperadmin(access.email)) return true
+  return (access.features as any)?.door_code_approver === true
+}
+
 // ---- Central write guard for API routes. ----
 // Usage:  const g = await requireLevel('glitches', 'edit'); if (!g.ok) return g.res
 // Semantics: signed-out → 401. Signed in but below the needed level on that feature → 403 with a

@@ -117,12 +117,37 @@ export const FEATURES: Feature[] = [
 //
 // Deliberately no `path:` field — scripts/check-tabs.mjs scrapes this file for `path: '...'` to
 // build the route census, and a pathless entry here must not look like a page to it.
-export const EXTRA_PERMS: { key: string; label: string; blurb: string }[] = [
+// A permission is either a plain on/off, or a CHOICE of named states. Door codes needed the second
+// kind: "can this person have one at all" and "do they need someone to approve it" are one decision
+// with three answers, not two booleans that can contradict each other.
+export type ExtraPerm = {
+  key: string; label: string; blurb: string
+  /** Absent = boolean. Present = one of these values, first entry is the default. */
+  choices?: { value: string; label: string; blurb: string }[]
+}
+export const EXTRA_PERMS: ExtraPerm[] = [
   { key: 'money', label: 'Dollar amounts',
     blurb: 'See revenue, payroll, wages and margins as amounts. Off = the same boards in percentages.' },
+  // DOOR CODES (Jon, 2026-08-26): "It should be dependent on user setting, in the app. Only
+  // specific users get codes… all codes released must be approved, except for me, Jon the owner."
+  // Default is 'off' and it is the FIRST entry on purpose — a person with no setting yet, a new
+  // hire, a row written before this shipped, all resolve to no access rather than to some access.
+  { key: 'door_codes', label: 'Door codes', blurb: 'Whether this person can get a door code from Eve, and whether it needs approving first.',
+    choices: [
+      { value: 'off',    label: 'No access',        blurb: 'Eve will not look one up for them at all.' },
+      { value: 'ask',    label: 'Ask for approval', blurb: 'They can request. It parks and goes to the approvals channel in Slack; an approver releases it.' },
+      { value: 'direct', label: 'Direct',           blurb: 'The code comes straight back, no approval. Still checked for occupancy and still written to the audit trail.' },
+    ] },
+  { key: 'door_code_approver', label: 'Approve door codes',
+    blurb: 'Can release someone else\u2019s parked request. Nobody can approve their own, whatever this says.' },
 ]
 export function isExtraPerm(key: string): boolean {
   return EXTRA_PERMS.some(p => p.key === key)
+}
+/** The allowed values for a choice-style permission, or null if it is a plain boolean. */
+export function extraPermChoices(key: string): string[] | null {
+  const p = EXTRA_PERMS.find(x => x.key === key)
+  return p?.choices ? p.choices.map(c => c.value) : null
 }
 
 // ---- Route census (2026-08-06). The build-time check (scripts/check-tabs.mjs, run from

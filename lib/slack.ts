@@ -225,6 +225,26 @@ export async function fetchChannels(): Promise<SlackChannel[]> {
  * The cached directory. Slack rate-limits users.list hard (tier 2), and the admin screen and every
  * alert both want it, so it lives in app_settings for 6 hours. `force` refetches.
  */
+/**
+ * Slack user id -> the email on their Slack profile, from the cached workspace roster.
+ *
+ * This is how a request that arrives from Slack becomes a request from a PERSON: the slash command
+ * carries only a user id, and door codes are decided per person. Returns null when the roster is
+ * cold, the bot is not connected, or the profile has no email — and every caller treats null as
+ * "unknown person", which resolves to no access. Never guess from the display name: `user_name` is
+ * a nickname anyone can change, and two people can share one.
+ */
+export async function emailForSlackUser(slackUserId: string): Promise<string | null> {
+  const id = String(slackUserId || '').trim()
+  if (!id) return null
+  try {
+    const dir = await getDirectory()
+    const hit = (dir.users || []).find((u: any) => u && u.id === id && !u.deleted && !u.bot)
+    const email = String((hit as any)?.email || '').trim().toLowerCase()
+    return email || null
+  } catch { return null }
+}
+
 export async function getDirectory(force?: boolean): Promise<Directory> {
   if (!force) {
     const cached = await getSetting<Directory>(DIRECTORY_KEY, EMPTY_DIRECTORY)
