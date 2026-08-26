@@ -5,8 +5,9 @@
 // head: everything she believes (editable, deletable, reweighable), how she sounds, what she has
 // recommended and how those calls actually graded, and a button to make her learn RIGHT NOW.
 import { useState, useEffect, useCallback } from 'react'
-import { Brain, Mic, Compass, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send } from 'lucide-react'
+import { Brain, Mic, Compass, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen } from 'lucide-react'
 import { TelegramAdmin } from '@/components/TelegramAdmin'
+import { EveDocsAdmin } from '@/components/EveDocsAdmin'
 
 type Memory = {
   id: string; kind: string; text: string; why: string | null; scope: string; weight: number
@@ -28,11 +29,11 @@ const card = 'bg-white border border-line rounded-2xl shadow-soft'
 const input = 'w-full text-sm text-ink bg-app border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200'
 
 export function EveAdmin({ canEdit }: { canEdit: boolean }) {
-  const [tab, setTab] = useState<'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram'>('memory')
+  const [tab, setTab] = useState<'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'>('memory')
   return (
     <div>
       <div className="flex items-center gap-1 mb-3 border-b border-line">
-        {([['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send]] as const).map(([k, label, Icon]) => (
+        {([['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send], ['docs', 'Library', BookOpen]] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors ${tab === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
             <Icon size={13} /> {label}
@@ -45,6 +46,7 @@ export function EveAdmin({ canEdit }: { canEdit: boolean }) {
       {tab === 'approvals' && <EveApprovalsAdmin canEdit={canEdit} />}
       {tab === 'audits' && <EveAuditsAdmin canEdit={canEdit} />}
       {tab === 'telegram' && <TelegramAdmin canEdit={canEdit} />}
+      {tab === 'docs' && <EveDocsAdmin canEdit={canEdit} />}
     </div>
   )
 }
