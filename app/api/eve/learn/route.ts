@@ -10,6 +10,7 @@ import { generateQuestions } from '@/lib/eve/questions'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { recordRun } from '@/lib/automation-runs'
+import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -37,13 +38,19 @@ function parseJson(raw: string): any | null {
 // portfolio shape and Eve's own failures — see lib/eve/sweep.ts for why those count records rather
 // than asking a model what is true.
 export async function POST(req: NextRequest) {
-  // Auth: allow the Vercel cron (CRON_SECRET bearer) OR a logged-in user.
-  const authHeader = req.headers.get('authorization') || ''
-  const cronOk = !!process.env.CRON_SECRET && authHeader === ('Bearer ' + process.env.CRON_SECRET)
-  if (!cronOk) {
+  // AUTH (fixed 2026-08-26). Was bearer-or-session; CRON_SECRET has never been set, so the
+  // scheduler got a 401 four times a day and this pass has never once run on its own. It spends
+  // real money (the FAQ/complaint phase calls Anthropic), so without a secret it runs for anyone —
+  // but never more than once every three hours. See lib/cron-auth.ts.
+  const allowed = cronAllowed(req)
+  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!allowed.viaSecret) {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    if (!user) {
+      const skip = await tooSoon('eve-learn', 170)
+      if (skip) return NextResponse.json({ ok: true, ...skip })
+    }
   }
   const days = Math.min(120, Math.max(7, Number(new URL(req.url).searchParams.get('days')) || 60))
 
