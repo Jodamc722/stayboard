@@ -1,0 +1,125 @@
+// SYSTEM CHECK — why a settings panel you just filled in is not doing anything.
+//
+// Jon, 2026-08-26: "we need this to be operated without the need of Claude." A large share of the
+// times somebody needed me, the actual problem was not the setting — it was that the feature behind
+// the setting had no key, no token, or no table, and NOTHING in the app said so. You could
+// configure the Vault all afternoon and every save would 503 because VAULT_KEY was never set on the
+// server, and the screen would never mention it.
+//
+// So this reports, in one place: which server-side secrets are present, which background jobs have
+// actually run recently, and which optional tables exist. It answers "is this thing alive?" without
+// anyone reading a log or opening Vercel.
+//
+// IT NEVER RETURNS A SECRET. Every env check is `!!process.env.X` — a boolean and a name, never a
+// value. That is deliberate and must stay that way: this endpoint is read by a browser.
+import { NextResponse } from 'next/server'
+import { getAccess } from '@/lib/access'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 30
+
+type Check = {
+  key: string
+  label: string
+  ok: boolean
+  area: string          // which settings panel this powers, so a red row points somewhere
+  breaks: string        // what stops working, in the operator's words
+  fix: string           // what a human does about it
+}
+
+const has = (...names: string[]) => names.every(n => !!process.env[n])
+
+export async function GET() {
+  const access = await getAccess()
+  if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+
+  const env: Check[] = [
+    {
+      key: 'vault', label: 'Vault encryption key', ok: has('VAULT_KEY'), area: 'Vault',
+      breaks: 'Saving or revealing any stored credential fails. The Vault opens but every write returns an error.',
+      fix: 'Generate one with `openssl rand -hex 32`, add it in Vercel as VAULT_KEY, redeploy. Keep a copy somewhere safe — losing it makes existing secrets unreadable.',
+    },
+    {
+      key: 'homebase', label: 'Homebase (timeclock)', ok: has('HOMEBASE_API_KEY', 'HOMEBASE_LOCATION_UUID'), area: 'Labor & billable hours',
+      breaks: 'Every hours, labor-cost and payroll number. Billable Hours and the labor brief go blank.',
+      fix: 'Homebase → API access. Add HOMEBASE_API_KEY and HOMEBASE_LOCATION_UUID in Vercel, redeploy.',
+    },
+    {
+      key: 'email', label: 'Outbound email', ok: has('RESEND_API_KEY', 'NOTIFY_FROM_EMAIL'), area: 'Morning brief, front-desk notices',
+      breaks: 'No email leaves the building — briefs, notices and digests only appear on the in-app bell.',
+      fix: 'Verify the domain at resend.com, then add RESEND_API_KEY and NOTIFY_FROM_EMAIL in Vercel and redeploy. Full steps on the Integrations page.',
+    },
+    {
+      key: 'slack', label: 'Slack', ok: has('SLACK_BOT_TOKEN'), area: 'Slack alerts & rules',
+      breaks: 'Alerts have nowhere to go and the channel pickers come up empty.',
+      fix: 'Connect Slack from the Integrations page, or set SLACK_BOT_TOKEN in Vercel.',
+    },
+    {
+      key: 'ai', label: 'AI (Eve, replies, listing copy)', ok: has('ANTHROPIC_API_KEY'), area: 'Eve, Review voice, Listing AI',
+      breaks: 'Eve, review replies, listing copy and every other AI feature return an error.',
+      fix: 'Add ANTHROPIC_API_KEY in Vercel and redeploy.',
+    },
+    {
+      key: 'cron', label: 'Scheduled jobs secret', ok: has('CRON_SECRET'), area: 'All automations',
+      breaks: 'Nothing breaks outright, but the scheduled jobs are reachable without the shared secret.',
+      fix: 'Set CRON_SECRET in Vercel to any long random string and redeploy.',
+    },
+    {
+      key: 'guesty', label: 'Guesty', ok: has('GUESTY_CLIENT_ID', 'GUESTY_CLIENT_SECRET'), area: 'Reservations, calendar',
+      breaks: 'Reservations, listings and calendar blocks stop syncing — the whole board goes stale.',
+      fix: 'Guesty → integrations → create an API app. Add GUESTY_CLIENT_ID and GUESTY_CLIENT_SECRET in Vercel, redeploy.',
+    },
+    {
+      key: 'breezeway', label: 'Breezeway', ok: has('BREEZEWAY_CLIENT_ID', 'BREEZEWAY_CLIENT_SECRET'), area: 'Today in Ops, task automation',
+      breaks: 'No tasks, no assignment, no templates. Today in Ops has nothing to show.',
+      fix: 'Breezeway → API credentials. Add BREEZEWAY_CLIENT_ID and BREEZEWAY_CLIENT_SECRET in Vercel, redeploy.',
+    },
+  ]
+
+  // ── DID THE JOBS ACTUALLY RUN? A key being present is not the same as the thing working. ──────
+  const db = supabaseAdmin()
+  const jobs: Check[] = []
+  try {
+    const { data } = await db.from('guesty_sync_status').select('entity,last_sync_at').limit(20)
+    for (const r of ((data || []) as any[])) {
+      const at = r.last_sync_at ? new Date(String(r.last_sync_at)) : null
+      const hrs = at ? (Date.now() - at.getTime()) / 3600000 : Infinity
+      jobs.push({
+        key: 'sync:' + r.entity, label: 'Guesty sync — ' + String(r.entity),
+        ok: hrs < 6, area: 'Integrations',
+        breaks: at ? 'Last synced ' + Math.round(hrs) + 'h ago. Anything newer than that is missing from every board.' : 'Never synced.',
+        fix: 'Check the Guesty credentials above, then re-run the sync from the Integrations page.',
+      })
+    }
+  } catch { /* the table is optional; its absence is not a finding worth shouting about */ }
+
+  // ── OPTIONAL TABLES. A missing migration reads as a broken feature to everyone but a developer. ──
+  const tables: { t: string; label: string; area: string; breaks: string }[] = [
+    { t: 'user_activity', label: 'Activity log table', area: 'Vault → Activity', breaks: 'Per-user activity cannot be recorded or read.' },
+    { t: 'app_roles', label: 'Roles table', area: 'Roles', breaks: 'Roles cannot be created or edited; everyone falls back to legacy access.' },
+    { t: 'vault_items', label: 'Vault table', area: 'Vault', breaks: 'Stored credentials have nowhere to live.' },
+  ]
+  const tableChecks: Check[] = []
+  await Promise.all(tables.map(async x => {
+    try {
+      const { error } = await db.from(x.t).select('*', { count: 'exact', head: true }).limit(1)
+      const missing = !!error && /does not exist|could not find the table/i.test(String(error.message))
+      tableChecks.push({
+        key: 'table:' + x.t, label: x.label, ok: !missing, area: x.area,
+        breaks: x.breaks,
+        fix: 'Run the migration for this table in Supabase (supabase/migrations in the repo), then reload.',
+      })
+    } catch { /* treat an unknown failure as "not a finding" rather than crying wolf */ }
+  }))
+
+  const all = env.concat(jobs).concat(tableChecks)
+  return NextResponse.json({
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    healthy: all.filter(c => c.ok).length,
+    total: all.length,
+    checks: all,
+  })
+}
