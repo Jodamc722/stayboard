@@ -20,6 +20,11 @@ export type Agency = {
   active: boolean; notes?: string | null; sort?: number
 }
 
+// ONE RECORD PER PERSON (Jon, 2026-08-26: "make sure all staff and role is pulled from one
+// source of data"). Everything the app needs to know about who somebody is lives on this row:
+// their crew, their job title, their market, who employs them, and what they cost. Migration 057
+// added the second half; the fields are optional here so the app behaves identically whether or
+// not that migration has been applied yet.
 export type StaffRow = {
   name: string
   agency: string | null
@@ -27,6 +32,16 @@ export type StaffRow = {
   area: string | null
   active: boolean
   notes?: string | null
+  /** THE crew. lib/crew reads this first; every other signal is only a seed for a blank. */
+  dept?: string | null
+  /** Where the crew came from, for the People card: 'set here', 'seed:roster', 'seed:homebase'… */
+  deptSource?: string | null
+  title?: string | null
+  /** Paid a salary — the salary IS the cost and punches never drive dollars (see lib/salary). */
+  salaried?: boolean
+  salaryHourly?: number | null
+  salaryHoursPerWeek?: number | null
+  salaryAnnual?: number | null
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -57,6 +72,15 @@ export async function getStaff(includeInactive = false): Promise<StaffRow[]> {
       agency: r.agency ? String(r.agency) : null,
       role: r.role ?? null, area: r.area ?? null,
       active: r.active !== false, notes: r.notes ?? null,
+      // `select('*')` returns whatever columns exist, so these read as undefined until 057 is
+      // applied and the whole app simply falls back to the old ladder. No branch needed.
+      dept: r.dept ?? null,
+      deptSource: r.dept_source ?? null,
+      title: r.title ?? null,
+      salaried: r.salaried === true,
+      salaryHourly: r.salary_hourly == null ? null : num(r.salary_hourly),
+      salaryHoursPerWeek: r.salary_hours_per_week == null ? null : num(r.salary_hours_per_week),
+      salaryAnnual: r.salary_annual == null ? null : num(r.salary_annual),
     }))
     return includeInactive ? rows : rows.filter(s => s.active)
   } catch { return [] }
@@ -115,7 +139,11 @@ export async function upsertAgency(a: Partial<Agency> & { key: string }): Promis
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
 
-export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Promise<{ ok: boolean; error?: string }> {
+// Columns migration 057 adds. Kept as a list because the write below has to be able to drop
+// them again — see the retry.
+const V057_COLUMNS = ['dept', 'dept_source', 'title', 'salaried', 'salary_hourly', 'salary_hours_per_week', 'salary_annual']
+
+export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Promise<{ ok: boolean; error?: string; migrationPending?: boolean }> {
   try {
     const sb = supabaseAdmin()
     const row: any = { name: String(s.name).trim(), updated_at: new Date().toISOString() }
@@ -125,9 +153,39 @@ export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Prom
     if (s.area !== undefined) row.area = s.area
     if (s.active != null) row.active = !!s.active
     if (s.notes !== undefined) row.notes = s.notes
+    if (s.dept !== undefined) row.dept = s.dept ? String(s.dept).trim().toLowerCase() : null
+    if (s.deptSource !== undefined) row.dept_source = s.deptSource
+    if (s.title !== undefined) row.title = s.title
+    if (s.salaried !== undefined) row.salaried = !!s.salaried
+    if (s.salaryHourly !== undefined) row.salary_hourly = s.salaryHourly == null ? null : num(s.salaryHourly)
+    if (s.salaryHoursPerWeek !== undefined) row.salary_hours_per_week = s.salaryHoursPerWeek == null ? null : num(s.salaryHoursPerWeek)
+    if (s.salaryAnnual !== undefined) row.salary_annual = s.salaryAnnual == null ? null : num(s.salaryAnnual)
     const { error } = await sb.from('staff').upsert(row, { onConflict: 'name' })
-    return error ? { ok: false, error: error.message } : { ok: true }
+    if (!error) return { ok: true }
+    // MIGRATION 057 NOT APPLIED YET. Rather than failing the whole save — which would make the
+    // People card look broken for edits that have nothing to do with the new fields — drop the
+    // new columns, save what the table can hold, and SAY the crew/pay half did not persist.
+    // Silently succeeding here would be the worst option: the operator would believe they had
+    // stated something the engine never saw.
+    const missing = V057_COLUMNS.some(c => error.message.includes(c))
+    if (missing) {
+      const legacy: any = { ...row }
+      for (const c of V057_COLUMNS) delete legacy[c]
+      const retry = await sb.from('staff').upsert(legacy, { onConflict: 'name' })
+      if (retry.error) return { ok: false, error: retry.error.message }
+      return { ok: true, migrationPending: true }
+    }
+    return { ok: false, error: error.message }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+}
+
+/** Does the staff table carry the single-source columns yet? Used to show migration state. */
+export async function staffSingleSourceReady(): Promise<boolean> {
+  try {
+    const sb = supabaseAdmin()
+    const { error } = await sb.from('staff').select('dept,salaried').limit(1)
+    return !error
+  } catch { return false }
 }
 
 // ---------------------------------------------------------------- inference
