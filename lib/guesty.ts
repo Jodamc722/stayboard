@@ -690,20 +690,76 @@ function mapReview(v: any) {
 //
 // DO NOT add a `sort` param here. Guesty's /reviews endpoint does not accept one and rejects the
 // whole request with 400 VALIDATION_FAILED ('"sort" is not allowed'), which kills the entire review
-// sync silently — the feed just stops updating. (That regression shipped 2026-07-31 and stalled
-// reviews for days.) It is unnecessary anyway: /reviews already returns results sorted DESCENDING
-// BY LAST UPDATE TIME, so page 0 always carries the freshest reviews and the 50-page (5000-row) cap
-// can never strand new ones behind an old backlog — which is exactly what the sort was added for.
-// Upsert is idempotent (onConflict id) and never deletes, so older reviews already stored are kept.
-// When `since` is given we stop as soon as a whole page predates it — a cheap incremental refresh.
-export async function syncReviews(maxPages = 60, since: string | null = null): Promise<number> {
+// sync silently. (That regression shipped 2026-07-31 and stalled reviews for days.)
+//
+// ── WHY THIS PAGES TO EXHAUSTION (2026-08-26) ───────────────────────────────────────────────────
+// The previous version capped at 60 pages / 6,000 reviews and justified it with a comment claiming
+// "/reviews already returns results sorted DESCENDING BY LAST UPDATE TIME, so page 0 always carries
+// the freshest reviews." Nothing verified that. It was written to replace the `sort=-createdAt`
+// that had just been removed for being invalid — an assumption standing in for the thing it lost.
+//
+// If Guesty actually returns ASCENDING order, that cap does exactly the opposite of what the
+// comment promises: once the account passes 6,000 reviews, every new review lives on a page the
+// loop never reaches, and the feed goes quiet while the job reports success every two hours. Jon
+// confirmed on 2026-08-26 that Airbnb reviews HAVE been arriving and are not in the app, which is
+// that failure, not the upstream outage the code comments had concluded.
+//
+// So the fix does not depend on knowing the sort order: page until the API runs out. The ceiling is
+// now a runaway guard rather than a policy, and an elapsed-time budget stops the caller being
+// killed mid-loop with no record of why. Upsert is idempotent (onConflict id) and never deletes.
+/** Are Guesty credentials present at all? Used by the health screen before it tries to call out. */
+export function guestyConfigured(): boolean {
+  return !!(process.env.GUESTY_CLIENT_ID && process.env.GUESTY_CLIENT_SECRET)
+}
+
+/**
+ * The newest reviews AS GUESTY SEES THEM — read-only, never written to our tables.
+ *
+ * This exists so the health screen can answer the only question that matters when reviews go
+ * missing: did the channel stop sending them, or did we stop storing them? Our own table cannot
+ * tell those apart. One page of Guesty's feed can.
+ */
+export async function listRecentReviews(limit = 200): Promise<{ id: string; channel: string; createdAt: string | null; rating: number | null }[]> {
+  const out: { id: string; channel: string; createdAt: string | null; rating: number | null }[] = []
+  const per = Math.min(100, Math.max(1, limit))
+  for (let page = 0; page * per < limit; page++) {
+    const data = await api<any>(`/reviews?limit=${per}&skip=${page * per}`)
+    const dd: any = data?.data ?? data
+    const arr: any[] = Array.isArray(dd) ? dd
+      : Array.isArray(dd?.results) ? dd.results
+      : Array.isArray(dd?.reviews) ? dd.reviews
+      : []
+    if (!arr.length) break
+    for (const v of arr) {
+      const m: any = mapReview(v)
+      out.push({ id: String(m.id || ''), channel: String(m.channel || 'Other'), createdAt: m.created_at || null, rating: m.rating ?? null })
+    }
+    if (arr.length < per) break
+  }
+  return out
+}
+
+export type ReviewSyncStats = {
+  fetched: number      // rows Guesty returned
+  kept: number         // rows written
+  skipped: number      // rows dropped for having neither text nor a rating
+  pages: number
+  exhausted: boolean   // true = we reached the end of the feed; false = we ran out of budget
+  newest: string | null
+  oldest: string | null
+}
+
+export async function syncReviewsDetailed(opts?: { maxPages?: number; budgetMs?: number }): Promise<ReviewSyncStats> {
   const sb = supabaseAdmin()
-  let total = 0
-  const sinceMs = since ? new Date(since).getTime() : null
+  const maxPages = opts?.maxPages ?? 400          // 40,000 reviews — a runaway guard, not a policy
+  const budgetMs = opts?.budgetMs ?? 240_000
+  const startedAt = Date.now()
+  const st: ReviewSyncStats = { fetched: 0, kept: 0, skipped: 0, pages: 0, exhausted: false, newest: null, oldest: null }
+
   for (let page = 0; page < maxPages; page++) {
-    const skip = page * 100
+    if (Date.now() - startedAt > budgetMs) break     // out of time, not out of data — say so below
     const data = await api<{ results?: any[]; data?: any[]; reviews?: any[] } | any[]>(
-      `/reviews?limit=100&skip=${skip}`
+      `/reviews?limit=100&skip=${page * 100}`
     )
     const dd: any = (data as any)?.data ?? data
     const arr: any[] = Array.isArray(dd) ? dd
@@ -712,19 +768,39 @@ export async function syncReviews(maxPages = 60, since: string | null = null): P
       : Array.isArray((data as any)?.results) ? (data as any).results
       : Array.isArray((data as any)?.reviews) ? (data as any).reviews
       : []
-    const rows = arr.map(mapReview).filter((r: any) => r.id && (r.content || r.rating != null))
-    if (arr.length === 0) break
+    st.pages++
+    st.fetched += arr.length
+    if (arr.length === 0) { st.exhausted = true; break }
+
+    const mapped = arr.map(mapReview).filter((r: any) => !!r.id)
+    // A review with neither text nor a rating carries nothing to show, so it is not written — but
+    // it IS counted. Silently dropping rows is how a channel goes quiet without anyone noticing;
+    // a number somebody can look at is the difference between a bug and a mystery.
+    const rows = mapped.filter((r: any) => r.content || r.rating != null)
+    st.skipped += mapped.length - rows.length
+
+    for (const r of mapped) {
+      const at = String(r.created_at || '')
+      if (!at) continue
+      if (!st.newest || at > st.newest) st.newest = at
+      if (!st.oldest || at < st.oldest) st.oldest = at
+    }
+
     if (rows.length) {
       const { error } = await sb.from('guesty_reviews').upsert(rows, { onConflict: 'id' })
       if (error) throw new Error(`upsert reviews: ${error.message}`)
-      total += rows.length
+      st.kept += rows.length
     }
-    // Incremental: once a whole page is older than `since`, everything after is older too.
-    if (sinceMs != null && rows.every((r: any) => r.created_at && new Date(r.created_at).getTime() < sinceMs)) break
-    if (arr.length < 100) break
+    if (arr.length < 100) { st.exhausted = true; break }
   }
-  await recordSync('reviews', total)
-  return total
+
+  await recordSync('reviews', st.kept)
+  return st
+}
+
+/** Back-compat wrapper: the old signature, still returning the number of rows written. */
+export async function syncReviews(_maxPages = 400, _since: string | null = null): Promise<number> {
+  return (await syncReviewsDetailed()).kept
 }
 
 export const GUEST_COMMS_WATERMARK = 'guest_comms_watermark'
