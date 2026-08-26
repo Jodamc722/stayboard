@@ -53,9 +53,65 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* the count is a nicety; the sync above is the job */ }
 
+    // ── EXPECTED vs ACTUAL ────────────────────────────────────────────────────────────────────
+    // Counting reviews cannot tell "the channel sent nothing" apart from "we failed to store it".
+    // Checkouts can. Every stay that ends is a chance for a review, so a review RATE that held for
+    // months and then went to zero WHILE CHECKOUTS CONTINUED is a broken pipe, not a quiet week.
+    //
+    // Deliberately no guest names or confirmation codes here — this response is reachable on the
+    // cron path. The named list a human can spot-check on Airbnb lives behind the admin gate at
+    // /api/settings/reviews-audit.
+    let expectedVsActual: any[] = []
+    try {
+      const db = supabaseAdmin()
+      const since = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10)
+      const todayY = new Date().toISOString().slice(0, 10)
+      const [rv, rs] = await Promise.all([
+        db.from('guesty_reviews').select('channel,created_at').gte('created_at', since).limit(6000),
+        db.from('guesty_reservations').select('check_out,status,source').gte('check_out', since).lte('check_out', todayY).limit(6000),
+      ])
+      const chOfSource = (v: any) => {
+        const c = String(v || '').toLowerCase()
+        if (/airbnb/.test(c)) return 'Airbnb'
+        if (/booking/.test(c)) return 'Booking.com'
+        if (/vrbo|homeaway/.test(c)) return 'Vrbo'
+        return c ? 'Direct/Other' : 'Unknown'
+      }
+      const stays = ((rs.data || []) as any[]).filter(r => !/cancel|denied|declined|expired|inquir/i.test(String(r.status || '')))
+      const revs = ((rv.data || []) as any[]).filter(r => r.created_at)
+      const agg: Record<string, { checkouts: number; reviews: number; lastReview: string | null }> = {}
+      const bump = (ch: string) => (agg[ch] = agg[ch] || { checkouts: 0, reviews: 0, lastReview: null })
+      for (const x of stays) bump(chOfSource(x.source)).checkouts++
+      for (const r of revs) {
+        const a = bump(String(r.channel || 'Other'))
+        a.reviews++
+        const at = String(r.created_at)
+        if (!a.lastReview || at > a.lastReview) a.lastReview = at
+      }
+      expectedVsActual = Object.keys(agg).sort().map(ch => {
+        const a = agg[ch]
+        const rate = a.checkouts > 0 ? a.reviews / a.checkouts : null
+        const lastDay = a.lastReview ? a.lastReview.slice(0, 10) : null
+        const coSince = lastDay ? stays.filter(x => chOfSource(x.source) === ch && String(x.check_out) > lastDay).length : 0
+        const expect = rate != null ? Math.round(coSince * rate) : null
+        return {
+          channel: ch, checkouts120d: a.checkouts, reviews120d: a.reviews,
+          reviewRatePct: rate != null ? Math.round(rate * 100) : null,
+          lastReview: lastDay,
+          checkoutsSinceLastReview: coSince,
+          reviewsExpectedSince: expect,
+          verdict: rate == null ? 'no history'
+            : coSince === 0 ? 'nothing due yet'
+              : (expect ?? 0) >= 3 ? 'BROKEN — ' + coSince + ' checkouts since, ~' + expect + ' reviews expected, 0 arrived'
+                : 'arriving',
+        }
+      })
+    } catch { /* the sweep above is the job; this is the diagnosis riding along */ }
+
     return NextResponse.json({
       ok: true,
       ms: Date.now() - startedAt,
+      expectedVsActual,
       ...st,
       // false here means we ran out of time before the feed ran out of reviews — the one condition
       // under which new reviews could still be sitting on a page nobody has read.
