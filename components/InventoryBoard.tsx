@@ -23,8 +23,9 @@ type Item = {
   description: string | null; unit: string | null; maxQty: number
   price: number; cost: number | null; reorderUrl: string | null; supplier: string | null; packNote: string | null
 }
-type Scope = { id: string; label: string }
-type Data = { scopes: Scope[]; items: Item[]; untracked: number }
+type Scope = { id: string; label: string; buildings: string[]; listings: string[] }
+type Listing = { id: string; name: string; building: string }
+type Data = { scopes: Scope[]; items: Item[]; untracked: number; listings: Listing[]; buildings: string[] }
 type NewItem = { key: string; name: string; description: string; category: string; unit: string; price: string; cost: string; onHand: string; reorderUrl: string }
 
 const money = (n: number | null | undefined) => n === null || n === undefined ? '—' : '$' + (Math.round(n * 100) / 100).toFixed(2)
@@ -43,6 +44,8 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
   const [open, setOpen] = useState<Record<string, boolean>>({})   // which rows have details expanded
   const [adds, setAdds] = useState<NewItem[]>([])
   const [removing, setRemoving] = useState<string | null>(null)   // two-step delete
+  const [coverOpen, setCoverOpen] = useState(false)
+  const [unitQ, setUnitQ] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +80,23 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
       const bits = [rows.length ? rows.length + ' count' + (rows.length === 1 ? '' : 's') : '', items.length ? items.length + ' edited' : '', j?.created ? j.created + ' added' : ''].filter(Boolean)
       if (j?.ok) setMsg({ tone: 'ok', text: 'Saved · ' + (bits.join(', ') || 'nothing to do') })
       else setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || j?.error || 'Could not save' })
+      await load()
+    } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
+  }
+
+  // WHICH PROPERTIES AND UNITS THIS SHELF FILLS. The guest's link resolves its hub from the unit
+  // first, then the property — so a unit named here gets THIS shelf even if its building is
+  // elsewhere. Saved immediately: it is a toggle, not a form.
+  async function setCoverage(next: { buildings?: string[]; listings?: string[] }) {
+    if (!data || scope === 'global') return
+    const cur = data.scopes.find(s => s.id === scope)
+    if (!cur) return
+    setBusy('cover'); setMsg(null)
+    try {
+      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        rows: [], items: [], coverage: { hubId: scope.replace(/^hub:/, ''), buildings: next.buildings ?? cur.buildings, listings: next.listings ?? cur.listings },
+      }) }).then(r => r.json())
+      if (!j?.ok) setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || 'Could not change what this shelf covers' })
       await load()
     } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
   }
@@ -151,6 +171,55 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex gap-2">
           <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
           <div>This is the fallback shelf for any property not in a hub. If it reads zero, those properties show an <b>empty order form</b> — put the property in a hub, or count it here.</div>
+        </div>
+      ) : here ? (
+        <div className="rounded-xl border border-line bg-white px-3 py-2.5">
+          <div className="flex items-start justify-between gap-2 flex-wrap">
+            <div className="text-[12.5px] text-ink">
+              <b>{here.label}</b> fills{' '}
+              {here.buildings.length ? <>{here.buildings.length} propert{here.buildings.length === 1 ? 'y' : 'ies'}</> : 'no property'}
+              {here.listings.length ? <> and {here.listings.length} individual unit{here.listings.length === 1 ? '' : 's'}</> : ''}
+              . <span className="text-muted">A guest's order link uses the shelf its unit sits on.</span>
+            </div>
+            {canEdit ? <button onClick={() => { setCoverOpen(o => !o); setUnitQ('') }} className="text-[12px] font-semibold text-brand-700 hover:underline">{coverOpen ? 'done' : 'change what it covers'}</button> : null}
+          </div>
+          {here.buildings.length || here.listings.length ? (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {here.buildings.map(b => <span key={b} className="px-2 py-0.5 rounded-full bg-ink text-white text-[11px]">{b}</span>)}
+              {here.listings.map(id => { const u = data.listings.find(x => x.id === id); return <span key={id} className="px-2 py-0.5 rounded-full border border-ink text-ink text-[11px]">{u ? u.name : id.slice(0, 8)}</span> })}
+            </div>
+          ) : <div className="text-[11.5px] text-amber-700 font-semibold mt-1">Nothing points at this shelf yet — no guest will see these items.</div>}
+
+          {coverOpen && canEdit ? (
+            <div className="mt-2.5 border-t border-line pt-2.5">
+              <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Whole properties</div>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {data.buildings.map(b => {
+                  const on = here.buildings.indexOf(b) >= 0
+                  const elsewhere = !on && data.scopes.some(s => s.id !== scope && s.buildings.indexOf(b) >= 0)
+                  return <button key={b} type="button" disabled={elsewhere || busy === 'cover'} title={elsewhere ? 'on another shelf' : ''}
+                    onClick={() => setCoverage({ buildings: on ? here.buildings.filter(x => x !== b) : [...here.buildings, b] })}
+                    className={'px-2 py-0.5 rounded-full border text-[11.5px] ' + (on ? 'bg-ink text-white border-ink' : elsewhere ? 'bg-app text-muted border-line opacity-50' : 'bg-white border-line text-ink hover:border-brand-300')}>{b}</button>
+                })}
+              </div>
+              <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold mt-2.5">Individual units <span className="normal-case tracking-normal font-normal">— a unit named here beats its property</span></div>
+              <input value={unitQ} onChange={e => setUnitQ(e.target.value)} placeholder="Search units…" className={box + ' w-full sm:w-72 mt-1'} />
+              <div className="max-h-48 overflow-y-auto mt-1 space-y-0.5">
+                {data.listings.filter(u => !unitQ || (u.name + ' ' + u.building).toLowerCase().includes(unitQ.toLowerCase())).slice(0, 100).map(u => {
+                  const on = here.listings.indexOf(u.id) >= 0
+                  const elsewhere = !on && data.scopes.some(s => s.id !== scope && s.listings.indexOf(u.id) >= 0)
+                  const viaBuilding = !on && here.buildings.indexOf(u.building) >= 0
+                  return <button key={u.id} type="button" disabled={elsewhere || busy === 'cover'} title={elsewhere ? 'on another shelf' : viaBuilding ? 'already included via its property' : ''}
+                    onClick={() => setCoverage({ listings: on ? here.listings.filter(x => x !== u.id) : [...here.listings, u.id] })}
+                    className={'w-full text-left px-2 py-1 rounded text-[12px] flex items-center gap-2 ' + (on ? 'bg-ink text-white' : elsewhere ? 'text-muted opacity-50' : 'hover:bg-app text-ink')}>
+                    <span className="flex-1 truncate">{u.name}</span>
+                    <span className={'text-[10.5px] ' + (on ? 'text-white/70' : 'text-muted')}>{u.building}{viaBuilding ? ' · via property' : ''}</span>
+                  </button>
+                })}
+                {!data.listings.length ? <div className="text-[12px] text-muted px-1 py-2">No listings loaded.</div> : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
