@@ -38,7 +38,14 @@ export type ConversationResponse = {
   last_responder: string | null
 }
 
-type Msg = { conversation_id: string; sender: string; sender_name: string | null; sent_at: string; is_automated: boolean | null }
+type Msg = { conversation_id: string; sender: string; sender_name: string | null; sent_at: string; is_automated: boolean | null; module?: string | null }
+
+// NOT EVERY "host" ROW IS A REPLY. Guesty files its own activity entries into the same thread —
+// `log` ("New guest inquiry") and `note` (an internal note nobody outside ever saw). There are
+// thousands of them and none was typed to a guest, so counting one as our answer would have shown
+// a portfolio replying in seconds while a real person had not looked yet. They are skipped
+// entirely, exactly like a `system` row: neither a question nor an answer.
+const NOT_A_MESSAGE = new Set(['log', 'note'])
 
 /**
  * Walk one thread in time order and pull out the response facts.
@@ -62,6 +69,7 @@ export function analyseThread(sorted: Msg[]): Omit<ConversationResponse, 'conver
   for (const m of sorted) {
     const t = new Date(m.sent_at).getTime()
     if (!Number.isFinite(t)) continue
+    if (m.module && NOT_A_MESSAGE.has(String(m.module).toLowerCase())) continue
     if (m.sender === 'guest') {
       guestMsgs++
       lastGuestAt = m.sent_at
@@ -138,7 +146,7 @@ export async function refreshResponseStats(opts: { sinceHours?: number; limit?: 
       const slice = list.slice(i, i + 40)
       const ids = slice.map(c => String(c.id))
       const { data: msgs } = await db.from('guesty_messages')
-        .select('conversation_id,sender,sender_name,sent_at,is_automated')
+        .select('conversation_id,sender,sender_name,sent_at,is_automated,module')
         .in('conversation_id', ids)
         .order('sent_at', { ascending: true })
         .limit(4000)

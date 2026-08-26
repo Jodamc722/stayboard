@@ -318,10 +318,16 @@ function mapMessage(conversationId: string, m: any) {
   // authored it. null = we genuinely cannot tell, which is the honest answer for a payload that
   // carries neither. Everything downstream treats null as unknown rather than as human, because a
   // flattering guess about response time is worse than a visible gap.
-  const moduleStr = String(m.module ?? m.type ?? '').toLowerCase() || null
+  // `module` is an OBJECT in Guesty's payload, not a string — {type:'airbnb2'|'email'|'log'|'note',
+  // templateValues:[], …}. Stringifying it whole gives "[object Object]"; what is useful is its
+  // `type`, which turns out to be the CHANNEL the message travelled on, plus two kinds — `log` and
+  // `note` — that are Guesty's own activity entries and were never sent to a guest at all.
+  const moduleObj: any = (m.module && typeof m.module === 'object') ? m.module : null
+  const moduleStr = String(moduleObj ? (moduleObj.type ?? moduleObj.name ?? '') : (m.module ?? m.type ?? '')).toLowerCase() || null
   const automationMarker = !!(
     m.automationId || m.autoMessageId || m.automationRuleId || m.ruleId || m.templateId ||
-    /auto/i.test(String(m.module ?? '')) ||
+    (Array.isArray(moduleObj?.templateValues) && moduleObj.templateValues.length > 0) ||
+    /auto/i.test(moduleStr || '') ||
     /auto/i.test(String(m.sentBy?.type ?? '')) ||
     /auto/i.test(String(m.from?.type ?? ''))
   )
