@@ -1,9 +1,11 @@
 // INVENTORY — what is on the shelf per hub, what is reserved by paid orders, what is running low.
 //   GET  every tracked item × scope, with hubs + low/out flags
-//   PUT  { rows: [{ itemId, scope, onHand, lowAt? }] }  stock-take (edit access)
+//   PUT  { rows: [{ itemId, scope, onHand, lowAt? }], items: [{ id, price?, cost?, reorderUrl?, supplier?, packNote? }] }
+//        stock-take + the item facts restocking needs (edit access)
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { getGuestOrdersCfg, loadCatalog, listStock, setStock } from '@/lib/guest-orders'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,7 +21,10 @@ export async function GET() {
       const available = Math.max(0, onHand - reserved)
       return { scope: sc.id, label: sc.label, onHand, reserved, lowAt, available, state: !row ? 'unset' : available <= 0 ? 'out' : available <= lowAt ? 'low' : 'ok', updatedAt: row ? row.updated_at : null, updatedBy: row ? row.updated_by : null }
     })
-    return { id: c.id, sku: c.sku, name: c.name, category: c.category, image: c.image_url, active: c.active, hubs: c.hubs, buildings: c.buildings, per }
+    return { id: c.id, sku: c.sku, name: c.name, category: c.category, image: c.image_url, active: c.active, hubs: c.hubs, buildings: c.buildings, per,
+      // Inventory edits price and cost in the same row it counts stock in, so restocking never
+      // means going and finding the catalog somewhere else.
+      price: c.price_usd, cost: c.cost_usd, unit: c.unit_label, reorderUrl: c.reorder_url, supplier: c.supplier, packNote: c.pack_note }
   })
   const alerts = items.flatMap(i => i.per.filter(p => p.state === 'out' || p.state === 'low').map(p => ({ item: i.name, scope: p.label, state: p.state, available: p.available })))
   return NextResponse.json({ ok: true, scopes, items, alerts, untracked: catalog.filter(c => !c.track_stock && c.active).length })
@@ -39,5 +44,33 @@ export async function PUT(req: NextRequest) {
     const res = await setStock(itemId, scope, Number(r?.onHand) || 0, r?.lowAt === undefined || r?.lowAt === null || r?.lowAt === '' ? null : Number(r.lowAt), actor)
     if (res.ok) saved++; else errors.push(res.error || 'failed')
   }
-  return NextResponse.json({ ok: errors.length === 0, saved, errors })
+  // ITEM FACTS, saved in the same trip as the count (Jon, 2026-08-25: "adjust cost, have the order
+  // links"). Price/cost/link belong to the ITEM, not to a shelf, so they are sent once per item
+  // rather than once per row. Editing them needs the same 'edit' level as a stock-take; nothing
+  // here is guest-facing except price, which the form already reads from this column.
+  const facts = Array.isArray(body?.items) ? body.items.slice(0, 300) : []
+  let itemsSaved = 0
+  if (facts.length) {
+    const db = supabaseAdmin()
+    for (const f of facts) {
+      const id = String(f?.id || '')
+      if (!/^[0-9a-f-]{36}$/i.test(id)) { errors.push('bad item id'); continue }
+      const patch: Record<string, any> = {}
+      if (f.price !== undefined) patch.price_usd = Math.max(0, Math.round((Number(f.price) || 0) * 100) / 100)
+      if (f.cost !== undefined) patch.cost_usd = f.cost === null || f.cost === '' ? null : Math.max(0, Math.round((Number(f.cost) || 0) * 100) / 100)
+      if (f.supplier !== undefined) patch.supplier = String(f.supplier || '').trim().slice(0, 120) || null
+      if (f.packNote !== undefined) patch.pack_note = String(f.packNote || '').trim().slice(0, 80) || null
+      if (f.reorderUrl !== undefined) {
+        const u = String(f.reorderUrl || '').trim().slice(0, 600)
+        // http(s) only — a javascript: or data: URL here would become a one-click trap for whoever
+        // is restocking, and this field is rendered as a link the team is meant to trust.
+        patch.reorder_url = u && /^https?:\/\//i.test(u) ? u : null
+        if (u && !patch.reorder_url) errors.push(String(f.name || 'item') + ': the order link must start with http:// or https://')
+      }
+      if (!Object.keys(patch).length) continue
+      const { error } = await db.from('guest_order_catalog').update(patch).eq('id', id)
+      if (error) errors.push(String(f.name || id) + ': ' + error.message); else itemsSaved++
+    }
+  }
+  return NextResponse.json({ ok: errors.length === 0, saved, itemsSaved, errors })
 }
