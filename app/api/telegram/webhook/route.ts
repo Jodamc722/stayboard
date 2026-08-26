@@ -26,9 +26,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getMe, sendMessage, sendTyping, displayName, type TgUpdate, type TgMessage } from '@/lib/telegram'
 import { webhookSecret, botConfigured } from '@/lib/telegram'
 import { claimUpdate, pruneUpdates, decide, seeRoom, recordMessage, threadFor, resetThread, overRate } from '@/lib/eve/telegram'
-import { canSeeMoney } from '@/lib/access'
+import { canSeeMoney, doorCodePolicy } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
-import { runCheck, createRequest, attachSlackPost } from '@/lib/eve/door-code'
+import { runCheck, requestDoorCode, attachSlackPost } from '@/lib/eve/door-code'
 import { postDoorCodeApproval, getApprovalsChannel } from '@/lib/eve/approvals'
 import { postToChannel } from '@/lib/slack'
 
@@ -186,11 +186,24 @@ export async function POST(req: NextRequest) {
       await sendMessage(chat.id, `🚫 *${check.headline}*${extra}`, { replyTo: msg.message_id })
       return ok()
     }
-    const parked = await createRequest(check, { email: contact.email || undefined, reason: `Telegram by ${displayName(from)}` })
-    if (!parked.ok) {
-      await sendMessage(chat.id, `Checks passed for *${check.unit}*, but I could not park the request: ${parked.error}`)
+    // Same three-way decision as everywhere else, from the same function. `access` here is the
+    // approved Telegram contact resolved to a real app user, so the setting that applies is theirs.
+    const outcome = await requestDoorCode(check, {
+      email: contact.email || undefined, reason: `Telegram by ${displayName(from)}`,
+      policy: doorCodePolicy(access),
+    })
+    if (outcome.kind === 'denied') { await sendMessage(chat.id, `🔒 ${outcome.message}`, { replyTo: msg.message_id }); return ok() }
+    if (outcome.kind === 'error') {
+      await sendMessage(chat.id, `Checks passed for *${check.unit}*, but I could not park the request: ${outcome.message}`)
       return ok()
     }
+    if (outcome.kind === 'released') {
+      const both = outcome.previousCode ? `\n*If that fails:* \`${outcome.previousCode}\`` : ''
+      const tn = outcome.transitionNote ? `\n_${outcome.transitionNote}_` : ''
+      await sendMessage(chat.id, `✅ *${check.unit}*\n*Try this first:* \`${outcome.code}\`${both}${tn}\n\n_Sent straight to you because your access is set to Direct. It is on the audit trail._`, { replyTo: msg.message_id })
+      return ok()
+    }
+    const parked = outcome
     const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
     const link = `${origin}/doorcode/${parked.token}`
     const quote = check.permissionQuotes?.length
