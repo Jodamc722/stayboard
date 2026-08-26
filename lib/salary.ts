@@ -24,6 +24,7 @@
 // month; on salary both cost exactly their weekly rate.
 import 'server-only'
 import { getSetting } from './app-settings'
+import { getStaff } from './staffing'
 
 export type SalaryRow = {
   /** Homebase spelling, including its typos — that is what the timecards key on. Matching is fuzzy. */
@@ -99,6 +100,23 @@ export function rateLabel(r: SalaryRow): string {
  * because an empty roster silently reports these people as free.
  */
 export async function getSalaried(): Promise<SalaryRow[]> {
+  // ONE SOURCE FIRST (Jon, 2026-08-26). Migration 057 put pay on the staff row, so if anybody is
+  // marked salaried there, that table IS the roster and neither the settings blob nor the seed
+  // below is consulted. Before 057 the query returns nothing and we fall through unchanged.
+  try {
+    const staff = await getStaff(true)
+    const paid = staff.filter(r => r.salaried && (Number(r.salaryHourly) > 0 || Number(r.salaryAnnual) > 0))
+    if (paid.length) {
+      return paid.map(r => ({
+        name: r.name,
+        hourly: r.salaryHourly ?? null,
+        hoursPerWeek: r.salaryHoursPerWeek ?? null,
+        annual: r.salaryAnnual ?? null,
+        title: r.title || r.role || undefined,
+        active: r.active !== false,
+      }))
+    }
+  } catch { /* fall through to the settings blob, then to the seed */ }
   let stored: any = null
   try { stored = await getSetting<any>(SALARY_SETTING_KEY, null) } catch { stored = null }
   const rows = Array.isArray(stored) ? stored : Array.isArray(stored?.people) ? stored.people : null
