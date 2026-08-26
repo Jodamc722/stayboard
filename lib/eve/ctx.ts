@@ -89,6 +89,46 @@ export function cap<T>(rows: T[], limit: number): { rows: T[]; truncated: boolea
   return { rows, truncated: rows.length >= limit }
 }
 
+/**
+ * READ A WHOLE RANGE, NOT THE FIRST PAGE OF IT.
+ *
+ * `.limit(4000)` does NOT get you 4000 rows. PostgREST caps every response at the project's
+ * max-rows setting (1000 here), so a `.limit()` above that is a number nobody enforces: you are
+ * handed the first 1000 rows of your ordering and no error, no flag, nothing that distinguishes
+ * "that was all of them" from "that was where I stopped".
+ *
+ * Found the hard way on 2026-08-26. `moved_cleans` asked for a padded 38-day window of housekeeping
+ * tasks ordered by scheduled_date — 1,451 rows. It got the first 1,000, which ran out partway
+ * through the 22nd, and reported ZERO cleans for the 23rd through the 26th. Not an error, not a
+ * gap: four confident zeroes on days that had 27, 38, 27 and 29 cleans on them. The labor engine
+ * had paged this same table since the beginning (lib/labor-econ.ts), which is the only reason its
+ * numbers were right while Eve's were wrong about the same days.
+ *
+ * So: any query over a range that can plausibly exceed 1,000 rows goes through here. `truncated`
+ * is only true when we hit the page ceiling — a real limit, honestly reported, which is what
+ * Rule 3 asked for in the first place.
+ */
+export async function pageRows(
+  q: (from: number, to: number) => PromiseLike<any>,
+  maxPages = 12,
+): Promise<{ rows: any[]; truncated: boolean }> {
+  const out: any[] = []
+  const seen: Record<string, boolean> = {}
+  for (let p = 0; p < maxPages; p++) {
+    const res: any = await safe(q(p * 1000, p * 1000 + 999), { data: [] } as any)
+    const data: any[] = res?.data || []
+    if (!data.length) return { rows: out, truncated: false }
+    // Even with a stable order, never let the same row land twice.
+    for (const row of data) {
+      const k = row && row.id != null ? String(row.id) : null
+      if (k) { if (seen[k]) continue; seen[k] = true }
+      out.push(row)
+    }
+    if (data.length < 1000) return { rows: out, truncated: false }
+  }
+  return { rows: out, truncated: true }
+}
+
 export async function buildCtx(access: Access, canMoney: boolean): Promise<EveCtx> {
   const db = supabaseAdmin()
   const listingMeta: Record<string, ListingMeta> = {}

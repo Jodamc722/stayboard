@@ -12,7 +12,7 @@ import { STAGES, effectiveDue, urgencyOf, gatesFor, daysUntil, itemsTotal } from
 import { nextCheckInMap } from '@/lib/claim-turnover'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing } from './ctx'
+import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, pageRows } from './ctx'
 
 // Status predicates. There is no enum on the mirror — every board in the app regex-matches, and
 // finished_at OVERRIDES the status label because the field app sets it even when the string is odd.
@@ -252,14 +252,15 @@ export const OPS_TOOLS: EveTool[] = [
       // PAD THE QUERY. A clean taken off Monday can land the following week, and a clean that
       // landed on Monday may still be scheduled under an older date. Ask wide, then bucket.
       const pad = 12
-      const { data } = await safe(
+      // PAGED, not `.limit(4000)`. PostgREST hands back at most 1,000 rows whatever the limit says,
+      // and this padded window is comfortably more than that — see pageRows() in ctx.ts for the four
+      // days of confident zeroes that taught us so.
+      const { rows: taskRows, truncated: tasksTruncated } = await pageRows((a, b) =>
         ctx.db.from('breezeway_tasks_sync').select(TASK_COLS)
           .eq('type_department', 'housekeeping')
           .gte('scheduled_date', shiftDay(from, -pad)).lte('scheduled_date', shiftDay(to, pad))
-          .order('scheduled_date', { ascending: true }).order('id').limit(4000),
-        { data: [] } as any,
-      )
-      let all = ((data as any[]) || []).filter(t => isDepartureCleanName(t.name))
+          .order('scheduled_date', { ascending: true }).order('id').range(a, b))
+      let all = taskRows.filter(t => isDepartureCleanName(t.name))
       const unit = resolveListing(ctx, input)
       if (unit) all = all.filter(t => String(t.reference_property_id) === unit.id)
       else if (input?.building) all = all.filter(t => has(ctx.buildingOf(t.reference_property_id), input.building))
@@ -341,12 +342,17 @@ export const OPS_TOOLS: EveTool[] = [
           window: { from, to }, moves: movesInRange.map(describeMove),
           moved_in: totals.moved_in, moved_out: totals.moved_out,
           could_not_trace: unresolved.length || undefined,
+          truncated: tasksTruncated || undefined,
         }
       }
 
       return {
         window: { from, to },
         scope: unit ? unit.meta.name : (input?.building || 'whole portfolio'),
+        truncated: tasksTruncated || undefined,
+        truncation_warning: tasksTruncated
+          ? 'I hit the row ceiling reading this window, so the later days may be short. Say so and ask for a narrower range rather than reporting these counts as complete.'
+          : undefined,
         totals,
         days: list,
         moves: movesInRange.length ? movesInRange.map(describeMove) : 'nothing moved in this window',
@@ -369,12 +375,12 @@ export const OPS_TOOLS: EveTool[] = [
       // and the replacement half of a move is a different row on a different day — ask wide, then
       // bucket into the range. Same padding moved_cleans uses, for the same reason.
       const pad = 12
-      const [tasksRes, stagedRes, resvRes] = await Promise.all([
-        safe(ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).eq('type_department', 'housekeeping').gte('scheduled_date', shiftDay(from, -pad)).lte('scheduled_date', shiftDay(to, pad)).order('scheduled_date').order('id').limit(4000), { data: [] } as any),
+      const [tasksPage, stagedRes, resvRes] = await Promise.all([
+        pageRows((a, b) => ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).eq('type_department', 'housekeeping').gte('scheduled_date', shiftDay(from, -pad)).lte('scheduled_date', shiftDay(to, pad)).order('scheduled_date').order('id').range(a, b)),
         safe(ctx.db.from('schedule_staged').select('listing_id,date,cleaner_name').gte('date', from).lte('date', to).order('date'), { data: [] } as any),
-        safe(ctx.db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', from).lte('check_out', to).order('check_out').limit(2000), { data: [] } as any),
+        safe(ctx.db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', from).lte('check_out', to).order('check_out').limit(1000), { data: [] } as any),
       ])
-      let allHk = (tasksRes.data || []).filter((t: any) => isDepartureCleanName(t.name))
+      let allHk = tasksPage.rows.filter((t: any) => isDepartureCleanName(t.name))
       // SCOPE BEFORE COUNTING. The market filter used to be applied to the unit list only, after
       // the totals were already added up — so asking about one building returned that building's
       // units next to the whole portfolio's counts. Filter first, and every number on the row is
@@ -432,7 +438,7 @@ export const OPS_TOOLS: EveTool[] = [
         const d = byDay[k]
         return { ...d, units: d.units.slice(0, 40), unassigned: d.cleans - d.assigned }
       })
-      return { from, to, scope: input?.market || 'whole portfolio', days, note: 'A departure clean is only counted when the task NAME says departure/turnover — a deep clean or oven clean is not a turnover. A clean counts on the day the work LANDED, and a move shows on both days: the old one says it left, the new one says where it came from.' }
+      return { from, to, scope: input?.market || 'whole portfolio', truncated: tasksPage.truncated || undefined, days, note: 'A departure clean is only counted when the task NAME says departure/turnover — a deep clean or oven clean is not a turnover. A clean counts on the day the work LANDED, and a move shows on both days: the old one says it left, the new one says where it came from.' }
     },
   },
 ]
