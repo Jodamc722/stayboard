@@ -25,7 +25,7 @@ type Scope = { id: string; label: string }
 type Data = { scopes: Scope[]; items: Item[]; untracked: number }
 
 const money = (n: number | null | undefined) => n === null || n === undefined ? '—' : '$' + (Math.round(n * 100) / 100).toFixed(2)
-const box = 'w-full text-[12.5px] px-2 py-1.5 rounded-lg border border-line bg-white text-ink focus:outline-none focus:border-brand-300'
+const box = 'text-[12.5px] px-2 py-1.5 rounded-lg border border-line bg-white text-ink focus:outline-none focus:border-brand-300'
 
 export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
   const [data, setData] = useState<Data | null>(null)
@@ -176,32 +176,32 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-end gap-2">
-                      <label className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">On hand
+                    <div className="flex flex-wrap items-end gap-2 flex-shrink-0">
+                      <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">On hand
                         <input type="number" min={0} value={onHand} disabled={!canEdit} onChange={e => setStockEdits(x => ({ ...x, [scope + '|' + i.id]: { ...x[scope + '|' + i.id], onHand: Number(e.target.value) } }))} className={box + ' w-20 mt-0.5'} />
                       </label>
-                      <label className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Warn at
+                      <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Warn at
                         <input type="number" min={0} value={lowAt} disabled={!canEdit} onChange={e => setStockEdits(x => ({ ...x, [scope + '|' + i.id]: { ...x[scope + '|' + i.id], lowAt: Number(e.target.value) } }))} className={box + ' w-16 mt-0.5'} />
                       </label>
-                      <label className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Guest pays
+                      <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Guest pays
                         <input type="number" min={0} step="0.01" value={price} disabled={!canEdit} onChange={e => setItem(i.id, { price: Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
                       </label>
-                      <label className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">We pay
+                      <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">We pay
                         <input type="number" min={0} step="0.01" value={cost ?? ''} placeholder="—" disabled={!canEdit} onChange={e => setItem(i.id, { cost: e.target.value === '' ? null : Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
                       </label>
-                      <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Margin
+                      <div className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold min-w-[52px]">Margin
                         <div className={'text-[13px] font-bold tabular-nums mt-1 ' + (margin === null ? 'text-muted' : margin < 0 ? 'text-rose-700' : 'text-emerald-700')}>{margin === null ? '—' : money(margin)}</div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-2 pl-[68px]">
-                    <input value={(url as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { reorderUrl: e.target.value } as any)} placeholder="Where to buy it again — paste the link" className={box + ' max-w-[320px]'} />
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2 sm:pl-[68px]">
+                    <input value={(url as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { reorderUrl: e.target.value } as any)} placeholder="Where to buy it again — paste the link" className={box + ' w-full sm:w-[300px]'} />
                     {url && /^https?:\/\//i.test(String(url))
                       ? <a href={String(url)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700"><ShoppingCart size={12} /> Order <ExternalLink size={11} /></a>
                       : <span className="text-[11.5px] text-muted">no order link yet</span>}
-                    <input value={(val(i, 'supplier') as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { supplier: e.target.value } as any)} placeholder="supplier" className={box + ' max-w-[140px]'} />
-                    <input value={(val(i, 'packNote') as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { packNote: e.target.value } as any)} placeholder="arrives as (case of 24…)" className={box + ' max-w-[170px]'} />
+                    <input value={(val(i, 'supplier') as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { supplier: e.target.value } as any)} placeholder="supplier" className={box + ' w-[130px]'} />
+                    <input value={(val(i, 'packNote') as string) || ''} disabled={!canEdit} onChange={e => setItem(i.id, { packNote: e.target.value } as any)} placeholder="arrives as (case of 24…)" className={box + ' w-[165px]'} />
                   </div>
                 </div>
               )
