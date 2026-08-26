@@ -368,7 +368,7 @@ export async function GET(req: NextRequest) {
     const M30: any = (K30 as any).management
     const mgmtLine = M30 && Number(M30.salaryWindow) > 0
       ? '<p style="margin:6px 0 0;font-size:11.5px;color:#9ca3af">Payroll includes salaried management pro-rated to each window (' +
-        (M30.people || []).map((p: any) => esc(p.name)).join(', ') + ' &mdash; ' + money(M30.salaryWindow) + ' over 30 days); their punches are not double-counted.</p>'
+        (M30.people || []).map((p: any) => esc(p.name)).join(', ') + ' &mdash; ' + money(M30.salaryWindow) + ' over 30 days); the salary is the cost and already sits inside each crew, never added on top.</p>'
       : ''
 
     const numbersCard = '<div style="' + cardStyle + '">' +
