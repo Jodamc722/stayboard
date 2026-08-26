@@ -53,6 +53,10 @@
       "schedule": "21 */2 * * *"
     },
     {
+      "path": "/api/cron/sync-reviews",
+      "schedule": "37 */2 * * *"
+    },
+    {
       "path": "/api/cron/auto-inspections",
       "schedule": "28 10,14,18,22 * * *"
     },
