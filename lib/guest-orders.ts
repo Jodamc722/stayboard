@@ -328,6 +328,8 @@ export type CatalogItem = {
   id: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null
   category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; hubs: string[] | null; image_url: string | null
   track_stock: boolean
+  /** Restocking facts — never guest-facing. cost is what WE pay; the gap to price_usd is margin. */
+  cost_usd: number | null; reorder_url: string | null; supplier: string | null; pack_note: string | null
   /** Filled in when loaded for a scope: on_hand − reserved for that scope (null = not tracked). */
   available?: number | null
 }
@@ -345,7 +347,9 @@ export async function loadCatalog(opts?: { building?: string | null; market?: st
   let q = db.from('guest_order_catalog').select('*').order('sort', { ascending: true }).order('name', { ascending: true })
   if (opts?.activeOnly !== false) q = q.eq('active', true)
   const { data } = await q.limit(500)
-  let rows = (data || []).map((r: any) => ({ ...r, price_usd: Number(r.price_usd) || 0, max_qty: Number(r.max_qty) || 10, sort: Number(r.sort) || 100, track_stock: r.track_stock === true, hubs: r.hubs || null, available: null })) as CatalogItem[]
+  let rows = (data || []).map((r: any) => ({ ...r, price_usd: Number(r.price_usd) || 0, max_qty: Number(r.max_qty) || 10, sort: Number(r.sort) || 100, track_stock: r.track_stock === true, hubs: r.hubs || null,
+    cost_usd: r.cost_usd === null || r.cost_usd === undefined ? null : Number(r.cost_usd), reorder_url: r.reorder_url || null, supplier: r.supplier || null, pack_note: r.pack_note || null,
+    available: null })) as CatalogItem[]
   const b = String(opts?.building || '').toLowerCase()
   const m = String(opts?.market || '').toLowerCase()
   const hb = String(opts?.hub || '').toLowerCase()
