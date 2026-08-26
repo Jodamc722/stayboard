@@ -208,6 +208,12 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* A two-word uppercase chip breaking across lines ("SAME-" / "DAY") reads as a rendering fault,
      not as emphasis. Short all-caps badges stay on one line. */
   .lh-chip { white-space: nowrap; }
+
+  /* THE APP BAR ALREADY SAID IT. Shell tags the page's own h1 (and the eyebrow over it) with this
+     class only when its text matches the bar's label — see the effect in Shell.tsx. A heading that
+     says something different is never marked, so it is never hidden. ~86px back on every page. */
+  .lh-dupe-title { display: none !important; }
+  main header:has(.lh-dupe-title) { margin-bottom: 0.25rem; }
 }
 
 /* ------------------------------------------------------------------------------------------------
