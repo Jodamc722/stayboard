@@ -306,14 +306,41 @@ function mapMessage(conversationId: string, m: any) {
   const body = m.body ?? m.text ?? m.message ?? m.content ?? m.rawMessage?.text ?? ''
   const sentAt = m.createdAt ?? m.sentAt ?? m.timestamp ?? m.date ?? null
   const id = m._id ?? m.id ?? `${conversationId}:${sentAt ?? ''}:${String(body || '').slice(0, 40)}`
+  const authorName = m.from?.fullName ?? m.author?.fullName ?? null
+
+  // WAS THIS A PERSON OR A TEMPLATE? (2026-08-26)
+  // Guesty sends its automated messages AS the host, so for years a template firing at 3pm and
+  // Karla typing a reply landed in this table identically. Every response-time number counted the
+  // robot as us, and the sentiment scan read both as "HOST". The evidence is in the payload we
+  // already store; nobody ever read it back out.
+  //
+  // THREE-VALUED ON PURPOSE. true = we can point at an automation marker. false = a named human
+  // authored it. null = we genuinely cannot tell, which is the honest answer for a payload that
+  // carries neither. Everything downstream treats null as unknown rather than as human, because a
+  // flattering guess about response time is worse than a visible gap.
+  const moduleStr = String(m.module ?? m.type ?? '').toLowerCase() || null
+  const automationMarker = !!(
+    m.automationId || m.autoMessageId || m.automationRuleId || m.ruleId || m.templateId ||
+    /auto/i.test(String(m.module ?? '')) ||
+    /auto/i.test(String(m.sentBy?.type ?? '')) ||
+    /auto/i.test(String(m.from?.type ?? ''))
+  )
+  const isAutomated: boolean | null =
+    sender !== 'host' ? null
+    : automationMarker ? true
+    : authorName ? false
+    : null
+
   return {
     id,
     conversation_id: conversationId,
     sender,
-    sender_name:     m.from?.fullName ?? m.author?.fullName ?? (sender === 'system' ? 'System' : null),
+    sender_name:     authorName ?? (sender === 'system' ? 'System' : null),
     body:            body || null,
     sent_at:         sentAt,
     attachments:     Array.isArray(m.attachments) ? m.attachments : null,
+    module:          moduleStr,
+    is_automated:    isAutomated,
     raw:             m
   }
 }

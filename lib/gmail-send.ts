@@ -10,6 +10,7 @@
 // broken mailbox can't take down the cron that was trying to use it.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { recordEmail, sourceFromSubject } from './automation-runs'
 
 async function accessTokenFor(email: string): Promise<{ token?: string; error?: string }> {
   const clientId = process.env.GOOGLE_CLIENT_ID
@@ -249,19 +250,34 @@ export async function sendGmail(opts: {
       body: JSON.stringify({ raw: rawToB64url(raw) }),
       cache: 'no-store',
     })
-    if (r.ok) return { ok: true }
+    if (r.ok) {
+      // RECEIPT. Every brief in this app funnels through here, so this one line is what makes
+      // "did the 7am brief go out, and to whom" answerable — without threading a logging call
+      // through six cron routes and every future one, which is the kind of wiring that gets
+      // forgotten and then quietly lies.
+      recordEmail({ source: sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: true, attachments: (opts.attachments || []).length })
+      return { ok: true }
+    }
     const body = await r.text().catch(() => '')
     // Two very different 403s: scope missing on the TOKEN vs Gmail API disabled on the PROJECT.
     // Never collapse them — the fix for each is different and misdiagnosis costs a day.
     if (/insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(body)) {
-      return { ok: false, error: 'The Google connection has no Gmail permission — reconnect Google (it will ask for "Send email on your behalf").' }
+      const err = 'The Google connection has no Gmail permission — reconnect Google (it will ask for "Send email on your behalf").'
+      recordEmail({ source: sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
+      return { ok: false, error: err }
     }
     if (/has not been used in project|is disabled|SERVICE_DISABLED/i.test(body)) {
       const m = body.match(/https:\/\/console\.developers\.google\.com[^"\\\s]*/)
       return { ok: false, error: 'The Gmail API is not enabled on the Google Cloud project — enable it' + (m ? ' at ' + m[0] : ' (APIs & Services → Library → Gmail API → Enable)') + ', wait a minute, then retry.' }
     }
-    return { ok: false, error: `Gmail send failed (${r.status}): ${body.slice(0, 300)}` }
-  } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+    const err = `Gmail send failed (${r.status}): ${body.slice(0, 300)}`
+    recordEmail({ source: sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
+    return { ok: false, error: err }
+  } catch (e: any) {
+    const err = String(e?.message || e)
+    recordEmail({ source: sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
+    return { ok: false, error: err }
+  }
 }
 
 // ── COMPAT EXPORTS for the desk's "Add to drafts" button + the support-draft watch (built in a

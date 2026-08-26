@@ -37,6 +37,12 @@ export type SlackChannel = {
   name: string
   isPrivate: boolean
   isMember: boolean     // the bot is in it — required for private channels
+  // WHAT THE CHANNEL IS FOR (2026-08-26). conversations.list returns purpose and topic and we
+  // threw both away, so nothing in this app — or in Eve — could answer "what is #vr-oasis for".
+  // The routing rules say where an alert GOES; only the people who made the channel ever wrote
+  // down why it exists, and this is where they wrote it.
+  purpose?: string
+  topic?: string
 }
 
 export const DIRECTORY_KEY = 'slack_directory'
@@ -212,6 +218,8 @@ export async function fetchChannels(): Promise<SlackChannel[]> {
         name: String(c.name || ''),
         isPrivate: !!c.is_private,
         isMember: !!c.is_member,
+        purpose: String(c.purpose?.value || '').slice(0, 300) || undefined,
+        topic: String(c.topic?.value || '').slice(0, 300) || undefined,
       })
     }
     cursor = (j.response_metadata && j.response_metadata.next_cursor) || ''
