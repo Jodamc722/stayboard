@@ -3,10 +3,11 @@
 // Every parked request lands in the Slack approvals channel. That is the whole point: an approval
 // that only the requester can see is not an approval, it is a phone call waiting to happen.
 import { NextRequest, NextResponse } from 'next/server'
-import { runCheck, createRequest, listPending, rejectByToken, attachSlackPost } from '@/lib/eve/door-code'
+import { runCheck, requestDoorCode, listPending, rejectByToken, attachSlackPost } from '@/lib/eve/door-code'
 import { postDoorCodeApproval, postApprovalOutcome } from '@/lib/eve/approvals'
 import { dmUser } from '@/lib/slack'
 import { eveGate } from '../../agent/route'
+import { doorCodePolicy } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -38,8 +39,21 @@ export async function POST(req: NextRequest) {
   })
   if (body?.op !== 'request' || !check.canRelease) return NextResponse.json({ ok: true, check })
 
-  const parked = await createRequest(check, { email, slackUserId: body?.slackUserId, reason: body?.reason })
-  if (!parked.ok) return NextResponse.json({ ok: true, check, parkError: parked.error })
+  // The person's own setting decides what happens next — No access, Ask, or Direct. One function
+  // owns that for every entry point so none of them can drift into being more generous.
+  const policy = doorCodePolicy(gate.access)
+  const outcome = await requestDoorCode(check, { email, slackUserId: body?.slackUserId, reason: body?.reason, policy })
+
+  if (outcome.kind === 'denied') return NextResponse.json({ ok: false, check, error: outcome.message }, { status: 403 })
+  if (outcome.kind === 'error') return NextResponse.json({ ok: true, check, parkError: outcome.message })
+  if (outcome.kind === 'released') {
+    // Direct. No approval to post; the audit row is already written and fingerprinted.
+    return NextResponse.json({
+      ok: true, check, released: true, code: outcome.code,
+      previousCode: outcome.previousCode ?? null, whichToTry: outcome.transitionNote ?? null,
+    })
+  }
+  const parked = outcome
 
   const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
   const link = `${origin}/doorcode/${parked.token}`
