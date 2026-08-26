@@ -25,6 +25,17 @@ const digestGet = async (key: string) => {
   return { enabled: o.enabled === true, to: cleanEmails(o.to), fromEmail: typeof o.fromEmail === 'string' ? o.fromEmail : '' }
 }
 
+// LANGUAGE IS A SAVED SETTING, NOT DECORATION (Jon, 2026-08-26 audit).
+//
+// The admin screen has shipped language pickers for the Miami/Broward day sheets and for each
+// maintenance brief since the Spanish work landed, and the UI sends them on every save. Neither
+// this route's GET nor its PUT ever mentioned `lang` — so the picker showed English on load,
+// accepted a change, reported "Saved", and dropped it on the floor. The crons read exactly these
+// fields (app/api/cron/ops-brief/route.ts:34, app/api/cron/maint-brief/route.ts:61), so setting a
+// crew's language was a Supabase row edit. A control that lies about having saved is worse than no
+// control: nobody goes looking for a bug in a screen that said yes.
+const asLang = (v: any): 'en' | 'es' => String(v || '').toLowerCase() === 'es' ? 'es' : 'en'
+
 export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -47,8 +58,12 @@ export async function GET() {
       miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full), gm: cleanEmails(s.gm),
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
       trueup, salato,
+      lang: { miami: asLang(s.lang?.miami), broward: asLang(s.lang?.broward) },
       laborPlan: { targetMarginPct: Number.isFinite(lpTarget) && lpTarget > 0 ? Math.round(lpTarget) : null },
-      maint: { enabled: mbo.enabled !== false, miamiTo: cleanEmails(mbo.miamiTo), browardTo: cleanEmails(mbo.browardTo) },
+      maint: {
+        enabled: mbo.enabled !== false, miamiTo: cleanEmails(mbo.miamiTo), browardTo: cleanEmails(mbo.browardTo),
+        miamiLang: asLang(mbo.miamiLang), browardLang: asLang(mbo.browardLang),
+      },
     },
   })
 }
@@ -64,6 +79,7 @@ export async function PUT(req: NextRequest) {
     fromEmail: typeof c.fromEmail === 'string' && /@/.test(c.fromEmail) ? c.fromEmail.trim().toLowerCase() : DEFAULTS.fromEmail,
     miami: cleanEmails(c.miami), broward: cleanEmails(c.broward), full: cleanEmails(c.full), gm: cleanEmails(c.gm),
     vendors: { botanica: cleanEmails(c.vendors?.botanica), pt: cleanEmails(c.vendors?.pt), north: cleanEmails(c.vendors?.north) },
+    lang: { miami: asLang(c.lang?.miami), broward: asLang(c.lang?.broward) },
   }
   const res = await setSetting(KEY, config, access.email)
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save.' }, { status: 500 })
@@ -98,11 +114,14 @@ export async function PUT(req: NextRequest) {
     laborPlan = { targetMarginPct: target }
   }
   // Maintenance briefs: merge-save to their own key so the cron keeps reading what it reads.
-  let maint: { enabled: boolean; miamiTo: string[]; browardTo: string[] } | null = null
+  let maint: { enabled: boolean; miamiTo: string[]; browardTo: string[]; miamiLang: 'en' | 'es'; browardLang: 'en' | 'es' } | null = null
   if (c.maint && typeof c.maint === 'object') {
     const cur = await getSetting<any>('maint_brief', null).catch(() => null)
     const base = cur && typeof cur === 'object' ? cur : {}
-    maint = { enabled: c.maint.enabled !== false, miamiTo: cleanEmails(c.maint.miamiTo), browardTo: cleanEmails(c.maint.browardTo) }
+    maint = {
+      enabled: c.maint.enabled !== false, miamiTo: cleanEmails(c.maint.miamiTo), browardTo: cleanEmails(c.maint.browardTo),
+      miamiLang: asLang(c.maint.miamiLang), browardLang: asLang(c.maint.browardLang),
+    }
     await setSetting('maint_brief', { ...base, ...maint }, access.email).catch(() => null)
   }
   return NextResponse.json({ ok: true, config: { ...config, trueup, salato, laborPlan, maint } })
