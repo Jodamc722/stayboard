@@ -73,6 +73,8 @@ export type Move = {
   name: string
   from: string                 // the day it was taken off
   to: string | null            // where it landed, when we can find the replacement
+  toId: string | null          // the replacement task's id — so a caller can credit the arrival to
+                               // exactly one row and never count the same clean as arriving twice
   landed: 'done' | 'scheduled' | 'unknown'
   assignees: string[]
   daysMoved: number | null
@@ -112,6 +114,7 @@ export function pairMoves(ghosts: CleanTask[], live: CleanTask[], nameOf: (id: a
       name: String(g.name || ''),
       from,
       to: hit ? hit.day : null,
+      toId: hit ? String(hit.t.id) : null,
       landed: hit ? (hit.t.finished_at ? 'done' : 'scheduled') : 'unknown',
       assignees: hit ? names(hit.t) : names(g),
       daysMoved: hit ? dayDiff(from, hit.day) : null,
