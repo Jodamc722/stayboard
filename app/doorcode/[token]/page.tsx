@@ -8,15 +8,29 @@
 // Deliberately a plain server page with POST forms and no JavaScript: it has to work on a phone, in
 // a lift, on bad signal, held in one hand at a door.
 import { redirect } from 'next/navigation'
-import { getAccess, isSuperadmin } from '@/lib/access'
+import { getAccess, isSuperadmin, canApproveDoorCodes } from '@/lib/access'
 import { atLeast } from '@/lib/features'
-import { releaseByToken, rejectByToken, peekRequest } from '@/lib/eve/door-code'
+import { releaseByToken, rejectByToken, peekRequest, revealByConfirmToken } from '@/lib/eve/door-code'
 import { postApprovalOutcome } from '@/lib/eve/approvals'
 import { dmUser } from '@/lib/slack'
 
 export const dynamic = 'force-dynamic'
 
+// APPROVING IS ITS OWN PERMISSION (Jon, 2026-08-26: "named approvers only"). It used to be "any
+// admin", which is not the same thing — and combined with no self-approval check it meant anyone
+// who could approve could simply request a code and approve themselves, so the approval step was a
+// formality. Now: you are an approver because somebody marked you one in Users & admin → People,
+// and releaseByToken separately refuses when the approver IS the requester.
+//
+// `atLeast` is still imported for the Eve-level read on the reject path, which is a lesser action.
 async function allowed() {
+  const access = await getAccess()
+  const email = String(access.email || '')
+  return { ok: canApproveDoorCodes(access), email, user: access.user, access }
+}
+
+/** Turning a request DOWN is not the same risk as releasing one — anyone who can see Eve may say no. */
+async function mayReject() {
   const access = await getAccess()
   const email = String(access.email || '')
   const byRole = !!access.accessRole && atLeast((access.levels as any)?.eve, 'view')
@@ -60,18 +74,16 @@ async function release(formData: FormData) {
   }
   await postApprovalOutcome(res.slackChannel, res.slackTs,
     `✅ Released by ${a.email}${res.slackUserId ? ' — code sent by DM to whoever asked.' : '.'} This request is now closed.`)
-  const q = new URLSearchParams({
-    done: '1', unit: res.unit || '', code: res.code || '',
-    prev: res.previousCode || '', expect: res.expect || '', tn: res.transitionNote || '',
-    aw: res.arrivalWarning || '', c: res.confirmToken || '',
-  })
-  redirect(`/doorcode/${token}?${q.toString()}`)
+  // The code used to travel here in the query string, which put it in browser history, in any
+  // proxy or access log along the way, and in the Referer of anything the page then loaded. It
+  // rides in a server-side one-shot instead; the URL carries only a claim ticket.
+  redirect(`/doorcode/${token}?done=1&c=${encodeURIComponent(res.confirmToken || '')}`)
 }
 
 async function reject(formData: FormData) {
   'use server'
   const token = String(formData.get('token') || '')
-  const a = await allowed()
+  const a = await mayReject()
   if (!a.ok) redirect(`/doorcode/${token}?e=forbidden`)
 
   const res = await rejectByToken(token, a.email)
@@ -96,24 +108,36 @@ export default async function DoorCodePage(props: { params: { token: string }; s
   if (!a.ok) {
     return <div className={wrap}><div className={card}>
       <p className="text-sm font-semibold text-ink">Not your call</p>
-      <p className="text-[13px] text-muted mt-1">Releasing a door code is limited to admins.</p>
+      <p className="text-[13px] text-muted mt-1">Releasing a door code is limited to named approvers. Ask Jon to mark you one in Users &amp; admin &rarr; People if this should be you.</p>
     </div></div>
   }
 
   if (sp.done === '1') {
+    // The code is re-read server-side from the confirm token rather than carried here in the URL.
+    // Only an approver reaches this branch, and only for a few minutes after the release.
+    const shown = await revealByConfirmToken(String(sp.c || ''))
+    if (!shown.ok) {
+      return <div className={wrap}><div className={card}>
+        <p className="text-sm font-semibold text-ink">Released</p>
+        <p className="text-[13px] text-muted mt-1">{shown.error}</p>
+        <p className="text-[12px] text-muted mt-3">The person who asked has it — it went to them privately when you tapped.</p>
+      </div></div>
+    }
+    const first = shown.expect === 'old' && shown.previousCode ? shown.previousCode : shown.code
+    const second = shown.expect === 'old' && shown.previousCode ? shown.code : shown.previousCode
     return <div className={wrap}><div className={card}>
       <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold">Released</p>
-      <p className="text-lg font-bold text-ink mt-1">{sp.unit || 'Unit'}</p>
-      <p className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold mt-4">{sp.expect === 'old' ? 'Try this first — the lock has not been changed yet' : 'Current code'}</p>
-      <p className="text-4xl font-mono font-bold text-ink tracking-[0.2em] mt-1 mb-3 text-center select-all">{sp.expect === 'old' ? (sp.prev || sp.code) : sp.code}</p>
-      {(sp.expect === 'old' ? sp.code : sp.prev) && (
+      <p className="text-lg font-bold text-ink mt-1">{shown.unit || 'Unit'}</p>
+      <p className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold mt-4">{shown.expect === 'old' ? 'Try this first — the lock has not been changed yet' : 'Current code'}</p>
+      <p className="text-4xl font-mono font-bold text-ink tracking-[0.2em] mt-1 mb-3 text-center select-all">{first}</p>
+      {second && (
         <>
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold">If that fails, the {sp.expect === 'old' ? 'new' : 'previous'} code</p>
-          <p className="text-2xl font-mono font-bold text-muted tracking-[0.18em] mt-1 mb-3 text-center select-all">{sp.expect === 'old' ? sp.code : sp.prev}</p>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold">If that fails, the {shown.expect === 'old' ? 'new' : 'previous'} code</p>
+          <p className="text-2xl font-mono font-bold text-muted tracking-[0.18em] mt-1 mb-3 text-center select-all">{second}</p>
         </>
       )}
-      {sp.tn && <p className="text-[12px] text-muted mb-3">{decodeURIComponent(String(sp.tn))}</p>}
-      {sp.aw && <p className="text-[13px] text-[#7A1A1A] font-semibold mb-3">{decodeURIComponent(String(sp.aw))}</p>}
+      {shown.transitionNote && <p className="text-[12px] text-muted mb-3">{shown.transitionNote}</p>}
+      {shown.arrivalWarning && <p className="text-[13px] text-[#7A1A1A] font-semibold mb-3">{shown.arrivalWarning}</p>}
       <p className="text-[13px] text-muted">Sent privately to whoever asked. This link is now dead — it will not show the code again.</p>
       <p className="text-[12px] text-muted mt-3">Don&apos;t paste it into a channel; channel history outlives the code.</p>
       {sp.c && (
