@@ -101,6 +101,7 @@ export const CS_TOOLS: EveTool[] = [
             ? 'Origin is unknown for most of these — Guesty did not tell us whether the reply was a person or an automation, so the headline number may be flattered by template messages. Say so when you quote it.'
             : 'Where origin is known, the human number is the one to quote — the headline includes automated replies.',
         },
+        data_note: 'Guesty files its own activity entries ("log", "note") into the same threads; those are excluded — they were never sent to a guest. Only real inbound/outbound messages count here.',
         attribution_note: 'These are TEAM numbers. Attributing a reply to an individual relies on the sender name Guesty gives us, which is a proxy, not proof — do not name a person as slow off this tool.',
       }
     },
