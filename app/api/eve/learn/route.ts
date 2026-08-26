@@ -9,6 +9,7 @@ import { nightlyVision } from '@/lib/eve/vision'
 import { generateQuestions } from '@/lib/eve/questions'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -148,6 +149,7 @@ Generalize (don't repeat one guest's wording). Max 12 faqs, max 10 complaints. B
     if (error) return NextResponse.json({ error: `eve_knowledge upsert: ${error.message}. Run migration 008.` }, { status: 200 })
     learned = rows.length
   }
+  recordRun({ name: 'eve-learn', ok: true, itemCount: learned, detail: { sweep, vision, questions, learned } })
   return NextResponse.json({ ok: true, sweep, vision, questions, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
 }
 export const GET = POST
