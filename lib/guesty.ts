@@ -297,12 +297,32 @@ function mapConversation(c: any) {
   }
 }
 
+// WHO IS "US" IN A GUESTY THREAD. Guesty types its own side of a conversation — an employee, a
+// logged-in user, or the account itself. It does NOT type the guest: a guest message simply has no
+// `from.type` at all.
+const GUESTY_HOST_TYPES = new Set(['employee', 'user', 'account', 'agent', 'staff', 'admin'])
+// Guesty's own activity entries, filed into the same thread. Never sent to anybody.
+const GUESTY_LOG_KINDS = new Set(['log', 'note'])
+
 function mapMessage(conversationId: string, m: any) {
   const fromType = (m.from?.type || m.author?.type || '').toLowerCase()
+  const moduleObj: any = (m.module && typeof m.module === 'object') ? m.module : null
+  const moduleStr = String(moduleObj ? (moduleObj.type ?? moduleObj.name ?? '') : (m.module ?? m.type ?? '')).toLowerCase() || null
+
+  // 🔴 2026-08-26 — THIS WAS WRONG FOR THE LIFE OF THE APP, AND SILENTLY.
+  // The old test was `fromType === 'guest' || m.isIncoming === true`. Guesty sends NEITHER: there
+  // is no 'guest' type in the payload and `isIncoming` is absent from all 25,074 messages we hold.
+  // So every single message — including "Thanks for the quick reply." — was filed as `host`.
+  // Nothing crashed; the data just quietly said the guests had never spoken. That broke the
+  // messages page's response KPIs, the sentiment scan's HOST/GUEST transcript, every
+  // awaiting-reply count, and Eve reading a thread back as if we had talked to ourselves.
+  //
+  // The real signal is the reverse of what was being looked for: Guesty types OUR side
+  // (employee | user | account) and leaves the guest's side untyped.
   const sender =
-    (m.module === 'system' || fromType === 'system') ? 'system'
-    : (fromType === 'guest' || m.isIncoming === true) ? 'guest'
-    : 'host'
+    (GUESTY_LOG_KINDS.has(moduleStr || '') || fromType === 'system') ? 'system'
+    : (fromType && GUESTY_HOST_TYPES.has(fromType)) ? 'host'
+    : 'guest'
   const body = m.body ?? m.text ?? m.message ?? m.content ?? m.rawMessage?.text ?? ''
   const sentAt = m.createdAt ?? m.sentAt ?? m.timestamp ?? m.date ?? null
   const id = m._id ?? m.id ?? `${conversationId}:${sentAt ?? ''}:${String(body || '').slice(0, 40)}`
@@ -318,12 +338,6 @@ function mapMessage(conversationId: string, m: any) {
   // authored it. null = we genuinely cannot tell, which is the honest answer for a payload that
   // carries neither. Everything downstream treats null as unknown rather than as human, because a
   // flattering guess about response time is worse than a visible gap.
-  // `module` is an OBJECT in Guesty's payload, not a string — {type:'airbnb2'|'email'|'log'|'note',
-  // templateValues:[], …}. Stringifying it whole gives "[object Object]"; what is useful is its
-  // `type`, which turns out to be the CHANNEL the message travelled on, plus two kinds — `log` and
-  // `note` — that are Guesty's own activity entries and were never sent to a guest at all.
-  const moduleObj: any = (m.module && typeof m.module === 'object') ? m.module : null
-  const moduleStr = String(moduleObj ? (moduleObj.type ?? moduleObj.name ?? '') : (m.module ?? m.type ?? '')).toLowerCase() || null
   const automationMarker = !!(
     m.automationId || m.autoMessageId || m.automationRuleId || m.ruleId || m.templateId ||
     (Array.isArray(moduleObj?.templateValues) && moduleObj.templateValues.length > 0) ||
