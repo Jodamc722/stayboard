@@ -6,7 +6,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
 type Feed = { feed: string; wired: 'live' | 'requested'; status: string; last_sync_at: string | null; last_ok_at: string | null; items: number; http: number | null; error: string | null; columns: string[] }
-type Status = { configured: boolean; url: string | null; authHeader: string; setting: { source: 'lighthouse' | 'revenue_app'; maxStaleHours: number }; feeds: Feed[]; tables: Record<string, number | null>; probe: any }
+type Domains = { revenue: boolean; expenses: boolean; budget: boolean; projections: boolean; maxStaleHours: number }
+type Outbound = {
+  enabled: boolean; feeds: Record<string, boolean>; includeDollars: boolean; includeNames: boolean
+  keySet: boolean; feedList: string[]; base: string; lastPullAt: string | null
+  recent: Array<{ feed: string; rows: number; status: number; at: string }>
+}
+type Status = { configured: boolean; url: string | null; authHeader: string; setting: { source: 'lighthouse' | 'revenue_app'; maxStaleHours: number }; domains: Domains; outbound: Outbound; feeds: Feed[]; tables: Record<string, number | null>; probe: any }
 type Recon = any
 
 const money = (n: number | null | undefined) => n == null ? '—' : (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US')
@@ -59,11 +65,26 @@ export function RevenueAppReconcile({ initialMonth }: { initialMonth: string }) 
       await loadStatus(); await loadRecon(month)
     } finally { setBusy(null) }
   }
-  async function setSource(source: 'lighthouse' | 'revenue_app') {
-    if (source === 'revenue_app' && !confirm('Switch every money surface in Lighthouse to the Revenue App\'s numbers? Our own math stays as a labelled fallback.')) return
-    setBusy('flag'); setErr(null)
+  async function saveDomains(next: Partial<Domains>) {
+    if (!s) return
+    const domains = { ...s.domains, ...next }
+    const turningOn = (Object.keys(next) as Array<keyof Domains>).some(k => next[k] === true && k !== 'maxStaleHours')
+    if (turningOn && !confirm('Make the Revenue App the source of truth for this? His number becomes THE number on every board — KPI, briefs, Eve, owner reports — with our own math kept as a labelled fallback.')) return
+    setBusy('domains'); setErr(null)
     try {
-      const r = await fetch('/api/revenue-app/status', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, maxStaleHours: status?.setting.maxStaleHours || 6 }) })
+      const r = await fetch('/api/revenue-app/status', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what: 'domains', domains }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) setErr(j?.message || j?.error || 'Could not save')
+      await loadStatus()
+    } finally { setBusy(null) }
+  }
+
+  async function saveOutbound(next: Partial<Outbound>) {
+    if (!s) return
+    const out = { enabled: s.outbound.enabled, feeds: s.outbound.feeds, includeDollars: s.outbound.includeDollars, includeNames: s.outbound.includeNames, ...next }
+    setBusy('out'); setErr(null)
+    try {
+      const r = await fetch('/api/revenue-app/status', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what: 'partner_out', out }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok) setErr(j?.message || j?.error || 'Could not save')
       await loadStatus()
@@ -218,20 +239,95 @@ export function RevenueAppReconcile({ initialMonth }: { initialMonth: string }) 
         ) : <div className="p-4 text-sm text-muted">Loading…</div>}
       </div>
 
-      {/* The flag — last, on purpose */}
+      {/* WHAT HE OWNS — the switches that make his numbers overwrite ours */}
       {s ? (
         <div className="rounded-2xl border border-line bg-white shadow-soft p-4 sm:p-5">
-          <div className="text-[10.5px] uppercase tracking-[0.14em] text-muted font-bold">Which numbers do Lighthouse pages show?</div>
-          <div className="mt-2 flex items-center gap-2 flex-wrap">
-            {(['lighthouse', 'revenue_app'] as const).map(v => (
-              <button key={v} onClick={() => setSource(v)} disabled={!!busy || s.setting.source === v}
-                className={'text-xs font-semibold px-3 py-1.5 rounded-lg border ' + (s.setting.source === v ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line hover:bg-slate-50')}>
-                {v === 'lighthouse' ? 'Lighthouse (our Guesty math)' : 'Revenue App (his numbers)'}
-              </button>
-            ))}
-            <span className="text-[11.5px] text-muted">Fallback after {s.setting.maxStaleHours} h without a sync — always labelled on the page, never blended.</span>
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-muted font-bold">What the Revenue App is the source of truth for</div>
+          <p className="text-[11.5px] text-muted mt-1 max-w-[80ch]">Turning one on makes his number <strong>the</strong> number for that domain everywhere at once — KPI board, daily briefs, Eve, owner reports. Ours is kept only as a labelled fallback for a window or a unit he does not cover. Turn one on only after that domain reconciles above.</p>
+          <div className="mt-3 grid sm:grid-cols-2 gap-2">
+            {([
+              ['revenue', 'Revenue', 'Accommodation, cleaning revenue, ADR / RevPAR / occupancy'],
+              ['expenses', 'Expenses', 'QuickBooks actuals. Nothing on our side computes these'],
+              ['budget', 'Budget', 'The locked monthly budget'],
+              ['projections', 'Projections', 'His Bear / Base / Bull month-end forecast'],
+            ] as Array<[keyof Domains, string, string]>).map(([k, label, blurb]) => {
+              const on = !!s.domains[k]
+              return (
+                <button key={String(k)} onClick={() => saveDomains({ [k]: !on } as Partial<Domains>)} disabled={!!busy}
+                  className={'text-left rounded-xl border px-3 py-2.5 transition disabled:opacity-50 ' + (on ? 'border-brand-600 bg-brand-50' : 'border-line bg-white hover:bg-slate-50')}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-ink">{label}</span>
+                    <span className={'text-[10.5px] font-semibold px-2 py-0.5 rounded-full border ' + (on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-slate-50 border-line text-muted')}>{on ? 'Revenue App' : 'Lighthouse'}</span>
+                  </div>
+                  <div className="text-[11.5px] text-muted mt-1">{blurb}</div>
+                </button>
+              )
+            })}
           </div>
-          <p className="text-xs text-muted mt-3 max-w-[80ch]">Flip only after one full month reconciles above with every delta explained. Pages switch one at a time as they adopt <code className="bg-slate-100 px-1 rounded">lib/revenue-source.ts</code>; until a page adopts it, it keeps showing Lighthouse numbers regardless of this switch.</p>
+          <div className="mt-3 flex items-center gap-2 flex-wrap text-[11.5px] text-muted">
+            <span>Fall back to our own math after</span>
+            <input type="number" min={1} max={168} defaultValue={s.domains.maxStaleHours} disabled={!!busy}
+              onBlur={e => { const v = Number(e.currentTarget.value); if (v > 0 && v !== s.domains.maxStaleHours) saveDomains({ maxStaleHours: v }) }}
+              className="w-16 border border-line rounded px-2 py-1 text-ink tabular-nums" />
+            <span>hours without a sync — labelled on the page, never blended.</span>
+          </div>
+          <p className="text-[11.5px] text-muted mt-2">Labour never moves: payroll and hours stay Homebase, volume stays departure cleans. His cleaning <em>revenue</em> swaps; the cost beside it stays ours, and the margin says so.</p>
+        </div>
+      ) : null}
+
+      {/* OUTBOUND — his view-only access to us */}
+      {s ? (
+        <div className="rounded-2xl border border-line bg-white shadow-soft p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-[10.5px] uppercase tracking-[0.14em] text-muted font-bold">His view-only access to Lighthouse</div>
+              <p className="text-[11.5px] text-muted mt-1 max-w-[78ch]">The same arrangement pointing the other way. He gets a read-only API his app can pull — completed departure cleans and actual clocked hours, the denominator his cost-per-clean has never had. Read-only by construction: there is no write path on this door.</p>
+            </div>
+            <button onClick={() => saveOutbound({ enabled: !s.outbound.enabled })} disabled={!!busy || !s.outbound.keySet}
+              title={!s.outbound.keySet ? 'Set PARTNER_API_KEY in Vercel first' : ''}
+              className={'text-xs font-semibold px-3 py-1.5 rounded-lg border disabled:opacity-50 ' + (s.outbound.enabled ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line hover:bg-slate-50')}>
+              {s.outbound.enabled ? 'On' : 'Off'}
+            </button>
+          </div>
+
+          {!s.outbound.keySet ? (
+            <div className="mt-3 rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-xs">Set <code className="bg-amber-100 px-1 rounded">PARTNER_API_KEY</code> in Vercel → Environment Variables, redeploy, then send him that key. Until then this door is closed to his app.</div>
+          ) : (
+            <div className="mt-3 text-xs text-muted">Base URL <code className="bg-slate-100 px-1 rounded break-all">{s.outbound.base}&lt;feed&gt;</code> · header <code className="bg-slate-100 px-1 rounded">X-API-Key</code> · {s.outbound.lastPullAt ? <>his app last pulled <strong className="text-ink">{ago(s.outbound.lastPullAt)}</strong></> : 'his app has not pulled yet'}</div>
+          )}
+
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {s.outbound.feedList.map(f => {
+              const on = !!s.outbound.feeds[f]
+              return (
+                <button key={f} onClick={() => saveOutbound({ feeds: { ...s.outbound.feeds, [f]: !on } })} disabled={!!busy}
+                  className={'font-mono text-[11px] px-2 py-1 rounded-md border disabled:opacity-50 ' + (on ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-slate-50 border-line text-muted line-through')}>{f}</button>
+              )
+            })}
+          </div>
+          <div className="mt-2 flex items-center gap-4 flex-wrap text-[11.5px]">
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.outbound.includeDollars} disabled={!!busy} onChange={() => saveOutbound({ includeDollars: !s.outbound.includeDollars })} /> <span className="text-muted">Include dollars (payroll, charges)</span></label>
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={s.outbound.includeNames} disabled={!!busy} onChange={() => saveOutbound({ includeNames: !s.outbound.includeNames })} /> <span className="text-muted">Include staff names</span></label>
+            <a href="/api/partner/status" target="_blank" rel="noreferrer" className="text-brand-700 font-semibold">Preview what he sees ↗</a>
+          </div>
+
+          {s.outbound.recent && s.outbound.recent.length ? (
+            <div className="mt-3 border-t border-line pt-2">
+              <div className="text-[10px] uppercase tracking-[0.13em] text-muted font-bold mb-1">Recent pulls</div>
+              <div className="flex flex-col gap-0.5">
+                {s.outbound.recent.slice(0, 6).map((r, i) => (
+                  <div key={i} className="text-[11.5px] text-muted tabular-nums flex gap-3">
+                    <span className="font-mono text-ink w-24">{r.feed}</span>
+                    <span className={r.status === 200 ? '' : 'text-rose-700'}>{r.status}</span>
+                    <span>{int(r.rows)} rows</span>
+                    <span>{ago(r.at)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <p className="text-[11.5px] text-muted mt-3">He also gets a read-only <strong>login</strong>: /users → People → set his access role to <code className="bg-slate-100 px-1 rounded">Partner (view only)</code>. Every tab loads, every mutation refuses.</p>
         </div>
       ) : null}
     </div>
