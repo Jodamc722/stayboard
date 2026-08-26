@@ -163,61 +163,52 @@ function shortTime(iso: string | null): string {
   try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) } catch { return '' }
 }
 
-// ── the donut ───────────────────────────────────────────────────────────────────────────────────
-// Three states on one ring: finished, in progress, not started. The track IS "not started", so a
-// day with nothing done reads as an empty grey circle at a glance — which is the point.
-function Donut({ done, running, total, size = 52, stroke = 6 }: { done: number; running: number; total: number; size?: number; stroke?: number }) {
-  const r = (size - stroke) / 2
-  const C = 2 * Math.PI * r
-  const d = total > 0 ? Math.min(1, done / total) : 0
-  const g = total > 0 ? Math.min(1 - d, running / total) : 0
-  return (
-    <svg width={size} height={size} viewBox={'0 0 ' + size + ' ' + size} className="shrink-0">
-      <g transform={'rotate(-90 ' + size / 2 + ' ' + size / 2 + ')'}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-slate-200" />
-        {g > 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="butt"
-          className="stroke-amber-400" strokeDasharray={(g * C) + ' ' + C} strokeDashoffset={-d * C} />}
-        {d > 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="butt"
-          className="stroke-emerald-500" strokeDasharray={(d * C) + ' ' + C} />}
-      </g>
-      <text x="50%" y="50%" dominantBaseline="central" textAnchor="middle" className="fill-ink font-bold" style={{ fontSize: size * 0.34 }}>{total}</text>
-    </svg>
-  )
-}
-
 type Counts = { total: number; done: number; running: number; open: number }
 const zero = (): Counts => ({ total: 0, done: 0, running: 0, open: 0 })
 
+// ── ONE COUNTER, SMALL ──────────────────────────────────────────────────────────────────────────
+// Jon, 2026-08-26, with a screenshot of eight tiles running off the side of the screen:
+// "we have too many of these, more condensed."
+//
+// He is right, and the size was doing damage beyond the space it took. A 52px donut plus three
+// stacked lines of legend made each tile ~110px tall and ~170px wide, so eight categories could
+// not fit a row — they scrolled sideways, the labels truncated to "House…" and "Inspect…", and the
+// counters you had to scroll to reach may as well not have been there.
+//
+// What the three legend lines were mostly saying was ZERO. "0 in progress" is not information; it
+// is a line of type defending its own existence. So the ring becomes a bar, the zeros disappear,
+// and the tile says the two things that are actually true of it: how many, and how far along.
+//
+// The bar keeps the completion palette exactly as the task chips use it — green done, amber
+// running, grey untouched — so the top of the screen and the rows below it are one language.
 function Tile({ cat, c, active, onClick }: { cat: CatMeta | null; c: Counts; active: boolean; onClick: () => void }) {
+  const pct = (n: number) => c.total > 0 ? (n / c.total) * 100 : 0
+  const G = cat ? cat.Icon : null
   return (
-    <button onClick={onClick}
-      className={'text-left rounded-xl sm:rounded-2xl border-2 px-2.5 py-1.5 sm:px-3 sm:py-2.5 bg-white transition-colors min-w-[150px] sm:min-w-[170px] flex-1 ' +
+    <button onClick={onClick} title={cat ? cat.label : 'Everything open'}
+      className={'text-left rounded-xl border-2 px-2 py-1.5 bg-white transition-colors ' +
         (active ? 'border-ink shadow-sm' : 'border-line hover:border-ink/25')}>
-      <div className="flex items-center gap-2 sm:gap-2.5">
-        {/* Two donuts, one shown at a time: the size is a number, not a class, so a phone-sized
-            ring cannot be had with a breakpoint on a single instance. */}
-        <span className="shrink-0 sm:hidden"><Donut done={c.done} running={c.running} total={c.total} size={34} stroke={4.5} /></span>
-        <span className="shrink-0 hidden sm:block"><Donut done={c.done} running={c.running} total={c.total} /></span>
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            {cat && (() => { const G = cat.Icon; return <span className="w-4 h-4 rounded-[4px] border border-slate-300 bg-white text-slate-500 shrink-0 inline-flex items-center justify-center"><G size={9} strokeWidth={2.6} /></span> })()}
-            <span className="text-[12.5px] font-bold text-ink truncate">{cat ? cat.label : 'Everything open'}</span>
-          </div>
-          {/* PHONE: the same three numbers on one line. Three stacked lines cost ~55px a tile, and
-              the tile row is the thing standing between the top of the screen and the first unit. */}
-          <div className="mt-0.5 flex items-center gap-1 text-[10.5px] text-muted leading-tight whitespace-nowrap sm:hidden">
-            <span><span className="font-bold text-emerald-600">{c.done}</span> done</span>
-            <span className="text-line">&middot;</span>
-            <span><span className="font-bold text-amber-600">{c.running}</span> going</span>
-            <span className="text-line">&middot;</span>
-            <span><span className="font-bold text-ink">{c.open}</span> open</span>
-          </div>
-          <div className="mt-1 space-y-[1px] hidden sm:block">
-            <div className="text-[10.5px] text-muted leading-tight"><span className="font-bold text-emerald-600">{c.done}</span> finished</div>
-            <div className="text-[10.5px] text-muted leading-tight"><span className="font-bold text-amber-600">{c.running}</span> in progress</div>
-            <div className="text-[10.5px] text-muted leading-tight"><span className="font-bold text-ink">{c.open}</span> not started</div>
-          </div>
-        </div>
+      <div className="flex items-baseline gap-1.5">
+        {G && <G size={11} strokeWidth={2.5} className="text-slate-500 shrink-0 self-center" />}
+        <span className="text-[11px] font-bold text-ink truncate flex-1 min-w-0">{cat ? cat.label : 'Everything'}</span>
+        <span className="text-[15px] font-bold text-ink tabular-nums leading-none">{c.total}</span>
+      </div>
+
+      {/* The ring was 52px to say one fraction. A 4px bar says the same fraction and leaves the
+          row short enough that every category fits on screen at once. */}
+      <div className="mt-1.5 h-1 rounded-full bg-slate-200 overflow-hidden flex">
+        {c.done > 0 && <span className="bg-emerald-500 h-full" style={{ width: pct(c.done) + '%' }} />}
+        {c.running > 0 && <span className="bg-amber-400 h-full" style={{ width: pct(c.running) + '%' }} />}
+      </div>
+
+      {/* Only the states that exist. A tile with nothing on it says so once, instead of three times. */}
+      <div className="mt-1 text-[10px] text-muted leading-tight truncate">
+        {c.total === 0 ? 'nothing today'
+          : [
+            c.done ? c.done + ' done' : '',
+            c.running ? c.running + ' going' : '',
+            c.open ? c.open + ' to go' : '',
+          ].filter(Boolean).join(' · ')}
       </div>
     </button>
   )
@@ -784,7 +775,10 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
     <div>
       {/* ── COUNTERS. Every tile is a filter — the number you are worried about is one tap from
           the list of rows behind it, which is the whole reason to put counters on a screen. ── */}
-      <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 lh-actions">
+      {/* A GRID, NOT A SCROLLER. Eight categories on one screen at every width — four across on a
+          phone, all eight on a laptop — so no counter is hidden behind a sideways swipe and no
+          label has to truncate. */}
+      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-8 gap-1.5">
         {tiles.map(t => (
           <Tile key={t.key} cat={t.cat} c={counts[t.key] || zero()}
             active={t.key === 'all' ? cat === null : cat === t.key}
