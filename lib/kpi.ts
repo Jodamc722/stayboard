@@ -674,6 +674,21 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     // ops user, quietly, for as long as that gate has existed. redactMoney() strips by field NAME,
     // so it catches those and anything added later without a wrapper. money() still earns its keep
     // for fields whose names don't read like money at all (adr, revpar, booked7).
-    return showMoney ? { ...payload, moneyHidden: false } : { ...redactMoney(payload), moneyHidden: true }
+    // MONEY SOURCE (Jon, 2026-08-24). When the Revenue App owns a money domain, HIS number is the
+    // number — here, once, so the KPI board, the daily briefs, Eve and the weekly all change
+    // together instead of drifting apart. Ops volumes, Breezeway work and Homebase labour are
+    // untouched; only revenue, cleaning revenue, expenses, budget and projections move. A scoped
+    // board passes its unit ids so a filtered view can never be answered with a portfolio total,
+    // and anything he cannot cover falls back to OUR math with `moneySource.note` saying why.
+    //
+    // Runs BEFORE redactMoney so a non-money user is still stripped: whose number it is and who is
+    // allowed to see it are two separate questions.
+    const scopeIds = (marketFilter === 'all' && buildingFilter === 'all') ? null : scopedUnits.map(l => l.id)
+    let out: any = payload
+    try {
+      const { applyMoneyOverride } = await import('./money-source')
+      out = await applyMoneyOverride(payload, from, to, prevFrom, prevTo, scopeIds)
+    } catch { /* the mirror is never allowed to take the KPI board down — ours stands */ }
+    return showMoney ? { ...out, moneyHidden: false } : { ...redactMoney(out), moneyHidden: true }
   }
 }

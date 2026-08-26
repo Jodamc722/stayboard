@@ -27,7 +27,20 @@ export type RevenueSourceName = 'lighthouse' | 'revenue_app'
 export type RevenueSourceSetting = { source: RevenueSourceName; maxStaleHours: number }
 export const DEFAULT_REVENUE_SOURCE: RevenueSourceSetting = { source: 'lighthouse', maxStaleHours: 6 }
 
+// ONE SWITCH, NOT TWO (2026-08-26). This started as its own `revenue_source` flag; a day later
+// `money_domains` arrived with a switch per domain, and two controls for one behaviour is the exact
+// failure Jon named in the three-Eves incident — the one you are not looking at wins silently.
+// `money_domains.revenue` is now the truth; this key survives only as the fallback for an install
+// where migration 056 has not run yet.
 export async function getRevenueSourceSetting(): Promise<RevenueSourceSetting> {
+  const dom = await getSetting<any>('money_domains', null)
+  if (dom && typeof dom === 'object' && 'revenue' in dom) {
+    const stale = Number(dom.maxStaleHours)
+    return {
+      source: (dom.revenue === true || dom.revenue === 'true') ? 'revenue_app' : 'lighthouse',
+      maxStaleHours: stale > 0 ? stale : DEFAULT_REVENUE_SOURCE.maxStaleHours,
+    }
+  }
   const s = await getSetting<any>(REVENUE_SOURCE_KEY, null)
   const source: RevenueSourceName = s?.source === 'revenue_app' ? 'revenue_app' : 'lighthouse'
   const maxStaleHours = Number(s?.maxStaleHours) > 0 ? Number(s.maxStaleHours) : DEFAULT_REVENUE_SOURCE.maxStaleHours

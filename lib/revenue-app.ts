@@ -23,13 +23,13 @@ import { createHash } from 'crypto'
 
 export const REVENUE_APP_FEEDS = [
   'snapshots', 'eom', 'official-prior', 'budget', 'owner-map', 'building-config',
-  'unit-month', 'pnl', 'assumptions', 'reservations', 'status',
+  'unit-month', 'pnl', 'assumptions', 'reservations', 'projections', 'status',
 ] as const
 export type Feed = typeof REVENUE_APP_FEEDS[number]
 
 /** Feeds his app already serves (verified live 2026-08-24). Everything else is on the request list. */
 export const FEEDS_LIVE: Feed[] = ['snapshots', 'eom', 'official-prior', 'budget', 'owner-map', 'building-config']
-export const FEEDS_REQUESTED: Feed[] = ['unit-month', 'pnl', 'assumptions', 'reservations', 'status']
+export const FEEDS_REQUESTED: Feed[] = ['unit-month', 'pnl', 'assumptions', 'reservations', 'projections', 'status']
 
 export function revenueAppConfig(): { url: string; key: string; header: string; configured: boolean } {
   const url = String(process.env.REVENUE_APP_URL || '').replace(/\/+$/, '')
@@ -185,6 +185,7 @@ export const ALIASES: Record<string, string[]> = {
   kind:         ['kind', 'type', 'status', 'basis_kind'],
   rate:         ['rate', 'driver', 'rate_label'],
   version:      ['version', 'budget_version', 'label'],
+  scenario:     ['scenario', 'case', 'variant'],
 }
 
 export function pick(row: Row, field: keyof typeof ALIASES): string | undefined {
