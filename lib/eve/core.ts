@@ -11,7 +11,7 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import type { EveTool } from './types'
 import { obj, S } from './types'
 import {
-  clampLimit, daysAgoISO, normStar, lc, has, DEAD_LISTING, safe, cap,
+  clampLimit, daysAgoISO, normStar, lc, has, DEAD_LISTING, safe, cap, pageRows,
 } from './ctx'
 import { loadMemories, saveMemory, normKind, MEMORY_KINDS } from './memory'
 import { METRICS, METRIC_BY_KEY } from './metrics'
@@ -128,8 +128,13 @@ export const CORE_TOOLS: EveTool[] = [
     description: 'Aggregate review score for a BUILDING, a unit (name/id), or the whole portfolio (no args = portfolio). Returns avg_rating on a 5-STAR scale (Airbnb /5; Booking & Vrbo normalized from /10), review_count, star distribution, unanswered count, and the lowest-rated units. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.',
     input_schema: obj({ building: S.str, name: S.str, id: S.str }),
     run: async (input, ctx) => {
-      const { data } = await ctx.db.from('guesty_reviews').select('listing_id,rating,has_reply,excluded_from_score').order('id').limit(10000)
-      let rows = (data || []).filter((r: any) => ctx.reviewable(r.listing_id))
+      // PAGED. This is the tool whose own description says "ALWAYS use this for any average review
+      // score question" — and `.limit(10000)` was returning 1,000 of 3,762 reviews, so every
+      // portfolio and building rating she has ever quoted came from the first 27% by id. See
+      // lib/db-page.ts.
+      const { rows: revRows, truncated: revTruncated } = await pageRows((a, b) =>
+        ctx.db.from('guesty_reviews').select('id,listing_id,rating,has_reply,excluded_from_score').order('id').range(a, b), 20)
+      let rows = revRows.filter((r: any) => ctx.reviewable(r.listing_id))
       if (input?.building) rows = rows.filter((r: any) => has(ctx.buildingOf(r.listing_id), input.building))
       if (input?.id) rows = rows.filter((r: any) => String(r.listing_id) === String(input.id))
       else if (input?.name) rows = rows.filter((r: any) => has(ctx.nameOf(r.listing_id), input.name))
@@ -150,6 +155,7 @@ export const CORE_TOOLS: EveTool[] = [
       return {
         scope: input?.building ? `building: ${input.building}` : (input?.name ? `unit: ${input.name}` : (input?.id ? `unit id: ${input.id}` : 'whole portfolio')),
         rating_scale: '/5 (Airbnb /5; Booking & Vrbo normalized from /10)',
+        truncated: revTruncated || undefined,
         review_count: rows.length, rated_count: vals.length,
         avg_rating: vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null,
         distribution_by_star: dist,

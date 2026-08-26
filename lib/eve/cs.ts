@@ -17,7 +17,7 @@
 import 'server-only'
 import type { EveTool } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, lc, has, safe, cap, num, round2 } from './ctx'
+import { clampLimit, clampDays, lc, has, safe, cap, num, round2, pageRows } from './ctx'
 import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
 import { fmtDuration, median } from '@/lib/response-times'
 
@@ -31,16 +31,21 @@ export const CS_TOOLS: EveTool[] = [
     run: async (input, ctx) => {
       const days = clampDays(input?.days, 30, 180)
       const since = new Date(Date.now() - days * 86400000).toISOString()
-      const lim = clampLimit(input?.limit, 500, 2000)
-      let q = ctx.db.from('conversation_response')
-        .select('conversation_id,reservation_id,listing_id,building,channel,first_ms,human_first_ms,replies,guest_msgs,awaiting,last_guest_at,last_host_at,last_responder')
-        .gte('last_guest_at', since)
-        .order('last_guest_at', { ascending: false })
-        .limit(lim)
-      if (input?.building) q = q.ilike('building', `%${String(input.building)}%`)
-      if (input?.channel) q = q.ilike('channel', `%${String(input.channel)}%`)
-      const { data } = await safe(q, { data: [] } as any)
-      const rows = ((data as any[]) || [])
+      // PAGED. Every number below is an AGGREGATE — a median, a within-the-hour percentage, a count
+      // of who is waiting — so a capped read does not shorten the list, it moves the answer. Asking
+      // for 2,000 rows returned 1,000 and said nothing about the rest. See lib/db-page.ts.
+      const maxPages = Math.max(1, Math.ceil(clampLimit(input?.limit, 2000, 8000) / 1000))
+      const { rows, truncated } = await pageRows<any>((a, b) => {
+        let q = ctx.db.from('conversation_response')
+          .select('conversation_id,reservation_id,listing_id,building,channel,first_ms,human_first_ms,replies,guest_msgs,awaiting,last_guest_at,last_host_at,last_responder')
+          .gte('last_guest_at', since)
+          .order('last_guest_at', { ascending: false })
+          .order('conversation_id')
+          .range(a, b)
+        if (input?.building) q = q.ilike('building', `%${String(input.building)}%`)
+        if (input?.channel) q = q.ilike('channel', `%${String(input.channel)}%`)
+        return q
+      }, maxPages)
 
       if (!rows.length) {
         return {
@@ -80,6 +85,10 @@ export const CS_TOOLS: EveTool[] = [
 
       return {
         window_days: days,
+        truncated: truncated || undefined,
+        truncation_warning: truncated
+          ? 'I hit the row ceiling reading this window, so these medians and percentages cover only part of it. Say so, and ask for fewer days rather than quoting these as the whole picture.'
+          : undefined,
         threads: rows.length,
         answered: answered.length,
         median_first_response: fmtDuration(median(gaps)),
