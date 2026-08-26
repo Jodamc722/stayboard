@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   const key = slugify(String(body?.key || label))
   if (!key) return NextResponse.json({ error: 'Could not derive a role key from that name.' }, { status: 400 })
   const perms = cleanPerms(body?.perms) ?? { '*': 'off' }
-  const landing = typeof body?.landing === 'string' && body.landing.startsWith('/') ? body.landing : '/'
+  const landing = typeof body?.landing === 'string' && body.landing.startsWith('/') ? body.landing : '/plan'
   const blurb = String(body?.blurb || '').slice(0, 200)
   const sb = supabaseAdmin()
   const { error: e } = await sb.from('app_roles').insert({ key, label, blurb, landing, perms, is_system: false, sort: Number(body?.sort) || 100 })
