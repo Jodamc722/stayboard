@@ -290,6 +290,34 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
               </div>
               <div className="rounded-lg border border-line bg-white divide-y divide-line">
                 {EXTRA_PERMS.map(p => {
+                  // A CHOICE permission (door codes: No access / Ask / Direct) renders as a picker,
+                  // not a switch. Two switches for one three-way decision is how you end up with
+                  // "no access" and "direct" both on and nobody able to say what that means.
+                  if (p.choices) {
+                    const cur = String((u.features as any)?.[p.key] || p.choices[0].value)
+                    const active = p.choices.find(c => c.value === cur) || p.choices[0]
+                    return (
+                      <div key={p.key} className="px-3 py-2.5">
+                        <div className="text-[12px] font-semibold text-ink">{p.label}</div>
+                        <div className="text-[10.5px] text-muted mb-2">{p.blurb}</div>
+                        <div className="lh-actions inline-flex rounded-lg border border-line bg-app p-0.5">
+                          {p.choices.map(c => (
+                            <button key={c.value} disabled={!isOwner || me}
+                              onClick={() => {
+                                const next: Record<string, any> = { ...(u.features || {}) }
+                                if (c.value === p.choices![0].value) delete next[p.key]; else next[p.key] = c.value
+                                onPatch(u.email, { features: next }, `${p.label} for ${name || u.email}: ${c.label}.`)
+                              }}
+                              className={'shrink-0 px-2.5 py-1 rounded-[7px] text-[11.5px] font-bold disabled:opacity-50 ' +
+                                (cur === c.value ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                              {c.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="text-[10.5px] text-muted mt-1.5">{active.blurb}</div>
+                      </div>
+                    )
+                  }
                   const on = (u.features as any)?.[p.key] === true
                   return (
                     <div key={p.key} className="flex items-start gap-3 px-3 py-2">
@@ -319,7 +347,9 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
                 })}
               </div>
               <p className="text-[10px] text-muted mt-1.5">
-                Off for everyone until you switch it on — no role grants it, and you always have it.
+                Closed for everyone until you open it — no role grants any of these, and you always
+                have them. Door codes are physical access: nobody can approve their own request, whatever
+                their setting says.
               </p>
             </div>
           )}
@@ -337,12 +367,16 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
                   {overrideCount > 0 && <span className="text-[10px] font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-full px-1.5 py-0.5">{overrideCount} customised</span>}
                 </div>
                 {overrideCount > 0 && isOwner && !me && (
-                  // Clears the TAB overrides only. Sending {} would also wipe the Dollar amounts
-                  // switch above — "put the tabs back" must not quietly revoke something the owner
-                  // turned on deliberately in a different control.
+                  // Clears the TAB overrides only. Sending {} would also wipe the permissions in
+                  // the card above — "put the tabs back" must not quietly revoke something the owner
+                  // turned on deliberately in a different control. Choice permissions (door codes)
+                  // carry a string, not `true`, so keep any value that is actually set.
                   <button onClick={() => {
                     const keep: Record<string, any> = {}
-                    for (const p of EXTRA_PERMS) if ((u.features as any)?.[p.key] === true) keep[p.key] = true
+                    for (const p of EXTRA_PERMS) {
+                      const v = (u.features as any)?.[p.key]
+                      if (p.choices ? (typeof v === 'string' && v) : v === true) keep[p.key] = v
+                    }
                     onPatch(u.email, { features: keep }, 'Back to the role for every tab.')
                   }}
                     className="text-[11px] font-semibold text-muted hover:text-ink underline">Reset all to role</button>
