@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, requireLevel, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
-import { getAgencies, upsertStaff, type Agency } from '@/lib/staffing'
+import { getAgencies, upsertStaff, getStaff, staffSingleSourceReady, type Agency } from '@/lib/staffing'
 import { getCrew, DEPTS, DEPT_LABEL, SOURCE_LABEL, type Dept } from '@/lib/crew'
 import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { nameMatchesRoster } from '@/lib/homebase'
@@ -43,6 +43,12 @@ type Person = {
   agency: string | null
   /** miami | broward | north | vendor | '' — '' means they are in no market tab at all. */
   area: string | null
+  /** Pay, from the same staff row. Present only once migration 057 has been applied. */
+  title?: string | null
+  salaried?: boolean
+  salaryHourly?: number | null
+  salaryHoursPerWeek?: number | null
+  salaryAnnual?: number | null
   // Breezeway, as colour only.
   tasks: { total: number; cleans: number; maintenance: number; inspection: number; other: number }
 }
@@ -57,14 +63,18 @@ export async function GET(req: NextRequest) {
   const from = dISO(new Date(Date.now() - days * 864e5))
 
   const sb = supabaseAdmin()
-  const [crew, agencies, tc, tasksRes] = await Promise.all([
+  const [crew, agencies, tc, tasksRes, singleSource, staffRows] = await Promise.all([
     getCrew(),
     getAgencies(true).catch(() => [] as Agency[]),
     getTimecardsAudited(from, to).catch(() => ({ cards: [] as any[], complete: false, failedWeeks: [] as string[], weeks: 0 })),
     sb.from('breezeway_tasks_sync')
       .select('name, type_department, assignees, scheduled_date, status')
       .gte('scheduled_date', from).lte('scheduled_date', to).limit(5000),
+    staffSingleSourceReady().catch(() => false),
+    getStaff(true).catch(() => [] as any[]),
   ])
+  const staffByLower: Record<string, any> = {}
+  for (const r of (staffRows || [])) staffByLower[String(r.name).toLowerCase()] = r
 
   // ── Homebase is the payroll truth. Everyone who clocked an hour starts here. ──────────────────
   const byName: Record<string, Person> = {}
@@ -106,6 +116,13 @@ export async function GET(req: NextRequest) {
     p.staffRole = rec?.role ? str(rec.role) : null
     p.agency = rec?.agency ? str(rec.agency) : null
     p.area = rec?.area ? str(rec.area) : null
+    // Pay rides the same record now — one row per person, edited in one place.
+    const sr = (rec && staffByLower[String(rec.name || '').toLowerCase()]) || staffByLower[n.toLowerCase()] || null
+    p.title = sr?.title ?? null
+    p.salaried = sr?.salaried === true
+    p.salaryHourly = sr?.salaryHourly ?? null
+    p.salaryHoursPerWeek = sr?.salaryHoursPerWeek ?? null
+    p.salaryAnnual = sr?.salaryAnnual ?? null
     const r = crew.deptOfDetailed(n, p.homebaseRole, null)
     p.dept = r.dept
     p.source = r.source
@@ -167,6 +184,10 @@ export async function GET(req: NextRequest) {
     },
     // Homebase week fetches can fail; a partial roster must not read as a complete one.
     payrollComplete: (tc as any).complete !== false,
+    // ONE SOURCE (Jon, 2026-08-26). false = migration 057 has not been applied, so crew and pay
+    // edits made here cannot persist to the staff row yet and the app is still resolving people
+    // through the old ladder. Said plainly on screen rather than failing quietly.
+    singleSource,
     canEdit: true,
   })
 }
@@ -182,16 +203,22 @@ export async function PUT(req: NextRequest) {
   const current = await getSetting<Record<string, string>>(KEY, {}).catch(() => ({} as Record<string, string>))
 
   const next: Record<string, string> = { ...(current || {}) }
+  // THE CREW NOW LANDS ON THE PERSON'S OWN ROW (Jon, 2026-08-26: one source of data). The legacy
+  // app_settings blob is still written alongside it, for two reasons: it is what resolves people
+  // on any deploy where migration 057 has not run, and keeping it in step means this change can
+  // be rolled back without losing a single operator decision.
+  const deptWrites: Record<string, string | null> = {}
   let set = 0, cleared = 0
   for (const rawName of Object.keys(incoming)) {
     const name = String(rawName).trim().slice(0, 120)
     if (!name) continue
     const v = String(incoming[rawName] || '').toLowerCase()
-    // '' clears the override and hands the person back to the normal resolution order.
-    if (!v) { if (name in next) { delete next[name]; cleared++ } continue }
+    // '' clears the stated crew and hands the person back to the normal resolution order.
+    if (!v) { if (name in next) { delete next[name]; cleared++ } deptWrites[name] = null; continue }
     if (DEPTS.indexOf(v as Dept) < 0) continue
     if (next[name] !== v) set++
     next[name] = v
+    deptWrites[name] = v
   }
 
   // Agency (or W2) and market live on the `staff` row, not in this setting — same record the
@@ -200,6 +227,7 @@ export async function PUT(req: NextRequest) {
   const staffEdits = (body?.staff && typeof body.staff === 'object') ? body.staff : {}
   const staffErrors: string[] = []
   let staffSaved = 0
+  let migrationPending = false
   for (const rawName of Object.keys(staffEdits)) {
     const name = String(rawName).trim().slice(0, 120)
     if (!name) continue
@@ -210,14 +238,117 @@ export async function PUT(req: NextRequest) {
     // Role rides the same staff row (Jon, 2026-08-23: "put the role, the agency, and their pay
     // agency fees so I can get a better assumption of labor cost based on market area and role").
     if ('role' in e) patch.role = e.role ? String(e.role) : null
+    // Pay lives on the same row, so the People card can state it in the same save.
+    if ('title' in e) patch.title = e.title ? String(e.title) : null
+    if ('salaried' in e) patch.salaried = !!e.salaried
+    if ('salaryHourly' in e) patch.salaryHourly = e.salaryHourly === '' || e.salaryHourly == null ? null : Number(e.salaryHourly)
+    if ('salaryHoursPerWeek' in e) patch.salaryHoursPerWeek = e.salaryHoursPerWeek === '' || e.salaryHoursPerWeek == null ? null : Number(e.salaryHoursPerWeek)
+    if ('salaryAnnual' in e) patch.salaryAnnual = e.salaryAnnual === '' || e.salaryAnnual == null ? null : Number(e.salaryAnnual)
+    if (name in deptWrites) { patch.dept = deptWrites[name]; patch.deptSource = 'set here' }
     if (Object.keys(patch).length < 2) continue
     const r = await upsertStaff(patch)
-    if (r.ok) staffSaved++; else staffErrors.push(`${name}: ${r.error}`)
+    if (r.ok) { staffSaved++; if (r.migrationPending) migrationPending = true }
+    else staffErrors.push(`${name}: ${r.error}`)
+    delete deptWrites[name]
+  }
+  // Anybody whose crew changed but who had no other staff edit still needs their row written.
+  for (const name of Object.keys(deptWrites)) {
+    const r = await upsertStaff({ name, dept: deptWrites[name], deptSource: 'set here' })
+    if (r.ok) { staffSaved++; if (r.migrationPending) migrationPending = true }
+    else staffErrors.push(`${name}: ${r.error}`)
   }
 
   const { error } = await supabaseAdmin().from('app_settings').upsert(
     { key: KEY, value: JSON.stringify(next), updated_by: access.email, updated_at: new Date().toISOString() },
     { onConflict: 'key' })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, set, cleared, staffSaved, staffErrors, roles: next })
+  return NextResponse.json({
+    ok: true, set, cleared, staffSaved, staffErrors, roles: next,
+    // true = the crew and pay half of this save could not reach the staff row because migration
+    // 057 is not applied. The legacy setting still holds the crew, so nothing was lost — but the
+    // operator is told rather than left believing the record is now the source.
+    migrationPending,
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
+// CONSOLIDATE — pull every person onto their own staff row, once (Jon, 2026-08-26: "make sure all
+// staff and role is pulled from one source of data").
+//
+// Migration 057 adds the columns; this fills them. For everyone the app currently resolves through
+// the OLD ladder — the settings override, the roster hardcoded in lib/crew, the Homebase role text
+// — it writes that answer onto their record and stamps where it came from. Nothing changes on
+// screen: the same crew each person already had is simply now STATED on their row instead of being
+// re-derived from five places on every request.
+//
+// Idempotent by construction: a person whose row already names a crew is skipped, so running it
+// twice is the same as running it once, and it can never overwrite an operator's choice.
+export async function POST(req: NextRequest) {
+  const g = await requireLevel('labor-settings', 'full')
+  if (!g.ok) return g.res
+
+  if (!(await staffSingleSourceReady())) {
+    return NextResponse.json({
+      ok: false,
+      error: 'The staff table does not have the single-source columns yet — apply supabase/migrations/057_staff_single_source.sql, then run this again.',
+      migrationPending: true,
+    }, { status: 409 })
+  }
+
+  const days = 30
+  const to = dISO(new Date())
+  const from = dISO(new Date(Date.now() - days * 864e5))
+  const sb = supabaseAdmin()
+  const [crew, existing, tc, tasksRes] = await Promise.all([
+    getCrew(),
+    getStaff(true).catch(() => [] as any[]),
+    getTimecardsAudited(from, to).catch(() => ({ cards: [] as any[] })),
+    sb.from('breezeway_tasks_sync').select('assignees, scheduled_date')
+      .gte('scheduled_date', from).lte('scheduled_date', to).limit(5000),
+  ])
+
+  // Everyone the app knows about: on payroll, seen in Breezeway, or already on the roster.
+  const names: Record<string, string> = {}
+  const roleOf: Record<string, string | null> = {}
+  for (const c of ((tc as any).cards || [])) {
+    const n = str(c.name).trim(); if (!n) continue
+    names[n.toLowerCase()] = n
+    if (!roleOf[n.toLowerCase()] && c.role) roleOf[n.toLowerCase()] = str(c.role)
+  }
+  for (const t of (tasksRes.data || [])) {
+    const raw = Array.isArray((t as any).assignees) ? (t as any).assignees : []
+    for (const a of raw) {
+      const nm = str(typeof a === 'string' ? a : a?.name).trim()
+      if (nm) names[nm.toLowerCase()] = nm
+    }
+  }
+  for (const r of (existing || [])) names[String(r.name).toLowerCase()] = String(r.name)
+
+  const stated: Record<string, boolean> = {}
+  for (const r of (existing || [])) if (r.dept) stated[String(r.name).toLowerCase()] = true
+
+  const written: { name: string; dept: string; from: string }[] = []
+  const skipped: string[] = []
+  const errors: string[] = []
+  for (const key of Object.keys(names)) {
+    const name = names[key]
+    // Already stated on the record — the whole point is that this can never override a person.
+    if (stated[key]) { skipped.push(name); continue }
+    const r = crew.deptOfDetailed(name, roleOf[key] || null, null)
+    // 'unrostered' means nobody has actually said. Writing 'other' for them would turn a visible
+    // gap into a stated fact, which is the exact failure this roster exists to prevent.
+    if (r.source === 'unrostered') { skipped.push(name); continue }
+    const res = await upsertStaff({ name, dept: r.dept, deptSource: 'consolidated:' + r.source })
+    if (res.ok) written.push({ name, dept: r.dept, from: SOURCE_LABEL[r.source] })
+    else errors.push(`${name}: ${res.error}`)
+  }
+
+  return NextResponse.json({
+    ok: true,
+    written: written.length,
+    skipped: skipped.length,
+    people: written,
+    errors,
+    note: 'Every person above now states their own crew on their own record. Nobody moved crews — the answer they already had was written down.',
+  })
 }
