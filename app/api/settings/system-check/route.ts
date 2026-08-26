@@ -132,6 +132,40 @@ export async function GET() {
           ' host dashboard. If reviews exist there and not in Guesty, it is the channel link that needs re-authorising — nothing in this app will fix it.',
       })
     }
+    // ── OURS OR THEIRS ────────────────────────────────────────────────────────────────────────
+    // The question that took a week to answer in August was whether reviews were missing because
+    // Guesty never received them or because we never fetched them. Reading our own table can never
+    // answer it — both look identical from here. So ask Guesty for the first page of reviews and
+    // compare its newest against ours. It is one API call, and it turns a week of argument into a
+    // line of text.
+    try {
+      const { guestyConfigured, listRecentReviews } = await import('@/lib/guesty')
+      if (guestyConfigured()) {
+        const theirs = await listRecentReviews(200)
+        const theirNewest: Record<string, string> = {}
+        for (const r of theirs) {
+          const ch = String(r.channel || 'Other')
+          const at = String(r.createdAt || '')
+          if (at && (!theirNewest[ch] || at > theirNewest[ch])) theirNewest[ch] = at
+        }
+        for (const ch of Object.keys(theirNewest)) {
+          const mine = newest[ch] || ''
+          const behind = !mine || theirNewest[ch] > mine
+          if (!behind) continue
+          const gap = mine
+            ? Math.max(0, Math.floor((new Date(theirNewest[ch]).getTime() - new Date(mine).getTime()) / 86400000))
+            : null
+          reviewChecks.push({
+            key: 'reviews:gap:' + ch, label: 'Reviews we have not pulled in — ' + ch, ok: false, area: 'Reviews',
+            breaks: 'Guesty already has ' + ch + ' reviews newer than anything in our database' +
+              (gap != null ? ' (by about ' + gap + ' day' + (gap === 1 ? '' : 's') + ')' : '') +
+              '. This is our sync, not the channel — the reviews arrived and we did not store them.',
+            fix: 'Run the review sync now: open /api/cron/sync-reviews while signed in. If it comes back completeSweep:false it ran out of time before finishing; if the gap persists after a complete sweep, send me its output.',
+          })
+        }
+      }
+    } catch { /* the comparison is a bonus; never let it take the health screen down */ }
+
     if (!Object.keys(newest).length) {
       reviewChecks.push({
         key: 'reviews:none', label: 'Reviews arriving', ok: false, area: 'Reviews',
