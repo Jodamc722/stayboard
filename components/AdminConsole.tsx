@@ -60,6 +60,7 @@ const L = {
   notices: dynamic(() => import('@/components/ReservationEmailsAdmin').then(m => m.ReservationEmailsAdmin), { loading: spin, ssr: false }),
   salato: dynamic(() => import('@/components/SalatoVerifyEmailAdmin').then(m => m.SalatoVerifyEmailAdmin), { loading: spin, ssr: false }),
   share: dynamic(() => import('@/components/ShareLinksCard').then(m => m.ShareLinksCard), { loading: spin, ssr: false }),
+  nav: dynamic(() => import('@/components/NavLayoutAdmin').then(m => m.NavLayoutAdmin), { loading: spin, ssr: false }),
 }
 
 // ── THE DIRECTORY ───────────────────────────────────────────────────────────────────────────────
@@ -83,6 +84,13 @@ const ENTRIES: Entry[] = [
     blurb: 'Whether the integrations and keys these settings depend on are actually working — and what to do when one is not.',
     find: 'health status broken error vault key homebase slack email api down not working missing env',
     render: () => <SystemCheck />,
+  },
+
+  {
+    key: 'nav', title: 'Sidebar & tabs', group: 'Start here', Icon: Sliders,
+    blurb: 'Rename any tab, move it to another section, reorder it or take it off the sidebar — no deploy, and one click back to standard.',
+    find: 'sidebar nav navigation tab menu rename reorder move hide section order layout left',
+    render: p => <L.nav isAdmin />,
   },
 
   {

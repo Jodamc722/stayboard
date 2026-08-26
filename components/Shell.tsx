@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from '@/lib/nav'
 import { TAB_SETS, tabSetForPath, type TabSet } from '@/lib/tabsets'
+import { applyNavLayout, type NavLayout } from '@/lib/nav-layout'
 import { EveFloat } from '@/components/EveFloat'
 import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
@@ -36,7 +37,10 @@ import {
 type NavItem = { to: string; label: string; Icon: any; set?: string }
 type NavSection = { title: string; items: NavItem[] }
 
-const SECTIONS: NavSection[] = [
+// Exported so the sidebar editor (components/NavLayoutAdmin) can list exactly these rows — the
+// editor must never keep its own copy of the nav, or the two drift and it starts offering to move
+// pages that no longer exist.
+export const SECTIONS: NavSection[] = [
   {
     title: 'Overview',
     items: [
@@ -171,6 +175,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [features, setFeatures] = useState<Record<string, boolean> | null>(null)
   const [workspace, setWorkspace] = useState<string | null>(null)
   const [levels, setLevels] = useState<Record<string, string> | null>(null)
+  // The saved sidebar arrangement (lib/nav-layout.ts). Null until /api/access/me answers; the code
+  // defaults render meanwhile, so the nav is never empty and never flickers into existence.
+  const [navLayout, setNavLayout] = useState<NavLayout | null>(null)
   const [roleLabel, setRoleLabel] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState<string | null>(null)
 
@@ -197,6 +204,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       setFeatures(j?.features && typeof j.features === 'object' ? j.features : {})
       setWorkspace(typeof j?.workspace === 'string' ? j.workspace : null)
       if (j?.levels && typeof j.levels === 'object') setLevels(j.levels)
+      if (j?.nav && typeof j.nav === 'object') setNavLayout(j.nav)
       if (typeof j?.accessRole === 'string' && j.accessRole) setRoleLabel(j.accessRole)
       if (j?.profile?.name) setDisplayName(String(j.profile.name))
       const roleKey = typeof j?.accessRole === 'string' && j.accessRole ? j.accessRole : (j?.isOwner ? 'admin' : null)
@@ -266,7 +274,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
     const first = setTabs(it.set).find(t => canSee(t.to))
     return first ? { ...it, to: first.to } : null
   }
-  const sections: NavSection[] = SECTIONS
+  // ORDER OF OPERATIONS MATTERS. The layout override is applied FIRST — it decides names, sections
+  // and order — and the permission filter runs after it, on the result. That keeps the two concerns
+  // from ever being mistaken for each other: rearranging the sidebar cannot grant anyone anything,
+  // and a role's access cannot be worked around by moving a row.
+  const arranged: NavSection[] = applyNavLayout(SECTIONS, navLayout)
+  const sections: NavSection[] = arranged
     .map(sec => sec.title === 'Settings' && isAdmin
       ? { title: sec.title, items: sec.items.concat([{ to: '/users', label: 'Users & admin', Icon: UserCog }]) }
       : sec)
