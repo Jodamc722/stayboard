@@ -356,42 +356,80 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
     return all.sort((a, b) => String(b.at).localeCompare(String(a.at)))[0] || null
   }, [comments])
 
+  // "Oasis - Royal Palm" above "Oasis · Fort Lauderdale" spends a line of a phone screen saying
+  // Oasis twice. When the name already carries the building, the sub keeps only what it adds.
+  const metaSub = useMemo(() => {
+    const sub = String(row.sub || '')
+    if (!sub) return ''
+    const title = String(row.title || '').toLowerCase()
+    const parts = sub.split(' \u00b7 ').map(p => p.trim()).filter(Boolean)
+    const kept = parts.filter(p => !title.includes(p.toLowerCase()))
+    // If every part was already in the name there is nothing left to say — drop the whole thing
+    // rather than falling back to repeating it.
+    return kept.join(' \u00b7 ')
+  }, [row.sub, row.title])
+
   return (
     <div className="border-b border-line last:border-0">
       {/* THE ROW. 12 columns from lg: up; below that it stacks into a card, because a coordinator
           on a phone in a hallway needs the same information and cannot scroll a table sideways. */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 lg:gap-3 items-center px-3 py-2.5 hover:bg-app/60 cursor-pointer"
+      {/* PHONE: TWO LINES, NOT FIVE (Jon, 2026-08-26: "make it visible and concise").
+          The desktop row is five cells across twelve columns. Stacked on a phone that became five
+          separate lines — title, building, reservation, status, chips — 160px per unit, so a
+          twenty-unit market was eight screens and you could see two and a half units at a time.
+          The information did not need cutting, it needed to stop being one item per line:
+            line 1   unit name          · status · 0/3 · issue count · nights free
+            line 2   city · what is happening today
+            line 3   the task chips, when there are any
+          From lg: up the twelve-column grid is exactly as it was — the `order-*` and width classes
+          all carry an lg: reset. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 lg:grid lg:grid-cols-12 lg:gap-3 px-3 py-2 lg:py-2.5 hover:bg-app/60 cursor-pointer"
         onClick={() => setOpen(o => !o)}>
         {/* who / what */}
-        <div className="lg:col-span-3 min-w-0 flex items-center gap-2">
+        <div className="order-1 flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:col-span-3 lg:flex-none lg:gap-2">
           <ChevronRight size={14} className={'text-muted shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
           <div className="min-w-0">
             <div className="text-[13.5px] font-bold text-ink truncate">{row.title}</div>
-            {row.sub && <div className="text-[11px] text-muted truncate">{row.sub}</div>}
+            {/* On a phone this rides on the meta line below instead, next to the reservation. */}
+            {row.sub && <div className="hidden lg:block text-[11px] text-muted truncate">{row.sub}</div>}
           </div>
         </div>
-        {/* reservation / shift context */}
-        <div className="lg:col-span-3 min-w-0">
-          <span className="text-[11.5px] text-muted lg:whitespace-nowrap lg:truncate lg:block">{row.reservation}</span>
-        </div>
-        {/* status */}
-        <div className="lg:col-span-2 flex items-center gap-2">
-          <span className={'text-[10.5px] font-bold px-2 py-0.5 rounded-full border ' + row.status.cls}>{row.status.label}</span>
+        {/* status — beside the name on a phone, its own column on desktop */}
+        <div className="order-2 flex items-center gap-1.5 shrink-0 lg:order-none lg:col-span-2 lg:gap-2">
+          <span className={'text-[10.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + row.status.cls}>{row.status.label}</span>
           {total > 0 && (
             <span className="text-[10.5px] font-semibold text-muted tabular-nums" title={done + ' of ' + total + ' finished'}>
               {done}/{total}
             </span>
           )}
+          {/* Issues and the free-nights count join the headline on a phone: they are the two things
+              that decide whether this row needs you, so they belong where the eye already is. */}
+          {row.issues.length > 0 && (
+            <span className="lg:hidden text-[10.5px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1"
+              title={row.issues.map(i => i.text).join(' · ')}>
+              <AlertTriangle size={10} />{row.issues.length}
+            </span>
+          )}
+          {row.gapNights != null && (
+            <span className="lg:hidden text-[10.5px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">{row.gapNights}n</span>
+          )}
+        </div>
+        {/* reservation / shift context — full width on a phone, carrying the city with it */}
+        <div className="order-3 w-full min-w-0 lg:order-none lg:col-span-3 lg:w-auto">
+          <span className="block truncate text-[11.5px] text-muted lg:whitespace-nowrap">
+            <span className="lg:hidden">{[metaSub, row.reservation].filter(Boolean).join(' \u00b7 ')}</span>
+            <span className="hidden lg:inline">{row.reservation}</span>
+          </span>
         </div>
         {/* the day's work */}
-        <div className="lg:col-span-3 flex items-center gap-1 flex-wrap">
+        <div className="order-4 w-full flex items-center gap-1 flex-wrap lg:order-none lg:col-span-3 lg:w-auto">
           {row.tasks.length === 0
             ? <span className="text-[11px] text-muted">No tasks today</span>
             : row.tasks.slice(0, 14).map(t => <TaskChip key={t.id} t={t} />)}
           {row.tasks.length > 14 && <span className="text-[10.5px] text-muted font-semibold">+{row.tasks.length - 14}</span>}
         </div>
-        {/* issues + gap */}
-        <div className="lg:col-span-1 flex items-center gap-2 lg:justify-end">
+        {/* issues + gap — desktop keeps its own right-hand column */}
+        <div className="hidden lg:col-span-1 lg:flex items-center gap-2 lg:justify-end">
           {row.issues.length > 0 && (
             <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1"
               title={row.issues.map(i => i.text).join(' · ')}>
