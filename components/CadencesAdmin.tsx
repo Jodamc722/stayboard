@@ -244,11 +244,14 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
           <label className="flex items-start gap-2 cursor-pointer sm:col-span-2">
             <input type="checkbox" checked={cfg.requireStaffOnSite} onChange={e => set({ requireStaffOnSite: e.target.checked })} className="mt-0.5" disabled={!isOwner} />
             <span className="text-[12px]">
-              <span className="font-semibold text-ink">Only where somebody is already working</span>{' '}
+              <span className="font-semibold text-ink">Only where somebody is already working nearby</span>{' '}
               <span className="text-muted">
                 — a filter change in a building a tech is standing in is twenty minutes; the same job across
-                the county is a two-hour round trip that does not happen. Past {cfg.escapeAfterDays || '—'} days
-                overdue it is proposed anyway, because &ldquo;nobody is ever near it&rdquo; cannot mean &ldquo;never&rdquo;.
+                the county is a two-hour round trip that does not happen. Somebody in the same building counts
+                first and ranks far higher; somebody elsewhere in the same area still counts, but only just.
+                A job with a real last-done date more than {cfg.escapeAfterDays || '—'} days past its interval is
+                proposed anyway, because &ldquo;nobody is ever near it&rdquo; cannot mean &ldquo;never&rdquo; — a unit
+                with no record at all does not get that pass, because a missing record is usually missing history.
               </span>
             </span>
           </label>
@@ -295,6 +298,7 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
             <p className="text-[11.5px] text-muted mt-0.5">
               Looked at {preview.considered} unit-and-job combinations · proposing {preview.suggestions?.length || 0}
               {preview.day?.cap != null ? ` (cap ${preview.day.cap} today)` : ''}
+              {preview.mix ? ` · ${preview.mix.building} where somebody is in the building, ${preview.mix.area} elsewhere in the area, ${preview.mix.none} with nobody near` : ''}
               {preview.historyComplete === false ? ' · history read hit its page limit, so some "never done" may be "long ago"' : ''}
             </p>
           </div>
