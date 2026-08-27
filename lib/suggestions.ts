@@ -40,6 +40,7 @@ import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { marketOf, buildingOf } from './segments'
 import { linkedSets } from './linked-units'
+import { pendingForUnits, stampDescription, type PendingTask } from './pending-work'
 import { isLiveStay } from './stay-status'
 import {
   CADENCE_KEY, resolveCadences, cadenceRe, daysBetween,
@@ -149,6 +150,12 @@ export type SuggestionRun = {
    * The whole-unit listing is suppressed so one front door gets one job, not two or three.
    */
   doubleListed: number
+  /**
+   * Open work per unit that is NOT on today's board — overdue, parked ahead, or unscheduled.
+   * Jon, 2026-08-27: "keep tabs on pending tasks in a particular unit." Shown on the unit's own row
+   * beside the suggestions, because the question "what does this unit still owe" is one question.
+   */
+  pending: Record<string, PendingTask[]>
   /** False when the history read hit its page ceiling; some "never done" may be "long ago". */
   historyComplete: boolean
   error?: string
@@ -301,7 +308,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
     suggestions: [], considered: 0, dropped, mix: { building: 0, area: 0, none: 0 },
     amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [], doubleListed: 0,
-    historyComplete: true, ...extra,
+    pending: {}, historyComplete: true, ...extra,
   })
 
   // A cadence that needs a scope and has not been given one is INERT: it is skipped, and it is
@@ -758,6 +765,15 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     if (who) perPerson[who] = (perPerson[who] || 0) + s.minutes
   }
 
+  // PENDING WORK, for the units a coordinator will actually open today: everything on today's board
+  // plus everything we are proposing against. Deliberately not the whole portfolio — 200 units of
+  // backlog is a report, not a prompt.
+  const wantPending = Array.from(new Set(
+    Array.from(busyUnits).concat(picked.map(s => s.listingId)),
+  )).slice(0, 300)
+  let pending: Record<string, PendingTask[]> = {}
+  try { pending = await pendingForUnits(wantPending, date) } catch { pending = {} }
+
   const mix = { building: 0, area: 0, none: 0 }
   for (const s of picked) mix[s.proximity]++
 
@@ -768,7 +784,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       .sort((a, b) => b.units - a.units).slice(0, 30),
     inert,
     stalled: stalled.sort((a, b) => a.since.localeCompare(b.since)).slice(0, 40),
-    doubleListed: links.sets,
+    doubleListed: links.sets, pending,
     buildings: Object.keys(bCount).map(name => ({ name, units: bCount[name] }))
       .sort((a, b) => b.units - a.units || a.name.localeCompare(b.name)).slice(0, 200),
     historyComplete: hist.complete,
@@ -800,13 +816,22 @@ export async function createFromSuggestion(s: Suggestion, by: string | null, opt
   const cfg = await getCadenceCfg()
   const cad = cfg.cadences.find(c => c.key === s.cadenceKey)
   const name = `${s.label} — ${s.unit}`
-  const description =
-    `SUGGESTED BY LIGHTHOUSE (preventative cadence: every ${cad?.everyDays ?? '?'} days).\n` +
+  // EVERY TASK LIGHTHOUSE TOUCHES SAYS SO (Jon, 2026-08-27: "if lighthouse is pushing something or
+  // creating an automation, it should indicate that lighthouse pushed or updated the task — that
+  // way it's an indicator"). One stamp format, shared with lib/pending-work's moves, so a technician
+  // reading a task in Breezeway always sees the same line and learns what it means.
+  const body =
     `${s.why}\n` +
     (s.vacantTonight
       ? `Unit is empty${s.windowDays >= 999 ? ' with nothing booked in the next three weeks' : ` for ${s.windowDays} more day${s.windowDays === 1 ? '' : 's'}`}.\n`
       : 'Unit is occupied — work around the guest.\n') +
     `Rough time: ${s.minutes} minutes.`
+  const description = stampDescription(
+    body,
+    `created this from the preventative cadence "${cad?.label ?? s.label}" (every ${cad?.everyDays ?? '?'} days)`
+      + `${by ? `, for ${by}` : ''}. Nobody typed it in — check the cadence in Settings if it looks wrong.`,
+    new Date().toISOString().slice(0, 10),
+  )
 
   // WHO AND WHEN ARE THE OPERATOR'S CALL, NOT THE ENGINE'S.
   // Jon, 2026-08-27: "I should be able to assign and schedule the tasks as well." The engine's pick
