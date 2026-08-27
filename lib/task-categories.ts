@@ -46,43 +46,50 @@ export const CAT_ICONS = [
 ] as const
 
 // ── THE SHIPPED TAXONOMY ────────────────────────────────────────────────────────────────────────
-// Guest issues and glitches are ONE category (Jon, 2026-08-25: "what's the difference of guest
-// issues and glitches, nothing, so combine"). The proof is in the data: Breezeway sends them as a
-// single task named "Guest Reported / Glitch — ", so splitting on which half of that prefix
-// somebody typed was counting one queue twice.
+// Jon, 2026-08-26: "we don't need this many — have Maintenance, Inspections, Other and Departure
+// cleans." Four, not six.
+//
+// The six were the real shape of the WORK; four is the shape of the DECISION. Standing in front of
+// this board you are asking which of a handful of things is behind, and a counter that never
+// carries more than one or two items is a counter you learn to skip. Splitting hairs at the top of
+// a screen costs more attention than it returns.
+//
+// What folded, and where it went — worth writing down, because these are not nothing:
+//   • GLITCHES → Maintenance. They arrive from Breezeway as maintenance tasks named "Guest
+//     Reported / Glitch — ", so with the name rule gone they land there by department, which is
+//     where the person fixing them already sits. They keep their own page (/glitches) and their own
+//     Slack alerts; only the counter merged.
+//   • HOUSEKEEPING AUDIT → Inspections. It is a walk of a unit against a standard, which is what
+//     the Inspections counter means.
+//   • CLEANING (strips, linen drops, restocks, mid-stays) → Other. Not the turnover, and not on the
+//     4pm clock — the departure clean is the one that decides whether a unit is sellable tonight,
+//     and giving it a counter of its own is the whole point of separating it.
+//
+// None of this is fixed: the categories are editable in Users & admin → Task categories, with a
+// tester that shows where a real task name lands before you save. If Glitches earns its own counter
+// again, add it back there — no deploy.
 export const DEFAULT_CATS: CatDef[] = [
   {
-    key: 'departure', label: 'Departure', icon: 'door',
+    key: 'departure', label: 'Departure cleans', icon: 'door',
     rules: [
       { type: ['departure_clean'] },
       // The separator is whatever whoever typed the task felt like: "Check-out clean", "Check out
       // clean", "Checkout Clean" all appear in the wild. [\s-]? catches all three; a bare -? caught
-      // only one, and the misses landed in Cleaning — which is the number the 4pm deadline is
+      // only one, and the misses landed elsewhere — which is the number the 4pm deadline is
       // measured against, so they were invisible in the place it mattered most.
       { name: 'departure clean|turnover clean|check[\\s-]?out clean|move[\\s-]?out clean' },
     ],
   },
   {
-    key: 'glitch', label: 'Glitches', icon: 'bolt',
-    rules: [{ name: 'glitch|guest\\s*reported' }],
-  },
-  {
-    key: 'hkaudit', label: 'Housekeeping audit', icon: 'clipboard-check',
-    rules: [
-      { name: 'housekeep\\w*\\s*audit|audit\\s*\\W*\\s*housekeep' },
-      { type: ['audit'], dept: 'housekeep' },
-    ],
-  },
-  {
-    key: 'cleaning', label: 'Cleaning', icon: 'sparkles',
-    rules: [{ dept: 'housekeep|clean' }, { type: ['strip', 'deep_clean'] }],
-  },
-  {
-    key: 'inspection', label: 'Inspection', icon: 'clipboard-list',
-    rules: [{ type: ['inspection', 'audit'] }, { dept: 'inspect' }, { name: 'unit check|inspect' }],
+    key: 'inspection', label: 'Inspections', icon: 'clipboard-list',
+    rules: [{ type: ['inspection', 'audit'] }, { dept: 'inspect' }, { name: 'unit check|inspect|audit' }],
   },
   {
     key: 'maintenance', label: 'Maintenance', icon: 'wrench',
+    rules: [{ dept: 'maint' }, { name: 'glitch|guest\\s*reported|field reported|preventative|preventive' }],
+  },
+  {
+    key: 'other', label: 'Other', icon: 'sparkles',
     rules: [], fallback: true,
   },
 ]
