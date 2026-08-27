@@ -72,7 +72,7 @@ export const FEATURES: Feature[] = [
   { key: 'share-links',   label: 'Share Links',       path: '/links', group: 'Portfolio' },
   { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Portfolio' },
   { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
-  { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize', group: 'Portfolio' },
+  { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize', group: 'Portfolio' },   // -> /buildings?view=fix; the optimizer itself is per-listing
   { key: 'health',        label: 'Health Score',      path: '/health', group: 'Portfolio' },
   // Building Patterns (2026-08-06, Jon): recurring complaint themes per building — prevention layer.
   { key: 'patterns',      label: 'Building Patterns', path: '/patterns', group: 'Portfolio' },
