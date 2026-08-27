@@ -26,6 +26,18 @@ export type SectionConfig = {
   mustInclude: string    // free text, appended as "ALWAYS work these in"
   neverSay: string       // free text, appended as "NEVER say"
   enabled: boolean       // off = the field is left alone by a full run
+  /**
+   * REAL COPY THAT SOUNDS RIGHT. Two or three examples of this field done well.
+   *
+   * The house voice is four hundred words of adjectives — "vivid but never padded", "world-class,
+   * never lazy" — and adjectives do not specify a voice. Nothing in this app ever showed the model
+   * a sentence it should sound like, for any field except 'space' (and that one was picked by
+   * whichever unit had the LONGEST text in the building, which is length used as a proxy for
+   * quality). This app already learned this lesson once: the review-reply settings take up to
+   * twelve example pairs and tell the operator "the AI will match their tone". Listing copy shipped
+   * with exhortations instead.
+   */
+  examples: string[]
 }
 
 export type EnhancePreset = {
@@ -41,6 +53,15 @@ export type EnhancePreset = {
 
 export type ListingAi = {
   voice: string
+  /**
+   * Phrases that must never appear, portfolio-wide.
+   *
+   * `neverSay` on a section is a TOPIC ban — it renders as "NEVER mention: x" — so putting
+   * "nestled, oasis" there tells the model not to discuss those subjects, and would also suppress
+   * the real Oasis building name. Banning a phrase is a different job and needs its own list, once,
+   * rather than pasted into all seven section guides and kept in sync by hand.
+   */
+  bannedPhrases: string
   exemplarMatch: string          // building name matched with ilike to pull the house-style exemplar
   exemplarListingId: string | null // pin one listing instead of matching by building
   sections: Record<SectionKey, SectionConfig>
@@ -93,37 +114,37 @@ const DEFAULT_SECTIONS: Record<SectionKey, SectionConfig> = {
   title: {
     label: 'Title',
     guide: 'AIM for a FULL, rich title - about 42-50 characters (USE the space; do not stop short at ~30). Front-load the single strongest hook in the first ~32 chars (mobile cards truncate there), THEN keep going to fill toward 50 with the specific unit/property details guests scan for: bed count/type (e.g. "2BR", "King"), a standout amenity (Pool, Ocean View, Rooftop, Steps to Beach), or the real area. Example shape: "Oceanview 2BR | Pool & Steps to South Beach". Title Case. No emoji, no repeated symbols, no ALL-CAPS words (proper nouns OK), no phone/email/URLs.',
-    targetMin: 42, targetMax: 50, hardCap: TITLE_MAX, mustInclude: '', neverSay: '', enabled: true,
+    targetMin: 42, targetMax: 50, hardCap: TITLE_MAX, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   summary: {
     label: 'Summary',
     guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, REAL perk only if the data supports it; state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. ALWAYS END the summary with a short standalone closing line that nudges guests to read the important notes, phrased like: "Please see Other things to note before booking." (keep it within the 500-char cap). Most important field.',
-    targetMin: 350, targetMax: 500, hardCap: 500, mustInclude: '', neverSay: '', enabled: true,
+    targetMin: 350, targetMax: 500, hardCap: 500, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   space: {
     label: 'The space',
-    guide: 'The SELLING section — make the reader want to book. Walk them through the home the way the PHOTOS show it: open with the single most compelling, true visual highlight (the view, the natural light, the kitchen, the pool), then room-by-room in short labeled lines or tight paragraphs (17 West house style): bedrooms + bed types, bathrooms, kitchen, living/dining, outdoor space, views, standout finishes, building amenities (pool, gym, parking). Keep it INVITING and broad - describe what the home offers in warm, confident strokes and list its real features. Use the photos to stay accurate and CONFIRM claims, but do NOT over-specify fine detail (exact materials, brands, precise finishes) unless you are 100% sure from a photo or the data; when unsure stay general (e.g. a bright open living area, a full kitchen, ample outdoor space) rather than risk a wrong specific. Lead with benefits (how it FEELS to stay), not a dry inventory. ALWAYS surface the practical amenities guests actively search for and that drive bookings, as a hyphenated list - e.g. pool / hot tub, in-unit OR on-site LAUNDRY (say if it is coin- or pay-app operated), free or paid parking, full kitchen, fast WiFi + workspace, elevator, gym, A/C, private balcony/outdoor space, beach or pool access. Include the building amenities and the high-level feel of the area (walkable, beachy, lively) - the important draws guests want, not fine specifics. Concrete, vivid, scannable.',
-    targetMin: 800, targetMax: 1400, hardCap: null, mustInclude: '', neverSay: '', enabled: true,
+    guide: 'The SELLING section — make the reader want to book. Walk them through the home the way the PHOTOS show it: open with the single most compelling, true visual highlight (the view, the natural light, the kitchen, the pool), then room-by-room in short labeled lines or tight paragraphs (17 West house style): bedrooms + bed types, bathrooms, kitchen, living/dining, outdoor space, views, standout finishes, building amenities (pool, gym, parking). Keep it INVITING and broad - describe what the home offers in warm, confident strokes and list its real features. Use the photos to stay accurate and CONFIRM claims, but do NOT over-specify fine detail (exact materials, brands, precise finishes) unless you are 100% sure from a photo or the data; when unsure, name the thing plainly without embellishing it rather than reaching for filler. NEVER retreat into empty adjectives like \'a bright open living area\' or \'ample outdoor space\' - if you cannot be specific about a space, write one plain true sentence about it and move on. Lead with benefits (how it FEELS to stay), not a dry inventory. ALWAYS surface the practical amenities guests actively search for and that drive bookings, as a hyphenated list - e.g. pool / hot tub, in-unit OR on-site LAUNDRY (say if it is coin- or pay-app operated), free or paid parking, full kitchen, fast WiFi + workspace, elevator, gym, A/C, private balcony/outdoor space, beach or pool access. Include the building amenities and the high-level feel of the area (walkable, beachy, lively) - the important draws guests want, not fine specifics. Concrete, vivid, scannable.',
+    targetMin: 800, targetMax: 1400, hardCap: null, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   access: {
     label: 'Guest access',
     guide: 'What the guest can use and how they get in: which areas/amenities are theirs, parking, building/elevator access, self check-in if the data indicates it. NEVER include the street address, unit number, real codes, phone, or URLs.',
-    targetMin: 300, targetMax: 700, hardCap: null, mustInclude: '', neverSay: '', enabled: true,
+    targetMin: 300, targetMax: 700, hardCap: null, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   neighborhood: {
     label: 'Neighborhood',
     guide: 'The area and concrete THINGS TO DO nearby, using the real city/area from the address. Name only WELL-KNOWN, real nearby beaches, dining/nightlife districts and attractions for that exact city. Highlight genuinely desirable, KEY draws - do NOT pad with trivial conveniences (a laundromat, convenience store, ATM, gas station, pharmacy). Do NOT fabricate distances or specific business names you are not sure of — keep proximity general unless the data states it.',
-    targetMin: 500, targetMax: 1000, hardCap: null, mustInclude: '', neverSay: '', enabled: true,
+    targetMin: 500, targetMax: 1000, hardCap: null, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   transit: {
     label: 'Getting around',
     guide: 'Transport and orientation for the real area: parking, whether a car is useful, walkability, airport proximity in general terms. Do not invent precise drive times or distances.',
-    targetMin: 250, targetMax: 600, hardCap: null, mustInclude: '', neverSay: '', enabled: true,
+    targetMin: 250, targetMax: 600, hardCap: null, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   notes: {
     label: 'Other notes',
     guide: 'Standardized "Listing Notes" - write as short, scannable lines, ONE PER ITEM each starting with "- " (hyphen + space), factual and welcoming. NEVER mention the cancellation policy or refunds anywhere in this section. Include these lines, lightly adapted to this listing: (1) ONLY IF facts.minAge21 is true: "The primary guest must be 21 years or older to check in"; (2) "No smoking or parties permitted"; (3) "Guests must sign the rental agreement and check-in form before arrival - these are mandatory to confirm your reservation and receive access instructions"; (4) "Please review all house rules prior to arrival for a seamless experience"; (5) "Only initial consumables (toiletries, coffee, paper products) are provided; additional supplies can be requested for a small fee"; (6) "Mid-stay cleaning services are available upon request for an additional fee"; (7) "Additional accessibility details and building policies available upon request before booking".',
-    targetMin: 400, targetMax: 800, hardCap: null, mustInclude: '', neverSay: 'the cancellation policy, refunds', enabled: true,
+    targetMin: 400, targetMax: 800, hardCap: null, mustInclude: '', neverSay: 'the cancellation policy, refunds', enabled: true, examples: [],
   },
 }
 
@@ -164,8 +185,17 @@ const DEFAULT_PRESETS: EnhancePreset[] = [
 
 export const NONE_PRESET: EnhancePreset = { key: 'none', name: 'None', when: 'Leave this photo exactly as shot.', brightness: 1, saturation: 1, contrast: 1, sharpen: 0, warmth: 0 }
 
+// The phrases every short-term-rental listing on the internet already uses. A guest reading four
+// listings in a row sees all of them; the one that does not use them is the one that sounds real.
+export const DEFAULT_BANNED = [
+  'nestled', 'home away from home', 'hidden gem', "stone's throw", 'boasts', 'look no further',
+  'urban retreat', 'perfect blend', 'whether you are looking for', 'unwind and relax',
+  'world-class dining', 'moments from', 'a true gem', 'your home base', 'step into',
+].join(', ')
+
 export const DEFAULT_LISTING_AI: ListingAi = {
   voice: DEFAULT_VOICE,
+  bannedPhrases: DEFAULT_BANNED,
   exemplarMatch: '17 west',
   exemplarListingId: null,
   sections: DEFAULT_SECTIONS,
@@ -213,6 +243,10 @@ export function mergeListingAi(stored: any): ListingAi {
       mustInclude: typeof o.mustInclude === 'string' ? o.mustInclude.slice(0, 1200) : d.mustInclude,
       neverSay: typeof o.neverSay === 'string' ? o.neverSay.slice(0, 1200) : d.neverSay,
       enabled: o.enabled === false ? false : true,
+      // An empty array is a real, saved choice — the operator deleting every example must stick.
+      examples: Array.isArray(o.examples)
+        ? o.examples.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 4).map((x: string) => x.slice(0, 1600))
+        : d.examples,
     }
   }
   const ph = (s.photos && typeof s.photos === 'object') ? s.photos : {}
@@ -224,6 +258,7 @@ export function mergeListingAi(stored: any): ListingAi {
     .map((p: any) => clampPreset(p))
   return {
     voice: str(s.voice, DEFAULT_VOICE),
+    bannedPhrases: typeof s.bannedPhrases === 'string' ? s.bannedPhrases.slice(0, 2000) : DEFAULT_BANNED,
     exemplarMatch: str(s.exemplarMatch, DEFAULT_LISTING_AI.exemplarMatch, 120),
     exemplarListingId: typeof s.exemplarListingId === 'string' && s.exemplarListingId ? s.exemplarListingId.slice(0, 64) : null,
     sections,
@@ -257,13 +292,33 @@ export function presetByKey(cfg: ListingAi, key: string | null | undefined): Enh
 export function sectionEdited(cfg: ListingAi, k: SectionKey): boolean {
   const d = DEFAULT_SECTIONS[k], c = cfg.sections[k]
   return c.guide !== d.guide || c.targetMin !== d.targetMin || c.targetMax !== d.targetMax ||
-    c.mustInclude !== d.mustInclude || c.neverSay !== d.neverSay || c.enabled !== d.enabled
+    c.mustInclude !== d.mustInclude || c.neverSay !== d.neverSay || c.enabled !== d.enabled ||
+    // hardCap and examples were both missing here, so changing only a cap — or adding the examples
+    // that are the whole point of the training panel — left the row looking untouched.
+    c.hardCap !== d.hardCap || c.examples.length !== d.examples.length ||
+    c.examples.some((x, i) => x !== d.examples[i])
 }
 
 export { DEFAULT_SECTIONS }
 
 // The length/inclusion rules appended under a section's editable guide. Kept here so the full run
 // and the single-section rewrite phrase them identically.
+export function bannedRule(cfg: ListingAi): string {
+  const list = String(cfg.bannedPhrases || '').trim()
+  if (!list) return ''
+  return `NEVER WRITE THESE PHRASES, or close variants of them: ${list}.\n`
+    + `They appear on every other listing a guest is reading. If one of them is the only phrase that `
+    + `fits, the sentence is not specific enough yet - say the real thing instead.`
+}
+
+/** A field's examples, as a few-shot block. Empty string when the operator has supplied none. */
+export function examplesRule(c: SectionConfig): string {
+  if (!c.examples || !c.examples.length) return ''
+  return `\nEXAMPLES OF THIS FIELD DONE WELL - match this VOICE, RHYTHM and level of specificity. `
+    + `Do NOT reuse their facts; this is about how it sounds:\n`
+    + c.examples.map((x, i) => `[example ${i + 1}]\n"""${x}"""`).join('\n')
+}
+
 export function sectionRules(c: SectionConfig): string {
   const bits: string[] = []
   if (c.targetMin && c.targetMax) bits.push(`Target length: about ${c.targetMin}-${c.targetMax} characters.`)
