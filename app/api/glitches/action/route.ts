@@ -69,7 +69,6 @@ export async function POST(req: NextRequest) {
       if (b.overview !== undefined) patch.overview = str(b.overview)
       if (b.category !== undefined) patch.category = str(b.category) || null
       if (b.glitchType !== undefined) patch.glitch_type = str(b.glitchType) || null
-      if (b.recoveryCost !== undefined) patch.recovery_cost = num(b.recoveryCost) || 0
       if (b.incidentDate !== undefined) patch.incident_date = str(b.incidentDate) || null
       if (b.refundApproved !== undefined) patch.refund_approved = num(b.refundApproved) || 0
       if (b.reportedBy !== undefined) patch.reported_by = str(b.reportedBy) || null
