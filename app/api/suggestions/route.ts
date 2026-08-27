@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     // A failure here must never take the ops board down — it renders no band and says why.
     return NextResponse.json({
       ok: false, date, enabled: false, suggestions: [], considered: 0, dropped: {},
-      mix: { building: 0, area: 0, none: 0 }, historyComplete: false,
+      mix: { building: 0, area: 0, none: 0 }, amenityStats: {}, historyComplete: false,
       day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
       error: String(e?.message || e),
     }, { status: 200 })
@@ -77,8 +77,16 @@ export async function POST(req: NextRequest) {
     }, { status: 409 })
   }
 
-  const made = await createFromSuggestion(s, access.email || null)
+  // Assign and schedule ride on the same call (Jon, 2026-08-27). `assignee: ''` is meaningful —
+  // it says leave it unassigned — so it must be distinguished from "not supplied".
+  const assignee = typeof body?.assignee === 'string' ? body.assignee.slice(0, 80) : undefined
+  const wantDate = String(body?.scheduleDate || '')
+  const scheduleDate = /^\d{4}-\d{2}-\d{2}$/.test(wantDate) ? wantDate : undefined
+
+  const made = await createFromSuggestion(s, access.email || null, { assignee, scheduleDate })
   if (!made.ok) return NextResponse.json({ error: made.error || 'Could not create it.' }, { status: 502 })
   await logAccepted(s, access.email || null, made.taskId || null)
-  return NextResponse.json({ ok: true, taskId: made.taskId, assigned: made.assigned, name: made.name })
+  return NextResponse.json({
+    ok: true, taskId: made.taskId, assigned: made.assigned, name: made.name, scheduled: made.scheduled,
+  })
 }
