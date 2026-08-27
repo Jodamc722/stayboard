@@ -133,7 +133,6 @@ export async function POST(req: NextRequest) {
       reservation_total: num(b.reservationTotal),
       incident_date: str(b.incidentDate) || null,
       overview,
-      recovery_cost: num(b.recoveryCost) || 0,
       refund_approved: num(b.refundApproved) || 0,
       reported_by: str(b.reportedBy) || null,
       guest_email: str(b.guestEmail) || null,
