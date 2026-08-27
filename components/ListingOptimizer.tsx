@@ -51,7 +51,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
     try {
       const base = genPrompt.trim()
       const instruction = freshFeel
-        ? `RECREATE THIS LISTING WITH A COMPLETELY FRESH FEEL: write a brand-new title and all six sections from scratch using a different angle, voice and structure than the current copy, so it reads like a fresh, new listing — while staying 100% honest and accurate to this unit's real features (never invent anything).${base ? ' Also make sure to: ' + base : ''}`
+        ? `RECREATE THIS LISTING WITH A COMPLETELY FRESH FEEL: write a brand-new title and all six sections from scratch using a different angle and structure than the current copy, so it reads like a fresh, new listing. KEEP THE HOUSE VOICE exactly as specified - a fresh take means new angles and new sentences, never a different voice — while staying 100% honest and accurate to this unit's real features (never invent anything).${base ? ' Also make sure to: ' + base : ''}`
         : (base || undefined)
       const res = await fetch('/api/optimize-listing', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
