@@ -16,6 +16,7 @@ import {
   buildSuggestions, getSuggestionLog, pruneLog, createFromSuggestion, logAccepted,
   SUGGESTION_LOG_KEY, type Suggestion,
 } from '@/lib/suggestions'
+import { pendingForUnits, pushTasks, sweepUnit } from '@/lib/pending-work'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
     // A failure here must never take the ops board down — it renders no band and says why.
     return NextResponse.json({
       ok: false, date, enabled: false, suggestions: [], considered: 0, dropped: {},
-      mix: { building: 0, area: 0, none: 0 }, amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [], historyComplete: false,
+      mix: { building: 0, area: 0, none: 0 }, amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [], doubleListed: 0, pending: {}, historyComplete: false,
       day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
       error: String(e?.message || e),
     }, { status: 200 })
@@ -63,6 +64,47 @@ export async function POST(req: NextRequest) {
     const res = await setSetting(SUGGESTION_LOG_KEY, log, access.email)
     if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save.' }, { status: 500 })
     return NextResponse.json({ ok: true, dismissedUntil: log.dismissed[`${listingId}-${cadenceKey}`].until })
+  }
+
+  // ── PUSH: move specific pending tasks onto a date, optionally onto a person ──────────────────
+  // Jon, 2026-08-27: "Push it to that date for the maintenance person that scheduled, or we can
+  // assign it to a staff member that scheduled that day."
+  if (action === 'push' || action === 'sweep') {
+    const wantDate = String(body?.scheduleDate || body?.date || '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(wantDate)) return NextResponse.json({ error: 'Pick a date first.' }, { status: 400 })
+    if (wantDate < ymd(new Date())) {
+      return NextResponse.json({ error: `${wantDate} has already passed — pick today or a day ahead.` }, { status: 400 })
+    }
+    const assignee = typeof body?.assignee === 'string' ? body.assignee.slice(0, 80) : null
+    const unitName = String(body?.unit || 'this unit').slice(0, 80)
+
+    if (action === 'sweep') {
+      const dept = ['maintenance', 'housekeeping', 'inspection'].indexOf(String(body?.dept)) >= 0
+        ? (String(body.dept) as 'maintenance' | 'housekeeping' | 'inspection') : 'maintenance'
+      const out = await sweepUnit({
+        listingId: String(body?.listingId || ''), unitName, date: wantDate, dept,
+        assignee, by: access.email || null,
+      })
+      return NextResponse.json({
+        ok: out.ok, moved: out.moved.length, failed: out.failed.length,
+        names: out.candidates.map(c => c.name), error: out.failed[0]?.error,
+      })
+    }
+
+    const ids: string[] = Array.isArray(body?.taskIds) ? body.taskIds.map((x: any) => String(x)).slice(0, 50) : []
+    if (!ids.length) return NextResponse.json({ error: 'Nothing selected.' }, { status: 400 })
+    const all = await pendingForUnits([String(body?.listingId || '')], ymd(new Date()))
+    const rows = (all[String(body?.listingId || '')] || []).filter(t => ids.indexOf(t.id) >= 0)
+    if (!rows.length) return NextResponse.json({ error: 'Those are no longer pending — refresh to see the current list.' }, { status: 409 })
+    const out = await pushTasks(rows, wantDate, {
+      assignee, by: access.email || null,
+      reason: `Moved from ${unitName}'s pending list because somebody is going in that day.`,
+    })
+    return NextResponse.json({
+      ok: out.ok, moved: out.moved.length, failed: out.failed.length,
+      names: rows.filter(r => out.moved.indexOf(r.id) >= 0).map(r => r.name),
+      error: out.failed[0]?.error,
+    })
   }
 
   if (action !== 'add') return NextResponse.json({ error: 'unknown action' }, { status: 400 })
@@ -94,7 +136,25 @@ export async function POST(req: NextRequest) {
   const made = await createFromSuggestion(s, access.email || null, { assignee, scheduleDate })
   if (!made.ok) return NextResponse.json({ error: made.error || 'Could not create it.' }, { status: 502 })
   await logAccepted(s, access.email || null, made.taskId || null)
+
+  // ── THE TRIP IS THE EXPENSIVE PART ────────────────────────────────────────────────────────────
+  // Jon, 2026-08-27, asked for this to happen automatically: "if maintenance is going into a unit,
+  // automatically push all of the pending maintenance tasks in that unit to that date that they're
+  // going in the unit." So the moment somebody is confirmed to be going through that door, every
+  // other pending job of the same trade in that unit moves onto the same day and the same person.
+  //
+  // Its own try/catch and never fatal: the task the human asked for already exists, and a failure
+  // to consolidate must not report that as a failure to create.
+  let swept: { moved: number; names: string[] } | null = null
+  try {
+    const r = await sweepUnit({
+      listingId: s.listingId, unitName: s.unit, date: made.scheduled || date,
+      dept: s.dept, assignee: made.assigned || assignee || null, by: access.email || null,
+    })
+    if (r.moved.length) swept = { moved: r.moved.length, names: r.candidates.map(c => c.name).slice(0, 6) }
+  } catch { /* the created task stands on its own */ }
+
   return NextResponse.json({
-    ok: true, taskId: made.taskId, assigned: made.assigned, name: made.name, scheduled: made.scheduled,
+    ok: true, taskId: made.taskId, assigned: made.assigned, name: made.name, scheduled: made.scheduled, swept,
   })
 }
