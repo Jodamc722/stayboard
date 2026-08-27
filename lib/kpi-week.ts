@@ -133,7 +133,7 @@ export async function weeklyKpiCard(): Promise<string> {
       row('Tasks completed', (K.onTimeRate != null ? pctTxt(K.onTimeRate) + ' finished on the scheduled day' : ''),
         intTxt(K.completedPrev), intTxt(K.completed), chg(K.completed, K.completedPrev, intTxt),
         w(p => intTxt(p.work.completed))) +
-      row('Glitches opened', (G.cost != null && G.cost > 0 ? money(G.cost) + ' in refunds + recovery' : ''),
+      row('Glitches opened', (G.cost != null && G.cost > 0 ? money(G.cost) + ' in refunds' : ''),
         intTxt(G.openedPrev), intTxt(G.opened), chg(G.opened, G.openedPrev, intTxt, false),
         w(p => intTxt(p.glitches.opened))) +
       row('Guest sentiment', S.scanned + ' conversations scanned',

@@ -144,7 +144,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         .select('id,listing_id,rating,content,guest_name,channel,created_at,has_reply')
         .gte('created_at', from + 'T00:00:00Z').lte('rating', 3)
         .order('created_at', { ascending: false }).limit(60),
-      db.from('glitches').select('id,status,category,market,unit,listing_id,created_at,recovery_cost,refund_approved')
+      db.from('glitches').select('id,status,category,market,unit,listing_id,created_at,refund_approved')
         .gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false }).limit(1000),
       db.from('field_requests').select('id,status,due_at,priority,building').in('status', ['open', 'in_progress']).limit(1000),
       db.from('labor_timesheets').select('employee,work_date,hours,cost').neq('source', '__synthetic_test.csv')
@@ -410,7 +410,9 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const glitchBlock = (a: string, b: string) => {
       const rows = (glitchRows.data || []).filter((g: any) => inWin(dOf(g.created_at), a, b)
         && (marketFilter === 'all' || str(g.market) === marketFilter))
-      const cost = rows.reduce((s: number, g: any) => s + num(g.recovery_cost) + num(g.refund_approved), 0)
+      // Refunds only. Cost recovery was retired 2026-08-27 — Jon: "cost recovery is not
+      // something we track, the refund amount is."
+      const cost = rows.reduce((s: number, g: any) => s + num(g.refund_approved), 0)
       const cats: Record<string, number> = {}
       for (const g of rows) { const k = str(g.category) || 'Other'; cats[k] = (cats[k] || 0) + 1 }
       return {
