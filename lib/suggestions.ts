@@ -115,6 +115,14 @@ export type SuggestionRun = {
    * "does not qualify".
    */
   amenityStats: Record<string, { has: number; hasNot: number; unknown: number }>
+  /**
+   * Every climate-related amenity string in the portfolio, with how many active units carry it.
+   *
+   * An equipment gate is only as good as the words the data actually uses, and guessing at those
+   * words from the outside is how a cadence silently matches nothing. This is the evidence for
+   * writing the pattern: counts only, no unit names, so it is safe on the unauthenticated path.
+   */
+  climateVocab: { term: string; units: number }[]
   /** False when the history read hit its page ceiling; some "never done" may be "long ago". */
   historyComplete: boolean
   error?: string
@@ -227,7 +235,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     ok: true, date, enabled: cfg.enabled,
     day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
     suggestions: [], considered: 0, dropped, mix: { building: 0, area: 0, none: 0 },
-    amenityStats: {}, historyComplete: true, ...extra,
+    amenityStats: {}, climateVocab: [], historyComplete: true, ...extra,
   })
 
   const live = cfg.cadences.filter(c => c.mode !== 'off')
@@ -263,6 +271,8 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   // Guesty writes amenities to a column on some listings and leaves them only in the raw payload on
   // others, so both are read and merged — one source would have reported units as having no
   // equipment recorded purely because of which sync last touched them.
+  const CLIMATE = /air|a\/?c\b|hvac|cool|heat|split|fan|thermostat/i
+  const vocab = new Map<string, number>()
   const amenText = (l: any): string => {
     const out: string[] = []
     for (const src of [l.amenities, l.rawAmen]) {
@@ -271,6 +281,8 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
         if (t) out.push(t)
       }
     }
+    // Array.from, not for-of over a Set — this project's TS target predates downlevel iteration.
+    for (const t of Array.from(new Set(out))) if (CLIMATE.test(t)) vocab.set(t, (vocab.get(t) || 0) + 1)
     return out.join(' | ').toLowerCase()
   }
   const lmap: Record<string, Meta> = {}
@@ -501,6 +513,8 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   return {
     ok: true, date, enabled: cfg.enabled, day,
     suggestions: picked, considered, dropped, mix, amenityStats: amenStats,
+    climateVocab: Array.from(vocab.entries()).map(([term, units]) => ({ term, units }))
+      .sort((a, b) => b.units - a.units).slice(0, 30),
     historyComplete: hist.complete,
   }
 }
