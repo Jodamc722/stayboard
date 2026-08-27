@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     // A failure here must never take the ops board down — it renders no band and says why.
     return NextResponse.json({
       ok: false, date, enabled: false, suggestions: [], considered: 0, dropped: {},
-      mix: { building: 0, area: 0, none: 0 }, amenityStats: {}, climateVocab: [], inert: [], buildings: [], historyComplete: false,
+      mix: { building: 0, area: 0, none: 0 }, amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [], historyComplete: false,
       day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
       error: String(e?.message || e),
     }, { status: 200 })
@@ -73,14 +73,22 @@ export async function POST(req: NextRequest) {
   const s: Suggestion | undefined = run.suggestions.find(x => x.id === id)
   if (!s) {
     return NextResponse.json({
-      error: 'That is no longer suggested — the unit, the day or the schedule has changed since this list was drawn.',
+      error: 'That one is already handled — it is on the board, or the unit was booked since this list was drawn. Refresh to see the current picks.',
     }, { status: 409 })
   }
 
   // Assign and schedule ride on the same call (Jon, 2026-08-27). `assignee: ''` is meaningful —
   // it says leave it unassigned — so it must be distinguished from "not supplied".
   const assignee = typeof body?.assignee === 'string' ? body.assignee.slice(0, 80) : undefined
+  // A DATE IN THE PAST IS ALWAYS A MISTAKE HERE. A task dated last week never appears on any
+  // "today" board, so nobody works it — and until the engine learned to see stalled tasks, it also
+  // came back as a fresh suggestion every morning. Refused with a sentence, not silently coerced,
+  // because silently moving somebody's chosen date is its own surprise.
   const wantDate = String(body?.scheduleDate || '')
+  const todayY = ymd(new Date())
+  if (wantDate && /^\d{4}-\d{2}-\d{2}$/.test(wantDate) && wantDate < todayY) {
+    return NextResponse.json({ error: `${wantDate} has already passed — pick today or a day ahead.` }, { status: 400 })
+  }
   const scheduleDate = /^\d{4}-\d{2}-\d{2}$/.test(wantDate) ? wantDate : undefined
 
   const made = await createFromSuggestion(s, access.email || null, { assignee, scheduleDate })
