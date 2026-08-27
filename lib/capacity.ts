@@ -18,9 +18,14 @@
 //
 // WHAT IS MEASURED AND WHAT IS ASSUMED — the honest split, because a model that hides this gets
 // believed further than it deserves:
-//   MEASURED   clean duration by bedroom count (1,232 solo cleans, 90 days — see CLEAN_MINUTES)
-//   MEASURED   that staying in one building is worth ~17% on a 3-unit day, and nothing at 4+
+//   MEASURED   clean duration by bedroom count (1,602 solo cleans — see CLEAN_MINUTES)
+//   MEASURED   units actually worked per person per day: Miami 2, Broward 4, North 1 (810 days)
 //   ASSUMED    travel minutes (there is no GPS trace; see TRAVEL, calibrate when there is)
+//   TESTED AND REJECTED  that clustering into one building measurably speeds a day up. It looked
+//              like a 17% gain on the first pass; on complete data with close-outs excluded the
+//              effect is 2-3% at two and three units and REVERSES at four and five. Whatever the
+//              real routing advantage is, this timer data cannot see it — so nothing in this file
+//              claims one, and no trigger tells anybody to cluster for speed.
 //   ASSUMED    maintenance task duration (Breezeway records no estimate anywhere — see OTHER_TASK)
 // Every assumption below is a named constant with a reason, so the first person to get real data
 // can replace it without reading the whole file.
@@ -29,31 +34,33 @@ import { distanceKm } from './geo-areas'
 
 // ── The measured clean standard ────────────────────────────────────────────────────────────────
 //
-// Observed median minutes for SOLO departure cleans, 2026-05-29 → 2026-08-26, vendor units
-// excluded, n = 1,232. The configured benchmark is in brackets:
+// Observed median minutes for SOLO departure cleans, 29 May → 26 Aug 2026, vendor units excluded,
+// and — this matters — excluding anything under 25 minutes, because a "clean" recorded in 8 minutes
+// was closed out on somebody's behalf, not performed. n = 1,602.
 //
-//   studio   73  (90)    n=547
-//   1 bed    86  (90)    n=312
-//   2 bed   112 (120)    n=278
-//   3 bed+  113 (180)    n=95
+//   studio   75   (app benchmark 90)    n=728
+//   1 bed    91   (app benchmark 90)    n=387
+//   2 bed   118   (app benchmark 120)   n=362
+//   3 bed+  125   (app benchmark 180)   n=125
 //
-// TWO THINGS THE CONFIGURED BENCHMARK GETS WRONG.
-// 1. It treats a studio and a one-bed as the same job (both 90). They differ by 13 minutes, every
-//    time, across 859 cleans. A one-bed deserves its own tier.
-// 2. It prices a three-bed at 180 minutes and the floor does it in 113 — the same as a two-bed.
-//    That is a 67-minute error on the biggest units, and it is the reason a person holding two
-//    three-beds reads as a full day (360 min) when the work is closer to 226. Treat the 3-bed
-//    figure as provisional: n=95 is the thinnest sample here, and big units are the ones most
-//    likely to be quietly cleaned by two people, which would flatter a solo-only median.
+// THE ONE REAL ERROR IN THE CONFIGURED BENCHMARK: a three-bed is priced at 180 minutes and takes
+// 125. Nothing else is far off, but that one is 55 minutes on the biggest units, and it is why a
+// person holding two three-beds reads as a full day when the work is closer to four hours.
+// A studio and a one-bed are also genuinely different jobs (75 vs 91) that the app prices the same.
 //
-// Padded ~8% above the observed median on purpose. The median is the day that went well; half of
-// all cleans took longer than this, and a standard set at the median guarantees half the days run
-// over. This is a planning figure, not a target to beat.
+// Padded ~6% above the median on purpose: the median is the day that went well, and half of all
+// cleans take longer than it. This is a planning figure, not a target.
+//
+// PROVENANCE, because the first cut of these numbers was wrong. They were originally derived from a
+// single 90-day request to /api/labor/cleans, which silently returned only late-May through July —
+// its internal pager stops at 6,000 task rows and a 90-day window exceeds that, so the newest month
+// fell off the end and nothing said so. These figures come from four separate month-sized requests
+// stitched together, which is the only way that endpoint currently returns a complete quarter.
 export const CLEAN_MINUTES: Record<CleanSize, number> = {
   studio: 80,
-  one: 93,
-  two: 121,
-  threePlus: 130,
+  one: 96,
+  two: 125,
+  threePlus: 133,
 }
 export type CleanSize = 'studio' | 'one' | 'two' | 'threePlus'
 
@@ -450,9 +457,10 @@ export function assessDay(input: {
   }
 
   // Clustering, which the data says only pays below four units.
-  if (cleans.length > 0 && cleans.length < 4 && buildings > 1) {
-    triggers.push(`${cleans.length} cleans across ${buildings} buildings. Below four units, a single-building day runs about 17% faster — worth a swap if another cleaner is already in one of these towers.`)
-  }
+  // NOTE: there is deliberately no "cluster this day" trigger. See the header — the efficiency
+  // gain that would have justified one did not survive complete data. Travel is still worth
+  // flagging when it is a large share of the day, because that is a fact about the day rather
+  // than a claim about how much faster it could have been.
   if (travelMinutes >= 90) {
     triggers.push(`${hrs(travelMinutes)} of this day is travel across ${hops} ${hops === 1 ? 'hop' : 'hops'} — nearly ${Math.round((travelMinutes / Math.max(1, load)) * 100)}% of the day spent getting there.`)
   }
