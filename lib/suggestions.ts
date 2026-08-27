@@ -69,6 +69,8 @@ export type Suggestion = {
   daysOver: number
   /** Who is already in that building today and could pick it up. Empty = the escape-valve case. */
   candidates: string[]
+  /** How close the nearest able person is. 'building' is the one this engine is built to prefer. */
+  proximity: 'building' | 'area' | 'none'
   score: number
   /** The sentence a coordinator reads. Written here so every surface says the same thing. */
   why: string
@@ -100,6 +102,12 @@ export type SuggestionRun = {
   /** Honest accounting of what was thrown away and why — this is the audit trail for a short list. */
   considered: number
   dropped: Record<string, number>
+  /**
+   * How close the people were on the jobs that were actually PICKED. The number that says whether
+   * proximity-first is really working, or whether the cap is being filled with drives across the
+   * county. Counts only — no names, so it is safe on the unauthenticated cron path.
+   */
+  mix: { building: number; area: number; none: number }
   /** False when the history read hit its page ceiling; some "never done" may be "long ago". */
   historyComplete: boolean
   error?: string
@@ -211,7 +219,8 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   const blank = (extra: Partial<SuggestionRun>): SuggestionRun => ({
     ok: true, date, enabled: cfg.enabled,
     day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
-    suggestions: [], considered: 0, dropped, historyComplete: true, ...extra,
+    suggestions: [], considered: 0, dropped, mix: { building: 0, area: 0, none: 0 },
+    historyComplete: true, ...extra,
   })
 
   const live = cfg.cadences.filter(c => c.mode !== 'off')
@@ -417,6 +426,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
         building: meta.building, market: meta.market, dept: c.dept, minutes: c.minutes,
         lastDone: ld, daysSince, daysOver,
         candidates: here.length ? here : near,
+        proximity: here.length ? 'building' : near.length ? 'area' : 'none',
         score: Math.round(score),
         why: `${overTxt} — ${bits.join('; ')}.`,
         windowDays, vacantTonight: !isOcc, mode: c.mode,
@@ -443,9 +453,12 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     if (who) perPerson[who] = (perPerson[who] || 0) + s.minutes
   }
 
+  const mix = { building: 0, area: 0, none: 0 }
+  for (const s of picked) mix[s.proximity]++
+
   return {
     ok: true, date, enabled: cfg.enabled, day,
-    suggestions: picked, considered, dropped, historyComplete: hist.complete,
+    suggestions: picked, considered, dropped, mix, historyComplete: hist.complete,
   }
 }
 
