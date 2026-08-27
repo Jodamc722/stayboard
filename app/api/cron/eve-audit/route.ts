@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { runAudit, listAudits } from '@/lib/eve/audit'
 import { getApprovalsChannel } from '@/lib/eve/approvals'
 import { postToChannel } from '@/lib/slack'
+import { getSlackRules, broadcastAllowed } from '@/lib/slack-rules'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { todayET } from '@/lib/eve/ctx'
 import { eveGate } from '../../agent/route'
@@ -50,7 +51,14 @@ async function run(req: NextRequest) {
   const res = await runAudit()
 
   let posted: string | null = null
-  if (!quiet) {
+  // MAY THIS POST? (2026-08-27) This route used to write to Slack with nothing to stop it — no
+  // event key, no switch, not listed anywhere a person could turn it off. It had never actually
+  // run because of the auth bug, so nobody found out until the auth was fixed and it began posting
+  // nine findings every 45 minutes. The audit itself still runs and still fills the tab; only the
+  // broadcast is gated, and now it answers to the same allow-list as every other alert.
+  const rules = await getSlackRules()
+  const mayPost = broadcastAllowed(rules, 'eve_audit')
+  if (!quiet && mayPost) {
     const ch = await getApprovalsChannel()
     const loud = res.opened.filter(f => f.severity !== 'info')
     // The daily roll-up fires on the FIRST run after 7am Eastern, tracked by date rather than by
@@ -88,5 +96,5 @@ async function run(req: NextRequest) {
   }
 
   recordRun({ name: 'eve-audit', ok: true, itemCount: (res as any)?.open?.length ?? (res as any)?.found ?? undefined, detail: { posted, resolved: (res as any)?.resolved?.length } })
-  return NextResponse.json({ ...res, ranBy: viaCron ? 'cron' : 'admin', posted })
+  return NextResponse.json({ ...res, ranBy: viaCron ? 'cron' : 'admin', posted, slack: mayPost ? 'allowed' : 'muted (Settings → Slack alerts & rules)' })
 }
