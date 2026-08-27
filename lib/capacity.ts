@@ -32,37 +32,69 @@
 import 'server-only'
 import { distanceKm } from './geo-areas'
 
-// ── The measured clean standard ────────────────────────────────────────────────────────────────
+// ── The measured clean standard, per market ────────────────────────────────────────────────────
 //
-// Observed median minutes for SOLO departure cleans, 29 May → 26 Aug 2026, vendor units excluded,
-// and — this matters — excluding anything under 25 minutes, because a "clean" recorded in 8 minutes
-// was closed out on somebody's behalf, not performed. n = 1,602.
+// TWO CORRECTIONS FROM JON, 2026-08-27, both of which moved these numbers materially.
 //
-//   studio   75   (app benchmark 90)    n=728
-//   1 bed    91   (app benchmark 90)    n=387
-//   2 bed   118   (app benchmark 120)   n=362
-//   3 bed+  125   (app benchmark 180)   n=125
+// 1. "No way a clean takes 25 mins or less ever. 1 hour will be the fastest possible time, and
+//    that does not include prep, laundry etc." So sixty minutes is the floor of what a real clean
+//    can be, and anything recorded under it was closed out on someone's behalf rather than
+//    performed. That is 441 of 1,936 timed cleans — 23%, nearly a quarter — and every one of them
+//    was dragging the measured medians down.
 //
-// THE ONE REAL ERROR IN THE CONFIGURED BENCHMARK: a three-bed is priced at 180 minutes and takes
-// 125. Nothing else is far off, but that one is 55 minutes on the biggest units, and it is why a
-// person holding two three-beds reads as a full day when the work is closer to four hours.
-// A studio and a one-bed are also genuinely different jobs (75 vs 91) that the app prices the same.
+// 2. "Miami units have other complexity, bigger units, building restrictions, further commute."
+//    Which the data agrees with, in the opposite direction to what I first assumed. A Miami studio
+//    takes 99 minutes and a Broward studio 77 — a 22-minute gap that holds across every unit size.
+//    One portfolio-wide benchmark cannot describe both, and using one means systematically
+//    over-filling Miami days and under-filling Broward ones. So the standard is PER MARKET.
 //
-// Padded ~6% above the median on purpose: the median is the day that went well, and half of all
-// cleans take longer than it. This is a planning figure, not a target.
+// Medians for solo cleans of 60+ minutes, 29 May → 26 Aug 2026, vendor units excluded, n = 1,372:
 //
-// PROVENANCE, because the first cut of these numbers was wrong. They were originally derived from a
-// single 90-day request to /api/labor/cleans, which silently returned only late-May through July —
-// its internal pager stops at 6,000 task rows and a 90-day window exceeds that, so the newest month
-// fell off the end and nothing said so. These figures come from four separate month-sized requests
-// stitched together, which is the only way that endpoint currently returns a complete quarter.
-export const CLEAN_MINUTES: Record<CleanSize, number> = {
-  studio: 80,
-  one: 96,
-  two: 125,
-  threePlus: 133,
-}
+//                studio   1 bed   2 bed   3 bed+
+//   Miami           99     112     124      137      (n = 196 / 69 / 217 / 103)
+//   Broward         77      93     116        —      (n = 376 / 276 / 125 / 8 — too few 3-beds)
+//   Portfolio       81      96     120      139
+//
+// Broward's three-bed sample is eight cleans, so it falls back to the portfolio figure rather than
+// pretending eight observations are a standard.
+//
+// WHY BROWARD IS FASTER DESPITE DOING ITS OWN LAUNDRY. Jon flagged that the Broward team handles
+// laundry, which should make their days longer, not shorter. It does not show up here because the
+// linen work is a SEPARATE Breezeway task — "Strip & Walkthrough: Linens, Trash, & Report" — that
+// runs outside the departure-clean timer. So Broward's true cost per unit is higher than these
+// figures alone suggest, and the difference lives in a task this table never sees. Anything
+// scheduling a Broward day has to count the strip task as its own stop, which the model does,
+// rather than assuming the clean number covers it.
+//
+// Padded ~6% above the median: the median is the day that went well, and half of all cleans take
+// longer than it. A planning figure, not a target.
+//
+// PROVENANCE. The first cut of these numbers was wrong twice over — derived from a single 90-day
+// request to /api/labor/cleans, whose internal pager stops at 6,000 task rows and silently dropped
+// the newest month, and then computed with a 25-minute plausibility floor that let close-outs
+// through. These come from four month-sized requests stitched together, with the 60-minute floor.
+
+/** Below this, a recorded "clean" was closed out, not performed. Jon's rule, 2026-08-27. */
+export const PERFORMED_FLOOR_MIN = 60
+
 export type CleanSize = 'studio' | 'one' | 'two' | 'threePlus'
+
+/** Portfolio-wide fallback, for any market without its own measured standard. */
+export const CLEAN_MINUTES: Record<CleanSize, number> = {
+  studio: 86, one: 102, two: 127, threePlus: 147,
+}
+
+/** Per-market standards. Miami carries the high-rise premium; Broward is the quicker floor. */
+export const CLEAN_MINUTES_BY_MARKET: Record<string, Record<CleanSize, number>> = {
+  miami:   { studio: 105, one: 119, two: 131, threePlus: 145 },
+  broward: { studio: 82,  one: 99,  two: 123, threePlus: 147 },
+}
+
+/** The standard for a unit, in the market it actually sits in. */
+export function cleanTableFor(market: string | null | undefined): Record<CleanSize, number> {
+  const k = String(market || '').trim().toLowerCase()
+  return CLEAN_MINUTES_BY_MARKET[k] || CLEAN_MINUTES
+}
 
 export function sizeOf(bedrooms: number | null | undefined): CleanSize {
   if (bedrooms == null) return 'one'          // unknown sits mid-range rather than cheapest
@@ -167,6 +199,8 @@ export type Stop = {
   lat?: number | null
   lng?: number | null
   bedrooms?: number | null
+  /** Which market this unit sits in — decides which measured standard prices it. */
+  market?: string | null
   /** How many people are on this task. Two cleaners on one unit each spend roughly half the time. */
   crewSize?: number
   /** Not a clean — a maintenance or inspection job sitting in the same person's day. */
@@ -231,16 +265,20 @@ export function unitCost(
   from: Stop | null,
   opts: { cleanTable?: Record<CleanSize, number>; isFirstOfDay?: boolean } = {},
 ): UnitCost {
-  const table = opts.cleanTable || CLEAN_MINUTES
+  // Price the unit in ITS market, not the day's. A cleaner who crosses from Broward into Miami
+  // should have the Miami units cost what Miami units cost.
+  const table = opts.cleanTable || cleanTableFor(stop.market)
   const crew = Math.max(1, Number(stop.crewSize) || 1)
   const isClean = (stop.kind || 'clean') === 'clean'
 
   let workMin: number
   let estimated = false
-  if (Number.isFinite(stop.knownMinutes as any)) {
+  if (Number.isFinite(stop.knownMinutes as any) && (!isClean || Number(stop.knownMinutes) >= PERFORMED_FLOOR_MIN)) {
     workMin = Number(stop.knownMinutes)
   } else if (isClean) {
-    workMin = cleanMinutes(stop.bedrooms, table)
+    // Never price a clean below the floor, whatever a table or a known reading says: an hour is
+    // the fastest a clean can physically be, so anything shorter is a bad record, not a fast day.
+    workMin = Math.max(PERFORMED_FLOOR_MIN, cleanMinutes(stop.bedrooms, table))
   } else {
     workMin = OTHER_TASK.defaultMinutes
     estimated = true
@@ -270,6 +308,7 @@ export function unitCost(
 
 /** Price a whole run in order, so the numbers sum to the day. */
 export function priceRun(ordered: Stop[], cleanTable?: Record<CleanSize, number>): UnitCost[] {
+  // cleanTable is an override for tests; normally each unit is priced by its own market.
   return ordered.map((s, i) => unitCost(s, i === 0 ? null : ordered[i - 1], {
     cleanTable, isFirstOfDay: i === 0,
   }))
