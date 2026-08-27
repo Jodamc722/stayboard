@@ -57,7 +57,15 @@ const ES: Record<string, string> = {
   'open': 'abierto',
   'guest lands': 'el huésped llega',
   'today': 'hoy',
-  HK_FOOTNOTE: 'Las filas numeradas son las limpiezas de salida — trabájelas en ese orden. Las filas con viñeta son todo lo demás asignado hoy: destendidos, ropa de cama, reposición, estadías en curso e inspecciones.',
+  HK_FOOTNOTE: 'Aquí está todo el equipo de hoy — limpieza, mantenimiento e inspecciones. Las filas numeradas son las limpiezas de salida; trabájelas en ese orden. Las filas con viñeta son todo lo demás de esa persona: destendidos, ropa de cama, reposición, estadías en curso, inspecciones y reparaciones. Una etiqueta junto a una unidad significa que la limpieza la cubre otro equipo.',
+  // Crew names — these label a person's block and the tag on a covered clean.
+  housekeeping: 'limpieza',
+  maintenance: 'mantenimiento',
+  inspection: 'inspección',
+  safety: 'seguridad',
+  'with nobody on them': 'sin nadie asignado',
+  "The team's day — every person, in order": 'El día del equipo — cada persona, en orden',
+  'Nothing on the board today.': 'No hay nada en el tablero hoy.',
   'Nothing on the housekeeping board today.': 'No hay nada en el tablero de limpieza hoy.',
   // ── arrivals / departures
   'Departures': 'Salidas',

@@ -146,32 +146,53 @@ async function gather(variant: BriefVariant) {
   }
   cleans.sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || a.unit.localeCompare(b.unit))
 
-  // EVERYTHING ELSE HOUSEKEEPING IS CARRYING TODAY (Jon, 2026-08-25: "in the briefs can we show
-  // all tasks assigned for HK"). A cleaner's day is not only departure cleans: strips, linen
-  // drops, restocks, mid-stays, common areas and the inspections they get handed all take real
-  // time, and a run that looks like "3 cleans" can actually be seven jobs. Anything that is NOT a
-  // departure clean (already listed) and NOT maintenance counts here when the department says
-  // cleaning or the person holding it is on the housekeeping crew.
-  type HkTask = { unit: string; lid: string; assignee: string; task: string; state: 'done' | 'running' | 'not_started' }
+  // THE WHOLE TEAM'S DAY, NOT JUST HOUSEKEEPING'S (Jon, 2026-08-27: "it should include all team…
+  // let's make sure we give full day of activities so that our team is on it").
+  //
+  // This started as housekeeping-only, which quietly hid two things a supervisor needs at 7am:
+  // the maintenance run (techs got no rows at all, so their day read as empty), and the moment a
+  // tech is covering a departure clean — the exact case Jon named. So the department filter is
+  // gone. Every job scheduled today, on every crew, lands on somebody's line.
+  //
+  // Departure cleans are NOT collected here — they already have their own numbered run above, and
+  // listing them twice would double every count. What lands here is everything else: strips,
+  // linen, restocks, mid-stays, inspections, and the full maintenance board.
+  type HkTask = { unit: string; lid: string; assignee: string; task: string; dept: string; state: 'done' | 'running' | 'not_started' }
   const hkOther: HkTask[] = []
+  // Which crew each person is really on — labels a person's block, and spots the tech holding a
+  // departure clean today.
+  const deptOfPerson: Record<string, string> = {}
   try {
     const { getCrew } = await import('./crew')
     const crew = await getCrew()
+    const noteDept = (names: string[], fallback: string) => {
+      for (const n of names) {
+        if (deptOfPerson[n]) continue
+        let dd = ''
+        try { dd = str(crew.deptOf(n)) } catch { dd = '' }
+        deptOfPerson[n] = dd && dd !== 'other' ? dd : fallback
+      }
+    }
     for (const t of ((tRes.data || []) as any[])) {
       const status = str(t.status).toLowerCase()
       if (/delete|cancel/.test(status)) continue
       const kind = kindOfTask(t)
-      if (kind === 'clean' || kind === 'maintenance') continue
       const lid = String(t.reference_property_id)
       if (!inVariant(lid)) continue
       const unit = meta[lid] ? meta[lid].name : 'Unknown unit'
       if (variant !== 'full' && VENDOR.test(unit)) continue
       const ppl = (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name || a)).filter(Boolean)
-      const dept = str(t.type_department)
-      const isHk = /clean|housekeep/i.test(dept) || ppl.some((n: string) => { try { return crew.deptOf(n) === 'housekeeping' } catch { return false } })
-      if (!isHk) continue
+      // The crew this job belongs to, in the task's own words where it has them, else from the work.
+      const raw = str(t.type_department).toLowerCase()
+      const dept = /clean|housekeep/.test(raw) ? 'housekeeping'
+        : /maint|repair/.test(raw) ? 'maintenance'
+        : /inspect/.test(raw) ? 'inspection'
+        : /safe/.test(raw) ? 'safety'
+        : kind === 'maintenance' ? 'maintenance' : 'housekeeping'
+      noteDept(ppl, dept)
+      if (kind === 'clean') continue          // already in the numbered run
       hkOther.push({
-        unit, lid,
+        unit, lid, dept,
         assignee: ppl.join(', ') || '—  UNASSIGNED',
         task: str(t.name).replace(/^(guest reported|field reported)[^a-z0-9]*/i, '').slice(0, 60) || 'Task',
         state: (/complete|finish|close|approv/.test(status) || t.finished_at) ? 'done'
@@ -383,7 +404,7 @@ async function gather(variant: BriefVariant) {
     // THE BOARD, IN THE BRIEF (Jon, 2026-08-25). Computed here because this is where today's
     // Breezeway rows and the variant's market scope already are — no second query.
     board: boardAtAGlance((tRes.data || []) as any[], inVariant, taskCats),
-    today, sheet, cleans, hkOther, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
+    today, sheet, cleans, hkOther, deptOfPerson, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
     forward, lookaheadDays: LOOK_D,
     rep: { n: allRevs.length, avg, five, owed }, watch30,
     repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
@@ -886,9 +907,19 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // deadline, so the row order IS the day's instruction.
   const arrTimeOf: Record<string, string> = {}
   for (const a of arrivals) if (a.checkInTime) arrTimeOf[String(a.listingId)] = str(a.checkInTime)
+  // WHO IS ON WHICH CREW. A departure clean carried by a tech is worth calling out on the row —
+  // it is the case Jon named, and it means the maintenance board is a person short that morning.
+  const deptBy: Record<string, string> = (d as any).deptOfPerson || {}
+  const crewOf = (name: string): string => deptBy[String(name).split(',')[0].trim()] || ''
+  const coveringPill = (assignee: string) => {
+    const dep = crewOf(assignee)
+    return dep && dep !== 'housekeeping'
+      ? ` <span style="display:inline-block;padding:1px 6px;border-radius:9px;background:#eef2ff;color:#4338ca;font-size:10.5px;font-weight:700;letter-spacing:.02em">${esc(t(dep).toUpperCase())}</span>`
+      : ''
+  }
   const cleanRow = (c: any, n: number | null, hot: boolean) => `
     <tr><td style="${S.td};width:30px;text-align:center">${n != null ? numBadge(n, hot) : ''}</td>
-    <td style="${S.td}"><b>${esc(c.unit)}</b>${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}</td>
+    <td style="${S.td}"><b>${esc(c.unit)}</b>${coveringPill(c.assignee)}${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap">${c.state === 'done' ? `<span style="${S.green}">${t('done')}</span>` : c.state === 'running' ? `<span style="${S.amber}">${t('in progress')}</span>` : `<span style="${S.muted}">${t('scheduled')}</span>`}</td></tr>`
   const byPerson: Record<string, any[]> = {}
   for (const c of d.cleans) if (!/UNASSIGNED/.test(c.assignee)) (byPerson[c.assignee] = byPerson[c.assignee] || []).push(c)
@@ -917,8 +948,12 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       mine.length ? `${mine.length} ${mine.length === 1 ? t('clean') : t('cleans')}` : '',
       others.length ? `${others.length} ${others.length === 1 ? t('other job') : t('other jobs')}` : '',
     ].filter(Boolean).join(' · ')
+    // The person's own crew, so a supervisor knows whose day this is — and sees at a glance
+    // when a tech's day has turned into cleans.
+    const dep = crewOf(name)
+    const depTag = dep ? ` <span style="${S.muted};font-size:11px">· ${esc(t(dep))}</span>` : ''
     return `
-    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b> <span style="${S.muted}">· ${bits}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b>${depTag} <span style="${S.muted}">· ${bits}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
       mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival)).join('') +
       others.map(otherRow).join('')
   }
@@ -934,7 +969,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${unassigned.length} · ${t('assign these first')}</span></td></tr>` +
       unassigned.map(c => cleanRow(c, null, c.sameDayArrival)).join('') : '') +
     (otherUnassigned.length ? `
-    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${otherUnassigned.length} ${otherUnassigned.length === 1 ? t('other housekeeping job') : t('other housekeeping jobs')}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${otherUnassigned.length} ${otherUnassigned.length === 1 ? t('other job') : t('other jobs')} ${t('with nobody on them')}</span></td></tr>` +
       otherUnassigned.map(otherRow).join('') : '') +
     everyone.map(personBlock).join('')
 
@@ -948,26 +983,36 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       onTodayCard = card('On the schedule today', null,
         `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Homebase did not answer this morning — today's roster is on the <a href="${APP_URL}/labor" style="color:#2563eb">Labor board</a>.</p>`, '#0891b2')
     } else if (todayShifts.length || todayOpenShifts) {
-      const cleansFor = (who: string): number =>
-        d.cleans.filter(c => c.assignee.split(',').map((t: string) => t.trim()).some((n: string) => n && nameMatches(n, who))).length
+      const holds = (assignee: string, who: string): boolean =>
+        String(assignee).split(',').map((x: string) => x.trim()).some((n: string) => n && nameMatches(n, who))
+      const cleansFor = (who: string): number => d.cleans.filter(c => holds(c.assignee, who)).length
+      // EVERY JOB ON THEM, NOT JUST CLEANS (Jon, 2026-08-27). A tech carrying eight repairs used
+      // to print an em-dash here and read as an idle body on the payroll.
+      const otherFor = (who: string): number => hkAll.filter((o: any) => holds(o.assignee, who)).length
       const isHK = (s: any) => /housekeep|cleaner|hk/i.test(str(s.role))
       const shiftRows = todayShifts.slice()
         .sort((a: any, b: any) => String(a.startAt).localeCompare(String(b.startAt)) || String(a.name).localeCompare(String(b.name)))
         .map((s: any) => {
           const n = cleansFor(str(s.name))
-          const work = n
-            ? `<b>${n}</b> clean${n === 1 ? '' : 's'}`
-            : isHK(s) ? `<span style="${S.amber}">no cleans assigned</span>` : `<span style="${S.muted}">—</span>`
+          const o = otherFor(str(s.name))
+          const parts = [
+            n ? `<b>${n}</b> clean${n === 1 ? '' : 's'}` : '',
+            o ? `<b>${o}</b> job${o === 1 ? '' : 's'}` : '',
+          ].filter(Boolean)
+          const work = parts.length ? parts.join(' · ')
+            : isHK(s) ? `<span style="${S.amber}">no cleans assigned</span>` : `<span style="${S.amber}">nothing on the board</span>`
           return `
     <tr><td style="${S.td}"><b>${esc(str(s.name))}</b>${s.role ? ` <span style="${S.muted};font-size:11.5px">${esc(str(s.role))}</span>` : ''}</td>
     <td style="${S.td};white-space:nowrap">${esc(str(s.label || ''))}</td>
     <td style="${S.td};text-align:right;white-space:nowrap">${work}</td></tr>`
         }).join('')
-      const idleHK = todayShifts.filter((s: any) => isHK(s) && cleansFor(str(s.name)) === 0).length
+      const idleHK = todayShifts.filter((s: any) => isHK(s) && cleansFor(str(s.name)) === 0 && otherFor(str(s.name)) === 0).length
+      const idleAny = todayShifts.filter((s: any) => !isHK(s) && cleansFor(str(s.name)) === 0 && otherFor(str(s.name)) === 0).length
       onTodayCard = card('On the schedule today', todayShifts.length,
         `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${todayShifts.length}</b> on shift` +
         (todayOpenShifts ? ` · <span style="${S.red}">${todayOpenShifts} open shift${todayOpenShifts === 1 ? '' : 's'} unfilled</span>` : '') +
         (idleHK ? ` · <span style="${S.amber}">${idleHK} housekeeper${idleHK === 1 ? '' : 's'} with no doors yet</span>` : '') +
+        (idleAny ? ` · <span style="${S.amber}">${idleAny} other${idleAny === 1 ? '' : 's'} with nothing assigned</span>` : '') +
         `</p><table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${S.th}">Person</th><th style="${S.th}">Shift</th><th style="${S.th};text-align:right">On the board</th></tr>${shiftRows}</table>`,
         '#0891b2', `Homebase · ${niceDay(d.today)} · assignments from the Breezeway board`)
     } else {
@@ -1388,10 +1433,10 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     : card(t('Top priorities'), null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">${t('Nothing on fire.')}</span> <span style="${S.muted}">${t('Work the list below and keep the 4pm deadline in sight.')}</span></p>`, '#059669')}
   ${!isField && fwdCard ? fwdCard : ''}
   ${onTodayCard}
-  ${card(t("Housekeeping — each person's day, in order"), d.cleans.length + hkAll.length,
+  ${card(t("The team's day — every person, in order"), d.cleans.length + hkAll.length,
     (d.cleans.length || hkAll.length)
-      ? bare(cleansRows) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${lang === 'es' ? t('HK_FOOTNOTE') : 'Numbered rows are the departure-clean run — work them in that order. Bulleted rows are everything else assigned today: strips, linen, restocks, mid-stays and inspections.'}</p>`
-      : emptyLine(t('Nothing on the housekeeping board today.')))}
+      ? bare(cleansRows) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${lang === 'es' ? t('HK_FOOTNOTE') : 'Everyone scheduled today is here — housekeeping, maintenance, inspections. Numbered rows are the departure-clean run; work them in that order. Bulleted rows are everything else on that person: strips, linen, restocks, mid-stays, inspections and repairs. A tag beside a unit means the clean is being covered by another crew.'}</p>`
+      : emptyLine(t('Nothing on the board today.')))}
   ${(autoInsp.length || reviewInsp.length) ? card('Inspections Lighthouse created &amp; assigned', autoInsp.length + reviewInsp.length,
     bare(
       autoInsp.map(i => `
