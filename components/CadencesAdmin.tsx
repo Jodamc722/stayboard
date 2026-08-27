@@ -346,6 +346,20 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
               })}
             </div>
           )}
+          {Array.isArray(preview.climateVocab) && preview.climateVocab.length > 0 && (
+            <div className="px-3 py-2 border-t border-line">
+              <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1">
+                Climate amenities actually recorded in the portfolio
+              </p>
+              <p className="text-[11.5px] text-muted">
+                {preview.climateVocab.map((v: any) => `${v.term} (${v.units})`).join(' · ')}
+              </p>
+              <p className="text-[11px] text-muted mt-1">
+                Write the equipment pattern against these exact words &mdash; a gate that matches none of
+                them silently excludes the whole portfolio.
+              </p>
+            </div>
+          )}
           {preview.dropped && Object.keys(preview.dropped).length > 0 && (
             <div className="px-3 py-2 border-t border-line bg-neutral-50">
               <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1">Ruled out today</p>
