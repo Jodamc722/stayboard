@@ -34,7 +34,7 @@ import {
   Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble,
 } from 'lucide-react'
 import { catOfTask, type TaskCat } from '@/lib/task-categories'
-import { SuggestionsBand } from '@/components/SuggestionsBand'
+import { SuggestionsProvider, SuggestionsBand, UnitSuggestions, PersonSuggestions } from '@/components/SuggestionsBand'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -460,6 +460,13 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
             {row.tasks.length === 0 && <div className="px-3 py-2.5 text-[12.5px] text-muted">Nothing scheduled on this {mode === 'people' ? 'person' : 'unit'} today.</div>}
             {row.tasks.map(t => <TaskLine key={t.id} t={t} roster={roster} mode={mode} onRefresh={onRefresh} comment={comments ? comments[t.id] || null : null} />)}
           </div>
+          {/* SUGGESTED, AT THIS LEVEL (Jon, 2026-08-27: "the suggestion should live at the unit
+              level, at the people level, and at the push level"). Same list as the band above —
+              the unit row asks what this unit is owed, the person row asks what this person could
+              pick up where they already are. Renders nothing when the answer is nothing. */}
+          {mode === 'units'
+            ? <UnitSuggestions listingId={row.listingId} />
+            : <PersonSuggestions name={row.title} />}
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             {mode === 'units' && (
               <button onClick={() => onAdd(row.title)}
@@ -772,6 +779,9 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
 
   return (
     <CatsCtx.Provider value={cats}>
+    {/* ONE fetch of the suggestion list, shared by the band, the unit rows and the people rows —
+        so adding a job in one place makes it disappear from the other two (Jon, 2026-08-27). */}
+    <SuggestionsProvider date={today} roster={roster} onAdded={onRefresh}>
     <div>
       {/* ── COUNTERS. Every tile is a filter — the number you are worried about is one tap from
           the list of rows behind it, which is the whole reason to put counters on a screen. ── */}
@@ -811,7 +821,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
           populate". Below the market chips so it scopes with them, and above the controls because
           it is about the shape of the day rather than about finding one row. It renders NOTHING
           when it has nothing to say, which on a heavy turn day is most mornings. ── */}
-      <SuggestionsBand date={today} market={mkt} onAdded={onRefresh} />
+      <SuggestionsBand market={mkt} />
 
       {/* ── CONTROLS ── */}
       <div className="mt-2.5 flex items-center gap-2 flex-wrap">
@@ -915,6 +925,7 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
         {' '}Glitches count everything still open, not only what is scheduled today &mdash; they stay open until somebody fixes them.
       </p>
     </div>
+    </SuggestionsProvider>
     </CatsCtx.Provider>
   )
 }

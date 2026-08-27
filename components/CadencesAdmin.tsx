@@ -24,7 +24,7 @@ type Cad = {
   key: string; label: string; everyDays: number
   dept: 'maintenance' | 'housekeeping' | 'inspection'
   match: string; needsVacant: boolean; needsDays: number; minutes: number
-  mode: 'off' | 'suggest' | 'auto'; seedIfNever: boolean
+  mode: 'off' | 'suggest' | 'auto'; seedIfNever: boolean; requiresAmenity?: string
 }
 type Cfg = {
   enabled: boolean; dailyCap: number; perUnitCap: number; perPersonMinutes: number
@@ -148,6 +148,7 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                   </button>
                   <span className="text-[11.5px] text-muted">every {everyLabel(c.everyDays)}</span>
                   {c.needsVacant && <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">needs an empty unit</span>}
+                  {c.requiresAmenity && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">only units with the equipment</span>}
                   <span className="text-[11px] text-muted">{c.minutes} min</span>
                   <select value={c.mode} onChange={e => setCad(c.key, { mode: e.target.value as Cad['mode'] })}
                     disabled={!isOwner} className={box + ' ml-auto'}>
@@ -195,6 +196,18 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                       <input type="checkbox" checked={c.seedIfNever} onChange={e => setCad(c.key, { seedIfNever: e.target.checked })} className="mt-0.5" disabled={!isOwner} />
                       <span className="text-[12px]"><span className="font-semibold text-ink">Treat &ldquo;never recorded&rdquo; as due</span> <span className="text-muted">— on for jobs every unit certainly needs; off for ones only some units have</span></span>
                     </label>
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[12px] text-muted shrink-0">Only units whose amenities match</span>
+                        <input value={c.requiresAmenity || ''} onChange={e => setCad(c.key, { requiresAmenity: e.target.value })}
+                          className={box + ' flex-1 font-mono text-[11.5px]'} disabled={!isOwner} placeholder="leave empty for every unit" />
+                      </div>
+                      <p className="text-[11px] text-muted mt-1">
+                        A unit with <strong className="text-ink">no amenities recorded at all</strong> is excluded rather than
+                        assumed to qualify &mdash; and counted separately in the preview, because &ldquo;we cannot tell&rdquo; is
+                        not the same answer as &ldquo;it does not have one&rdquo;.
+                      </p>
+                    </div>
                     <div className="sm:col-span-2">
                       <div className="flex items-center gap-2">
                         <span className="text-[12px] text-muted shrink-0">Counts as done when a task is named</span>
@@ -316,6 +329,21 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                   </p>
                 </div>
               ))}
+            </div>
+          )}
+          {preview.amenityStats && Object.keys(preview.amenityStats).length > 0 && (
+            <div className="px-3 py-2 border-t border-line">
+              <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1">Equipment check</p>
+              {Object.entries(preview.amenityStats).map(([k, v]: any) => {
+                const cad = cfg.cadences.find(c => c.key === k)
+                return (
+                  <p key={k} className="text-[11.5px] text-muted">
+                    <strong className="text-ink">{cad?.label || k}</strong> — {v.has} unit{v.has === 1 ? '' : 's'} have it,
+                    {' '}{v.hasNot} do not
+                    {v.unknown > 0 && <span className="text-amber-700"> · {v.unknown} have no amenities recorded, so they are excluded</span>}
+                  </p>
+                )
+              })}
             </div>
           )}
           {preview.dropped && Object.keys(preview.dropped).length > 0 && (
