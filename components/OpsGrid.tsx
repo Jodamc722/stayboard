@@ -34,7 +34,8 @@ import {
   Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble,
 } from 'lucide-react'
 import { catOfTask, type TaskCat } from '@/lib/task-categories'
-import { SuggestionsProvider, SuggestionsBand, UnitSuggestions, PersonSuggestions } from '@/components/SuggestionsBand'
+import { SuggestionsProvider, SuggestionsBand, UnitSuggestions, PersonSuggestions, useSuggestions } from '@/components/SuggestionsBand'
+import { AssignPanel } from '@/components/AssignPanel'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -357,13 +358,16 @@ type Row = {
    */
   late?: boolean
   atRisk?: boolean
+  building?: string | null
+  market?: string
   /** The clock facts already in the payload: when the guest left, when the next one lands. */
   outAt?: string | null
   inAt?: string | null
 }
 
-function GridRow({ row, roster, mode, onRefresh, onAdd }: {
+function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
   row: Row; roster: GRoster[]; mode: 'units' | 'people'; onRefresh: () => void; onAdd: (unit: string) => void
+  units: GUnit[]; staff?: GStaff | null
 }) {
   const [open, setOpen] = useState(false)
   const [comments, setComments] = useState<Record<string, { body: string; at: string } | null> | null>(null)
@@ -498,7 +502,12 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
           )}
           <div className="rounded-xl border border-line bg-white divide-y divide-line overflow-hidden">
             {row.tasks.length === 0 && <div className="px-3 py-2.5 text-[12.5px] text-muted">Nothing scheduled on this {mode === 'people' ? 'person' : 'unit'} today.</div>}
-            {row.tasks.map(t => <TaskLine key={t.id} t={t} roster={roster} mode={mode} onRefresh={onRefresh} comment={comments ? comments[t.id] || null : null} />)}
+            {row.tasks.map(t => (
+              <TaskLine key={t.id} t={t} roster={roster} mode={mode} onRefresh={onRefresh}
+                comment={comments ? comments[t.id] || null : null}
+                units={units} staff={staff}
+                unitMeta={{ listingId: row.listingId, building: row.building, market: row.market, unit: row.title }} />
+            ))}
           </div>
           {/* SUGGESTED, AT THIS LEVEL (Jon, 2026-08-27: "the suggestion should live at the unit
               level, at the people level, and at the push level"). Same list as the band above —
@@ -529,28 +538,55 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
 }
 
 /** One task inside an opened row: what it is, who has it, where it stands, and one-tap assign. */
-function TaskLine({ t, roster, mode, onRefresh, comment }: {
+function TaskLine({ t, roster, mode, onRefresh, comment, units, staff, unitMeta }: {
   t: GTask; roster: GRoster[]; mode: 'units' | 'people'; onRefresh: () => void; comment: { body: string; at: string } | null
+  units: GUnit[]; staff?: GStaff | null
+  unitMeta?: { listingId?: string; building?: string | null; market?: string; unit?: string }
 }) {
   const [assigning, setAssigning] = useState(false)
   const [busy, setBusy] = useState(0)
   const [err, setErr] = useState('')
+  // THE VERBS THE BOARD NEVER HAD. complete / priority / vendor / reschedule have been working APIs
+  // this whole time, wired into the OLD board — this one shipped as a viewer with a single write.
+  const [acting, setActing] = useState('')
+  const sug = useSuggestions()
   const { by } = useCats()
   const c = metaOf(by, catKeyOf(t))
   const mv = moveNote(t)
-  const ppl = useMemo(() => {
-    const inDept = roster.filter(p => !p.departments?.length || p.departments.some(x => x.toLowerCase().includes(String(t.dept || '').toLowerCase())))
-    return (inDept.length ? inDept : roster).slice(0, 14)
-  }, [roster, t.dept])
-  const assign = async (id: number) => {
+  const assign = async (id: number, alsoTaskIds: string[] = []) => {
     setBusy(id); setErr('')
     try {
       const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, assigneeIds: [id] }) })
       const j = await r.json()
       if (!r.ok || j.error) throw new Error(j.error || 'assign failed')
-      setAssigning(false); onRefresh()
+      // Anything ticked in the panel moves onto today and goes to the same person — the trip is
+      // the expensive part, and this is the moment we know who is making it.
+      if (alsoTaskIds.length && unitMeta?.listingId) {
+        const who = roster.find(p => p.id === id)?.name
+        try {
+          await fetch('/api/suggestions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'push', listingId: unitMeta.listingId, unit: unitMeta.unit || t.unit, taskIds: alsoTaskIds, scheduleDate: sug?.run?.date, assignee: who }),
+          })
+        } catch { /* the primary assign already succeeded — never fail the whole action on the extra */ }
+      }
+      setAssigning(false); onRefresh(); sug?.reload()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(0)
+  }
+
+  /** complete / vendor / priority — all against the existing task-action route. */
+  const act = async (action: string, extra: Record<string, any> = {}) => {
+    setActing(action); setErr('')
+    try {
+      const r = await fetch('/api/ops-today/task-action', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: t.id, action, ...extra }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || 'That did not work.')
+      onRefresh()
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setActing('') }
   }
   return (
     <div className="px-3 py-2">
@@ -577,6 +613,31 @@ function TaskLine({ t, roster, mode, onRefresh, comment }: {
               {t.assignees.length ? 'Reassign' : 'Assign'}
             </button>
           )}
+          {/* DONE. The single most-wanted verb on an ops board, and the one this one did not have:
+              crews finish work and forget to close it, so a board full of "not started" is often a
+              board that is actually finished. The API has existed and been wired into the old board
+              all along. */}
+          {isReal(t) && !t.done && (
+            <button onClick={() => { if (window.confirm(`Mark "${t.name}" complete in Breezeway?`)) act('complete') }}
+              disabled={!!acting}
+              className="text-[11.5px] font-bold text-emerald-700 hover:underline disabled:opacity-50 inline-flex items-center gap-1">
+              {acting === 'complete' ? <Loader2 size={10} className="animate-spin" /> : <Check size={11} />} Done
+            </button>
+          )}
+          {isReal(t) && !t.done && (
+            <button onClick={() => act('priority', { level: 'urgent' })} disabled={!!acting}
+              title="Flag urgent in Breezeway"
+              className="text-[11.5px] font-semibold text-muted hover:text-rose-700 disabled:opacity-50">
+              {acting === 'priority' ? <Loader2 size={10} className="animate-spin inline" /> : 'Urgent'}
+            </button>
+          )}
+          {isReal(t) && !t.done && !/vendor needed/i.test(t.name) && (
+            <button onClick={() => act('vendor', { on: true })} disabled={!!acting}
+              title="Tag VENDOR NEEDED so it is never billed to the owner by mistake"
+              className="text-[11.5px] font-semibold text-muted hover:text-ink disabled:opacity-50">
+              {acting === 'vendor' ? <Loader2 size={10} className="animate-spin inline" /> : 'Vendor'}
+            </button>
+          )}
           {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-muted hover:underline" title="Read-only field report">Report</a>}
           {isReal(t) && <a href={bzTask(t.id)} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open in Breezeway"><ExternalLink size={12} /></a>}
         </span>
@@ -588,16 +649,12 @@ function TaskLine({ t, roster, mode, onRefresh, comment }: {
         </div>
       )}
       {assigning && (
-        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-          {ppl.map(p => (
-            <button key={p.id} onClick={() => assign(p.id)} disabled={!!busy}
-              className="text-[11.5px] font-semibold px-2 py-1 rounded-full border border-line bg-white hover:border-ink/40 disabled:opacity-50">
-              {busy === p.id ? <Loader2 size={10} className="animate-spin inline" /> : null} {p.name}
-            </button>
-          ))}
-          {err && <span className="text-[11px] text-rose-600 font-semibold">{err}</span>}
-        </div>
+        <AssignPanel
+          task={{ id: t.id, dept: t.dept, listingId: unitMeta?.listingId, unit: unitMeta?.unit || t.unit, building: unitMeta?.building, market: unitMeta?.market || t.market }}
+          units={units} roster={roster} staff={staff}
+          onAssign={assign} onClose={() => setAssigning(false)} busyId={busy} error={err} />
       )}
+      {!assigning && err && <p className="mt-1 text-[11px] text-rose-600 font-semibold">{err}</p>}
     </div>
   )
 }
@@ -755,6 +812,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           urgent: (u.late ? 100 : 0) + (u.atRisk ? 50 : 0) + (u.sameDayTurn ? 20 : 0) + (u.unassigned ? 10 : 0) + issues.length,
           listingId: u.listingId,
           late: !!u.late, atRisk: !!u.atRisk,
+          building: u.building || null, market: u.market,
           outAt: u.checkOutTime || null, inAt: u.arrivingAt || null,
         } as Row
       })
@@ -788,6 +846,20 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       if (!t.assignees.length) { if (!t.done) unassigned.push(t); continue }
       for (const n of t.assignees) (byPerson[n] = byPerson[n] || []).push(t)
     }
+    // ── ANYONE ON SHIFT WITH NOTHING ON THEM STILL EXISTS ────────────────────────────────────
+    // People mode was built purely by re-pivoting today's TASKS on the assignee string, so somebody
+    // clocked in and idle produced no row at all. "Who is free?" is the first question of the
+    // morning and it was structurally unanswerable on the board — while the answer sat in the
+    // staffing payload, fetched two lines above where this component is mounted and never passed in.
+    const idleNames: string[] = []
+    for (const sp of (staff?.people || [])) {
+      const nm = String(sp?.name || '').trim()
+      if (!nm) continue
+      if (!(sp.clockedIn || sp.shift)) continue
+      const known = Object.keys(byPerson).some(k => k.toLowerCase() === nm.toLowerCase())
+      if (!known) idleNames.push(nm)
+    }
+
     const out: Row[] = Object.keys(byPerson).sort().map(name => {
       const tasks = byPerson[name]
       const doneN = tasks.filter(t => t.done).length
@@ -809,6 +881,22 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         urgent: late * 100 + (tasks.length - doneN),
       } as Row
     })
+    // Free people sort just under the unassigned pile — the two rows a coordinator needs to put
+    // together are then adjacent, which is the whole point of showing them at all.
+    for (const nm of idleNames.sort()) {
+      const sp = (staff?.people || []).find(x => String(x?.name || '').toLowerCase() === nm.toLowerCase())
+      out.push({
+        key: 'p:free:' + nm, title: nm,
+        sub: (roster.find(p => p.name.toLowerCase() === nm.toLowerCase())?.departments || []).join(' · '),
+        reservation: sp?.clockedIn ? 'On the clock, nothing assigned' : 'On shift, nothing assigned',
+        status: { label: 'Free', cls: 'bg-brand-50 text-brand-700 border-brand-200' },
+        tasks: [], issues: [], gapNights: null,
+        // Above ordinary working people, below the unassigned pile: an idle person is not urgent in
+        // itself, but it is the answer to the row directly above them.
+        urgent: 500_000,
+      } as Row)
+    }
+
     if (unassigned.length) out.unshift({
       key: 'p:unassigned', title: 'Nobody assigned', sub: 'open work with no name on it',
       reservation: unassigned.length + ' task' + (unassigned.length === 1 ? '' : 's') + ' · ' + Array.from(new Set(unassigned.map(t => t.unit))).length + ' units',
@@ -824,7 +912,9 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     if (n) r = r.filter(x => (x.title + ' ' + x.sub + ' ' + x.tasks.map(t => t.name + ' ' + t.assignees.join(' ')).join(' ')).toLowerCase().includes(n))
     // "Active" is Breezeway's word for "still has something on it". Off = the whole portfolio,
     // finished units included, which is what you want at 6pm when you are checking the day closed.
-    if (activeOnly) r = r.filter(x => x.tasks.some(t => !t.done) || x.issues.length > 0)
+    // "Active" means work still to do — but a FREE person has no open tasks by definition, so the
+    // default filter would have hidden the very rows that answer "who can take this".
+    if (activeOnly) r = r.filter(x => x.key.startsWith('p:free:') || x.tasks.some(t => !t.done) || x.issues.length > 0)
     // A filtered row earns its place with a matching task OR a matching issue — dropping the
     // issue-only rows here is what made the Glitches tile filter to an empty list.
     if (cat) r = r.filter(x => x.tasks.length > 0 || x.issues.length > 0)
@@ -1014,7 +1104,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             )}
           </div>
         ) : shown.map(r => (
-          <GridRow key={r.key} row={r} roster={roster} mode={mode} onRefresh={onRefresh} onAdd={onAddTask} />
+          <GridRow key={r.key} row={r} roster={roster} mode={mode} onRefresh={onRefresh} onAdd={onAddTask}
+            units={allUnits} staff={staff} />
         ))}
       </div>
 
