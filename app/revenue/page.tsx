@@ -238,7 +238,7 @@ export type RevenueData = {
   fwdDaily: { d: string; nights: number }[]
   // Revenue leakage — refunds/comps logged on guest-issue cards in this window, by building + cause.
   leakage: {
-    total: number; count: number; fixCost: number; pctOfGross: number
+    total: number; count: number; pctOfGross: number
     byBuilding: { building: string; amount: number; count: number }[]
     byCause: { cause: string; amount: number; count: number }[]
   }
@@ -570,15 +570,14 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const buildingByListing: Record<string, string> = {}
     for (const l of listings) buildingByListing[String(l.id)] = rollupBuilding(l.building)
     const { data: glitchRows } = await sb.from('glitches')
-      .select('id, listing_id, unit, category, created_at, recovery_cost, refund_approved, status')
+      .select('id, listing_id, unit, category, created_at, refund_approved, status')
       .gte('created_at', from + 'T00:00:00Z').lte('created_at', to + 'T23:59:59Z')
       .neq('status', 'deleted')
       .limit(5000)
-    let leakTotal = 0, leakCount = 0, fixCostTotal = 0
+    let leakTotal = 0, leakCount = 0
     const leakByBuilding: Record<string, { amount: number; count: number }> = {}
     const leakByCause: Record<string, { amount: number; count: number }> = {}
     for (const g of (glitchRows || []) as any[]) {
-      fixCostTotal += Number(g.recovery_cost) || 0
       const amt = Number(g.refund_approved) || 0
       if (amt <= 0) continue
       leakTotal += amt; leakCount++
@@ -589,7 +588,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     }
     const grossBase = totals.grossAccom || totals.total || 0
     const leakage = {
-      total: Math.round(leakTotal), count: leakCount, fixCost: Math.round(fixCostTotal),
+      total: Math.round(leakTotal), count: leakCount,
       pctOfGross: grossBase > 0 ? Math.round((leakTotal / grossBase) * 1000) / 10 : 0,
       byBuilding: Object.entries(leakByBuilding).map(([building, v]) => ({ building, amount: Math.round(v.amount), count: v.count })).sort((a, b) => b.amount - a.amount).slice(0, 12),
       byCause: Object.entries(leakByCause).map(([cause, v]) => ({ cause, amount: Math.round(v.amount), count: v.count })).sort((a, b) => b.amount - a.amount),
