@@ -287,6 +287,11 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
   const [photos, setPhotos] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // TONE IS SELECTED, NEVER INFERRED. Jon, 2026-08-27: "we select the tone, cause it could of been
+  // a call." Plenty of complaints never touch the message thread, and the only person who knows how
+  // the guest sounded is whoever spoke to them.
+  const [guestTone, setGuestTone] = useState('')
+  const [reportedVia, setReportedVia] = useState('')
   const [reportedBy, setReportedBy] = useState('')
   const [guestEmail, setGuestEmail] = useState('')
 
@@ -317,7 +322,7 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
     setBusy(true); setErr('')
     try {
       const body: Record<string, any> = {
-        glitchType, category, incidentDate, overview, photos, reportedBy, guestEmail,
+        glitchType, category, incidentDate, overview, guestTone, reportedVia, photos, reportedBy, guestEmail,
       }
       if (res) Object.assign(body, { reservationId: res.reservationId, listingId: res.listingId, unit: res.unit, market: res.market, guestName: res.guestName, guestPhone: res.guestPhone, channel: res.channel, checkIn: res.checkIn, checkOut: res.checkOut, reservationTotal: res.total, reservationNotes: res.notes, sentiment: res.sentiment })
       const r = await fetch('/api/glitches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -449,6 +454,33 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
 
           <Field label="Category" hint={!moreCats ? <button type="button" onClick={() => setMoreCats(true)} className="font-semibold text-ink underline">More categories</button> : null}>
             <Chips options={catChips} value={category} onChange={setCategory} />
+          </Field>
+
+          <Field label="How did they tell us?" hint="A call leaves no message thread, so the record needs to say so.">
+            <Chips
+              options={[
+                { value: 'message', label: 'Message' },
+                { value: 'call', label: 'Phone call' },
+                { value: 'in_person', label: 'In person' },
+                { value: 'at_checkout', label: 'At checkout' },
+                { value: 'review', label: 'In a review' },
+              ]}
+              value={reportedVia}
+              onChange={v => setReportedVia(v || '')}
+            />
+          </Field>
+
+          <Field label="How did the guest sound?" hint="You spoke to them, so only you know this. It changes what a fair refund looks like.">
+            <Chips
+              options={[
+                { value: 'understanding', label: 'Understanding' },
+                { value: 'frustrated', label: 'Frustrated' },
+                { value: 'angry', label: 'Angry' },
+                { value: 'fishing', label: 'Angling for a discount' },
+              ]}
+              value={guestTone}
+              onChange={v => setGuestTone(v || '')}
+            />
           </Field>
 
           <Field label="What happened">
