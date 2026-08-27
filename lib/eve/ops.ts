@@ -140,7 +140,7 @@ export const OPS_TOOLS: EveTool[] = [
       const lim = clampLimit(input?.limit, 40, 100)
       const days = clampDays(input?.days, 60, 400)
       // Slim select — the full row carries photos[], history jsonb and AI text (multi-MB over a board).
-      let q = ctx.db.from('glitches').select('id,status,glitch_type,category,listing_id,unit,market,guest_name,channel,incident_date,overview,due_date,assignee,progress,recovery_cost,refund_approved,created_at')
+      let q = ctx.db.from('glitches').select('id,status,glitch_type,category,listing_id,unit,market,guest_name,channel,incident_date,overview,due_date,assignee,progress,refund_approved,created_at')
         .gte('created_at', new Date(Date.now() - days * 86400000).toISOString())
       if (input?.status) q = q.eq('status', lc(input.status))
       else if (input?.open_only !== false) q = q.not('status', 'in', '("done","resolved","closed")')
@@ -152,7 +152,7 @@ export const OPS_TOOLS: EveTool[] = [
         guest: g.guest_name, channel: g.channel, opened: String(g.created_at).slice(0, 10),
         due: g.due_date, overdue: !!g.due_date && String(g.due_date) < ctx.today && lc(g.status) !== 'closed',
         assignee: g.assignee, progress: g.progress,
-        recovery_cost: g.recovery_cost, refund_approved: g.refund_approved,
+        refund_approved: g.refund_approved,
       }))
       if (input?.building) rows = rows.filter((r: any) => has(r.building, input.building) || has(r.unit, input.building))
       const byLane: Record<string, number> = {}

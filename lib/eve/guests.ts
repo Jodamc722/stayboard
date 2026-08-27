@@ -91,7 +91,7 @@ export const GUEST_TOOLS: EveTool[] = [
       const nm = String(stays[0].guest_name || name)
       const [revRes, gliRes, claimRes] = await Promise.all([
         safe(ctx.db.from('guesty_reviews').select('listing_id,rating,content,channel,created_at,has_reply').ilike('guest_name', `%${nm}%`).order('created_at', { ascending: false }).limit(20), { data: [] } as any),
-        safe(ctx.db.from('glitches').select('id,overview,status,unit,listing_id,created_at,refund_approved,recovery_cost,reservation_id').ilike('guest_name', `%${nm}%`).order('created_at', { ascending: false }).limit(20), { data: [] } as any),
+        safe(ctx.db.from('glitches').select('id,overview,status,unit,listing_id,created_at,refund_approved,reservation_id').ilike('guest_name', `%${nm}%`).order('created_at', { ascending: false }).limit(20), { data: [] } as any),
         safe(ctx.db.from('claims').select('id,stage,summary,amount_sought,amount_paid,check_out,property').ilike('guest_name', `%${nm}%`).is('deleted_at', null).order('created_at', { ascending: false }).limit(10), { data: [] } as any),
       ])
       const live = stays.filter((r: any) => !/cancel|declin|inquir|expire/i.test(lc(r.status)))
@@ -107,7 +107,7 @@ export const GUEST_TOOLS: EveTool[] = [
         },
         stays: stays.map((r: any) => ({ confirmation: r.confirmation_code, unit: r.listing_name || ctx.nameOf(r.listing_id), check_in: String(r.check_in).slice(0, 10), check_out: String(r.check_out).slice(0, 10), nights: r.nights, status: r.status, channel: r.source, total: r.money_total })),
         reviews: (revRes.data || []).map((r: any) => ({ unit: ctx.nameOf(r.listing_id), rating: normStar(r.rating), rating_scale: '/5', channel: r.channel, date: String(r.created_at).slice(0, 10), answered: !!r.has_reply, text: String(r.content || '').slice(0, 300) })),
-        glitches: (gliRes.data || []).map((g: any) => ({ issue: g.overview, status: g.status, unit: g.unit || ctx.nameOf(g.listing_id), opened: String(g.created_at).slice(0, 10), refund_approved: g.refund_approved, recovery_cost: g.recovery_cost })),
+        glitches: (gliRes.data || []).map((g: any) => ({ issue: g.overview, status: g.status, unit: g.unit || ctx.nameOf(g.listing_id), opened: String(g.created_at).slice(0, 10), refund_approved: g.refund_approved  })),
         claims: (claimRes.data || []).map((c: any) => ({ stage: c.stage, property: c.property, summary: String(c.summary || '').slice(0, 200), sought: c.amount_sought, paid: c.amount_paid })),
       }
     },
