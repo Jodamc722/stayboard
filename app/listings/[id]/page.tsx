@@ -25,7 +25,8 @@ import { UnitAudit } from '@/components/UnitAudit'
 import { FaqDesk } from '@/components/FaqDesk'
 import { AmenityEditor } from '@/components/AmenityEditor'
 import { GuidebookLauncher } from '@/components/GuidebookLauncher'
-import { CollapsePanel } from '@/components/CollapsePanel'
+import { ListingWorkspace, type WorkTab } from '@/components/ListingWorkspace'
+import { ContentTable } from '@/components/ContentTable'
 import {
   computeScore, rollupBuilding, buildingSlug, band, bandUi, ratingToStars,
   lastOptimizedOf, contentLooksComplete, scoreGaps, type Factor, type Gap,
@@ -33,7 +34,7 @@ import {
 import {
   Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X, Sparkles,
   AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare,
-  PlusCircle, ShieldAlert, ExternalLink, Wrench, ArrowRight, ClipboardList,
+  PlusCircle, ShieldAlert, ExternalLink, Wrench, ArrowRight, ChevronRight, ClipboardList,
 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -167,231 +168,240 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
     res.photos.coverageNote || null,
   ].filter(Boolean).join(' · ')
 
+  // THE CONTENT TABLE'S ROWS. Built from the raw publicDescription rather than
+  // res.description.sections, because that list filters empties out — and an empty section is the
+  // single most useful row on this screen. Targets come from the same editable spec the copywriter
+  // writes to, so the character counts here and the rules it writes under can never disagree.
+  const pubDesc: any = (listing as any).raw?.publicDescription || {}
+  const CONTENT_FIELDS: [string, string][] = [
+    ['summary', 'Summary'], ['space', 'The space'], ['access', 'Guest access'],
+    ['neighborhood', 'Neighborhood'], ['transit', 'Getting around'], ['notes', 'Other notes'],
+  ]
+  const emptyCost = gaps.find(g => g.pillar === 'description' && /section/i.test(g.label))?.points ?? null
+  const emptyCount = CONTENT_FIELDS.filter(([k]) => !String(pubDesc?.[k] || '').trim()).length
+  const contentRows = [
+    { key: 'title', label: 'Title', text: name, targetMin: 42, targetMax: 50, hardCap: 50 },
+    ...CONTENT_FIELDS.map(([k, label]) => ({
+      key: k, label, text: String(pubDesc?.[k] || ''),
+      // The gap is scored once for "sections filled", so split it across the fields that caused it
+      // rather than printing the whole cost against each one.
+      costs: emptyCount > 0 && emptyCost ? emptyCost / emptyCount : null,
+    })),
+  ]
+
   // Which panel fixes which gap — the factor rows in "What to fix" are links, not just labels.
   const PANEL_FOR: Record<Gap['pillar'], string> = {
-    title: 'content', description: 'content', photos: 'photos', amenities: 'amenities', settings: 'settings-panel',
+    title: 'content', description: 'content', photos: 'photos', amenities: 'amenities', settings: 'fix',
+  }
+  // The fix rows now say WHERE they go. "Quantified location → Content" is a route; a bare label
+  // with an arrow was a promise the reader had to guess at.
+  const GO_LABEL: Record<Gap['pillar'], string> = {
+    title: 'Content', description: 'Content', photos: 'Photos', amenities: 'Amenities', settings: 'Settings',
   }
 
   return (
     <Shell>
       <Link href={`/buildings/${buildingSlug(buildingName)}`} className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-4"><ArrowLeft size={15} /> Back to {buildingName}</Link>
 
-      <header className="mb-5 flex items-start justify-between gap-4 flex-wrap">
-        <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Building2 size={13} /> {listing.building || 'Unassigned'}{listing.unit ? ` · ${listing.unit}` : ''}</p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight break-words">{name}</h1>
-          <div className="text-sm text-muted mt-1 flex flex-wrap gap-x-4 gap-y-1">
-            {place && <span className="inline-flex items-center gap-1"><MapPin size={12} /> {place}</span>}
-            {listing.bedrooms != null && <span className="inline-flex items-center gap-1"><BedDouble size={12} /> {listing.bedrooms} bd</span>}
-            {listing.bathrooms != null && <span className="inline-flex items-center gap-1"><Bath size={12} /> {listing.bathrooms} ba</span>}
-            {listing.max_occupancy != null && <span className="inline-flex items-center gap-1"><Users size={12} /> sleeps {listing.max_occupancy}</span>}
-            <span className="inline-flex items-center gap-1"><ImageIcon size={12} /> {photoCount} photos</span>
-            {avgRating != null && <span className="inline-flex items-center gap-1"><Star size={12} className="text-amber-500 fill-amber-500" /> {avgRating}/5 · {reviews.length} reviews</span>}
-          </div>
-          {streetAddress && <div className="text-[12px] text-muted mt-1.5 inline-flex items-center gap-1.5"><MapPin size={12} /> {streetAddress}</div>}
-          <div className="text-[12px] mt-1.5 flex items-center gap-1.5 flex-wrap">
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold ${lastOptimized ? 'bg-emerald-50 text-emerald-700' : 'bg-app text-muted'}`}>
-              <Sparkles size={11} /> {lastOptimized ? `Last optimized ${lastOptimized}` : 'Never optimized'}
-            </span>
-            {!lastOptimized && contentComplete && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold bg-app text-muted" title="Every section has copy in it — but nobody has run the optimizer on this unit.">
-                <Check size={11} /> Content looks complete
+      {/* ── HEADER ─────────────────────────────────────────────────────────────────────────
+          Was a ~200px block: eyebrow, 3xl title, a wrapping meta row, the street address on its own
+          line, a chips row, and an 80x80 score tile floated right — then a jump rail under it,
+          then a score chip AGAIN inside "What to fix" a few hundred pixels later. Two lines now,
+          with the score beside the name where it belongs and the OTA links (previously a whole
+          right-rail panel of their own) as three small buttons. */}
+      <header className="mb-3">
+        <div className="flex items-start gap-3 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-muted font-semibold inline-flex items-center gap-1.5">
+              <Building2 size={12} /> {listing.building || 'Unassigned'}{listing.unit ? ` \u00b7 ${listing.unit}` : ''}
+            </p>
+            <div className="flex items-baseline gap-2.5 flex-wrap mt-0.5">
+              <h1 className="text-[22px] font-bold text-ink tracking-tight break-words">{name}</h1>
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg ring-1 ${opt.ring}`} title={`Optimize score \u2014 ${opt.label}`}>
+                <span className="text-[13px] font-black tabular-nums leading-none">{optimizeScore}</span>
+                <span className="text-[10px] font-bold uppercase tracking-wide">Optimize</span>
               </span>
-            )}
+              {dead && (
+                <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-100 text-amber-800">{String(listing.status)} in Guesty</span>
+              )}
+            </div>
+            <div className="text-[12.5px] text-muted mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              {place && <span>{place}</span>}
+              {(listing.bedrooms != null || listing.bathrooms != null || listing.max_occupancy != null) && <span className="text-line">|</span>}
+              <span>
+                {[listing.bedrooms != null ? `${listing.bedrooms} bd` : null,
+                  listing.bathrooms != null ? `${listing.bathrooms} ba` : null,
+                  listing.max_occupancy != null ? `sleeps ${listing.max_occupancy}` : null].filter(Boolean).join(' \u00b7 ')}
+              </span>
+              <span className="text-line">|</span><span>{photoCount} photos</span>
+              {avgRating != null && <><span className="text-line">|</span><span>{avgRating} \u00b7 {reviews.length} reviews</span></>}
+              <span className="text-line">|</span>
+              <span className={lastOptimized ? 'text-emerald-700 font-semibold' : 'text-muted'}>
+                {lastOptimized ? `Optimized ${lastOptimized}` : 'Never optimized'}
+              </span>
+              {streetAddress && <><span className="text-line">|</span><span className="truncate max-w-[260px]" title={streetAddress}>{streetAddress}</span></>}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 lh-actions">
+            {otaLinks.map(l => (
+              <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer"
+                className="text-[11.5px] font-semibold rounded-lg border border-line bg-white text-muted px-2.5 py-1.5 hover:text-ink hover:bg-app">{l.name}</a>
+            ))}
             <a href={`https://app.guesty.com/properties/${listing.id}/property/v2`} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold bg-app text-brand-700 hover:bg-brand-50">
-              <ExternalLink size={11} /> Open property in Guesty
+              className="text-[11.5px] font-semibold rounded-lg border border-line bg-white text-brand-700 px-2.5 py-1.5 hover:bg-brand-50 inline-flex items-center gap-1">
+              <ExternalLink size={11} /> Guesty
             </a>
           </div>
         </div>
-        <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl ring-1 flex-shrink-0 ${opt.ring}`} title="Optimize score">
-          <span className="text-2xl font-bold tabular-nums leading-none">{optimizeScore}</span>
-          <span className="text-[9px] uppercase tracking-wider font-semibold mt-0.5">Optimize</span>
-        </div>
       </header>
 
-      {/* Jump rail — the page is one scroll by design, so give it a spine. */}
-      <nav className="lh-actions mb-5 flex flex-wrap gap-1.5 text-[12px]" aria-label="Jump to section">
-        {[
-          { id: 'fix', label: 'What to fix' },
-          { id: 'content', label: 'Content' },
-          { id: 'photos', label: 'Photos' },
-          { id: 'amenities', label: 'Amenities' },
-          { id: 'reviews', label: 'Reviews' },
-          { id: 'ops', label: 'Ops' },
-        ].map(x => (
-          <a key={x.id} href={`#${x.id}`} className="px-2.5 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink hover:bg-app font-medium">{x.label}</a>
-        ))}
-      </nav>
 
-      {dead && (
-        <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800 flex items-center gap-2">
-          <AlertTriangle size={14} /> This listing is marked <b>{String(listing.status)}</b> in Guesty.
-        </div>
-      )}
-
-      {/* ── WHAT TO FIX — the diagnosis, first ─────────────────────────────────────────────── */}
-      <div id="fix" className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 mb-5 scroll-mt-24">
-        <div className="min-w-0 space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] uppercase tracking-wider text-muted font-semibold inline-flex items-center gap-1.5"><Wrench size={13} /> What to fix</span>
-            <span className={`inline-flex items-center justify-center px-2 py-0.5 rounded-md ring-1 text-[12px] font-bold tabular-nums ${opt.ring}`}>{optimizeScore}</span>
-            <span className="text-[12px] font-semibold text-muted">{opt.label}</span>
-            {res.reviewSignal && <span className="text-[11px] text-muted">· review signal {res.reviewSignal.score}/100 (14% of the score)</span>}
-          </div>
-
-          {gaps.length === 0 ? (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-800 inline-flex items-center gap-2">
-              <Check size={14} /> Nothing left on the checklist — every scored factor on this unit is full marks.
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-line bg-white p-4">
-              <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2.5">Biggest wins first — points are what the Optimize Score would gain</div>
-              <div className="space-y-1.5">
-                {gaps.slice(0, 6).map((g, i) => (
-                  <a key={i} href={`#${PANEL_FOR[g.pillar]}`}
-                    className="flex items-center gap-3 rounded-xl border border-line bg-app/40 px-3 py-2 hover:bg-app transition-colors group">
-                    <span className={`shrink-0 tabular-nums text-[12px] font-bold px-2 py-0.5 rounded-md ${g.severity === 'bad' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>+{g.points.toFixed(1)}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-semibold text-ink">{g.label}</span>
-                      <span className="block text-[11.5px] text-muted leading-snug">{g.note}</span>
-                    </span>
-                    <ArrowRight size={14} className="shrink-0 text-muted group-hover:text-brand-600" />
-                  </a>
-                ))}
-              </div>
-              {gaps.length > 6 && <div className="text-[11px] text-muted mt-2">+{gaps.length - 6} smaller {gaps.length - 6 === 1 ? 'gap' : 'gaps'} in the pillars below.</div>}
-            </div>
-          )}
-
-          {/* Five pillars. Photos used to be one factor buried inside Booking settings, worth 4.1%
-              of the score; it is its own pillar at 18% since 2026-08-21. */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            <ScoreCard title="Title" weight="18%" score={res.title.score} factors={res.title.factors} Icon={Tag} />
-            <ScoreCard title="Description" weight="22%" score={res.description.score} factors={res.description.factors} Icon={FileText} />
-            <ScoreCard title="Photos" weight="18%" score={res.photos.score} factors={res.photos.factors} Icon={ImageIcon} />
-            <AmenityScoreCard score={res.amenities.score} suggestions={res.amenities.suggestions} mustFix={res.amenities.mustFix} have={amenities.length} />
-            <ScoreCard title="Booking settings" weight="20%" score={res.settings.score} factors={res.settings.factors} Icon={Zap} />
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          {otaLinks.length > 0 && (
-            <Panel title="View live on OTAs">
-              <div className="flex flex-wrap gap-2">
-                {otaLinks.map(l => (
-                  <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-line text-brand-700 px-2.5 py-1.5 hover:bg-app">
-                    <ExternalLink size={13} /> {l.name}
-                  </a>
-                ))}
-              </div>
-            </Panel>
-          )}
-          <div id="settings-panel" className="scroll-mt-24">
-            <Panel title="Booking settings (from Guesty)">
-              <dl className="space-y-2.5 text-sm">
-                <SettingRow Icon={Ban} label="Cancellation" value={res.settings.meta.cancel.label} tone={res.settings.meta.cancel.tier === 'flex' ? 'good' : res.settings.meta.cancel.tier === 'strict' ? 'bad' : 'muted'} />
-                <SettingRow Icon={CalendarClock} label="Min nights" value={res.settings.meta.minN != null ? `${res.settings.meta.minN}` : 'Not set'} tone={res.settings.meta.minN != null && Number(res.settings.meta.minN) <= 3 ? 'good' : 'muted'} />
-                <SettingRow Icon={CalendarClock} label="Max nights" value={res.settings.meta.maxN != null ? `${res.settings.meta.maxN}` : '—'} tone="muted" />
-                <SettingRow Icon={Zap} label="Instant Book" value={res.settings.meta.instant ? 'On' : (res.settings.meta.instantRaw == null ? 'Unknown' : 'Off')} tone={res.settings.meta.instant ? 'good' : 'muted'} />
-                <SettingRow Icon={CalendarClock} label="Check-in / out" value={res.settings.meta.checkIn || res.settings.meta.checkOut ? `${res.settings.meta.checkIn || '—'} / ${res.settings.meta.checkOut || '—'}` : 'Not set'} tone="muted" />
-              </dl>
-            </Panel>
-          </div>
-          <div className="rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-[12px] text-brand-700">
-            <b className="text-brand-700">How to push changes:</b> optimized title/description sync to <b>Airbnb</b> and <b>Vrbo</b> automatically once written to Guesty. <b>Booking.com</b> auto-generates its own description, so there the lever is the amenities + settings above.
-          </div>
-        </div>
-      </div>
-
-      {/* ── THE WORK — folded, each header carrying its own headline ───────────────────────── */}
-      <div className="space-y-3">
-        <CollapsePanel
-          id="content" icon="file" defaultOpen
-          title="Content"
-          sub={`Title ${name.length} chars · ${res.description.sections.length} of 6 description sections filled`}
-          badge={`${res.description.score}`} tone={res.description.score >= 80 ? 'good' : res.description.score >= 60 ? 'warn' : 'bad'}
-        >
-          <div className="space-y-4">
-            <div className="rounded-xl border border-line bg-app/40 p-3.5">
-              <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">Live on the OTAs right now</div>
-              <div className="text-[15px] font-semibold text-ink break-words">{name}</div>
-              {res.description.sections.length === 0 ? (
-                <div className="text-sm text-muted italic mt-2">No description content in Guesty. Use Optimize below to draft one.</div>
-              ) : (
-                <div className="space-y-3 mt-3">
-                  {res.description.sections.map((s, i) => (
-                    <div key={i}>
-                      <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">{s.label} <span className="text-muted/60 normal-case tracking-normal">· {s.text.length} chars</span></div>
-                      {/* CLAMPED. This block reprints every description section at full length —
-                          about a thousand pixels of prose on a filled listing — and it sits between
-                          the diagnosis and every tool on the page. The optimizer below already
-                          shows the same text in a scrolling "Current" column, so the moment you
-                          press Generate you had the same 2,700 characters on screen twice, one copy
-                          unbounded. Kept (it is useful at a glance) but no longer allowed to push
-                          the actual work off the screen. */}
-                      <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed max-h-[8.5rem] overflow-y-auto pr-1">{s.text}</div>
+      {/* ── THE WORKSPACE ──────────────────────────────────────────────────────────────────
+          One tool at a time, each tab carrying the number that says whether it needs you. This
+          replaces five stacked accordions sitting under ~1,400px of diagnosis — see the header of
+          components/ListingWorkspace for why that arrangement was the actual complaint. */}
+      <ListingWorkspace storeKey={`stay:listing-tab`} tabs={[
+        {
+          id: 'fix', label: 'Fix next',
+          badge: gaps.length ? String(gaps.length) : 'clear',
+          tone: gaps.length === 0 ? 'good' : gaps[0].severity === 'bad' ? 'bad' : 'warn',
+          panel: (
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
+              <div className="min-w-0 space-y-3">
+                {gaps.length === 0 ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-800 inline-flex items-center gap-2">
+                    <Check size={14} /> Nothing left on the checklist — every scored factor on this unit is full marks.
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-line bg-white overflow-hidden">
+                    <div className="px-3 py-2 bg-app border-b border-line flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Biggest wins first</span>
+                      <span className="text-[11px] text-muted">points the Optimize score would gain</span>
+                      {res.reviewSignal && (
+                        <span className="text-[11px] text-muted ml-auto">review signal {res.reviewSignal.score}/100 · 14% of the score</span>
+                      )}
                     </div>
-                  ))}
+                    <div className="divide-y divide-line">
+                      {gaps.slice(0, 8).map((g, i) => (
+                        <a key={i} href={`#${PANEL_FOR[g.pillar]}`}
+                          className="px-3 py-2 flex items-center gap-3 hover:bg-app/50 transition-colors group">
+                          <span className={`shrink-0 tabular-nums text-[12px] font-bold px-2 py-0.5 rounded-md w-[46px] text-center ${g.severity === 'bad' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>+{g.points.toFixed(1)}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[12.5px] font-bold text-ink">{g.label}</span>
+                            <span className="block text-[11.5px] text-muted leading-snug">{g.note}</span>
+                          </span>
+                          <span className="text-[11px] font-semibold text-muted group-hover:text-brand-600 shrink-0 inline-flex items-center gap-0.5">
+                            {GO_LABEL[g.pillar]} <ArrowRight size={11} />
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                    {gaps.length > 8 && (
+                      <div className="px-3 py-1.5 border-t border-line text-[11px] text-muted">
+                        +{gaps.length - 8} smaller {gaps.length - 8 === 1 ? 'gap' : 'gaps'} — see the breakdown below.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* THE FIVE SCORE CARDS ARE REFERENCE, NOT ACTION. They restate the very factors the
+                    ranked list above is derived from, so printing both meant reading "Quantified
+                    location +4.0" and then scrolling past "Quantified location 4/15" a few hundred
+                    pixels later. Folded: still one click away when somebody wants to audit the
+                    number, no longer a wall of grades between the diagnosis and the tools. */}
+                <details className="rounded-2xl border border-line bg-white overflow-hidden group">
+                  <summary className="px-3 py-2 bg-app border-b border-line text-[11px] font-bold uppercase tracking-wider text-muted cursor-pointer select-none hover:text-ink list-none flex items-center gap-1.5">
+                    <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
+                    Score breakdown — how the {optimizeScore} is built
+                  </summary>
+                  <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <ScoreCard title="Title" weight="18%" score={res.title.score} factors={res.title.factors} Icon={Tag} />
+                    <ScoreCard title="Description" weight="22%" score={res.description.score} factors={res.description.factors} Icon={FileText} />
+                    <ScoreCard title="Photos" weight="18%" score={res.photos.score} factors={res.photos.factors} Icon={ImageIcon} />
+                    <AmenityScoreCard score={res.amenities.score} suggestions={res.amenities.suggestions} mustFix={res.amenities.mustFix} have={amenities.length} />
+                    <ScoreCard title="Booking settings" weight="20%" score={res.settings.score} factors={res.settings.factors} Icon={Zap} />
+                  </div>
+                </details>
+              </div>
+
+              <div className="space-y-3">
+                {/* ONE copy of the booking settings. There were two adjacent: a scored card listing
+                    Cancellation / Minimum stay / Instant Book / Check-in-out, and this panel listing
+                    the same five fields as values. Four of five rows were the same fields twice. The
+                    scored version now lives in the breakdown; this one shows what they are set to. */}
+                <div className="rounded-2xl border border-line bg-white overflow-hidden">
+                  <div className="px-3 py-2 bg-app border-b border-line text-[10px] font-bold uppercase tracking-wider text-muted">Booking settings</div>
+                  <dl className="divide-y divide-line text-[12.5px]">
+                    <SettingRow Icon={Ban} label="Cancellation" value={res.settings.meta.cancel.label} tone={res.settings.meta.cancel.tier === 'flex' ? 'good' : res.settings.meta.cancel.tier === 'strict' ? 'bad' : 'muted'} />
+                    <SettingRow Icon={CalendarClock} label="Min nights" value={res.settings.meta.minN != null ? `${res.settings.meta.minN}` : 'Not set'} tone={res.settings.meta.minN != null && Number(res.settings.meta.minN) <= 3 ? 'good' : 'muted'} />
+                    <SettingRow Icon={CalendarClock} label="Max nights" value={res.settings.meta.maxN != null ? `${res.settings.meta.maxN}` : '—'} tone="muted" />
+                    <SettingRow Icon={Zap} label="Instant Book" value={res.settings.meta.instant ? 'On' : (res.settings.meta.instantRaw == null ? 'Unknown' : 'Off')} tone={res.settings.meta.instant ? 'good' : 'bad'} />
+                    <SettingRow Icon={CalendarClock} label="Check-in / out" value={res.settings.meta.checkIn || res.settings.meta.checkOut ? `${res.settings.meta.checkIn || '—'} / ${res.settings.meta.checkOut || '—'}` : 'Not set'} tone="muted" />
+                  </dl>
                 </div>
-              )}
+                <p className="text-[11px] text-muted leading-snug px-0.5">
+                  Title and description sync to <b className="text-ink">Airbnb</b> and <b className="text-ink">Vrbo</b> once written to Guesty.
+                  {' '}<b className="text-ink">Booking.com</b> writes its own description — there the lever is amenities and settings.
+                </p>
+              </div>
             </div>
-            <ListingOptimizer listingId={listing.id} name={name} />
-          </div>
-        </CollapsePanel>
-
-        <CollapsePanel
-          id="photos" icon="image"
-          title="Photos"
-          sub={photoSub}
-          badge={`${res.photos.score}`} tone={res.photos.score >= 80 ? 'good' : res.photos.score >= 60 ? 'warn' : 'bad'}
-        >
-          <PhotoOrganizer listingId={listing.id} name={name} />
-        </CollapsePanel>
-
-        <CollapsePanel
-          id="amenities" icon="amenity"
-          title="Amenities"
-          sub={`${amenities.length} listed${recommendedAdds.length ? ` · ${recommendedAdds.length} recommended to add` : ' · fully covered'}`}
-          badge={`${res.amenities.score}`} tone={res.amenities.mustFix.length ? 'bad' : res.amenities.score >= 80 ? 'good' : 'warn'}
-        >
-          <AmenityEditor listingId={listing.id} current={amenities} recommended={recommendedAdds} catalog={amenityCatalog} />
-        </CollapsePanel>
-
-        <CollapsePanel
-          id="reviews" icon="reviews"
-          title="Reviews"
-          sub={`${reviews.length} pulled${avgRating != null ? ` · ${avgRating}/5 average` : ''}${awaitingReply ? ` · ${awaitingReply} awaiting a reply` : ''}`}
-          badge={awaitingReply ? `${awaitingReply} to reply` : 'all replied'} tone={awaitingReply ? 'warn' : 'good'}
-        >
-          <ListingReviews
-            reviews={reviews.map((r: any) => ({ id: r.id, rating: r.rating ?? null, content: r.content ?? null, channel: r.channel ?? null, guest_name: r.guest_name ?? null, hostReply: r.hostReply ?? null, has_reply: !!r.has_reply, excluded: !!r.excluded_from_score }))}
-            listingName={name}
-          />
-        </CollapsePanel>
-
-        {/* CollapsePanel's own header comment says "the closed header must carry the headline — if
-            you have to open a panel to find out whether it needs you, folding has just hidden the
-            information." Every other panel on this page passes a badge and a tone; this one passed
-            neither, so the junk drawer was also the only panel you could not triage from outside.
-            Open work is the number that decides whether anybody needs to look inside. */}
-        <CollapsePanel
-          id="ops" icon="ops"
-          title="Ops"
-          sub="Open work, the last property audit, guest FAQs, the guidebook and the hero collage"
-          badge={openWork > 0 ? `${openWork} open` : undefined}
-          tone={openWork > 0 ? 'warn' : undefined}
-        >
-          <div className="space-y-4">
-            <UnitTasks listingId={listing.id} />
-            <UnitAudit listingId={listing.id} />
-            <FaqDesk listingId={listing.id} />
-            <GuidebookLauncher listingId={listing.id} name={name} />
-            <HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={pictures} amenities={amenities} />
-          </div>
-        </CollapsePanel>
-      </div>
+          ),
+        },
+        {
+          id: 'content', label: 'Content',
+          badge: String(res.description.score),
+          tone: res.description.score >= 80 ? 'good' : res.description.score >= 60 ? 'warn' : 'bad',
+          panel: (
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-line bg-white overflow-hidden">
+                <div className="px-3 py-2 bg-app border-b border-line flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Live on the OTAs now</span>
+                  <span className="text-[11px] text-muted">{res.description.sections.length} of 6 sections filled</span>
+                </div>
+                <ContentTable rows={contentRows} />
+              </div>
+              <ListingOptimizer listingId={listing.id} name={name} />
+            </div>
+          ),
+        },
+        {
+          id: 'photos', label: 'Photos',
+          badge: String(res.photos.score),
+          tone: res.photos.score >= 80 ? 'good' : res.photos.score >= 60 ? 'warn' : 'bad',
+          panel: <PhotoOrganizer listingId={listing.id} name={name} />,
+        },
+        {
+          id: 'amenities', label: 'Amenities',
+          badge: String(res.amenities.score),
+          tone: res.amenities.mustFix.length ? 'bad' : res.amenities.score >= 80 ? 'good' : 'warn',
+          panel: <AmenityEditor listingId={listing.id} current={amenities} recommended={recommendedAdds} catalog={amenityCatalog} />,
+        },
+        {
+          id: 'reviews', label: 'Reviews',
+          badge: awaitingReply ? String(awaitingReply) : null,
+          tone: awaitingReply ? 'warn' : 'good',
+          panel: (
+            <ListingReviews
+              reviews={reviews.map((r: any) => ({ id: r.id, rating: r.rating ?? null, content: r.content ?? null, channel: r.channel ?? null, guest_name: r.guest_name ?? null, hostReply: r.hostReply ?? null, has_reply: !!r.has_reply, excluded: !!r.excluded_from_score }))}
+              listingName={name}
+            />
+          ),
+        },
+        {
+          id: 'ops', label: 'Ops',
+          badge: openWork > 0 ? String(openWork) : null,
+          tone: openWork > 0 ? 'warn' : 'muted',
+          panel: (
+            <div className="space-y-4">
+              <UnitTasks listingId={listing.id} />
+              <UnitAudit listingId={listing.id} />
+              <FaqDesk listingId={listing.id} />
+              <GuidebookLauncher listingId={listing.id} name={name} />
+              <HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={pictures} amenities={amenities} />
+            </div>
+          ),
+        },
+      ] as WorkTab[]} />
     </Shell>
   )
 }
@@ -479,9 +489,10 @@ function AmenityScoreCard({ score, suggestions, mustFix, have }: { score: number
 function SettingRow({ Icon, label, value, tone }: { Icon: any; label: string; value: string; tone: 'good' | 'bad' | 'muted' }) {
   const c = tone === 'good' ? 'text-emerald-700' : tone === 'bad' ? 'text-rose-700' : 'text-ink'
   return (
-    <div className="flex items-center justify-between gap-3">
-      <dt className="text-muted inline-flex items-center gap-1.5"><Icon size={13} /> {label}</dt>
-      <dd className={`font-medium text-right ${c}`}>{value}</dd>
+    // Sits inside a divide-y list now rather than a spaced dl, so it carries its own row padding.
+    <div className="px-3 py-1.5 flex items-center justify-between gap-3">
+      <dt className="text-muted inline-flex items-center gap-1.5"><Icon size={12} /> {label}</dt>
+      <dd className={`font-semibold text-right ${c}`}>{value}</dd>
     </div>
   )
 }
