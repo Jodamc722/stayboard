@@ -36,7 +36,7 @@
 // 'auto' — and even 'auto' obeys the same caps, because the cap is the promise.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { getSetting, getOpsPresets } from './app-settings'
+import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { marketOf } from './segments'
 import { isLiveStay } from './stay-status'
@@ -436,4 +436,70 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     ok: true, date, enabled: cfg.enabled, day,
     suggestions: picked, considered, dropped, historyComplete: hist.complete,
   }
+}
+
+// ── CREATING THE WORK ───────────────────────────────────────────────────────────────────────────
+// ONE creation path, used by the human clicking Add and by a cadence set to 'auto'. They must not
+// drift: the difference between the two is who decided, never what gets made.
+export async function createFromSuggestion(s: Suggestion, by: string | null): Promise<{
+  ok: boolean; taskId?: string; assigned?: string | null; name?: string; error?: string
+}> {
+  const { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson, breezewayConfigured } = await import('./breezeway')
+  if (!breezewayConfigured()) return { ok: false, error: 'Breezeway is not configured on this server.' }
+
+  const db = supabaseAdmin()
+  const { data: props } = await db.from('breezeway_properties').select('home_id')
+    .eq('reference_property_id', s.listingId).limit(1)
+  const homeId = Number((props || [])[0]?.home_id)
+  if (!Number.isFinite(homeId)) {
+    return { ok: false, error: `${s.unit} is not linked to a Breezeway property, so a task cannot be created for it.` }
+  }
+
+  const cfg = await getCadenceCfg()
+  const cad = cfg.cadences.find(c => c.key === s.cadenceKey)
+  const name = `${s.label} — ${s.unit}`
+  const description =
+    `SUGGESTED BY LIGHTHOUSE (preventative cadence: every ${cad?.everyDays ?? '?'} days).\n` +
+    `${s.why}\n` +
+    (s.vacantTonight
+      ? `Unit is empty${s.windowDays >= 999 ? ' with nothing booked in the next three weeks' : ` for ${s.windowDays} more day${s.windowDays === 1 ? '' : 's'}`}.\n`
+      : 'Unit is occupied — work around the guest.\n') +
+    `Rough time: ${s.minutes} minutes.`
+
+  let assigneeId: number | null = null
+  const who = s.candidates[0] || null
+  if (who) { try { assigneeId = await matchBreezewayPerson(who) } catch { assigneeId = null } }
+
+  try {
+    const r = await createBreezewayTask({
+      name, type_department: s.dept, type_priority: 'normal',
+      scheduled_date: s.id.split('|')[0], description, home_id: homeId,
+    })
+    if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
+    const taskId = String(r.data.id)
+    if (assigneeId != null && Number.isFinite(assigneeId)) {
+      try { await updateBreezewayTask(taskId, { assignments: [assigneeId] }) } catch { /* shows unassigned */ }
+    }
+    // Write-through so the board shows it before the next sync.
+    try {
+      await db.from('breezeway_tasks_sync').upsert({
+        id: taskId, reference_property_id: s.listingId, name, status: 'created',
+        scheduled_date: s.id.split('|')[0], type_department: s.dept,
+        assignees: assigneeId != null && who ? [who] : [],
+        raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
+      }, { onConflict: 'id' })
+    } catch { /* sync catches up */ }
+    return { ok: true, taskId, assigned: assigneeId != null ? who : null, name }
+  } catch (e: any) {
+    return { ok: false, error: `Breezeway would not create it: ${String(e?.message || e)}` }
+  }
+}
+
+/** Record an accepted suggestion in the rolling log. Best-effort — never blocks a creation. */
+export async function logAccepted(s: Suggestion, by: string | null, taskId: string | null): Promise<void> {
+  try {
+    const log = pruneLog(await getSuggestionLog(), s.id.split('|')[0])
+    log.accepted.push({ at: new Date().toISOString(), by, id: s.id, taskId, unit: s.unit, label: s.label })
+    await setSetting(SUGGESTION_LOG_KEY, log, by)
+  } catch { /* the task exists; the log is a convenience */ }
 }
