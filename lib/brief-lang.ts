@@ -64,6 +64,7 @@ const ES: Record<string, string> = {
   inspection: 'inspección',
   safety: 'seguridad',
   'with nobody on them': 'sin nadie asignado',
+  with: 'con',
   "The team's day — every person, in order": 'El día del equipo — cada persona, en orden',
   'Nothing on the board today.': 'No hay nada en el tablero hoy.',
   'Nothing on the housekeeping board today.': 'No hay nada en el tablero de limpieza hoy.',

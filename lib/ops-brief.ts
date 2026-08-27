@@ -911,33 +911,49 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // it is the case Jon named, and it means the maintenance board is a person short that morning.
   const deptBy: Record<string, string> = (d as any).deptOfPerson || {}
   const crewOf = (name: string): string => deptBy[String(name).split(',')[0].trim()] || ''
+  const crewOfAny = (assignee: string): string => {
+    for (const n of String(assignee).split(',').map(x => x.trim())) { const dd = deptBy[n]; if (dd) return dd }
+    return ''
+  }
   const coveringPill = (assignee: string) => {
-    const dep = crewOf(assignee)
+    const dep = crewOfAny(assignee)
     return dep && dep !== 'housekeeping'
       ? ` <span style="display:inline-block;padding:1px 6px;border-radius:9px;background:#eef2ff;color:#4338ca;font-size:10.5px;font-weight:700;letter-spacing:.02em">${esc(t(dep).toUpperCase())}</span>`
       : ''
   }
-  const cleanRow = (c: any, n: number | null, hot: boolean) => `
+  const cleanRow = (c: any, n: number | null, hot: boolean, me = '') => `
     <tr><td style="${S.td};width:30px;text-align:center">${n != null ? numBadge(n, hot) : ''}</td>
-    <td style="${S.td}"><b>${esc(c.unit)}</b>${coveringPill(c.assignee)}${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}</td>
+    <td style="${S.td}"><b>${esc(c.unit)}</b>${coveringPill(c.assignee)}${me ? withOthers(c.assignee, me) : ''}${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap">${c.state === 'done' ? `<span style="${S.green}">${t('done')}</span>` : c.state === 'running' ? `<span style="${S.amber}">${t('in progress')}</span>` : `<span style="${S.muted}">${t('scheduled')}</span>`}</td></tr>`
+  // ONE BLOCK PER PERSON, NOT PER COMBINATION OF NAMES (Jon, 2026-08-27).
+  //
+  // These lists were keyed on the assignee STRING, so a job held by three people made its own
+  // group: Guillermo appeared in five separate blocks and nobody could read their own day. A
+  // shared job now lands on each person's list, tagged with who else is on it — which is what
+  // "every person, in order" has to mean for the person holding the phone.
+  const namesOf = (assignee: string): string[] =>
+    String(assignee).split(',').map(x => x.trim()).filter(x => x && !/UNASSIGNED/.test(x))
+  const withOthers = (assignee: string, me: string): string => {
+    const rest = namesOf(assignee).filter(n => n !== me)
+    return rest.length ? ` <span style="${S.muted};font-size:11.5px">· ${t('with')} ${esc(rest.join(', '))}</span>` : ''
+  }
   const byPerson: Record<string, any[]> = {}
-  for (const c of d.cleans) if (!/UNASSIGNED/.test(c.assignee)) (byPerson[c.assignee] = byPerson[c.assignee] || []).push(c)
+  for (const c of d.cleans) for (const n of namesOf(c.assignee)) (byPerson[n] = byPerson[n] || []).push(c)
   const personOrder = Object.keys(byPerson).sort((a, b) => {
     const sa = byPerson[a].some(c => c.sameDayArrival) ? 0 : 1
     const sb = byPerson[b].some(c => c.sameDayArrival) ? 0 : 1
     return sa - sb || byPerson[b].length - byPerson[a].length || a.localeCompare(b)
   })
-  // A person's OTHER jobs today — strips, linen, restocks, the inspections they were handed.
-  // Same row shape as a clean but unnumbered: the numbers are the clean run's order of work.
+  // A person's OTHER jobs today — strips, linen, restocks, repairs, the inspections they were
+  // handed. Same row shape as a clean but unnumbered: the numbers are the clean run's order.
   const hkAll: any[] = (d as any).hkOther || []
   const otherByPerson: Record<string, any[]> = {}
-  for (const t of hkAll) if (!/UNASSIGNED/.test(t.assignee)) (otherByPerson[t.assignee] = otherByPerson[t.assignee] || []).push(t)
+  for (const t of hkAll) for (const n of namesOf(t.assignee)) (otherByPerson[n] = otherByPerson[n] || []).push(t)
   const otherUnassigned = hkAll.filter(t => /UNASSIGNED/.test(t.assignee))
   const tt = t
-  const otherRow = (t: any) => `
+  const otherRow = (t: any, me = '') => `
     <tr><td style="${S.td};width:30px;text-align:center"><span style="${S.muted};font-size:11px">•</span></td>
-    <td style="${S.td}">${esc(t.unit)} <span style="${S.muted};font-size:12px">· ${esc(t.task)}</span></td>
+    <td style="${S.td}">${esc(t.unit)} <span style="${S.muted};font-size:12px">· ${esc(t.task)}</span>${me ? withOthers(t.assignee, me) : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap">${t.state === 'done' ? `<span style="${S.green}">${tt('done')}</span>` : t.state === 'running' ? `<span style="${S.amber}">${tt('in progress')}</span>` : `<span style="${S.muted}">${tt('to do')}</span>`}</td></tr>`
   const personBlock = (name: string) => {
     const mine = (byPerson[name] || []).slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || a.unit.localeCompare(b.unit))
@@ -954,8 +970,8 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     const depTag = dep ? ` <span style="${S.muted};font-size:11px">· ${esc(t(dep))}</span>` : ''
     return `
     <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b>${depTag} <span style="${S.muted}">· ${bits}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
-      mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival)).join('') +
-      others.map(otherRow).join('')
+      mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival, name)).join('') +
+      others.map((o: any) => otherRow(o, name)).join('')
   }
   // Somebody whose whole day is strips and linen has a run too — include them in the order.
   const everyone = Array.from(new Set([...personOrder, ...Object.keys(otherByPerson)]))
@@ -970,7 +986,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       unassigned.map(c => cleanRow(c, null, c.sameDayArrival)).join('') : '') +
     (otherUnassigned.length ? `
     <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${otherUnassigned.length} ${otherUnassigned.length === 1 ? t('other job') : t('other jobs')} ${t('with nobody on them')}</span></td></tr>` +
-      otherUnassigned.map(otherRow).join('') : '') +
+      otherUnassigned.map((o: any) => otherRow(o)).join('') : '') +
     everyone.map(personBlock).join('')
 
   // ── ON THE SCHEDULE TODAY (Ops Command). Each shift is cross-checked against the clean board:
