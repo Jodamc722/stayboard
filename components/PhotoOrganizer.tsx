@@ -1,9 +1,11 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw } from 'lucide-react'
+import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2 } from 'lucide-react'
 
 type Photo = {
   _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string
+  /** The server invented this caption from the category — a label for the copywriter, not copy. */
+  captionIsPlaceholder?: boolean
   // 2026-08-21: the analyst now names the SPECIFIC room ("bedroom-1"), which is what keeps every
   // photo of one room together, and picks a named enhance preset with a reason.
   room?: string; enhance?: string; enhanceWhy?: string
@@ -68,6 +70,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [uploadingCount, setUploadingCount] = useState(0)
   const [mirroring, setMirroring] = useState(false)
   const [capBusy, setCapBusy] = useState<Set<string>>(new Set())
+  const [metaBusy, setMetaBusy] = useState<Set<string>>(new Set())
+  const [metaSaved, setMetaSaved] = useState<Set<string>>(new Set())
+  const capTimer = useRef<Record<string, any>>({})
   const fileRef = useRef<HTMLInputElement | null>(null)
   // REPLACEMENTS: overwrite an existing photo's image with a new upload (keeps position + caption).
   // replaced[id] = { orig: new uploaded original URL, prevUrl: the old image (for undo) }.
@@ -79,12 +84,17 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const photosRef = useRef<Record<string, Photo>>({})
   photosRef.current = photos
 
-  async function analyze(hero?: string, guidanceText?: string): Promise<string[] | null> {
+  async function analyze(hero?: string, guidanceText?: string, regenerateCaptions = false): Promise<string[] | null> {
     setBusy(true); setError(null); setPushedMsg(null)
     try {
       const r = await fetch('/api/optimize-photos', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, ...(hero ? { heroId: hero } : {}), ...(guidanceText && guidanceText.trim() ? { guidance: guidanceText.trim() } : {}) }),
+        body: JSON.stringify({
+          listingId,
+          ...(hero ? { heroId: hero } : {}),
+          ...(guidanceText && guidanceText.trim() ? { guidance: guidanceText.trim() } : {}),
+          ...(regenerateCaptions ? { regenerateCaptions: true } : {}),
+        }),
       })
       const raw = await r.text()
       let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
@@ -311,10 +321,43 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     setToRemove(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
   function setCaption(id: string, v: string) {
-    setPhotos(prev => ({ ...prev, [id]: { ...prev[id], caption: v } }))
+    setPhotos(prev => ({ ...prev, [id]: { ...prev[id], caption: v, captionIsPlaceholder: false } }))
+    // Saved back to _photoIndex on a pause, not on every keystroke. Without this a hand-written
+    // caption survived only until the next Analyze, and the copywriter kept reading the older AI
+    // text because _photoIndex still held it.
+    if (capTimer.current[id]) clearTimeout(capTimer.current[id])
+    capTimer.current[id] = setTimeout(() => {
+      fetch('/api/photo-meta', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, photoId: id, caption: v }),
+      }).catch(() => { /* the push still carries it; this is the durable copy */ })
+    }, 900)
   }
-  function setCategory(id: string, v: string) {
+  // ── THE TAG EDIT IS REAL NOW ──────────────────────────────────────────────────────────────
+  // This used to write React state and stop. The value was never in the push body, no route ever
+  // accepted a category, and the next Analyze or page reload wiped it — so every correction anyone
+  // made here since the panel shipped was silently thrown away. It saves to _photoIndex marked as a
+  // human edit, which the vision pass now respects instead of overwriting on its next run.
+  async function setCategory(id: string, v: string) {
+    const before = photos[id]?.category
     setPhotos(prev => ({ ...prev, [id]: { ...prev[id], category: v } }))
+    setMetaBusy(prev => { const n = new Set(prev); n.add(id); return n })
+    try {
+      const r = await fetch('/api/photo-meta', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, photoId: id, category: v }),
+      })
+      const j: any = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j?.error || 'Could not save that tag.')
+      setMetaSaved(prev => { const n = new Set(prev); n.add(id); return n })
+      setTimeout(() => setMetaSaved(prev => { const n = new Set(prev); n.delete(id); return n }), 2000)
+    } catch (e: any) {
+      // Put the old value back rather than leaving the screen claiming something that did not save.
+      setPhotos(prev => ({ ...prev, [id]: { ...prev[id], category: before } }))
+      setError(e.message || String(e))
+    } finally {
+      setMetaBusy(prev => { const n = new Set(prev); n.delete(id); return n })
+    }
   }
   // Per-photo AI description: regenerates ONE photo's caption on demand (deliberate overwrite).
   async function regenCaption(id: string) {
@@ -336,7 +379,17 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     setPushing(true); setError(null); setPushedMsg(null)
     try {
       const captions: Record<string, string> = {}
-      order.forEach(id => { const c = photos[id]?.caption; if (typeof c === 'string') captions[id] = c })
+      // NEVER PUSH A PLACEHOLDER. Every photo is guaranteed a caption server-side so the copywriter
+      // always has a label — but for the hero and any photo past the AI's limit that caption is a
+      // category stub the model never saw. Those were going to Airbnb as real captions, which is
+      // how the literal words "Property photo" ended up on live listings.
+      order.forEach(id => {
+        const p = photos[id]
+        const c = p?.caption
+        if (typeof c !== 'string' || !c.trim()) return
+        if (p?.captionIsPlaceholder) return
+        captions[id] = c
+      })
       const urls: Record<string, string> = {}
       const adds: Record<string, { url: string; caption: string }> = {}
       order.forEach(id => {
@@ -394,10 +447,22 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             {enhancing ? <Sparkles size={15} className="animate-pulse" /> : <Sun size={15} />}
             {enhancing ? 'Enhancing…' : 'Enhance photos'}
           </button>
+          {/* DESCRIBE EVERY PHOTO. The ordinary run never overwrites a caption Guesty already has —
+              right for a human-written one, but it also meant the AI captions were generated, paid
+              for and silently discarded on any listing that already had captions, so "optimize
+              photos" produced no new descriptions at all. This is the explicit opt-in. */}
+          {open && order.length > 0 && (
+            <button onClick={() => { if (window.confirm('Rewrite the description on EVERY photo, replacing what is there now? Nothing goes live until you push.')) analyze(heroId || undefined, undefined, true) }}
+              disabled={busy || pushing}
+              title="Regenerate a description for every photo, including ones that already have a caption"
+              className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
+              <Wand2 size={15} /> Describe all
+            </button>
+          )}
           <button onClick={() => { setOpen(o => !o); if (!open && order.length === 0) analyze() }} disabled={busy}
             className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-brand-700 disabled:opacity-50">
             {busy ? <Sparkles size={15} className="animate-pulse" /> : <Wand2 size={15} />}
-            {busy ? 'Analyzing…' : open ? 'Hide' : 'Analyze order'}
+            {busy ? 'Organizing…' : open ? 'Hide' : 'Organize photos'}
           </button>
         </div>
       </div>
@@ -552,6 +617,10 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                           {CATS.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                         {p.room && <span className="text-[10px] font-medium text-muted ml-1">{p.room.replace(/-/g, ' ')}</span>}
+                        {/* Saving state on the tag, because a control that silently does nothing is
+                            exactly what this dropdown used to be. */}
+                        {metaBusy.has(id) && <Loader2 size={10} className="animate-spin text-muted ml-1 inline" />}
+                        {metaSaved.has(id) && <span className="text-[10px] font-semibold text-emerald-600 ml-1">saved</span>}
                         {p.reason && <p className="text-[11px] text-muted leading-snug">{p.reason}</p>}
                         {presets.length > 0 && !uploads[id] && (
                           <div className="flex items-center gap-1">

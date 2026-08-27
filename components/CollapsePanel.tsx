@@ -49,13 +49,34 @@ export function CollapsePanel({
   const storeKey = `stay:panel:${id}`
 
   useEffect(() => {
+    // ── A DEEP LINK MUST OPEN THE PANEL IT POINTS AT ──────────────────────────────────────────
+    // Audit, 2026-08-27: every "what to fix" row on the listing page, and every row in the
+    // portfolio Fix-next worklist, links to #photos / #amenities / #reviews. Those panels are
+    // closed by default and nothing here read the hash — so the app's single most important
+    // call to action scrolled you to a closed header and stopped, one click short of the tool.
+    // The pattern already existed elsewhere in the codebase (FfeTabs reads the hash on mount);
+    // it had just never been applied to the component that needed it most.
+    //
+    // The hash beats the remembered preference: you clicked a link asking for this specific
+    // thing, which is a stronger signal than how you left the page last Tuesday.
+    let fromHash = false
     try {
-      const v = window.localStorage.getItem(storeKey)
-      if (v === '1') setOpen(true)
-      else if (v === '0') setOpen(false)
-    } catch { /* private mode, blocked storage — keep the default */ }
+      if (window.location.hash === '#' + id) { setOpen(true); fromHash = true }
+    } catch { /* no window — server render */ }
+    if (!fromHash) {
+      try {
+        const v = window.localStorage.getItem(storeKey)
+        if (v === '1') setOpen(true)
+        else if (v === '0') setOpen(false)
+      } catch { /* private mode, blocked storage — keep the default */ }
+    }
     setReady(true)
-  }, [storeKey])
+
+    // Links within the page change the hash without remounting, so listen for that too.
+    const onHash = () => { try { if (window.location.hash === '#' + id) setOpen(true) } catch { /* no-op */ } }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [storeKey, id])
 
   function toggle() {
     const next = !open

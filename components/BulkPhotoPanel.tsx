@@ -2,7 +2,7 @@
 // Bulk "organize photos by room" for a building. For each selected unit it runs the AI photo
 // categoriser (/api/optimize-photos), then builds a new order = the first 5 photos UNCHANGED
 // followed by the remaining photos grouped by room type. Nothing is written to Guesty until you
-// approve; pushing sends the new order via /api/photo-order (reorder only, captions untouched).
+// approve; pushing sends the new order AND each photo's caption via /api/photo-order.
 import { useState } from 'react'
 import { Images, RefreshCw, Check, X, Lock, UploadCloud, AlertTriangle, Wand2 } from 'lucide-react'
 
@@ -89,6 +89,15 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
   }
 
   async function pushAll() {
+    // A CONFIRMATION, BECAUSE THIS IS THE WIDEST WRITE IN THE APP.
+    // One click here reorders every analysed unit in the building on Airbnb, Vrbo, Expedia and
+    // Booking — and it sends captions too, despite this file's header claiming "reorder only,
+    // captions untouched". The single-listing push has asked for confirmation all along; the
+    // building-wide one did not.
+    const n = Object.keys(plans).filter(id => plans[id].changed && !plans[id].pushed && !plans[id].error).length
+    if (!n) return
+    if (!window.confirm(`Push the new photo order AND descriptions for ${n} unit${n === 1 ? '' : 's'} to every channel (Airbnb, Vrbo, Booking)? This changes live listings.`)) return
+
     for (const id of Object.keys(plans)) {
       const pl = plans[id]
       if (pl.changed && !pl.pushed && !pl.error) await push(id)

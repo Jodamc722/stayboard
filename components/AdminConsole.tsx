@@ -185,9 +185,9 @@ const ENTRIES: Entry[] = [
     render: p => <L.eve canEdit={p.isOwner} />,
   },
   {
-    key: 'listing-ai', title: 'Listing & photo AI', group: 'AI', Icon: Star, ownerOnly: true,
-    blurb: 'The prompts behind listing copy, photo selection and enhancement.',
-    find: 'listing ai copy prompt photo enhance preset title description honesty optimize',
+    key: 'listing-ai', title: 'Listing copy — voice & training', group: 'AI', Icon: Star, ownerOnly: true,
+    blurb: 'Teach the AI how your listings should sound — the house voice, real examples per field, the phrases it must never write, and the length rules. Also the photo and enhance prompts.',
+    find: 'listing ai copy prompt photo enhance preset title description honesty optimize voice tone training train retrain example examples banned never write cliche nestled style writing copywriter',
     render: p => <L.listingAi isOwner={p.isOwner} />,
   },
   {

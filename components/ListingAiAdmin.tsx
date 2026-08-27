@@ -18,19 +18,14 @@ import {
   ChevronDown, ChevronRight, Image as ImageIcon, Wand2, FileText,
 } from 'lucide-react'
 import {
-  DEFAULT_LISTING_AI, SECTION_KEYS, ENHANCE_CAPS, sectionEdited,
+  DEFAULT_LISTING_AI, DEFAULT_BANNED, SECTION_KEYS, ENHANCE_CAPS, sectionEdited,
   type ListingAi, type SectionKey,
 } from '@/lib/listing-ai'
+// The EXACT strings the model receives, not a summary of them. The panel used to render a
+// hand-written paraphrase that had already drifted from the real rules — see lib/listing-rules.
+import { HONESTY, PHOTO_RULES_LABELLED, PHOTO_RULES_RAW } from '@/lib/listing-rules'
 
 type Tab = 'copy' | 'photos' | 'enhance' | 'honesty'
-
-const HONESTY_TEXT = `Use ONLY facts present in the listing data, location, current content, review signal, booking settings and photo index. If you are not certain of a distance, a business name, a drive time, an amenity, a view or a room count — omit it or stay general. Never guess, never embellish, never invent.
-
-Never print the exact street address, unit number, lock or door codes, phone, email, or URLs anywhere in the copy.
-
-Never claim a garage — no unit has one. If parking exists per the data, describe it generically.
-
-Tell real photos of the home apart from generic area/stock imagery. Only ground home-feature claims in real photos of this unit or building.`
 
 export function ListingAiAdmin({ isOwner }: { isOwner: boolean }) {
   const [cfg, setCfg] = useState<ListingAi | null>(null)
@@ -159,8 +154,13 @@ export function ListingAiAdmin({ isOwner }: { isOwner: boolean }) {
       {/* ── COPY ─────────────────────────────────────────────────────────── */}
       {tab === 'copy' && (
         <div className="space-y-2.5">
-          <Row title="House voice" sub="Shared by every section" badge={edited.has('voice')}>
+          <Row title="House voice" sub="Shared by every section, and by every single-field rewrite" badge={edited.has('voice')}>
             <Area value={cfg.voice} rows={10} disabled={ro} onChange={v => mutate(c => { c.voice = v })} />
+            <p className="text-[11px] text-muted mt-1.5">
+              Describing a voice in adjectives only goes so far &mdash; &ldquo;vivid&rdquo;, &ldquo;never lazy&rdquo; and
+              &ldquo;world-class&rdquo; do not tell a writer how to sound. The <strong className="text-ink">Examples</strong> under
+              each field below are what actually move it.
+            </p>
             <div className="flex flex-wrap gap-2 mt-2.5">
               <Knob label="Style exemplar — building">
                 <input value={cfg.exemplarMatch} disabled={ro}
@@ -178,6 +178,30 @@ export function ListingAiAdmin({ isOwner }: { isOwner: boolean }) {
               <button onClick={() => mutate(c => { c.voice = DEFAULT_LISTING_AI.voice })} disabled={ro}
                 className="text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1 disabled:opacity-40">
                 <RotateCcw size={11} /> Reset to Stay default
+              </button>
+            </div>
+          </Row>
+
+          {/* ── NEVER WRITE ────────────────────────────────────────────────────────────────────
+              A phrase ban is a different job from a topic ban. The per-section "Never mention" box
+              renders as "NEVER mention: x", which reads to the model as a SUBJECT to avoid — put
+              "oasis" there and it will also refuse to name the Oasis building. This list bans the
+              words themselves, once, portfolio-wide, and is checked in code after generation so a
+              violation shows up as a warning rather than being quietly asked for and ignored. */}
+          <Row title="Never write these phrases" sub="Checked after every generation, not just requested"
+            badge={(cfg.bannedPhrases || '') !== DEFAULT_BANNED}>
+            <Area value={cfg.bannedPhrases || ''} rows={3} disabled={ro}
+              onChange={v => mutate(c => { c.bannedPhrases = v })} />
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <p className="text-[11px] text-muted flex-1 min-w-[220px]">
+                Comma separated. These are the phrases on every other listing a guest is reading &mdash;
+                if one of them is the only thing that fits, the sentence was not specific enough yet.
+                Single lowercase words are matched case-sensitively, so banning &ldquo;oasis&rdquo; never
+                touches the Oasis building.
+              </p>
+              <button onClick={() => mutate(c => { c.bannedPhrases = DEFAULT_BANNED })} disabled={ro}
+                className="text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1 disabled:opacity-40">
+                <RotateCcw size={11} /> Reset list
               </button>
             </div>
           </Row>
@@ -218,7 +242,45 @@ export function ListingAiAdmin({ isOwner }: { isOwner: boolean }) {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2.5">
                       <Small label="Always work in (when true)" value={sc.mustInclude} disabled={ro} onChange={v => mutate(c => { c.sections[k].mustInclude = v })} />
-                      <Small label="Never mention" value={sc.neverSay} disabled={ro} onChange={v => mutate(c => { c.sections[k].neverSay = v })} />
+                      <Small label="Never mention (a TOPIC, not a phrase)" value={sc.neverSay} disabled={ro} onChange={v => mutate(c => { c.sections[k].neverSay = v })} />
+                    </div>
+
+                    {/* ── EXAMPLES ──────────────────────────────────────────────────────────
+                        The single highest-leverage control on this screen. Rules describe a voice;
+                        examples ARE one. This app already proved it — the review-reply settings
+                        take a dozen example pairs and tell you "the AI will match their tone" —
+                        and listing copy shipped with adjectives instead. */}
+                    <div className="mt-3 pt-3 border-t border-line">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Examples of this done well</span>
+                        <span className="text-[10px] text-muted">{sc.examples.length}/3</span>
+                        {sc.examples.length < 3 && (
+                          <button onClick={() => mutate(c => { c.sections[k].examples = [...c.sections[k].examples, ''] })} disabled={ro}
+                            className="ml-auto text-[11.5px] font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-40">
+                            + Add an example
+                          </button>
+                        )}
+                      </div>
+                      {sc.examples.length === 0 ? (
+                        <p className="text-[11.5px] text-muted">
+                          Paste two or three of your best real {sc.label.toLowerCase()} sections &mdash; the ones you would be happy
+                          to see on every listing. The AI matches their rhythm and their level of specificity, not their facts.
+                          This does more for tone than any amount of editing the guide above.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {sc.examples.map((ex, i) => (
+                            <div key={i} className="relative">
+                              <Area value={ex} rows={k === 'title' ? 2 : 5} disabled={ro}
+                                onChange={v => mutate(c => { c.sections[k].examples[i] = v })} />
+                              <button onClick={() => mutate(c => { c.sections[k].examples.splice(i, 1) })} disabled={ro}
+                                className="absolute top-1.5 right-1.5 text-[11px] text-muted hover:text-rose-600 disabled:opacity-40">
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -229,7 +291,13 @@ export function ListingAiAdmin({ isOwner }: { isOwner: boolean }) {
           {/* playground */}
           <div className="rounded-xl border border-brand-200 bg-brand-50 p-3.5">
             <div className="text-[13px] font-bold text-brand-700 mb-1.5 inline-flex items-center gap-1.5"><PlayCircle size={14} /> Test on a unit</div>
-            <p className="text-[11.5px] text-brand-700/80 mb-2.5">Runs the text in this editor — including unsaved changes — against a real listing. Nothing is written to Guesty.</p>
+            <p className="text-[11.5px] text-brand-700/80 mb-2.5">
+              Runs the text in this editor &mdash; including unsaved changes &mdash; against a real listing. Nothing is written to Guesty.
+              <br />
+              <span className="text-brand-700">Now genuinely tests the house voice.</span> Until 2026-08-27 this path substituted a
+              one-line style note for everything in the voice box, so every voice experiment run here was judged on a prompt that
+              ignored the voice being edited.
+            </p>
             <div className="flex flex-wrap gap-2 items-center">
               <select value={testId} onChange={e => setTestId(e.target.value)}
                 className="rounded-lg border border-brand-200 bg-white px-2.5 py-1.5 text-[12.5px] text-ink max-w-[260px]">
@@ -351,13 +419,34 @@ export function ListingAiAdmin({ isOwner }: { isOwner: boolean }) {
 
       {/* ── HONESTY ──────────────────────────────────────────────────────── */}
       {tab === 'honesty' && (
-        <div className="rounded-xl border border-line bg-white p-3.5">
-          <div className="text-[13px] font-bold text-ink mb-1 inline-flex items-center gap-1.5"><Lock size={13} /> Not editable, by design</div>
-          <p className="text-[12px] text-muted mb-3 max-w-[70ch]">
-            These rules are assembled inside the route on every call and sit under every prompt above. They are what stops a
-            prompt experiment putting a wrong fact on a live listing, so they are not something the settings page can switch off.
-          </p>
-          <div className="rounded-lg border border-line bg-app/40 px-3 py-2.5 text-[12px] text-ink whitespace-pre-wrap font-mono leading-relaxed">{HONESTY_TEXT}</div>
+        <div className="space-y-2.5">
+          <div className="rounded-xl border border-line bg-white p-3.5">
+            <div className="text-[13px] font-bold text-ink mb-1 inline-flex items-center gap-1.5"><Lock size={13} /> Not editable, by design</div>
+            <p className="text-[12px] text-muted mb-1 max-w-[74ch]">
+              These blocks are assembled inside the route on every call and sit under everything you can edit. They are what stops a
+              prompt experiment putting a wrong fact on a live listing, so they are not something the settings page can switch off.
+            </p>
+            <p className="text-[11.5px] text-muted max-w-[74ch]">
+              This is now the <strong className="text-ink">exact text the model receives</strong>, rendered from the same constants the
+              route imports. It used to be a hand-written summary kept beside them, and the two had already drifted apart &mdash; so the
+              person tuning tone was reading a description of the rules rather than the rules.
+            </p>
+          </div>
+
+          {([
+            ['Honesty and location', HONESTY,
+              'Under every prompt, on every call. Note the last block: a verified building fact pack is the one thing that lets the model name a restaurant or a walk time.'],
+            ['Photos — when the photo AI has labelled them', PHOTO_RULES_LABELLED,
+              'Used when this unit has been through the photo pass, so each image arrives with the room it shows.'],
+            ['Photos — when it has not', PHOTO_RULES_RAW,
+              'The fallback. The model has to tell real photos from stock imagery itself, which it is worse at — running the photo AI on a unit measurably improves its copy.'],
+          ] as const).map(([title, body, why]) => (
+            <div key={title} className="rounded-xl border border-line bg-white p-3.5">
+              <div className="text-[12.5px] font-bold text-ink">{title}</div>
+              <p className="text-[11.5px] text-muted mt-0.5 mb-2 max-w-[74ch]">{why}</p>
+              <div className="rounded-lg border border-line bg-app/40 px-3 py-2.5 text-[11.5px] text-ink whitespace-pre-wrap font-mono leading-relaxed max-h-[320px] overflow-y-auto">{body}</div>
+            </div>
+          ))}
         </div>
       )}
     </div>
