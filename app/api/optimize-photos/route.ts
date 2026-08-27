@@ -31,7 +31,16 @@ const CAT_CAPTION: Record<string, string> = { living: 'Living area', kitchen: 'K
 // Junk detector: Guesty sometimes stores UUIDs/filenames as captions - treat those as empty.
 const realCaption = (s: string) => { const t = (s || '').trim(); if (!t) return ''; if (/^[0-9a-f\-]{16,}$/i.test(t)) return ''; if (/\.(jpe?g|png|webp|gif)$/i.test(t)) return ''; return t }
 // A human-written caption is never overwritten — see project-photo-organizer-captions-2026-07-19.
-const captionFor = (m: { caption?: string; category?: string } | undefined, existing: string) => realCaption(existing) || (m?.caption && m.caption.trim()) || CAT_CAPTION[m?.category || 'other'] || 'Property photo'
+// `regenerate` is the explicit "rewrite every description" mode. Without it a human caption always
+// wins — but that ALSO meant that on any listing Guesty already had captions for, the AI captions
+// were generated, paid for, and silently discarded, so "optimize photos" produced no new
+// descriptions at all. Jon, 2026-08-27: "it should add a description to each one."
+const captionFor = (m: { caption?: string; category?: string } | undefined, existing: string, regenerate = false) =>
+  (regenerate ? '' : realCaption(existing)) || (m?.caption && m.caption.trim()) || CAT_CAPTION[m?.category || 'other'] || 'Property photo'
+
+// A caption we invented from the category is a placeholder, not a description. It must never be
+// pushed to Airbnb as if a human meant it — "Property photo" has been shipping as a real caption.
+const isPlaceholderCaption = (c: string) => Object.values(CAT_CAPTION).indexOf(String(c || '').trim()) >= 0
 
 // Tolerant JSON reader for vision output. The model occasionally returns slightly long or truncated
 // JSON (one description per photo over many photos); rather than hard-failing, we salvage the largest
@@ -128,6 +137,8 @@ export async function POST(req: NextRequest) {
   const lockedHeroId: string | null = typeof body?.heroId === 'string' && body.heroId ? body.heroId : null
   // Optional free-text host correction/guidance to steer the re-run (e.g. fix a mis-tagged photo).
   const guidance: string = typeof body?.guidance === 'string' ? body.guidance.trim().slice(0, 600) : ''
+  // "Describe every photo" — rewrites descriptions even where Guesty already has one.
+  const regenerate: boolean = body?.regenerateCaptions === true
 
   // Editable prompts + caption spec + enhance presets. promptPreview lets the settings playground
   // test unsaved text; without it this is the saved config, and without that the Stay defaults.
@@ -320,7 +331,10 @@ Return ONLY valid JSON, no prose, in exactly this shape:
   const mirror: Record<string, any> = (raw._photoMirror && typeof raw._photoMirror === 'object') ? raw._photoMirror : {}
   const photos = allPics.map(p => ({
     _id: p._id, url: p.url, ...(meta[p._id] || {}),
-    caption: captionFor(meta[p._id], p.caption),
+    caption: captionFor(meta[p._id], p.caption, regenerate),
+    // Tells the client this is a category placeholder, not a real description — so it is never
+    // pushed to Airbnb as though somebody wrote it.
+    captionIsPlaceholder: isPlaceholderCaption(captionFor(meta[p._id], p.caption, regenerate)),
     mirrorUrl: str(mirror[p._id]?.orig) || null,
   }))
 
@@ -328,13 +342,24 @@ Return ONLY valid JSON, no prose, in exactly this shape:
   // the Guesty sync (see reference-listing-raw-annotations), so no migration is needed.
   const at = new Date().toISOString()
   try {
+    // What we knew before this run — the source of any human corrections we must not trample.
+    const prevIndex: Record<string, any> = (raw?._photoIndex && typeof raw._photoIndex === "object")
+      ? raw._photoIndex : {}
     const photoIndex: Record<string, any> = {}
     for (const id of Object.keys(meta)) {
       const m = meta[id]
+      // A HUMAN CORRECTION OUTRANKS THE MODEL. Somebody re-tagged this photo through
+      // /api/photo-meta; the next vision run must not quietly put it back. Without this the tag
+      // editor would look like it worked and then silently revert overnight, which is worse than
+      // not having one.
+      const human = (prevIndex[id] && (prevIndex[id] as any).by === 'human') ? (prevIndex[id] as any) : null
       photoIndex[id] = {
-        room: m.room, category: m.category, kind: m.kind,
-        caption: captionFor(m, allPics.find(p => p._id === id)?.caption || ''),
+        room: human?.room || m.room,
+        category: human?.category || m.category,
+        kind: m.kind,
+        caption: human?.caption || captionFor(m, allPics.find(p => p._id === id)?.caption || '', regenerate),
         enhance: m.enhance, enhanceWhy: m.enhanceWhy, at,
+        ...(human ? { by: 'human' } : {}),
       }
     }
     const update: any = { raw: { ...raw, _photoIndex: photoIndex } }
