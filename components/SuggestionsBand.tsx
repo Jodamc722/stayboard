@@ -40,6 +40,13 @@ type Run = {
   inert?: { key: string; label: string; why: string }[]
   stalled?: { unit: string; label: string; since: string }[]
   doubleListed?: number
+  pending?: Record<string, Pend[]>
+}
+export type Pend = {
+  id: string; listingId: string; name: string; rawName: string
+  dept: 'maintenance' | 'housekeeping' | 'inspection' | 'other'
+  scheduledDate: string | null; assignees: string[]
+  overdueDays: number | null; future: boolean; movedBefore: boolean
 }
 type Person = { id: number; name: string; departments: string[] }
 
@@ -61,6 +68,10 @@ type Ctx = {
   forUnit: (listingId: string) => Sug[]
   forPerson: (name: string) => Sug[]
   all: (market?: string) => Sug[]
+  pendingFor: (listingId: string) => Pend[]
+  /** Move pending tasks onto a date (and optionally a person). Returns a sentence to show. */
+  push: (listingId: string, unit: string, taskIds: string[], date: string, assignee?: string) => Promise<void>
+  note: string
 }
 const SugCtx = createContext<Ctx | null>(null)
 export const useSuggestions = () => useContext(SugCtx)
@@ -76,6 +87,7 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
   const [gone, setGone] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [errs, setErrs] = useState<Record<string, string>>({})
+  const [note, setNote] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -123,6 +135,10 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
             + (j.scheduled && j.scheduled !== date ? ` on ${j.scheduled}` : '')
           : 'not now — hidden for 30 days',
       }))
+      // The auto-sweep changes work nobody asked about in this click, so it must be SAID.
+      if (j.swept?.moved) {
+        setNote(`Brought ${j.swept.moved} other pending ${j.swept.moved === 1 ? 'job' : 'jobs'} in ${s.unit} onto the same visit: ${j.swept.names.join(', ')}.`)
+      }
       if (action === 'add') { onAdded(); load() }
     } catch (e: any) {
       const m = String(e?.message || e)
@@ -136,13 +152,32 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
     } finally { setBusy(null) }
   }, [date, onAdded, load])
 
+  const push = useCallback(async (listingId: string, unit: string, taskIds: string[], date: string, assignee?: string) => {
+    setBusy('push:' + listingId); setNote('')
+    try {
+      const r = await fetch('/api/suggestions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'push', listingId, unit, taskIds, scheduleDate: date, assignee }),
+      })
+      const text = await r.text()
+      let j: any = null; try { j = JSON.parse(text) } catch { j = null }
+      if (!r.ok || !j) throw new Error(j?.error || 'Could not move those.')
+      setNote(j.moved ? `Moved ${j.moved} ${j.moved === 1 ? 'job' : 'jobs'} in ${unit} to ${date}: ${(j.names || []).join(', ')}.` : 'Nothing moved.')
+      onAdded(); load()
+    } catch (e: any) {
+      const m = String(e?.message || e)
+      setErrs(er => ({ ...er, ['push:' + listingId]: /failed to fetch|networkerror/i.test(m) ? 'No connection right now — nothing moved.' : m }))
+    } finally { setBusy(null) }
+  }, [onAdded, load])
+
   const live = useMemo(
     () => (run?.enabled && run.ok !== false ? (run.suggestions || []) : []).filter(s => !gone[s.id]),
     [run, gone])
 
   const value: Ctx = useMemo(() => ({
-    run, loading, roster, gone, busy, act, reload: load,
+    run, loading, roster, gone, busy, act, reload: load, push, note,
     errOf: (id: string) => errs[id] || '',
+    pendingFor: (id: string) => (run?.pending || {})[String(id)] || [],
     forUnit: (id: string) => live.filter(s => s.listingId === id),
     // A person sees what they could pick up — the jobs where they are one of the people already
     // working in that building today. Not "assigned to them": nothing is assigned yet.
@@ -157,28 +192,24 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
     // permanently empty.
     all: (market?: string) => live.filter(s =>
       !market || market === 'all' || (market === 'Vendor' ? s.vendor : s.market === market && !s.vendor)),
-  }), [run, loading, roster, gone, errs, busy, act, live, load])
+  }), [run, loading, roster, gone, errs, busy, act, live, load, push, note])
 
   return <SugCtx.Provider value={value}>{children}</SugCtx.Provider>
 }
 
 // ── ONE CARD ────────────────────────────────────────────────────────────────────────────────────
-function SugCard({ s, showUnit = true, defaultAssignee }: {
+function SugRow({ s, showUnit = true, defaultAssignee }: {
   s: Sug
   showUnit?: boolean
   /**
-   * WHOSE ROW IS THIS.
-   *
-   * Audit, 2026-08-27: the card had no idea which surface it was rendered in, so on a person's row
-   * it still defaulted to `s.candidates[0]` — an arbitrary co-worker, since `candidates` is a Set
-   * built in whatever order today's task rows came back. Opening Maria's row to give Maria a job
-   * produced a button reading "Add for Devon" that created the task for Devon, with nothing on the
-   * card mentioning Maria. On a phone nobody catches that.
+   * WHOSE ROW IS THIS. On a person's row the job must default to THAT person — it used to default
+   * to `s.candidates[0]`, an arbitrary co-worker, so opening Maria's row produced a button reading
+   * "Add for Devon" that created the task for Devon.
    */
   defaultAssignee?: string
 }) {
   const ctx = useSuggestions()
-  const [openAssign, setOpenAssign] = useState(false)
+  const [open, setOpen] = useState(false)
   const [who, setWho] = useState<string>(defaultAssignee ?? s.candidates[0] ?? '')
   const [when, setWhen] = useState<string>(ctx?.run?.date || '')
   if (!ctx) return null
@@ -188,35 +219,50 @@ function SugCard({ s, showUnit = true, defaultAssignee }: {
   const today = ctx.run?.date || ''
   const inDept = ctx.roster.filter(p => (p.departments || []).some(d => String(d).toLowerCase().includes(s.dept.slice(0, 6))))
   const rest = ctx.roster.filter(p => inDept.indexOf(p) < 0)
-  // The label always names whoever would actually receive it — never a different person.
-  const target = openAssign ? who : (defaultAssignee ?? s.candidates[0] ?? '')
-  const dated = openAssign && when && when !== today
+  const target = open ? who : (defaultAssignee ?? s.candidates[0] ?? '')
+  const dated = open && when && when !== today
+  // One clause on the row, the full reasoning when you open it. Three lines of grey prose per item
+  // is what made six suggestions unreadable at 7am.
+  const gist = s.candidates.length
+    ? `${s.candidates[0].split(' ')[0]} is there today`
+    : s.daysSince == null ? 'no record of it' : `${s.daysOver}d past due`
 
   return (
-    <div className="rounded-xl border border-line bg-white p-2.5 flex flex-col gap-2">
-      {/* WHAT IT IS — the job, then the place, in that order. The old card led with a wrench icon
-          and a 12.5px title competing with a unit name at nearly the same weight; at arm's length
-          on a phone they read as one grey blur. */}
-      <div className="flex items-start gap-2">
-        <span className="mt-0.5 w-6 h-6 rounded-lg bg-amber-50 border border-amber-200 text-amber-600 inline-flex items-center justify-center shrink-0">
-          <Icon size={12} strokeWidth={2.5} />
+    <div className={open ? 'bg-app/60' : 'hover:bg-app/50'}>
+      <div className="px-3 py-2 flex items-center gap-2.5">
+        <span className="w-5 h-5 rounded-md bg-brand-50 text-brand-600 inline-flex items-center justify-center shrink-0">
+          <Icon size={11} strokeWidth={2.6} />
         </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-bold text-ink leading-tight">{s.label}</p>
-          <p className="text-[11.5px] text-muted truncate mt-0.5">
-            {showUnit ? s.unit : (s.building || s.market)}
-            <span className="mx-1 text-line">|</span>{s.minutes} min
-            {s.vacantTonight && <><span className="mx-1 text-line">|</span>empty tonight</>}
-          </p>
+        <div className="min-w-0 flex-1 sm:flex sm:items-baseline sm:gap-2">
+          <span className="block sm:inline text-[12.5px] font-bold text-ink sm:whitespace-nowrap">{s.label}</span>
+          {showUnit && <span className="block sm:inline text-[12px] text-muted truncate">{s.unit}</span>}
+        </div>
+        <span className="hidden sm:block text-[11px] text-muted whitespace-nowrap w-[58px] text-right tabular-nums">{s.minutes} min</span>
+        <span className="hidden md:block text-[11px] text-muted truncate w-[170px]">{gist}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => ctx.act(s, 'add', open
+              ? { assignee: who, scheduleDate: when }
+              : (defaultAssignee !== undefined ? { assignee: defaultAssignee } : undefined))}
+            disabled={busy}
+            className="rounded-lg bg-brand-500 hover:bg-brand-600 text-white px-2.5 py-1 text-[11.5px] font-bold whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1">
+            {busy && <Loader2 size={10} className="animate-spin" />}
+            {dated ? `Schedule ${when.slice(5).replace('-', '/')}` : `Add${target ? ` \u00b7 ${target.split(' ')[0]}` : ''}`}
+          </button>
+          <button onClick={() => setOpen(o => !o)} disabled={busy} title="Who does it, and when"
+            className={'rounded-lg border px-1.5 py-1 disabled:opacity-40 ' + (open ? 'border-ink text-ink' : 'border-line text-muted hover:text-ink')}>
+            <CalendarClock size={11} />
+          </button>
+          <button onClick={() => ctx.act(s, 'dismiss')} disabled={busy} title="Hides this job everywhere for 30 days"
+            className="rounded-lg border border-line px-1.5 py-1 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40">
+            <X size={11} />
+          </button>
         </div>
       </div>
 
-      {/* WHY — the sentence that makes this a suggestion rather than an order. */}
-      <p className="text-[11.5px] text-muted leading-snug border-l-2 border-amber-200 pl-2">{s.why}</p>
-
-      {openAssign && (
-        <div className="flex items-center gap-1.5 flex-wrap rounded-lg bg-app px-2 py-1.5">
-          <span className="text-[11px] text-muted font-semibold">Give it to</span>
+      {open && (
+        <div className="px-3 pb-2 pl-[38px] flex items-center gap-1.5 flex-wrap">
+          <span className="text-[11px] text-muted">Give it to</span>
           <select value={who} onChange={e => setWho(e.target.value)}
             className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px] max-w-[150px]">
             <option value="">Nobody yet</option>
@@ -224,38 +270,69 @@ function SugCard({ s, showUnit = true, defaultAssignee }: {
             {rest.length > 0 && <option key="sep" disabled>{'\u2500\u2500\u2500\u2500\u2500\u2500'}</option>}
             {rest.map(p => <option key={'r' + p.id} value={p.name}>{p.name}</option>)}
           </select>
-          <span className="text-[11px] text-muted font-semibold">on</span>
+          <span className="text-[11px] text-muted">on</span>
           {/* min=today: a task dated last week never lands on any board, so nobody works it. */}
           <input type="date" value={when} min={today} onChange={e => setWhen(e.target.value)}
             className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px]" />
+          <span className="text-[11px] text-muted basis-full sm:basis-auto sm:ml-1">{s.why}</span>
         </div>
       )}
+      {err && <p className="px-3 pb-2 pl-[38px] text-[11px] text-rose-700">{err}</p>}
+    </div>
+  )
+}
 
-      <div className="flex items-center gap-1.5">
+// ── PENDING WORK IN A UNIT ──────────────────────────────────────────────────────────────────────
+// Jon, 2026-08-27: "keep tabs on pending tasks in a particular unit." Same row language as a
+// suggestion, one shade quieter, because these are not proposals — they are jobs that already exist
+// and have been waiting. The action is a move, not a create.
+function PendingRows({ listingId, unit, defaultAssignee }: {
+  listingId: string; unit: string; defaultAssignee?: string
+}) {
+  const ctx = useSuggestions()
+  const [when, setWhen] = useState<string>(ctx?.run?.date || '')
+  const [picked, setPicked] = useState<Record<string, boolean>>({})
+  if (!ctx) return null
+  const rows = ctx.pendingFor(listingId)
+  if (!rows.length) return null
+  const today = ctx.run?.date || ''
+  const busy = ctx.busy === 'push:' + listingId
+  const err = ctx.errOf('push:' + listingId)
+  const chosen = rows.filter(r => picked[r.id]).map(r => r.id)
+  const allIds = rows.map(r => r.id)
+
+  return (
+    <div className="mt-2 rounded-xl border border-line bg-white overflow-hidden">
+      <div className="px-2.5 py-1.5 bg-app border-b border-line flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Pending in this unit</span>
+        <span className="text-[10px] font-bold text-white bg-muted rounded-full px-1.5 py-0.5 tabular-nums leading-none">{rows.length}</span>
+        <span className="flex-1" />
+        <input type="date" value={when} min={today} onChange={e => setWhen(e.target.value)}
+          className="rounded-lg border border-line bg-white px-1.5 py-0.5 text-[11px]" />
         <button
-          onClick={() => ctx.act(s, 'add', openAssign
-            ? { assignee: who, scheduleDate: when }
-            : (defaultAssignee !== undefined ? { assignee: defaultAssignee } : undefined))}
+          onClick={() => ctx.push(listingId, unit, chosen.length ? chosen : allIds, when, defaultAssignee)}
           disabled={busy}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-bold disabled:opacity-40">
-          {busy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-          {dated ? `Schedule ${when.slice(5)}` : `Add${target ? ` for ${target.split(' ')[0]}` : ''}`}
-        </button>
-        <button onClick={() => setOpenAssign(o => !o)} disabled={busy}
-          title="Choose who does it and when"
-          className={'inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-[12px] disabled:opacity-40 '
-            + (openAssign ? 'border-ink text-ink font-semibold' : 'border-line text-muted hover:text-ink')}>
-          <CalendarClock size={12} /> Who / when
-        </button>
-        <button onClick={() => ctx.act(s, 'dismiss')} disabled={busy}
-          title="Hides this job everywhere, for 30 days"
-          className="inline-flex items-center justify-center rounded-lg border border-line px-2 py-1.5 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40">
-          <X size={12} />
+          className="rounded-lg bg-ink text-white px-2 py-1 text-[11px] font-bold disabled:opacity-40 inline-flex items-center gap-1">
+          {busy ? <Loader2 size={10} className="animate-spin" /> : <CalendarClock size={10} />}
+          Bring {chosen.length ? chosen.length : 'all'} to this date
         </button>
       </div>
-      {err && (
-        <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 leading-snug">{err}</p>
-      )}
+      <div className="divide-y divide-line">
+        {rows.map(r => (
+          <label key={r.id} className="px-2.5 py-1.5 flex items-center gap-2 cursor-pointer hover:bg-app/50">
+            <input type="checkbox" checked={!!picked[r.id]}
+              onChange={e => setPicked(p => ({ ...p, [r.id]: e.target.checked }))} className="shrink-0" />
+            <span className="min-w-0 flex-1 text-[12px] text-ink truncate">{r.name}</span>
+            <span className="text-[10.5px] text-muted shrink-0 capitalize hidden sm:block">{r.dept}</span>
+            <span className={'text-[10.5px] shrink-0 tabular-nums whitespace-nowrap '
+              + (r.overdueDays != null && r.overdueDays > 14 ? 'text-rose-600 font-semibold' : 'text-muted')}>
+              {r.overdueDays != null ? `${r.overdueDays}d late` : r.future ? `set ${String(r.scheduledDate).slice(5)}` : 'unscheduled'}
+            </span>
+            {r.assignees[0] && <span className="text-[10.5px] text-muted shrink-0 hidden md:block">{r.assignees[0].split(' ')[0]}</span>}
+          </label>
+        ))}
+      </div>
+      {err && <p className="px-2.5 py-1.5 text-[11px] text-rose-700 border-t border-line">{err}</p>}
     </div>
   )
 }
@@ -300,43 +377,46 @@ export function SuggestionsBand({ market }: { market: string }) {
   if (dbl) notes.push(`${dbl} apartment${dbl === 1 ? ' is' : 's are'} listed both whole and as halves \u2014 the whole-unit listing is skipped so one front door gets one job.`)
 
   return (
-    <div className="mt-3 rounded-2xl border border-amber-300 bg-white overflow-hidden shadow-[0_1px_0_rgba(0,0,0,0.03)]">
-      {/* ── THE HEADLINE ────────────────────────────────────────────────────────────────────
-          Jon, 2026-08-27: "make this cleaner, and more visible." It was a wash of amber on amber
-          with the count buried in a sentence. Now: a solid header strip, the number as a number,
-          and the day's verdict as the subtitle that explains it. */}
-      <div className="px-3 py-2.5 bg-amber-50 border-b border-amber-200 flex items-start gap-2.5">
-        <span className="mt-0.5 w-7 h-7 rounded-lg bg-amber-400 text-white inline-flex items-center justify-center shrink-0">
-          <Lightbulb size={15} strokeWidth={2.5} />
-        </span>
-        <button type="button" onClick={() => setOpen(o => !o)} className="flex-1 min-w-0 text-left">
-          <span className="flex items-baseline gap-1.5 flex-wrap">
-            {list.length > 0 && <span className="text-[15px] font-black text-ink tabular-nums leading-none">{list.length}</span>}
-            <span className="text-[12.5px] font-bold text-ink">
-              {list.length ? `suggested for today` : 'Nothing extra today'}
-            </span>
-            {market !== 'all' && <span className="text-[10.5px] text-amber-700 font-semibold">in {market}</span>}
-          </span>
-          {ctx.run.day?.verdict && <span className="block text-[11.5px] text-muted mt-1 leading-snug">{ctx.run.day.verdict}</span>}
+    <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
+      {/* ── THE HEADER ──────────────────────────────────────────────────────────────────────
+          Jon, 2026-08-27: "just look at it, it's so ugly, make it cleaner." It was an amber slab
+          with amber cards and three heavy black buttons, in an app that is white, grey and indigo
+          everywhere else — it read as a warning banner, not as help, and the ragged card heights
+          left the buttons on three different lines. This is the SAME shell as the board below it:
+          white card, app-grey header strip, micro-caps label, one brand accent. */}
+      <div className="px-3 py-2 bg-app border-b border-line flex items-center gap-2">
+        <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-2 min-w-0 flex-1 text-left">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted shrink-0">Suggested today</span>
+          {list.length > 0 && (
+            <span className="text-[10px] font-bold text-white bg-brand-500 rounded-full px-1.5 py-0.5 tabular-nums leading-none shrink-0">{list.length}</span>
+          )}
+          {market !== 'all' && <span className="text-[10px] font-semibold text-muted shrink-0">in {market}</span>}
+          {ctx.run.day?.verdict && (
+            <span className="text-[11.5px] text-muted truncate hidden sm:block">{ctx.run.day.verdict}</span>
+          )}
         </button>
         <button type="button" onClick={ctx.reload} title="Re-read the day"
-          className="text-amber-700/60 hover:text-amber-800 shrink-0 mt-0.5 p-0.5"><RefreshCw size={13} /></button>
-        {list.length > 0 && (
-          <button type="button" onClick={() => setOpen(o => !o)} title={open ? 'Collapse' : 'Expand'}
-            className="text-amber-700/60 hover:text-amber-800 shrink-0 mt-0.5 p-0.5">
-            {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          </button>
-        )}
+          className="text-muted hover:text-ink shrink-0"><RefreshCw size={12} /></button>
+        <button type="button" onClick={() => setOpen(o => !o)} title={open ? 'Collapse' : 'Expand'}
+          className="text-muted hover:text-ink shrink-0">
+          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </button>
       </div>
 
-      {open && list.length > 0 && (
-        <div className="p-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 bg-app/40">
-          {list.map(s => <SugCard key={s.id} s={s} />)}
-        </div>
+      {/* The verdict gets its own line on a phone, where it will not fit beside the label. */}
+      {ctx.run.day?.verdict && (
+        <p className="sm:hidden px-3 py-1.5 text-[11.5px] text-muted border-b border-line">{ctx.run.day.verdict}</p>
       )}
 
+      {open && list.length > 0 && <div className="divide-y divide-line">{list.map(s => <SugRow key={s.id} s={s} />)}</div>}
+
+      {ctx.note && (
+        <p className="px-3 py-1.5 text-[11.5px] text-brand-700 bg-brand-50 border-t border-line flex items-start gap-1.5">
+          <Check size={12} className="mt-0.5 shrink-0" /><span>{ctx.note}</span>
+        </p>
+      )}
       {handled.length > 0 && (
-        <p className="px-3 py-2 text-[11.5px] text-emerald-800 bg-emerald-50 border-t border-emerald-200 flex items-start gap-1.5">
+        <p className="px-3 py-1.5 text-[11.5px] text-emerald-800 bg-emerald-50 border-t border-line flex items-start gap-1.5">
           <Check size={12} className="mt-0.5 shrink-0" />
           <span>{handled.map(([, v]) => v).join(' \u00b7 ')}</span>
         </p>
@@ -347,8 +427,8 @@ export function SuggestionsBand({ market }: { market: string }) {
           <button type="button" onClick={() => setNotesOpen(n => !n)}
             className="w-full px-3 py-1.5 flex items-center gap-1.5 text-left text-[11px] text-muted hover:text-ink">
             <Info size={11} className="shrink-0" />
-            <span className="flex-1">{notes.length} thing{notes.length === 1 ? '' : 's'} worth knowing about this list</span>
-            {notesOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <span>{notes.length} thing{notes.length === 1 ? '' : 's'} worth knowing about this list</span>
+            {notesOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
           </button>
           {notesOpen && (
             <ul className="px-3 pb-2 space-y-1">
@@ -367,9 +447,6 @@ function InlineSuggestions({ list, title, showUnit, defaultAssignee, done }: {
 }) {
   const ctx = useSuggestions()
   if (!ctx) return null
-  // CONFIRM WHERE THE ACTION HAPPENED. Adding from a unit row used to make the card vanish and say
-  // nothing — the only confirmation in the whole feature was a line at the top of the page, which
-  // on a phone is twenty rows away.
   if (!list.length) {
     return done.length ? (
       <p className="mt-2 text-[11.5px] text-muted flex items-start gap-1">
@@ -378,29 +455,35 @@ function InlineSuggestions({ list, title, showUnit, defaultAssignee, done }: {
     ) : null
   }
   return (
-    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/40 p-2">
-      <p className="text-[10px] uppercase tracking-wider font-bold text-amber-700 mb-1.5 flex items-center gap-1.5">
-        <Lightbulb size={11} strokeWidth={2.5} /> {title}
+    <div className="mt-2 rounded-xl border border-line bg-white overflow-hidden">
+      <p className="px-2.5 py-1.5 bg-app border-b border-line text-[10px] uppercase tracking-wider font-bold text-muted flex items-center gap-1.5">
+        <Lightbulb size={11} strokeWidth={2.6} className="text-brand-500" /> {title}
       </p>
-      <div className="grid gap-1.5 sm:grid-cols-2">
-        {list.map(s => <SugCard key={s.id} s={s} showUnit={showUnit} defaultAssignee={defaultAssignee} />)}
+      <div className="divide-y divide-line">
+        {list.map(s => <SugRow key={s.id} s={s} showUnit={showUnit} defaultAssignee={defaultAssignee} />)}
       </div>
       {done.length > 0 && (
-        <p className="text-[11.5px] text-muted mt-1.5 flex items-start gap-1">
-          <Check size={12} className="mt-0.5 shrink-0 text-emerald-600" /> <span>{done.join(' \u00b7 ')}</span>
+        <p className="px-2.5 py-1.5 text-[11.5px] text-emerald-800 bg-emerald-50 border-t border-line flex items-start gap-1">
+          <Check size={12} className="mt-0.5 shrink-0" /> <span>{done.join(' \u00b7 ')}</span>
         </p>
       )}
     </div>
   )
 }
 
-/** What this unit is owed, on the unit's own row. */
-export function UnitSuggestions({ listingId }: { listingId: string | null | undefined }) {
+/** What this unit is owed: what we would suggest, and what is already pending on it. */
+export function UnitSuggestions({ listingId, unit }: { listingId: string | null | undefined; unit?: string }) {
   const ctx = useSuggestions()
   if (!ctx || !listingId) return null
   const id = String(listingId)
   const done = Object.entries(ctx.gone).filter(([k]) => k.split('|')[1] === id).map(([, v]) => v)
-  return <InlineSuggestions list={ctx.forUnit(id)} title="Worth doing while somebody is here" showUnit={false} done={done} />
+  return (
+    <>
+      <InlineSuggestions list={ctx.forUnit(id)} title="Worth doing while somebody is here"
+        showUnit={false} done={done} />
+      <PendingRows listingId={id} unit={unit || 'this unit'} />
+    </>
+  )
 }
 
 /** What this person could pick up, because they are already in that building today. */

@@ -465,7 +465,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
               the unit row asks what this unit is owed, the person row asks what this person could
               pick up where they already are. Renders nothing when the answer is nothing. */}
           {mode === 'units'
-            ? <UnitSuggestions listingId={row.listingId} />
+            ? <UnitSuggestions listingId={row.listingId} unit={row.title} />
             : <PersonSuggestions name={row.title} />}
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             {mode === 'units' && (
