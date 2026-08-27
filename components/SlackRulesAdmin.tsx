@@ -35,6 +35,8 @@ type Group = {
   vendor: boolean
 }
 type Rules = {
+  /** Master mute: when set, only these event keys reach Slack. null = no mute. */
+  onlyEvents: string[] | null
   firehose: string | null
   defaultChannel: string | null
   opsChannel: string | null
@@ -89,6 +91,10 @@ const ALERTS: { key: string; title: string; blurb: string; dest: Dest }[] = [
     blurb: 'Tomorrow in numbers, per area, as a draft for leadership to edit before it goes out.' },
   { key: 'overtime', title: 'Someone running over hours', dest: { kind: 'channel', field: 'defaultChannel' },
     blurb: 'Anyone still clocked in past the hour limit set below.' },
+  { key: 'eve_audit', title: 'Eve audit findings', dest: { kind: 'channel', field: 'opsChannel' },
+    blurb: 'System-health findings from the standing audit \u2014 unscored threads, missing metrics, gaps in door codes. Posts every 45 minutes when it has something, which is most of the time. Off by default.' },
+  { key: 'notice_drafts', title: 'Front-desk notice drafts', dest: { kind: 'channel', field: 'opsChannel' },
+    blurb: 'Tells a channel when arrival notices have been drafted into Gmail. The drafts are written either way \u2014 this is only the announcement.' },
   { key: 'sync', title: 'A data feed stopped', dest: { kind: 'channel', field: 'defaultChannel' },
     blurb: 'Bookings or tasks stopped syncing. Sends immediately — never waits for approval.' },
   { key: 'digest', title: 'Morning summary', dest: { kind: 'channel', field: 'defaultChannel' },
@@ -244,6 +250,39 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
           <b>Invite the bot first</b> to {needInvite.map(c => '#' + c).join(', ')}. Post <code className="font-mono">/invite @lighthouse</code> in each — a private channel cannot be posted to otherwise.
         </div>
       ) : null}
+
+      {/* ── QUIET MODE ────────────────────────────────────────────────────────
+          The master mute. While it is on, the per-alert checkboxes below still show what WOULD
+          send — but only the alerts named here actually reach Slack. Said plainly, because a
+          switch whose effect you cannot see is how a channel gets noisy without anyone deciding. */}
+      {rules.onlyEvents ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-3 text-[12.5px] text-amber-900">
+          <div className="font-bold">Quiet mode is on</div>
+          <p className="mt-1">
+            Only <b>{rules.onlyEvents.map((k: string) => (ALERTS.find(a => a.key === k)?.title || k)).join(', ') || 'nothing'}</b>
+            {' '}can post to Slack right now. Every other alert below is held no matter how it is ticked.
+            Approvals and replies — door codes, anything you asked Eve for — are unaffected.
+          </p>
+          <button
+            type="button"
+            onClick={() => patch(r => ({ ...r, onlyEvents: null }))}
+            className="mt-2 rounded-lg border border-amber-400 bg-white px-2.5 py-1 text-[12px] font-semibold hover:bg-amber-100"
+          >
+            Turn quiet mode off — let every ticked alert send again
+          </button>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-line bg-white px-3.5 py-3 text-[12.5px] text-muted">
+          <span className="font-semibold text-ink">Quiet mode is off.</span> Every alert ticked below can post.
+          <button
+            type="button"
+            onClick={() => patch(r => ({ ...r, onlyEvents: ['late_cleans'] as any }))}
+            className="ml-2 rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold hover:bg-app"
+          >
+            Mute everything except late cleans
+          </button>
+        </div>
+      )}
 
       {/* ── 1. WHERE EACH ALERT GOES — the main event ───────────────────────── */}
       <div className="rounded-xl border border-line bg-white overflow-hidden">
