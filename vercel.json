@@ -61,6 +61,10 @@
       "schedule": "28 10,14,18,22 * * *"
     },
     {
+      "path": "/api/cron/suggestions",
+      "schedule": "48 11 * * *"
+    },
+    {
       "path": "/api/eve/learn",
       "schedule": "47 5,11,17,23 * * *"
     },
