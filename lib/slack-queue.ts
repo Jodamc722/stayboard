@@ -15,7 +15,7 @@ import 'server-only'
 import { randomBytes } from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
 import { postToChannel, postThreadReply, dmUser, mention } from './slack'
-import { getSlackRules, withinWindow, type EventKey, type SlackRules } from './slack-rules'
+import { getSlackRules, withinWindow, broadcastAllowed, type EventKey, type SlackRules } from './slack-rules'
 
 export type OutboxStatus = 'pending' | 'approved' | 'sent' | 'skipped' | 'expired' | 'failed'
 
@@ -92,7 +92,9 @@ export function nowMinutesET(): number {
 export async function draft(input: DraftInput, rulesIn?: SlackRules): Promise<DraftResult> {
   const rules = rulesIn || (await getSlackRules())
   const rule = rules.events[input.eventKey]
-  if (!rule || !rule.enabled) return { ok: false, reason: 'event disabled' }
+  // ONE gate for every rule-driven alert, master mute included. See broadcastAllowed().
+  if (!broadcastAllowed(rules, input.eventKey)) return { ok: false, reason: 'event disabled' }
+  if (!rule) return { ok: false, reason: 'event disabled' }
   if (!withinWindow(rule, nowMinutesET())) return { ok: false, reason: 'outside the sending window' }
 
   const db = supabaseAdmin()

@@ -32,6 +32,9 @@ export type EventKey =
   | 'weekly_planner'
   // Guest orders (2026-08-24): new basket → approvers; paid order → area HK channel on delivery day.
   | 'guest_orders'
+  // Direct posters that never went through the rules engine, named here so they can be turned off
+  // from the same place as everything else (2026-08-27).
+  | 'eve_audit' | 'notice_drafts'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -51,6 +54,8 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   guest_orders: 'Guest orders (new order → CCS/ops channel as a notice; delivery day → housekeeping)',
   labor_report: 'Hours, no-shows, over hours',
   notable_arrivals: 'Owner stays & big bookings',
+  eve_audit: 'Eve audit findings (system health)',
+  notice_drafts: 'Front-desk notice drafts',
 }
 
 /** The two rooms every area has. Safety issues ride with maintenance — there is no third channel. */
@@ -90,6 +95,22 @@ export type EventRule = {
 }
 
 export type SlackRules = {
+  /**
+   * MASTER MUTE. When this is a list, ONLY these events may reach Slack — every other broadcast is
+   * held, including any event added to the system after this list was written.
+   *
+   * Jon, 2026-08-27, after the Eve audit started posting every 45 minutes: "stop posting this in
+   * slack, turn off all slack updates other then running late cleans".
+   *
+   * WHY AN ALLOW-LIST AND NOT SIXTEEN OFF SWITCHES. Turning each event off one at a time leaves the
+   * next one somebody adds switched on by default, and the way this channel got noisy in the first
+   * place was a job nobody knew was posting. An allow-list is quiet by default and has to be opened
+   * on purpose. null = no master mute, every event follows its own `enabled` flag.
+   *
+   * This does NOT touch request/response traffic — door-code approvals, Eve answering a question,
+   * anything a person asked for — because those are replies, not updates.
+   */
+  onlyEvents: EventKey[] | null
   /** Gets a copy of everything, so Jon can see the whole picture in one place. */
   firehose: string | null
   /** Used when a group has no channel for that department. */
@@ -199,6 +220,8 @@ const workHours = (approval: boolean): EventRule => ({
 })
 
 export const DEFAULT_RULES: SlackRules = {
+  // Quiet by default, and only late cleans get through — see the field docs above.
+  onlyEvents: ['late_cleans'],
   firehose: null,
   defaultChannel: null,
   // #vr-ops-team-projects — low volume, already report-shaped, supervisors expect structure here.
@@ -256,6 +279,9 @@ export const DEFAULT_RULES: SlackRules = {
     // delivery-day message goes to housekeeping — so no window and no second approval gate. Each
     // message carries its own order id in the group key, so there is nothing to cool down.
     guest_orders: { enabled: true, approval: false, quietStart: 0, quietEnd: 0, cooldownMin: 0 },
+    // Off on its own account as well as behind the master mute — this one posted every 45 minutes.
+    eve_audit: { enabled: false, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 12 * 60 },
+    notice_drafts: { enabled: false, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 60 },
   },
   approvers: [JON_SLACK_ID],
   approvalExpiryMin: 240,
@@ -326,15 +352,40 @@ function mergeRule(stored: any, dflt: EventRule): EventRule {
   }
 }
 
+/**
+ * MAY THIS BROADCAST GO OUT? The one question every Slack update has to answer.
+ *
+ * Checks the master allow-list first, then the event's own switch. Anything that posts to Slack
+ * without asking this is, by definition, a channel nobody can turn off — which is how the audit
+ * ended up firing every 45 minutes into a room full of people who had not asked for it.
+ *
+ * Replies are not updates: a door-code approval, Eve answering a question, a thread response to
+ * something a person sent us. Those do not come through here and are not affected.
+ */
+export function broadcastAllowed(rules: SlackRules, key: EventKey): boolean {
+  if (rules.onlyEvents && !rules.onlyEvents.includes(key)) return false
+  const rule = rules.events[key]
+  return !!rule && rule.enabled
+}
+
 /** Normalise whatever is on disk into a complete, safe rule set. Never throws. */
 export function mergeRules(stored: any): SlackRules {
   const d = DEFAULT_RULES
   if (!stored || typeof stored !== 'object') {
-    return { ...d, core: d.core.slice(), approvers: d.approvers.slice(), leadership: d.leadership.slice(), groups: d.groups.map(g => ({ ...g })), events: { ...d.events } }
+    return { ...d, onlyEvents: d.onlyEvents ? d.onlyEvents.slice() : null, core: d.core.slice(), approvers: d.approvers.slice(), leadership: d.leadership.slice(), groups: d.groups.map(g => ({ ...g })), events: { ...d.events } }
   }
   const events = {} as Record<EventKey, EventRule>
   const keys = Object.keys(d.events) as EventKey[]
   for (const k of keys) events[k] = mergeRule((stored.events || {})[k], d.events[k])
+
+  // The master mute. `null` stored on purpose means "no mute"; absent means "use the default",
+  // which is the quiet one — so a settings blob written before this existed stays quiet rather
+  // than silently re-opening every channel.
+  const onlyEvents: EventKey[] | null =
+    stored.onlyEvents === null ? null
+    : Array.isArray(stored.onlyEvents) ? (stored.onlyEvents as any[])
+        .map(v => String(v)).filter(v => (keys as string[]).includes(v)).slice(0, 40) as EventKey[]
+    : d.onlyEvents
 
   const rawGroups = Array.isArray(stored.groups) ? stored.groups.slice(0, 40) : []
   const groups = rawGroups.map(mergeGroup).filter(Boolean) as RoutingGroup[]
@@ -343,6 +394,7 @@ export function mergeRules(stored: any): SlackRules {
   const approvers = strList(stored.approvers, 20)
   const leadership = strList(stored.leadership, 30)
   return {
+    onlyEvents,
     firehose: chan(stored.firehose),
     defaultChannel: chan(stored.defaultChannel),
     opsChannel: stored.opsChannel === undefined ? d.opsChannel : chan(stored.opsChannel),

@@ -480,7 +480,11 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       const seen = (await getAppSetting<Record<string, string>>(SEEN_KEY, {}).catch(() => null)) || {}
       const announceKey = (x: { nid: string }) => 'n:' + x.nid + ':' + today
       const toAnnounce = draftedList.filter(x => x.safety || !seen[announceKey(x)])
-      if (toAnnounce.length) {
+      // Same gate as every other Slack update (2026-08-27). The drafts are still written to Gmail
+      // either way — this only decides whether a channel gets told about them.
+      const { getSlackRules, broadcastAllowed } = await import('./slack-rules')
+      const noticeRules = await getSlackRules()
+      if (toAnnounce.length && broadcastAllowed(noticeRules, 'notice_drafts')) {
         const { postToChannel } = await import('./slack')
         const lines = toAnnounce.map(x =>
           `• *${x.unit}* — ${x.guest.split(' ')[0] || 'Guest'} (${x.property}${x.form ? ', registration form attached' : ''})${x.missing ? ` — :warning: *form missing the ${x.missing}* — fill it in before sending` : ''}${x.safety ? ' — _safety copy: marked sent but unconfirmed; discard if the building already got it_' : ''}`)
