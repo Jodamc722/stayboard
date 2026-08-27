@@ -348,11 +348,23 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           ),
         },
         {
+          id: 'photos', label: 'Photos',
+          badge: String(res.photos.score),
+          tone: res.photos.score >= 80 ? 'good' : res.photos.score >= 60 ? 'warn' : 'bad',
+          panel: <PhotoOrganizer listingId={listing.id} name={name} />,
+        },
+        {
           id: 'content', label: 'Content',
           badge: String(res.description.score),
           tone: res.description.score >= 80 ? 'good' : res.description.score >= 60 ? 'warn' : 'bad',
           panel: (
+            // THE TOOL COMES FIRST (Jon, 2026-08-27: "the optimize should sit above the actual
+            // section"). You open this tab to rewrite the copy, not to read it — the live text is
+            // context for that decision, so it belongs underneath. The optimizer also shows the
+            // current text beside its proposal once it runs, which is where reading it properly
+            // actually happens.
             <div className="space-y-3">
+              <ListingOptimizer listingId={listing.id} name={name} />
               <div className="rounded-2xl border border-line bg-white overflow-hidden">
                 <div className="px-3 py-2 bg-app border-b border-line flex items-center gap-2 flex-wrap">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Live on the OTAs now</span>
@@ -360,15 +372,8 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                 </div>
                 <ContentTable rows={contentRows} />
               </div>
-              <ListingOptimizer listingId={listing.id} name={name} />
             </div>
           ),
-        },
-        {
-          id: 'photos', label: 'Photos',
-          badge: String(res.photos.score),
-          tone: res.photos.score >= 80 ? 'good' : res.photos.score >= 60 ? 'warn' : 'bad',
-          panel: <PhotoOrganizer listingId={listing.id} name={name} />,
         },
         {
           id: 'amenities', label: 'Amenities',
