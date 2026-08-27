@@ -421,12 +421,17 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
 
   return (
     <section className="rounded-2xl border border-brand-200 bg-white overflow-hidden">
+      {/* THE ACTIONS SIT AT THE TOP (Jon, 2026-08-27: "photos at top too"). The explanation used to
+          be three lines of paragraph that pushed the button row below the fold on a phone, and it
+          said the same thing on every visit to somebody who already knows what the tool does. One
+          line now, and on small screens the buttons come FIRST — `order-first` — so the thing you
+          came to press is the thing you see. */}
       <div className="px-4 py-3 bg-gradient-to-r from-brand-50 to-white flex items-center justify-between gap-3 flex-wrap">
-        <div className="min-w-0">
+        <div className="min-w-0 order-last sm:order-none">
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Images size={15} className="text-brand-600" /> Organize photos with AI</h2>
-          <p className="text-[12px] text-muted mt-0.5">AI studies every photo, orders them to maximize bookings, and writes a guest-facing description for each. You pick the cover photo (#1); AI orders the rest. Edit anything, then push the order + descriptions to Guesty.</p>
+          <p className="text-[12px] text-muted mt-0.5">Orders every photo to maximise bookings and writes a description for each. You pick the cover; nothing goes live until you push.</p>
         </div>
-        <div className="lh-actions flex flex-wrap items-center gap-2 sm:flex-nowrap sm:flex-shrink-0">
+        <div className="lh-actions flex flex-wrap items-center gap-2 sm:flex-nowrap sm:flex-shrink-0 order-first sm:order-none w-full sm:w-auto">
           <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={e => addFiles(e.target.files)} />
           <input ref={replaceRef} type="file" accept="image/*" className="hidden" onChange={e => replaceFile(e.target.files)} />
           <button onClick={() => fileRef.current?.click()} disabled={uploadingCount > 0 || pushing}
