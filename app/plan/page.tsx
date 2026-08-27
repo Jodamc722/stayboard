@@ -25,7 +25,10 @@ import { ClipboardList } from 'lucide-react'
 export default function OpsPlanPage() {
   return (
     <Shell>
-      <header className="mb-4">
+      {/* HIDDEN ON A PHONE. Shell's mobile app bar already prints "Today in Ops" (lib/nav), so this
+          block repeated the page title plus an eyebrow — about 70px of a 750px screen, on the one
+          page where vertical space decides how many units you can see before scrolling. */}
+      <header className="mb-4 hidden sm:block">
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><ClipboardList size={13} /> Operations</p>
         <div className="flex items-center gap-3 flex-wrap mt-1">
           <h1 className="text-3xl font-bold text-ink tracking-tight">Today in Ops</h1>
