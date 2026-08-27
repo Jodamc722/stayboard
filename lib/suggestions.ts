@@ -376,7 +376,18 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       const mKey = `${meta.market}|${c.dept}`
       const here = Array.from(onSite[bKey] || [])
       const near = Array.from(inMarket[mKey] || [])
-      const escaped = cfg.escapeAfterDays > 0 && daysOver >= cfg.escapeAfterDays
+      // THE ESCAPE VALVE NEEDS REAL HISTORY BEHIND IT.
+      //
+      // First live run, 2026-08-27: 503 jobs cleared every filter, because a unit with no record of
+      // ever having had a job done is scored as one full interval overdue — which is past
+      // escapeAfterDays for every cadence, so "only where somebody is already working" was being
+      // bypassed by essentially the whole portfolio. A missing record is far more often missing
+      // history than a genuinely neglected unit, and it must not be allowed to outrank a real
+      // overdue job in a building somebody is standing in.
+      //
+      // So a never-recorded job is proposed ONLY where there is already somebody on site. A job with
+      // a real last-done date, genuinely past its interval by escapeAfterDays, still escapes.
+      const escaped = cfg.escapeAfterDays > 0 && daysSince != null && daysOver >= cfg.escapeAfterDays
       if (cfg.requireStaffOnSite && !here.length && !near.length && !escaped) { drop('nobody near it'); continue }
 
       const dismissId = `${date.slice(0, 4)}-${lid}-${c.key}`
