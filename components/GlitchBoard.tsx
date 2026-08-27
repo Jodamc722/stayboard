@@ -1,4 +1,5 @@
 'use client'
+import PolishButton from './PolishButton'
 // GLITCH BOARD — the Asana "VR Glitch/Incident Reporting" workflow, rebuilt in-app.
 // Pool → Ops → Guest Followup → Refund → Manager Review → Incident → Closed.
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
@@ -18,7 +19,7 @@ type Glitch = {
   reservation_id: string | null; guest_name: string | null; guest_phone: string | null
   channel: string | null; check_in: string | null; check_out: string | null
   reservation_total: number | null; incident_date: string | null; overview: string | null
-  recovery_cost: number | null; refund_approved: number | null; reported_by: string | null; guest_email: string | null
+  refund_approved: number | null; reported_by: string | null; guest_email: string | null
   breezeway_task_id: string | null; photos: string[] | null; task_status: string | null; task_report_url?: string | null
   reservation_notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null
   due_date?: string | null; assignee?: string | null; assignee_person_id?: number | null; details?: string | null; progress?: number | null
@@ -192,7 +193,6 @@ export function GlitchBoard() {
                           {g.market && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted border border-line">{g.market}</span>}
                           {g.channel && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">{g.channel}</span>}
                           {g.incident_date && <span className="text-[9px] text-muted">{fmtShort(g.incident_date)}</span>}
-                          {(g.recovery_cost || 0) > 0 && <span className="text-[9px] font-bold text-rose-700">{money(g.recovery_cost)}</span>}
                           {(g.photos || []).length > 0 && <span className="text-[9px] text-muted inline-flex items-center gap-0.5"><Camera size={9} />{(g.photos || []).length}</span>}
                           {g.breezeway_task_id && <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + (g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-violet-50 text-violet-700 border-violet-200')}>{g.task_status === 'completed' ? 'Task completed' : g.task_status === 'in_progress' ? 'Task in progress' : 'Task not started'}</span>}
                           {(g.refund_approved || 0) > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">Refund {money(g.refund_approved)}</span>}
@@ -284,7 +284,6 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
   const [moreCats, setMoreCats] = useState(false)
   const [incidentDate, setIncidentDate] = useState(todayET())
   const [overview, setOverview] = useState('')
-  const [recovery, setRecovery] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -318,7 +317,7 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
     setBusy(true); setErr('')
     try {
       const body: Record<string, any> = {
-        glitchType, category, incidentDate, overview, recoveryCost: recovery, photos, reportedBy, guestEmail,
+        glitchType, category, incidentDate, overview, photos, reportedBy, guestEmail,
       }
       if (res) Object.assign(body, { reservationId: res.reservationId, listingId: res.listingId, unit: res.unit, market: res.market, guestName: res.guestName, guestPhone: res.guestPhone, channel: res.channel, checkIn: res.checkIn, checkOut: res.checkOut, reservationTotal: res.total, reservationNotes: res.notes, sentiment: res.sentiment })
       const r = await fetch('/api/glitches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -456,6 +455,13 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
             <textarea value={overview} onChange={e => setOverview(e.target.value)} rows={3}
               placeholder="One or two sentences. The team and Breezeway will read this."
               className="w-full text-[13.5px] border border-line rounded-xl px-3 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            {/* Rewrites for clarity only — never adds or drops a fact, and you approve it. */}
+            <PolishButton
+              text={overview} kind="glitch" className="mt-1.5"
+              context={category || undefined}
+              onAccept={setOverview}
+              label="Tidy the wording"
+            />
           </Field>
 
           <Field label="Proof" hint="Screenshot the guest's message and paste it straight in.">
@@ -489,10 +495,6 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
               className="w-full text-[13.5px] border border-line rounded-xl px-3 py-2.5 bg-white" />
           </Field>
 
-          <Field label="Recovery cost" hint="What this already cost us to put right. Not a refund &mdash; that decision happens on the card.">
-            <input value={recovery} onChange={e => setRecovery(e.target.value)} placeholder="0"
-              className="w-28 text-[13.5px] border border-line rounded-xl px-3 py-2.5 bg-white" />
-          </Field>
         </div>
       )}
     </Sheet>
@@ -540,7 +542,7 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
 function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
   const [f, setF] = useState({
     glitchType: g.glitch_type || TYPES[0], category: g.category || '', incidentDate: g.incident_date || '',
-    overview: g.overview || '', recoveryCost: String(g.recovery_cost || ''), refundApproved: String(g.refund_approved || ''),
+    overview: g.overview || '', refundApproved: String(g.refund_approved || ''),
     reportedBy: g.reported_by || '', guestName: g.guest_name || '', guestPhone: g.guest_phone || '', guestEmail: g.guest_email || '', unit: g.unit || '', channel: g.channel || '',
   })
   const [busy, setBusy] = useState(false)
@@ -570,7 +572,6 @@ function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
         <input value={f.guestPhone} onChange={e => set('guestPhone', e.target.value)} placeholder="Guest phone" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
         <input value={f.guestEmail} onChange={e => set('guestEmail', e.target.value)} placeholder="Guest email" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
         <input value={f.channel} onChange={e => set('channel', e.target.value)} placeholder="Channel (Airbnb…)" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
-        <input value={f.recoveryCost} onChange={e => set('recoveryCost', e.target.value)} placeholder="Recovery cost $" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
         <input value={f.refundApproved} onChange={e => set('refundApproved', e.target.value)} placeholder="Refund approved $" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
         <input value={f.reportedBy} onChange={e => set('reportedBy', e.target.value)} placeholder="Reported by" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white sm:col-span-2" />
       </div>

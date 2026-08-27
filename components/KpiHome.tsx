@@ -484,7 +484,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
         <Panel title="Service failures" note={g.opened != null ? count(g.opened) + ' glitches raised in this window' : 'loading…'}>
           <div className="grid grid-cols-2 divide-x divide-line border-b border-line">
             <Big label="Raised" value={count(g.opened)} href="/glitches" sub={g.openedPrev != null ? 'was ' + count(g.openedPrev) : undefined} />
-            <Big label="Cost" value={canSeeMoney ? money(g.cost) : '—'} href="/glitches" sub="recovery + refunds"
+            <Big label="Cost" value={canSeeMoney ? money(g.cost) : '—'} href="/glitches" sub="refunds approved"
               tone={g.cost > 0 ? 'alert' : undefined} />
           </div>
           <ul className="divide-y divide-line/70">

@@ -519,7 +519,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
               <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><TrendingDown size={14} className="text-rose-600" /> Revenue leakage <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">refunds &amp; comps · this range</span></h2>
               <div className="text-right">
                 <div className="text-2xl font-extrabold text-rose-700 tabular-nums leading-none">{fmtExact(d.leakage.total)}</div>
-                <div className="text-[11px] text-muted mt-0.5">{d.leakage.count} refund{d.leakage.count === 1 ? '' : 's'} · {d.leakage.pctOfGross}% of gross{d.leakage.fixCost > 0 ? ` · ${fmtExact(d.leakage.fixCost)} fix cost` : ''}</div>
+                <div className="text-[11px] text-muted mt-0.5">{d.leakage.count} refund{d.leakage.count === 1 ? '' : 's'} · {d.leakage.pctOfGross}% of gross</div>
               </div>
             </div>
             <p className="text-[12px] text-muted mb-3">Guest-issue refunds logged on the board, rolled into the money view — where the portfolio is giving revenue back, by building and by cause.</p>
