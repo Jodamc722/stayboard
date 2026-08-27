@@ -17,11 +17,12 @@
 //    are the same text, so an unset key behaves exactly as before. The HONESTY BLOCK below is NOT
 //    editable and is assembled here on every call.
 import { NextRequest, NextResponse } from 'next/server'
+import { buildingFactsFor, factsPrompt } from '@/lib/building-facts'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
-import { SECTION_KEYS, TITLE_MAX, sectionRules, type SectionKey, type ListingAi } from '@/lib/listing-ai'
+import { SECTION_KEYS, TITLE_MAX, sectionRules, type SectionKey, type ListingAi, bannedRule, examplesRule } from '@/lib/listing-ai'
 
 export const dynamic = 'force-dynamic'
 // Was 45. Opus with ~10 vision images does comparable work to the photo analyst, which needs 120
@@ -40,7 +41,10 @@ const HONESTY = `ABSOLUTE HONESTY (THE MOST IMPORTANT RULE)
 LOCATION (use it; never print it verbatim)
 - A real address/area is provided. Use it ONLY to identify the actual city/neighborhood so you can name genuinely well-known, real nearby places for THAT exact city (e.g. for Miami Beach: South Beach, Lincoln Road, Ocean Drive; for Fort Lauderdale: Las Olas, Fort Lauderdale Beach). Reference only landmarks you are confident actually exist for that city.
 - NEVER print the exact street address, unit number, lock/door codes, phone, email, or URLs anywhere in the copy. Keep proximity general ("a short walk to the beach") unless the data gives an exact distance.
-- NEVER claim a GARAGE or garage parking - none of these units have a garage. If parking exists per the data, describe it generically (e.g. parking available) and never call it a garage.`
+- PARKING: describe only the parking the data confirms. If a VERIFIED BUILDING FACTS block states a garage, it is a garage and you should say so — that is a booking driver. If nothing confirms parking, do not mention it.
+
+THE ONE EXCEPTION TO ALL OF THE ABOVE
+- If a block headed VERIFIED BUILDING FACTS appears below, everything in it was written and checked by Stay staff. You MAY state those places, distances and walk times specifically and by name. That block is the ONLY licence to be that specific — it does not extend to anything you know from elsewhere.`
 
 const PHOTO_RULES_LABELLED = `PHOTOS (you can SEE them, and they are LABELLED)
 - Each attached photo is introduced by a line naming the room it shows and what is in it. That labelling was produced by a vision pass over the whole photo set — trust it for WHICH space you are looking at, and use the image itself for how it looks.
@@ -217,6 +221,14 @@ export async function POST(req: NextRequest) {
     .map(r => str(r.content).replace(/\s+/g, ' ').trim().slice(0, 220)).slice(0, 8)
   const reviewSignal = { count: reviews.length, avgRating, guestPraiseSamples: praise }
 
+  // THE FACTS WE ALREADY HAD (see lib/building-facts). Without this the honesty rules leave the
+  // model nothing specific to say about the neighbourhood, and it falls back to "moments from
+  // world-class dining" on every unit in the portfolio.
+  const bFacts = await buildingFactsFor({
+    building: (listing as any).building, nickname: (listing as any).nickname, title: (listing as any).title,
+  }).catch(() => null)
+  const factsBlock = factsPrompt(bFacts)
+
   const facts = {
     currentTitle: current.title || null,
     nickname: listing.nickname || null,
@@ -275,26 +287,34 @@ export async function POST(req: NextRequest) {
     const sk = singleSection as SectionKey
     const isTitle = sk === 'title'
     const guide = isTitle ? `Title: ${guideFor('title')}` : `${cfg.sections[sk].label}: ${guideFor(sk)}`
-    const SYS = `You are a senior short-term-rental listing copywriter for Stay Hospitality (South Florida). You are rewriting ONE field of the Guesty MASTER listing content, which syncs to Airbnb, Vrbo, Expedia and Booking.com. Write to Airbnb's stricter, highest-converting standard.
+    // ── THE HOUSE VOICE BELONGS ON BOTH PATHS ────────────────────────────────────────────────
+    // This prompt used to open with a hardcoded paragraph and substitute a one-line "HOUSE STYLE:"
+    // for cfg.voice, so everything the operator wrote in the voice box was silently dropped here.
+    // That matters more than it sounds: this is the path behind every per-section Regenerate AND
+    // behind the "Test on a unit" playground in settings — which always sends a section. So every
+    // voice experiment anyone has ever run was judged on a prompt that ignored the voice they were
+    // editing. Tuning the voice appeared to do nothing, because on the path being tested it did.
+    const SYS = `${cfg.voice}
+
+You are rewriting ONE field of the Guesty MASTER listing content, which syncs to Airbnb, Vrbo, Expedia and Booking.com.
 
 ${HONESTY}
 
 ${photoRules}
-
-HOUSE STYLE: structured and scannable; lead with the strongest true point; vivid but never padded; write to SELL the stay.
-
+${bannedRule(cfg) ? '\n' + bannedRule(cfg) + '\n' : ''}
 You are writing ONLY this field:
-${guide}
+${guide}${examplesRule(cfg.sections[sk])}
 ${instruction ? `\nTHE USER WANTS THIS SPECIFIC CHANGE (apply it, within the honesty rules above): "${instruction}"` : ''}
 
 OUTPUT: STRICT minified JSON only, nothing else, exactly: {"text":"...","rationale":"..."}
 - "text" = the new field content as a single non-empty string (for the title, obey the character limit).
 - "rationale" = one short sentence on why it is stronger.`
     const USR = `Field to rewrite: "${sk}".
+${factsBlock ? '\n' + factsBlock + '\n' : ''}
 ${sk === 'space' && spaceExemplar ? `\nHOUSE STYLE EXEMPLAR (match its voice/format as a baseline, then ENHANCE; do NOT copy its facts):\n"""${spaceExemplar}"""\n` : ''}
 ${photoBrief}
 
-VERIFIED FACTS (use ONLY these; never invent beyond them):
+${factsBlock ? factsBlock + '\n\n' : ''}VERIFIED FACTS (use ONLY these; never invent beyond them):
 ${JSON.stringify(facts)}
 
 GUEST REVIEW SIGNAL - you MAY share what guests genuinely PRAISE, in your own words (e.g. "guests love the natural light and the walkable location"). NEVER state a star rating, a numeric score, or "X-star"; never quote a review verbatim:
@@ -323,7 +343,8 @@ ${JSON.stringify(currentDraft || (current as any)[sk] || '')}`
 
   // ── Full run ─────────────────────────────────────────────────────────────────
   const activeSections = SECTION_KEYS.filter(k => k !== 'title' && cfg.sections[k].enabled)
-  const sectionSpec = activeSections.map(k => `- "${k}" (${cfg.sections[k].label}): ${guideFor(k)}`).join('\n')
+  const sectionSpec = activeSections
+    .map(k => `- "${k}" (${cfg.sections[k].label}): ${guideFor(k)}${examplesRule(cfg.sections[k])}`).join('\n')
   const outShape = ['title', ...activeSections].map(k => `"${k}":"..."`).join(',')
 
   const SYSTEM = `${cfg.voice}
@@ -332,8 +353,9 @@ ${HONESTY}
 
 ${photoRules}
 
+${bannedRule(cfg) ? bannedRule(cfg) + '\n' : ''}
 TITLE RULES
-- ${guideFor('title')}
+- ${guideFor('title')}${examplesRule(cfg.sections.title)}
 
 SECTION RULES (Guesty publicDescription fields)
 ${sectionSpec}
@@ -347,7 +369,7 @@ Return STRICT, minified JSON and nothing else (no markdown, no code fences, no c
 ${instruction ? `\nMUST-INCLUDE FROM JON (work this in naturally, within the honesty rules - never invent facts to satisfy it): "${instruction}"\n` : ''}${spaceExemplar ? `\nHOUSE STYLE EXEMPLAR for the 'space' field - match this VOICE and FORMAT as your baseline, then ENHANCE it (even more compelling, photo-grounded). Do NOT copy its specific facts:\n"""${spaceExemplar}"""\n` : ''}
 ${photoBrief}
 
-VERIFIED FACTS (use ONLY these; never invent beyond them):
+${factsBlock ? factsBlock + '\n\n' : ''}VERIFIED FACTS (use ONLY these; never invent beyond them):
 ${JSON.stringify(facts)}
 
 GUEST REVIEW SIGNAL - you MAY share what guests genuinely PRAISE, in your own words (e.g. "guests love the natural light and the walkable location"). NEVER state a star rating, a numeric score, or "X-star"; never quote a review verbatim:
@@ -403,10 +425,31 @@ ${JSON.stringify(current)}`
 }
 
 // Per-field guardrails, applied identically to a full run and a single rewrite.
+// A RULE THE PROMPT ASKS FOR AND NOTHING CHECKS IS A RULE THE MODEL LEARNS IT CAN IGNORE.
+// The banned list is stated in both system prompts; this is what makes it real. Matched on word
+// boundaries so "Oasis" the building never trips the ban on "oasis" the cliché is not the goal —
+// case matters there, so the check is deliberately case-SENSITIVE for single capitalised words and
+// case-insensitive for multi-word phrases, which is the shape clichés actually take.
+function bannedHits(value: string, list: string): string[] {
+  const phrases = String(list || '').split(',').map(x => x.trim()).filter(Boolean)
+  const hits: string[] = []
+  for (const p of phrases) {
+    const esc = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const multi = /\s/.test(p)
+    const re = new RegExp('\\b' + esc + '\\b', multi ? 'i' : '')
+    if (re.test(value)) hits.push(p)
+  }
+  return hits
+}
+
 function warnFor(k: SectionKey, value: string, cfg: ListingAi, streetAddress: string | null): string[] {
   const out: string[] = []
   if (!value) return out
   const c = cfg.sections[k]
+  const banned = bannedHits(value, cfg.bannedPhrases)
+  if (banned.length) {
+    out.push(`${k === 'title' ? 'Title' : 'The ' + c.label.toLowerCase() + ' section'} uses ${banned.map(b => `"${b}"`).join(', ')} - on the never-write list.`)
+  }
   const label = k === 'title' ? 'Title' : `The ${c.label.toLowerCase()} section`
   if (k === 'title') {
     const cap = c.hardCap || TITLE_MAX
