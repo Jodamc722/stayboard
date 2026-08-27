@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
     const safe = {
       ok: true, date, enabled: cfg.enabled,
       day: run.day, considered: run.considered, dropped: run.dropped, mix: run.mix,
-      amenityStats: run.amenityStats, climateVocab: run.climateVocab,
+      amenityStats: run.amenityStats, climateVocab: run.climateVocab, inert: run.inert,
       historyComplete: run.historyComplete, suggested: run.suggestions.length,
     }
 
