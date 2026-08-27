@@ -262,12 +262,21 @@ export function NeedsHumanPanel() {
 export function OpsV2() {
   // The three fetches the summary needs. Cached (30s) so tab flips are instant, and so the full
   // board opening underneath does not mean the page paid for the data twice in a row.
-  const { data, loading, refresh } = useCachedFetch<OpsData>('/api/ops-today')
+  const { data, loading, error, refresh } = useCachedFetch<OpsData>('/api/ops-today')
   const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches')
   const { data: staff } = useCachedFetch<Staffing>('/api/ops-today/staffing')
   const [roster, setRoster] = useState<Roster[]>([])
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
-  useEffect(() => { const t = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, 5 * 60 * 1000); return () => clearInterval(t) }, [refresh])
+  // FIVE MINUTES, PLUS THE MOMENT YOU LOOK AT IT AGAIN.
+  // The interval alone meant a phone that had been in a pocket for forty minutes showed forty-minute
+  // -old rows for up to five minutes more — on the one screen where a stale row is how a walk-in
+  // happens. The suggestions provider already listened for this; the board did not.
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, 5 * 60 * 1000)
+    const onShow = () => { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onShow)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onShow) }
+  }, [refresh])
 
   // Which tab. Remembered per person — the research point about role-shaped views, cheaply.
   // GRID IS THE LANDING (Jon, 2026-08-25: "the Today in Ops board that I created with the Breezeway
@@ -338,7 +347,9 @@ export function OpsV2() {
         <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} onAddTask={u => setAddFor(u)} />
       )}
       {tab === 'grid' && (
-        <OpsGrid data={data as any} glitches={glitches as any} roster={roster} onRefresh={refresh} onAddTask={u => setAddFor(u)} />
+        <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
+          loading={loading} error={error ? String(error) : null}
+          onRefresh={refresh} onAddTask={u => setAddFor(u)} />
       )}
       {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} />}
       {tab === 'push' && <PushTab roster={roster} />}

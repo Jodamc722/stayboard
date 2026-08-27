@@ -29,7 +29,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
-  LayoutGrid, Users, X, MapPin,
+  LayoutGrid, Users, X, MapPin, Clock, RefreshCw,
   DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
   Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble,
 } from 'lucide-react'
@@ -61,7 +61,23 @@ export type GUnit = {
 }
 export type GVacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number; needsClean?: boolean }
 export type GCat = { key: string; label: string; icon: string }
-export type GData = { ok: boolean; today: string; units: GUnit[]; vacants?: GVacant[]; categories?: GCat[] }
+export type GDeadline = {
+  dueBy: string; minsLeft: number; passed: boolean
+  cleans: number; done: number; running: number; remaining: number
+  late: number; atRisk: number; missed: number; untracked: number
+}
+export type GData = {
+  ok: boolean; today: string; units: GUnit[]; vacants?: GVacant[]; categories?: GCat[]
+  // COMPUTED ON EVERY REQUEST SINCE THE ROUTE WAS WRITTEN, AND RENDERED NOWHERE.
+  // The whole job of this board is a 4pm deadline, and it had no clock. `atRisk` per task existed
+  // only inside a sort expression; `deadline.minsLeft` and `lastSync` were never read at all.
+  deadline?: GDeadline
+  lastSync?: string | null
+}
+export type GStaff = {
+  people?: { name: string; role?: string | null; clockedIn?: boolean; shift?: string | null; bzAlias?: string | null }[]
+  summary?: { idleNames?: string[]; clockedIn?: number; assignedOffShift?: string[] }
+}
 export type GGlitch = { id: string; unit: string; issue: string; rawName?: string; market?: string | null; market2?: string | null; ageDays?: number | null; running?: boolean; unassigned?: boolean; assignees?: string[]; reportUrl?: string | null; done?: boolean }
 export type GRoster = { id: number; name: string; departments: string[] }
 
@@ -334,6 +350,16 @@ type Row = {
   gapNights: number | null
   urgent: number
   listingId?: string
+  /**
+   * PAST 4PM / WITHIN THE AT-RISK WINDOW. Both were computed per task server-side and used here
+   * ONLY inside the sort expression — so the two facts that decide what a coordinator does next
+   * changed the order of the rows and were otherwise invisible. A row that is late now says so.
+   */
+  late?: boolean
+  atRisk?: boolean
+  /** The clock facts already in the payload: when the guest left, when the next one lands. */
+  outAt?: string | null
+  inAt?: string | null
 }
 
 function GridRow({ row, roster, mode, onRefresh, onAdd }: {
@@ -386,7 +412,17 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
             line 3   the task chips, when there are any
           From lg: up the twelve-column grid is exactly as it was — the `order-*` and width classes
           all carry an lg: reset. */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 lg:grid lg:grid-cols-12 lg:gap-3 px-3 py-2 lg:py-2.5 hover:bg-app/60 cursor-pointer"
+      {/* A LEFT RAIL FOR THE TWO FACTS THAT DECIDE THE MORNING. Late and at-risk were computed on
+          every task and shown nowhere on the collapsed row — you had to open a row to learn that a
+          clean had blown the 4pm deadline. A 3px rail costs no space and is readable down the whole
+          column at a glance, which is the one thing a colour-coded 24px chip cannot do.
+          Also: this was a bare clickable <div> with no role, no tabIndex and no key handler — the
+          primary interaction on the most-used screen in the app, unreachable by keyboard. */}
+      <div role="button" tabIndex={0} aria-expanded={open}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}
+        className={'relative flex flex-wrap items-center gap-x-2 gap-y-0.5 lg:grid lg:grid-cols-12 lg:gap-3 px-3 py-2 lg:py-2.5 hover:bg-app/60 cursor-pointer focus:outline-none focus-visible:bg-app '
+          + (row.late ? 'before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-rose-500'
+            : row.atRisk ? 'before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-amber-400' : '')}
         onClick={() => setOpen(o => !o)}>
         {/* who / what */}
         <div className="order-1 flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:col-span-3 lg:flex-none lg:gap-2">
@@ -416,6 +452,10 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
           {row.gapNights != null && (
             <span className="lg:hidden text-[10.5px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">{row.gapNights}n</span>
           )}
+          {/* LATE AND AT RISK, IN WORDS. The rail catches the eye down the column; this says which
+              one it is without opening anything. */}
+          {row.late && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 whitespace-nowrap">LATE</span>}
+          {!row.late && row.atRisk && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">AT RISK</span>}
         </div>
         {/* reservation / shift context — full width on a phone, carrying the city with it */}
         <div className="order-3 w-full min-w-0 lg:order-none lg:col-span-3 lg:w-auto">
@@ -563,10 +603,24 @@ function TaskLine({ t, roster, mode, onRefresh, comment }: {
 }
 
 // ── THE GRID ────────────────────────────────────────────────────────────────────────────────────
-export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
+/** "3 min ago" — how stale the board is, in the only unit a coordinator cares about. */
+function fmtAgo(iso: string): string {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return 'just now'
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000))
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m} min ago`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m ago`
+}
+
+export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask }: {
   data: GData | undefined
   glitches: GGlitch[]
   roster: GRoster[]
+  staff?: GStaff | null
+  loading?: boolean
+  error?: string | null
   onRefresh: () => void
   onAddTask: (unit: string) => void
 }) {
@@ -700,6 +754,8 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
           gapNights: gapByListing[u.listingId] ?? null,
           urgent: (u.late ? 100 : 0) + (u.atRisk ? 50 : 0) + (u.sameDayTurn ? 20 : 0) + (u.unassigned ? 10 : 0) + issues.length,
           listingId: u.listingId,
+          late: !!u.late, atRisk: !!u.atRisk,
+          outAt: u.checkOutTime || null, inAt: u.arrivingAt || null,
         } as Row
       })
       // A UNIT WITH A PROBLEM AND NO WORK ON IT IS THE WHOLE POINT OF A GLITCH.
@@ -777,12 +833,74 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
 
   const tiles: { key: string; cat: CatMeta | null }[] = [{ key: 'all', cat: null }, ...cats.list.map(c => ({ key: c.key, cat: c }))]
 
+  // ── THE CLOCK ────────────────────────────────────────────────────────────────────────────────
+  // Every departure clean on this board has to be finished by 4pm, because that is when the next
+  // guest can walk in. The route has computed the countdown, the late count and the at-risk count
+  // on every single request since it was written, and the board rendered none of it — so the one
+  // number that decides the morning was the one number nobody could see.
+  const dl = data?.deadline || null
+  const hh = dl ? Math.floor(Math.abs(dl.minsLeft) / 60) : 0
+  const mm = dl ? Math.abs(dl.minsLeft) % 60 : 0
+  const clock = dl ? (dl.passed ? `${hh}h ${mm}m past` : `${hh}h ${mm}m left`) : ''
+
   return (
     <CatsCtx.Provider value={cats}>
     {/* ONE fetch of the suggestion list, shared by the band, the unit rows and the people rows —
         so adding a job in one place makes it disappear from the other two (Jon, 2026-08-27). */}
     <SuggestionsProvider date={today} roster={roster} onAdded={onRefresh}>
     <div>
+      {/* ── A BROKEN BOARD MUST NOT LOOK LIKE A FINISHED DAY ──────────────────────────────────
+          The fetch error was dropped on the floor and `loading` never reached this component, so a
+          500, a timeout and a genuinely clear day all rendered the same sentence: "Nothing on the
+          board for today yet." That is the failure mode that quietly destroys trust in a board —
+          it says all clear at the exact moment it knows least. */}
+      {error && (
+        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 flex items-start gap-2">
+          <AlertTriangle size={14} className="text-rose-600 mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-bold text-rose-900">Could not load the board</p>
+            <p className="text-[11.5px] text-rose-900/80 mt-0.5">{error} — what you see below may be old, or nothing at all.</p>
+          </div>
+          <button onClick={onRefresh} className="text-[11.5px] font-bold text-rose-700 hover:text-rose-900 shrink-0">Retry</button>
+        </div>
+      )}
+
+      {/* ── THE DEADLINE STRIP ─────────────────────────────────────────────────────────────── */}
+      {dl && dl.cleans > 0 && (
+        <div className={'mb-3 rounded-xl border overflow-hidden ' + (dl.late > 0 ? 'border-rose-300' : dl.atRisk > 0 ? 'border-amber-300' : 'border-line')}>
+          <div className={'px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap ' + (dl.late > 0 ? 'bg-rose-50' : dl.atRisk > 0 ? 'bg-amber-50' : 'bg-app')}>
+            <span className="inline-flex items-baseline gap-1.5 shrink-0">
+              <Clock size={13} className={dl.late > 0 ? 'text-rose-600' : dl.atRisk > 0 ? 'text-amber-600' : 'text-muted'} />
+              <span className="text-[13px] font-black text-ink tabular-nums">{dl.dueBy}</span>
+              <span className={'text-[12px] font-bold tabular-nums ' + (dl.passed ? 'text-rose-700' : 'text-muted')}>{clock}</span>
+            </span>
+            <span className="text-line hidden sm:inline">|</span>
+            <span className="text-[12px] text-muted">
+              <b className="text-ink tabular-nums">{dl.remaining}</b> of {dl.cleans} cleans still open
+              {dl.running > 0 && <> &middot; <b className="text-amber-700 tabular-nums">{dl.running}</b> under way</>}
+            </span>
+            {dl.late > 0 && (
+              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 tabular-nums">{dl.late} late</span>
+            )}
+            {dl.atRisk > 0 && (
+              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 tabular-nums">{dl.atRisk} at risk</span>
+            )}
+            {dl.untracked > 0 && (
+              <span className="text-[11px] text-muted" title="Vendor-cleaned units never close their tasks in Breezeway, so they carry no deadline.">
+                {dl.untracked} vendor &mdash; no clock
+              </span>
+            )}
+            <span className="flex-1" />
+            {/* HOW OLD IS THIS. The route computes lastSync precisely so a coordinator can tell —
+                its own comment says "a stale list is how walk-ins happen" — and nothing showed it. */}
+            <span className="text-[10.5px] text-muted shrink-0 inline-flex items-center gap-1.5">
+              {loading && <Loader2 size={10} className="animate-spin" />}
+              {data?.lastSync ? `synced ${fmtAgo(data.lastSync)}` : today}
+              <button onClick={onRefresh} className="hover:text-ink" title="Refresh now"><RefreshCw size={11} /></button>
+            </span>
+          </div>
+        </div>
+      )}
       {/* ── COUNTERS. Every tile is a filter — the number you are worried about is one tap from
           the list of rows behind it, which is the whole reason to put counters on a screen. ── */}
       {/* A GRID, NOT A SCROLLER. Eight categories on one screen at every width — four across on a
@@ -869,15 +987,31 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
       {/* ── HEADER + ROWS ── */}
       <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
         <div className="hidden lg:grid grid-cols-12 gap-3 px-3 py-2 bg-app border-b border-line text-[10px] font-bold uppercase tracking-wider text-muted">
+          {/* THE HEADER NOW MATCHES THE ROW. The cells render in DOM order on desktop — property,
+              STATUS, reservation, tasks, issues — but this header claimed property, RESERVATION,
+              STATUS, tasks, issues. Two of five labels sat over the wrong data, and nobody caught
+              it because the header is hidden below lg. */}
           <div className="col-span-3 pl-5">{mode === 'units' ? 'Property' : 'Person'}</div>
-          <div className="col-span-3">{mode === 'units' ? 'Reservation' : 'Load today'}</div>
           <div className="col-span-2">Status</div>
+          <div className="col-span-3">{mode === 'units' ? 'Reservation' : 'Load today'}</div>
           <div className="col-span-3">Tasks today</div>
-          <div className="col-span-1 text-right">Issues</div>
+          <div className="col-span-1 text-right">{mode === 'units' ? 'Issues' : ''}</div>
         </div>
         {shown.length === 0 ? (
           <div className="px-4 py-8 text-center text-[13px] text-muted">
-            {rows.length === 0 ? 'Nothing on the board for today yet.' : 'Nothing matches. Clear the filters to see the rest.'}
+            {/* THREE DIFFERENT SITUATIONS THAT USED TO PRINT THE SAME SENTENCE. Still loading, the
+                fetch failed, and a genuinely clear day are not the same news, and telling a
+                coordinator "nothing on the board" when the request 500'd is how a board earns the
+                reputation of being wrong. */}
+            {loading && rows.length === 0 ? (
+              <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading today&rsquo;s board&hellip;</span>
+            ) : error ? (
+              <span className="text-rose-700">The board could not load, so this is not &ldquo;nothing to do&rdquo; &mdash; it is &ldquo;we do not know&rdquo;.</span>
+            ) : rows.length === 0 ? (
+              <>Nothing scheduled on {today || 'today'}.{' '}<button onClick={onRefresh} className="font-semibold text-brand-600 hover:underline">Check again</button></>
+            ) : (
+              'Nothing matches. Clear the filters to see the rest.'
+            )}
           </div>
         ) : shown.map(r => (
           <GridRow key={r.key} row={r} roster={roster} mode={mode} onRefresh={onRefresh} onAdd={onAddTask} />
