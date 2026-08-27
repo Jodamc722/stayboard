@@ -224,6 +224,18 @@ export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: b
   if (!row) return { ok: false, error: 'not found' }
   if (row.status !== 'approved') return { ok: false, error: 'not approved' }
 
+  // CHECK THE GATE AGAIN, AT THE MOMENT OF SENDING (2026-08-27).
+  //
+  // draft() checks whether an alert is allowed when the message is WRITTEN. That is not the same
+  // question as whether it is allowed when it is SENT — a row approved this morning, or queued
+  // before somebody turned an alert off, would otherwise go out anyway and make a mute look like
+  // it had failed. Turning an alert off has to stop the ones already in the queue too, or it is
+  // not really off.
+  if (!broadcastAllowed(rules, row.event_key as EventKey)) {
+    await db.from(TABLE).update({ status: 'skipped', updated_at: nowIso() }).eq('id', id)
+    return { ok: false, error: 'muted since this was queued' }
+  }
+
   const problems: string[] = []
   let delivered = 0
 
