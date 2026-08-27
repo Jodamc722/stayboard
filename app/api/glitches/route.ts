@@ -11,6 +11,8 @@ import { requireLevel } from '@/lib/access'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
+const TONES = ['understanding', 'frustrated', 'angry', 'fishing']
+const VIAS = ['message', 'call', 'in_person', 'at_checkout', 'review', 'other']
 export const STATUSES = ['pool', 'ops', 'guest_followup', 'refund', 'manager_review', 'incident', 'closed'] as const
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function num(v: any): number | null { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : null }
@@ -134,6 +136,12 @@ export async function POST(req: NextRequest) {
       incident_date: str(b.incidentDate) || null,
       overview,
       refund_approved: num(b.refundApproved) || 0,
+      // Every issue on the report. `category` stays the primary and still routes the Breezeway task.
+      categories: Array.isArray(b.categories) && b.categories.length
+        ? b.categories.map((c: any) => String(c).slice(0, 80)).slice(0, 8)
+        : (str(b.category) ? [str(b.category)] : []),
+      guest_tone: TONES.includes(String(b.guestTone || '').toLowerCase()) ? String(b.guestTone).toLowerCase() : null,
+      reported_via: VIAS.includes(String(b.reportedVia || '').toLowerCase()) ? String(b.reportedVia).toLowerCase() : null,
       reported_by: str(b.reportedBy) || null,
       guest_email: str(b.guestEmail) || null,
       reservation_notes: str(b.reservationNotes) || null,
@@ -145,8 +153,10 @@ export async function POST(req: NextRequest) {
     const db = supabaseAdmin()
     let ins = await db.from('glitches').insert(row).select('id').single()
     if (ins.error && /column|schema/i.test(ins.error.message)) {
-      // snapshot columns not migrated yet — save the core record rather than failing
+      // Columns not migrated yet — save the core record rather than losing the report. A glitch
+      // half-recorded beats a guest issue that vanished because a column was missing.
       delete row.reservation_notes; delete row.sentiment
+      delete row.guest_tone; delete row.reported_via; delete row.categories
       ins = await db.from('glitches').insert(row).select('id').single()
     }
     const { data, error } = ins
