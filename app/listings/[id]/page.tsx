@@ -129,6 +129,15 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   })
   // Normalize mixed-scale ratings to 0-5 stars before averaging (Booking/Expedia are 0-10).
   const rated = reviews.filter((r: any) => ratingToStars(r.rating) != null && !r.excluded_from_score)
+  // Open work on this unit — the Ops panel's headline. Cheap count, no rows pulled.
+  const { count: openWorkCount } = await supabaseAdmin()
+    .from('breezeway_tasks_sync')
+    .select('id', { count: 'exact', head: true })
+    .eq('reference_property_id', params.id)
+    .not('status', 'ilike', '%complete%')
+    .not('status', 'ilike', '%cancel%')
+  const openWork = Number(openWorkCount) || 0
+
   const avgRating = rated.length ? Math.round((rated.reduce((s: number, r: any) => s + (ratingToStars(r.rating) || 0), 0) / rated.length) * 100) / 100 : null
   const awaitingReply = reviews.filter((r: any) => !r.has_reply).length
 
@@ -315,7 +324,14 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                   {res.description.sections.map((s, i) => (
                     <div key={i}>
                       <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">{s.label} <span className="text-muted/60 normal-case tracking-normal">· {s.text.length} chars</span></div>
-                      <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{s.text}</div>
+                      {/* CLAMPED. This block reprints every description section at full length —
+                          about a thousand pixels of prose on a filled listing — and it sits between
+                          the diagnosis and every tool on the page. The optimizer below already
+                          shows the same text in a scrolling "Current" column, so the moment you
+                          press Generate you had the same 2,700 characters on screen twice, one copy
+                          unbounded. Kept (it is useful at a glance) but no longer allowed to push
+                          the actual work off the screen. */}
+                      <div className="text-sm text-ink whitespace-pre-wrap leading-relaxed max-h-[8.5rem] overflow-y-auto pr-1">{s.text}</div>
                     </div>
                   ))}
                 </div>
@@ -355,10 +371,17 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           />
         </CollapsePanel>
 
+        {/* CollapsePanel's own header comment says "the closed header must carry the headline — if
+            you have to open a panel to find out whether it needs you, folding has just hidden the
+            information." Every other panel on this page passes a badge and a tone; this one passed
+            neither, so the junk drawer was also the only panel you could not triage from outside.
+            Open work is the number that decides whether anybody needs to look inside. */}
         <CollapsePanel
           id="ops" icon="ops"
           title="Ops"
           sub="Open work, the last property audit, guest FAQs, the guidebook and the hero collage"
+          badge={openWork > 0 ? `${openWork} open` : undefined}
+          tone={openWork > 0 ? 'warn' : undefined}
         >
           <div className="space-y-4">
             <UnitTasks listingId={listing.id} />
