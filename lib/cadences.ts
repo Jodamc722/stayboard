@@ -51,6 +51,19 @@ export type CadenceDef = {
   mode: 'off' | 'suggest' | 'auto'
   /** A unit never before recorded as having had this done: treat as due, or leave alone? */
   seedIfNever: boolean
+  /**
+   * OPTIONAL EQUIPMENT GATE. Only units whose amenities match this pattern are eligible.
+   *
+   * Jon, 2026-08-27: "AC Filter change is for units only with central ac, we need to check
+   * amenities etc." A monthly filter change proposed against a unit with a mini-split or a window
+   * unit is not merely wasted — it is the kind of wrong suggestion that teaches people the whole
+   * band is noise, and this list only works while people trust it.
+   *
+   * Empty means every unit. A unit with NO amenities recorded at all is never quietly assumed to
+   * qualify: it is excluded and COUNTED, so "we cannot tell" reads differently from "it does not
+   * have one" — the settings screen prints both.
+   */
+  requiresAmenity?: string
 }
 
 export type CadenceCfg = {
@@ -86,8 +99,14 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     needsVacant: true, needsDays: 1, minutes: 120, mode: 'suggest', seedIfNever: true,
   },
   {
-    key: 'ac_filter', label: 'A/C filter change', everyDays: 90, dept: 'maintenance',
+    // MONTHLY, AND CENTRAL SYSTEMS ONLY (Jon, 2026-08-27). Thirty days is the manufacturer interval
+    // for a central return in a coastal rental that turns over every few days; a quarterly filter in
+    // that duty cycle is a dirty filter for two of the three months. It is also why this one carries
+    // an equipment gate: at 30 days it would otherwise be the loudest cadence in the portfolio,
+    // proposing monthly filter changes for units that have no filter to change.
+    key: 'ac_filter', label: 'A/C filter change', everyDays: 30, dept: 'maintenance',
     match: 'filter',
+    requiresAmenity: 'central air|central a\\/?c|central hvac|forced air',
     // A filter is fifteen minutes and a step stool. It does not need an empty unit, but it is far
     // less awkward in one, so it is ranked below the jobs that genuinely need the window.
     needsVacant: false, needsDays: 0, minutes: 15, mode: 'suggest', seedIfNever: true,
@@ -117,7 +136,15 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
 ]
 
 export const CADENCE_DEFAULTS: CadenceCfg = {
-  enabled: false,
+  // ON BY DEFAULT, AND SAFE BECAUSE OF WHAT "ON" MEANS HERE.
+  //
+  // Jon, 2026-08-27: "I also don't see where the suggestions are." They were switched off, because
+  // every other automation in this app ships off — but those automations CREATE things, and off is
+  // the right default for a thing that acts on its own. This one only ever SHOWS a short list until
+  // somebody clicks Add: every cadence ships as 'suggest', none as 'auto', so nothing is created
+  // without a human. A feature that has to be discovered in settings before it can be judged is a
+  // feature nobody judges. Setting any cadence to 'auto' is still an explicit, owner-only act.
+  enabled: true,
   // SIX. Not sixty, and not "however many are due". A coordinator can look at six extra jobs, decide
   // on them in a minute, and still run the day. This is the number that keeps the promise.
   dailyCap: 6,
@@ -184,6 +211,12 @@ export function resolveCadences(raw: any): CadenceCfg {
       minutes: num(o?.minutes, base.minutes, 5, 600),
       mode: o?.mode === 'off' ? 'off' : o?.mode === 'auto' ? 'auto' : o?.mode === 'suggest' ? 'suggest' : base.mode,
       seedIfNever: o?.seedIfNever == null ? base.seedIfNever : o.seedIfNever === true,
+      // An empty string is a real edit — it means "drop the equipment gate" — so it must survive
+      // the usual "falsy falls back to the default" rule that applies to every other field.
+      requiresAmenity: typeof o?.requiresAmenity === 'string'
+        ? (patternOk(o.requiresAmenity.trim()) || !o.requiresAmenity.trim()
+          ? o.requiresAmenity.trim().slice(0, 200) : base.requiresAmenity)
+        : base.requiresAmenity,
     }
   }
 
@@ -192,6 +225,7 @@ export function resolveCadences(raw: any): CadenceCfg {
     const blank: CadenceDef = {
       key: inv.key, label: inv.key, everyDays: 180, dept: 'maintenance', match: inv.key,
       needsVacant: true, needsDays: 1, minutes: 60, mode: 'suggest', seedIfNever: false,
+      requiresAmenity: '',
     }
     // An invented cadence with an uncompilable pattern is dropped, not silently made to match all.
     const c = one(blank, inv)

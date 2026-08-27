@@ -108,6 +108,13 @@ export type SuggestionRun = {
    * county. Counts only — no names, so it is safe on the unauthenticated cron path.
    */
   mix: { building: number; area: number; none: number }
+  /**
+   * Per cadence that carries an equipment gate: how many active units have the equipment, how many
+   * do not, and how many have NO amenities recorded at all. The third number is the one that
+   * matters — it is work we cannot see, not work that does not exist, and it must never hide inside
+   * "does not qualify".
+   */
+  amenityStats: Record<string, { has: number; hasNot: number; unknown: number }>
   /** False when the history read hit its page ceiling; some "never done" may be "long ago". */
   historyComplete: boolean
   error?: string
@@ -220,7 +227,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     ok: true, date, enabled: cfg.enabled,
     day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
     suggestions: [], considered: 0, dropped, mix: { building: 0, area: 0, none: 0 },
-    historyComplete: true, ...extra,
+    amenityStats: {}, historyComplete: true, ...extra,
   })
 
   const live = cfg.cadences.filter(c => c.mode !== 'off')
@@ -236,7 +243,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   const horizon = shift(date, 21)
 
   const [lRes, todayRes, occRes, nextRes, hist, log] = await Promise.all([
-    db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(2000),
+    db.from('guesty_listings').select('id,nickname,title,building,address_city,status,amenities,rawAmen:raw->amenities').limit(2000),
     db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,assignees,type_department,finished_at')
       .eq('scheduled_date', date).limit(2000),
     db.from('guesty_reservations').select('listing_id,check_in,check_out,status')
@@ -248,7 +255,24 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   ])
 
   // ── UNITS ─────────────────────────────────────────────────────────────────────────────────────
-  type Meta = { name: string; building: string | null; market: string; vendor: boolean }
+  type Meta = {
+    name: string; building: string | null; market: string; vendor: boolean
+    /** Every amenity this unit lists, lowercased into one searchable string. '' = none recorded. */
+    amenities: string
+  }
+  // Guesty writes amenities to a column on some listings and leaves them only in the raw payload on
+  // others, so both are read and merged — one source would have reported units as having no
+  // equipment recorded purely because of which sync last touched them.
+  const amenText = (l: any): string => {
+    const out: string[] = []
+    for (const src of [l.amenities, l.rawAmen]) {
+      if (Array.isArray(src)) for (const a of src) {
+        const t = typeof a === 'string' ? a : str(a?.amenity || a?.name || a?.title || a?.label)
+        if (t) out.push(t)
+      }
+    }
+    return out.join(' | ').toLowerCase()
+  }
   const lmap: Record<string, Meta> = {}
   for (const l of (lRes.data || []) as any[]) {
     if (str(l.status).trim().toLowerCase() !== 'active') continue
@@ -258,6 +282,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       name, building,
       market: marketOf(l.building, l.address_city, name),
       vendor: VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name),
+      amenities: amenText(l),
     }
   }
 
@@ -356,6 +381,11 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   }
 
   // ── RANK ──────────────────────────────────────────────────────────────────────────────────────
+  // Equipment gates compiled once, not per unit — this loop runs units × cadences.
+  const amenRe: Record<string, RegExp | null> = {}
+  const amenStats: Record<string, { has: number; hasNot: number; unknown: number }> = {}
+  for (const c of live) amenRe[c.key] = c.requiresAmenity ? cadenceRe(c.requiresAmenity) : null
+
   const out: Suggestion[] = []
   let considered = 0
   for (const lid of Object.keys(lmap)) {
@@ -374,6 +404,18 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       if (daysSince == null && !c.seedIfNever) { drop('never done, seeding off'); continue }
       const daysOver = daysSince == null ? c.everyDays : daysSince - c.everyDays
       if (daysOver < 0) { drop('not due'); continue }
+
+      // ── EQUIPMENT GATE ────────────────────────────────────────────────────────────────────
+      // Checked EARLY, before anything expensive, because a unit without the equipment is not a
+      // near miss — the job does not exist for it. "We cannot tell" is counted separately and
+      // excluded: assuming a unit has central A/C because nobody filled in its amenities is how a
+      // list of six good suggestions becomes a list of six wrong ones.
+      if (amenRe[c.key]) {
+        const st = amenStats[c.key] || (amenStats[c.key] = { has: 0, hasNot: 0, unknown: 0 })
+        if (!meta.amenities) { st.unknown++; drop('amenities not recorded'); continue }
+        if (!amenRe[c.key]!.test(meta.amenities)) { st.hasNot++; drop(`no ${c.label.toLowerCase()} equipment`); continue }
+        st.has++
+      }
 
       if (c.needsVacant && isOcc) { drop('occupied'); continue }
       if (windowDays < c.needsDays) { drop('window too short'); continue }
@@ -458,15 +500,21 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
 
   return {
     ok: true, date, enabled: cfg.enabled, day,
-    suggestions: picked, considered, dropped, mix, historyComplete: hist.complete,
+    suggestions: picked, considered, dropped, mix, amenityStats: amenStats,
+    historyComplete: hist.complete,
   }
 }
 
 // ── CREATING THE WORK ───────────────────────────────────────────────────────────────────────────
 // ONE creation path, used by the human clicking Add and by a cadence set to 'auto'. They must not
 // drift: the difference between the two is who decided, never what gets made.
-export async function createFromSuggestion(s: Suggestion, by: string | null): Promise<{
-  ok: boolean; taskId?: string; assigned?: string | null; name?: string; error?: string
+export async function createFromSuggestion(s: Suggestion, by: string | null, opts: {
+  /** Override who it goes to. Empty string means deliberately unassigned. */
+  assignee?: string | null
+  /** Override the day it is scheduled for. Defaults to the day the suggestion was drawn. */
+  scheduleDate?: string | null
+} = {}): Promise<{
+  ok: boolean; taskId?: string; assigned?: string | null; name?: string; scheduled?: string; error?: string
 }> {
   const { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson, breezewayConfigured } = await import('./breezeway')
   if (!breezewayConfigured()) return { ok: false, error: 'Breezeway is not configured on this server.' }
@@ -490,14 +538,23 @@ export async function createFromSuggestion(s: Suggestion, by: string | null): Pr
       : 'Unit is occupied — work around the guest.\n') +
     `Rough time: ${s.minutes} minutes.`
 
+  // WHO AND WHEN ARE THE OPERATOR'S CALL, NOT THE ENGINE'S.
+  // Jon, 2026-08-27: "I should be able to assign and schedule the tasks as well." The engine's pick
+  // is a default, never a decision: an explicit assignee wins, an explicit empty string means
+  // deliberately unassigned, and only an absent value falls back to whoever is already on site.
+  const who = opts.assignee === undefined || opts.assignee === null
+    ? (s.candidates[0] || null)
+    : (String(opts.assignee).trim() || null)
   let assigneeId: number | null = null
-  const who = s.candidates[0] || null
   if (who) { try { assigneeId = await matchBreezewayPerson(who) } catch { assigneeId = null } }
+
+  const scheduled = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.scheduleDate || ''))
+    ? String(opts.scheduleDate) : s.id.split('|')[0]
 
   try {
     const r = await createBreezewayTask({
       name, type_department: s.dept, type_priority: 'normal',
-      scheduled_date: s.id.split('|')[0], description, home_id: homeId,
+      scheduled_date: scheduled, description, home_id: homeId,
     })
     if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
     const taskId = String(r.data.id)
@@ -508,12 +565,12 @@ export async function createFromSuggestion(s: Suggestion, by: string | null): Pr
     try {
       await db.from('breezeway_tasks_sync').upsert({
         id: taskId, reference_property_id: s.listingId, name, status: 'created',
-        scheduled_date: s.id.split('|')[0], type_department: s.dept,
+        scheduled_date: scheduled, type_department: s.dept,
         assignees: assigneeId != null && who ? [who] : [],
         raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
       }, { onConflict: 'id' })
     } catch { /* sync catches up */ }
-    return { ok: true, taskId, assigned: assigneeId != null ? who : null, name }
+    return { ok: true, taskId, assigned: assigneeId != null ? who : null, name, scheduled }
   } catch (e: any) {
     return { ok: false, error: `Breezeway would not create it: ${String(e?.message || e)}` }
   }
