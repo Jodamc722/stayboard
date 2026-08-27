@@ -64,6 +64,22 @@ export type CadenceDef = {
    * have one" — the settings screen prints both.
    */
   requiresAmenity?: string
+  /**
+   * OPTIONAL BUILDING SCOPE. When non-empty, only units in these buildings are eligible. Buildings
+   * are the natural unit of equipment — a tower is plumbed and ducted one way throughout — so this
+   * is a handful of choices rather than two hundred.
+   */
+  scopeBuildings?: string[]
+  /** Individual units, for the ones that do not follow their building. */
+  scopeUnits?: string[]
+  /**
+   * "THIS CADENCE DOES NOTHING UNTIL SOMEBODY SAYS WHERE IT APPLIES."
+   *
+   * Set on cadences whose equipment cannot be read from any data we hold. The engine skips them and
+   * reports them as INERT, by name, so an unanswered question stays visible instead of looking like
+   * a cadence that simply never comes due. Silence is the failure mode this flag exists to prevent.
+   */
+  needsScope?: boolean
 }
 
 export type CadenceCfg = {
@@ -99,14 +115,25 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     needsVacant: true, needsDays: 1, minutes: 120, mode: 'suggest', seedIfNever: true,
   },
   {
-    // MONTHLY, AND CENTRAL SYSTEMS ONLY (Jon, 2026-08-27). Thirty days is the manufacturer interval
-    // for a central return in a coastal rental that turns over every few days; a quarterly filter in
-    // that duty cycle is a dirty filter for two of the three months. It is also why this one carries
-    // an equipment gate: at 30 days it would otherwise be the loudest cadence in the portfolio,
-    // proposing monthly filter changes for units that have no filter to change.
+    // MONTHLY, AND CENTRAL SYSTEMS ONLY (Jon, 2026-08-27: "AC Filter change is for units only with
+    // central ac, we need to check amenities etc.").
+    //
+    // THE AMENITY CHECK WAS TRIED AND IT CANNOT ANSWER THIS. Measured against the live portfolio on
+    // 2026-08-27: 232 units carry the amenity "Air conditioning" and NOT ONE carries any variant of
+    // "central" — the other climate strings recorded anywhere are "Heating" (30) and "Ceiling fan"
+    // (22). Guesty's amenity vocabulary simply does not distinguish a central system from a
+    // mini-split or a PTAC, so a pattern gate here matched zero units and quietly switched the whole
+    // cadence off. A cadence that silently matches nothing is worse than one that is openly
+    // unconfigured, so this ships as the latter.
+    //
+    // `needsScope` means: inert, and SAYING SO, until somebody picks the buildings. Buildings are
+    // the right grain — a tower is ducted one way throughout — and it is a handful of choices.
+    //
+    // Thirty days, not ninety, because a central return in a coastal rental that turns over every
+    // few days is a dirty filter for two months out of three on a quarterly cycle.
     key: 'ac_filter', label: 'A/C filter change', everyDays: 30, dept: 'maintenance',
     match: 'filter',
-    requiresAmenity: 'central air|central a\\/?c|central hvac|forced air',
+    needsScope: true, scopeBuildings: [], scopeUnits: [],
     // A filter is fifteen minutes and a step stool. It does not need an empty unit, but it is far
     // less awkward in one, so it is ranked below the jobs that genuinely need the window.
     needsVacant: false, needsDays: 0, minutes: 15, mode: 'suggest', seedIfNever: true,
@@ -159,6 +186,12 @@ const isObj = (v: any) => !!v && typeof v === 'object' && !Array.isArray(v)
 const num = (v: any, fb: number, lo: number, hi: number) => {
   const n = Number(v)
   return Number.isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : fb
+}
+// An EMPTY array is a real answer — "scoped to nothing yet" — so it must survive rather than fall
+// back to the default the way an absent value does.
+const strList = (v: any, fb: string[] | undefined): string[] | undefined => {
+  if (!Array.isArray(v)) return fb
+  return v.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 400)
 }
 const txt = (v: any, fb: string, max: number) =>
   typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : fb
@@ -217,6 +250,9 @@ export function resolveCadences(raw: any): CadenceCfg {
         ? (patternOk(o.requiresAmenity.trim()) || !o.requiresAmenity.trim()
           ? o.requiresAmenity.trim().slice(0, 200) : base.requiresAmenity)
         : base.requiresAmenity,
+      scopeBuildings: strList(o?.scopeBuildings, base.scopeBuildings),
+      scopeUnits: strList(o?.scopeUnits, base.scopeUnits),
+      needsScope: o?.needsScope == null ? base.needsScope : o.needsScope === true,
     }
   }
 
@@ -225,7 +261,7 @@ export function resolveCadences(raw: any): CadenceCfg {
     const blank: CadenceDef = {
       key: inv.key, label: inv.key, everyDays: 180, dept: 'maintenance', match: inv.key,
       needsVacant: true, needsDays: 1, minutes: 60, mode: 'suggest', seedIfNever: false,
-      requiresAmenity: '',
+      requiresAmenity: '', scopeBuildings: [], scopeUnits: [], needsScope: false,
     }
     // An invented cadence with an uncompilable pattern is dropped, not silently made to match all.
     const c = one(blank, inv)

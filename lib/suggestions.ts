@@ -123,6 +123,13 @@ export type SuggestionRun = {
    * writing the pattern: counts only, no unit names, so it is safe on the unauthenticated path.
    */
   climateVocab: { term: string; units: number }[]
+  /**
+   * Cadences that produced nothing because nobody has told them WHERE they apply. Named, every
+   * single run, so an unanswered question keeps asking instead of looking like a quiet cadence.
+   */
+  inert: { key: string; label: string; why: string }[]
+  /** Buildings and how many active units each holds — what the scope picker in settings offers. */
+  buildings: { name: string; units: number }[]
   /** False when the history read hit its page ceiling; some "never done" may be "long ago". */
   historyComplete: boolean
   error?: string
@@ -235,11 +242,37 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     ok: true, date, enabled: cfg.enabled,
     day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
     suggestions: [], considered: 0, dropped, mix: { building: 0, area: 0, none: 0 },
-    amenityStats: {}, climateVocab: [], historyComplete: true, ...extra,
+    amenityStats: {}, climateVocab: [], inert: [], buildings: [], historyComplete: true, ...extra,
   })
 
-  const live = cfg.cadences.filter(c => c.mode !== 'off')
-  if (!live.length) return blank({ day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: 'Every cadence is switched off.', heavy: false } })
+  // A cadence that needs a scope and has not been given one is INERT: it is skipped, and it is
+  // named in the output so the gap is loud. Jon, 2026-08-27, asked for filters on central-A/C units
+  // only; nothing we hold records which units those are (see lib/cadences), so this is the shape
+  // that question takes until it is answered.
+  const inert: { key: string; label: string; why: string }[] = []
+  const live = cfg.cadences.filter(c => {
+    if (c.mode === 'off') return false
+    const scoped = (c.scopeBuildings?.length || 0) + (c.scopeUnits?.length || 0)
+    if (c.needsScope && !scoped) {
+      inert.push({
+        key: c.key, label: c.label,
+        why: 'Nothing is suggested until you pick which buildings or units this applies to — the amenity data does not record it.',
+      })
+      return false
+    }
+    return true
+  })
+  if (!live.length) {
+    return blank({
+      inert,
+      day: {
+        date, openCleans: 0, cleaners: 0, load: 0, cap: 0, heavy: false,
+        verdict: inert.length
+          ? `${inert.length} cadence${inert.length === 1 ? '' : 's'} waiting on a list of units; the rest are switched off.`
+          : 'Every cadence is switched off.',
+      },
+    })
+  }
 
   const db = supabaseAdmin()
   const presets = await getOpsPresets()
@@ -273,6 +306,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   // equipment recorded purely because of which sync last touched them.
   const CLIMATE = /air|a\/?c\b|hvac|cool|heat|split|fan|thermostat/i
   const vocab = new Map<string, number>()
+  const bCount: Record<string, number> = {}
   const amenText = (l: any): string => {
     const out: string[] = []
     for (const src of [l.amenities, l.rawAmen]) {
@@ -290,6 +324,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     if (str(l.status).trim().toLowerCase() !== 'active') continue
     const name = l.nickname || l.title || 'Unit'
     const building = str(l.building) || null
+    bCount[building || name] = (bCount[building || name] || 0) + 1
     lmap[String(l.id)] = {
       name, building,
       market: marketOf(l.building, l.address_city, name),
@@ -417,6 +452,16 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       const daysOver = daysSince == null ? c.everyDays : daysSince - c.everyDays
       if (daysOver < 0) { drop('not due'); continue }
 
+      // ── WHERE IT APPLIES ──────────────────────────────────────────────────────────────────
+      // An explicit list always wins over an inferred one: if somebody has named the buildings,
+      // that IS the answer, and no amenity string gets to overrule it.
+      const scopeB = c.scopeBuildings || [], scopeU = c.scopeUnits || []
+      if (scopeB.length || scopeU.length) {
+        const inScope = scopeB.some(b => b === (meta.building || '') || b === meta.name)
+          || scopeU.some(u => u === lid || u === meta.name)
+        if (!inScope) { drop(`outside the ${c.label.toLowerCase()} list`); continue }
+      }
+
       // ── EQUIPMENT GATE ────────────────────────────────────────────────────────────────────
       // Checked EARLY, before anything expensive, because a unit without the equipment is not a
       // near miss — the job does not exist for it. "We cannot tell" is counted separately and
@@ -515,6 +560,9 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     suggestions: picked, considered, dropped, mix, amenityStats: amenStats,
     climateVocab: Array.from(vocab.entries()).map(([term, units]) => ({ term, units }))
       .sort((a, b) => b.units - a.units).slice(0, 30),
+    inert,
+    buildings: Object.keys(bCount).map(name => ({ name, units: bCount[name] }))
+      .sort((a, b) => b.units - a.units || a.name.localeCompare(b.name)).slice(0, 200),
     historyComplete: hist.complete,
   }
 }
