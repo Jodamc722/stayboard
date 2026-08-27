@@ -34,6 +34,7 @@ import {
   Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble,
 } from 'lucide-react'
 import { catOfTask, type TaskCat } from '@/lib/task-categories'
+import { SuggestionsBand } from '@/components/SuggestionsBand'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -804,6 +805,13 @@ export function OpsGrid({ data, glitches, roster, onRefresh, onAddTask }: {
           ))}
         </div>
       )}
+
+      {/* ── SUGGESTED TODAY ────────────────────────────────────────────────────────────────
+          Jon, 2026-08-26: "lets get the suggestion populating… we can't have 200 tasks just auto
+          populate". Below the market chips so it scopes with them, and above the controls because
+          it is about the shape of the day rather than about finding one row. It renders NOTHING
+          when it has nothing to say, which on a heavy turn day is most mornings. ── */}
+      <SuggestionsBand date={today} market={mkt} onAdded={onRefresh} />
 
       {/* ── CONTROLS ── */}
       <div className="mt-2.5 flex items-center gap-2 flex-wrap">

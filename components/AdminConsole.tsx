@@ -31,7 +31,7 @@ import dynamic from 'next/dynamic'
 import {
   Users, ShieldCheck, Sliders, ChevronRight, Search, X, ArrowLeft, Loader2, Lock,
   Activity, ListChecks, Mail, Bot, ShoppingBag, HardHat, Package, MessageSquare,
-  DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2,
+  DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2, CalendarClock,
 } from 'lucide-react'
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { RolesAdmin } from '@/components/RolesAdmin'
@@ -63,6 +63,7 @@ const L = {
   nav: dynamic(() => import('@/components/NavLayoutAdmin').then(m => m.NavLayoutAdmin), { loading: spin, ssr: false }),
   taskCats: dynamic(() => import('@/components/TaskCategoriesAdmin').then(m => m.TaskCategoriesAdmin), { loading: spin, ssr: false }),
   revAudit: dynamic(() => import('@/components/ReviewAuditPanel').then(m => m.ReviewAuditPanel), { loading: spin, ssr: false }),
+  cadences: dynamic(() => import('@/components/CadencesAdmin').then(m => m.CadencesAdmin), { loading: spin, ssr: false }),
 }
 
 // ── THE DIRECTORY ───────────────────────────────────────────────────────────────────────────────
@@ -113,6 +114,12 @@ const ENTRIES: Entry[] = [
     blurb: 'Which vendor cleans which building, the cleaner roster and ratios, the 4pm deadline and the at-risk window.',
     find: 'vendor botanica cleaner roster ratio deadline 4pm at risk timing audit cadence clean time benchmark',
     render: p => <L.ops isOwner={p.isOwner} />,
+  },
+  {
+    key: 'cadences', title: 'Preventative cadences', group: 'Operations', Icon: CalendarClock, ownerOnly: true,
+    blurb: 'The work that comes due on a clock — A/C deep cleans, filters, batteries, deep cleans — and the caps that keep the daily suggestion list short enough to actually work.',
+    find: 'preventative preventive cadence suggestion suggestions battery batteries ac air conditioning filter deep clean dryer vent water heater interval every six months schedule due overdue automation cap proximity pm',
+    render: p => <L.cadences isOwner={p.isOwner} />,
   },
   {
     key: 'automation', title: 'Task automation', group: 'Operations', Icon: Bot, ownerOnly: true,
