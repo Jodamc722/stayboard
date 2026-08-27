@@ -25,6 +25,7 @@ type Cad = {
   dept: 'maintenance' | 'housekeeping' | 'inspection'
   match: string; needsVacant: boolean; needsDays: number; minutes: number
   mode: 'off' | 'suggest' | 'auto'; seedIfNever: boolean; requiresAmenity?: string
+  scopeBuildings?: string[]; scopeUnits?: string[]; needsScope?: boolean
 }
 type Cfg = {
   enabled: boolean; dailyCap: number; perUnitCap: number; perPersonMinutes: number
@@ -103,6 +104,10 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
+  const scopedCount = (c: Cad) => (c.scopeBuildings?.length || 0) + (c.scopeUnits?.length || 0)
+  const inertCadences = useMemo(() => (cfg?.cadences || []).filter(c => c.mode !== 'off' && c.needsScope && !scopedCount(c)), [cfg])
+  const buildings: { name: string; units: number }[] = preview?.buildings || []
+
   const autoCount = useMemo(() => (cfg?.cadences || []).filter(c => c.mode === 'auto').length, [cfg])
 
   if (!cfg) return <p className="text-[12.5px] text-muted py-2"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Loading&hellip;</p>
@@ -129,6 +134,31 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
         list of hundreds is a list nobody works.
       </p>
 
+      {/* ── THE UNANSWERED QUESTION ───────────────────────────────────────────────────────
+          A cadence that cannot know where it applies is worth more as a visible gap than as a
+          quiet nothing — this is the banner that keeps it visible. */}
+      {inertCadences.length > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5">
+          <p className="text-[12.5px] font-bold text-amber-900 flex items-center gap-1.5">
+            <AlertTriangle size={13} /> {inertCadences.map(c => c.label).join(', ')} — suggesting nothing yet
+          </p>
+          <p className="text-[11.5px] text-amber-900/80 mt-1">
+            {inertCadences.some(c => c.key === 'ac_filter') ? (
+              <>
+                Every one of your units records the amenity &ldquo;Air conditioning&rdquo; and not one records
+                any form of &ldquo;central&rdquo;, so nothing we hold can tell a central system from a
+                mini-split or a PTAC. Rather than guess and propose monthly filter changes for units with
+                no filter to change, this cadence stays inert until you pick the buildings.
+                {' '}<strong>Open it below and tick the ones on central air.</strong>
+              </>
+            ) : 'Open it below and pick which buildings or units it applies to.'}
+          </p>
+          {!buildings.length && (
+            <p className="text-[11px] text-amber-900/70 mt-1">Press <strong>Preview today</strong> to load your building list into the picker.</p>
+          )}
+        </div>
+      )}
+
       {/* ── THE JOBS ──────────────────────────────────────────────────────────────────────── */}
       <div className="border border-line rounded-xl overflow-hidden">
         <div className="px-3 py-1.5 bg-neutral-50 border-b border-line text-[11px] uppercase tracking-wider font-bold text-muted">
@@ -149,6 +179,10 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                   <span className="text-[11.5px] text-muted">every {everyLabel(c.everyDays)}</span>
                   {c.needsVacant && <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">needs an empty unit</span>}
                   {c.requiresAmenity && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">only units with the equipment</span>}
+                  {scopedCount(c) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">{scopedCount(c)} building{scopedCount(c) === 1 ? '' : 's'}</span>}
+                  {c.mode !== 'off' && c.needsScope && !scopedCount(c) && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 font-bold">needs a list &mdash; inert</span>
+                  )}
                   <span className="text-[11px] text-muted">{c.minutes} min</span>
                   <select value={c.mode} onChange={e => setCad(c.key, { mode: e.target.value as Cad['mode'] })}
                     disabled={!isOwner} className={box + ' ml-auto'}>
@@ -196,6 +230,34 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                       <input type="checkbox" checked={c.seedIfNever} onChange={e => setCad(c.key, { seedIfNever: e.target.checked })} className="mt-0.5" disabled={!isOwner} />
                       <span className="text-[12px]"><span className="font-semibold text-ink">Treat &ldquo;never recorded&rdquo; as due</span> <span className="text-muted">— on for jobs every unit certainly needs; off for ones only some units have</span></span>
                     </label>
+                    {(c.needsScope || scopedCount(c) > 0) && (
+                      <div className="sm:col-span-2">
+                        <p className="text-[12px] text-muted mb-1">
+                          Which buildings this applies to
+                          {c.needsScope && !scopedCount(c) && <span className="text-amber-700 font-semibold"> — nothing is suggested until you pick at least one</span>}
+                        </p>
+                        {buildings.length === 0 ? (
+                          <p className="text-[11.5px] text-muted">Press <strong className="text-ink">Preview today</strong> to load your buildings.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5 max-h-[180px] overflow-y-auto">
+                            {buildings.map(b => {
+                              const on = (c.scopeBuildings || []).indexOf(b.name) >= 0
+                              return (
+                                <button key={b.name} type="button" disabled={!isOwner}
+                                  onClick={() => setCad(c.key, {
+                                    scopeBuildings: on
+                                      ? (c.scopeBuildings || []).filter(x => x !== b.name)
+                                      : (c.scopeBuildings || []).concat(b.name),
+                                  })}
+                                  className={'px-2 py-1 rounded-lg border text-[11.5px] ' + (on ? 'bg-ink border-ink text-white font-semibold' : 'bg-white border-line text-muted hover:text-ink')}>
+                                  {b.name} <span className={on ? 'text-white/60' : 'text-muted'}>{b.units}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="sm:col-span-2">
                       <div className="flex items-center gap-2">
                         <span className="text-[12px] text-muted shrink-0">Only units whose amenities match</span>
@@ -344,6 +406,15 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                   </p>
                 )
               })}
+            </div>
+          )}
+          {Array.isArray(preview.inert) && preview.inert.length > 0 && (
+            <div className="px-3 py-2 border-t border-line bg-amber-50/60">
+              {preview.inert.map((i: any) => (
+                <p key={i.key} className="text-[11.5px] text-amber-900">
+                  <strong>{i.label}</strong> — {i.why}
+                </p>
+              ))}
             </div>
           )}
           {Array.isArray(preview.climateVocab) && preview.climateVocab.length > 0 && (
