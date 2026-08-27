@@ -83,7 +83,11 @@ export async function POST(req: NextRequest) {
       if (b.dueDate !== undefined) patch.due_date = /^\d{4}-\d{2}-\d{2}$/.test(str(b.dueDate)) ? str(b.dueDate) : null
       if (b.assignee !== undefined) patch.assignee = str(b.assignee) || null
       if (b.assigneePersonId !== undefined) { const pid = Number(b.assigneePersonId); patch.assignee_person_id = Number.isFinite(pid) && pid > 0 ? pid : null }
-      if (b.details !== undefined) patch.details = str(b.details).slice(0, 4000) || null
+      // Tone is a human judgement and stays editable — the person who took the call may only think
+  // to record it afterwards.
+  if (b.guestTone !== undefined) patch.guest_tone = ['understanding','frustrated','angry','fishing'].includes(String(b.guestTone).toLowerCase()) ? String(b.guestTone).toLowerCase() : null
+  if (b.reportedVia !== undefined) patch.reported_via = ['message','call','in_person','at_checkout','review','other'].includes(String(b.reportedVia).toLowerCase()) ? String(b.reportedVia).toLowerCase() : null
+  if (b.details !== undefined) patch.details = str(b.details).slice(0, 4000) || null
       if (b.progress !== undefined) { const pr = Number(b.progress); patch.progress = (Number.isFinite(pr) && pr >= 0 && pr <= 100) ? Math.round(pr) : null }
       patch.history = stamp('updated')
       patch.updated_at = new Date().toISOString()
