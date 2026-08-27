@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     // COUNTS ONLY on the anonymous path — no unit names, no staff names.
     const safe = {
       ok: true, date, enabled: cfg.enabled,
-      day: run.day, considered: run.considered, dropped: run.dropped,
+      day: run.day, considered: run.considered, dropped: run.dropped, mix: run.mix,
       historyComplete: run.historyComplete, suggested: run.suggestions.length,
     }
 
