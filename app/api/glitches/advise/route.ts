@@ -57,8 +57,6 @@ const CLASSIFY_TOOL = {
           required: ['label', 'severity', 'severityWhy', 'affectedNights', 'speed', 'mitigation', 'dial'],
         },
       },
-      tone: { type: 'string', enum: ['understanding', 'frustrated', 'angry', 'fishing', 'unknown'] },
-      toneWhy: { type: 'string' },
       unusedNights: { type: 'number', description: 'Nights paid for but not stayed because they left over this. 0 if they did not.' },
       reportedAfterCheckout: { type: 'boolean' },
       guestCaused: { type: 'boolean' },
@@ -70,7 +68,7 @@ const CLASSIFY_TOOL = {
       confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
       summary: { type: 'string', description: 'Two sentences a supervisor can read: what happened and what drives the number.' },
     },
-    required: ['issues', 'tone', 'unusedNights', 'reportedAfterCheckout', 'guestCaused', 'questions', 'confidence', 'summary'],
+    required: ['issues', 'unusedNights', 'reportedAfterCheckout', 'guestCaused', 'questions', 'confidence', 'summary'],
   },
 }
 
@@ -90,7 +88,10 @@ RULES YOU MUST FOLLOW:
 - If the record does not say how fast it was fixed, answer speed "unknown" and ASK. Do not infer it
   from the fact that the glitch is closed.
 - If it does not say what was offered, answer mitigation "unknown" and ASK.
-- Judge tone only from the guest's own words. If you have none, answer "unknown" and ask.
+- TONE IS NOT YOURS TO JUDGE. It is chosen by whoever actually dealt with the guest and is handed to
+  you as a fact. Many complaints arrive by phone or in person, where no words were ever written down
+  and the only person who knows how the guest sounded is the one who spoke to them. Never infer it,
+  never contradict it, and if it is missing say so in your questions rather than guessing.
 - Only set guestCaused when the record actually says so. It means no refund, so never infer it.
 - Count affectedNights from the dates you were given. If you cannot, ask.
 - Separate issues get separate entries. Dirty on arrival AND a broken AC is two, not one.
@@ -110,6 +111,9 @@ export async function POST(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'Which glitch?' }, { status: 400 })
   /** Answers to the questions it asked last time, as free text. */
   const extra = String(body?.answers || '').slice(0, 2000)
+  /** Tone, chosen by a person — from the request if they just picked it, else what is on the record. */
+  const TONES = ['understanding', 'frustrated', 'angry', 'fishing']
+  const toneIn = String(body?.tone || '').trim().toLowerCase()
 
   const db = supabaseAdmin()
   const { data: g } = await db.from('glitches').select('*').eq('id', id).maybeSingle()
@@ -147,6 +151,11 @@ export async function POST(req: NextRequest) {
       .join('\n').slice(0, 6000)
   }
 
+  const tone: string | null = TONES.includes(toneIn) ? toneIn
+    : TONES.includes(String((g as any).guest_tone || '').toLowerCase()) ? String((g as any).guest_tone).toLowerCase()
+    : null
+  const reportedVia = String((g as any).reported_via || '')
+
   const cats: string[] = Array.isArray((g as any).categories) && (g as any).categories.length
     ? (g as any).categories : [(g as any).category].filter(Boolean)
 
@@ -157,12 +166,17 @@ export async function POST(req: NextRequest) {
     `OPENED: ${String((g as any).created_at || '').slice(0, 10)}   STATUS NOW: ${(g as any).status}`,
     `STAY: ${String((g as any).check_in || '').slice(0, 10)} to ${String((g as any).check_out || '').slice(0, 10)}  (${nights} nights)`,
     `CHANNEL: ${channel || 'unknown'}`,
+    `HOW THE GUEST RAISED IT: ${reportedVia || 'not recorded'}`,
+    `GUEST TONE (chosen by the person who dealt with them): ${tone || 'NOT SET — ask for it, do not guess'}`,
     `NIGHTLY RATE: ${nightly ? '$' + nightly : 'unknown'}`,
     '',
     'WHAT WAS REPORTED:',
     String((g as any).overview || '(nothing written)'),
     (g as any).details ? '\nWORK NOTES:\n' + String((g as any).details).slice(0, 2000) : '',
-    thread ? '\nGUEST CONVERSATION:\n' + thread : '\nNo guest conversation is linked to this report.',
+    thread ? '\nGUEST CONVERSATION:\n' + thread
+      : (reportedVia && reportedVia !== 'message'
+          ? `\nNo message thread, and none is expected — the guest raised this by ${reportedVia.replace(/_/g, ' ')}.`
+          : '\nNo guest conversation is linked to this report.'),
     extra ? '\nANSWERS THE TEAM JUST GAVE:\n' + extra : '',
   ].join('\n')
 
@@ -189,6 +203,7 @@ export async function POST(req: NextRequest) {
     const questions: string[] = [...(c.questions || [])]
     const needRate = !nightly
     if (needRate) questions.unshift(REQUIRED_FIELDS[0].ask)
+    if (!tone) questions.push('How did the guest sound — understanding, frustrated, angry, or angling for a discount? Pick one; whoever spoke to them knows.')
 
     const usable = (c.issues || []).filter((i: any) => i.speed !== 'unknown' && i.mitigation !== 'unknown')
     const blocked = needRate || usable.length === 0
@@ -202,7 +217,7 @@ export async function POST(req: NextRequest) {
       severity: i.severity,
       speed: i.speed === 'unknown' ? 'next_day' : i.speed,
       mitigation: i.mitigation === 'unknown' ? 'none' : i.mitigation,
-      tone: c.tone === 'unknown' ? null : c.tone,
+      tone: (tone as any) || null,
       reportedAfterCheckout: !!c.reportedAfterCheckout,
       guestCaused: !!c.guestCaused,
       dial: Number(i.dial),
@@ -219,7 +234,7 @@ export async function POST(req: NextRequest) {
       summary: c.summary,
       questions,
       classification: {
-        issues: c.issues, tone: c.tone, toneWhy: c.toneWhy,
+        issues: c.issues, tone, toneSource: tone ? (toneIn ? 'just selected' : 'on the record') : null,
         unusedNights: c.unusedNights, reportedAfterCheckout: c.reportedAfterCheckout, guestCaused: c.guestCaused,
       },
       stay: { nights, nightlyRate: nightly, channel, hasThread: !!thread },
