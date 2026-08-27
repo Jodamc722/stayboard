@@ -39,6 +39,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { marketOf, buildingOf } from './segments'
+import { linkedSets } from './linked-units'
 import { isLiveStay } from './stay-status'
 import {
   CADENCE_KEY, resolveCadences, cadenceRe, daysBetween,
@@ -143,6 +144,11 @@ export type SuggestionRun = {
    * visible backlog into a stream of duplicates.
    */
   stalled: { unit: string; label: string; since: string }[]
+  /**
+   * Apartments that appear in Guesty more than once — listed whole AND as their lock-off halves.
+   * The whole-unit listing is suppressed so one front door gets one job, not two or three.
+   */
+  doubleListed: number
   /** False when the history read hit its page ceiling; some "never done" may be "long ago". */
   historyComplete: boolean
   error?: string
@@ -294,7 +300,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     ok: true, date, enabled: cfg.enabled,
     day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
     suggestions: [], considered: 0, dropped, mix: { building: 0, area: 0, none: 0 },
-    amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [],
+    amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [], doubleListed: 0,
     historyComplete: true, ...extra,
   })
 
@@ -426,6 +432,15 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       bucket: (buildingOf(l.building, name) || str(l.building) || name).trim().toLowerCase(),
     }
   }
+
+  // ── ONE APARTMENT, ONE JOB ────────────────────────────────────────────────────────────────────
+  // Jon, 2026-08-27: "Make sure we don't push double — full parent listing with same tasks. Only
+  // individual listing." Several apartments are listed both whole and as their lock-off halves, and
+  // walking the listing table proposes the same A/C deep clean against every one of them — two or
+  // three dispatches to one front door. lib/linked-units holds the rule.
+  const links = linkedSets(Object.keys(lmap).map(id => ({
+    listingId: id, unit: lmap[id].name, building: lmap[id].bucket,
+  })))
 
   // ── OCCUPANCY AND THE WINDOW ──────────────────────────────────────────────────────────────────
   const occupied = new Set<string>()
@@ -583,6 +598,10 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   let considered = 0
   for (const lid of Object.keys(lmap)) {
     const meta = lmap[lid]
+    // The whole-unit listing of an apartment whose halves are also listed. Its parts carry the
+    // work; proposing against it as well is the double. (A whole unit with NO parts listed is not
+    // flagged here at all, so nothing standalone is ever lost.)
+    if (links.isRedundantParent[lid]) { drop('listed whole and in parts — its halves carry the work'); continue }
     const isOcc = occupied.has(lid)
     const na = nextIn[lid] || null
     // No arrival inside the horizon is the widest window there is.
@@ -592,7 +611,19 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       considered++
       if (openCadenceTask[lid]?.has(c.key) || openAny[lid]?.has(c.key)) { drop('already scheduled'); continue }
 
-      const ld = lastDone[lid]?.[c.key] || null
+      // HISTORY FLOWS DOWN FROM THE WHOLE UNIT. A deep clean logged against "3316 Full" cleaned
+      // both halves, so "3316/1" must not read as never done — otherwise suppressing the parent
+      // would manufacture a flood of false "never done" the very next morning. Siblings are NOT
+      // pooled: /1 and /2 are separate halves with their own A/C and their own locks.
+      const kin = links.parentsOf[lid] || []
+      if (kin.some(pid => openCadenceTask[pid]?.has(c.key) || openAny[pid]?.has(c.key))) {
+        drop('already scheduled on the whole unit'); continue
+      }
+      let ld = lastDone[lid]?.[c.key] || null
+      for (const pid of kin) {
+        const pld = lastDone[pid]?.[c.key] || null
+        if (pld && (!ld || pld > ld)) ld = pld
+      }
       const daysSince = ld ? daysBetween(ld, date) : null
       if (daysSince == null && !c.seedIfNever) { drop('never done, seeding off'); continue }
       const daysOver = daysSince == null ? c.everyDays : daysSince - c.everyDays
@@ -709,18 +740,21 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
 
   // ── THE CAPS ──────────────────────────────────────────────────────────────────────────────────
   // Applied after ranking so the caps trim the tail, not the top.
+  // Keyed on the SPACE, not the listing: two halves of one apartment are one front door, and
+  // "don't push double" means one job for that door today, not one per listing.
   const perUnit: Record<string, number> = {}
   const perPerson: Record<string, number> = {}
   const picked: Suggestion[] = []
   for (const s of out) {
     if (picked.length >= day.cap) { drop('over the daily cap'); continue }
-    if ((perUnit[s.listingId] || 0) >= cfg.perUnitCap) { drop('unit already has one'); continue }
+    const space = links.spaceOf[s.listingId] || s.listingId
+    if ((perUnit[space] || 0) >= cfg.perUnitCap) { drop('unit already has one'); continue }
     // Charge the minutes to the person most likely to take it. With nobody named, the job is
     // unassigned and cannot overload anybody, so it skips this test.
     const who = s.candidates[0] || null
     if (who && (perPerson[who] || 0) + s.minutes > cfg.perPersonMinutes) { drop("person's day is full"); continue }
     picked.push(s)
-    perUnit[s.listingId] = (perUnit[s.listingId] || 0) + 1
+    perUnit[space] = (perUnit[space] || 0) + 1
     if (who) perPerson[who] = (perPerson[who] || 0) + s.minutes
   }
 
@@ -734,6 +768,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       .sort((a, b) => b.units - a.units).slice(0, 30),
     inert,
     stalled: stalled.sort((a, b) => a.since.localeCompare(b.since)).slice(0, 40),
+    doubleListed: links.sets,
     buildings: Object.keys(bCount).map(name => ({ name, units: bCount[name] }))
       .sort((a, b) => b.units - a.units || a.name.localeCompare(b.name)).slice(0, 200),
     historyComplete: hist.complete,
