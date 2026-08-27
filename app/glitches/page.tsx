@@ -122,7 +122,6 @@ export default function GlitchesPage() {
             {(() => {
               const bg: any[] = board && Array.isArray(board.glitches) ? board.glitches : []
               if (!bg.length) return null
-              const rec = bg.reduce((s, g) => s + (Number(g.recovery_cost) || 0), 0)
               const ref = bg.reduce((s, g) => s + (Number(g.refund_approved) || 0), 0)
               const byCat: Record<string, number> = {}
               for (const g of bg) if (g.category) byCat[g.category] = (byCat[g.category] || 0) + 1
@@ -131,7 +130,6 @@ export default function GlitchesPage() {
                 <span className="text-sm text-muted w-full mt-1 flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-ink">Board:</span>
                   <span>{bg.filter(g => g.status !== 'closed').length} in play</span>
-                  {rec > 0 && <span>· ${Math.round(rec).toLocaleString()} recovery cost</span>}
                   {ref > 0 && <span>· ${Math.round(ref).toLocaleString()} refunds approved</span>}
                   {top.length > 0 && <span>· top: {top.map(t => t.k.replace('Maintenance - ', '') + ' ×' + t.n).join(', ')}</span>}
                 </span>
@@ -255,7 +253,6 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
     const src = board && Array.isArray(board.glitches) ? board.glitches : []
     return src.filter((g: any) => (!bFilter || buildingOf({ unit: g.unit || '', building: null } as Glitch) === bFilter) && (!uFilter || g.unit === uFilter))
   }, [board, bFilter, uFilter])
-  const rec = bg.reduce((s, g) => s + (Number(g.recovery_cost) || 0), 0)
   const ref = bg.reduce((s, g) => s + (Number(g.refund_approved) || 0), 0)
 
   return (
@@ -281,7 +278,7 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">{focused ? 'Glitches (focused)' : 'On record'}</div><div className="text-2xl font-bold text-ink">{filtered.length}</div></div>
         <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Still open</div><div className="text-2xl font-bold text-rose-700">{stats.open}</div></div>
-        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Recovery cost (board)</div><div className="text-2xl font-bold text-ink">${Math.round(rec).toLocaleString()}</div></div>
+        
         <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Refunds approved (board)</div><div className="text-2xl font-bold text-ink">${Math.round(ref).toLocaleString()}</div></div>
       </div>
 
