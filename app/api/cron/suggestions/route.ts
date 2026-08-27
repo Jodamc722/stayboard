@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { recordRun } from '@/lib/automation-runs'
+import { tooSoon } from '@/lib/cron-auth'
 import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg } from '@/lib/suggestions'
 
 export const dynamic = 'force-dynamic'
@@ -28,9 +29,18 @@ async function signedIn(): Promise<boolean> {
 }
 
 export async function GET(req: NextRequest) {
+  // ── WHO MAY RUN THE CREATING PATH ─────────────────────────────────────────────────────────────
+  // Audit, 2026-08-27: this used to accept `auth === ''` when CRON_SECRET is unset — and
+  // lib/cron-auth's own header records that CRON_SECRET has never been set on this project. That
+  // made a plain anonymous GET from anywhere on the internet enough to run the path that CREATES
+  // work in Breezeway and assigns it to named staff.
+  //
+  // The lenient fallback exists so Vercel's scheduler can run jobs without a secret, and Vercel
+  // stamps `x-vercel-cron` on every one of its calls. That header is the whole of the leniency it
+  // needs; a bare unauthenticated request is not the scheduler and gets nothing.
   const secret = process.env.CRON_SECRET
   const auth = req.headers.get('authorization') || ''
-  const isCron = secret ? auth === 'Bearer ' + secret : (!!req.headers.get('x-vercel-cron') || auth === '')
+  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
   const preview = new URL(req.url).searchParams.get('preview') === '1'
   const me = await signedIn()
 
@@ -43,6 +53,17 @@ export async function GET(req: NextRequest) {
   }
 
   const date = ymd(new Date())
+
+  // ── ONCE A DAY, WHOEVER CALLS ─────────────────────────────────────────────────────────────────
+  // Every other cron in this app that spends something real leans on tooSoon(); this one wrote its
+  // receipt to `automation_runs` and then never read it back, so nothing stopped it running twenty
+  // times in an hour. It is a MORNING run: 20 hours is "not again today", while still allowing
+  // tomorrow's 7:48 to fire. A preview never creates anything, so it is not throttled.
+  if (!preview) {
+    const skip = await tooSoon('suggestions', 20 * 60)
+    if (skip) return NextResponse.json({ ok: true, date, created: 0, ...skip })
+  }
+
   try {
     const cfg = await getCadenceCfg()
     const run = await buildSuggestions(date)
@@ -52,6 +73,7 @@ export async function GET(req: NextRequest) {
       ok: true, date, enabled: cfg.enabled,
       day: run.day, considered: run.considered, dropped: run.dropped, mix: run.mix,
       amenityStats: run.amenityStats, climateVocab: run.climateVocab, inert: run.inert,
+      stalled: run.stalled.length,
       historyComplete: run.historyComplete, suggested: run.suggestions.length,
     }
 
