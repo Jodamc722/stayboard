@@ -23,7 +23,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import {
   Lightbulb, Loader2, Plus, X, ChevronDown, ChevronRight, Wrench, Sparkles, ClipboardList,
-  CalendarClock, Check, AlertTriangle, RefreshCw,
+  CalendarClock, Check, AlertTriangle, RefreshCw, Info,
 } from 'lucide-react'
 
 export type Sug = {
@@ -39,6 +39,7 @@ type Run = {
   suggestions: Sug[]; considered: number; historyComplete: boolean; error?: string
   inert?: { key: string; label: string; why: string }[]
   stalled?: { unit: string; label: string; since: string }[]
+  doubleListed?: number
 }
 type Person = { id: number; name: string; departments: string[] }
 
@@ -192,57 +193,69 @@ function SugCard({ s, showUnit = true, defaultAssignee }: {
   const dated = openAssign && when && when !== today
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-white px-2.5 py-2">
-      <div className="flex items-start gap-1.5">
-        <Icon size={12} className="text-muted mt-0.5 shrink-0" />
+    <div className="rounded-xl border border-line bg-white p-2.5 flex flex-col gap-2">
+      {/* WHAT IT IS — the job, then the place, in that order. The old card led with a wrench icon
+          and a 12.5px title competing with a unit name at nearly the same weight; at arm's length
+          on a phone they read as one grey blur. */}
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 w-6 h-6 rounded-lg bg-amber-50 border border-amber-200 text-amber-600 inline-flex items-center justify-center shrink-0">
+          <Icon size={12} strokeWidth={2.5} />
+        </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[12.5px] font-semibold text-ink leading-tight">{s.label}</p>
-          {showUnit && <p className="text-[11.5px] text-muted truncate">{s.unit}</p>}
+          <p className="text-[13px] font-bold text-ink leading-tight">{s.label}</p>
+          <p className="text-[11.5px] text-muted truncate mt-0.5">
+            {showUnit ? s.unit : (s.building || s.market)}
+            <span className="mx-1 text-line">|</span>{s.minutes} min
+            {s.vacantTonight && <><span className="mx-1 text-line">|</span>empty tonight</>}
+          </p>
         </div>
-        <span className="text-[10px] text-muted shrink-0">{s.minutes}m</span>
       </div>
-      <p className="text-[11px] text-muted mt-1 leading-snug">{s.why}</p>
+
+      {/* WHY — the sentence that makes this a suggestion rather than an order. */}
+      <p className="text-[11.5px] text-muted leading-snug border-l-2 border-amber-200 pl-2">{s.why}</p>
 
       {openAssign && (
-        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap rounded-lg bg-app px-2 py-1.5">
+          <span className="text-[11px] text-muted font-semibold">Give it to</span>
           <select value={who} onChange={e => setWho(e.target.value)}
-            className="rounded-lg border border-line px-1.5 py-1 text-[11.5px] max-w-[140px]">
+            className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px] max-w-[150px]">
             <option value="">Nobody yet</option>
             {inDept.map(p => <option key={'d' + p.id} value={p.name}>{p.name}</option>)}
             {rest.length > 0 && <option key="sep" disabled>{'\u2500\u2500\u2500\u2500\u2500\u2500'}</option>}
             {rest.map(p => <option key={'r' + p.id} value={p.name}>{p.name}</option>)}
           </select>
+          <span className="text-[11px] text-muted font-semibold">on</span>
           {/* min=today: a task dated last week never lands on any board, so nobody works it. */}
           <input type="date" value={when} min={today} onChange={e => setWhen(e.target.value)}
-            className="rounded-lg border border-line px-1.5 py-1 text-[11.5px]" />
+            className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px]" />
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 mt-1.5">
+      <div className="flex items-center gap-1.5">
         <button
           onClick={() => ctx.act(s, 'add', openAssign
             ? { assignee: who, scheduleDate: when }
-            // Even collapsed, a person's row sends that person explicitly rather than letting the
-            // server fall back to candidates[0].
             : (defaultAssignee !== undefined ? { assignee: defaultAssignee } : undefined))}
           disabled={busy}
-          className="inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2 py-1 text-[11.5px] font-semibold disabled:opacity-40">
-          {busy ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
-          {dated ? 'Schedule it' : `Add${target ? ` for ${target.split(' ')[0]}` : ''}`}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-bold disabled:opacity-40">
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+          {dated ? `Schedule ${when.slice(5)}` : `Add${target ? ` for ${target.split(' ')[0]}` : ''}`}
         </button>
         <button onClick={() => setOpenAssign(o => !o)} disabled={busy}
-          className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-[11.5px] text-muted disabled:opacity-40">
-          {/* Says both things it does. It used to say only "Assign", so the ability to move a job to
-              another day was behind a button that gave no hint it was there. */}
-          <CalendarClock size={11} /> {openAssign ? 'Close' : 'Who / when'}
+          title="Choose who does it and when"
+          className={'inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-[12px] disabled:opacity-40 '
+            + (openAssign ? 'border-ink text-ink font-semibold' : 'border-line text-muted hover:text-ink')}>
+          <CalendarClock size={12} /> Who / when
         </button>
         <button onClick={() => ctx.act(s, 'dismiss')} disabled={busy}
           title="Hides this job everywhere, for 30 days"
-          className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-[11.5px] text-muted disabled:opacity-40">
-          <X size={11} /> Not for a month
+          className="inline-flex items-center justify-center rounded-lg border border-line px-2 py-1.5 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40">
+          <X size={12} />
         </button>
       </div>
-      {err && <p className="text-[11px] text-rose-600 mt-1 leading-snug">{err}</p>}
+      {err && (
+        <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 leading-snug">{err}</p>
+      )}
     </div>
   )
 }
@@ -251,6 +264,7 @@ function SugCard({ s, showUnit = true, defaultAssignee }: {
 export function SuggestionsBand({ market }: { market: string }) {
   const ctx = useSuggestions()
   const [open, setOpen] = useState(true)
+  const [notesOpen, setNotesOpen] = useState(false)
   if (!ctx || ctx.loading || !ctx.run) return null
 
   // A TOTAL FAILURE MUST NOT LOOK LIKE A QUIET DAY.
@@ -274,60 +288,74 @@ export function SuggestionsBand({ market }: { market: string }) {
   const inert = ctx.run.inert || []
   const stalled = ctx.run.stalled || []
   const truncated = ctx.run.historyComplete === false
+  const dbl = ctx.run.doubleListed || 0
   if (!list.length && !heavy && !handled.length && !inert.length && !stalled.length) return null
 
+  // The caveats the engine already knew. Collected into ONE line with a count, rather than a stack
+  // of amber paragraphs that push the actual board off a phone screen.
+  const notes: string[] = []
+  if (truncated) notes.push('Task history was too long to read in full, so a job shown as never done may just be older than we can see.')
+  if (inert.length) notes.push(`${inert.map(i => i.label).join(', ')} is suggesting nothing until somebody picks which buildings it applies to (Settings \u2192 Preventative cadences).`)
+  if (stalled.length) notes.push(`${stalled.length} preventative ${stalled.length === 1 ? 'job was' : 'jobs were'} scheduled and never done \u2014 ${stalled.slice(0, 3).map(x => `${x.label} at ${x.unit} (${x.since})`).join(', ')}${stalled.length > 3 ? ', and more' : ''}. Already on the board, so not proposed again.`)
+  if (dbl) notes.push(`${dbl} apartment${dbl === 1 ? ' is' : 's are'} listed both whole and as halves \u2014 the whole-unit listing is skipped so one front door gets one job.`)
+
   return (
-    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/60 overflow-hidden">
-      <div className="w-full px-3 py-2 flex items-start gap-2">
-        <Lightbulb size={14} className="text-amber-500 mt-0.5 shrink-0" />
+    <div className="mt-3 rounded-2xl border border-amber-300 bg-white overflow-hidden shadow-[0_1px_0_rgba(0,0,0,0.03)]">
+      {/* ── THE HEADLINE ────────────────────────────────────────────────────────────────────
+          Jon, 2026-08-27: "make this cleaner, and more visible." It was a wash of amber on amber
+          with the count buried in a sentence. Now: a solid header strip, the number as a number,
+          and the day's verdict as the subtitle that explains it. */}
+      <div className="px-3 py-2.5 bg-amber-50 border-b border-amber-200 flex items-start gap-2.5">
+        <span className="mt-0.5 w-7 h-7 rounded-lg bg-amber-400 text-white inline-flex items-center justify-center shrink-0">
+          <Lightbulb size={15} strokeWidth={2.5} />
+        </span>
         <button type="button" onClick={() => setOpen(o => !o)} className="flex-1 min-w-0 text-left">
-          <span className="text-[12.5px] font-bold text-ink">
-            {list.length ? `${list.length} worth slotting in today` : 'Nothing extra today'}
+          <span className="flex items-baseline gap-1.5 flex-wrap">
+            {list.length > 0 && <span className="text-[15px] font-black text-ink tabular-nums leading-none">{list.length}</span>}
+            <span className="text-[12.5px] font-bold text-ink">
+              {list.length ? `suggested for today` : 'Nothing extra today'}
+            </span>
+            {market !== 'all' && <span className="text-[10.5px] text-amber-700 font-semibold">in {market}</span>}
           </span>
-          {ctx.run.day?.verdict && <span className="block text-[11.5px] text-muted mt-0.5">{ctx.run.day.verdict}</span>}
+          {ctx.run.day?.verdict && <span className="block text-[11.5px] text-muted mt-1 leading-snug">{ctx.run.day.verdict}</span>}
         </button>
         <button type="button" onClick={ctx.reload} title="Re-read the day"
-          className="text-muted hover:text-ink shrink-0 mt-0.5"><RefreshCw size={12} /></button>
+          className="text-amber-700/60 hover:text-amber-800 shrink-0 mt-0.5 p-0.5"><RefreshCw size={13} /></button>
         {list.length > 0 && (
-          <button type="button" onClick={() => setOpen(o => !o)} className="text-muted shrink-0 mt-0.5">
-            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <button type="button" onClick={() => setOpen(o => !o)} title={open ? 'Collapse' : 'Expand'}
+            className="text-amber-700/60 hover:text-amber-800 shrink-0 mt-0.5 p-0.5">
+            {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           </button>
         )}
       </div>
 
       {open && list.length > 0 && (
-        <div className="px-2 pb-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="p-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 bg-app/40">
           {list.map(s => <SugCard key={s.id} s={s} />)}
         </div>
       )}
 
-      {/* ── THE CAVEATS THE ENGINE ALREADY KNEW AND NEVER SAID ────────────────────────────────
-          All three of these were computed every run and rendered nowhere on the board. A flag that
-          says "these numbers may be wrong", shown only inside owner-only settings behind a button
-          nobody presses, is not a warning. */}
-      {truncated && (
-        <p className="px-3 pb-1.5 text-[11px] text-amber-800">
-          Task history was too long to read in full, so a job shown as never done may just be older than we can see.
-        </p>
-      )}
-      {inert.length > 0 && (
-        <p className="px-3 pb-1.5 text-[11px] text-amber-800">
-          <strong>{inert.map(i => i.label).join(', ')}</strong> is suggesting nothing until somebody picks which
-          buildings it applies to (Settings &rarr; Preventative cadences).
-        </p>
-      )}
-      {stalled.length > 0 && (
-        <p className="px-3 pb-1.5 text-[11px] text-amber-800">
-          {stalled.length} preventative {stalled.length === 1 ? 'job was' : 'jobs were'} scheduled and never done &mdash;
-          {' '}{stalled.slice(0, 3).map(x => `${x.label} at ${x.unit} (${x.since})`).join(', ')}
-          {stalled.length > 3 ? ', and more' : ''}. They are already on the board, so they are not proposed again.
-        </p>
-      )}
       {handled.length > 0 && (
-        <p className="px-3 pb-2 text-[11.5px] text-muted flex items-start gap-1">
-          <Check size={12} className="mt-0.5 shrink-0 text-emerald-600" />
+        <p className="px-3 py-2 text-[11.5px] text-emerald-800 bg-emerald-50 border-t border-emerald-200 flex items-start gap-1.5">
+          <Check size={12} className="mt-0.5 shrink-0" />
           <span>{handled.map(([, v]) => v).join(' \u00b7 ')}</span>
         </p>
+      )}
+
+      {notes.length > 0 && (
+        <div className="border-t border-line">
+          <button type="button" onClick={() => setNotesOpen(n => !n)}
+            className="w-full px-3 py-1.5 flex items-center gap-1.5 text-left text-[11px] text-muted hover:text-ink">
+            <Info size={11} className="shrink-0" />
+            <span className="flex-1">{notes.length} thing{notes.length === 1 ? '' : 's'} worth knowing about this list</span>
+            {notesOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </button>
+          {notesOpen && (
+            <ul className="px-3 pb-2 space-y-1">
+              {notes.map((n, i) => <li key={i} className="text-[11px] text-muted leading-snug">{n}</li>)}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   )
@@ -350,9 +378,9 @@ function InlineSuggestions({ list, title, showUnit, defaultAssignee, done }: {
     ) : null
   }
   return (
-    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/50 px-2 py-2">
-      <p className="text-[10px] uppercase tracking-wider font-bold text-amber-700 mb-1.5 flex items-center gap-1">
-        <Lightbulb size={11} /> {title}
+    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/40 p-2">
+      <p className="text-[10px] uppercase tracking-wider font-bold text-amber-700 mb-1.5 flex items-center gap-1.5">
+        <Lightbulb size={11} strokeWidth={2.5} /> {title}
       </p>
       <div className="grid gap-1.5 sm:grid-cols-2">
         {list.map(s => <SugCard key={s.id} s={s} showUnit={showUnit} defaultAssignee={defaultAssignee} />)}
