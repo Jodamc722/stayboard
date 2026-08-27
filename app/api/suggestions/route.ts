@@ -34,7 +34,8 @@ export async function GET(req: NextRequest) {
   } catch (e: any) {
     // A failure here must never take the ops board down — it renders no band and says why.
     return NextResponse.json({
-      ok: false, date, enabled: false, suggestions: [], considered: 0, dropped: {}, historyComplete: false,
+      ok: false, date, enabled: false, suggestions: [], considered: 0, dropped: {},
+      mix: { building: 0, area: 0, none: 0 }, historyComplete: false,
       day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
       error: String(e?.message || e),
     }, { status: 200 })
