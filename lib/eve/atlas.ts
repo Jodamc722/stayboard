@@ -42,7 +42,7 @@ const PAGE_NOTES: Record<string, string> = {
   'share-links': 'live shareable data links — reservations, ADR, cleaning, verification — with passwords',
   buildings: 'the property/building registry and rollups',
   listings: 'every listing with channel config',
-  optimize: 'listing content optimizer',
+  optimize: 'ranked list of what to fix across the portfolio; the optimizer itself is on each listing page (/listings/<id>)',
   health: 'listing health & channel connection status',
   patterns: 'building-level performance patterns',
   revenue: 'revenue center — pricing, pacing, pickup',
