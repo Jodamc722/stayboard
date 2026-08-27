@@ -38,7 +38,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
-import { marketOf } from './segments'
+import { marketOf, buildingOf } from './segments'
 import { isLiveStay } from './stay-status'
 import {
   CADENCE_KEY, resolveCadences, cadenceRe, daysBetween,
@@ -47,7 +47,11 @@ import {
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const dOf = (v: any) => str(v).slice(0, 10)
-const DONE = /complete|finish|close|approv/i
+// \b matters here and nowhere else in this app. Elsewhere this regex only labels a display state;
+// here a false "done" writes a completion date into the cadence ledger and SUPPRESSES REAL WORK for
+// a full interval. /complete/ matches "incomplete" and /finish/ matches "unfinished" — the word
+// boundary is the difference between "this was done" and "this was explicitly not done".
+const DONE = /\b(complete|finish|close|approv)/i
 const GONE = /delete|cancel/i
 const shift = (ymd: string, days: number) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
@@ -71,6 +75,8 @@ export type Suggestion = {
   candidates: string[]
   /** How close the nearest able person is. 'building' is the one this engine is built to prefer. */
   proximity: 'building' | 'area' | 'none'
+  /** Vendor-cleaned building. The board files these under a 'Vendor' chip, not their geography. */
+  vendor: boolean
   score: number
   /** The sentence a coordinator reads. Written here so every surface says the same thing. */
   why: string
@@ -83,6 +89,7 @@ export type DayRead = {
   date: string
   /** Departure cleans still open right now. */
   openCleans: number
+  /** People who still have housekeeping work open — the crew that can absorb something else. */
   cleaners: number
   /** Open cleans per cleaner. Above `heavy` the day cannot absorb extra work. */
   load: number
@@ -130,6 +137,12 @@ export type SuggestionRun = {
   inert: { key: string; label: string; why: string }[]
   /** Buildings and how many active units each holds — what the scope picker in settings offers. */
   buildings: { name: string; units: number }[]
+  /**
+   * Preventative work that WAS scheduled and never done, now past its day. Not re-suggested — it
+   * already exists — but named, because the old behaviour of silently proposing it again turned a
+   * visible backlog into a stream of duplicates.
+   */
+  stalled: { unit: string; label: string; since: string }[]
   /** False when the history read hit its page ceiling; some "never done" may be "long ago". */
   historyComplete: boolean
   error?: string
@@ -189,7 +202,12 @@ async function readHistory(sinceDate: string): Promise<{ rows: any[]; complete: 
       .gte('scheduled_date', sinceDate)
       .not('name', 'ilike', '%departure clean%')
       .not('name', 'ilike', '%strip%')
-      .order('scheduled_date', { ascending: false })
+      // A SECOND SORT KEY IS NOT OPTIONAL WHEN PAGING. `scheduled_date` is a date with hundreds of
+      // ties per value, and Postgres gives no stable order among ties across the separate queries
+      // that fetch page 0 and page 1 — so rows straddling a boundary came back twice or not at all.
+      // A dropped completion row reads as "never done", which is the exact failure the paging was
+      // written to prevent.
+      .order('scheduled_date', { ascending: false }).order('id', { ascending: false })
       .range(p * PAGE, p * PAGE + PAGE - 1)
     if (error) { complete = false; break }
     const batch = (data || []) as any[]
@@ -207,26 +225,60 @@ async function readHistory(sinceDate: string): Promise<{ rows: any[]; complete: 
  * already stretched and the honest number of extra jobs is zero. The thresholds are deliberately
  * blunt — this is a go / slow-down / stop judgement, not a forecast.
  */
-function readDay(opts: { date: string; openCleans: number; cleaners: number; cap: number }): DayRead {
-  const { date, openCleans, cleaners, cap } = opts
-  const load = cleaners > 0 ? openCleans / cleaners : (openCleans > 0 ? 99 : 0)
+function readDay(opts: {
+  date: string
+  openCleans: number
+  /** People with work STILL OPEN today — the crew that can actually absorb something. */
+  cleaners: number
+  /** Anyone who had housekeeping work today, finished or not. Only used to tell 0 from unknown. */
+  cleanersEver: number
+  cap: number
+}): DayRead {
+  const { date, openCleans, cleaners, cleanersEver, cap } = opts
   let out = cap
   let verdict = ''
   let heavy = false
-  if (openCleans === 0 && cleaners === 0) {
+
+  // ── "NOBODY IS ASSIGNED YET" IS NOT "EVERYBODY IS SLAMMED" ────────────────────────────────────
+  // Audit, 2026-08-27: this used to compute load = openCleans / cleaners with cleaners = 0 giving
+  // load 99 — heavy, cap 0. The cron fires at 7:48am ET. If assignments are not in Breezeway yet at
+  // 7:48, the feature produced NOTHING, every day, forever, while its receipt said ok:true and its
+  // verdict read "Heavy turn day — 43 cleans across 0 cleaners". A permanently dark feature that
+  // looks like it is working as designed is the worst failure mode available, so the unknown case
+  // is now named as unknown and given a small allowance rather than a zero.
+  if (openCleans > 0 && cleanersEver === 0) {
     out = Math.min(cap, 2)
-    verdict = 'Nobody is scheduled and nothing is open — holding to a couple of suggestions until the day is real.'
-  } else if (load >= 6) {
+    return {
+      date, openCleans, cleaners: 0, load: 0, cap: out, heavy: false,
+      verdict: `${openCleans} clean${openCleans === 1 ? '' : 's'} on the board with nobody assigned to them yet — too early to read the day, so holding to ${out}.`,
+    }
+  }
+  if (openCleans === 0 && cleanersEver === 0) {
+    out = Math.min(cap, 2)
+    return {
+      date, openCleans: 0, cleaners: 0, load: 0, cap: out, heavy: false,
+      verdict: 'Nothing on the board and nobody scheduled — holding to a couple of suggestions until the day is real.',
+    }
+  }
+
+  // Numerator and denominator now describe the SAME moment: cleans still open, over the people who
+  // still have work open. The old version counted everyone who had touched a clean all day, so at
+  // 2pm — four cleaners finished and gone home — the day read light exactly when the crew left
+  // standing was most stretched.
+  const load = cleaners > 0 ? openCleans / cleaners : (openCleans > 0 ? 99 : 0)
+  if (load >= 6) {
     out = 0; heavy = true
-    verdict = `Heavy turn day — ${openCleans} cleans still open across ${cleaners} ${cleaners === 1 ? 'cleaner' : 'cleaners'}. Nothing extra today.`
+    verdict = `Heavy turn day — ${openCleans} cleans still open across ${cleaners} still working. Nothing extra today.`
   } else if (load >= 4) {
     out = Math.max(1, Math.round(cap / 3)); heavy = true
-    verdict = `Busy — ${openCleans} open cleans across ${cleaners} ${cleaners === 1 ? 'cleaner' : 'cleaners'}. Only the jobs somebody is standing next to.`
+    verdict = `Busy — ${openCleans} open cleans across ${cleaners} still working. Only the jobs somebody is standing next to.`
   } else if (load >= 2.5) {
     out = Math.max(1, Math.round(cap / 2))
     verdict = `Normal turn day — ${openCleans} open cleans across ${cleaners}. Room for a few extras.`
   } else {
-    verdict = `Light day — ${openCleans} open ${openCleans === 1 ? 'clean' : 'cleans'} across ${cleaners}. Good day to catch up on preventative work.`
+    verdict = openCleans === 0
+      ? `Every clean is closed. Good day to catch up on preventative work.`
+      : `Light day — ${openCleans} open ${openCleans === 1 ? 'clean' : 'cleans'} across ${cleaners}. Good day to catch up on preventative work.`
   }
   return { date, openCleans, cleaners, load: Math.round(load * 10) / 10, cap: out, verdict, heavy }
 }
@@ -242,7 +294,8 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     ok: true, date, enabled: cfg.enabled,
     day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
     suggestions: [], considered: 0, dropped, mix: { building: 0, area: 0, none: 0 },
-    amenityStats: {}, climateVocab: [], inert: [], buildings: [], historyComplete: true, ...extra,
+    amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [],
+    historyComplete: true, ...extra,
   })
 
   // A cadence that needs a scope and has not been given one is INERT: it is skipped, and it is
@@ -277,7 +330,10 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   const db = supabaseAdmin()
   const presets = await getOpsPresets()
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
-  const maxEvery = Math.max(...live.map(c => c.everyDays))
+  // Capped at three years. `everyDays` accepts up to 3650, and one cadence set to a ten-year
+  // interval used to widen the history read to 3,680 days FOR EVERY CADENCE, guaranteeing the page
+  // ceiling was hit and silently degrading the whole portfolio's history.
+  const maxEvery = Math.min(1095, Math.max(...live.map(c => c.everyDays)))
   // Look back one full cadence plus a month of slack, so a job done just inside its interval is
   // still visible as done rather than reading as never.
   const since = shift(date, -(maxEvery + 30))
@@ -295,11 +351,47 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     getSuggestionLog(),
   ])
 
+  // ── FAIL LOUD, NEVER CONFIDENTLY WRONG ────────────────────────────────────────────────────────
+  // Audit, 2026-08-27: these four reads were never checked. The worst case is not an empty list, it
+  // is a CONFIDENT one — if the occupancy read fails, every unit reads vacant, every window reads
+  // wide open, and the engine proposes tearing an A/C apart in a unit with a guest asleep in it,
+  // captioned "nothing booked in the next three weeks". In 'auto' mode it would create them.
+  //
+  // A suggestion engine that cannot see the calendar has no business having an opinion, so a failed
+  // read stops the run and says which one broke. Zero suggestions is always a safe answer here;
+  // a wrong one is not.
+  const readErr = [
+    lRes.error ? 'the unit list' : '',
+    todayRes.error ? "today's tasks" : '',
+    occRes.error ? 'who is in-house' : '',
+    nextRes.error ? 'upcoming arrivals' : '',
+  ].filter(Boolean)
+  if (readErr.length) {
+    return blank({
+      ok: false, inert,
+      error: `Could not read ${readErr.join(' and ')} — suggesting nothing rather than guessing.`,
+      day: {
+        date, openCleans: 0, cleaners: 0, load: 0, cap: 0, heavy: false,
+        verdict: `Could not read ${readErr.join(' and ')}. No suggestions until that is working — proposing work without the calendar is how a guest gets walked in on.`,
+      },
+    })
+  }
+
   // ── UNITS ─────────────────────────────────────────────────────────────────────────────────────
   type Meta = {
     name: string; building: string | null; market: string; vendor: boolean
     /** Every amenity this unit lists, lowercased into one searchable string. '' = none recorded. */
     amenities: string
+    /**
+     * The building people are actually grouped by, via lib/segments' canonical resolver.
+     *
+     * Audit, 2026-08-27: this used to key on the raw Guesty `building` field, which lib/segments
+     * exists precisely because nobody trusts — it has split one tower into two and invented
+     * buildings out of unit names. Worse, an EMPTY building fell back to the unit's own name, so
+     * every standalone house became a building of one that nobody could ever be "already at", and
+     * it was dropped as "nobody near it" — indistinguishable from a real proximity miss.
+     */
+    bucket: string
   }
   // Guesty writes amenities to a column on some listings and leaves them only in the raw payload on
   // others, so both are read and merged — one source would have reported units as having no
@@ -324,12 +416,14 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     if (str(l.status).trim().toLowerCase() !== 'active') continue
     const name = l.nickname || l.title || 'Unit'
     const building = str(l.building) || null
-    bCount[building || name] = (bCount[building || name] || 0) + 1
+    const disp = buildingOf(l.building, name) || building || name
+    bCount[disp] = (bCount[disp] || 0) + 1
     lmap[String(l.id)] = {
       name, building,
       market: marketOf(l.building, l.address_city, name),
       vendor: VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name),
       amenities: amenText(l),
+      bucket: (buildingOf(l.building, name) || str(l.building) || name).trim().toLowerCase(),
     }
   }
 
@@ -348,6 +442,10 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   // building X, they are in building X. This is an ID-clean signal from the same system the work
   // lives in — deliberately NOT the fuzzy Homebase name match, which cannot be trusted to place a
   // person in a building.
+  // Compiled once, and used by BOTH the day loop and the history loop.
+  const liveRes = live.map(c => ({ c, re: cadenceRe(c.match) }))
+    .filter(x => !!x.re) as { c: CadenceDef; re: RegExp }[]
+
   const deptOf = (v: any): CadenceDef['dept'] | 'other' => {
     const s = str(v).toLowerCase()
     if (/housekeep|clean/.test(s)) return 'housekeeping'
@@ -357,10 +455,26 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   }
   const onSite: Record<string, Set<string>> = {}      // `${building}|${dept}` -> names
   const inMarket: Record<string, Set<string>> = {}    // `${market}|${dept}`   -> names
-  const busyUnits = new Set<string>()                 // a unit with anything scheduled today
+  const busyUnits = new Set<string>()                 // a unit somebody is actually AT today
   const openCadenceTask: Record<string, Set<string>> = {}  // listingId -> cadence keys already open
   let openCleans = 0
-  const cleanerNames = new Set<string>()
+  // STILL WORKING vs WORKED AT ALL. The first is the day's real capacity; the second only exists to
+  // tell "nobody is assigned yet" apart from "nobody is working" (see readDay).
+  const cleanersOpen = new Set<string>()
+  const cleanersEver = new Set<string>()
+  // Open work per department, so a maintenance job is not gated by the housekeeping crew's day —
+  // five of the six shipped cadences are maintenance, and the old single load number judged all of
+  // them by how many departure cleans were outstanding.
+  const deptOpen: Record<string, number> = {}
+  const deptPeople: Record<string, Set<string>> = {}
+
+  // Breezeway assignee names arrive with inconsistent spacing and casing, and an assignee object
+  // with a null name used to stringify to the literal "[object Object]" — a phantom cleaner in the
+  // denominator and a phantom "Add for [object" on a button.
+  const personName = (p: any): string => {
+    const raw = p && typeof p === 'object' ? (p.name ?? p.full_name ?? p.first_name ?? '') : p
+    return str(raw).replace(/\s+/g, ' ').trim()
+  }
 
   for (const t of (todayRes.data || []) as any[]) {
     const st = str(t.status).toLowerCase()
@@ -370,39 +484,60 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     const dept = deptOf(t.type_department)
     const nm = str(t.name)
     const done = DONE.test(st) || !!t.finished_at
-    const names: string[] = Array.isArray(t.assignees)
-      ? t.assignees.map((p: any) => str(p && (p.name ?? p))).filter(Boolean) : []
+    const names: string[] = Array.isArray(t.assignees) ? t.assignees.map(personName).filter(Boolean) : []
 
-    if (/departure clean|turnover clean/i.test(nm)) {
-      if (!done) openCleans++
-      names.forEach(n => cleanerNames.add(n))
-    }
-    if (dept === 'housekeeping') names.forEach(n => cleanerNames.add(n))
-    if (!meta || dept === 'other') continue
-    busyUnits.add(lid)
-    const bKey = `${meta.building || meta.name}|${dept}`
-    const mKey = `${meta.market}|${dept}`
-    if (!onSite[bKey]) onSite[bKey] = new Set()
-    if (!inMarket[mKey]) inMarket[mKey] = new Set()
-    names.forEach(n => { onSite[bKey].add(n); inMarket[mKey].add(n) })
-    // A cadence job already on today's board must never be suggested a second time.
-    if (!done) {
-      for (const c of live) {
-        const re = cadenceRe(c.match)
-        if (re && re.test(nm)) {
+    // ALREADY-PLANNED CHECK FIRST, and unconditionally. This used to sit after a `continue` that
+    // skipped any task whose department we did not recognise, so a hand-made "Filter change 3B"
+    // with a blank department never suppressed anything and the engine proposed it again on top.
+    if (!done && meta) {
+      for (const { c, re } of liveRes) {
+        if (re.test(nm)) {
           if (!openCadenceTask[lid]) openCadenceTask[lid] = new Set()
           openCadenceTask[lid].add(c.key)
         }
       }
     }
+    if (!meta) continue
+
+    // VENDOR CREWS ARE NOT OUR CAPACITY. Their cleans and their people used to inflate the very
+    // denominator that is supposed to represent staff we can hand extra work to.
+    if (!meta.vendor) {
+      if (/departure clean|turnover clean/i.test(nm)) {
+        if (!done) openCleans++
+      }
+      if (dept === 'housekeeping') {
+        names.forEach(n => { cleanersEver.add(n); if (!done) cleanersOpen.add(n) })
+      }
+      if (dept !== 'other') {
+        if (!done) deptOpen[dept] = (deptOpen[dept] || 0) + 1
+        if (!deptPeople[dept]) deptPeople[dept] = new Set()
+        if (!done) names.forEach(n => deptPeople[dept].add(n))
+      }
+    }
+
+    if (dept === 'other') continue
+    // "Somebody is already in the unit" must mean a PERSON is there. An unassigned open task used
+    // to earn that sentence and +20 — the second largest score term — for a unit nobody is at.
+    if (names.length) busyUnits.add(lid)
+    const bKey = `${meta.bucket}|${dept}`
+    const mKey = `${meta.market}|${dept}`
+    if (!onSite[bKey]) onSite[bKey] = new Set()
+    if (!inMarket[mKey]) inMarket[mKey] = new Set()
+    names.forEach(n => { onSite[bKey].add(n); inMarket[mKey].add(n) })
   }
 
-  const day = readDay({ date, openCleans, cleaners: cleanerNames.size, cap: cfg.dailyCap })
+  const day = readDay({
+    date, openCleans, cleaners: cleanersOpen.size, cleanersEver: cleanersEver.size, cap: cfg.dailyCap,
+  })
 
   // ── LAST DONE, PER UNIT PER CADENCE ───────────────────────────────────────────────────────────
   const lastDone: Record<string, Record<string, string>> = {}   // listingId -> cadenceKey -> date
   const openAny: Record<string, Set<string>> = {}               // an open (not today) matching task
-  const res = live.map(c => ({ c, re: cadenceRe(c.match) })).filter(x => !!x.re) as { c: CadenceDef; re: RegExp }[]
+  // Preventative work that was scheduled, never done, and has gone past its day. Not suggested
+  // again — it already exists — but named, because an unworked task is a real backlog and the old
+  // behaviour of quietly re-proposing it hid exactly that.
+  const stalled: { unit: string; label: string; since: string }[] = []
+  const res = liveRes
   for (const t of hist.rows) {
     const lid = String(t.reference_property_id)
     if (!lmap[lid]) continue
@@ -418,10 +553,21 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
         if (when > date) continue   // a future-dated completion is a data artefact, not history
         if (!lastDone[lid]) lastDone[lid] = {}
         if (!lastDone[lid][c.key] || when > lastDone[lid][c.key]) lastDone[lid][c.key] = when
-      } else if (when >= date) {
-        // Scheduled ahead and not done — it is already planned, so do not suggest it again.
+      } else {
+        // ── THE RE-CREATION BUG (audit, 2026-08-27) ──────────────────────────────────────────
+        // This used to read `else if (when >= date)`, so an unfinished task dated YESTERDAY fell
+        // through both branches: never a completion, never "already planned". It became invisible,
+        // and the engine proposed the identical job again the next morning — and the morning after
+        // that. On an 'auto' cadence that is a duplicate created every single day until somebody
+        // notices, which is exactly the "200 tasks just auto populate" failure this whole file
+        // exists to prevent, delivered slowly instead of all at once.
+        //
+        // An open task is an open task. The date it carries says whether it is LATE, never whether
+        // it counts. Anything unfinished suppresses, and the overdue ones are surfaced separately
+        // (see `stalled`) so they get chased rather than silently re-created.
         if (!openAny[lid]) openAny[lid] = new Set()
         openAny[lid].add(c.key)
+        if (when < date) stalled.push({ unit: lmap[lid].name, label: c.label, since: when })
       }
       break   // first matching cadence wins, same as the task taxonomy
     }
@@ -457,8 +603,9 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       // that IS the answer, and no amenity string gets to overrule it.
       const scopeB = c.scopeBuildings || [], scopeU = c.scopeUnits || []
       if (scopeB.length || scopeU.length) {
-        const inScope = scopeB.some(b => b === (meta.building || '') || b === meta.name)
-          || scopeU.some(u => u === lid || u === meta.name)
+        const norm = (x: string) => String(x || '').trim().toLowerCase()
+        const inScope = scopeB.some(b => norm(b) === meta.bucket || norm(b) === norm(meta.building || ''))
+          || scopeU.some(u => u === lid || norm(u) === norm(meta.name))
         if (!inScope) { drop(`outside the ${c.label.toLowerCase()} list`); continue }
       }
 
@@ -480,7 +627,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       // Vendor-cleaned buildings: we do not staff them, so housekeeping cadences there are not ours.
       if (meta.vendor && c.dept === 'housekeeping') { drop('vendor building'); continue }
 
-      const bKey = `${meta.building || meta.name}|${c.dept}`
+      const bKey = `${meta.bucket}|${c.dept}`
       const mKey = `${meta.market}|${c.dept}`
       const here = Array.from(onSite[bKey] || [])
       const near = Array.from(inMarket[mKey] || [])
@@ -502,6 +649,18 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       const dis = log.dismissed[dismissId] || log.dismissed[`${lid}-${c.key}`]
       if (dis && str(dis.until) >= date) { drop('dismissed'); continue }
 
+      // ── THE DAY READ IS PER DEPARTMENT ────────────────────────────────────────────────────
+      // Audit, 2026-08-27: the cap was scaled by departure-cleans-per-cleaner and applied to
+      // everything, but five of the six shipped cadences are MAINTENANCE. A tech with an empty
+      // morning was gated to zero because housekeeping was having a heavy Saturday. Housekeeping
+      // cadences still answer to the housekeeping day; a maintenance cadence answers to how much
+      // maintenance is already open against the maintenance people actually working.
+      if (c.dept !== 'housekeeping') {
+        const people = (deptPeople[c.dept] || new Set()).size
+        const openN = deptOpen[c.dept] || 0
+        if (people > 0 && openN / people >= 6) { drop(`${c.dept} is slammed today`); continue }
+      }
+
       // SCORE. Proximity first, deliberately — see the header.
       let score = 0
       const bits: string[] = []
@@ -509,14 +668,22 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       else if (near.length) { score += 12; bits.push(`${near.length} in ${meta.market} today`) }
       else { bits.push(`nobody is near it, but it is ${daysOver} days past due`) }
       if (busyUnits.has(lid)) { score += 20; bits.push('somebody is already in the unit') }
-      score += Math.min(1, daysOver / Math.max(1, c.everyDays)) * 30
+      // A NEVER-RECORDED JOB IS NOT A 100%-OVERDUE JOB.
+      // Audit, 2026-08-27: `daysOver` for a unit with no history is set to one full interval, which
+      // saturated this term at the full 30 points and then won the daysOver tiebreak with a
+      // synthetic 365 against a real 100. Since a missing record is far more often a data gap than
+      // a neglected unit — the same reasoning that closed the escape valve to it — it now scores
+      // like a job that has just come due rather than like the most overdue thing in the portfolio.
+      score += daysSince == null ? 8 : Math.min(1, daysOver / Math.max(1, c.everyDays)) * 30
       if (!isOcc) score += 15
       if (windowDays >= c.needsDays + 2) score += 10
       if (windowDays >= 999) { score += 8; bits.push('nothing booked in the next three weeks') }
       if (c.dept === 'maintenance' && c.minutes <= 30) score += 6   // cheap wins ride along easily
 
+      // "No record" is a statement about OUR DATA, not about the unit. Saying "no A/C deep clean on
+      // record" reads as an indictment; saying where the record was looked for does not.
       const overTxt = daysSince == null
-        ? `no ${c.label.toLowerCase()} on record`
+        ? `nothing named like a ${c.label.toLowerCase()} in the last ${Math.round((maxEvery + 30) / 30)} months of tasks`
         : `last done ${daysSince} days ago, cadence is ${c.everyDays}`
 
       out.push({
@@ -526,6 +693,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
         lastDone: ld, daysSince, daysOver,
         candidates: here.length ? here : near,
         proximity: here.length ? 'building' : near.length ? 'area' : 'none',
+        vendor: meta.vendor,
         score: Math.round(score),
         why: `${overTxt} — ${bits.join('; ')}.`,
         windowDays, vacantTonight: !isOcc, mode: c.mode,
@@ -533,7 +701,11 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     }
   }
 
-  out.sort((a, b) => b.score - a.score || b.daysOver - a.daysOver || a.unit.localeCompare(b.unit))
+  // Real history breaks a score tie ahead of a seeded guess, for the same reason.
+  out.sort((a, b) => b.score - a.score
+    || (a.daysSince == null ? 1 : 0) - (b.daysSince == null ? 1 : 0)
+    || b.daysOver - a.daysOver
+    || a.unit.localeCompare(b.unit))
 
   // ── THE CAPS ──────────────────────────────────────────────────────────────────────────────────
   // Applied after ranking so the caps trim the tail, not the top.
@@ -561,6 +733,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     climateVocab: Array.from(vocab.entries()).map(([term, units]) => ({ term, units }))
       .sort((a, b) => b.units - a.units).slice(0, 30),
     inert,
+    stalled: stalled.sort((a, b) => a.since.localeCompare(b.since)).slice(0, 40),
     buildings: Object.keys(bCount).map(name => ({ name, units: bCount[name] }))
       .sort((a, b) => b.units - a.units || a.name.localeCompare(b.name)).slice(0, 200),
     historyComplete: hist.complete,
