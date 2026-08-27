@@ -386,7 +386,7 @@ export type DayLoad = {
   standardCleans: number
   hops: number
   buildings: number
-  verdict: 'underloaded' | 'balanced' | 'overloaded' | 'unknown'
+  verdict: 'underloaded' | 'balanced' | 'overloaded' | 'implausible' | 'unknown'
   /** Plain sentences a person can act on. Never a bare number. */
   triggers: string[]
   /** True when a guessed duration (maintenance, or a missing shift) moved the verdict. */
@@ -404,6 +404,19 @@ export const THRESHOLD = {
   overPct: 105,          // above this, the day does not fit and something will slip
   /** Jon's maintenance rule: fewer than this many jobs on a full shift is worth a look. */
   minMaintenanceTasks: 3,
+  /**
+   * Past this much of a day, the assignment is not a workload — it is a credit.
+   *
+   * Jon, 2026-08-27: "they might be added to a task, but they're not completing the task ...
+   * sometimes they're just completing the task on behalf of the team." The first live run of this
+   * model put a supervisor at 796% of his day. Nobody works eight days in one, so a figure like
+   * that is not an overloaded person to relieve — it is a data-quality problem to fix, and calling
+   * it "overloaded" would send somebody to redistribute work that was never really there.
+   *
+   * These days are named separately, kept out of the day's KPI, and never used as a source for
+   * moving work, because we do not know which of those tasks he actually holds.
+   */
+  implausibleAtPct: 200,
 }
 
 /**
@@ -473,6 +486,7 @@ export function assessDay(input: {
 
   let verdict: DayLoad['verdict'] = 'balanced'
   if (!stops.length) verdict = 'underloaded'
+  else if (utilisation >= th.implausibleAtPct) verdict = 'implausible'
   else if (utilisation < th.underPct) verdict = 'underloaded'
   else if (utilisation > th.overPct) verdict = 'overloaded'
 
@@ -484,6 +498,8 @@ export function assessDay(input: {
     triggers.push(`Nothing assigned. A ${hrs(capacity)} day is completely open — roughly ${standardCleans} cleans, or a maintenance run.`)
   } else if (verdict === 'underloaded') {
     triggers.push(`About ${hrs(capacity - load)} spare — room for roughly ${headroom} more ${headroom === 1 ? 'unit' : 'units'} without running over.`)
+  } else if (verdict === 'implausible') {
+    triggers.push(`Credited with ${stops.length} jobs — about ${hrs(load)} of work in a ${hrs(capacity)} day. Nobody does that, so this is almost certainly tasks closed out on the team's behalf rather than work actually held. Worth checking who really did them before trusting any number that counts them.`)
   } else if (verdict === 'overloaded') {
     triggers.push(`Over by about ${hrs(load - capacity)}. Something here will finish late or get rushed — move a unit before the day starts, not at 3pm.`)
   }
@@ -551,7 +567,9 @@ export function spread(days: DayLoad[]): {
   lopsided: boolean
   note: string | null
 } {
-  const withWork = days.filter(d => d.capacityMinutes > 0)
+  // Implausible days are excluded: one supervisor credited with eight days of work would otherwise
+  // set the spread for the whole team and hide every real imbalance behind it.
+  const withWork = days.filter(d => d.capacityMinutes > 0 && d.verdict !== 'implausible')
   if (withWork.length < 2) {
     return { people: withWork.length, medianUtil: 0, minUtil: 0, maxUtil: 0, gapPct: 0, lopsided: false, note: null }
   }

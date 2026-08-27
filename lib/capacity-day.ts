@@ -65,6 +65,8 @@ export type DayKpi = {
   spreadPct: number
   overloaded: number
   underloaded: number
+  /** People credited with more work than a day can hold — a data problem, not a workload one. */
+  implausible: number
   /** Cleans recorded under the floor — closed out rather than performed. A data-quality KPI. */
   closedOutToday: number
 }
@@ -171,29 +173,36 @@ export async function buildDayPicture(date: string, market?: string): Promise<Da
   if (!Object.keys(shiftMin).length) {
     notes.push('No Homebase shifts for this date, so every day is priced against an assumed 8 hours. Utilisation figures are indicative only.')
   }
+  const credited = people.filter(p => p.verdict === 'implausible')
+  if (credited.length) {
+    notes.push(`${credited.map(p => p.person).join(', ')} ${credited.length === 1 ? 'is' : 'are'} credited with more work than a day can hold — almost certainly tasks closed out on the team's behalf. Left out of the day's figures, because counting them would hide every real imbalance.`)
+  }
   if (closedOutToday) {
     notes.push(`${closedOutToday} clean${closedOutToday === 1 ? '' : 's'} today recorded under ${PERFORMED_FLOOR_MIN} minutes — closed out rather than performed, so the timings behind them are not real.`)
   }
 
   const suggestions = buildSuggestions(people, unassignedStops)
 
+  // Everything the day is judged on excludes credited-not-worked days.
+  const real = people.filter(p => p.verdict !== 'implausible')
   const sp = spread(people)
   const kpi: DayKpi = {
     peopleOnShift: Object.keys(shiftMin).length,
-    cleans: people.reduce((a, p) => a + p.cleans, 0),
-    otherTasks: people.reduce((a, p) => a + p.otherTasks, 0),
+    cleans: real.reduce((a, p) => a + p.cleans, 0),
+    otherTasks: real.reduce((a, p) => a + p.otherTasks, 0),
     unassignedCount: unassignedStops.length,
-    workMinutes: people.reduce((a, p) => a + p.workMinutes, 0),
-    travelMinutes: people.reduce((a, p) => a + p.travelMinutes, 0),
-    capacityMinutes: people.reduce((a, p) => a + p.capacityMinutes, 0),
+    workMinutes: real.reduce((a, p) => a + p.workMinutes, 0),
+    travelMinutes: real.reduce((a, p) => a + p.travelMinutes, 0),
+    capacityMinutes: real.reduce((a, p) => a + p.capacityMinutes, 0),
     utilisationPct: (() => {
-      const cap = people.reduce((a, p) => a + p.capacityMinutes, 0)
-      const load = people.reduce((a, p) => a + p.loadMinutes, 0)
+      const cap = real.reduce((a, p) => a + p.capacityMinutes, 0)
+      const load = real.reduce((a, p) => a + p.loadMinutes, 0)
       return cap > 0 ? Math.round((load / cap) * 100) : 0
     })(),
     spreadPct: sp.gapPct,
     overloaded: people.filter(p => p.verdict === 'overloaded').length,
     underloaded: people.filter(p => p.verdict === 'underloaded').length,
+    implausible: people.filter(p => p.verdict === 'implausible').length,
     closedOutToday,
   }
   if (sp.note) notes.push(sp.note)
@@ -252,6 +261,8 @@ export function buildSuggestions(people: DayLoad[], unassigned: Stop[]): Suggest
   }
 
   // 2. Overloaded → underloaded. Move the unit that helps most and still fits.
+  // Never move work off an implausible day — we do not know which of those tasks the person
+  // actually holds, so "relieving" them could hand away work somebody else already did.
   const over = people.filter(p => p.verdict === 'overloaded' && eligible(p))
   const under = people.filter(p => p.verdict === 'underloaded' && eligible(p))
   for (const from of over) {
