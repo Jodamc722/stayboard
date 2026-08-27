@@ -90,15 +90,14 @@ const GLYPH: Record<string, any> = {
 }
 const glyphOf = (icon: string) => GLYPH[icon] || Wrench
 
+// MUST MIRROR lib/task-categories.ts DEFAULT_CATS. This is only what the board paints in the
+// moment before /api/ops-today answers with the taxonomy in force; if it lists different
+// categories, the counters visibly rearrange themselves a beat after the page loads.
 const FALLBACK_CATS: { key: Cat; label: string; short: string; Icon: any }[] = [
-  { key: 'departure', label: 'Departure', short: 'Dep', Icon: DoorOpen },
-  { key: 'cleaning', label: 'Cleaning', short: 'Clean', Icon: Sparkles },
-  // One category, not two (Jon, 2026-08-25): Breezeway files these as "Guest Reported / Glitch — ",
-  // so splitting on which half of that prefix a task used was counting one queue twice.
-  { key: 'glitch', label: 'Glitches', short: 'Glitch', Icon: Zap },
+  { key: 'departure', label: 'Departure cleans', short: 'Dep', Icon: DoorOpen },
+  { key: 'inspection', label: 'Inspections', short: 'Inspect', Icon: ClipboardList },
   { key: 'maintenance', label: 'Maintenance', short: 'Maint', Icon: Wrench },
-  { key: 'hkaudit', label: 'Housekeeping audit', short: 'HK audit', Icon: ClipboardCheck },
-  { key: 'inspection', label: 'Inspection', short: 'Inspect', Icon: ClipboardList },
+  { key: 'other', label: 'Other', short: 'Other', Icon: Sparkles },
 ]
 // Kept only for the first paint, before /api/ops-today answers with the real taxonomy.
 const FALLBACK_BY: Record<string, any> = FALLBACK_CATS.reduce((m, c) => { m[c.key] = c; return m }, {} as any)
