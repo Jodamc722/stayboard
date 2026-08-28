@@ -27,7 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle, Plus, Search, ChevronDown, Users, Send, X, Loader2, Check, Phone,
-  CheckCircle2, ExternalLink, UserPlus, MessageSquare, LayoutGrid, FileText,
+  CheckCircle2, ExternalLink, UserPlus, MessageSquare, LayoutGrid, FileText, ChevronLeft, ChevronRight, CalendarDays,
 } from 'lucide-react'
 import { TodayInOps } from '@/components/TodayInOps'
 import { OpsGrid } from '@/components/OpsGrid'
@@ -259,10 +259,27 @@ export function NeedsHumanPanel() {
   )
 }
 
+/** Today in the market's own timezone — the board is a New York clock, not the browser's. */
+function ymdET(d: Date) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
+}
+function shiftYmd(ymd: string, n: number) {
+  return ymdET(new Date(Date.parse(ymd + 'T12:00:00Z') + n * 86400000))
+}
+
 export function OpsV2() {
   // The three fetches the summary needs. Cached (30s) so tab flips are instant, and so the full
   // board opening underneath does not mean the page paid for the data twice in a row.
-  const { data, loading, error, refresh } = useCachedFetch<OpsData>('/api/ops-today')
+  // ── WHICH DAY ────────────────────────────────────────────────────────────────────────────────
+  // The route has accepted ?date= since it was written and the board never sent one, so it was
+  // permanently pinned to today with no way to tell. That is a plain gap on its own — but it also
+  // made a feature actively misleading: the suggestions layer can schedule work onto a future date,
+  // and the moment you did, the thing you had just created became invisible.
+  const todayYmd = ymdET(new Date())
+  const [date, setDate] = useState(todayYmd)
+  const isToday = date === todayYmd
+  const { data, loading, error, refresh } = useCachedFetch<OpsData>(
+    isToday ? '/api/ops-today' : `/api/ops-today?date=${date}`)
   const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches')
   const { data: staff } = useCachedFetch<Staffing>('/api/ops-today/staffing')
   const [roster, setRoster] = useState<Roster[]>([])
@@ -337,11 +354,38 @@ export function OpsV2() {
           className="sm:hidden shrink-0 mb-1.5 w-9 h-9 rounded-xl border border-line bg-white grid place-items-center text-muted active:bg-app">
           <FileText size={15} />
         </Link>
+        {/* ── THE DAY ──────────────────────────────────────────────────────────────────────
+            Only shows itself once you have moved off today: on the normal morning it is a single
+            chevron, and the moment you are looking at another day the board says so loudly, because
+            a board silently showing tomorrow is worse than one that cannot show tomorrow at all. */}
+        <div className="shrink-0 mb-1.5 inline-flex items-center rounded-xl border border-line bg-white overflow-hidden">
+          <button onClick={() => setDate(d => shiftYmd(d, -1))} title="Previous day"
+            className="px-1.5 py-2 text-muted hover:text-ink hover:bg-app"><ChevronLeft size={14} /></button>
+          {!isToday && (
+            <button onClick={() => setDate(todayYmd)} title="Back to today"
+              className="px-2 py-2 text-[12px] font-bold text-brand-700 hover:bg-brand-50 whitespace-nowrap border-x border-line">
+              {new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}
+            </button>
+          )}
+          <button onClick={() => setDate(d => shiftYmd(d, 1))} title="Next day"
+            className="px-1.5 py-2 text-muted hover:text-ink hover:bg-app"><ChevronRight size={14} /></button>
+        </div>
         <button onClick={() => setAddFor('')}
           className="shrink-0 mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 sm:px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
           <Plus size={14} /> Add task
         </button>
       </div>
+
+      {!isToday && (
+        <div className="mb-3 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 flex items-center gap-2 flex-wrap">
+          <CalendarDays size={13} className="text-brand-700 shrink-0" />
+          <span className="text-[12.5px] font-bold text-brand-800">
+            You are looking at {new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })}
+          </span>
+          <span className="text-[11.5px] text-brand-700/80">not today</span>
+          <button onClick={() => setDate(todayYmd)} className="ml-auto text-[12px] font-bold text-brand-700 hover:underline shrink-0">Back to today</button>
+        </div>
+      )}
 
       {tab === 'board' && (
         <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} onAddTask={u => setAddFor(u)} />

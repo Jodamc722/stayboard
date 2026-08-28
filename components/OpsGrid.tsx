@@ -29,7 +29,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
-  LayoutGrid, Users, X, MapPin, Clock, RefreshCw,
+  LayoutGrid, Users, X, MapPin, Clock, RefreshCw, ChevronDown,
   DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
   Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble,
 } from 'lucide-react'
@@ -131,16 +131,40 @@ const catKeyOf = (t: GTask) => String(t.cat || catOf(t))
 const metaOf = (by: Record<string, CatMeta>, key: string): CatMeta =>
   by[key] || { key, label: key, short: key.slice(0, 8), Icon: Wrench }
 
-// THE ONLY PLACE COLOUR IS DECIDED. Four states, in the order a job moves through them, plus the
-// one that is not a stage at all: nobody has taken it. Unassigned is drawn as a dashed outline as
-// well as a colour, because "no owner" is the state most worth catching on a screen where somebody
-// is colour-blind or standing in the sun.
+// ── ONE CHANNEL, ONE MEANING ────────────────────────────────────────────────────────────────────
+//
+// This file has always stated its own contract: SYMBOL = what the work is, never state. COLOUR =
+// how far along it is, never type. The contract was then broken by the table beneath it, and that
+// break is most of why the board is hard to read.
+//
+// What the 24px chip was carrying at once: a glyph (category), a fill colour (state), a border
+// colour (state again), a border STYLE — dashed for unassigned — and a rose ring for "a guest is
+// still inside". Five channels, and two of them collide badly:
+//
+//   • `unassigned` is not a stage. It is ownership. Rendering it as a fourth COLOUR put ownership
+//     into the channel colour had promised not to carry, and `border-dashed` at 2px on a 24px chip
+//     is invisible at scan distance — so what a coordinator actually perceived was rose vs slate.
+//   • Unassigned (rose dashed border) and extended (rose ring) then read as the same thing: a white
+//     square with rose around it. One means "nobody has this". The other means "do not go in, a
+//     guest is asleep in there". Those are the two most consequential states on the board and they
+//     looked alike.
+//
+// So the encodings are separated onto channels that cannot be confused:
+//
+//   COLOUR    three states only — finished, in progress, not started. The contract, restored.
+//   POSITION  a dot in the corner means nobody has taken it. Position was the one strong
+//             pre-attentive channel going unused, it survives sunlight and colour-blindness, and it
+//             cannot be mistaken for a fill.
+//   MUTING    an extended clean is drawn switched OFF — faded, with a neutral ring. It is not an
+//             alarm, it is an exclusion: the job exists and must not be done today. Keeping rose
+//             out of it means rose now means exactly one thing on this board — a human is needed.
 type TaskState = 'done' | 'running' | 'open' | 'unassigned'
 const STATE: Record<TaskState, { label: string; chip: string; swatch: string }> = {
   done: { label: 'Finished', chip: 'bg-emerald-500 border-emerald-500 text-white', swatch: 'bg-emerald-500 border-emerald-500' },
   running: { label: 'In progress', chip: 'bg-amber-400 border-amber-400 text-white', swatch: 'bg-amber-400 border-amber-400' },
   open: { label: 'Not started', chip: 'bg-white border-slate-300 text-slate-500', swatch: 'bg-white border-slate-300' },
-  unassigned: { label: 'Nobody assigned', chip: 'bg-white border-dashed border-rose-400 text-rose-500', swatch: 'bg-white border-dashed border-rose-400' },
+  // Same paint as `open` — an unassigned task IS not-started; the dot says nobody owns it.
+  unassigned: { label: 'Nobody assigned', chip: 'bg-white border-slate-300 text-slate-500', swatch: 'bg-white border-slate-300' },
 }
 const stateOf = (t: GTask): TaskState =>
   t.done ? 'done' : t.running ? 'running' : t.assignees.length ? 'open' : 'unassigned'
@@ -283,12 +307,17 @@ function TaskChip({ t }: { t: GTask }) {
         onMouseLeave={() => { if (!pinned) setAt(null) }}
         onClick={ev => { ev.stopPropagation(); place(); setPinned(p => !p) }}
         aria-label={c.label + ': ' + t.name}
-        className={'w-6 h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
+        className={'relative w-6 h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
           STATE[state].chip +
-          // The exception rides ON TOP of the state rather than replacing it, so an extended clean
-          // still tells you whether anyone has touched it — it just also shouts not to.
-          (t.moveState === 'extended' ? ' ring-2 ring-rose-500 ring-offset-1' : '')}>
+          // SWITCHED OFF, NOT ALARMED. A guest is still in the unit, so this job must not happen
+          // today. Muting it says that in the one way an alarm colour cannot: it removes the chip
+          // from the set of things you are meant to act on.
+          (t.moveState === 'extended' ? ' opacity-45 ring-2 ring-slate-400 ring-offset-1' : '')}>
         <Glyph size={12} strokeWidth={2.4} />
+        {/* NOBODY HAS THIS. A dot, not a colour — see the STATE header. */}
+        {state === 'unassigned' && (
+          <span aria-hidden className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 ring-1 ring-white" />
+        )}
       </button>
 
       {open && at && (
@@ -340,6 +369,12 @@ function TaskChip({ t }: { t: GTask }) {
 }
 
 // ── THE ROW ─────────────────────────────────────────────────────────────────────────────────────
+export type Issue = {
+  text: string; kind: 'qc' | 'glitch'
+  id?: string; ageDays?: number | null; assignees?: string[]
+  unassigned?: boolean; running?: boolean; reportUrl?: string | null
+}
+
 type Row = {
   key: string
   title: string
@@ -347,7 +382,7 @@ type Row = {
   reservation: string
   status: { label: string; cls: string }
   tasks: GTask[]
-  issues: { text: string; kind: 'qc' | 'glitch' }[]
+  issues: Issue[]
   gapNights: number | null
   urgent: number
   listingId?: string
@@ -494,10 +529,37 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
       {open && (
         <div className="px-3 pb-3 pt-1 bg-app/40" onClick={e => e.stopPropagation()}>
           {row.issues.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {row.issues.map((i, n) => (
-                <span key={n} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200">{i.text}</span>
-              ))}
+            <div className="mb-2 rounded-xl border border-rose-200 bg-rose-50/60 overflow-hidden">
+              <p className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-rose-800 border-b border-rose-200">
+                {row.issues.length} open {row.issues.length === 1 ? 'issue' : 'issues'} on this unit
+              </p>
+              <div className="divide-y divide-rose-200/70">
+                {row.issues.map((i, n) => (
+                  <div key={i.id || n} className="px-2.5 py-1.5 flex items-center gap-2 flex-wrap">
+                    <span className="text-[11.5px] font-semibold text-rose-900 min-w-0 flex-1">{i.text}</span>
+                    {i.ageDays != null && (
+                      <span className={'text-[10px] font-bold tabular-nums shrink-0 ' + (i.ageDays > 7 ? 'text-rose-700' : 'text-rose-600/70')}>
+                        {i.ageDays}d open
+                      </span>
+                    )}
+                    {i.kind === 'glitch' && (
+                      i.unassigned
+                        ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Nobody on it</span>
+                        : i.assignees?.length
+                          ? <span className="text-[10.5px] text-rose-800/80 shrink-0">{i.assignees.join(', ')}{i.running ? ' · working' : ''}</span>
+                          : null
+                    )}
+                    {i.reportUrl && (
+                      <a href={i.reportUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                        className="text-[11px] font-semibold text-rose-700 hover:underline shrink-0">Report</a>
+                    )}
+                    {i.id && (
+                      <a href={bzTask(i.id)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                        className="text-rose-700 hover:text-rose-900 shrink-0" title="Open in Breezeway"><ExternalLink size={11} /></a>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           <div className="rounded-xl border border-line bg-white divide-y divide-line overflow-hidden">
@@ -691,6 +753,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const searchRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => { if (searchOpen && searchRef.current) searchRef.current.focus() }, [searchOpen])
   const [activeOnly, setActiveOnly] = useState(true)
+  const [keyOpen, setKeyOpen] = useState(false)
   // MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). Remembered per
   // device, because whoever runs Broward runs Broward every morning and should not re-pick it.
   const [mkt, setMkt] = useState<string>('all')
@@ -764,12 +827,21 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   }, [allTasks, glitchesInMkt, cats])
 
   // Open issues per unit: the QC items the board already carries plus the open guest/glitch feed.
+  // AN ISSUE IS A JOB, NOT A LABEL. The glitch feed returns id, age, who has it, whether anybody
+  // has it, and a report link — and every one of those was thrown away here to make a string, so an
+  // open guest issue rendered as a grey sentence you could not act on without leaving the board.
   const issuesByUnit = useMemo(() => {
-    const m: Record<string, { text: string; kind: 'qc' | 'glitch' }[]> = {}
-    for (const u of units) for (const q2 of (u.qc || [])) (m[u.unit] = m[u.unit] || []).push({ text: q2.issue, kind: 'qc' })
+    const m: Record<string, Issue[]> = {}
+    for (const u of units) for (const q2 of (u.qc || [])) {
+      (m[u.unit] = m[u.unit] || []).push({ text: q2.issue, kind: 'qc', reportUrl: q2.reportUrl || null })
+    }
     for (const g of glitchesInMkt) {
       if (g.done) continue
-      ;(m[g.unit] = m[g.unit] || []).push({ text: g.issue, kind: 'glitch' })
+      ;(m[g.unit] = m[g.unit] || []).push({
+        text: g.issue, kind: 'glitch', id: g.id,
+        ageDays: g.ageDays ?? null, assignees: g.assignees || [],
+        unassigned: !!g.unassigned, running: !!g.running, reportUrl: g.reportUrl || null,
+      })
     }
     return m
   }, [units, glitchesInMkt])
@@ -1061,6 +1133,12 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           className={'px-2.5 py-1.5 rounded-xl border text-[12px] font-bold ' + (activeOnly ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
           {activeOnly ? 'Active' : 'All'}
         </button>
+        {/* The key sits with the other controls rather than over the table header, where it
+            collided with the Issues label, and where a phone would never have seen it. */}
+        <button onClick={() => setKeyOpen(k => !k)}
+          className={'px-2.5 py-1.5 rounded-xl border text-[12px] font-bold inline-flex items-center gap-1 ' + (keyOpen ? 'bg-app border-ink/30 text-ink' : 'bg-white border-line text-muted hover:text-ink')}>
+          Key {keyOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        </button>
         {cat && (
           <button onClick={() => setCat(null)}
             className="px-2.5 py-1.5 rounded-xl border border-ink bg-ink text-white text-[12px] font-bold inline-flex items-center gap-1.5">
@@ -1076,6 +1154,55 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
 
       {/* ── HEADER + ROWS ── */}
       <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
+        {/* ── THE KEY ─────────────────────────────────────────────────────────────────────────
+            The legend used to be thirteen swatches over two rows, rendered AFTER the entire table.
+            To decode a symbol in row three you scrolled past eighty rows, read the key, and scrolled
+            back — a legend you cannot see while decoding is not a legend, it is an apology. It also
+            cost ~66px of permanent height on the screen where height is the scarcest thing there is.
+            Now it opens where you are already looking, and costs nothing when closed. */}
+        <div className="relative">
+          {keyOpen && (
+            <>
+              <div className="fixed inset-0 z-20" onClick={() => setKeyOpen(false)} />
+              <div className="absolute right-0 top-1 z-30 w-[min(340px,calc(100vw-2rem))] rounded-xl border border-line bg-white shadow-xl p-3 text-left">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">Colour &mdash; how far along</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2.5">
+                  {(['done', 'running', 'open'] as TaskState[]).map(k => (
+                    <span key={k} className="inline-flex items-center gap-1.5 text-[11px] text-ink">
+                      <span className={'w-4 h-4 rounded-[4px] border-2 shrink-0 ' + STATE[k].swatch} />{STATE[k].label}
+                    </span>
+                  ))}
+                </div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">And two things that are not stages</p>
+                <div className="space-y-1 mb-2.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-ink">
+                    <span className="relative w-4 h-4 rounded-[4px] border-2 bg-white border-slate-300 shrink-0">
+                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 ring-1 ring-white" />
+                    </span>
+                    Dot = nobody has taken it
+                  </span>
+                  <span className="flex items-center gap-1.5 text-[11px] text-ink">
+                    <span className="w-4 h-4 rounded-[4px] border-2 bg-white border-slate-300 opacity-45 ring-2 ring-slate-400 ring-offset-1 shrink-0" />
+                    Faded = guest still in, do not clean
+                  </span>
+                </div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">Symbol &mdash; what the work is</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {cats.list.map(c => {
+                    const G = c.Icon
+                    return (
+                      <span key={c.key} className="inline-flex items-center gap-1.5 text-[11px] text-ink">
+                        <span className="w-4 h-4 rounded-[4px] border border-slate-300 bg-white text-slate-500 inline-flex items-center justify-center shrink-0"><G size={9} strokeWidth={2.6} /></span>
+                        {c.label}
+                      </span>
+                    )
+                  })}
+                </div>
+                <p className="text-[10.5px] text-muted mt-2 pt-2 border-t border-line">Each symbol is one task. Hover or tap one for its detail; tap a row to work it.</p>
+              </div>
+            </>
+          )}
+        </div>
         <div className="hidden lg:grid grid-cols-12 gap-3 px-3 py-2 bg-app border-b border-line text-[10px] font-bold uppercase tracking-wider text-muted">
           {/* THE HEADER NOW MATCHES THE ROW. The cells render in DOM order on desktop — property,
               STATUS, reservation, tasks, issues — but this header claimed property, RESERVATION,
@@ -1109,45 +1236,9 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         ))}
       </div>
 
-      {/* THE LEGEND — two rows, because there are two channels and mixing them in one line is how
-          people end up believing the colour means the category. Symbols first: they are the thing
-          you read; colour is the thing you scan. */}
-      <div className="mt-2.5 rounded-xl border border-line bg-app/50 px-3 py-2">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted shrink-0">Symbol = what it is</span>
-          <span className="flex items-center gap-x-3 gap-y-1 flex-wrap">
-            {cats.list.map(c => {
-              const G = c.Icon
-              return (
-                <span key={c.key} className="inline-flex items-center gap-1 text-[10.5px] text-muted">
-                  <span className="w-4 h-4 rounded-[4px] border border-slate-300 bg-white text-slate-500 inline-flex items-center justify-center"><G size={9} strokeWidth={2.6} /></span>
-                  {c.label}
-                </span>
-              )
-            })}
-          </span>
-        </div>
-        <div className="mt-1.5 pt-1.5 border-t border-line flex items-baseline gap-2 flex-wrap">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted shrink-0">Colour = how far along</span>
-          <span className="flex items-center gap-x-3 gap-y-1 flex-wrap">
-            {(['done', 'running', 'open', 'unassigned'] as TaskState[]).map(k => (
-              <span key={k} className="inline-flex items-center gap-1 text-[10.5px] text-muted">
-                <span className={'w-4 h-4 rounded-[4px] border-2 ' + STATE[k].swatch} />
-                {STATE[k].label}
-              </span>
-            ))}
-            <span className="inline-flex items-center gap-1 text-[10.5px] text-muted">
-              <span className="w-4 h-4 rounded-[4px] border-2 bg-white border-slate-300 ring-2 ring-rose-500 ring-offset-1" />
-              Guest still in &mdash; do not clean
-            </span>
-          </span>
-        </div>
-      </div>
-
       <p className="mt-2 text-[11px] text-muted">
-        {shown.length} {mode === 'units' ? 'unit' : 'person'}{shown.length === 1 ? '' : 's'} shown ·
-        each symbol is one task · hover or tap a symbol for its detail, tap a row to work it.
-        {' '}Glitches count everything still open, not only what is scheduled today &mdash; they stay open until somebody fixes them.
+        {shown.length} {mode === 'units' ? 'unit' : 'person'}{shown.length === 1 ? '' : 's'} shown.
+        {' '}Glitches count everything still open, not only what is scheduled today.
       </p>
     </div>
     </SuggestionsProvider>
