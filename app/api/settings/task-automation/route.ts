@@ -39,6 +39,18 @@ export async function PUT(req: NextRequest) {
       Broward: nm(c.supervisors?.Broward, d.supervisors.Broward),
       North: nm(c.supervisors?.North, d.supervisors.North),
     },
+    tripSweep: {
+      enabled: c.tripSweep?.enabled !== false,
+      lookBackDays: num(c.tripSweep?.lookBackDays, d.tripSweep.lookBackDays, 1, 365),
+      maxFutureDays: num(c.tripSweep?.maxFutureDays, d.tripSweep.maxFutureDays, 1, 120),
+      sameDeptOnly: c.tripSweep?.sameDeptOnly !== false,
+    },
+    staleCleans: {
+      enabled: c.staleCleans?.enabled === true,
+      afterDays: num(c.staleCleans?.afterDays, d.staleCleans.afterDays, 1, 90),
+      skipOccupied: c.staleCleans?.skipOccupied !== false,
+      maxPerRun: num(c.staleCleans?.maxPerRun, d.staleCleans.maxPerRun, 1, 500),
+    },
     noticeDrafts: {
       enabled: c.noticeDrafts?.enabled === true,
       fromEmail: typeof c.noticeDrafts?.fromEmail === 'string' && /@/.test(c.noticeDrafts.fromEmail)
