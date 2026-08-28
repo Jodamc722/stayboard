@@ -14,6 +14,7 @@ import { createClient } from '@/lib/supabase-server'
 import { recordRun } from '@/lib/automation-runs'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sweepUnit, deptOf } from '@/lib/pending-work'
+import { closeStaleCleans } from '@/lib/stale-cleans'
 import { tooSoon } from '@/lib/cron-auth'
 import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg } from '@/lib/suggestions'
 
@@ -138,12 +139,20 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* the suggestions still stand */ }
 
+    // ── STALE DEPARTURE CLEANS ────────────────────────────────────────────────────────────────
+    // Jon, 2026-08-27: "any old departure cleans that have not been closed 7 days post departure,
+    // please close." Off until switched on in settings; see lib/stale-cleans for what it refuses to
+    // touch. Its own try — closing bookkeeping must never be able to fail the suggestion run.
+    let stale: any = null
+    try { stale = await closeStaleCleans() } catch (e: any) { stale = { ok: false, error: String(e?.message || e).slice(0, 140) } }
+
     // Receipt, so the automations screen can prove this ran and say what it did.
     await recordRun({
       name: 'suggestions', ok: failed.length === 0, itemCount: created.length,
       detail: {
         suggested: run.suggestions.length, autoCreated: created.length, failed: failed.length,
         consolidated, consolidatedUnits: consolidatedUnits.slice(0, 20), verdict: run.day.verdict,
+        staleCleansClosed: stale?.closed?.length || 0, staleCleansSkipped: stale?.skipped || null,
       },
       error: failed[0] || null,
     })
@@ -151,6 +160,7 @@ export async function GET(req: NextRequest) {
     const out = {
       ...safe, created: created.length, failed: failed.length, errors: failed.slice(0, 3),
       consolidated, consolidatedUnits: consolidatedUnits.length,
+      staleCleans: stale ? { closed: stale.closed?.length || 0, found: stale.found, enabled: stale.enabled, skipped: stale.skipped } : null,
     }
     return NextResponse.json(me ? { ...out, suggestions: run.suggestions } : out)
   } catch (e: any) {
