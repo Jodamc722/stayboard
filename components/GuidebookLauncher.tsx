@@ -21,7 +21,12 @@ const QUESTIONS: { key: string; label: string; hint: string; required?: boolean 
 
 type Up = { url: string; kind: 'photo' | 'doc'; name: string }
 
-export function GuidebookLauncher({ listingId, name }: { listingId: string; name: string }) {
+export function GuidebookLauncher({ listingId, name, compact }: {
+  listingId: string; name: string
+  /** Header-sized: the launcher now lives beside the OTA links at the top of a listing, where a
+      full-size black button would outweigh every other action on the page. */
+  compact?: boolean
+}) {
   const router = useRouter()
   const fileRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -128,8 +133,10 @@ export function GuidebookLauncher({ listingId, name }: { listingId: string; name
   return (
     <>
       <button onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-2 rounded-lg bg-ink text-white px-4 py-2 text-sm font-semibold hover:opacity-90">
-        <BookOpen size={16} /> Generate Guidebook
+        className={compact
+          ? 'inline-flex items-center gap-1.5 text-[11.5px] font-semibold rounded-lg border border-line bg-white text-muted px-2.5 py-1.5 hover:text-ink hover:bg-app'
+          : 'inline-flex items-center gap-2 rounded-lg bg-ink text-white px-4 py-2 text-sm font-semibold hover:opacity-90'}>
+        <BookOpen size={compact ? 12 : 16} /> {compact ? 'Guidebook' : 'Generate Guidebook'}
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-0 overflow-y-auto sm:p-4">
