@@ -51,6 +51,32 @@ export type TaskAutomationCfg = {
   // Low-review inspections (Jon, 2026-08-25: "auto assign bad review 3 and below task as
   // inspection in breezeway for checkouts, also move forward to checkout if not completed").
   lowReviews: boolean; lowReviewMax: number
+  // ── TRIP CONSOLIDATION (Jon, 2026-08-27) ──────────────────────────────────────────────────────
+  // "If maintenance is going into a unit, automatically push all of the pending maintenance tasks
+  // in that unit to that date." Built and running; these are the knobs it was hardcoding.
+  // `lookBackDays` is the line between "pending" and "abandoned" — Jon: "I would only look back 30
+  // days." Older than that and dragging a job onto today's visit reads as something forgotten
+  // rather than something to do.
+  tripSweep: {
+    enabled: boolean
+    lookBackDays: number      // how far back a task can be and still count as pending
+    maxFutureDays: number     // how far forward we will pull work — beyond this it was parked on purpose
+    sameDeptOnly: boolean     // a maintenance visit should not conscript the housekeeping deep clean
+  }
+  // ── STALE DEPARTURE CLEANS (Jon, 2026-08-27) ──────────────────────────────────────────────────
+  // "Any old departure cleans that have not been closed 7 days post departure, please close."
+  //
+  // Crews finish turns and forget to close the task. A week after the guest left, the unit has been
+  // cleaned, re-let and cleaned again — an open clean from that long ago is not outstanding work,
+  // it is a stale record, and every one of them inflates the late count and makes the board's
+  // deadline numbers mean less. Closing them is bookkeeping, not a shortcut.
+  staleCleans: {
+    enabled: boolean
+    afterDays: number         // days past the scheduled date before a clean is considered stale
+    /** Never touch a clean on a unit that is occupied right now — that one may be real. */
+    skipOccupied: boolean
+    maxPerRun: number         // a ceiling, so a bad day can never mass-close the portfolio
+  }
 }
 export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   enabled: false,
@@ -64,6 +90,10 @@ export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   // to the channel for the post to land — private channels need membership.
   noticeDrafts: { enabled: false, fromEmail: 'support@stay-hospitality.com', slackChannel: 'G01TT278P2L' },
   lowReviews: true, lowReviewMax: 3,
+  tripSweep: { enabled: true, lookBackDays: 30, maxFutureDays: 21, sameDeptOnly: true },
+  // OFF until somebody turns it on. This one CLOSES records, and an automation that closes things
+  // has to be switched on deliberately by a person who understands what it will do.
+  staleCleans: { enabled: false, afterDays: 7, skipOccupied: true, maxPerRun: 40 },
 }
 export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
   const s = await getSetting<any>(TASK_AUTOMATION_KEY, null)
@@ -92,7 +122,24 @@ export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
     lowReviews: s.lowReviews !== false,
     lowReviewMax: Number.isFinite(Number(s.lowReviewMax)) && Number(s.lowReviewMax) >= 1 && Number(s.lowReviewMax) <= 4
       ? Number(s.lowReviewMax) : d.lowReviewMax,
+    tripSweep: {
+      enabled: s.tripSweep?.enabled !== false,
+      lookBackDays: numIn(s.tripSweep?.lookBackDays, d.tripSweep.lookBackDays, 1, 365),
+      maxFutureDays: numIn(s.tripSweep?.maxFutureDays, d.tripSweep.maxFutureDays, 1, 120),
+      sameDeptOnly: s.tripSweep?.sameDeptOnly !== false,
+    },
+    staleCleans: {
+      enabled: s.staleCleans?.enabled === true,
+      afterDays: numIn(s.staleCleans?.afterDays, d.staleCleans.afterDays, 1, 90),
+      skipOccupied: s.staleCleans?.skipOccupied !== false,
+      maxPerRun: numIn(s.staleCleans?.maxPerRun, d.staleCleans.maxPerRun, 1, 500),
+    },
   }
+}
+
+function numIn(v: any, fb: number, lo: number, hi: number): number {
+  const n = Number(v)
+  return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n) : fb
 }
 
 function normName(s: string): string { return str(s).toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim() }

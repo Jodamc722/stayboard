@@ -105,7 +105,7 @@ export type PendingTask = {
  *
  * Bounded on purpose: a task from eight months ago that nobody has touched is not "pending", it is
  * abandoned, and putting it in front of a coordinator every morning is how the whole panel starts
- * getting skipped. `lookBackDays` is the line between the two.
+ * getting skipped. `lookBackDays` is the line between the two, and it is 30 days — see below.
  */
 export async function pendingForUnits(
   listingIds: string[],
@@ -114,7 +114,13 @@ export async function pendingForUnits(
 ): Promise<Record<string, PendingTask[]>> {
   const out: Record<string, PendingTask[]> = {}
   if (!listingIds.length) return out
-  const back = Math.max(1, opts.lookBackDays ?? 120)
+  // THIRTY DAYS (Jon, 2026-08-27: "I would only look back 30 days").
+  // It was 120. That was too generous in both directions: a job nobody has touched in four months
+  // is not pending, it is abandoned, and dragging it onto today's visit tells a tech something got
+  // forgotten rather than that something needs doing. Thirty days is roughly "this month" — recent
+  // enough that the person who logged it still remembers why, which is the test that matters when
+  // somebody is standing in the unit deciding whether to act on it.
+  const back = Math.max(1, opts.lookBackDays ?? 30)
   const ahead = Math.max(1, opts.lookAheadDays ?? 60)
   const from = dOf(new Date(Date.parse(today + 'T12:00:00Z') - back * 86400000).toISOString())
   const to = dOf(new Date(Date.parse(today + 'T12:00:00Z') + ahead * 86400000).toISOString())
@@ -244,11 +250,18 @@ export async function sweepUnit(opts: {
   maxFutureDays?: number
 }): Promise<PushResult & { candidates: PendingTask[] }> {
   const { listingId, unitName, date, dept } = opts
-  const pending = (await pendingForUnits([listingId], date))[listingId] || []
-  const horizon = Math.max(1, opts.maxFutureDays ?? 21)
+  // THE WINDOWS ARE OPERATOR SETTINGS NOW (Jon, 2026-08-27: "all this should be in settings and
+  // automations"). They were hardcoded here, which meant the one number Jon actually wanted to
+  // change — how far back counts as pending — was a code change.
+  const { getTaskAutomation } = await import('./auto-inspections')
+  const cfg = await getTaskAutomation().catch(() => null)
+  const ts = cfg?.tripSweep
+  if (ts && ts.enabled === false) return { ok: true, moved: [], failed: [], candidates: [] }
+  const pending = (await pendingForUnits([listingId], date, { lookBackDays: ts?.lookBackDays }))[listingId] || []
+  const horizon = Math.max(1, opts.maxFutureDays ?? ts?.maxFutureDays ?? 21)
   const cutoff = new Date(Date.parse(date + 'T12:00:00Z') + horizon * 86400000).toISOString().slice(0, 10)
   const take = pending.filter(t =>
-    t.dept === dept
+    (ts?.sameDeptOnly === false ? t.dept !== 'other' : t.dept === dept)
     && t.scheduledDate !== date
     // Future work is only pulled forward from inside the horizon. Something booked two months out
     // was scheduled deliberately, and yanking it to today is not helpfulness, it is meddling.
