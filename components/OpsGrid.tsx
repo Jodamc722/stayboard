@@ -31,11 +31,12 @@ import {
   Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
   LayoutGrid, Users, X, MapPin, Clock, RefreshCw, ChevronDown,
   DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
-  Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble,
+  Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble, Wand2,
 } from 'lucide-react'
 import { catOfTask, type TaskCat } from '@/lib/task-categories'
 import { SuggestionsProvider, SuggestionsBand, UnitSuggestions, PersonSuggestions, useSuggestions } from '@/components/SuggestionsBand'
 import { AssignPanel } from '@/components/AssignPanel'
+import { DayPlanPanel } from '@/components/DayPlanPanel'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -754,6 +755,10 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   useEffect(() => { if (searchOpen && searchRef.current) searchRef.current.focus() }, [searchOpen])
   const [activeOnly, setActiveOnly] = useState(true)
   const [keyOpen, setKeyOpen] = useState(false)
+  // PLAN THE DAY (Jon, 2026-08-27: "need the AI systems to help assign or build tasks to ensure we
+  // give the team a full and directional day"). Opens over the board it is planning, so the numbers
+  // in the header and the plan behind it are the same numbers.
+  const [planOpen, setPlanOpen] = useState(false)
   // MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). Remembered per
   // device, because whoever runs Broward runs Broward every morning and should not re-pick it.
   const [mkt, setMkt] = useState<string>('all')
@@ -786,6 +791,12 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const inMkt = (m?: string | null, m2?: string | null) => mkt === 'all' || m === mkt || m2 === mkt
   const units = useMemo(() => allUnits.filter(u => inMkt(u.market, u.market2)), [allUnits, mkt])
   const glitchesInMkt = useMemo(() => glitches.filter(g => inMkt(g.market, g.market2)), [glitches, mkt])
+
+  // How much work on this slice of the board nobody owns. It is the label on the Plan day button
+  // and the reason it exists — when it is zero the button is not rendered at all, because a button
+  // that opens a panel saying "nothing to do" is a button that trains people not to press it.
+  const unownedNow = useMemo(() => units.reduce((n, u) =>
+    u.guestyOnly ? n : n + u.tasks.filter(t => !t.done && !t.guestyOnly && !(t.assignees || []).length).length, 0), [units])
 
   // The chips are built from the WHOLE day, not the filtered slice — otherwise picking a market
   // hides every other market and you cannot get back without knowing the names.
@@ -1133,6 +1144,16 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           className={'px-2.5 py-1.5 rounded-xl border text-[12px] font-bold ' + (activeOnly ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
           {activeOnly ? 'Active' : 'All'}
         </button>
+        {/* PLAN THE DAY. Sits with the controls because it acts on exactly what the controls
+            have selected — the market chips scope the plan the same way they scope the rows. It
+            counts the unowned work in its own label, so the reason to press it is on the button. */}
+        {unownedNow > 0 && (
+          <button onClick={() => setPlanOpen(true)}
+            className="px-2.5 py-1.5 rounded-xl border border-brand-500/40 bg-brand-50 text-brand-700 text-[12px] font-bold inline-flex items-center gap-1.5 hover:bg-brand-100">
+            <Wand2 size={13} /> Plan day
+            <span className="text-[10px] font-bold text-brand-700/70 tabular-nums">{unownedNow}</span>
+          </button>
+        )}
         {/* The key sits with the other controls rather than over the table header, where it
             collided with the Issues label, and where a phone would never have seen it. */}
         <button onClick={() => setKeyOpen(k => !k)}
@@ -1240,6 +1261,14 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         {shown.length} {mode === 'units' ? 'unit' : 'person'}{shown.length === 1 ? '' : 's'} shown.
         {' '}Glitches count everything still open, not only what is scheduled today.
       </p>
+
+      {planOpen && (
+        <DayPlanPanel
+          units={units} roster={roster} staff={staff} today={today}
+          onClose={() => setPlanOpen(false)}
+          onApplied={onRefresh}
+        />
+      )}
     </div>
     </SuggestionsProvider>
     </CatsCtx.Provider>
