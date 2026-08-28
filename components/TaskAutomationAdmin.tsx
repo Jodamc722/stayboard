@@ -9,7 +9,7 @@
 // PREVIEW BEFORE TRUST. The Preview button runs the real rule against the real calendar and
 // shows exactly what WOULD fire, without creating anything — the same contract as the ops
 // brief's preview. Nothing is created until Enabled is on.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Zap, Loader2, Save, Eye, AlertTriangle, Check } from 'lucide-react'
 
 type Cfg = {
@@ -20,6 +20,34 @@ type Cfg = {
   assignAlways: string
   supervisors: { Miami: string; Broward: string; North: string }
   noticeDrafts: { enabled: boolean; fromEmail: string; slackChannel: string }
+  tripSweep: { enabled: boolean; lookBackDays: number; maxFutureDays: number; sameDeptOnly: boolean }
+  staleCleans: { enabled: boolean; afterDays: number; skipOccupied: boolean; maxPerRun: number }
+}
+
+// A labelled knob: the words and the number read as one phrase ("Only look back [30]"),
+// so a manager never has to map a bare input back to the sentence above it.
+function Knob({ label, unit, children }: { label: string; unit?: string; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 border border-line rounded-lg px-2.5 py-1 bg-app/40 text-[11.5px] text-muted">
+      {label}
+      {children}
+      {unit ? <span>{unit}</span> : null}
+    </span>
+  )
+}
+
+// A small integer input. It refuses junk rather than writing NaN into the config — an empty or
+// non-numeric box leaves the saved number exactly as it was.
+function Num({ value, onChange, disabled, min = 1, max = 365 }: {
+  value: number; onChange: (n: number) => void; disabled?: boolean; min?: number; max?: number
+}) {
+  return (
+    <input
+      type="number" min={min} max={max} value={value} disabled={disabled}
+      onChange={e => { const n = Number(e.target.value); if (Number.isFinite(n) && n > 0) onChange(Math.round(n)) }}
+      className="w-[58px] rounded-md border border-line bg-white px-1.5 py-0.5 text-[12px] font-semibold text-ink tabular-nums disabled:opacity-50"
+    />
+  )
 }
 
 export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
@@ -35,6 +63,7 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const [preview, setPreview] = useState<any[] | null>(null)
+  const [stalePrev, setStalePrev] = useState<any | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +104,16 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
         setLongStaySaved(Number(j3.rules?.longStayNights) || longStay)
       }
       setMsg({ tone: 'ok', text: j.config.enabled ? 'Saved — the automation is ON and runs four times a day.' : 'Saved — the automation stays OFF until you enable it.' })
+    } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
+  }
+
+  async function previewStale() {
+    setBusy('stale'); setMsg(null); setStalePrev(null)
+    try {
+      const r = await fetch('/api/settings/stale-cleans', { cache: 'no-store' })
+      const j = await r.json()
+      if (!r.ok || j.ok === false) throw new Error(j?.error || 'Preview failed.')
+      setStalePrev(j)
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
@@ -161,6 +200,116 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
           ))}
           <p className="text-[11px] text-muted">Names are matched against Breezeway's people list when each task is created.</p>
         </div>
+      </div>
+
+      {/* ── AUTOMATION: TRIP CONSOLIDATION ────────────────────────────────────────────────── */}
+      <div className="border-t border-line pt-3 mt-1">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <Zap size={14} className={cfg.tripSweep?.enabled ? 'text-amber-500' : 'text-muted'} />
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={cfg.tripSweep?.enabled !== false}
+              onChange={e => set({ tripSweep: { ...cfg.tripSweep, enabled: e.target.checked } })} disabled={!isOwner} />
+            <span className="text-[13px] font-bold text-ink">Bring pending work along when somebody visits a unit</span>
+          </label>
+          <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + (cfg.tripSweep?.enabled !== false ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-500')}>
+            {cfg.tripSweep?.enabled !== false ? 'On' : 'Off'}
+          </span>
+        </div>
+        <p className="text-[12px] text-muted mt-1 max-w-[74ch]">
+          The expensive part of a maintenance job is getting somebody through the door. When a visit is
+          scheduled &mdash; from a suggestion, or by anybody, picked up each morning &mdash; every other pending job of the
+          same trade in that unit moves onto the same day and the same person, and each one is retitled
+          <b className="text-ink"> [Moved to &hellip;]</b> with a dated Lighthouse line saying why.
+        </p>
+        <div className="flex flex-wrap gap-2 mt-2">
+          <Knob label="Only look back" unit="days">
+            <Num value={cfg.tripSweep?.lookBackDays ?? 30} disabled={!isOwner}
+              onChange={n => set({ tripSweep: { ...cfg.tripSweep, lookBackDays: n } })} />
+          </Knob>
+          <Knob label="Pull forward from up to" unit="days">
+            <Num value={cfg.tripSweep?.maxFutureDays ?? 21} disabled={!isOwner}
+              onChange={n => set({ tripSweep: { ...cfg.tripSweep, maxFutureDays: n } })} />
+          </Knob>
+          <label className="text-[11.5px] text-muted border border-line rounded-lg px-2.5 py-1 bg-app/40 inline-flex items-center gap-1.5">
+            <input type="checkbox" checked={cfg.tripSweep?.sameDeptOnly !== false} disabled={!isOwner}
+              onChange={e => set({ tripSweep: { ...cfg.tripSweep, sameDeptOnly: e.target.checked } })} />
+            Same trade only
+          </label>
+        </div>
+        <p className="text-[11px] text-muted mt-1.5">
+          Older than the look-back is not pending, it is abandoned &mdash; dragging it onto today&rsquo;s visit tells a
+          tech something was forgotten rather than that something needs doing. Beyond the pull-forward window, work was
+          scheduled deliberately and is left alone.
+        </p>
+      </div>
+
+      {/* ── AUTOMATION: STALE DEPARTURE CLEANS ────────────────────────────────────────────── */}
+      <div className="border-t border-line pt-3 mt-1">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <Zap size={14} className={cfg.staleCleans?.enabled ? 'text-amber-500' : 'text-muted'} />
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!cfg.staleCleans?.enabled}
+              onChange={e => set({ staleCleans: { ...cfg.staleCleans, enabled: e.target.checked } })} disabled={!isOwner} />
+            <span className="text-[13px] font-bold text-ink">Close departure cleans nobody closed</span>
+          </label>
+          <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + (cfg.staleCleans?.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-500')}>
+            {cfg.staleCleans?.enabled ? 'On' : 'Off'}
+          </span>
+        </div>
+        <p className="text-[12px] text-muted mt-1 max-w-[74ch]">
+          Crews finish turns and forget to close the task. A week later the unit has been cleaned, re-let and cleaned
+          again &mdash; so an open clean from that long ago is a stale record, not outstanding work, and every one of them
+          inflates the late count until the 4pm numbers stop meaning anything.
+          {' '}<b className="text-ink">It never touches a unit that is occupied right now, and never touches a vendor-cleaned
+          building</b> &mdash; vendors never close tasks at all, so every one of theirs would look stale forever.
+        </p>
+        <div className="flex flex-wrap gap-2 mt-2 items-center">
+          <Knob label="Close after" unit="days">
+            <Num value={cfg.staleCleans?.afterDays ?? 7} disabled={!isOwner}
+              onChange={n => set({ staleCleans: { ...cfg.staleCleans, afterDays: n } })} />
+          </Knob>
+          <Knob label="Never more than" unit="a run">
+            <Num value={cfg.staleCleans?.maxPerRun ?? 40} disabled={!isOwner}
+              onChange={n => set({ staleCleans: { ...cfg.staleCleans, maxPerRun: n } })} />
+          </Knob>
+          <label className="text-[11.5px] text-muted border border-line rounded-lg px-2.5 py-1 bg-app/40 inline-flex items-center gap-1.5">
+            <input type="checkbox" checked={cfg.staleCleans?.skipOccupied !== false} disabled={!isOwner}
+              onChange={e => set({ staleCleans: { ...cfg.staleCleans, skipOccupied: e.target.checked } })} />
+            Skip occupied units
+          </label>
+          <button onClick={previewStale} disabled={busy === 'stale'}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-40">
+            {busy === 'stale' ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />} Show me what it would close
+          </button>
+        </div>
+        <p className="text-[11px] text-muted mt-1.5">Counted from the scheduled date. The per-run ceiling is a hard stop, so a bad sync can never mass-close the portfolio.</p>
+
+        {stalePrev && (
+          <div className="mt-2 rounded-xl border border-line bg-white overflow-hidden">
+            <div className="px-3 py-2 bg-app border-b border-line">
+              <p className="text-[12.5px] font-semibold text-ink">
+                {stalePrev.closed?.length || 0} would be closed &middot; open since before {stalePrev.cutoff}
+              </p>
+              <p className="text-[11.5px] text-muted mt-0.5">
+                {stalePrev.found} stale cleans found
+                {stalePrev.skipped?.occupied ? ` · ${stalePrev.skipped.occupied} skipped, unit occupied today` : ''}
+                {stalePrev.skipped?.vendor ? ` · ${stalePrev.skipped.vendor} skipped, vendor-cleaned` : ''}
+                {stalePrev.skipped?.overCap ? ` · ${stalePrev.skipped.overCap} over the per-run cap` : ''}
+              </p>
+            </div>
+            <div className="divide-y divide-line max-h-[220px] overflow-y-auto">
+              {(stalePrev.closed || []).slice(0, 60).map((c: any) => (
+                <div key={c.id} className="px-3 py-1.5 flex items-center gap-2">
+                  <span className="text-[12px] text-ink flex-1 truncate">{c.unit}</span>
+                  <span className="text-[11px] text-muted tabular-nums shrink-0">{c.date}</span>
+                </div>
+              ))}
+              {(stalePrev.closed || []).length === 0 && (
+                <p className="px-3 py-2 text-[12px] text-muted">Nothing is stale right now.</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── AUTOMATION 2: arrival-day Gmail drafts for front-desk notices ─────────────────── */}
