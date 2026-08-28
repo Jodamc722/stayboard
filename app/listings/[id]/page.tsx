@@ -247,6 +247,9 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
               <a key={l.name} href={l.url} target="_blank" rel="noopener noreferrer"
                 className="text-[11.5px] font-semibold rounded-lg border border-line bg-white text-muted px-2.5 py-1.5 hover:text-ink hover:bg-app">{l.name}</a>
             ))}
+            {/* Guidebook sits with the OTA links rather than five panels down inside Ops — it is a
+                thing you open ABOUT this listing, which is exactly what this row is for. */}
+            <GuidebookLauncher listingId={listing.id} name={name} compact />
             <a href={`https://app.guesty.com/properties/${listing.id}/property/v2`} target="_blank" rel="noopener noreferrer"
               className="text-[11.5px] font-semibold rounded-lg border border-line bg-white text-brand-700 px-2.5 py-1.5 hover:bg-brand-50 inline-flex items-center gap-1">
               <ExternalLink size={11} /> Guesty
@@ -351,7 +354,17 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           id: 'photos', label: 'Photos',
           badge: String(res.photos.score),
           tone: res.photos.score >= 80 ? 'good' : res.photos.score >= 60 ? 'warn' : 'bad',
-          panel: <PhotoOrganizer listingId={listing.id} name={name} />,
+          panel: (
+            // HERO STUDIO IS A PHOTO TOOL (Jon, 2026-08-27: "this should be in the photo section").
+            // It was filed under Ops, next to open work orders and the property audit, because that
+            // panel had become the drawer everything without an obvious home went into. Picking the
+            // cover shot is the single highest-impact photo decision on a listing; it belongs where
+            // somebody is already looking at the photos. Organiser first — that is the bulk work.
+            <div className="space-y-3">
+              <PhotoOrganizer listingId={listing.id} name={name} />
+              <HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={pictures} amenities={amenities} />
+            </div>
+          ),
         },
         {
           id: 'content', label: 'Content',
@@ -401,8 +414,6 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
               <UnitTasks listingId={listing.id} />
               <UnitAudit listingId={listing.id} />
               <FaqDesk listingId={listing.id} />
-              <GuidebookLauncher listingId={listing.id} name={name} />
-              <HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={pictures} amenities={amenities} />
             </div>
           ),
         },
