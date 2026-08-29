@@ -79,7 +79,13 @@ export async function getAccess(): Promise<Access> {
     // select('*') so optional columns (workspace/profile/prefs/access_role) are read when present
     // and simply absent when their migration hasn't run yet.
     const { data, error } = await sb.from('app_users').select('*').eq('email', email).maybeSingle()
-    if (error) return base({ user, email, role: 'member', allowed: true, bootstrap: true, levels: ALL_FULL() })
+    if (error) {
+      // FAIL CLOSED (2026-08-29 security audit). This used to grant full admin on any read error —
+      // a transient Supabase blip promoted whoever hit it next to app-wide admin. Deny instead;
+      // the superadmin still gets in so an outage never locks the owner out of his own tool.
+      if (isSuperadmin(email)) return base({ user, email, role: 'admin', allowed: true, bootstrap: true, levels: ALL_FULL() })
+      return base({ user, email })
+    }
     if (!data) {
       const { count } = await sb.from('app_users').select('email', { count: 'exact', head: true }).eq('status', 'active')
       if (!count || count === 0) return base({ user, email, role: 'member', allowed: true, bootstrap: true, levels: ALL_FULL() })
@@ -98,7 +104,9 @@ export async function getAccess(): Promise<Access> {
       accessRole, levels, landing,
     })
   } catch {
-    return base({ user, email, role: 'member', allowed: true, bootstrap: true, levels: ALL_FULL() })
+    // FAIL CLOSED, same reasoning as the read-error path above.
+    if (isSuperadmin(email)) return base({ user, email, role: 'admin', allowed: true, bootstrap: true, levels: ALL_FULL() })
+    return base({ user, email })
   }
 }
 

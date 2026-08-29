@@ -76,12 +76,17 @@ export async function closeStaleCleans(opts: { dryRun?: boolean } = {}): Promise
     // Bounded window: `afterDays` back to 180 days. Beyond that is archaeology, and closing a
     // six-month-old record changes nothing anybody is looking at.
     const from = ymd(new Date(Date.parse(today + 'T12:00:00Z') - 180 * 86400000))
+    // ORDER DESC — most recent stale clean first. This used to order ASC with .limit(2000);
+    // PostgREST silently caps every response at 1000 rows, so it only ever saw the OLDEST 1000
+    // stale cleans (~6 months back) and could NEVER reach the 8-day-old ones this job exists to
+    // close. Recent-first means the cleans a person would actually recognise are the ones it acts
+    // on, and the maxPerRun cap trims the ancient tail rather than the useful head. (2026-08-29)
     const { data, error } = await db.from('breezeway_tasks_sync')
       .select('id,reference_property_id,name,status,scheduled_date,finished_at')
       .gte('scheduled_date', from).lt('scheduled_date', cutoff)
       .ilike('name', '%clean%')
-      .order('scheduled_date', { ascending: true })
-      .limit(2000)
+      .order('scheduled_date', { ascending: false })
+      .limit(1000)
     if (error) return { ...base, ok: false, error: error.message }
 
     const open = ((data || []) as any[]).filter(t => {
