@@ -45,6 +45,11 @@ const dISO = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })
 const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 864e5)
 const money = (n: number | null | undefined) =>
   n == null ? '&mdash;' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
+// A RATE NEEDS ITS CENTS. Whole dollars are right for a payroll total, but cost per clean is a
+// number Jon compares between two markets — rounding $54.82 and $55.40 both to "$55" hides the
+// very gap the table exists to show.
+const rate = (n: number | null | undefined) =>
+  n == null ? '&mdash;' : (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const pctTxt = (n: number | null | undefined) => (n == null ? '&mdash;' : Math.round(n) + '%')
 const r1 = (n: number) => Math.round(n * 10) / 10
 const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -267,7 +272,7 @@ export async function GET(req: NextRequest) {
             const last = i === cols.length - 1
             return '<td style="' + td + ';text-align:right;white-space:nowrap' + (last ? ';border-left:1px solid #e5e7eb' : '') + '">' +
               (c.perClean != null
-                ? '<b style="font-size:' + (strong ? '15px' : '13.5px') + '">' + money(c.perClean) + '</b>' +
+                ? '<b style="font-size:' + (strong ? '15px' : '13.5px') + '">' + rate(c.perClean) + '</b>' +
                   '<br><span style="' + MUTED + ';font-size:11px">' + money(c.payroll) + (c.hours ? ' &middot; ' + r1(c.hours) + 'h' : '') + '</span>'
                 : '<span style="' + MUTED + '">&mdash;</span>') + '</td>'
           }).join('') + '</tr>'
@@ -292,12 +297,12 @@ export async function GET(req: NextRequest) {
           '<tr><td style="' + td + ';border-top:2px solid #0f172a"><b>All three crews</b><br><span style="' + MUTED + ';font-size:11.5px">what a turn really costs in payroll</span></td>' +
           cols.map((m: any, i: number) => '<td style="' + td + ';text-align:right;white-space:nowrap;border-top:2px solid #0f172a' +
             (i === cols.length - 1 ? ';border-left:1px solid #e5e7eb' : '') + '">' +
-            (m.all.perClean != null ? '<b style="font-size:16px">' + money(m.all.perClean) + '</b><br><span style="' + MUTED + ';font-size:11px">' + money(m.all.payroll) + '</span>'
+            (m.all.perClean != null ? '<b style="font-size:16px">' + rate(m.all.perClean) + '</b><br><span style="' + MUTED + ';font-size:11px">' + money(m.all.payroll) + '</span>'
               : '<span style="' + MUTED + '">&mdash;</span>') + '</td>').join('') + '</tr>' +
           cleansRow +
           '</table>' +
           (trend.length > 1 ? '<p style="margin:12px 0 0;font-size:12.5px;color:#374151">All three crews combined: ' +
-            trend.map(x => '<b>' + money(x.g.all.perClean) + '</b> <span style="' + MUTED + '">' + x.lab.toLowerCase() + '</span>').join(' &middot; ') + '</p>' : '') +
+            trend.map(x => '<b>' + rate(x.g.all.perClean) + '</b> <span style="' + MUTED + '">' + x.lab.toLowerCase() + '</span>').join(' &middot; ') + '</p>' : '') +
           '<p style="margin:10px 0 0;font-size:11px;color:#9ca3af;line-height:1.7">' +
           'Every row is divided by the departure cleans done in that market, so the three crews add up to the combined line. ' +
           '<b>Housekeepers</b> is a true unit cost &mdash; those wages were spent turning those units. ' +
@@ -456,7 +461,7 @@ export async function GET(req: NextRequest) {
     const verdict =
       'Yesterday: <b style="' + ((cY.profit || 0) < 0 ? RED : GREEN) + '">' + money(cY.profit) + ' profit</b> on ' +
       money((cY.cleanRev || 0) + (cY.maintRev || 0)) + ' of revenue &middot; ' + (cY.cleans || 0) + ' cleans' +
-      (cY.cpc != null ? ' @ ' + money(cY.cpc) : '') + '.' +
+      (cY.cpc != null ? ' @ ' + rate(cY.cpc) + '/clean' : '') + '.' +
       (onShift ? ' Today: <b>' + onShift + '</b> on shift' + (cleansDueToday != null ? ', <b>' + cleansDueToday + '</b> cleans due' : '') + '.' : '')
 
     const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b1220">' +
