@@ -1848,6 +1848,21 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       row.tasksNoCharge += Math.round(p.tasksNoCharge * share)
     })
   }
+  // ---- supervision, by market --------------------------------------------------------------
+  // Supervisors turn no units, so there is no clean share to split them by. They DO hold
+  // Breezeway work (inspections, guest issues, the walk-throughs they get handed), so the same
+  // task-share rule the technicians use is the closest thing to where their day actually went;
+  // anyone holding no tasks falls back to their Staffing area, exactly as `spread` does for
+  // everybody else. This is an allocation, not a measurement, and the card says so.
+  const supRows: Record<string, PnlRow> = {}
+  const supStaff = people.filter(p => p.dept === 'supervision')
+  for (const p of supStaff) {
+    spread(supRows, p, mkTasksBy[p.name], (row, share) => {
+      row.hours += p.hours * share
+      row.payroll += netCost(p) * share
+      row.tasks += Math.round(p.tasks * share)
+    })
+  }
   const rowList = (rows: Record<string, PnlRow>) => Object.keys(rows)
     .sort((a, b) => (MK_ORDER.indexOf(a) < 0 ? 9 : MK_ORDER.indexOf(a)) - (MK_ORDER.indexOf(b) < 0 ? 9 : MK_ORDER.indexOf(b)))
     .map(k => finishRow(rows[k]))
@@ -1872,6 +1887,67 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     round2(hkStaff.reduce((a, p) => a + p.cleaningRevenue, 0)))
   const mtTotal = totalOf(mtStaff, 'all', 'All maintenance', 0,
     round2(mtStaff.reduce((a, p) => a + p.billableRevenue, 0)))
+  const supMarkets = rowList(supRows)
+  const supTotal = totalOf(supStaff, 'all', 'All supervision', 0, 0)
+
+  // ---- COST PER CLEAN, BY CREW AND BY MARKET (Jon, 2026-08-29) ------------------------------
+  //
+  //   "I need to see cost per clean in Broward and Miami broken out, and it needs to be
+  //    organized by housekeepers / supervisors / maintenance. Then do a combined total."
+  //
+  // ONE DENOMINATOR FOR ALL THREE ROWS: the departure cleans done in that market. That is what
+  // makes the three crew rows add up to the combined row — divide each crew by a different
+  // count and the column stops summing, which is exactly the kind of table nobody trusts.
+  //
+  // Only the housekeeping row is a true unit cost: those wages are spent turning those units.
+  // The supervisor and technician rows answer a different question — what each of the other
+  // crews ADDS to the cost of a turn — and their own output (billable repairs, inspections) is
+  // not cleaning output at all. The card labels them as loaded contribution, never as though a
+  // technician were cleaning. Maintenance revenue is printed beside it so the row cannot be
+  // misread as pure cost.
+  const cleansByMk: Record<string, number> = {}
+  for (const r of hkMarkets) cleansByMk[r.key] = r.cleans
+  const perCleanMkKeys = Array.from(new Set([
+    ...hkMarkets.map(r => r.key), ...supMarkets.map(r => r.key), ...mtMarkets.map(r => r.key),
+  ])).filter(k => (cleansByMk[k] || 0) > 0)
+    .sort((a, b) => (MK_ORDER.indexOf(a) < 0 ? 9 : MK_ORDER.indexOf(a)) - (MK_ORDER.indexOf(b) < 0 ? 9 : MK_ORDER.indexOf(b)))
+  const payrollOf = (rows: PnlRow[], k: string) => round2((rows.find(r => r.key === k)?.payroll) || 0)
+  const hoursOfRow = (rows: PnlRow[], k: string) => round2((rows.find(r => r.key === k)?.hours) || 0)
+  const per = (dollars: number, cleans: number) => (cleans > 0 && dollars > 0 ? round2(dollars / cleans) : null)
+  const perCleanByMarket = perCleanMkKeys.map(k => {
+    const cleans = cleansByMk[k] || 0
+    const hkP = payrollOf(hkMarkets, k), supP = payrollOf(supMarkets, k), mtP = payrollOf(mtMarkets, k)
+    const all = round2(hkP + supP + mtP)
+    return {
+      key: k, label: mkLabel(k), cleans,
+      housekeeping: { payroll: hkP, hours: hoursOfRow(hkMarkets, k), perClean: per(hkP, cleans) },
+      supervision: { payroll: supP, hours: hoursOfRow(supMarkets, k), perClean: per(supP, cleans) },
+      maintenance: {
+        payroll: mtP, hours: hoursOfRow(mtMarkets, k), perClean: per(mtP, cleans),
+        revenue: round2((mtMarkets.find(r => r.key === k)?.revenue) || 0),
+      },
+      all: { payroll: all, perClean: per(all, cleans) },
+    }
+  })
+  // The combined column. Summed from the SAME rows the markets use, so the table reconciles by
+  // construction rather than by a second pass over the people.
+  const perCleanCleansAll = perCleanByMarket.reduce((a, m) => a + m.cleans, 0)
+  const perCleanTotal = (() => {
+    const hkP = round2(perCleanByMarket.reduce((a, m) => a + m.housekeeping.payroll, 0))
+    const supP = round2(perCleanByMarket.reduce((a, m) => a + m.supervision.payroll, 0))
+    const mtP = round2(perCleanByMarket.reduce((a, m) => a + m.maintenance.payroll, 0))
+    const all = round2(hkP + supP + mtP)
+    return {
+      key: 'all', label: 'Combined', cleans: perCleanCleansAll,
+      housekeeping: { payroll: hkP, hours: round2(perCleanByMarket.reduce((a, m) => a + m.housekeeping.hours, 0)), perClean: per(hkP, perCleanCleansAll) },
+      supervision: { payroll: supP, hours: round2(perCleanByMarket.reduce((a, m) => a + m.supervision.hours, 0)), perClean: per(supP, perCleanCleansAll) },
+      maintenance: {
+        payroll: mtP, hours: round2(perCleanByMarket.reduce((a, m) => a + m.maintenance.hours, 0)), perClean: per(mtP, perCleanCleansAll),
+        revenue: round2(perCleanByMarket.reduce((a, m) => a + m.maintenance.revenue, 0)),
+      },
+      all: { payroll: all, perClean: per(all, perCleanCleansAll) },
+    }
+  })()
 
   // ---- WHO IS BENDING COST PER CLEAN, BY NAME ----------------------------------------------
   // Hours per clean across the crew, then anybody more than three times the middle of it — or
@@ -1906,7 +1982,15 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const pnl = {
     basis: 'Homebase hours and wages; departure-clean fees net of the channel cut; Breezeway charges for billable work. A person’s hours and pay follow the work — housekeepers split by share of cleans, technicians by share of tasks, anyone with neither by their Staffing market.',
     housekeeping: { markets: hkMarkets, total: hkTotal },
+    supervision: { markets: supMarkets, total: supTotal },
     maintenance: { markets: mtMarkets, total: mtTotal },
+    // Cost per clean as a crew × market grid, with the combined column. See the block above for
+    // what each row does and does not mean.
+    perClean: {
+      markets: perCleanByMarket,
+      total: perCleanTotal,
+      basis: 'Every row is divided by the departure cleans done in that market, so the three crews sum to the combined line. Housekeeping is a true unit cost; supervision and maintenance are what those crews add to the cost of a turn.',
+    },
     // Already deducted from the payroll above, named so the number can be traced back.
     seventeenWestCredit: w17CreditInScope,
     // The reconciliation, computed rather than promised: markets must equal the total.
@@ -1915,6 +1999,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
         payrollDelta: round2(hkMarkets.reduce((a, r) => a + r.payroll, 0) - hkTotal.payroll),
         hoursDelta: round2(hkMarkets.reduce((a, r) => a + r.hours, 0) - hkTotal.hours),
         cleansDelta: hkMarkets.reduce((a, r) => a + r.cleans, 0) - hkTotal.cleans,
+      },
+      supervision: {
+        payrollDelta: round2(supMarkets.reduce((a, r) => a + r.payroll, 0) - supTotal.payroll),
+        hoursDelta: round2(supMarkets.reduce((a, r) => a + r.hours, 0) - supTotal.hours),
       },
       maintenance: {
         payrollDelta: round2(mtMarkets.reduce((a, r) => a + r.payroll, 0) - mtTotal.payroll),
