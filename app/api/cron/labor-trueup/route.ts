@@ -201,7 +201,7 @@ export async function GET(req: NextRequest) {
         '<br>' + workBits + '</p>' +
         (rows
           ? '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">On today</th><th style="' + th + '">Shift</th><th style="' + th + ';text-align:right">Scheduled</th></tr>' + rows + '</table>' +
-            '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Hours are worked hours &mdash; shifts over 6h assume one unpaid break hour, so 8:00&ndash;5:00 counts as 8h.</p>'
+            '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">These are <b>scheduled</b> hours, not punches &mdash; nobody has worked today yet. A shift over 6h assumes one unpaid break hour, so 8:00&ndash;5:00 is counted as 8h. Every dollar elsewhere in this email comes from actual clock punches.</p>'
           : '<p style="margin:0;font-size:13px;color:#6b7280">Nobody is on the Homebase schedule for today.</p>') +
         '</div>'
     } catch {
@@ -409,7 +409,7 @@ export async function GET(req: NextRequest) {
         // board, whoever closed it — that IS Jon's effectiveness measure. The table below credits
         // cleans to housekeepers only (that is what cost/clean divides by). Without this line the
         // same email carries "25" and "18" and somebody has to ask which is wrong. Neither is.
-        '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">Counts here are board completions &mdash; every departure clean closed yesterday, whoever closed it. The table below credits cleans to housekeepers only (for cost/clean), so the two can differ by vendor- and maintenance-closed doors.</p>' +
+        '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">Counts here are board completions &mdash; every departure clean closed yesterday, whoever closed it. The h/clean rate beside them is housekeepers only: their punched hours over the cleans credited to them, the same basis as cost/clean below. The two clean counts differ by vendor- and maintenance-closed doors.</p>' +
         '</div>'
     } catch {
       crewsCard = '<div style="' + cardStyle + '">' + secTitle('Crews &mdash; completed vs hours clocked', '') +
