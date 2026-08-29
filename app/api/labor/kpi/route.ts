@@ -347,7 +347,11 @@ export async function GET(req: Request) {
     // base. The legacy attribution above still feeds the today strip and per-person tiles
     // (now netted too), but the money the strip leads with is the engine's.
     const econ = await laborEconomics({ from: start, to: end, market: marketParam })
-    const scheduledCost = round2(dayShifts.reduce((a, s: any) => a + (s.scheduledCost ?? 0), 0))
+    // FILLED SHIFTS ONLY. An unfilled open shift is priced by Homebase but nobody works it —
+    // counting it inflated the scheduled denominator, so actual always read under budget.
+    // computeLaborKpis has always filtered these; this line did not, and the market tabs
+    // (which drop nameless shifts) disagreed with the all tab as a result.
+    const scheduledCost = round2(dayShifts.filter((s: any) => !s.open).reduce((a, s: any) => a + (s.scheduledCost ?? 0), 0))
     const payrollTotal = kpis.totalLaborCost ?? 0
     const engineInhouse = econ.cleaningRevenue ?? inhouseFees
     const engineVendor = econ.cleaningRevenueVendor ?? vendorFees
@@ -377,7 +381,7 @@ export async function GET(req: Request) {
       clockedInNow: Array.from(new Set(tcToday.filter(t => t.open).map(t => t.name))),
       hoursSoFar: round2(tcToday.reduce((a, t) => a + (t.hours ?? 0), 0)),
       payrollSoFar: round2(tcToday.reduce((a, t) => a + (t.laborCost ?? 0), 0)),
-      scheduledPayroll: round2(shToday.reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0)),
+      scheduledPayroll: round2(shToday.filter((s: any) => !s.open).reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0)),
       cleaningRevenueToday: round2(attributions.filter(x => x.checkOut === today).reduce((a, x) => a + (x.fee ?? 0), 0)),
       tasksDoneToday: taskRows.filter(t => String(t.finished_at).slice(0, 10) === today).length,
       laborPct: pctOf(
@@ -385,7 +389,7 @@ export async function GET(req: Request) {
         round2(attributions.filter(x => x.checkOut === today).reduce((a, x) => a + (x.fee ?? 0), 0))),
       vsScheduledPct: pctOf(
         round2(tcToday.reduce((a, t) => a + (t.laborCost ?? 0), 0)),
-        round2(shToday.reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0))),
+        round2(shToday.filter((s: any) => !s.open).reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0))),
     } : null
 
     const economics = {
