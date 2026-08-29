@@ -195,7 +195,7 @@ export async function GET(req: NextRequest) {
         (openShifts ? ' &middot; <span style="' + RED + '">' + openShifts + ' open shift' + (openShifts === 1 ? '' : 's') + ' unfilled</span>' : '') +
         '<br>' + workBits + '</p>' +
         (rows
-          ? '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">On today</th><th style="' + th + '">Shift</th><th style="' + th + ';text-align:right">Hours</th></tr>' + rows + '</table>' +
+          ? '<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="' + th + '">On today</th><th style="' + th + '">Shift</th><th style="' + th + ';text-align:right">Scheduled</th></tr>' + rows + '</table>' +
             '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Hours are worked hours &mdash; shifts over 6h assume one unpaid break hour, so 8:00&ndash;5:00 counts as 8h.</p>'
           : '<p style="margin:0;font-size:13px;color:#6b7280">Nobody is on the Homebase schedule for today.</p>') +
         '</div>'
@@ -237,6 +237,77 @@ export async function GET(req: NextRequest) {
       numRow('Departure cleans', 'cost / clean is housekeepers only', c =>
         String(c.cleans || 0) + (c.cpc != null ? ' <span style="' + MUTED + '">&middot; ' + money(c.cpc) + '/clean</span>' : '')) +
       '</table>'
+
+    // ── 2a. COST PER CLEAN, BY CREW AND BY MARKET (Jon, 2026-08-29) ───────────────────────────
+    //
+    //   "I need to see cost per clean in Broward and Miami broken out, and it needs to be
+    //    organized by housekeepers / supervisors / maintenance. Then do a combined total."
+    //
+    // Built on the 30-day window. A single day cannot carry this table: one supervisor's shift
+    // lands entirely on whichever market he happened to hold a task in, and the row swings by
+    // dollars a clean for reasons that have nothing to do with how the day was run. Thirty days
+    // is also the window the rest of this email says to manage on. The combined line is shown
+    // for all three windows underneath, which is where the movement actually belongs.
+    let perCleanCard = ''
+    try {
+      const grid: any = (ec30 as any)?.pnl?.perClean
+      const mkts: any[] = (grid?.markets || []).filter((m: any) => m.cleans > 0)
+      if (grid && mkts.length) {
+        const cols = [...mkts, grid.total]
+        const headCells = cols.map((m: any, i: number) =>
+          '<th style="' + th + ';text-align:right' + (i === cols.length - 1 ? ';border-left:1px solid #e5e7eb' : '') + '">' +
+          (i === cols.length - 1 ? '<b>Combined</b>' : esc(m.label)) + '</th>').join('')
+        // One crew row. The dollars-per-clean lead; the payroll behind it is the small print,
+        // because the whole point of the table is the rate.
+        const crewRow = (label: string, sub: string, pick: (m: any) => any, strong = false) =>
+          '<tr><td style="' + td + '">' + (strong ? '<b>' + label + '</b>' : label) +
+          (sub ? '<br><span style="' + MUTED + ';font-size:11.5px">' + sub + '</span>' : '') + '</td>' +
+          cols.map((m: any, i: number) => {
+            const c = pick(m)
+            const last = i === cols.length - 1
+            return '<td style="' + td + ';text-align:right;white-space:nowrap' + (last ? ';border-left:1px solid #e5e7eb' : '') + '">' +
+              (c.perClean != null
+                ? '<b style="font-size:' + (strong ? '15px' : '13.5px') + '">' + money(c.perClean) + '</b>' +
+                  '<br><span style="' + MUTED + ';font-size:11px">' + money(c.payroll) + (c.hours ? ' &middot; ' + r1(c.hours) + 'h' : '') + '</span>'
+                : '<span style="' + MUTED + '">&mdash;</span>') + '</td>'
+          }).join('') + '</tr>'
+        const cleansRow =
+          '<tr><td style="' + td + ';border-top:2px solid #e5e7eb">Departure cleans<br><span style="' + MUTED + ';font-size:11.5px">the denominator every row above is divided by</span></td>' +
+          cols.map((m: any, i: number) => '<td style="' + td + ';text-align:right;border-top:2px solid #e5e7eb' +
+            (i === cols.length - 1 ? ';border-left:1px solid #e5e7eb' : '') + '"><b>' + (m.cleans || 0) + '</b></td>').join('') + '</tr>'
+        // The combined rate over the three windows — the movement, which the grid cannot show.
+        const trend = [
+          { lab: 'Yesterday', g: (ecY as any)?.pnl?.perClean?.total },
+          { lab: 'Last 7', g: (ec7 as any)?.pnl?.perClean?.total },
+          { lab: 'Last 30', g: grid.total },
+        ].filter(x => x.g && x.g.all && x.g.all.perClean != null)
+        const mtRev = grid.total?.maintenance?.revenue || 0
+        perCleanCard = '<div style="' + cardStyle + '">' +
+          secTitle('Cost per clean &mdash; by crew, by market', 'last 30 days &middot; ' + niceDay(d30) + ' &ndash; ' + niceDay(yd)) +
+          '<table width="100%" cellspacing="0" cellpadding="0">' +
+          '<tr><th style="' + th + '"></th>' + headCells + '</tr>' +
+          crewRow('Housekeepers', 'the wages spent turning these units', (m: any) => m.housekeeping) +
+          crewRow('Supervisors', 'allocated by where their tasks were', (m: any) => m.supervision) +
+          crewRow('Maintenance', 'allocated by where their tasks were' + (mtRev > 0 ? ' &middot; earned ' + money(mtRev) + ' billable' : ''), (m: any) => m.maintenance) +
+          '<tr><td style="' + td + ';border-top:2px solid #0f172a"><b>All three crews</b><br><span style="' + MUTED + ';font-size:11.5px">what a turn really costs in payroll</span></td>' +
+          cols.map((m: any, i: number) => '<td style="' + td + ';text-align:right;white-space:nowrap;border-top:2px solid #0f172a' +
+            (i === cols.length - 1 ? ';border-left:1px solid #e5e7eb' : '') + '">' +
+            (m.all.perClean != null ? '<b style="font-size:16px">' + money(m.all.perClean) + '</b><br><span style="' + MUTED + ';font-size:11px">' + money(m.all.payroll) + '</span>'
+              : '<span style="' + MUTED + '">&mdash;</span>') + '</td>').join('') + '</tr>' +
+          cleansRow +
+          '</table>' +
+          (trend.length > 1 ? '<p style="margin:12px 0 0;font-size:12.5px;color:#374151">All three crews combined: ' +
+            trend.map(x => '<b>' + money(x.g.all.perClean) + '</b> <span style="' + MUTED + '">' + x.lab.toLowerCase() + '</span>').join(' &middot; ') + '</p>' : '') +
+          '<p style="margin:10px 0 0;font-size:11px;color:#9ca3af;line-height:1.7">' +
+          'Every row is divided by the departure cleans done in that market, so the three crews add up to the combined line. ' +
+          '<b>Housekeepers</b> is a true unit cost &mdash; those wages were spent turning those units. ' +
+          '<b>Supervisors</b> and <b>Maintenance</b> answer a different question: what each crew adds to the cost of a turn. ' +
+          'Neither crew cleans, and maintenance earns its own billable revenue, so read those two as loaded overhead rather than as cleaning cost. ' +
+          'Wages are Homebase punches (salaried people carry their contracted salary instead); a person&rsquo;s pay follows their work &mdash; ' +
+          'housekeepers by share of cleans, everyone else by share of tasks, anyone with neither by their Staffing area.</p>' +
+          '</div>'
+      }
+    } catch { /* additive — the rest of the email stands without it */ }
 
     // ── 2b. CREWS — COMPLETED WORK vs HOURS CLOCKED (Jon, 2026-08-22: "We track departure
     // cleans completed in a particular day, that's how we should determine effectiveness of the
@@ -299,7 +370,13 @@ export async function GET(req: NextRequest) {
       if (!rowsT.length) throw new Error('no finished tasks returned for the window')
       const hkHours = Number(KY.housekeeping.hours) || 0
       const mtHours = Number(KY.maintenance.hours) || 0
-      const perClean = y.hkCleans > 0 && hkHours > 0 ? r1(hkHours / y.hkCleans) : null
+      // ONE DENOMINATOR, NOT TWO. This rate used to divide the ENGINE's housekeeper hours by
+      // THIS CARD's board-completion count — a count that includes vendor- and maintenance-closed
+      // doors the engine never put hours against. The footnote under the table admitted the two
+      // clean counts differ, but the rate quietly mixed them anyway and read low. Both sides of
+      // the division now come from the engine, so the number means what it says.
+      const hkCleansEng = Number(KY.housekeeping.cleans) || 0
+      const perClean = hkCleansEng > 0 && hkHours > 0 ? r1(hkHours / hkCleansEng) : null
       const dayBits: string[] = []
       for (let i = 6; i >= 0; i--) {
         const day = dISO(addDays(now, -(i + 1)))
@@ -390,6 +467,7 @@ export async function GET(req: NextRequest) {
       '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + niceDay(today) + '</p></div>' +
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:13px 18px;margin:12px 0 0">' +
       '<p style="margin:0;font-size:14px;line-height:1.6">' + verdict + '</p></div>' +
+      perCleanCard +
       todayCard +
       crewsCard +
       numbersCard +
