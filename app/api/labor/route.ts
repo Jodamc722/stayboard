@@ -73,7 +73,29 @@ export async function POST(req: NextRequest) {
     const iFirst = idx(/first name/)
     const iLast = idx(/last name/)
     const iDate = idx(/^date$|work date|shift date|^day$/)
-    const iHours = (() => { let k = idx(/total paid hours|paid hours|total hours/); if (k < 0) k = idx(/scheduled hours/); if (k < 0) k = idx(/^hours$|regular hours|^hrs/); return k })()
+    // LABOR IS WHAT WAS PUNCHED, NOT WHAT WAS PLANNED (Jon, 2026-08-29: "all labor for employees
+    // should be based on their punches, not their scheduled time… across the entire aisle").
+    //
+    // This used to fall back to Homebase's "Scheduled Hours" column whenever the paid-hours
+    // header was missing or spelled differently. Those hours were then multiplied by the wage a
+    // few lines down and stored in `labor_timesheets` with no marker saying where they came
+    // from — so a plan silently became a cost, and rode into /labor, the KPI board's
+    // labor-%-of-revenue, the GM brief and the outbound partner feed as though someone had
+    // clocked it. A scheduled hour is a forecast; nobody is paid for a shift they did not work.
+    const iHours = (() => {
+      let k = idx(/total paid hours|paid hours|total hours/)
+      if (k < 0) k = idx(/^hours$|regular hours|^hrs/)
+      return k
+    })()
+    // Named only so the upload can refuse it out loud rather than quietly pricing it.
+    const iSchedOnly = idx(/scheduled hours/)
+    if (iHours < 0 && iSchedOnly >= 0) {
+      return NextResponse.json({
+        ok: false,
+        error: 'This export has a "Scheduled Hours" column but no paid/worked hours column. Scheduled time is a plan, not payroll — '
+          + 'pricing it would overstate labor everywhere it is read. Re-export the Homebase timesheet with "Total Paid Hours" included.',
+      }, { status: 400 })
+    }
     const iWage = idx(/wage|^rate$|hourly rate|pay rate/)
     const iCost = idx(/total pay|total wages|labor cost|^wages$|est.*wages|gross pay/)
     if (iDate < 0 || (iEmp < 0 && iFirst < 0)) return NextResponse.json({ ok: false, error: 'Missing employee or date column. Header seen: ' + header.join(' | ').slice(0, 200) }, { status: 400 })
