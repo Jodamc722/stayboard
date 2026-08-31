@@ -22,6 +22,7 @@ type Cfg = {
   noticeDrafts: { enabled: boolean; fromEmail: string; slackChannel: string }
   tripSweep: { enabled: boolean; lookBackDays: number; maxFutureDays: number; sameDeptOnly: boolean }
   staleCleans: { enabled: boolean; afterDays: number; skipOccupied: boolean; maxPerRun: number }
+  strayInspections: { enabled: boolean; afterDays: number; maxPerRun: number }
 }
 
 // A labelled knob: the words and the number read as one phrase ("Only look back [30]"),
@@ -387,10 +388,12 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
               <div className="px-3 py-2 bg-app border-b border-line">
                 <p className="text-[12.5px] font-semibold text-ink">
                   {audit.strays?.closed?.length || 0} stray {(audit.strays?.closed?.length === 1) ? 'inspection' : 'inspections'} would close
+                  {(audit.strays?.pushed?.length || 0) > 0 && <> &middot; {audit.strays.pushed.length} unmanned maintenance would move to today instead</>}
                 </p>
                 <p className="text-[11.5px] text-muted mt-0.5">
-                  {audit.strays?.found || 0} open inspections found
+                  {audit.strays?.found || 0} open inspections found, older than {audit.strays?.cutoff}
                   {audit.strays?.skipped?.lighthouse ? ` · ${audit.strays.skipped.lighthouse} left alone, created by Lighthouse` : ''}
+                  {audit.strays?.skipped?.unownedMaintenance ? ` · ${audit.strays.skipped.unownedMaintenance} maintenance with nobody on it` : ''}
                   {audit.strays?.skipped?.overCap ? ` · ${audit.strays.skipped.overCap} over the per-run cap` : ''}
                 </p>
               </div>
@@ -406,9 +409,27 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
                 )}
               </div>
             </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <label className="text-[11.5px] text-muted border border-line rounded-lg px-2.5 py-1 bg-app/40 inline-flex items-center gap-1.5">
+                <input type="checkbox" checked={cfg.strayInspections?.enabled !== false} disabled={!isOwner}
+                  onChange={e => set({ strayInspections: { ...cfg.strayInspections, enabled: e.target.checked } })} />
+                Close strays automatically
+              </label>
+              <Knob label="Only after" unit="days">
+                <Num value={cfg.strayInspections?.afterDays ?? 7} disabled={!isOwner}
+                  onChange={n => set({ strayInspections: { ...cfg.strayInspections, afterDays: n } })} />
+              </Knob>
+              <Knob label="Never more than" unit="a run">
+                <Num value={cfg.strayInspections?.maxPerRun ?? 40} disabled={!isOwner}
+                  onChange={n => set({ strayInspections: { ...cfg.strayInspections, maxPerRun: n } })} />
+              </Knob>
+            </div>
             <p className="text-[11px] text-muted">
               Stray inspections are <b className="text-ink">closed, never deleted</b> &mdash; the board empties just the same,
               and the record survives so a wrong call here can be seen and put back.
+              {' '}<b className="text-ink">Maintenance with nobody on it is never closed at all.</b> Closing a task says the work
+              happened; a broken thing stays broken, and no name on it is evidence nobody fixed it &mdash; so those move to
+              today instead, where somebody will see them.
             </p>
           </div>
         )}
