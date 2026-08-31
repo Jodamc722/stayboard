@@ -10,7 +10,7 @@
 // shows exactly what WOULD fire, without creating anything — the same contract as the ops
 // brief's preview. Nothing is created until Enabled is on.
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { Zap, Loader2, Save, Eye, AlertTriangle, Check } from 'lucide-react'
+import { Zap, Loader2, Save, Eye, AlertTriangle, Check, ClipboardCheck } from 'lucide-react'
 
 type Cfg = {
   enabled: boolean
@@ -64,6 +64,7 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const [preview, setPreview] = useState<any[] | null>(null)
   const [stalePrev, setStalePrev] = useState<any | null>(null)
+  const [audit, setAudit] = useState<any | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -104,6 +105,16 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
         setLongStaySaved(Number(j3.rules?.longStayNights) || longStay)
       }
       setMsg({ tone: 'ok', text: j.config.enabled ? 'Saved — the automation is ON and runs four times a day.' : 'Saved — the automation stays OFF until you enable it.' })
+    } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
+  }
+
+  async function runAudit() {
+    setBusy('audit'); setMsg(null); setAudit(null)
+    try {
+      const r = await fetch('/api/settings/task-audit?days=30', { cache: 'no-store' })
+      const j = await r.json()
+      if (!r.ok || j.ok === false) throw new Error(j?.error || 'Audit failed.')
+      setAudit(j)
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
@@ -174,7 +185,7 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
           </p>
           {check('vip', 'VIP guests', 'a Guesty VIP field or tag')}
           {check('ownerStays', 'Owner stays', 'owner bookings and owner-name matches')}
-          {check('lowReviews', 'Bad reviews', 'a NEW low review fires a quality inspection on the unit&rsquo;s next checkout')}
+          {check('lowReviews', 'Bad reviews', 'a NEW low review fires a quality inspection on the unit\u2019s next checkout')}
           <div className="flex items-center gap-2 pl-6">
             <span className="text-[11.5px] text-muted">rating</span>
             <input type="number" min={1} max={4} step={0.5} value={cfg.lowReviewMax} onChange={e => set({ lowReviewMax: Number(e.target.value) })} className={box + ' max-w-[64px]'} disabled={!isOwner || !cfg.lowReviews} />
@@ -308,6 +319,97 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
                 <p className="px-3 py-2 text-[12px] text-muted">Nothing is stale right now.</p>
               )}
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── THE AUDIT ─────────────────────────────────────────────────────────────────────────
+          Jon, 2026-08-31: "scan for duplicate tasks… there should be an audit of that", and "that
+          should be run before moving the task forward". The sweep already runs this gate per unit
+          on every visit; this panel is the same question asked across the whole portfolio, so the
+          pattern is visible rather than only ever silently avoided. ── */}
+      <div className="border-t border-line pt-3 mt-1">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <ClipboardCheck size={14} className="text-muted" />
+          <span className="text-[13px] font-bold text-ink">Work that was done twice</span>
+          <button onClick={runAudit} disabled={busy === 'audit'}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-40">
+            {busy === 'audit' ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />} Run the audit
+          </button>
+        </div>
+        <p className="text-[12px] text-muted mt-1 max-w-[74ch]">
+          Two systems can both be right: the calendar sync creates a departure clean from the
+          reservation, and a supervisor creates one by hand because the sync had not run yet. Nobody
+          is at fault, which is exactly why nobody catches it. A duplicate is
+          <b className="text-ink"> the same unit, the same day, the same kind of job, completed twice</b> &mdash;
+          the tight definition on purpose, because an audit that cries wolf gets ignored by the second week.
+        </p>
+        <p className="text-[11px] text-muted mt-1.5">
+          The trip sweep runs this same check per unit <b className="text-ink">before</b> it moves anything, so a job
+          already done here last week is never dragged onto today&rsquo;s visit. Read-only &mdash; running it changes nothing.
+        </p>
+
+        {audit && (
+          <div className="mt-2 space-y-2">
+            <div className="rounded-xl border border-line bg-white overflow-hidden">
+              <div className="px-3 py-2 bg-app border-b border-line">
+                <p className="text-[12.5px] font-semibold text-ink">
+                  {audit.dupes?.summary?.groups || 0} duplicated {(audit.dupes?.summary?.groups === 1) ? 'job' : 'jobs'}
+                  {' '}&middot; {audit.dupes?.summary?.extraTasks || 0} wasted {(audit.dupes?.summary?.extraTasks === 1) ? 'visit' : 'visits'}
+                </p>
+                <p className="text-[11.5px] text-muted mt-0.5">
+                  {audit.dupes?.scanned || 0} completed tasks scanned, {audit.dupes?.from} to {audit.dupes?.to}
+                  {audit.dupes?.error ? ` · ${audit.dupes.error}` : ''}
+                </p>
+              </div>
+              <div className="divide-y divide-line max-h-[240px] overflow-y-auto">
+                {(audit.dupes?.groups || []).slice(0, 60).map((g: any) => (
+                  <div key={g.listingId + g.date + g.key} className="px-3 py-2">
+                    <p className="text-[12px] text-ink">
+                      <b>{g.unit}</b> <span className="text-muted">&middot; {g.date} &middot; {g.key.replace(/-/g, ' ')}</span>
+                    </p>
+                    {g.tasks.map((t: any, i: number) => (
+                      <p key={t.id} className={'text-[11px] ' + (t.id === g.keepId ? 'text-muted' : 'text-rose-700')}>
+                        {t.id === g.keepId ? 'kept' : 'extra'} &middot; {t.name}
+                        {t.assignees?.length ? ` · ${t.assignees.join(', ')}` : ' · nobody named'}
+                        {t.byLighthouse ? ' · Lighthouse' : ''}
+                      </p>
+                    ))}
+                  </div>
+                ))}
+                {(audit.dupes?.groups || []).length === 0 && (
+                  <p className="px-3 py-2 text-[12px] text-muted">Nothing was done twice in this window.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-line bg-white overflow-hidden">
+              <div className="px-3 py-2 bg-app border-b border-line">
+                <p className="text-[12.5px] font-semibold text-ink">
+                  {audit.strays?.closed?.length || 0} stray {(audit.strays?.closed?.length === 1) ? 'inspection' : 'inspections'} would close
+                </p>
+                <p className="text-[11.5px] text-muted mt-0.5">
+                  {audit.strays?.found || 0} open inspections found
+                  {audit.strays?.skipped?.lighthouse ? ` · ${audit.strays.skipped.lighthouse} left alone, created by Lighthouse` : ''}
+                  {audit.strays?.skipped?.overCap ? ` · ${audit.strays.skipped.overCap} over the per-run cap` : ''}
+                </p>
+              </div>
+              <div className="divide-y divide-line max-h-[200px] overflow-y-auto">
+                {(audit.strays?.closed || []).slice(0, 60).map((c: any) => (
+                  <div key={c.id} className="px-3 py-1.5 flex items-center gap-2">
+                    <span className="text-[12px] text-ink flex-1 truncate">{c.unit} <span className="text-muted">&middot; {c.name}</span></span>
+                    <span className="text-[11px] text-muted tabular-nums shrink-0">{c.date}</span>
+                  </div>
+                ))}
+                {(audit.strays?.closed || []).length === 0 && (
+                  <p className="px-3 py-2 text-[12px] text-muted">No stray inspections are sitting open.</p>
+                )}
+              </div>
+            </div>
+            <p className="text-[11px] text-muted">
+              Stray inspections are <b className="text-ink">closed, never deleted</b> &mdash; the board empties just the same,
+              and the record survives so a wrong call here can be seen and put back.
+            </p>
           </div>
         )}
       </div>
