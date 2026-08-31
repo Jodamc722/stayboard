@@ -163,6 +163,7 @@ export async function GET(req: NextRequest) {
         consolidated, consolidatedUnits: consolidatedUnits.slice(0, 20), verdict: run.day.verdict,
         staleCleansClosed: stale?.closed?.length || 0, staleCleansSkipped: stale?.skipped || null,
         strayInspectionsClosed: strays?.closed?.length || 0, strayInspectionsSkipped: strays?.skipped || null,
+        unownedMaintenanceMoved: strays?.pushed?.length || 0,
       },
       error: failed[0] || null,
     })
@@ -171,7 +172,7 @@ export async function GET(req: NextRequest) {
       ...safe, created: created.length, failed: failed.length, errors: failed.slice(0, 3),
       consolidated, consolidatedUnits: consolidatedUnits.length,
       staleCleans: stale ? { closed: stale.closed?.length || 0, found: stale.found, enabled: stale.enabled, skipped: stale.skipped } : null,
-      strayInspections: strays ? { closed: strays.closed?.length || 0, found: strays.found, skipped: strays.skipped } : null,
+      strayInspections: strays ? { closed: strays.closed?.length || 0, pushed: strays.pushed?.length || 0, found: strays.found, enabled: strays.enabled, skipped: strays.skipped } : null,
     }
     return NextResponse.json(me ? { ...out, suggestions: run.suggestions } : out)
   } catch (e: any) {
