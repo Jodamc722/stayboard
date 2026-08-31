@@ -15,6 +15,7 @@ import { recordRun } from '@/lib/automation-runs'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sweepUnit, deptOf } from '@/lib/pending-work'
 import { closeStaleCleans } from '@/lib/stale-cleans'
+import { closeStrayInspections } from '@/lib/task-audit'
 import { tooSoon } from '@/lib/cron-auth'
 import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg } from '@/lib/suggestions'
 
@@ -146,6 +147,14 @@ export async function GET(req: NextRequest) {
     let stale: any = null
     try { stale = await closeStaleCleans() } catch (e: any) { stale = { ok: false, error: String(e?.message || e).slice(0, 140) } }
 
+    // ── STRAY INSPECTIONS ─────────────────────────────────────────────────────────────────────
+    // Jon, 2026-08-31: "the only inspections that get moved up are the automated inspections
+    // created by Lighthouse." The other half of that rule: everything else stops sitting open.
+    // Closed, never deleted — see lib/task-audit for why. Its own try, same as the cleans:
+    // bookkeeping must never be able to fail the suggestion run.
+    let strays: any = null
+    try { strays = await closeStrayInspections() } catch (e: any) { strays = { ok: false, error: String(e?.message || e).slice(0, 140) } }
+
     // Receipt, so the automations screen can prove this ran and say what it did.
     await recordRun({
       name: 'suggestions', ok: failed.length === 0, itemCount: created.length,
@@ -153,6 +162,7 @@ export async function GET(req: NextRequest) {
         suggested: run.suggestions.length, autoCreated: created.length, failed: failed.length,
         consolidated, consolidatedUnits: consolidatedUnits.slice(0, 20), verdict: run.day.verdict,
         staleCleansClosed: stale?.closed?.length || 0, staleCleansSkipped: stale?.skipped || null,
+        strayInspectionsClosed: strays?.closed?.length || 0, strayInspectionsSkipped: strays?.skipped || null,
       },
       error: failed[0] || null,
     })
@@ -161,6 +171,7 @@ export async function GET(req: NextRequest) {
       ...safe, created: created.length, failed: failed.length, errors: failed.slice(0, 3),
       consolidated, consolidatedUnits: consolidatedUnits.length,
       staleCleans: stale ? { closed: stale.closed?.length || 0, found: stale.found, enabled: stale.enabled, skipped: stale.skipped } : null,
+      strayInspections: strays ? { closed: strays.closed?.length || 0, found: strays.found, skipped: strays.skipped } : null,
     }
     return NextResponse.json(me ? { ...out, suggestions: run.suggestions } : out)
   } catch (e: any) {
