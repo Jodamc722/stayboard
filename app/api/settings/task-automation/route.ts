@@ -53,6 +53,13 @@ export async function PUT(req: NextRequest) {
       maxFutureDays: num(c.tripSweep?.maxFutureDays, d.tripSweep.maxFutureDays, 1, 120),
       sameDeptOnly: c.tripSweep?.sameDeptOnly !== false,
     },
+    // NAME EVERY BLOCK HERE. This route rebuilds the config rather than patching it, so any key it
+    // forgets is dropped on every save — that is exactly how `lowReviews` silently unticked itself.
+    strayInspections: {
+      enabled: c.strayInspections?.enabled !== false,
+      afterDays: num(c.strayInspections?.afterDays, d.strayInspections.afterDays, 1, 90),
+      maxPerRun: num(c.strayInspections?.maxPerRun, d.strayInspections.maxPerRun, 1, 500),
+    },
     staleCleans: {
       enabled: c.staleCleans?.enabled === true,
       afterDays: num(c.staleCleans?.afterDays, d.staleCleans.afterDays, 1, 90),
