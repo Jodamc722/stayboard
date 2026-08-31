@@ -31,6 +31,7 @@ import { vacantWork, vacantWorkSummary, type VacantWork } from './vacant-work'
 import { maintData } from './maint-brief'
 import { translator, type BriefLang } from './brief-lang'
 import { catOfTaskWith, stateOfTask, resolveCats, TASK_CATS_KEY, type CatDef } from './task-categories'
+import { buildReviewQueue, dayWord, niceDate } from './review-queue'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymdET(d: Date): string {
@@ -444,6 +445,7 @@ function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, 
 const pillRed = (t: string) => `<span style="${S.pill};background:#fee2e2;color:#b91c1c">${t}</span>`
 const pillAmber = (t: string) => `<span style="${S.pill};background:#fef3c7;color:#b45309">${t}</span>`
 const pillBlue = (t: string) => `<span style="${S.pill};background:#e0e7ff;color:#4338ca">${t}</span>`
+const pillGreen = (t: string) => `<span style="${S.pill};background:#d1fae5;color:#047857">${t}</span>`
 const stars = (n: number) => n >= 4.75 ? '★★★★★' : n >= 4 ? '★★★★' : n >= 3 ? '★★★' : n >= 2 ? '★★' : '★'
 
 // Stat-tile row, table-based for email clients. tone colors the VALUE only when it needs attention.
@@ -753,6 +755,35 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // the maintenance story (merged from the retired standalone maintenance emails) and the
   // paperwork/coverage counters. Labor detail lives in the Daily Labor email alone.
   const isField = variant === 'Miami' || variant === 'Broward'
+
+  // ── REVIEW (Jon, 2026-08-31) ────────────────────────────────────────────────────────────────
+  // "There should be a section for review. Review is pending tasks and recommendations, which help
+  // guide supervisors, operators, and maintenance to make plans for their day."
+  //
+  // The internal briefs only. The vendor emails go to outside cleaning companies and have no
+  // business carrying our maintenance backlog; the GM brief is a different altitude by design —
+  // an owner reading a list of overdue filter changes is reading the wrong document.
+  let review: Awaited<ReturnType<typeof buildReviewQueue>> | null = null
+  if (variant !== 'GM') {
+    try {
+      // Scope from every unit the brief already knows about, defensively — the day sheet is typed
+      // `any` and its shape is not this file's to assume. Whatever is present contributes.
+      const nameOf: Record<string, string> = {}
+      const scope = new Set<string>()
+      const soak = (rows: any) => {
+        for (const r of (Array.isArray(rows) ? rows : [])) {
+          const lid = str(r?.listingId || r?.listing_id)
+          if (!lid) continue
+          scope.add(lid)
+          const nm = str(r?.unit || r?.unit_name || r?.name)
+          if (nm && !nameOf[lid]) nameOf[lid] = nm
+        }
+      }
+      soak(d.cleans); soak(d.hkOther)
+      soak(d.sheet?.vacants); soak(d.sheet?.arrivals); soak(d.sheet?.departures); soak(d.sheet?.units)
+      review = await buildReviewQueue(Array.from(scope), d.today, { nameOf, horizon: 21 })
+    } catch { /* the brief must send with or without this card */ }
+  }
   // BLOCKED UNITS: THE LIST LIVES IN THE GM BRIEF ONLY (Jon, 2026-08-24: "For GM should only get
   // the blocked unit list" — reverting the 2026-08-17 add-back to full). Ops Command keeps the
   // COUNT (tile, verdict, subject) so the morning picture stays honest, but the unit-by-unit
@@ -1466,6 +1497,33 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     ) +
     (reviewInsp.length ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">A review at or below the bar books an inspection on that unit's next checkout — the task carries what the guest wrote, and it rolls forward until it is done.</p>` : ''),
     '#7c3aed') : ''}
+
+  ${review && review.items.length ? (() => {
+    const r = review!
+    const rows = r.items.slice(0, 14).map(i => {
+      const late = i.waitingDays != null && i.waitingDays > 0
+      const tag = i.target?.hasTrade ? pillGreen('FREE TRIP') : i.target ? pillBlue('UNIT EMPTY') : pillAmber('NO WINDOW')
+      return `
+    <tr><td style="${S.td}">${tag} <b>${esc(i.unit)}</b> <span style="${S.muted}">&middot; ${esc(i.task)}</span><br>
+    <span style="font-size:12px;color:#6b7280">${esc(i.recommendation)}</span></td>
+    <td style="${S.td};text-align:right;white-space:nowrap">${late
+        ? `<span style="${S.red}">${esc(dayWord(i.waitingDays))}</span>`
+        : `<span style="${S.muted}">${esc(dayWord(i.waitingDays))}</span>`}${
+        i.target ? `<div style="font-size:11px;color:#6b7280;margin-top:2px">${esc(niceDate(i.target.date))}</div>` : ''}</td></tr>`
+    }).join('')
+    const head = `<p style="font-size:13px;margin:0 0 8px;line-height:1.6">` +
+      (r.summary.freeTrips
+        ? `<b>${r.summary.freeTrips} of these ride along free</b> — somebody is already going into that unit on the day shown. `
+        : '') +
+      (r.summary.needsATrip ? `${r.summary.needsATrip} need a trip booked into an empty unit. ` : '') +
+      (r.summary.noWindow ? `<span style="${S.amber}">${r.summary.noWindow} have no empty day in three weeks</span> — those need a guest-in visit or a schedule change. ` : '') +
+      `</p>`
+    return card(t('Review — pending work, and when it can be done'), r.summary.total,
+      head + bare(rows) +
+      (r.summary.total > 14 ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">+${r.summary.total - 14} more on the board.</p>` : '') +
+      `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">Maintenance and Lighthouse inspections only — housekeeping runs to a 4pm deadline, not a backlog. The date beside each job is the next day that unit is empty; a green tag means a technician is already booked there, so clearing it costs no extra trip.</p>`,
+      '#0891b2')
+  })() : ''}
 
   ${eyebrow(t('Today'))}
   ${departures.length ? card(t('Departures'), departures.length, bare(depRows) + (departures.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${departures.length - 20} more on the board</p>` : ''), '#0891b2') : ''}
