@@ -77,6 +77,13 @@ export type TaskAutomationCfg = {
     skipOccupied: boolean
     maxPerRun: number         // a ceiling, so a bad day can never mass-close the portfolio
   }
+  // Inspections nobody automated. Same shape, same guards — but it is a different rule with a
+  // different blast radius, so it gets its own switch rather than riding on the cleans'.
+  strayInspections: {
+    enabled: boolean
+    afterDays: number         // days past the scheduled date before an inspection counts as stray
+    maxPerRun: number
+  }
 }
 export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   enabled: false,
@@ -94,6 +101,10 @@ export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   // OFF until somebody turns it on. This one CLOSES records, and an automation that closes things
   // has to be switched on deliberately by a person who understands what it will do.
   staleCleans: { enabled: false, afterDays: 7, skipOccupied: true, maxPerRun: 40 },
+  // SEVEN DAYS, not one (Jon, 2026-08-31: "this again is 7 day old or more"). The first cut closed
+  // anything scheduled before today, which is not "stray" — it is "Tuesday's inspection that
+  // somebody is doing Thursday". A week is the point where nobody is coming back for it.
+  strayInspections: { enabled: true, afterDays: 7, maxPerRun: 40 },
 }
 export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
   const s = await getSetting<any>(TASK_AUTOMATION_KEY, null)
@@ -127,6 +138,11 @@ export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
       lookBackDays: numIn(s.tripSweep?.lookBackDays, d.tripSweep.lookBackDays, 1, 365),
       maxFutureDays: numIn(s.tripSweep?.maxFutureDays, d.tripSweep.maxFutureDays, 1, 120),
       sameDeptOnly: s.tripSweep?.sameDeptOnly !== false,
+    },
+    strayInspections: {
+      enabled: s.strayInspections?.enabled !== false,
+      afterDays: numIn(s.strayInspections?.afterDays, d.strayInspections.afterDays, 1, 90),
+      maxPerRun: numIn(s.strayInspections?.maxPerRun, d.strayInspections.maxPerRun, 1, 500),
     },
     staleCleans: {
       enabled: s.staleCleans?.enabled === true,

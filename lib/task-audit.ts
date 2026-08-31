@@ -188,26 +188,36 @@ export type StrayRun = {
   cutoff: string
   found: number
   closed: { id: string; unit: string; name: string; date: string }[]
-  skipped: { lighthouse: number; overCap: number }
+  /** Unowned maintenance: never closed, moved to today instead. See the rule below. */
+  pushed: { id: string; unit: string; name: string; date: string }[]
+  skipped: { lighthouse: number; overCap: number; unownedMaintenance: number }
   failed: { id: string; error: string }[]
 }
 
 export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanDays?: number; maxPerRun?: number } = {}): Promise<StrayRun> {
   const today = new Date().toISOString().slice(0, 10)
-  const olderThan = Math.max(0, opts.olderThanDays ?? 1)
-  const cap = Math.max(1, opts.maxPerRun ?? 40)
+  // THE WINDOW IS AN OPERATOR SETTING, AND IT IS SEVEN DAYS, NOT ONE.
+  // Jon, 2026-08-31: "this again is 7 day old or more". The first cut defaulted to a single day,
+  // which does not mean "stray" — it means "Tuesday's inspection that somebody is walking on
+  // Thursday", and closing that is the automation deciding a job is done because it is late.
+  const { getTaskAutomation } = await import('./auto-inspections')
+  const cfg = await getTaskAutomation().catch(() => null)
+  const si = cfg?.strayInspections
+  const olderThan = Math.max(1, opts.olderThanDays ?? si?.afterDays ?? 7)
+  const cap = Math.max(1, opts.maxPerRun ?? si?.maxPerRun ?? 40)
   const cutoff = new Date(Date.parse(today + 'T12:00:00Z') - olderThan * 86400000).toISOString().slice(0, 10)
   const base: StrayRun = {
-    ok: true, enabled: true, cutoff, found: 0, closed: [],
-    skipped: { lighthouse: 0, overCap: 0 }, failed: [],
+    ok: true, enabled: si?.enabled !== false, cutoff, found: 0, closed: [], pushed: [],
+    skipped: { lighthouse: 0, overCap: 0, unownedMaintenance: 0 }, failed: [],
   }
+  if (!base.enabled && !opts.dryRun) return base
   try {
     const db = supabaseAdmin()
     // 180 days back, same outer bound the stale-clean closer uses: older than that is archaeology
     // and closing it changes nothing anybody is looking at.
     const from = new Date(Date.parse(today + 'T12:00:00Z') - 180 * 86400000).toISOString().slice(0, 10)
     const { data, error } = await db.from('breezeway_tasks_sync')
-      .select('id,reference_property_id,property_name,name,status,scheduled_date,finished_at,description,type_department')
+      .select('id,reference_property_id,property_name,name,status,scheduled_date,finished_at,description,type_department,assignees')
       .gte('scheduled_date', from).lte('scheduled_date', cutoff)
       .ilike('name', '%inspect%')
       .order('scheduled_date', { ascending: false }).order('id', { ascending: true })
@@ -215,6 +225,7 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
     if (error) return { ...base, ok: false, error: error.message }
 
     const queue: StrayRun['closed'] = []
+    const pushQueue: { id: string; listingId: string; unit: string; name: string; rawName: string; date: string }[] = []
     for (const t of (data || []) as any[]) {
       const st = str(t.status).toLowerCase()
       if (GONE.test(st)) continue
@@ -223,6 +234,32 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
       // Lighthouse's own inspections are the point of the automation — they carry a real brief and
       // they are the ones allowed to move forward. Never close those.
       if (LIGHTHOUSE_MARK.test(str(t.description))) { base.skipped.lighthouse++; continue }
+
+      // ── MAINTENANCE NEVER CLOSES WITHOUT A PERSON (Jon, 2026-08-31) ─────────────────────────
+      // "Maintenance task never close without a person, pushed forward."
+      //
+      // Closing a task asserts the work happened. For a clean that assertion is usually safe — the
+      // unit got re-let and re-cleaned, so the record is stale rather than outstanding. Maintenance
+      // is the opposite: a broken thing stays broken until somebody fixes it, and nobody's name on
+      // the task is evidence that nobody did. Closing it would take a real fault off the board and
+      // call it done.
+      //
+      // So this one is moved to today instead, with the Lighthouse line saying why. It stays
+      // visible, it keeps its history, and it lands somewhere a person will actually see it.
+      const assignees = Array.isArray(t.assignees)
+        ? t.assignees.map((p: any) => str(p && typeof p === 'object' ? p.name : p)).filter(Boolean)
+        : []
+      const isMaint = deptOf(t.type_department) === 'maintenance'
+      if (isMaint && assignees.length === 0) {
+        base.skipped.unownedMaintenance++
+        pushQueue.push({
+          id: str(t.id), listingId: str(t.reference_property_id),
+          unit: str(t.property_name) || str(t.reference_property_id),
+          name: str(t.name), rawName: str(t.name), date: dOf(t.scheduled_date),
+        })
+        continue
+      }
+
       if (queue.length >= cap) { base.skipped.overCap++; continue }
       queue.push({
         id: str(t.id), unit: str(t.property_name) || str(t.reference_property_id),
@@ -230,7 +267,7 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
       })
     }
 
-    if (opts.dryRun) return { ...base, closed: queue }
+    if (opts.dryRun) return { ...base, closed: queue, pushed: pushQueue.map(p => ({ id: p.id, unit: p.unit, name: p.name, date: p.date })) }
     if (!breezewayConfigured()) return { ...base, ok: false, error: 'Breezeway is not configured.' }
 
     for (const q of queue) {
@@ -247,6 +284,27 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
         base.failed.push({ id: q.id, error: String(e?.message || e).slice(0, 140) })
       }
     }
+    // The unowned maintenance moves rather than closes. Its own try: a failure to reschedule must
+    // not turn into a failure to close, and neither can be allowed to fail the morning run.
+    if (pushQueue.length) {
+      try {
+        const { pushTasks } = await import('./pending-work')
+        const r = await pushTasks(
+          pushQueue.slice(0, cap).map(p => ({
+            id: p.id, listingId: p.listingId, name: p.name, rawName: p.rawName,
+            dept: 'maintenance' as const, scheduledDate: p.date, assignees: [],
+            overdueDays: null, future: false, movedBefore: false, byLighthouse: false,
+          })),
+          today,
+          { reason: 'Open more than a week with nobody on it. Maintenance is never closed unmanned — this moves to today so somebody sees it.' },
+        )
+        for (const p of pushQueue.slice(0, cap)) if (r.moved.includes(p.id)) base.pushed.push({ id: p.id, unit: p.unit, name: p.name, date: p.date })
+        for (const f of r.failed) base.failed.push(f)
+      } catch (e: any) {
+        base.failed.push({ id: 'push', error: String(e?.message || e).slice(0, 140) })
+      }
+    }
+
     base.ok = base.failed.length === 0
     return base
   } catch (e: any) {
