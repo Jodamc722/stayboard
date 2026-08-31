@@ -129,7 +129,7 @@ export async function pendingForUnits(
 
   const db = supabaseAdmin()
   const { data, error } = await db.from('breezeway_tasks_sync')
-    .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,description')
+    .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,description:raw->>description')
     .in('reference_property_id', listingIds.slice(0, 400))
     .gte('scheduled_date', from).lte('scheduled_date', to)
     .not('name', 'ilike', '%departure clean%')

@@ -115,7 +115,7 @@ export async function auditDuplicates(opts: {
   try {
     const db = supabaseAdmin()
     let q = db.from('breezeway_tasks_sync')
-      .select('id,reference_property_id,property_name,name,status,scheduled_date,finished_at,assignees,type_department,description')
+      .select('id,reference_property_id,name,status,scheduled_date,finished_at,assignees,type_department,description:raw->>description')
       .gte('scheduled_date', from).lte('scheduled_date', today)
       // Recent-first, and a secondary sort key so paging cannot drop or repeat rows — the same
       // PostgREST trap that made the stale-clean job blind to everything newer than six months.
@@ -128,17 +128,27 @@ export async function auditDuplicates(opts: {
     const rows = (data || []) as any[]
     base.scanned = rows.length
 
+    // UNIT NAMES COME FROM THE LISTINGS TABLE. `property_name` is not a column on the task mirror
+    // — only reference_property_id is — and asking for it errored the whole query. One extra read
+    // for the whole batch, the same way the stale-clean closer does it.
+    const unitOf: Record<string, string> = {}
+    try {
+      const lids = Array.from(new Set(rows.map(r => str(r.reference_property_id)).filter(Boolean)))
+      if (lids.length) {
+        const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').in('id', lids.slice(0, 400)).limit(1000)
+        for (const l of ((ls || []) as any[])) unitOf[str(l.id)] = str(l.nickname || l.title) || str(l.id)
+      }
+    } catch { /* ids are a workable fallback name */ }
+
     // Bucket by unit + day + category. Only COMPLETED work counts: two open tasks on one unit is a
     // scheduling smell, but it is not yet waste — nobody has driven anywhere twice.
     const buckets: Record<string, DupTask[]> = {}
-    const unitOf: Record<string, string> = {}
     for (const t of rows) {
       const st = str(t.status).toLowerCase()
       if (GONE.test(st)) continue
       if (!DONE.test(st) && !t.finished_at) continue
       const lid = str(t.reference_property_id); if (!lid) continue
       const date = dOf(t.scheduled_date); if (!date) continue
-      unitOf[lid] = unitOf[lid] || str(t.property_name) || lid
       const key = auditKey(t.name, t.type_department)
       const k = `${lid}|${date}|${key}`
       ;(buckets[k] = buckets[k] || []).push({
@@ -243,12 +253,23 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
     // and closing it changes nothing anybody is looking at.
     const from = new Date(Date.parse(today + 'T12:00:00Z') - 180 * 86400000).toISOString().slice(0, 10)
     const { data, error } = await db.from('breezeway_tasks_sync')
-      .select('id,reference_property_id,property_name,name,status,scheduled_date,finished_at,description,type_department,assignees')
+      .select('id,reference_property_id,name,status,scheduled_date,finished_at,type_department,assignees,description:raw->>description')
       .gte('scheduled_date', from).lte('scheduled_date', cutoff)
       .ilike('name', '%inspect%')
       .order('scheduled_date', { ascending: false }).order('id', { ascending: true })
       .limit(1000)
     if (error) return { ...base, ok: false, error: error.message }
+
+    // Unit names for the rows we are about to report. Same reason as above: the mirror carries the
+    // listing id, not its name.
+    const nameOf: Record<string, string> = {}
+    try {
+      const lids = Array.from(new Set(((data || []) as any[]).map(r => str(r.reference_property_id)).filter(Boolean)))
+      if (lids.length) {
+        const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').in('id', lids.slice(0, 400)).limit(1000)
+        for (const l of ((ls || []) as any[])) nameOf[str(l.id)] = str(l.nickname || l.title) || str(l.id)
+      }
+    } catch { /* ids are a workable fallback name */ }
 
     const queue: StrayRun['closed'] = []
     const pushQueue: { id: string; listingId: string; unit: string; name: string; rawName: string; date: string; why: string }[] = []
@@ -258,7 +279,7 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
       const done = DONE.test(st) || !!t.finished_at
       const kind = inspectionKind(t.name, t.description)
       const lid = str(t.reference_property_id)
-      const unit = str(t.property_name) || lid
+      const unit = nameOf[lid] || lid
       const row = { id: str(t.id), unit, name: str(t.name), date: dOf(t.scheduled_date) }
 
       // PERSISTENT — a bad-review inspection. Never retired; it rides forward until it is walked.
