@@ -33,6 +33,14 @@ export async function PUT(req: NextRequest) {
     vip: c.vip !== false,
     ownerStays: c.ownerStays !== false,
     daysAhead: num(c.daysAhead, d.daysAhead, 1, 7),
+    // THESE TWO WERE MISSING, AND THAT IS WHY THE "Bad reviews" BOX WOULD NOT STAY TICKED.
+    // This route does not patch the stored object, it REBUILDS it — so any key it forgets to name
+    // is dropped on every save. `lowReviews` and `lowReviewMax` were never named, so ticking the
+    // box wrote a config without them, the response came back missing the key, and the checkbox
+    // snapped straight back to unticked. It read as "the box will not click"; it was actually
+    // "the box unticks itself the moment you press Save."
+    lowReviews: c.lowReviews !== false,
+    lowReviewMax: num(c.lowReviewMax, d.lowReviewMax, 1, 4),
     assignAlways: nm(c.assignAlways, d.assignAlways),
     supervisors: {
       Miami: nm(c.supervisors?.Miami, d.supervisors.Miami),
