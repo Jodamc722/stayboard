@@ -31,12 +31,13 @@ import {
   Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
   LayoutGrid, Users, X, MapPin, Clock, RefreshCw, ChevronDown,
   DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
-  Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble, Wand2,
+  Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble, Wand2, ListChecks,
 } from 'lucide-react'
 import { catOfTask, type TaskCat } from '@/lib/task-categories'
 import { SuggestionsProvider, SuggestionsBand, UnitSuggestions, PersonSuggestions, useSuggestions } from '@/components/SuggestionsBand'
 import { AssignPanel } from '@/components/AssignPanel'
 import { DayPlanPanel } from '@/components/DayPlanPanel'
+import { ReviewTab } from '@/components/ReviewTab'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -744,7 +745,10 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   onRefresh: () => void
   onAddTask: (unit: string) => void
 }) {
-  const [mode, setMode] = useState<'units' | 'people'>('units')
+  // A THIRD TAB (Jon, 2026-08-31: "create a review / recommended tab"). Units and People both
+  // answer "what is happening today". Review answers "what is hanging over us, and when could we
+  // clear it" — a different question, so it earns its own tab rather than another filter.
+  const [mode, setMode] = useState<'units' | 'people' | 'review'>('units')
   const [cat, setCat] = useState<Cat | null>(null)
   const [q, setQ] = useState('')
   // The search box is a whole line of a phone screen for something you use once a day. On a phone
@@ -764,11 +768,11 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const [mkt, setMkt] = useState<string>('all')
   useEffect(() => {
     try {
-      const m = localStorage.getItem('opsgrid_mode'); if (m === 'people') setMode('people')
+      const m = localStorage.getItem('opsgrid_mode'); if (m === 'people' || m === 'review') setMode(m as any)
       const k = localStorage.getItem('opsgrid_market'); if (k) setMkt(k)
     } catch {}
   }, [])
-  const pickMode = (m: 'units' | 'people') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
+  const pickMode = (m: 'units' | 'people' | 'review') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
   const pickMkt = (m: string) => { setMkt(m); try { localStorage.setItem('opsgrid_market', m) } catch {} }
 
   const allUnits: GUnit[] = Array.isArray(data?.units) ? data!.units : []
@@ -1117,7 +1121,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       {/* ── CONTROLS ── */}
       <div className="mt-2.5 flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
-          {([['units', 'Units', LayoutGrid], ['people', 'People', Users]] as const).map(([k, label, Icon]) => (
+          {([['units', 'Units', LayoutGrid], ['people', 'People', Users], ['review', 'Review', ListChecks]] as const).map(([k, label, Icon]) => (
             <button key={k} onClick={() => pickMode(k as any)}
               className={'px-3 py-1.5 rounded-[10px] text-[12.5px] font-bold inline-flex items-center gap-1.5 ' +
                 (mode === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
@@ -1173,6 +1177,15 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         </button>
       </div>
 
+      {/* ── REVIEW ── The third tab replaces the grid entirely rather than sitting under it: it
+          answers a different question, and stacking it below eighty rows is how a panel becomes
+          something nobody scrolls to. ── */}
+      {mode === 'review' ? (
+        <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
+          <ReviewTab market={mkt} onRefresh={onRefresh} />
+        </div>
+      ) : (
+      <>
       {/* ── HEADER + ROWS ── */}
       <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
         {/* ── THE KEY ─────────────────────────────────────────────────────────────────────────
@@ -1261,6 +1274,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         {shown.length} {mode === 'units' ? 'unit' : 'person'}{shown.length === 1 ? '' : 's'} shown.
         {' '}Glitches count everything still open, not only what is scheduled today.
       </p>
+      </>
+      )}
 
       {planOpen && (
         <DayPlanPanel
