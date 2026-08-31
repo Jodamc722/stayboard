@@ -104,7 +104,13 @@ export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   // SEVEN DAYS, not one (Jon, 2026-08-31: "this again is 7 day old or more"). The first cut closed
   // anything scheduled before today, which is not "stray" — it is "Tuesday's inspection that
   // somebody is doing Thursday". A week is the point where nobody is coming back for it.
-  strayInspections: { enabled: true, afterDays: 7, maxPerRun: 40 },
+  // PROPOSE, DO NOT ACT — off until the review queue exists (Jon, 2026-08-31: "there can be a
+  // review section in Today in Ops where we can delete or manage… maybe that's safer").
+  // He is right, and it changes what "enabled" should default to. This automation cancels
+  // inspections and reschedules maintenance without a person in the loop; the dry run that feeds
+  // the audit panel needs none of that, and runs regardless. So it stays off, the proposals stay
+  // visible, and a human turns it on — or approves item by item once the queue is built.
+  strayInspections: { enabled: false, afterDays: 7, maxPerRun: 40 },
 }
 export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
   const s = await getSetting<any>(TASK_AUTOMATION_KEY, null)

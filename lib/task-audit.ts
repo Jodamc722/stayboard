@@ -22,7 +22,7 @@
 // the reservation, and a supervisor creates one by hand because the sync had not run yet. Both are
 // reasonable acts. Nobody is at fault, which is exactly why nobody catches it.
 import { supabaseAdmin } from './supabase-admin'
-import { completeBreezewayTask, breezewayConfigured } from './breezeway'
+import { completeBreezewayTask, cancelBreezewayTask, breezewayConfigured } from './breezeway'
 import { deptOf } from './pending-work'
 
 const str = (v: any) => String(v ?? '').trim()
@@ -48,6 +48,32 @@ export function auditKey(name: string, department: any): string {
   if (/a\/?c|hvac|filter/.test(n)) return 'hvac'
   if (/clean/.test(n)) return 'clean-other'
   return deptOf(department) + ':' + n.replace(/[^a-z]+/g, ' ').trim().split(' ').slice(0, 3).join('-')
+}
+
+// ── THE THREE KINDS OF INSPECTION (Jon, 2026-08-31) ────────────────────────────────────────────
+// The rule he gave is one idea: an inspection tied to an EVENT dies with the event; an inspection
+// tied to a DEFECT lives until somebody walks it.
+//
+//   stray      — nobody automated it. Nobody owns the intent. Retire it.
+//   arrival    — Lighthouse made it for a big / VIP / owner arrival. That guest has been and gone;
+//                walking the unit now inspects nothing. Retire it, done or not.
+//   persistent — Lighthouse made it from a bad review. A quality defect does not expire on a date.
+//                Never retired. Moved forward until it is actually completed.
+//
+// Anything Lighthouse-stamped that does not clearly say "arrival" is treated as PERSISTENT. When
+// the classifier is unsure, the safe direction is to keep the work alive, not to retire it.
+export type InspectionKind = 'stray' | 'arrival' | 'persistent'
+
+const ARRIVAL_RULE = /\b(big arrival|vip|owner stay)\b/i
+const REVIEW_RULE = /auto-created from a \d(?:\.\d)?\s*\/\s*5 guest review|quality inspection/i
+
+export function inspectionKind(name: any, description: any): InspectionKind {
+  const d = String(description ?? '')
+  const n = String(name ?? '')
+  if (REVIEW_RULE.test(d) || REVIEW_RULE.test(n)) return 'persistent'
+  if (!LIGHTHOUSE_MARK.test(d)) return 'stray'
+  if (ARRIVAL_RULE.test(d)) return 'arrival'
+  return 'persistent'
 }
 
 export type DupTask = {
@@ -189,8 +215,8 @@ export type StrayRun = {
   found: number
   closed: { id: string; unit: string; name: string; date: string }[]
   /** Unowned maintenance: never closed, moved to today instead. See the rule below. */
-  pushed: { id: string; unit: string; name: string; date: string }[]
-  skipped: { lighthouse: number; overCap: number; unownedMaintenance: number }
+  pushed: { id: string; unit: string; name: string; date: string; to: string; hasTrade: boolean; why: string }[]
+  skipped: { lighthouse: number; overCap: number; unownedMaintenance: number; noWorkableDay: number }
   failed: { id: string; error: string }[]
 }
 
@@ -208,7 +234,7 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
   const cutoff = new Date(Date.parse(today + 'T12:00:00Z') - olderThan * 86400000).toISOString().slice(0, 10)
   const base: StrayRun = {
     ok: true, enabled: si?.enabled !== false, cutoff, found: 0, closed: [], pushed: [],
-    skipped: { lighthouse: 0, overCap: 0, unownedMaintenance: 0 }, failed: [],
+    skipped: { lighthouse: 0, overCap: 0, unownedMaintenance: 0, noWorkableDay: 0 }, failed: [],
   }
   if (!base.enabled && !opts.dryRun) return base
   try {
@@ -225,58 +251,83 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
     if (error) return { ...base, ok: false, error: error.message }
 
     const queue: StrayRun['closed'] = []
-    const pushQueue: { id: string; listingId: string; unit: string; name: string; rawName: string; date: string }[] = []
+    const pushQueue: { id: string; listingId: string; unit: string; name: string; rawName: string; date: string; why: string }[] = []
     for (const t of (data || []) as any[]) {
       const st = str(t.status).toLowerCase()
       if (GONE.test(st)) continue
-      if (DONE.test(st) || t.finished_at) continue          // only OPEN inspections
-      base.found++
-      // Lighthouse's own inspections are the point of the automation — they carry a real brief and
-      // they are the ones allowed to move forward. Never close those.
-      if (LIGHTHOUSE_MARK.test(str(t.description))) { base.skipped.lighthouse++; continue }
+      const done = DONE.test(st) || !!t.finished_at
+      const kind = inspectionKind(t.name, t.description)
+      const lid = str(t.reference_property_id)
+      const unit = str(t.property_name) || lid
+      const row = { id: str(t.id), unit, name: str(t.name), date: dOf(t.scheduled_date) }
 
-      // ── MAINTENANCE NEVER CLOSES WITHOUT A PERSON (Jon, 2026-08-31) ─────────────────────────
-      // "Maintenance task never close without a person, pushed forward."
-      //
-      // Closing a task asserts the work happened. For a clean that assertion is usually safe — the
-      // unit got re-let and re-cleaned, so the record is stale rather than outstanding. Maintenance
-      // is the opposite: a broken thing stays broken until somebody fixes it, and nobody's name on
-      // the task is evidence that nobody did. Closing it would take a real fault off the board and
-      // call it done.
-      //
-      // So this one is moved to today instead, with the Lighthouse line saying why. It stays
-      // visible, it keeps its history, and it lands somewhere a person will actually see it.
+      // PERSISTENT — a bad-review inspection. Never retired; it rides forward until it is walked.
+      // An already-completed one is simply finished and needs nothing.
+      if (kind === 'persistent') {
+        if (done) continue
+        base.found++
+        pushQueue.push({ ...row, listingId: lid, rawName: str(t.name),
+          why: 'Quality inspection from a guest review — this rides forward until somebody walks it.' })
+        continue
+      }
+
+      // ARRIVAL — retired once its arrival has passed, completed or not. A completed one is left
+      // alone; there is nothing to retire and rewriting a finished record helps nobody.
+      if (kind === 'arrival') {
+        if (done) continue
+        base.found++
+        if (queue.length >= cap) { base.skipped.overCap++; continue }
+        queue.push(row)
+        continue
+      }
+
+      // STRAY — nobody automated it.
+      if (done) continue
+      base.found++
+
+      // MAINTENANCE NEVER RETIRES (Jon, 2026-08-31: "maintenance task never close"). Closing says
+      // the work happened; a broken thing stays broken. It moves instead — see the target below.
       const assignees = Array.isArray(t.assignees)
         ? t.assignees.map((p: any) => str(p && typeof p === 'object' ? p.name : p)).filter(Boolean)
         : []
-      const isMaint = deptOf(t.type_department) === 'maintenance'
-      if (isMaint && assignees.length === 0) {
+      if (deptOf(t.type_department) === 'maintenance' && assignees.length === 0) {
         base.skipped.unownedMaintenance++
-        pushQueue.push({
-          id: str(t.id), listingId: str(t.reference_property_id),
-          unit: str(t.property_name) || str(t.reference_property_id),
-          name: str(t.name), rawName: str(t.name), date: dOf(t.scheduled_date),
-        })
+        pushQueue.push({ ...row, listingId: lid, rawName: str(t.name),
+          why: 'Maintenance is never closed unmanned — a broken thing stays broken.' })
         continue
       }
 
       if (queue.length >= cap) { base.skipped.overCap++; continue }
-      queue.push({
-        id: str(t.id), unit: str(t.property_name) || str(t.reference_property_id),
-        name: str(t.name), date: dOf(t.scheduled_date),
-      })
+      queue.push(row)
     }
 
-    if (opts.dryRun) return { ...base, closed: queue, pushed: pushQueue.map(p => ({ id: p.id, unit: p.unit, name: p.name, date: p.date })) }
+    // ── WHERE THE MOVED WORK GOES (Jon, 2026-08-31: "if unit is vacant it can be moved to that
+    // day") ────────────────────────────────────────────────────────────────────────────────────
+    // Not today. Today may well have a guest in the unit, and a job parked on a day nobody can get
+    // in is a job parked nowhere. The earliest day with a technician already booked wins; failing
+    // that, the earliest empty day; failing that, it stays where it is and keeps ageing visibly.
+    const { workableDays } = await import('./unit-windows')
+    const windows = await workableDays(Array.from(new Set(pushQueue.map(p => p.listingId))), today, 21)
+    const targeted = pushQueue
+      .map(p => ({ ...p, target: windows[p.listingId]?.best || null }))
+      .filter(p => {
+        if (!p.target) { base.skipped.noWorkableDay++; return false }
+        return true
+      })
+
+    if (opts.dryRun) return { ...base, closed: queue, pushed: targeted.map(p => ({ id: p.id, unit: p.unit, name: p.name, date: p.date, to: p.target!.date, hasTrade: p.target!.hasTrade, why: p.why })) }
     if (!breezewayConfigured()) return { ...base, ok: false, error: 'Breezeway is not configured.' }
 
     for (const q of queue) {
       try {
-        const r = await completeBreezewayTask(q.id)
-        if (!r.ok) throw new Error('Breezeway ' + r.status)
+        // CANCELLED, NOT COMPLETED. 'complete' asserts the walk happened, and for an inspection
+        // nobody did that is a falsehood written into the record — one that will later read as
+        // evidence the unit was checked. No fallback: a rejected cancel leaves the task open.
+        const r = await cancelBreezewayTask(q.id)
+        if (!r.ok) throw new Error('Breezeway would not cancel (' + r.status + ')')
         try {
           await db.from('breezeway_tasks_sync')
-            .update({ status: 'completed', finished_at: new Date().toISOString(), synced_at: new Date().toISOString() })
+            .update({ status: 'cancelled', synced_at: new Date().toISOString() })
             .eq('id', q.id)
         } catch { /* the next sync catches up */ }
         base.closed.push(q)
@@ -286,20 +337,31 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
     }
     // The unowned maintenance moves rather than closes. Its own try: a failure to reschedule must
     // not turn into a failure to close, and neither can be allowed to fail the morning run.
-    if (pushQueue.length) {
+    if (targeted.length) {
       try {
         const { pushTasks } = await import('./pending-work')
-        const r = await pushTasks(
-          pushQueue.slice(0, cap).map(p => ({
-            id: p.id, listingId: p.listingId, name: p.name, rawName: p.rawName,
-            dept: 'maintenance' as const, scheduledDate: p.date, assignees: [],
-            overdueDays: null, future: false, movedBefore: false, byLighthouse: false,
-          })),
-          today,
-          { reason: 'Open more than a week with nobody on it. Maintenance is never closed unmanned — this moves to today so somebody sees it.' },
-        )
-        for (const p of pushQueue.slice(0, cap)) if (r.moved.includes(p.id)) base.pushed.push({ id: p.id, unit: p.unit, name: p.name, date: p.date })
-        for (const f of r.failed) base.failed.push(f)
+        // Grouped by target date: each unit gets the day that actually works for it, so one call
+        // per date rather than one per task.
+        const byDate: Record<string, typeof targeted> = {}
+        for (const p of targeted.slice(0, cap)) (byDate[p.target!.date] = byDate[p.target!.date] || []).push(p)
+        for (const date of Object.keys(byDate)) {
+          const group = byDate[date]
+          const r = await pushTasks(
+            group.map(p => ({
+              id: p.id, listingId: p.listingId, name: p.name, rawName: p.rawName,
+              dept: 'maintenance' as const, scheduledDate: p.date, assignees: [],
+              overdueDays: null, future: false, movedBefore: false, byLighthouse: false,
+            })),
+            date,
+            { reason: group[0].target!.hasTrade
+                ? `The unit is empty that day and ${group[0].target!.who[0]} is already going in, so this costs no extra trip.`
+                : 'The unit is empty that day, so somebody can actually get in.' },
+          )
+          for (const p of group) if (r.moved.includes(p.id)) {
+            base.pushed.push({ id: p.id, unit: p.unit, name: p.name, date: p.date, to: date, hasTrade: p.target!.hasTrade, why: p.why })
+          }
+          for (const f of r.failed) base.failed.push(f)
+        }
       } catch (e: any) {
         base.failed.push({ id: 'push', error: String(e?.message || e).slice(0, 140) })
       }

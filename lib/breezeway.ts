@@ -233,6 +233,30 @@ export async function updateBreezewayTask(taskId: string | number, body: Record<
 
 // Best-effort: mark a Breezeway task complete. The exact completion enum is not documented for our
 // instance, so we attempt a status update and tolerate failure - the app record is the master.
+/**
+ * CANCEL IS NOT COMPLETE, AND THE DIFFERENCE MATTERS.
+ *
+ * `completeBreezewayTask` writes status 'complete', which asserts the work happened. For a stale
+ * departure clean that is roughly true — the unit was cleaned, just under a later task. For an
+ * arrival inspection nobody ever walked, it is a lie written into the record, and it is a lie that
+ * will later be read as evidence the unit was checked.
+ *
+ * Cancelling retires the task without claiming it was done. No silent fallback to 'complete' if the
+ * code is rejected: a failure is reported and the task is left alone, because a wrong status is
+ * worse than an open one.
+ */
+export async function cancelBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+  const path = `/task/${encodeURIComponent(String(taskId))}`
+  for (const code of ['cancel', 'canceled', 'cancelled']) {
+    const r = await bzApi(path, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type_task_status: { code } }),
+    })
+    if (r.ok) return r
+  }
+  return { ok: false, status: 422, data: null, text: 'Breezeway rejected every cancel status code' }
+}
+
 export async function completeBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_task_status: { code: 'complete' } }) })
 }
