@@ -57,6 +57,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, deleted: true })
     }
 
+    // ── SCHEDULE (Jon, 2026-08-31: the Review tab's "Move to <day>") ─────────────────────────
+    // Move one task onto a chosen date and say on it that Lighthouse did, using the same stamping
+    // helpers the trip sweep uses — so a job rescheduled by hand from the board and one moved by
+    // the automation carry an identical, dated explanation. A task with no trail is a task somebody
+    // will undo tomorrow because nobody knows why it moved.
+    if (action === 'schedule') {
+      const date = str(body.date)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return NextResponse.json({ ok: false, error: 'A date (YYYY-MM-DD) is required.' }, { status: 400 })
+      }
+      // Departure cleans are the calendar's, not ours: their date comes from the checkout, and
+      // moving one by hand desynchronises it from the reservation that created it.
+      if (CLEAN.test(name)) {
+        return NextResponse.json({ ok: false, error: 'Departure cleans follow the checkout — reschedule the reservation, not the task.' }, { status: 403 })
+      }
+      const { movedTitle, stampDescription } = await import('@/lib/pending-work')
+      let desc = ''
+      try {
+        const { data: row } = await db.from('breezeway_tasks_sync').select('raw').eq('id', taskId).maybeSingle()
+        desc = str((row as any)?.raw?.description)
+      } catch { /* a missing description just means we write a fresh stamp */ }
+      const r = await updateBreezewayTask(taskId, {
+        name: movedTitle(name, date),
+        scheduled_date: date,
+        description: stampDescription(desc, `Moved to ${date} from the Review tab — the unit is empty that day.`, date),
+      })
+      if (!r.ok) return NextResponse.json({ ok: false, error: 'Breezeway: ' + r.text.slice(0, 140) }, { status: 502 })
+      try {
+        await db.from('breezeway_tasks_sync')
+          .update({ scheduled_date: date, name: movedTitle(name, date), synced_at: new Date().toISOString() })
+          .eq('id', taskId)
+      } catch { /* the next sync catches up */ }
+      return NextResponse.json({ ok: true, scheduled: date })
+    }
+
     if (action === 'vendor') {
       const on = body.on !== false
       const has = name.toUpperCase().startsWith(VENDOR_TAG.toUpperCase()) || /vendor needed/i.test(name)
