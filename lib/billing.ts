@@ -16,6 +16,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { isDepartureCleanName } from './breezeway'
 import { getEmployeeNames, nameMatchesRoster } from './homebase'
+import { getSetting, setSetting } from './app-settings'
 
 // key identifies a line item across pulls ('cost:<breezewayId>' / 'supply:<id>' / 'extra:<idx>').
 // originalAmount is set when OUR override replaced the Breezeway amount (the override wins in
@@ -116,15 +117,19 @@ export async function monthTasks(month: string): Promise<any[]> {
 /** The same pull over ANY date window (Jon, 2026-08-10: a week, a pay period, a quarter). */
 export async function rangeTasks(from: string, to: string): Promise<any[]> {
   const db = supabaseAdmin()
-  const scheduled = await pageAll((a, b) => db.from('breezeway_tasks_sync')
-    .select(MIRROR_COLS)
-    .gte('scheduled_date', from).lte('scheduled_date', to)
-    .order('id').range(a, b))
-  const undated = await pageAll((a, b) => db.from('breezeway_tasks_sync')
-    .select(MIRROR_COLS)
-    .is('scheduled_date', null)
-    .gte('finished_at', from + 'T00:00:00').lte('finished_at', to + 'T23:59:59')
-    .order('id').range(a, b))
+  // The two pulls are independent — running them one after the other doubled the wait on the
+  // slowest hop of the board for no reason.
+  const [scheduled, undated] = await Promise.all([
+    pageAll((a, b) => db.from('breezeway_tasks_sync')
+      .select(MIRROR_COLS)
+      .gte('scheduled_date', from).lte('scheduled_date', to)
+      .order('id').range(a, b)),
+    pageAll((a, b) => db.from('breezeway_tasks_sync')
+      .select(MIRROR_COLS)
+      .is('scheduled_date', null)
+      .gte('finished_at', from + 'T00:00:00').lte('finished_at', to + 'T23:59:59')
+      .order('id').range(a, b)),
+  ])
   const seen: Record<string, boolean> = {}
   const out: any[] = []
   for (const t of scheduled.concat(undated)) {
@@ -282,6 +287,21 @@ export async function billingMonth(month: string): Promise<{ tasks: BillingTask[
 }
 
 /** Assemble the billing view for ANY date window. billingMonth is this with a month's endpoints. */
+// The Homebase roster changes on the order of weeks; fetching it live added a full external
+// network hop to every load of the board. Cached in app_settings for 6 hours — the same pattern
+// as the timecards cache in the route. Any failure falls back to the live call, and an empty
+// roster is never cached so one bad pull cannot blank the crew split for six hours.
+async function cachedEmployeeNames(): Promise<string[]> {
+  const KEY = 'homebase_roster_cache'
+  try {
+    const c = await getSetting<{ at: number; names: string[] }>(KEY, { at: 0, names: [] })
+    if (c && Array.isArray(c.names) && c.names.length && Date.now() - Number(c.at) < 6 * 3600_000) return c.names
+  } catch { /* fall through to live */ }
+  const names = await getEmployeeNames()
+  if (names.length) setSetting(KEY, { at: Date.now(), names }, 'billing-cache').catch(() => null)
+  return names
+}
+
 export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks: BillingTask[]; owners: OwnerGroup[]; missingDetail: number }> {
   const db = supabaseAdmin()
   const [raw, owners] = await Promise.all([rangeTasks(rFrom, rTo), ownerMap()])
@@ -289,22 +309,30 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
   // a named doer that matches nobody is an outside vendor. No roster (API down)
   // means crew stays null everywhere rather than mislabelling.
   let staffNames: string[] = []
-  try { staffNames = await getEmployeeNames() } catch { /* crew stays null */ }
+  try { staffNames = await cachedEmployeeNames() } catch { /* crew stays null */ }
   const ids = raw.map(t => String(t.id))
   const details: Record<string, any> = {}
   const adjs: Record<string, any> = {}
-  for (let i = 0; i < ids.length; i += 400) {
-    const chunk = ids.slice(i, i + 400)
-    if (!chunk.length) break
-    try {
-      const { data } = await db.from('breezeway_billing_details').select('task_id, bill_to, rate_type, costs, supplies, synced_at').in('task_id', chunk)
-      for (const d of (data || []) as any[]) details[String(d.task_id)] = d
-    } catch { /* detail-less rows still render */ }
-    try {
-      const { data } = await db.from('billing_adjustments').select('*').in('task_id', chunk)
-      for (const a of (data || []) as any[]) adjs[String(a.task_id)] = a
-    } catch { /* overlay optional */ }
-  }
+  // A month is ~8 chunks; awaiting each of the sixteen queries in turn cost ~2s of pure
+  // round-trip time. The chunks are disjoint, so they can all be in flight at once.
+  const chunks: string[][] = []
+  for (let i = 0; i < ids.length; i += 400) { const c = ids.slice(i, i + 400); if (c.length) chunks.push(c) }
+  await Promise.all(chunks.map(async chunk => {
+    await Promise.all([
+      (async () => {
+        try {
+          const { data } = await db.from('breezeway_billing_details').select('task_id, bill_to, rate_type, costs, supplies, synced_at').in('task_id', chunk)
+          for (const d of (data || []) as any[]) details[String(d.task_id)] = d
+        } catch { /* detail-less rows still render */ }
+      })(),
+      (async () => {
+        try {
+          const { data } = await db.from('billing_adjustments').select('*').in('task_id', chunk)
+          for (const a of (data || []) as any[]) adjs[String(a.task_id)] = a
+        } catch { /* overlay optional */ }
+      })(),
+    ])
+  }))
   const listingIds: string[] = []
   const seenL: Record<string, boolean> = {}
   for (const t of raw) {
