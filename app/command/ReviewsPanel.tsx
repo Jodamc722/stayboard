@@ -85,6 +85,11 @@ export function ReviewsPanel() {
   // That is exactly the bug hit when clicking Undo at human speed: the visibility-change reload
   // races the undo, lands last, and the review never returns to the reply list.
   const mutatedAtRef = useRef(0)
+  // First load only: if nothing is awaiting a reply, open on the populated 'Replied' list rather
+  // than an empty 'Needs a reply' box. Jon, twice: "reviews don't seem to be populating" — they
+  // are; the default work-queue tab was just empty because the team is caught up, which reads as a
+  // broken page. Never overrides a tab the user picked themselves.
+  const didInitialTab = useRef(false)
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts || !opts.quiet) setS(prev => ({ ...prev, loading: true }))
     setErr(null)
@@ -95,6 +100,11 @@ export function ReviewsPanel() {
       const reviews: Review[] = d.reviews || []
       setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error })
       setLoadedAt(Date.now())
+      if (!didInitialTab.current) {
+        didInitialTab.current = true
+        const anyNeeds = reviews.some(r => !r.hasReply && !r.dismissed)
+        if (!anyNeeds && reviews.length > 0) setTab('replied')
+      }
       // No template placeholders — drafts stay empty until the AI writes the real one.
     } catch (e: any) {
       setS({ loading: false, error: String((e && e.message) || e) })
@@ -422,7 +432,7 @@ export function ReviewsPanel() {
           </>
         )
       ) : needs.length === 0 ? (
-        <div className="px-4 py-8 text-center text-sm text-muted">All caught up on reviews. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /></div>
+        <div className="px-4 py-8 text-center text-sm text-muted">All caught up — nothing awaiting a reply. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /><br/><button onClick={() => setTab('replied')} className="mt-2 text-xs font-semibold text-brand-600 hover:underline">See the {replied.length} replied reviews →</button></div>
       ) : (
         <ul className="divide-y divide-line/70">
           {needs.map(r => (
