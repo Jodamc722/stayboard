@@ -91,6 +91,8 @@ export type PendingTask = {
   name: string
   rawName: string
   dept: 'maintenance' | 'housekeeping' | 'inspection' | 'other'
+  /** Lighthouse created this one. Only its own inspections are allowed to ride forward. */
+  byLighthouse: boolean
   scheduledDate: string | null
   assignees: string[]
   /** Days past its scheduled date. null when it is parked in the future or unscheduled. */
@@ -127,7 +129,7 @@ export async function pendingForUnits(
 
   const db = supabaseAdmin()
   const { data, error } = await db.from('breezeway_tasks_sync')
-    .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at')
+    .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,description')
     .in('reference_property_id', listingIds.slice(0, 400))
     .gte('scheduled_date', from).lte('scheduled_date', to)
     .not('name', 'ilike', '%departure clean%')
@@ -151,6 +153,7 @@ export async function pendingForUnits(
       id: String(t.id), listingId: lid,
       name: baseTitle(raw) || 'Task', rawName: raw,
       dept: deptOf(t.type_department),
+      byLighthouse: /lighthouse/i.test(str(t.description)),
       scheduledDate: sd,
       assignees: Array.isArray(t.assignees)
         ? t.assignees.map((p: any) => str(p && typeof p === 'object' ? (p.name ?? '') : p).replace(/\s+/g, ' ').trim()).filter(Boolean)
@@ -248,7 +251,7 @@ export async function sweepUnit(opts: {
   by?: string | null
   /** Do not drag a job forward from further out than this — it was parked for a reason. */
   maxFutureDays?: number
-}): Promise<PushResult & { candidates: PendingTask[] }> {
+}): Promise<PushResult & { candidates: PendingTask[]; skippedAsDone: PendingTask[] }> {
   const { listingId, unitName, date, dept } = opts
   // THE WINDOWS ARE OPERATOR SETTINGS NOW (Jon, 2026-08-27: "all this should be in settings and
   // automations"). They were hardcoded here, which meant the one number Jon actually wanted to
@@ -256,20 +259,48 @@ export async function sweepUnit(opts: {
   const { getTaskAutomation } = await import('./auto-inspections')
   const cfg = await getTaskAutomation().catch(() => null)
   const ts = cfg?.tripSweep
-  if (ts && ts.enabled === false) return { ok: true, moved: [], failed: [], candidates: [] }
+  if (ts && ts.enabled === false) return { ok: true, moved: [], failed: [], candidates: [], skippedAsDone: [] }
   const pending = (await pendingForUnits([listingId], date, { lookBackDays: ts?.lookBackDays }))[listingId] || []
   const horizon = Math.max(1, opts.maxFutureDays ?? ts?.maxFutureDays ?? 21)
   const cutoff = new Date(Date.parse(date + 'T12:00:00Z') + horizon * 86400000).toISOString().slice(0, 10)
-  const take = pending.filter(t =>
-    (ts?.sameDeptOnly === false ? t.dept !== 'other' : t.dept === dept)
-    && t.scheduledDate !== date
+  // ── THE DUPLICATE GATE RUNS FIRST (Jon, 2026-08-31: "that should be run before moving the task
+  // forward") ───────────────────────────────────────────────────────────────────────────────────
+  // Ask what this unit has ALREADY had done recently, before deciding what to drag onto today. A
+  // pending job whose category was completed here last week is not pending — it is a record nobody
+  // closed, and sending a tech to redo it is the single most expensive mistake this feature can
+  // make. If the gate itself fails it returns empty and simply stops filtering; a broken audit must
+  // never be able to block the day's work.
+  const { completedRecently } = await import('./task-audit')
+  const { auditKey } = await import('./task-audit')
+  const alreadyDone = (await completedRecently([listingId], date, 14))[listingId] || new Set<string>()
+
+  const skippedAsDone: PendingTask[] = []
+  const take = pending.filter(t => {
+    if (t.scheduledDate === date) return false
     // Future work is only pulled forward from inside the horizon. Something booked two months out
     // was scheduled deliberately, and yanking it to today is not helpfulness, it is meddling.
-    && (!t.future || String(t.scheduledDate) <= cutoff))
-  if (!take.length) return { ok: true, moved: [], failed: [], candidates: [] }
+    if (t.future && String(t.scheduledDate) > cutoff) return false
+
+    // ── MAINTENANCE ONLY (Jon, 2026-08-31: "for the pending work, it's only maintenance-related
+    // tasks") ───────────────────────────────────────────────────────────────────────────────────
+    // The sweep used to ride along with whatever trade was visiting. Housekeeping does not work
+    // that way: a cleaner has a route and a clock, and handing them a backlog because they happened
+    // to open the door costs the turn. Maintenance is the trade where the trip IS the cost, so
+    // maintenance is the only trade that consolidates.
+    //
+    // Inspections are the one exception, and only Lighthouse's own: those carry a real brief and
+    // were created by this system for a reason. An inspection somebody made by hand is not moved
+    // forward at all — closeStrayInspections deals with those separately.
+    const eligible = t.dept === 'maintenance' || (t.dept === 'inspection' && t.byLighthouse)
+    if (!eligible) return false
+
+    if (alreadyDone.has(auditKey(t.rawName, t.dept))) { skippedAsDone.push(t); return false }
+    return true
+  })
+  if (!take.length) return { ok: true, moved: [], failed: [], candidates: [], skippedAsDone }
   const out = await pushTasks(take, date, {
     assignee: opts.assignee, by: opts.by,
     reason: `${dept === 'maintenance' ? 'Maintenance is' : 'Somebody is'} in ${unitName} that day, so this rides along instead of costing its own trip.`,
   })
-  return { ...out, candidates: take }
+  return { ...out, candidates: take, skippedAsDone }
 }
