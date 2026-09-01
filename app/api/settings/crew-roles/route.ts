@@ -43,6 +43,8 @@ type Person = {
   agency: string | null
   /** miami | broward | north | vendor | '' — '' means they are in no market tab at all. */
   area: string | null
+  /** w2 | contractor | agency | vendor | null — how they are employed (migration 062). */
+  employmentType?: string | null
   /** Pay, from the same staff row. Present only once migration 057 has been applied. */
   title?: string | null
   salaried?: boolean
@@ -119,6 +121,7 @@ export async function GET(req: NextRequest) {
     // Pay rides the same record now — one row per person, edited in one place.
     const sr = (rec && staffByLower[String(rec.name || '').toLowerCase()]) || staffByLower[n.toLowerCase()] || null
     p.title = sr?.title ?? null
+    p.employmentType = sr?.employmentType ?? null
     p.salaried = sr?.salaried === true
     p.salaryHourly = sr?.salaryHourly ?? null
     p.salaryHoursPerWeek = sr?.salaryHoursPerWeek ?? null
@@ -240,6 +243,7 @@ export async function PUT(req: NextRequest) {
     if ('role' in e) patch.role = e.role ? String(e.role) : null
     // Pay lives on the same row, so the People card can state it in the same save.
     if ('title' in e) patch.title = e.title ? String(e.title) : null
+    if ('employmentType' in e) patch.employmentType = e.employmentType || null
     if ('salaried' in e) patch.salaried = !!e.salaried
     if ('salaryHourly' in e) patch.salaryHourly = e.salaryHourly === '' || e.salaryHourly == null ? null : Number(e.salaryHourly)
     if ('salaryHoursPerWeek' in e) patch.salaryHoursPerWeek = e.salaryHoursPerWeek === '' || e.salaryHoursPerWeek == null ? null : Number(e.salaryHoursPerWeek)
