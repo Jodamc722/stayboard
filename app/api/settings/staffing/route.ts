@@ -7,7 +7,7 @@
 // Owner/admin only: agency fee rates decide what gets invoiced, so this is not a floor-level edit.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { getAgencies, getStaff, upsertAgency, upsertStaff, suggestFromTasks, mergeSuggestion, roleFromDepartment, agencyFromText, type Agency } from '@/lib/staffing'
+import { getAgencies, getStaff, getVendors, upsertAgency, upsertStaff, upsertVendor, suggestFromTasks, mergeSuggestion, roleFromDepartment, agencyFromText, type Agency } from '@/lib/staffing'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
@@ -118,7 +118,8 @@ export async function GET() {
     inactive: names.filter(p => !p.active).length,
     withAgencyHint: names.filter(p => p.agencyHint).length,
   }
-  return NextResponse.json({ ok: true, agencies, staff, roster: names, diag })
+  const vendors = await getVendors(true)
+  return NextResponse.json({ ok: true, agencies, staff, vendors, roster: names, diag })
 }
 
 export async function PUT(req: NextRequest) {
@@ -139,9 +140,15 @@ export async function PUT(req: NextRequest) {
       const r = await upsertStaff(s)
       if (r.ok) saved++; else errors.push(`staff ${s.name}: ${r.error}`)
     }
+    // VENDOR COMPANIES (migration 062). Same shape as agencies: upsert whatever changed.
+    for (const v of (Array.isArray(body.vendors) ? body.vendors : [])) {
+      if (!v?.key) continue
+      const r = await upsertVendor(v)
+      if (r.ok) saved++; else errors.push(`vendor ${v.key}: ${r.error}`)
+    }
 
-    const [agencies, staff] = await Promise.all([getAgencies(true), getStaff(true)])
-    return NextResponse.json({ ok: errors.length === 0, saved, errors, agencies, staff })
+    const [agencies, staff, vendors] = await Promise.all([getAgencies(true), getStaff(true), getVendors(true)])
+    return NextResponse.json({ ok: errors.length === 0, saved, errors, agencies, staff, vendors })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
