@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { billingRange, listingNames, monthRange } from '@/lib/billing'
-import { getTimecards } from '@/lib/homebase-labor'
+import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { getCrew } from '@/lib/crew'
 import { marketOf } from '@/lib/segments'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -99,10 +99,15 @@ export async function GET(req: NextRequest) {
       } catch { /* cache miss */ }
       const crew = await getCrew()
       if (!tc) {
-        tc = await getTimecards(win.from, win.to)
-        // Store only what the block below reads — the full timecards are heavy.
-        const slim = (tc as any[]).map(t => ({ name: t.name, role: t.role, hours: t.hours, laborCost: t.laborCost }))
-        setSetting(CACHE_KEY, { id: cacheId, at: Date.now(), tc: slim }, 'billing-cache').catch(() => null)
+        const a = await getTimecardsAudited(win.from, win.to)
+        tc = a.cards
+        // NEVER CACHE A SHORT PULL. A rate-limited minute used to write the truncated card set
+        // into this shared cache, and every request for the next ten minutes served understated
+        // payroll even after Homebase recovered. Incomplete data may render once; it never sticks.
+        if (a.complete) {
+          const slim = (tc as any[]).map(t => ({ name: t.name, role: t.role, hours: t.hours, laborCost: t.laborCost }))
+          setSetting(CACHE_KEY, { id: cacheId, at: Date.now(), tc: slim }, 'billing-cache').catch(() => null)
+        }
       }
       const byName: Record<string, { name: string; hours: number; cost: number }> = {}
       for (const t of (tc as any[])) {
