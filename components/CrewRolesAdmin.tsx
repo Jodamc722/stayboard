@@ -47,6 +47,7 @@ type Person = {
   agency: string | null; area: string | null
   // Pay rides the same record as the crew (migration 057) — one row per person, one place to edit.
   title?: string | null
+  employmentType?: string | null
   salaried?: boolean
   salaryHourly?: number | null
   salaryHoursPerWeek?: number | null
@@ -87,7 +88,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
   const [saving, setSaving] = useState(false)
   const [edits, setEdits] = useState<Record<string, string>>({})
   type StaffEdit = {
-    agency?: string; area?: string; role?: string; title?: string
+    agency?: string; area?: string; role?: string; title?: string; employmentType?: string
     salaried?: boolean; salaryHourly?: string; salaryHoursPerWeek?: string; salaryAnnual?: string
   }
   const [staffEdits, setStaffEdits] = useState<Record<string, StaffEdit>>({})
@@ -112,6 +113,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
   const setStaff = (name: string, patch: StaffEdit) =>
     setStaffEdits(s => ({ ...s, [name]: { ...s[name], ...patch } }))
   const salariedOf = (p: Person) => (staffEdits[p.name]?.salaried ?? !!p.salaried)
+  const etOf = (p: Person) => (staffEdits[p.name]?.employmentType ?? (p.employmentType || ''))
   const payOf = (p: Person, k: 'salaryHourly' | 'salaryHoursPerWeek' | 'salaryAnnual') => {
     const pend = staffEdits[p.name]?.[k]
     if (pend !== undefined) return pend
@@ -274,8 +276,8 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
         <table className="w-full text-[12.5px] min-w-[980px]">
           <thead>
             <tr className="border-b border-line text-left">
-              {['Person', 'Crew', 'Role', 'Agency / W2', 'Market', 'Pay', 'Hours', 'Payroll', 'Breezeway (context only)'].map((h, i) => (
-                <th key={i} className={`px-2.5 py-2 text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap ${i === 6 || i === 7 ? 'text-right' : ''}`}>{h}</th>
+              {['Person', 'Crew', 'Role', 'Employment', 'Agency', 'Market', 'Pay', 'Hours', 'Payroll', 'Breezeway (context only)'].map((h, i) => (
+                <th key={i} className={`px-2.5 py-2 text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap ${i === 7 || i === 8 ? 'text-right' : ''}`}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -329,6 +331,21 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
                       ))}
                     </select>
                     {!roleOf(p) && p.homebaseRole && <div className="mt-1 text-[10px] text-muted whitespace-nowrap" title="What Homebase's free-text role says — pick the real one above">HB: {p.homebaseRole}</div>}
+                  </td>
+                  <td className="px-2.5 py-2 align-top">
+                    {/* HOW they are employed (Jon, 2026-09-01). A fact for now, not a multiplier —
+                        burden rates arrive from Eric's app later. Blank = never stated. */}
+                    <select
+                      value={etOf(p)} disabled={!isOwner}
+                      onChange={e => setStaff(p.name, { employmentType: e.target.value })}
+                      title="W-2 = our payroll · 1099 = invoices us directly · Agency = through a staffing agency (pick which, next column) · Vendor = an outside company's employee"
+                      className={`rounded-lg border bg-white px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60 ${!etOf(p) ? 'border-amber-300 text-amber-700' : staffEdits[p.name]?.employmentType !== undefined ? 'border-brand-300 text-brand-700 font-semibold' : 'border-line text-ink'}`}>
+                      <option value="">— not set —</option>
+                      <option value="w2">W-2</option>
+                      <option value="contractor">1099 contractor</option>
+                      <option value="agency">Agency</option>
+                      <option value="vendor">Vendor staff</option>
+                    </select>
                   </td>
                   <td className="px-2.5 py-2 align-top">
                     <select

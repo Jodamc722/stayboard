@@ -18,6 +18,7 @@ type RosterPerson = {
   department?: string | null; active?: boolean; agencyHint?: string | null
   source?: 'homebase' | 'punches'
 }
+type Vendor = { key: string; label: string; buildings: string[]; billing: string | null; contact: string | null; notes: string | null; active: boolean; sort: number }
 type Diag = { locations: number; fromEmployeeList: number; punchesOnly: number; inactive: number; withAgencyHint: number }
 
 const AREAS = ['', 'miami', 'broward', 'north', 'vendor']
@@ -28,6 +29,7 @@ const daysAgoISO = (n: number) => new Date(Date.now() - n * 864e5).toLocaleDateS
 
 export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
   const [agencies, setAgencies] = useState<Agency[]>([])
+  const [vendors, setVendors] = useState<Vendor[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
   const [roster, setRoster] = useState<RosterPerson[]>([])
   const [diag, setDiag] = useState<Diag | null>(null)
@@ -44,7 +46,7 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
       const r = await fetch('/api/settings/staffing', { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'load failed')
-      setAgencies(j.agencies || []); setStaff(j.staff || []); setRoster(j.roster || []); setDiag(j.diag || null)
+      setAgencies(j.agencies || []); setStaff(j.staff || []); setVendors(j.vendors || []); setRoster(j.roster || []); setDiag(j.diag || null)
     } catch (e: any) { setMsg({ tone: 'bad', text: String(e.message || e) }) }
     finally { setBusy(null) }
   }, [])
@@ -55,11 +57,11 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
     try {
       const r = await fetch('/api/settings/staffing', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agencies, staff }),
+        body: JSON.stringify({ agencies, staff, vendors }),
       })
       const j = await r.json()
       if (!j.ok) throw new Error((j.errors || []).join('; ') || j.error || 'save failed')
-      setAgencies(j.agencies || agencies); setStaff(j.staff || staff)
+      setAgencies(j.agencies || agencies); setStaff(j.staff || staff); setVendors(j.vendors || vendors)
       setMsg({ tone: 'ok', text: `Saved ${j.saved} record${j.saved === 1 ? '' : 's'}.` })
     } catch (e: any) { setMsg({ tone: 'bad', text: String(e.message || e) }) }
     finally { setBusy(null) }
@@ -190,6 +192,63 @@ export function StaffingAdmin({ isOwner }: { isOwner: boolean }) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ---------------- vendors ---------------- */}
+      {/* VENDOR COMPANIES (Jon, 2026-09-01: "an option to add different vendors"). A vendor is an
+          outside company that runs its own crew in buildings we manage. The buildings named here
+          feed the same vendor classification everything already uses (lib/ops-presets merges this
+          registry into vendorBuildings) — so adding a vendor here is all it takes for its
+          buildings to leave cost-per-clean and land in the vendor bucket. */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <h4 className="text-[12px] font-semibold text-ink inline-flex items-center gap-1.5"><Building2 size={13} /> Vendors</h4>
+          <button onClick={() => {
+            const label = window.prompt('Vendor company name (e.g. "Opal Works")')?.trim()
+            if (!label) return
+            const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+            if (vendors.some(v => v.key === key)) { setMsg({ tone: 'bad', text: 'That vendor already exists.' }); return }
+            setVendors(v => [...v, { key, label, buildings: [], billing: null, contact: null, notes: null, active: true, sort: 100 }])
+          }} disabled={dis} className="text-[11px] font-semibold text-brand-700 hover:text-brand-800 inline-flex items-center gap-1 disabled:opacity-50"><Plus size={12} /> Add vendor</button>
+        </div>
+        {vendors.length ? (
+          <div className="overflow-x-auto rounded-xl border border-line">
+            <table className="w-full text-[12px] min-w-[640px]">
+              <thead className="bg-app text-muted">
+                <tr>{['Vendor', 'Buildings they cover', 'How they bill', 'Active'].map(h => (
+                  <th key={h} className="text-left font-semibold px-2.5 py-1.5 whitespace-nowrap">{h}</th>))}</tr>
+              </thead>
+              <tbody>
+                {vendors.map((v, i) => (
+                  <tr key={v.key} className="border-t border-line">
+                    <td className="px-2.5 py-1.5 font-semibold whitespace-nowrap">{v.label}</td>
+                    <td className="px-2.5 py-1.5">
+                      <input value={v.buildings.join(', ')} disabled={dis}
+                        onChange={e => setVendors(vs => vs.map((x, j) => j === i ? { ...x, buildings: e.target.value.split(',').map(b => b.trim()).filter(Boolean) } : x))}
+                        placeholder="Botanica, 17WEST — comma-separated, the building names as the app knows them"
+                        className="w-full rounded-lg border border-line px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+                    </td>
+                    <td className="px-2.5 py-1.5">
+                      <input value={v.billing || ''} disabled={dis}
+                        onChange={e => setVendors(vs => vs.map((x, j) => j === i ? { ...x, billing: e.target.value || null } : x))}
+                        placeholder="per clean · monthly invoice…"
+                        className="w-40 rounded-lg border border-line px-2 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+                    </td>
+                    <td className="px-2.5 py-1.5">
+                      <input type="checkbox" checked={v.active} disabled={dis}
+                        onChange={e => setVendors(vs => vs.map((x, j) => j === i ? { ...x, active: e.target.checked } : x))}
+                        className="accent-brand-600" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-[11.5px] text-muted rounded-xl border border-dashed border-line px-3 py-2.5">
+            No vendors yet. Add the companies whose own crews clean buildings we manage — their buildings then count as vendor-cleaned everywhere, automatically.
+          </p>
+        )}
       </div>
 
       {/* ---------------- staff ---------------- */}
