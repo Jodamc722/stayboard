@@ -1,0 +1,443 @@
+import { redirect } from 'next/navigation'
+import Link from 'next/link'
+import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getOpsPresets } from '@/lib/app-settings'
+import { noBreezewayRegex } from '@/lib/ops-presets'
+import { Shell } from '@/components/Shell'
+import { BrainConsole } from '@/components/BrainConsole'
+import { SlackQueueCard } from '@/components/SlackQueueCard'
+import { AvailabilityAlert } from '@/components/AvailabilityAlert'
+import { MissionFeed } from '@/components/MissionFeed'
+import { GeneratePlanButton } from '@/components/OpsPlanUI'
+import { NeedsHumanPanel, CapacityPanel } from '@/components/OpsV2'
+import {
+  Sparkles, Star, MessageSquare, AlertTriangle, LogIn, ClipboardCheck,
+  ArrowUpRight, ListChecks, Crown, Wrench,
+} from 'lucide-react'
+
+export const dynamic = 'force-dynamic'
+
+function rollupBuilding(raw: any): string {
+  const s = String(raw || '').toLowerCase()
+  if (!s) return 'Unknown'
+  if (s.includes('botanica')) return 'Botanica'
+  if (s.includes('arya')) return 'Arya'
+  if (s.includes('oasis') || /mahogany|royal\s*palm|bougainvillea|bamboo|sapodilla|jasmine/.test(s)) return 'Oasis'
+  return String(raw)
+}
+
+// Pull the unit/nickname tail off a listing name (e.g. "Botanica 1208" -> "1208").
+function unitOf(listingName: string): string {
+  const s = String(listingName || '')
+  const m = s.match(/#?\s*([0-9]{2,5}[A-Za-z]?)\s*$/)
+  return m ? m[1] : ''
+}
+
+// Command Center welcome calls: surface ONLY today's calls, and only the PRIORITY LUXE buildings
+// individually; the rest of today's calls roll up to a count. Edit this list as the luxe portfolio changes.
+const LUX_BUILDINGS = ['elser', 'amrit', '17 west', '17west', 'district 225', 'district225', 'nomad']
+
+export default async function CommandCenterPage() {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const sb = supabaseAdmin()
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const sixtyAgo = new Date(Date.now() - 60 * 86400000).toISOString()
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
+  const in2 = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
+  // Overdue-work window: Breezeway tasks scheduled in the last 45 days, before today, still unfinished.
+  const bzStart = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.now() - 45 * 86400000))
+
+  const [
+    reviewsRes,
+    convosRes,
+    overdueRes,
+    approvalsRes,
+    checkInsRes,
+    welcomeRes,
+    sentimentRes,
+    listingsRes,
+    bzOverdueRes,
+    glitchOverdueRes,
+    departuresRes,
+    occupiedRes,
+    bzTodayRes,
+  ] = await Promise.all([
+    sb.from('guesty_reviews').select('id, listing_id, rating, content, channel, guest_name, created_at')
+      .eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', sixtyAgo)
+      .order('created_at', { ascending: false }).limit(60),
+    sb.from('guesty_conversations').select('id, reservation_id, listing_id, guest_name, channel, last_message_preview, last_message_at, unread_count')
+      .gt('unread_count', 0).order('last_message_at', { ascending: false }).limit(40),
+    sb.from('field_requests').select('id, title, type, building, unit, due_at, priority')
+      .in('status', ['open', 'in_progress']).lt('due_at', nowIso).order('due_at', { ascending: true }).limit(40),
+    sb.from('field_requests').select('id, title, type, building, unit, vendor, amount_usd, priority, approval_status')
+      .eq('approval_required', true).order('created_at', { ascending: false }).limit(40),
+    sb.from('guesty_reservations').select('id, guest_name, listing_name, listing_id, check_in, nights, money_total')
+      .eq('check_in', todayStr).neq('status', 'canceled').limit(60),
+    sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, nights, custom_fields, status, money_total')
+      .gte('check_in', todayStr).lte('check_in', in2).order('check_in').limit(120),
+    sb.from('guesty_conversation_sentiment').select('conversation_id, guest_name, listing_id, channel, band, dissatisfied, awaiting_reply, top_issue, guest_excerpt, last_message_at, status')
+      .eq('status', 'open').order('last_message_at', { ascending: false }).limit(60),
+    sb.from('guesty_listings').select('id, nickname, title, building, status').limit(2000),
+    // Truthful overdue work: unfinished Breezeway tasks scheduled before today (matches daysheet
+    // isDone/isGone). PAGED — PostgREST caps any single request at 1000 rows no matter what
+    // .limit() asks for (the trap lib/kpi.ts documents), so the old .limit(5000) single fetch
+    // silently undercounted exactly when the backlog was biggest.
+    (async () => {
+      let rows: any[] = []
+      for (let i = 0; i < 8; i++) {
+        const { data: page } = await sb.from('breezeway_tasks_sync').select('reference_property_id')
+          .gte('scheduled_date', bzStart).lt('scheduled_date', todayStr)
+          .is('finished_at', null)
+          .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
+          .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
+          .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
+          .order('scheduled_date').range(i * 1000, i * 1000 + 999)
+        rows = rows.concat(page || [])
+        if (!page || page.length < 1000) break
+      }
+      return { data: rows }
+    })(),
+    // ...plus open glitches whose due date has passed.
+    sb.from('glitches').select('id', { count: 'exact', head: true })
+      .not('status', 'in', '("done","resolved","closed")').lt('due_date', todayStr),
+    // THE DAY PULSE (Jon, 2026-09-01: "sharper... see operations and make operational decisions").
+    // Two cheap mirror queries so the first line of the cockpit is the shape of the day itself.
+    // Statuses are filtered in JS the same way the vacancy logic does (/confirm|check/i) — the
+    // mirror holds several spellings and an .in() list would quietly miss one.
+    sb.from('guesty_reservations').select('id, listing_id, status')
+      .eq('check_out', todayStr).limit(1000),
+    sb.from('guesty_reservations').select('id, status')
+      .lte('check_in', todayStr).gt('check_out', todayStr).limit(1000),
+    // TODAY'S MAINTENANCE (Jon, 2026-08-14: "Command center should show... Maintenance tasks").
+    // The overdue count linked to the board; the actual work was invisible from here.
+    sb.from('breezeway_tasks_sync')
+      .select('id, reference_property_id, name, status, assignees, raw')
+      .eq('scheduled_date', todayStr).ilike('type_department', '%maint%')
+      .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
+      .not('status', 'ilike', '%close%').not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
+      .limit(60),
+  ])
+
+  const meta: Record<string, { name: string; building: string; status: string }> = {}
+  ;(listingsRes.data ?? []).forEach((l: any) => {
+    meta[l.id] = { name: l.nickname || l.title || l.id, building: rollupBuilding(l.building), status: String(l.status || '').toLowerCase() }
+  })
+  const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
+  const liveListing = (id: string | null) => {
+    if (!id) return false
+    const m = meta[id]; if (!m) return false
+    if (DEAD.includes(m.status)) return false
+    if (m.building.toLowerCase() === 'waves') return false
+    return true
+  }
+
+  // Exclude reviews already dismissed ('no reply needed') so they do NOT repopulate after close-out.
+  const dismissedSet = new Set<string>()
+  try {
+    const { data: dz } = await sb.from('guesty_reviews').select('id').eq('dismissed', true).gte('created_at', sixtyAgo)
+    ;(dz ?? []).forEach((d: any) => dismissedSet.add(d.id))
+  } catch { /* dismissed column may not exist yet */ }
+
+  const reviewItems = (reviewsRes.data ?? [])
+    .filter((r: any) => liveListing(r.listing_id) && !dismissedSet.has(r.id))
+    .map((r: any) => ({
+      id: r.id, rating: r.rating != null ? Number(r.rating) : null,
+      content: String(r.content || '').slice(0, 4000), channel: r.channel || '',
+      guest: r.guest_name || '', listing_name: meta[r.listing_id]?.name || 'Listing',
+      created_at: r.created_at,
+    }))
+    .sort((a: any, b: any) => {
+      const fa = a.rating == null ? 99 : (a.rating <= 5 ? a.rating : a.rating / 2)
+      const fb = b.rating == null ? 99 : (b.rating <= 5 ? b.rating : b.rating / 2)
+      return fa - fb
+    })
+
+  const approvals = (approvalsRes.data ?? [])
+    .filter((r: any) => (r.approval_status || '').toLowerCase() !== 'approved' && (r.approval_status || '').toLowerCase() !== 'rejected')
+    .map((r: any) => ({ id: r.id, title: r.title || 'Untitled request', type: r.type || '', building: r.building || '', unit: r.unit || '', vendor: r.vendor || '', amount_usd: r.amount_usd != null ? Number(r.amount_usd) : null, priority: (r.priority || 'low').toLowerCase() }))
+
+  const messages = (convosRes.data ?? []).map((c: any) => ({
+    id: c.id, reservationId: c.reservation_id || null,
+    guest: c.guest_name || 'Guest', channel: c.channel || '',
+    unit: unitOf(c.listing_id ? (meta[c.listing_id]?.name || '') : ''),
+    listing_name: c.listing_id ? (meta[c.listing_id]?.name || '') : '',
+    preview: c.last_message_preview || '', at: c.last_message_at, unread: Number(c.unread_count) || 0,
+  }))
+
+  const truthy = (v: any) => v === true || v === 1 || (typeof v === 'string' && /^(y|yes|true|done|complete|1|x)/i.test(v.trim()))
+  const fieldVal = (cf: any, kw: string) => Array.isArray(cf) ? (cf.find((c: any) => String(c?.fieldName || c?.name || '').toLowerCase().includes(kw)) || {}).value : undefined
+  // Only TODAY's confirmed, not-yet-done welcome calls. Priority luxe buildings show individually;
+  // the rest of today's calls become a count (welcomeOtherCount).
+  const welcomeDue = (welcomeRes.data ?? [])
+    .filter((r: any) => String(r.status || '').toLowerCase() === 'confirmed' && !truthy(fieldVal(r.custom_fields, 'welcome')) && String(r.check_in).slice(0, 10) === todayStr)
+    .map((r: any) => {
+      const lname = String(r.listing_name || '').toLowerCase()
+      const value = Number(r.money_total) || 0
+      const lux = LUX_BUILDINGS.some(b => lname.includes(b))
+      return { id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '', unit: unitOf(r.listing_name || ''), check_in: String(r.check_in).slice(0, 10), today: true, value, important: lux }
+    })
+    .sort((a: any, b: any) => b.value - a.value)
+  const welcomeImportant = welcomeDue.filter((w: any) => w.important)
+  const welcomeOtherCount = welcomeDue.length - welcomeImportant.length
+
+  const checkIns = (checkInsRes.data ?? []).map((r: any) => ({ id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '', unit: unitOf(r.listing_name || ''), nights: Number(r.nights) || 0 }))
+
+  // ── THE DAY PULSE ─────────────────────────────────────────────────────────────────────────────
+  // The shape of the day in one line, before any list: how full tonight, what moves today, and how
+  // many turns have zero slack. LIVE = /confirm|check/i, the same test the vacancy logic settled
+  // on; active listings use EXACT status equality (the /active/ substring bug of 2026-07-16
+  // counted every 'inactive' listing as active — never again).
+  const live = (v: any) => /confirm|check/i.test(String(v || ''))
+  const activeCount = (listingsRes.data ?? []).filter((l: any) => String(l.status || '').trim().toLowerCase() === 'active').length
+  const occupiedTonight = ((occupiedRes.data ?? []) as any[]).filter((r: any) => live(r.status)).length
+  const departuresToday = ((departuresRes.data ?? []) as any[]).filter((r: any) => live(r.status))
+  const arrivalIds = new Set(((checkInsRes.data ?? []) as any[]).filter((r: any) => live(r.status)).map((r: any) => String(r.listing_id || '')).filter(Boolean))
+  const sameDayTurns = departuresToday.filter((r: any) => r.listing_id && arrivalIds.has(String(r.listing_id))).length
+  const pulse = {
+    occupancyPct: activeCount ? Math.round((occupiedTonight / activeCount) * 100) : null,
+    occupied: occupiedTonight, active: activeCount,
+    arrivals: checkIns.length, departures: departuresToday.length, sameDayTurns,
+  }
+
+  const overdue = (overdueRes.data ?? []).map((r: any) => ({ id: r.id, title: r.title || 'Untitled', type: r.type || '', building: r.building || '', unit: r.unit || '', due_at: r.due_at, priority: (r.priority || 'low').toLowerCase() }))
+
+  const sentiment = (sentimentRes.error ? [] : (sentimentRes.data ?? []))
+    .filter((r: any) => r.dissatisfied || r.awaiting_reply)
+    .map((r: any) => ({ id: r.conversation_id, guest: r.guest_name || 'Guest', channel: r.channel || '', unit: unitOf(r.listing_id ? (meta[r.listing_id]?.name || '') : ''), band: r.band || '', dissatisfied: !!r.dissatisfied, awaiting: !!r.awaiting_reply, topIssue: r.top_issue || '', excerpt: r.guest_excerpt || '', at: r.last_message_at }))
+
+  // Guesty-only buildings (Botanica) left Breezeway with old tasks stuck in the mirror - nobody
+  // will ever close those, so they do not count as overdue. Flagged via ops-presets noBreezeway.
+  const noBz = noBreezewayRegex((await getOpsPresets()).vendorBuildings)
+  const bzOverdueCount = ((bzOverdueRes.data ?? []) as any[]).filter((t: any) => {
+    const m = meta[String(t.reference_property_id)]
+    return !m || !noBz.test(m.building + ' ' + m.name)
+  }).length
+
+  // BIG RESERVATIONS (Jon, 2026-08-14: "Command center should show... big reservation"). The next
+  // three days' arrivals that deserve a manager's eye before the guest is in the building: high
+  // dollar value or a long stay. The bar is deliberately simple — top of the money list, floor of
+  // $1,500 or 7+ nights — because "big" here means "worth a personal look", not a revenue report.
+  const bigArrivals = (welcomeRes.data ?? [])
+    .filter((r: any) => String(r.status || '').toLowerCase() === 'confirmed')
+    .map((r: any) => ({
+      id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '',
+      unit: unitOf(r.listing_name || ''), check_in: String(r.check_in).slice(0, 10),
+      nights: Number(r.nights) || 0, value: Number(r.money_total) || 0,
+      today: String(r.check_in).slice(0, 10) === todayStr,
+    }))
+    .filter((r: any) => r.value >= 1500 || r.nights >= 7)
+    .sort((a: any, b: any) => b.value - a.value)
+    .slice(0, 6)
+
+  // Today's open maintenance, urgent first. Priority lives only in the raw Breezeway payload on
+  // the mirror; missing = normal, never a crash.
+  const prioOf = (raw: any): string => { try { return String(raw?.type_priority || raw?.priority || 'normal').toLowerCase() } catch { return 'normal' } }
+  const prioRank: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 }
+  const maintToday = ((bzTodayRes.data ?? []) as any[])
+    .filter((t: any) => liveListing(String(t.reference_property_id)))
+    .map((t: any) => ({
+      id: String(t.id), name: String(t.name || 'Maintenance'),
+      unit: meta[String(t.reference_property_id)]?.name || '',
+      prio: prioOf(t.raw),
+      who: (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => a?.name).filter(Boolean).join(', '),
+    }))
+    .sort((a: any, b: any) => (prioRank[a.prio] ?? 2) - (prioRank[b.prio] ?? 2) || a.unit.localeCompare(b.unit))
+  const maintShown = maintToday.slice(0, 6)
+
+  const counts = {
+    reviews: reviewItems.length,
+    messages: messages.length,
+    overdue: overdue.length + bzOverdueCount + (glitchOverdueRes.count || 0),
+    checkIns: checkIns.length,
+    approvals: approvals.length,
+    welcome: welcomeDue.length,
+    sentiment: sentiment.length,
+  }
+
+  const firstName = user.email?.split('@')[0]?.split('.')[0]?.replace(/^\w/, c => c.toUpperCase()) || 'there'
+
+  const cards = [
+    { label: 'Awaiting approval', value: counts.approvals, href: '/requests', Icon: ClipboardCheck },
+    { label: 'Reviews to reply', value: counts.reviews, href: '/reviews', Icon: Star },
+    { label: 'Unread messages', value: counts.messages, href: '/messages', Icon: MessageSquare },
+    { label: 'Welcome calls due', value: counts.welcome, href: '/welcome-calls', Icon: LogIn },
+    { label: 'Overdue work', value: counts.overdue, href: '/plan', Icon: AlertTriangle },
+  ]
+
+  return (
+    <Shell>
+      <header className="mb-5">
+        <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5">
+          <Sparkles size={13} /> Mission Control
+        </p>
+        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Mission Control</h1>
+        <p className="text-sm text-muted mt-1">
+          Everything that needs you, {firstName} &mdash; in one place, in priority order. Work top to bottom; Eve is on the right whenever you need her.
+        </p>
+      </header>
+
+      {/* The day in one line, before any list. Plain numbers on purpose — this is the sentence a
+          GM says out loud at 8am, not a chart. */}
+      <div className="mb-4 rounded-xl border border-line bg-white px-4 py-2.5 flex items-center gap-x-4 gap-y-1 flex-wrap text-[13px]">
+        {pulse.occupancyPct != null && (
+          <span className="font-bold text-ink">Tonight {pulse.occupancyPct}% full <span className="font-normal text-muted">({pulse.occupied} of {pulse.active})</span></span>
+        )}
+        <span className="text-ink/80"><b className="text-ink">{pulse.arrivals}</b> arriving</span>
+        <span className="text-ink/80"><b className="text-ink">{pulse.departures}</b> leaving</span>
+        <span className={pulse.sameDayTurns > 0 ? 'font-bold text-amber-700' : 'text-ink/80'}>
+          {pulse.sameDayTurns} same-day {pulse.sameDayTurns === 1 ? 'turn' : 'turns'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+        {cards.map(c => <AlertCard key={c.label} {...c} />)}
+      </div>
+
+      <div className="mb-5">
+        <AvailabilityAlert />
+      </div>
+
+      {/* NEEDS A HUMAN — the ops board's exception list, rendered here too (one definition of
+          urgent, two doors). Client component; renders nothing when the field day is clean. */}
+      <div className="mb-5">
+        <NeedsHumanPanel />
+      </div>
+
+      {/* IS TODAY DOABLE — the same capacity sentence the ops board leads with (one model, two
+          doors, like Needs-a-human above). Renders nothing while the model has no day to price. */}
+      <div className="mb-5">
+        <CapacityPanel />
+      </div>
+
+      {/* BIG ARRIVALS + TODAY'S MAINTENANCE — the two lists Jon asked to SEE here, not count. */}
+      {(bigArrivals.length > 0 || maintShown.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+          {bigArrivals.length > 0 && (
+            <div className="rounded-2xl border border-line bg-white overflow-hidden">
+              <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center gap-2">
+                <Crown size={14} className="text-amber-500" />
+                <span className="text-[13px] font-bold text-ink">Big arrivals — next 3 days</span>
+                <span className="text-[11px] text-muted">$1,500+ or 7+ nights</span>
+              </div>
+              <div className="divide-y divide-line">
+                {bigArrivals.map((r: any) => (
+                  <div key={r.id} className="px-4 py-2.5 flex items-center gap-2.5 text-[13px] flex-wrap">
+                    <span className="font-bold text-ink shrink-0">{r.guest}</span>
+                    <span className="text-ink/70 truncate flex-1 min-w-[120px]">{r.listing_name}</span>
+                    {r.today
+                      ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-600 text-white shrink-0">Today</span>
+                      : <span className="text-[11px] text-muted shrink-0">{r.check_in.slice(5)}</span>}
+                    <span className="text-[11.5px] text-muted shrink-0">{r.nights} nt</span>
+                    <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">${Math.round(r.value).toLocaleString('en-US')}</span>
+                  </div>
+                ))}
+              </div>
+              <Link href="/welcome-calls" className="block px-4 py-2 text-[12px] font-semibold text-brand-700 hover:underline border-t border-line">Welcome calls →</Link>
+            </div>
+          )}
+          {maintShown.length > 0 && (
+            <div className="rounded-2xl border border-line bg-white overflow-hidden">
+              <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center gap-2">
+                <Wrench size={14} className="text-amber-600" />
+                <span className="text-[13px] font-bold text-ink">Maintenance today — {maintToday.length}</span>
+              </div>
+              <div className="divide-y divide-line">
+                {maintShown.map((t: any) => (
+                  <a key={t.id} href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer"
+                    className="px-4 py-2.5 flex items-center gap-2.5 text-[13px] flex-wrap hover:bg-app/40">
+                    <span className="font-bold text-ink shrink-0">{t.unit}</span>
+                    <span className="text-ink/70 truncate flex-1 min-w-[120px]">{t.name}</span>
+                    {(t.prio === 'urgent' || t.prio === 'high') && (
+                      <span className={'text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ' + (t.prio === 'urgent' ? 'bg-rose-600 text-white' : 'bg-amber-100 text-amber-800')}>{t.prio}</span>
+                    )}
+                    <span className={'text-[11.5px] shrink-0 ' + (t.who ? 'text-muted' : 'text-amber-700 font-bold')}>{t.who || 'Unassigned'}</span>
+                  </a>
+                ))}
+              </div>
+              {maintToday.length > maintShown.length && (
+                <Link href="/plan" className="block px-4 py-2 text-[12px] font-semibold text-brand-700 hover:underline border-t border-line">+ {maintToday.length - maintShown.length} more on the board →</Link>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PHONE STACK ORDER. The right rail used to be pulled above the feed on a narrow screen
+          (order-1), which put "Connect your tools", Ask Eve and Quick actions between Jon and the
+          day's actual exceptions — three admin cards to scroll past before the first thing that
+          needs him. On a phone the feed goes first and the rail follows; on lg the two columns
+          sit side by side exactly as before, so nothing above 640px moves. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+        <div className="lg:col-span-2">
+          <MissionFeed
+            reviews={reviewItems}
+            approvals={approvals}
+            messages={messages}
+            welcome={welcomeImportant}
+            welcomeOther={welcomeOtherCount}
+            checkIns={checkIns}
+            overdue={overdue}
+            sentiment={sentiment}
+          />
+        </div>
+
+        <div className="lg:col-span-1 space-y-4 lg:sticky lg:top-4">
+          <SlackQueueCard />
+          {/* ConnectTools left the cockpit 2026-09-01: it is Slack SETUP, which lives on
+              /integrations, and connection health lives on the system-check screen now. The
+              approval queue above is the part of Slack that belongs in a command center. */}
+          <BrainConsole />
+
+          <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
+            <div className="flex items-center gap-2 text-sm mb-2.5">
+              <ListChecks size={15} className="text-brand-600" />
+              <span className="font-semibold text-ink">Quick actions</span>
+            </div>
+            <div className="lh-actions flex flex-wrap items-center gap-2">
+              <GeneratePlanButton />
+              <Link href="/plan" className="inline-flex items-center gap-1.5 rounded-xl border border-line text-sm font-semibold text-ink px-3.5 py-2 hover:bg-app transition-colors">
+                Ops Plans <ArrowUpRight size={14} className="text-muted" />
+              </Link>
+              <Link href="/reviews" className="inline-flex items-center gap-1.5 rounded-xl border border-line text-sm font-semibold text-ink px-3.5 py-2 hover:bg-app transition-colors">
+                Reviews <ArrowUpRight size={14} className="text-muted" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Shell>
+  )
+}
+
+function AlertCard({ label, value, href, Icon }: { label: string; value: number; href: string; Icon: any }) {
+  const hot = value > 0
+  const isUrgent = label === 'Overdue work'
+  const isAttention = label === 'Awaiting approval' || label === 'Reviews to reply' || label === 'Unread messages' || label === 'Welcome calls due'
+
+  const ring = hot ? (isUrgent ? 'border-red-200 bg-red-50/50' : isAttention ? 'border-amber-200 bg-amber-50/50' : 'border-brand-200 bg-brand-50/40') : 'border-line bg-white'
+  const ic = hot ? (isUrgent ? 'text-red-500' : isAttention ? 'text-amber-500' : 'text-brand-600') : 'text-muted'
+  const num = hot ? (isUrgent ? 'text-red-600' : isAttention ? 'text-amber-700' : 'text-ink') : 'text-ink'
+
+  // PHONE TILE (Jon, 2026-08-22: "much taller than their content needs"). Two tiles per row is
+  // ~173px wide; 16px of padding each side plus the extra letter-spacing pushed "Awaiting approval"
+  // onto two lines with the number stranded below it, and the hover-only "View" line held ~20px of
+  // height that a touch screen can never reveal. Below 640px: tighter padding, normal tracking so
+  // the label keeps one line, and no dead hover row. Every sm: value is the authored desktop one.
+  return (
+    <Link href={href} className={`group rounded-2xl border ${ring} p-3 sm:p-4 transition-colors hover:border-brand-300`}>
+      <div className="flex items-center justify-between gap-1.5">
+        <span className="text-[11px] uppercase tracking-normal sm:tracking-wider text-muted font-semibold">{label}</span>
+        <Icon size={15} className={`${ic} shrink-0`} />
+      </div>
+      <div className={`text-2xl font-bold mt-1 sm:mt-2 tabular-nums ${num}`}>{value}</div>
+      <div className="mt-1 text-[11px] text-muted hidden sm:inline-flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        View <ArrowUpRight size={11} />
+      </div>
+    </Link>
+  )
+}
