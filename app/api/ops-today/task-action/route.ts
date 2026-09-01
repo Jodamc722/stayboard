@@ -72,6 +72,22 @@ export async function POST(req: NextRequest) {
       if (CLEAN.test(name)) {
         return NextResponse.json({ ok: false, error: 'Departure cleans follow the checkout — reschedule the reservation, not the task.' }, { status: 403 })
       }
+      // ASSIGN AND SCHEDULE IN ONE CALL (Jon, 2026-09-01: "lets make it where we can assign, pick
+      // date, etc"). Two round trips from the browser could half-succeed — a job moved to Thursday
+      // with nobody on it, or assigned but still dated last month — and a coordinator would have no
+      // way to tell which half failed. One call, one result.
+      const who = str(body.assignee)
+      let assignments: number[] | null = null
+      if (who) {
+        const { matchBreezewayPerson } = await import('@/lib/breezeway')
+        try {
+          const id = await matchBreezewayPerson(who)
+          if (Number.isFinite(id as any)) assignments = [Number(id)]
+          else return NextResponse.json({ ok: false, error: `No Breezeway person matches "${who}".` }, { status: 400 })
+        } catch {
+          return NextResponse.json({ ok: false, error: 'Could not look that person up in Breezeway.' }, { status: 502 })
+        }
+      }
       const { movedTitle, stampDescription } = await import('@/lib/pending-work')
       let desc = ''
       try {
@@ -81,7 +97,10 @@ export async function POST(req: NextRequest) {
       const r = await updateBreezewayTask(taskId, {
         name: movedTitle(name, date),
         scheduled_date: date,
-        description: stampDescription(desc, `Moved to ${date} from the Review tab — the unit is empty that day.`, date),
+        description: stampDescription(desc, who
+          ? `Moved to ${date} and given to ${who} from the Review tab.`
+          : `Moved to ${date} from the Review tab — the unit is empty that day.`, date),
+        ...(assignments ? { assignments } : {}),
       })
       if (!r.ok) return NextResponse.json({ ok: false, error: 'Breezeway: ' + r.text.slice(0, 140) }, { status: 502 })
       try {
@@ -89,7 +108,7 @@ export async function POST(req: NextRequest) {
           .update({ scheduled_date: date, name: movedTitle(name, date), synced_at: new Date().toISOString() })
           .eq('id', taskId)
       } catch { /* the next sync catches up */ }
-      return NextResponse.json({ ok: true, scheduled: date })
+      return NextResponse.json({ ok: true, scheduled: date, assignee: who || null })
     }
 
     if (action === 'vendor') {
