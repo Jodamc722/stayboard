@@ -421,6 +421,15 @@ export function OpsV2() {
   )
 }
 
+// The cockpit door to the same strip: Mission Control mounts this. It feeds itself (capacity +
+// roster), and "view lanes" navigates to the ops board's Staffing tab instead of switching tabs.
+export function CapacityPanel() {
+  const { data: cap, refresh } = useCachedFetch<CapData>('/api/capacity', { ttl: 5 * 60_000 })
+  const [roster, setRoster] = useState<Roster[]>([])
+  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  return <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => { window.location.href = '/plan' }} />
+}
+
 // ── THE DAY IN ONE SENTENCE (Jon, 2026-08-31: "we need AI to learn how many tasks are doable,
 // how long things should take"). The learning already happened — lib/capacity measures clean
 // duration per market and bedroom count and each person's real day — this strip is where the
