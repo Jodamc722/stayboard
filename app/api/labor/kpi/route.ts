@@ -19,7 +19,7 @@ import { getAccess, canSeeMoney } from '@/lib/access'
 import { redactMoney, pctOf } from '@/lib/money'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getShifts, nameMatches, nameMatchesRoster, type Shift } from '@/lib/homebase'
-import { getTimecards, computeLaborKpis } from '@/lib/homebase-labor'
+import { getTimecardsAudited, computeLaborKpis } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
@@ -97,20 +97,19 @@ export async function GET(req: Request) {
     // live in the vendor bucket, not inside their geographic market's numbers.
     const presets = await getOpsPresets()
     const VENDOR_RE = vendorRegex(presets.vendorBuildings)
-    // Supervisors / hybrid roles (Jon 2026-08-07): excluded from the per-cleaner
-    // rankings; still counted in dept payroll so cost-per-clean stays fully loaded.
-    // Override by adding a `supervisors` text column to labor_settings (comma-separated).
-    const SUP_NAMES = String((settings as any).supervisors || 'Ernesto Torres,Yoslenis Rodriguez,Roberto Chiriboga,Guillermo Hernandez')
-      .split(',').map(s => s.trim()).filter(Boolean)
-    const isSupervisor = (n: string) => SUP_NAMES.some(s => nameMatches(s, n))
 
-    const [dayShiftsAll, timecardsAll, weekShiftsAll, listingRows] = await Promise.all([
+    // ONE audited pull. This route used to fetch timecards twice — unaudited here, audited
+    // inside the engine — and the two could disagree: a Homebase week failing for one call and
+    // not the other put a green "payroll is complete" banner over short numbers. The audit now
+    // rides with the cards and is surfaced at the top level of the response.
+    const [dayShiftsAll, tcAudit, weekShiftsAll, listingRows] = await Promise.all([
       shiftsForRange(start, end),
-      getTimecards(start, end),
+      getTimecardsAudited(start, end),
       shiftsForRange(week.start, week.end),
       pageAll((a, b) => sb.from('guesty_listings')
         .select('id,nickname,title,building,address_city').range(a, b)),
     ])
+    const timecardsAll = tcAudit.cards
 
     const lmap: Record<string, { market: string; name: string; vendor: boolean }> = {}
     for (const l of listingRows) {
@@ -259,14 +258,6 @@ export async function GET(req: Request) {
     const vendorFees = round2(totalFees - inhouseFees)
     const attributed = attributions.filter(x => x.assignee && x.fee != null)
     const attributedFees = round2(attributed.reduce((a, x) => a + (x.fee as number), 0))
-    // Revenue per person - EVERYONE with an attributed clean, supervisors included
-    // (the ranked cleaner board still excludes them; this feeds the People table).
-    const personRevenue: Record<string, number> = {}
-    for (const x of attributed) {
-      const who = x.assignee as string
-      personRevenue[who] = round2((personRevenue[who] || 0) + (x.fee as number))
-    }
-
     // ---- Per-cleaner + person task detail ---------------------------------
     const personNames = new Set<string>()
     taskRows.forEach(t => { const d = doer(t); if (d) personNames.add(d) })
@@ -287,51 +278,11 @@ export async function GET(req: Request) {
         }))
     }
 
-    const cleanerNames = (Array.from(new Set(cleanTasks.map(t => doer(t)).filter(Boolean))) as string[])
-      .filter(n => !isSupervisor(n))   // supervisors/hybrids are not ranked as cleaners
-    const perCleaner = cleanerNames.map(name => {
-      const myTasks = cleanTasks.filter(t => doer(t) && nameMatches(doer(t) as string, name))
-      const myPay = round2(myTasks.reduce((a, t) => a + (num(t.rate_paid) ?? 0), 0))
-      const mine = attributed.filter(x => nameMatches(x.assignee as string, name))
-      const revenue = round2(mine.reduce((a, x) => a + (x.fee as number), 0))
-      const myCards = timecards.filter(t => nameMatches(t.name, name))
-      const payroll = round2(myCards.reduce((a, t) => a + (t.laborCost ?? 0), 0))
-      const hours = round2(myCards.reduce((a, t) => a + (t.hours ?? 0), 0))
-      const cost = payroll > 0 ? payroll : myPay
-      return {
-        // role/area straight off the staff record so the board labels people the way /users says.
-        name, role: roleOfPerson(name), area: marketOfPerson(name),
-        cleans: myTasks.length, checkoutsAttributed: mine.length,
-        revenueGenerated: revenue, taskPay: myPay, payroll, hours,
-        margin: round2(revenue - cost),
-        revenuePerLaborDollar: cost > 0 ? round2(revenue / cost) : null,
-        avgFeePerClean: mine.length ? round2(revenue / mine.length) : null,
-        // Dollar-free versions of the same two facts, so the ranking still reads when amounts are
-        // hidden: how much of what this person generated was left after paying them, and how much
-        // of the team's cleaning revenue came through their hands.
-        marginPct: pctOf(revenue - cost, revenue),
-        laborPct: pctOf(cost, revenue),
-        _rev: revenue,
-      }
-    }).sort((a, b) => (b.revenuePerLaborDollar ?? -1) - (a.revenuePerLaborDollar ?? -1))
-    const cleanerRevTotal = perCleaner.reduce((a, c) => a + (c._rev || 0), 0)
-    for (const c of perCleaner as any[]) { c.sharePct = pctOf(c._rev, cleanerRevTotal); delete c._rev }
+    // (The old per-cleaner ranking and reconciliation objects lived here. They were a second
+    // attribution engine with its own matching window and their own cost basis — the People tab
+    // now reads the shared engine only, so a page can no longer show two answers.)
 
     // ---- Reconciliation ----------------------------------------------------
-    const unattributed = {
-      feesWithNoMatchedClean: round2(
-        attributions.filter(x => x.fee != null && !x.assignee).reduce((a, x) => a + (x.fee as number), 0)),
-      checkoutsWithNoFeeData: attributions.filter(x => x.fee == null).length,
-      cleansWithNoAssignee: cleanTasks.filter(t => !doer(t)).length,
-      cleansWithNoMatchedCheckout: cleanTasks.filter(t => !usedTask.has(String(t.id))).length,
-    }
-    const attribution = {
-      totalCleaningRevenue: totalFees,
-      attributedRevenue: attributedFees,
-      rate: totalFees > 0 ? round2(attributedFees / totalFees) : 0,
-      reliable: totalFees > 0 && attributedFees / totalFees >= (Number(settings.attribution_min) || 0.85),
-    }
-
     // ---- Homebase hours/OT (workweek-aligned) ------------------------------
     const kpis = computeLaborKpis({
       start, end, shifts: dayShifts, timecards, weekShifts,
@@ -391,16 +342,6 @@ export async function GET(req: Request) {
         round2(tcToday.reduce((a, t) => a + (t.laborCost ?? 0), 0)),
         round2(shToday.filter((s: any) => !s.open).reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0))),
     } : null
-
-    const economics = {
-      cleaningRevenue: totalFees,
-      cleaningRevenueInhouse: inhouseFees,
-      cleaningRevenueVendor: vendorFees,
-      cleaningLaborCost: cleaningTaskPay > 0 ? cleaningTaskPay : payrollTotal,
-      cleaningMargin: round2(inhouseFees - (cleaningTaskPay > 0 ? cleaningTaskPay : payrollTotal)),
-      revenuePerLaborDollar: payrollTotal > 0 ? round2(inhouseFees / payrollTotal) : null,
-      costBasis: cleaningTaskPay > 0 ? 'breezeway rate_paid' : 'homebase payroll',
-    }
 
     // ---- Department economics — ONE engine, shared with the briefs ---------
     //
@@ -515,17 +456,20 @@ export async function GET(req: Request) {
 
     const body = {
       ok: true, market: marketParam, week: { ...week, weekStart }, departments, weekSchedule,
-      ...kpis, tasks, economics, payroll, today: todayBlock,
+      // PAYROLL COMPLETENESS, from the same pull the numbers came from. When any Homebase week
+      // failed, every dollar on the page is a floor, not a total — the UI must say so.
+      payrollComplete: tcAudit.complete && (econ as any)?.payrollAudit?.complete !== false,
+      payrollFailedWeeks: Array.from(new Set([...(tcAudit.failedWeeks || []), ...(((econ as any)?.payrollAudit?.failedWeeks) || [])])),
+      ...kpis, tasks, payroll, today: todayBlock,
       // The three housekeeping categories and the layer stack, straight off the shared engine.
-      buckets: econ.buckets, layers: econ.layers,
+      buckets: econ.buckets,
       // Our crew's work inside vendor-managed buildings + the per-building invoice check.
       vendorWork: econ.vendorWork,
       feeAudit: econ.feeAudit,
-      perCleaner, personTasks, personRevenue, attribution, unattributed, settings,
+      personTasks, settings,
       // The same P&L the briefs print, per person and per crew, so nothing has to be re-derived
       // on the client and no two screens can disagree.
       econ,
-      nameAliases: Object.keys(aliasCache).filter(k => aliasCache[k] && aliasCache[k] !== k).reduce((o: any, k) => { o[k] = aliasCache[k]; return o }, {}),
     }
     // The percentages above were computed for everyone; only the amounts are gated. `moneyHidden`
     // tells the panel to render the percentage layout — it is a rendering hint, not the control:
