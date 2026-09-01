@@ -10,7 +10,7 @@
 // applied once at the agency level (a flat fee is per invoice, not per line).
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { getTimecards } from '@/lib/homebase-labor'
+import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { getAgencies, staffByName, resolveStaff, computeAgencyCharge, type Agency } from '@/lib/staffing'
 
 export const dynamic = 'force-dynamic'
@@ -36,9 +36,18 @@ export async function GET(req: NextRequest) {
   const wantAgency = String(sp.get('agency') || '').trim().toLowerCase()
 
   try {
-    const [cards, agencies, index] = await Promise.all([
-      getTimecards(from, to), getAgencies(true), staffByName(),
+    const [tcA, agencies, index] = await Promise.all([
+      getTimecardsAudited(from, to), getAgencies(true), staffByName(),
     ])
+    // AN INVOICE OVER A HOLE IS MONEY OUT THE DOOR. If any Homebase week failed, these lines
+    // would be short and someone would pay a wrong bill — refuse and say which weeks are missing.
+    if (!tcA.complete) {
+      return NextResponse.json({
+        ok: false,
+        error: 'Homebase did not return every week in this window (' + tcA.failedWeeks.join(', ') + ') — an invoice built now would be short. Retry in a minute.',
+      }, { status: 503 })
+    }
+    const cards = tcA.cards
     const byKey: Record<string, Agency> = {}
     for (const a of agencies) byKey[a.key] = a
 
