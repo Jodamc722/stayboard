@@ -4,6 +4,7 @@
 // The saved VOICE PROFILE (admin console → Review reply AI: house guidelines + approved example
 // replies, app_settings key 'review_voice') is appended to the system prompt on every draft.
 import { NextRequest, NextResponse } from 'next/server'
+import { ratingDisplay, isBookingChannel } from '@/lib/review-scale'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
@@ -26,6 +27,12 @@ WE ARE THE TEAM — NEVER REFER TO A THIRD PARTY (this is the most important rul
   "glad our communication made it easy", NOT "our host's communication was quick".
 - Never name an individual employee.
 
+MATCH THE REPLY TO THE SCORE (read the Rating line carefully — the scale is stated on it)
+- A top score (5/5, 9–10 on Booking) is PRAISE. Reply with plain thanks; never apologize, never
+  say anything "fell short" or "didn't measure up", never ask what went wrong. An apology under a
+  perfect score reads as though we didn't read their review.
+- A middling or low score gets the empathy; a high score gets the warmth. Never mix them up.
+
 DEFAULT TONE (use this when the host gives no specific instruction)
 - Warm, sincere, professional — and TIGHT. 2-3 short sentences, 45 words or fewer in total.
   A shorter reply reads more confident than a long one. Never pad to fill space.
@@ -34,6 +41,12 @@ DEFAULT TONE (use this when the host gives no specific instruction)
   "we look closely at every detail", "to keep improving the experience", "we value your feedback",
   "we strive to", "please don't hesitate", "we're committed to", "rest assured", "moving forward".
   Say the thing plainly instead.
+- NO IDIOMS OR BUSINESS METAPHORS. Never "left something on the table", "the details make all the
+  difference", "went the extra mile", "above and beyond", "exceeded expectations". A guest reads
+  these as template language; say the plain thing in plain words.
+- Do not reuse stock phrases from these instructions ("didn't fully measure up" included) as if
+  they were the answer — they are examples of register, not lines to copy. Write fresh words for
+  this guest's actual review.
 - Do not repeat the guest's whole list back to them. Pick at most TWO specifics they praised.
 - Do NOT admit fault, and do NOT restate, apologize for, or concede the specific problem a guest described. Respond to the FEELING ("we're sorry the stay didn't fully measure up"), not the specific defect. We are not calling the guest a liar; we simply do not concede the specific issue by default.
 - For praise: be genuinely appreciative and reference the specific things they liked.
@@ -156,10 +169,19 @@ export async function POST(req: NextRequest) {
   const voice = (voicePreview && typeof voicePreview === 'object') ? voicePreview : await getVoice()
   const system = SYSTEM + voiceSection(voice)
 
+  // THE RATING GOES IN ON ITS NATIVE SCALE (Jon, 2026-09-01, from a live draft). Ratings are
+  // STORED out of 5 (lib/review-scale) — Booking.com's 10 arrives here as 5. This line used to
+  // say "Rating: 5" with no scale, so on a Booking review the model read a PERFECT score as
+  // five-out-of-ten and wrote an apology under a 10/10 chip. Now it reads exactly what the chip
+  // shows, with the scale spelled out so it can never be re-derived wrong.
+  const ratingLine = rating == null ? 'n/a'
+    : isBookingChannel(channel)
+      ? `${ratingDisplay(rating, channel)} on Booking.com's 0–10 scale (10/10 is a perfect score)`
+      : `${ratingDisplay(rating, channel)} out of 5`
   const userMsg =
     `Channel: ${channel || 'unknown'}\n` +
     `Guest: ${guest || 'the guest'}\n` +
-    `Rating: ${rating == null ? 'n/a' : rating}\n` +
+    `Rating: ${ratingLine}\n` +
     `Guest review:\n"""${(content || '').slice(0, 1500)}"""\n\n` +
     (draft ? `Current draft (the host's own wording — refine and keep its intent, do not discard):\n"""${draft.slice(0, 1500)}"""\n\n` : '') +
     (instr ? `Instruction (authoritative — follow it exactly): ${instr}\n\n` : '') +
