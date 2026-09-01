@@ -51,6 +51,19 @@ type PlanUnit = { listingId: string; listing: string; internalName?: string | nu
 type PlanData = { ok: boolean; days: { date: string; label: string; units: PlanUnit[] }[] }
 type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null }
 
+// ── The efficiency model (/api/capacity — lib/capacity-day). Built 2026-08-27, measured from
+// 1,372 timed cleans; this page is its first surface. Shapes mirror DayLoad / Suggestion / DayKpi.
+type CapPerson = { person: string; cleans: number; otherTasks: number; workMinutes: number; travelMinutes: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number }
+type CapSug = { kind: 'assign' | 'move'; stopId: string; unit: string; toPerson: string; fromPerson?: string | null; toBeforePct: number; toAfterPct: number; fromBeforePct?: number; fromAfterPct?: number; addedMinutes: number; why: string }
+type CapKpi = { peopleOnShift: number; cleans: number; otherTasks: number; unassignedCount: number; workMinutes: number; travelMinutes: number; capacityMinutes: number; utilisationPct: number; spreadPct: number; overloaded: number; underloaded: number; implausible: number; closedOutToday: number }
+type CapData = { ok?: boolean; people?: CapPerson[]; suggestions?: CapSug[]; kpi?: CapKpi; notes?: string[]; error?: string }
+
+const fmtH = (mins: number) => {
+  const m = Math.max(0, Math.round(mins))
+  const h = Math.floor(m / 60), r = m % 60
+  return h ? h + 'h' + (r ? ' ' + r + 'm' : '') : r + 'm'
+}
+
 const fmtLeft = (m: number) => { const a = Math.abs(m); const h = Math.floor(a / 60); return (h ? h + 'h ' : '') + (a % 60) + 'm' }
 
 // One exception row: something on today that needs a human, whatever mechanism noticed it.
@@ -282,6 +295,9 @@ export function OpsV2() {
     isToday ? '/api/ops-today' : `/api/ops-today?date=${date}`)
   const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches')
   const { data: staff } = useCachedFetch<Staffing>('/api/ops-today/staffing')
+  // The capacity model prices the same day the board is showing — today or a planned date.
+  const { data: cap } = useCachedFetch<CapData>(
+    isToday ? '/api/capacity' : `/api/capacity?date=${date}`, { ttl: 5 * 60_000 })
   const [roster, setRoster] = useState<Roster[]>([])
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
   // FIVE MINUTES, PLUS THE MOMENT YOU LOOK AT IT AGAIN.
@@ -387,6 +403,8 @@ export function OpsV2() {
         </div>
       )}
 
+      <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />
+
       {tab === 'board' && (
         <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} onAddTask={u => setAddFor(u)} />
       )}
@@ -395,10 +413,98 @@ export function OpsV2() {
           loading={loading} error={error ? String(error) : null}
           onRefresh={refresh} onAddTask={u => setAddFor(u)} />
       )}
-      {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} />}
+      {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} cap={cap || null} />}
       {tab === 'push' && <PushTab roster={roster} />}
 
       {addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
+    </div>
+  )
+}
+
+// ── THE DAY IN ONE SENTENCE (Jon, 2026-08-31: "we need AI to learn how many tasks are doable,
+// how long things should take"). The learning already happened — lib/capacity measures clean
+// duration per market and bedroom count and each person's real day — this strip is where the
+// answer finally faces the person deciding. One line; the moves live behind the chevron.
+function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | null; roster: Roster[]; onRefresh: () => void; onPeople: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [filed, setFiled] = useState<Record<string, boolean>>({})
+  const k = cap?.kpi
+  if (!cap || !k || !cap.ok) return null
+  const load = k.workMinutes + k.travelMinutes
+  const over = k.utilisationPct > 100
+  const warm = !over && k.utilisationPct >= 85
+  const tone = over ? 'border-rose-200 bg-rose-50' : warm ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'
+  const toneText = over ? 'text-rose-800' : warm ? 'text-amber-900' : 'text-emerald-900'
+  const sugs = (cap.suggestions || []).slice(0, 6)
+
+  const file = async (s: CapSug) => {
+    // The model recommends; a person commits. Assign-kind moves file through the same endpoint
+    // every other assign on this page uses. Move-kind stays a recommendation — moving a task
+    // between people mid-day is a conversation, not a click.
+    const n = s.toPerson.toLowerCase()
+    const hit = roster.find(r => r.name.toLowerCase() === n)
+      || roster.find(r => r.name.toLowerCase().includes(n.split(' ')[0]) && n.split(' ')[0].length > 3)
+    if (!hit) { alert('Could not match "' + s.toPerson + '" to the Breezeway roster — assign from the board instead.'); return }
+    setBusy(s.stopId + s.toPerson)
+    try {
+      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: s.stopId, assigneeIds: [hit.id] }) })
+      const j = await r.json()
+      if (!r.ok || j.error) throw new Error(j.error || 'failed')
+      setFiled(f => ({ ...f, [s.stopId]: true }))
+      onRefresh()
+    } catch (e: any) { alert(String(e?.message || e)) }
+    setBusy('')
+  }
+
+  return (
+    <div className={'mb-3 rounded-xl border ' + tone}>
+      <button onClick={() => setOpen(o => !o)} className="w-full px-3 py-2 flex items-center gap-2 flex-wrap text-left">
+        <span className={'text-[12.5px] font-bold ' + toneText}>
+          {fmtH(load)} of work on {k.peopleOnShift} {k.peopleOnShift === 1 ? 'person' : 'people'} ≈ {fmtH(k.capacityMinutes)} capacity — {k.utilisationPct}% loaded
+        </span>
+        <span className={'text-[11.5px] ' + toneText + ' opacity-80'}>
+          {k.overloaded > 0 && <>· <b>{k.overloaded} over</b> </>}
+          {k.underloaded > 0 && <>· {k.underloaded} light </>}
+          {k.unassignedCount > 0 && <>· <b>{k.unassignedCount} unowned</b> </>}
+          {k.closedOutToday > 0 && <>· {k.closedOutToday} closed-out </>}
+        </span>
+        <span className={'ml-auto inline-flex items-center gap-1 text-[11.5px] font-semibold ' + toneText}>
+          {sugs.length > 0 ? sugs.length + (sugs.length === 1 ? ' move' : ' moves') : 'balanced'}
+          <ChevronDown size={13} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-line/60 bg-white/60 rounded-b-xl px-3 py-2 space-y-1.5">
+          {sugs.length === 0 && <p className="text-[12px] text-muted py-1">Nothing worth moving — the day is spread as well as the model can see.</p>}
+          {sugs.map(s => (
+            <div key={s.stopId + s.toPerson} className="flex items-center gap-2 flex-wrap text-[12px]">
+              <span className="font-bold text-ink">{s.unit}</span>
+              <span className="text-muted">→ {s.toPerson}</span>
+              <span className="text-muted tabular-nums">{s.toBeforePct}%→{s.toAfterPct}%</span>
+              <span className="text-muted flex-1 min-w-[140px]">{s.why}</span>
+              {s.kind === 'assign' ? (
+                filed[s.stopId] ? (
+                  <span className="inline-flex items-center gap-1 text-[11.5px] font-bold text-emerald-700"><Check size={12} /> assigned</span>
+                ) : (
+                  <button onClick={() => file(s)} disabled={busy === s.stopId + s.toPerson}
+                    className="text-[11.5px] font-bold px-2.5 py-1 rounded-lg bg-ink text-white disabled:opacity-50 inline-flex items-center gap-1">
+                    {busy === s.stopId + s.toPerson ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                    Assign · {s.toPerson.split(' ')[0]}
+                  </button>
+                )
+              ) : (
+                <button onClick={onPeople} className="text-[11.5px] font-semibold text-muted border border-line rounded-lg px-2 py-1 hover:text-ink">
+                  from {s.fromPerson ? s.fromPerson.split(' ')[0] : '—'} · view lanes
+                </button>
+              )}
+            </div>
+          ))}
+          {Array.isArray(cap.notes) && cap.notes.length > 0 && (
+            <p className="text-[11px] text-muted pt-1">{cap.notes.join(' · ')}</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -542,7 +648,7 @@ function InlineAssign({ taskId, dept, roster, onDone }: { taskId: string; dept: 
 // for anyone idle — the open unassigned work pushed to them in one tap. Load is measured in TASKS,
 // not invented minutes: we do not have predicted durations, and a bar built on made-up numbers
 // would be read as truth. (Optii earns its minutes with an ML model; until we have one, count.)
-function PeopleTab({ staff, units, roster, onRefresh }: { staff: Staffing | null; units: Unit[]; roster: Roster[]; onRefresh: () => void }) {
+function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing | null; units: Unit[]; roster: Roster[]; onRefresh: () => void; cap: CapData | null }) {
   const [busyKey, setBusyKey] = useState('')
   const allTasks = useMemo(() => units.flatMap(u => u.tasks.map(t => ({ ...t, unit: u.unit }))), [units])
   const unassignedOpen = useMemo(() =>
@@ -591,6 +697,13 @@ function PeopleTab({ staff, units, roster, onRefresh }: { staff: Staffing | null
       {lanes.map(({ p, mine, done }) => {
         const idle = p.clockedIn && mine.length === 0
         const pct = mine.length ? Math.round((done / mine.length) * 100) : 0
+        // The model's pricing of this person's day, when it knows them. Matched by name the same
+        // loose way lanes match tasks — both sides ultimately come from Homebase names.
+        const pn = p.name.toLowerCase()
+        const price = (cap?.people || []).find(c => {
+          const cn = c.person.toLowerCase()
+          return cn === pn || (cn.includes(pn.split(' ')[0]) && pn.split(' ')[0].length > 3)
+        }) || null
         return (
           <div key={p.name} className={'rounded-2xl border overflow-hidden ' + (idle ? 'border-amber-300' : 'border-line')}>
             <div className="flex items-center gap-3 px-4 py-2.5 bg-white flex-wrap">
@@ -603,6 +716,13 @@ function PeopleTab({ staff, units, roster, onRefresh }: { staff: Staffing | null
                   {p.role || 'Field'}{p.shift ? ' · ' + p.shift : ''} · {p.clockedIn ? 'clocked in' : 'not clocked in'}
                   {p.bzAlias && p.bzAlias !== p.name ? ' · bz: ' + p.bzAlias : ''}
                 </span>
+                {price && price.capacityMinutes > 0 && (
+                  <span className={'block text-[11px] font-semibold ' + (price.utilisationPct > 100 ? 'text-rose-700' : price.utilisationPct >= 85 ? 'text-amber-700' : 'text-emerald-700')}>
+                    ≈ {fmtH(price.loadMinutes)} of {fmtH(price.capacityMinutes)} · {price.utilisationPct}%
+                    {price.travelMinutes > 0 ? ' · ' + fmtH(price.travelMinutes) + ' travel' : ''}
+                    {price.utilisationPct > 100 ? ' · over' : price.headroomCleans > 0 ? ' · room for ' + price.headroomCleans + ' more clean' + (price.headroomCleans === 1 ? '' : 's') : ' · full'}
+                  </span>
+                )}
               </span>
               <span className="ml-auto flex items-center gap-2 shrink-0">
                 <span className="text-[11.5px] font-semibold text-muted tabular-nums">{done}/{mine.length} done</span>
