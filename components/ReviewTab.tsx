@@ -27,7 +27,7 @@
 // Scheduling goes through the same route the rest of the board uses, so there is one code path that
 // moves a task and one place for it to be wrong.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, RefreshCw, CalendarClock, MapPin, X, Wrench, Sparkles, ClipboardList, Lightbulb } from 'lucide-react'
+import { Loader2, RefreshCw, CalendarClock, MapPin, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square } from 'lucide-react'
 import { useSuggestions, type Sug } from '@/components/SuggestionsBand'
 
 const niceDate = (ymd: string) => {
@@ -73,6 +73,13 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
   const [busy, setBusy] = useState<string | null>(null)
   const [done, setDone] = useState<Set<string>>(new Set())
   const [half, setHalf] = useState<'recommended' | 'proposals'>('recommended')
+  // BULK IS FOR THE REVERSIBLE THINGS ONLY. Moving and assigning can be undone by moving and
+  // assigning again; deleting cannot. So selection drives move/assign, and delete stays strictly
+  // one row at a time behind a password that names the task — the asymmetry is the safety.
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [bulkDate, setBulkDate] = useState('')
+  const [bulkWho, setBulkWho] = useState('')
+  const [bulkNote, setBulkNote] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -118,6 +125,79 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
       setDone(s => new Set(s).add(i.taskId))
       onRefresh()
     } catch (e: any) { setError(String(e?.message || e)) } finally { setBusy(null) }
+  }
+
+  // ── DELETE ────────────────────────────────────────────────────────────────────────────────
+  // Jon, 2026-09-01: "we should also be able to delete as well."
+  //
+  // Straight to the route that already exists, which requires the embedded admin password and
+  // refuses departure cleans outright — their date comes from the reservation, so a deleted one
+  // just reappears on the next sync looking like a mystery. The prompt NAMES the task and the unit:
+  // a confirmation that does not say what it is about to destroy is not a confirmation.
+  async function remove(i: Item) {
+    if (busy) return
+    const pw = window.prompt(`Admin password required to delete \u201c${i.task}\u201d on ${i.unit}:`)
+    if (!pw) return
+    setBusy(i.taskId)
+    try {
+      const r = await fetch('/api/ops-today/task-action', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', taskId: i.taskId, adminPassword: pw }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j?.error) throw new Error(j?.error || 'Could not delete.')
+      setDone(d => new Set(d).add(i.taskId))
+      setSel(x => { const n = new Set(x); n.delete(i.taskId); return n })
+      onRefresh()
+    } catch (e: any) { setError(String(e?.message || e)) } finally { setBusy(null) }
+  }
+
+  // ── BULK ──────────────────────────────────────────────────────────────────────────────────
+  // Sequential, with a per-row receipt. A bulk action that reports only "3 failed" and not WHICH
+  // three is worse than doing them one at a time, because now nobody knows what state the board is
+  // in. Each row that lands disappears from the list; each that does not keeps its place and says
+  // why in the summary line.
+  async function applySelected() {
+    const chosen = rows.filter(r => sel.has(r.id))
+    if (!chosen.length || busy) return
+    setBulkNote(''); setError(null)
+    let ok = 0
+    const failures: string[] = []
+    for (const r of chosen) {
+      setBusy(r.id)
+      try {
+        if (r.kind === 'suggestion') {
+          if (!sugCtx) throw new Error('suggestions unavailable')
+          await sugCtx.act(r.sug, 'add', {
+            assignee: bulkWho || (r.sug.candidates[0] || ''),
+            scheduleDate: bulkDate || data?.today || '',
+          })
+        } else {
+          const when = bulkDate || r.item.target?.date
+          if (!when) throw new Error('no workable day')
+          const res = await fetch('/api/ops-today/task-action', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'schedule', taskId: r.item.taskId, date: when,
+              ...(bulkWho ? { assignee: bulkWho } : (r.item.target?.who?.[0] ? { assignee: r.item.target.who[0] } : {})),
+            }),
+          })
+          const j = await res.json().catch(() => ({}))
+          if (!res.ok || j?.error) throw new Error(j?.error || 'failed')
+          setDone(d => new Set(d).add(r.item.taskId))
+        }
+        ok++
+        setSel(x => { const n = new Set(x); n.delete(r.id); return n })
+      } catch (e: any) {
+        failures.push(`${r.unit} — ${String(e?.message || e).slice(0, 60)}`)
+      }
+    }
+    setBusy(null)
+    setBulkNote(
+      failures.length
+        ? `${ok} applied. ${failures.length} did not: ${failures.slice(0, 3).join('; ')}${failures.length > 3 ? '…' : ''}`
+        : `${ok} applied.`)
+    onRefresh()
   }
 
   if (loading && !data) {
@@ -169,17 +249,59 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
       {error && <p className="text-[12px] text-rose-700 mb-2">{error}</p>}
 
       {half === 'recommended' && (
-        <div className="rounded-2xl border border-line bg-white overflow-hidden">
-          {rows.length === 0 ? (
-            <p className="px-4 py-8 text-center text-[13px] text-muted">Nothing waiting and nothing to suggest. This is what a clear backlog looks like.</p>
-          ) : rows.map(r => (
-            <RowLine key={r.kind + r.id} row={r} today={data?.today || ''} busy={busy}
-              roster={sugCtx?.roster || []}
-              onSchedule={(date, who) => r.kind === 'pending' ? schedule(r.item, date, who) : undefined}
-              onAddSuggestion={(date, who) => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'add', { assignee: who, scheduleDate: date }) : undefined}
-              onDismiss={() => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'dismiss') : undefined} />
-          ))}
-        </div>
+        <>
+          {/* ── THE BULK BAR ── Appears only when something is selected, so it costs nothing at
+              rest. Leaving the day or the person blank keeps each row's own recommendation, which
+              is the common case: select eight, press Move, and each goes to ITS best day. ── */}
+          {sel.size > 0 && (
+            <div className="mb-2 rounded-xl border border-ink/20 bg-app px-3 py-2 flex items-center gap-2 flex-wrap">
+              <span className="text-[12.5px] font-bold text-ink">{sel.size} selected</span>
+              <span className="text-[11px] text-muted">Give to</span>
+              <select value={bulkWho} onChange={e => setBulkWho(e.target.value)}
+                className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px] max-w-[150px]">
+                <option value="">each row&rsquo;s pick</option>
+                {(sugCtx?.roster || []).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+              </select>
+              <span className="text-[11px] text-muted">on</span>
+              <input type="date" value={bulkDate} min={data?.today || ''} onChange={e => setBulkDate(e.target.value)}
+                className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px]" />
+              {!bulkDate && <span className="text-[11px] text-muted">each row&rsquo;s best day</span>}
+              <button onClick={applySelected} disabled={!!busy}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-bold disabled:opacity-40">
+                {busy ? <Loader2 size={12} className="animate-spin" /> : null} Apply to {sel.size}
+              </button>
+              <button onClick={() => { setSel(new Set()); setBulkNote('') }} disabled={!!busy}
+                className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-muted hover:text-ink disabled:opacity-40">
+                Clear
+              </button>
+            </div>
+          )}
+          {bulkNote && <p className="mb-2 text-[11.5px] text-muted">{bulkNote}</p>}
+
+          <div className="rounded-2xl border border-line bg-white overflow-hidden">
+            {rows.length > 0 && (
+              <div className="px-3 py-1.5 border-b border-line bg-app/60 flex items-center gap-2">
+                <button onClick={() => setSel(s2 => s2.size === rows.length ? new Set() : new Set(rows.map(r => r.id)))}
+                  className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-muted hover:text-ink">
+                  {sel.size === rows.length && rows.length > 0 ? <CheckSquare size={12} /> : <Square size={12} />}
+                  {sel.size === rows.length && rows.length > 0 ? 'Clear all' : 'Select all'}
+                </button>
+              </div>
+            )}
+            {rows.length === 0 ? (
+              <p className="px-4 py-8 text-center text-[13px] text-muted">Nothing waiting and nothing to suggest. This is what a clear backlog looks like.</p>
+            ) : rows.map(r => (
+              <RowLine key={r.kind + r.id} row={r} today={data?.today || ''} busy={busy}
+                roster={sugCtx?.roster || []}
+                selected={sel.has(r.id)}
+                onToggle={() => setSel(x => { const n = new Set(x); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n })}
+                onSchedule={(date, who) => r.kind === 'pending' ? schedule(r.item, date, who) : undefined}
+                onAddSuggestion={(date, who) => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'add', { assignee: who, scheduleDate: date }) : undefined}
+                onDismiss={() => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'dismiss') : undefined}
+                onDelete={() => r.kind === 'pending' ? remove(r.item) : undefined} />
+            ))}
+          </div>
+        </>
       )}
 
       {half === 'proposals' && (
@@ -250,14 +372,17 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
 //
 // Closed by default: the engine's pick is a DEFAULT, not a decision, and putting a name and a date
 // picker on every row at rest turns a scannable list into a form. Open it and you override both.
-function RowLine({ row, today, busy, roster, onSchedule, onAddSuggestion, onDismiss }: {
+function RowLine({ row, today, busy, roster, selected, onToggle, onSchedule, onAddSuggestion, onDismiss, onDelete }: {
   row: Row
   today: string
   busy: string | null
   roster: { id: number; name: string; departments: string[] }[]
+  selected: boolean
+  onToggle: () => void
   onSchedule: (date?: string, who?: string) => void
   onAddSuggestion: (date?: string, who?: string) => void
   onDismiss: () => void
+  onDelete: () => void
 }) {
   const suggested = row.kind === 'suggestion'
   const target = row.kind === 'pending' ? row.item.target : null
@@ -285,6 +410,8 @@ function RowLine({ row, today, busy, roster, onSchedule, onAddSuggestion, onDism
   return (
     <div className={(open ? 'bg-app/60 ' : 'hover:bg-app/40 ') + 'border-b border-line last:border-0'}>
       <div className="flex items-start gap-2.5 px-3 py-2.5">
+        <input type="checkbox" checked={selected} onChange={onToggle} disabled={!!busy}
+          className="mt-1 shrink-0" aria-label={`Select ${row.unit} ${row.label}`} />
         <span className={'w-5 h-5 rounded-md inline-flex items-center justify-center shrink-0 mt-0.5 ' +
           (suggested ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500')}>
           <Icon size={11} strokeWidth={2.6} />
@@ -315,10 +442,17 @@ function RowLine({ row, today, busy, roster, onSchedule, onAddSuggestion, onDism
             className={'rounded-lg border px-1.5 py-1 disabled:opacity-40 ' + (open ? 'border-ink text-ink' : 'border-line text-muted hover:text-ink')}>
             <CalendarClock size={11} />
           </button>
-          {suggested && (
+          {suggested ? (
             <button onClick={onDismiss} disabled={!!busy} title="Hides this for 30 days"
               className="rounded-lg border border-line px-1.5 py-1 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40">
               <X size={11} />
+            </button>
+          ) : (
+            // Deleting destroys the record. The route asks for the admin password and names the
+            // task in the prompt; nothing here should make that feel like a one-tap action.
+            <button onClick={onDelete} disabled={!!busy} title="Delete this task — admin password required"
+              className="rounded-lg border border-line px-1.5 py-1 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40">
+              <Trash2 size={11} />
             </button>
           )}
         </div>
