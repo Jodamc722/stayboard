@@ -42,6 +42,17 @@ export type StaffRow = {
   salaryHourly?: number | null
   salaryHoursPerWeek?: number | null
   salaryAnnual?: number | null
+  /** HOW they are employed (Jon, 2026-09-01): 'w2' | 'contractor' | 'agency' | 'vendor'. Fact
+   *  only for now — no burden math until Eric's app supplies the real rates. */
+  employmentType?: string | null
+}
+
+/** A vendor company — who they are, which buildings they cover, how they bill (migration 062). */
+export type Vendor = {
+  key: string; label: string
+  buildings: string[]
+  billing: string | null; contact: string | null; notes: string | null
+  active: boolean; sort: number
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -81,6 +92,7 @@ export async function getStaff(includeInactive = false): Promise<StaffRow[]> {
       salaryHourly: r.salary_hourly == null ? null : num(r.salary_hourly),
       salaryHoursPerWeek: r.salary_hours_per_week == null ? null : num(r.salary_hours_per_week),
       salaryAnnual: r.salary_annual == null ? null : num(r.salary_annual),
+      employmentType: r.employment_type ?? null,
     }))
     return includeInactive ? rows : rows.filter(s => s.active)
   } catch { return [] }
@@ -141,7 +153,7 @@ export async function upsertAgency(a: Partial<Agency> & { key: string }): Promis
 
 // Columns migration 057 adds. Kept as a list because the write below has to be able to drop
 // them again — see the retry.
-const V057_COLUMNS = ['dept', 'dept_source', 'title', 'salaried', 'salary_hourly', 'salary_hours_per_week', 'salary_annual']
+const V057_COLUMNS = ['dept', 'dept_source', 'title', 'salaried', 'salary_hourly', 'salary_hours_per_week', 'salary_annual', 'employment_type']
 
 export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Promise<{ ok: boolean; error?: string; migrationPending?: boolean }> {
   try {
@@ -160,6 +172,10 @@ export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Prom
     if (s.salaryHourly !== undefined) row.salary_hourly = s.salaryHourly == null ? null : num(s.salaryHourly)
     if (s.salaryHoursPerWeek !== undefined) row.salary_hours_per_week = s.salaryHoursPerWeek == null ? null : num(s.salaryHoursPerWeek)
     if (s.salaryAnnual !== undefined) row.salary_annual = s.salaryAnnual == null ? null : num(s.salaryAnnual)
+    if (s.employmentType !== undefined) {
+      const et = String(s.employmentType || '').trim().toLowerCase()
+      row.employment_type = ['w2', 'contractor', 'agency', 'vendor'].includes(et) ? et : null
+    }
     const { error } = await sb.from('staff').upsert(row, { onConflict: 'name' })
     if (!error) return { ok: true }
     // MIGRATION 057 NOT APPLIED YET. Rather than failing the whole save — which would make the
@@ -268,4 +284,38 @@ export function mergeSuggestion(existing: StaffRow | null, s: StaffSuggestion, n
     agency: existing?.agency ?? null,     // never inferred
     active: existing ? existing.active : true,
   }
+}
+
+
+// ── VENDORS (Jon, 2026-09-01: "an option to add different vendors") ───────────────────────────
+export async function getVendors(includeInactive = false): Promise<Vendor[]> {
+  try {
+    const sb = supabaseAdmin()
+    const { data } = await sb.from('vendors').select('*').order('sort').order('label')
+    const rows = ((data || []) as any[]).map(r => ({
+      key: String(r.key), label: String(r.label || r.key),
+      buildings: Array.isArray(r.buildings) ? r.buildings.map(String) : [],
+      billing: r.billing ?? null, contact: r.contact ?? null, notes: r.notes ?? null,
+      active: r.active !== false, sort: num(r.sort, 100),
+    }))
+    return includeInactive ? rows : rows.filter(v => v.active)
+  } catch { return [] }   // table may predate migration 062 — everything falls back to presets
+}
+
+export async function upsertVendor(v: Partial<Vendor> & { key: string }): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const sb = supabaseAdmin()
+    const key = String(v.key).trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-')
+    if (!key) return { ok: false, error: 'key required' }
+    const row: any = { key, updated_at: new Date().toISOString() }
+    if (v.label !== undefined) row.label = String(v.label || key)
+    if (v.buildings !== undefined) row.buildings = (v.buildings || []).map(b => String(b).trim()).filter(Boolean)
+    if (v.billing !== undefined) row.billing = v.billing
+    if (v.contact !== undefined) row.contact = v.contact
+    if (v.notes !== undefined) row.notes = v.notes
+    if (v.active != null) row.active = !!v.active
+    if (v.sort !== undefined) row.sort = num(v.sort, 100)
+    const { error } = await sb.from('vendors').upsert(row, { onConflict: 'key' })
+    return error ? { ok: false, error: error.message } : { ok: true }
+  } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }

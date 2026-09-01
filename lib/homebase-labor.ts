@@ -6,7 +6,7 @@
 // /api/homebase/probe route once and we tighten the pickers to your account's
 // actual schema.
 
-import { getLocationUuid, getShifts, nameMatches, type Shift } from '@/lib/homebase'
+import { getLocationUuids, getShifts, nameMatches, type Shift } from '@/lib/homebase'
 
 const BASE = process.env.HOMEBASE_BASE_URL || 'https://app.joinhomebase.com/api/public'
 const OT_WEEKLY_HOURS = 40 // FL: overtime is federal FLSA — over 40h/workweek
@@ -23,15 +23,51 @@ const arr = (d: Json): Json[] => {
 }
 
 async function hb(path: string): Promise<Json> {
+  const key = process.env.HOMEBASE_API_KEY || process.env['Homebase_Secret_id']
+  if (!key) throw new Error('Homebase API key not configured (HOMEBASE_API_KEY)')
   const r = await fetch(`${BASE}${path}`, {
     headers: {
-      Authorization: `Bearer ${process.env.HOMEBASE_API_KEY || process.env['Homebase_Secret_id']}`,
+      Authorization: `Bearer ${key}`,
       Accept: 'application/vnd.homebase-v1+json',
     },
     cache: 'no-store',
   })
   if (!r.ok) throw new Error(`Homebase ${r.status} on ${path}`)
   return r.json()
+}
+
+// AN UNRECOGNIZED ENVELOPE IS A FAILURE, NOT AN EMPTY WEEK. arr() returning [] used to count as
+// a successful fetch: an HTTP 200 whose body we simply did not understand became "zero punches
+// this week", got cached for 15 minutes, and printed as complete truth. A bare [] is a real
+// empty week; an OBJECT with keys but no array we recognize is the API changing shape under us,
+// and the only honest reading is "this week failed".
+const arrStrict = (d: Json): Json[] => {
+  if (Array.isArray(d)) return d
+  for (const k of ['data', 'timecards', 'results', 'shifts']) if (Array.isArray(d?.[k])) return d[k]
+  if (d && typeof d === 'object' && Object.keys(d).length) {
+    throw new Error('Homebase returned an unrecognized envelope: ' + Object.keys(d).slice(0, 5).join(','))
+  }
+  return []
+}
+
+// WALK EVERY PAGE (Jon, 2026-09-01: "make sure the punches are being collected properly").
+// The public API caps one response at ~100 rows and says nothing when it truncates. A busy week
+// across the whole roster is well past that, so the un-paginated call was silently dropping
+// whatever fell off the first page — the exact failure the week-chunking comment thought it had
+// fixed. Chunking narrowed the loss; it could not close it. Stop on a short page.
+const PER_PAGE = 100
+async function hbAllPages(path: string, cap = 12): Promise<Json[]> {
+  const out: Json[] = []
+  for (let page = 1; page <= cap; page++) {
+    const sep = path.includes('?') ? '&' : '?'
+    const batch = arrStrict(await hb(`${path}${sep}page=${page}&per_page=${PER_PAGE}`))
+    out.push(...batch)
+    if (batch.length < PER_PAGE) return out
+    await sleep(120)
+  }
+  // cap hit with every page full — more data likely exists; better to fail the week loudly than
+  // to return a smooth-looking truncation.
+  throw new Error(`Homebase pagination cap hit on ${path} (${cap} pages)`)
 }
 
 export type Timecard = {
@@ -89,7 +125,10 @@ const weekTtl = (weekEnd: string) => {
 }
 
 export async function getTimecardsAudited(startDate: string, endDate: string): Promise<TimecardAudit> {
-  const loc = await getLocationUuid()
+  // EVERY LOCATION. The roster got this fix in August (Jon: "Aljenador is someone I don't see")
+  // and the punches never did — on a multi-location account every timecard at locations 2..n was
+  // invisible, with `complete: true`. Same rule here now: one paged pull per location, merged.
+  const locs = await getLocationUuids()
   const spans: Array<[string, string]> = []
   const s0 = new Date(startDate + 'T12:00:00Z').getTime()
   const e0 = new Date(endDate + 'T12:00:00Z').getTime()
@@ -106,14 +145,21 @@ export async function getTimecardsAudited(startDate: string, endDate: string): P
     const hit = weekCache.get(ck)
     if (hit && Date.now() - hit.at < weekTtl(b)) { pages.push(hit.page); continue }
     let got: Json[] | null = null
+    let lastErr = ''
     for (let attempt = 0; attempt < 3 && got == null; attempt++) {
       try {
-        got = arr(await hb(`/locations/${loc}/timecards?start_date=${a}&end_date=${b}`))
-      } catch {
-        // Back off harder each attempt — 429 means "slow down", so we do.
-        await sleep(800 * (attempt + 1) * (attempt + 1))
+        const merged: Json[] = []
+        for (const loc of locs) merged.push(...await hbAllPages(`/locations/${loc}/timecards?start_date=${a}&end_date=${b}`))
+        got = merged
+      } catch (e: any) {
+        lastErr = String(e?.message || e)
+        // A config error will not heal itself — do not burn 11s of backoff proving it.
+        if (/key not configured/.test(lastErr)) break
+        // Back off harder each attempt — 429 means "slow down", so we do. Never after the last try.
+        if (attempt < 2) await sleep(800 * (attempt + 1) * (attempt + 1))
       }
     }
+    if (got == null && lastErr) console.error('[homebase] week ' + a + '..' + b + ' failed: ' + lastErr)
     if (got == null) { failedWeeks.push(`${a}..${b}`); pages.push([]) }
     else { pages.push(got); weekCache.set(ck, { at: Date.now(), page: got }) }
     await sleep(150)   // breathe between weeks; sequential + spaced is what keeps 429s away
@@ -134,10 +180,13 @@ function mergeTimecards(pages: Json[][]): Timecard[] {
   for (const page of pages) {
     for (const t of page) {
       const nested = (t && (t.employee || t.user)) || {}
-      const key = [
+      // THE ID IS THE IDENTITY. The composite fallback exists only for a payload with no id at
+      // all; it must recognize every clock-in spelling the mapper below does, or two punches in
+      // one day collapse into one and the second silently vanishes.
+      const key = t?.id != null ? 'id:' + String(t.id) : [
         [t?.first_name, t?.last_name].filter(Boolean).join(' ') || nested?.name || nested?.full_name || '',
         t?.date || t?.shift_date || '',
-        t?.clock_in || t?.clock_in_at || t?.start_at || '',
+        t?.clock_in || t?.clock_in_at || t?.start_at || t?.clockIn || '',
       ].join('|')
       if (seen[key]) continue
       seen[key] = true
@@ -173,15 +222,26 @@ function mergeTimecards(pages: Json[][]): Timecard[] {
     let openHours = false
     if (hours == null && clockIn && !clockOut) {
       const ms = Date.now() - new Date(clockIn).getTime()
-      if (ms > 0) { hours = round2(Math.min(ms / 36e5, 16)); openHours = true }
+      // ONLY WHILE THE SHIFT COULD STILL BE RUNNING. The old rule ran now−clockIn on every open
+      // card regardless of age, so a card someone forgot to close three weeks ago pegged at the
+      // 16h cap, was priced at wage × 16, and rode into cost per clean and real invoices as
+      // fabricated payroll. Inside 20h it is the honest "worked so far"; past that it is a missed
+      // clock-out, which is a flag for a person to fix, never a number.
+      if (ms > 0 && ms <= 20 * 36e5) { hours = round2(Math.min(ms / 36e5, 16)); openHours = true }
     }
     const regularHours = num(pick(lab, 'regular_hours')) ?? num(pick(t, 'regular_hours', 'regularHours'))
     const otSum = (num(pick(lab, 'weekly_overtime')) ?? 0) + (num(pick(lab, 'daily_overtime')) ?? 0) + (num(pick(lab, 'double_overtime')) ?? 0)
     const overtimeHours = otSum > 0 ? round2(otSum) : num(pick(t, 'overtime_hours', 'overtimeHours'))
     const wageRate = num(pick(lab, 'wage_rate')) ?? num(pick(t, 'wage_rate', 'wage', 'hourly_wage', 'rate'))
     let laborCost = num(pick(lab, 'costs')) ?? num(pick(t, 'labor_cost', 'estimated_wages', 'total_wages', 'cost'))
-    if (laborCost == null && wageRate != null && hours != null)
-      laborCost = round2(wageRate * hours)
+    if (laborCost == null && wageRate != null && hours != null) {
+      // Price the split when Homebase gave us one — flat wage × total hours paid overtime at
+      // straight time, understating every OT card by half the premium.
+      const dot = num(pick(lab, 'double_overtime')) ?? 0
+      const ot = (num(pick(lab, 'weekly_overtime')) ?? 0) + (num(pick(lab, 'daily_overtime')) ?? 0)
+      const reg = Math.max(0, hours - ot - dot)
+      laborCost = round2(wageRate * (ot > 0 || dot > 0 ? reg + ot * 1.5 + dot * 2 : hours))
+    }
     return {
       name,
       role: pick(t, 'role', 'position', 'department'),

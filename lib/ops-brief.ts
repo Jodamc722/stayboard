@@ -1632,6 +1632,7 @@ async function weekCompliance(): Promise<{
     const didClean: Record<string, boolean> = {}
     for (const t of (cl3 as any[])) {
       if (kindOfTask(t) !== 'clean') continue
+      if (str(t.status).toLowerCase() === 'deleted') continue   // moved — its replacement counts
       const done = !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
       if (!done) continue
       const who = ([] as any[])

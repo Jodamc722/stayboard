@@ -215,7 +215,8 @@ export async function buildTeamSchedule(opts: {
       .in('reference_property_id', chunk)
       .gte('scheduled_date', from).lte('scheduled_date', to)
       .order('scheduled_date').range(a, b))
-    tasks = tasks.concat(got)
+    // Ghosts of moved tasks stay out — the replacement row on the new day is the real one.
+    tasks = tasks.concat(got.filter((t: any) => String(t.status || '').toLowerCase() !== 'deleted'))
   }
 
   // ── the stays that give a job its tags ──────────────────────────────────────────────────────

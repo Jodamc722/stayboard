@@ -55,5 +55,22 @@ export async function setSetting(key: string, value: any, updatedBy?: string | n
  */
 export async function getOpsPresets(): Promise<OpsPresets> {
   const stored = await getSetting<any>(OPS_PRESETS_KEY, null)
-  return mergePresets(stored)
+  const presets = mergePresets(stored)
+  // THE VENDOR REGISTRY RIDES IN (migration 062; Jon, 2026-09-01: "an option to add different
+  // vendors"). Vendors added on /users merge into vendorBuildings here, so every classifier that
+  // already reads presets — the engine, the briefs, the boards — picks them up with no call-site
+  // changes. Buildings become word-boundary terms; a key collision defers to the stored preset.
+  try {
+    const { getVendors } = await import('./staffing')
+    const have = new Set(presets.vendorBuildings.map(v => v.id))
+    for (const v of await getVendors()) {
+      if (!v.buildings.length || have.has('vendor:' + v.key)) continue
+      presets.vendorBuildings.push({
+        id: 'vendor:' + v.key, label: v.label,
+        terms: [], wordTerms: v.buildings,
+        enabled: true, untracked: false, noBreezeway: false,
+      })
+    }
+  } catch { /* registry table absent — presets alone still stand */ }
+  return presets
 }

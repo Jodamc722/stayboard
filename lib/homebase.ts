@@ -229,10 +229,19 @@ const shiftCache: Map<string, { at: number; shifts: Shift[] }> = new Map()
 export async function getShifts(date: string, tz = 'America/New_York'): Promise<Shift[]> {
   const cHit = shiftCache.get(date + '|' + tz)
   if (cHit && Date.now() - cHit.at < 4 * 60 * 1000) return cHit.shifts
-  const loc = await getLocationUuid()
-  const raw = arr(await hb(
-    `/locations/${loc}/shifts?start_date=${date}&end_date=${date}&with_note=true`
-  ))
+  // Every location and every page — the same two holes the roster and the timecards had.
+  // One location's day of shifts usually fits a page, but "usually" is how punches went missing.
+  const locs = await getLocationUuids()
+  const raw: Json[] = []
+  const seenShift = new Set<string>()
+  for (const loc of locs) {
+    for (const s of await hbPaged(`/locations/${loc}/shifts?start_date=${date}&end_date=${date}&with_note=true`)) {
+      const id = s?.id != null ? String(s.id) : JSON.stringify([s?.first_name, s?.last_name, s?.start_at, s?.end_at])
+      if (seenShift.has(id)) continue
+      seenShift.add(id)
+      raw.push(s)
+    }
+  }
   const shifts = raw.map((s: Json): Shift => {
     const first = pick(s, 'first_name', 'firstName')
     const last = pick(s, 'last_name', 'lastName')

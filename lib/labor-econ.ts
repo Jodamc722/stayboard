@@ -33,6 +33,7 @@
 // the stay) is reported alongside supervision so the overhead has something real to sit against —
 // but it is never mixed into a cleaner's or a tech's margin.
 import 'server-only'
+import { etDay } from './clean-day'
 import { supabaseAdmin } from './supabase-admin'
 import { getTimecardsAudited, type Timecard, type TimecardAudit } from './homebase-labor'
 import { marketOf } from './segments'
@@ -358,9 +359,15 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const inMarketListing = (id: any) => market === 'all' || lmap[String(id)]?.market === market
 
   // ── the window's work + the money entered on it ───────────────────────────
-  const taskRowsAll = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
+  // Widened a day each side then filtered by ET day: the raw timestamptz bounds are UTC, so the
+  // old query dropped everything finished after 8pm on `to` and picked up the previous window's
+  // late evening instead.
+  const qFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -1))
+  const qTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 1))
+  const taskRowsAll = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
     .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,total_minutes,rate_paid')
-    .gte('finished_at', from).lte('finished_at', to + 'T23:59:59').order('id', { ascending: true }).range(a, b))
+    .gte('finished_at', qFrom).lte('finished_at', qTo + 'T23:59:59').order('id', { ascending: true }).range(a, b)))
+    .filter(t => { const d = etDay(t.finished_at); return d >= from && d <= to })
   const taskRows = taskRowsAll.filter(t => inMarketListing(t.reference_property_id))
 
   // THE CLEAN A FEE BELONGS TO MAY SIT OUTSIDE THIS WINDOW (Jon, 2026-08-14: "sometimes you'll see
@@ -377,7 +384,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // pool but strictly inside the window (see cleansDone below), which is what lets a clean the
   // crew did but nobody closed still count on the day it was scheduled.
   const padFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -2))
-  const padTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 7))
+  const padTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 9))
   const poolCols = 'id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,scheduled_date,status,total_minutes'
   const poolByFinish = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
     .select(poolCols).gte('finished_at', padFrom).lte('finished_at', padTo + 'T23:59:59').order('id', { ascending: true }).range(a, b))
@@ -392,7 +399,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     cleanPool.push(t)
   }
   // The day a clean actually landed: when it was finished, else the day it was scheduled for.
-  const cleanDay = (t: any): string => String(t.finished_at || '').slice(0, 10) || String(t.scheduled_date || '').slice(0, 10)
+  // ET, NEVER A RAW SLICE (Jon, 2026-09-01 accuracy pass): finished_at is a timestamptz, and the
+  // first ten characters of it are the UTC day — a different day for anything closed after 8pm.
+  // Payroll days are ET (Homebase), checkout days are ET (Guesty), so the clean day must be too,
+  // or the denominator and the numerator quietly disagree every evening. lib/clean-day.ts is the
+  // one shared rule; this file now actually uses it.
+  const cleanDay = (t: any): string => etDay(t.finished_at) || String(t.scheduled_date || '').slice(0, 10)
   const isClosed = (t: any) => !!t.finished_at && String(t.status || '').toLowerCase() !== 'deleted'
   // DELETED MEANS MOVED (Jon, 2026-08-25: "if moved it means extended or we moved for a
   // schedule"). Breezeway does not edit a clean onto a new day; it deletes the row and creates a
@@ -480,9 +492,15 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   }
 
   // ── cleaning fees: one checkout, one clean, one fee ──────────────────────
+  // THE CHECKOUT A CLEAN BELONGS TO MAY SIT BEFORE THIS WINDOW. The task pool has always been
+  // padded; the reservations never were — so a clean landing on day 1 of the window, whose
+  // checkout was two days earlier, had no fee to find and counted at $0. Padded checkouts join
+  // the MATCHING only: their fees ride on the clean they claim, and every window-scoped total and
+  // audit bucket still counts checkouts strictly inside [from, to].
+  const resFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -9))
   const resRowsAll = await pageAll((a, b) => sb.from('guesty_reservations')
     .select('listing_id,check_out,status,source,confirmation_code,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
-    .gte('check_out', from).lte('check_out', to)
+    .gte('check_out', resFrom).lte('check_out', to)
     .not('status', 'in', '("canceled","cancelled","declined")').order('id', { ascending: true }).range(a, b))
 
   // ── EXPEDIA CLEANING BACK-FILL ───────────────────────────────────────────
@@ -552,7 +570,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   let feesCleanNotClosed = 0, feesCleanNoAssignee = 0, feesNoCleanFound = 0, feesCleanOpenCredited = 0
   let movedCleans = 0
   const movedOffsets: Record<string, number> = {}
-  const pending: { listingId: string; co: string; coNext: string; fee: number; inMk: boolean; source: string; unit: string }[] = []
+  const pending: { listingId: string; co: string; coNext: string; fee: number; inMk: boolean; pad: boolean; source: string; unit: string }[] = []
   // WHICH CHANNEL DID AN UNMATCHED FEE COME FROM? (Jon, 2026-08-14: "it's likely Expedia fees that
   // need to be split out in folio — Expedia bulks fees into one category.") If a channel bundles
   // its fees, a cleaning fee can land on a stay that never needed a separate clean, and chasing a
@@ -564,6 +582,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const srcOf = (v: any) => String(v || 'unknown').toLowerCase()
   for (const r of resRowsAll) {
     const co = String(r.check_out).slice(0, 10)
+    const pad = co < from   // matching only — never in this window's totals or audit
     const coNext = dISO(addDays(new Date(co + 'T12:00:00Z'), 1))
     const li = lmap[String(r.listing_id)]
     const vendor = !!li?.vendor
@@ -584,7 +603,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       : feeGross
     // Totals stay scoped to the tab; the fee-to-clean matching below does not.
     const inMk = inMarketListing(r.listing_id)
-    if (inMk) managementFee += num(r.commission) ?? 0
+    if (inMk && !pad) managementFee += num(r.commission) ?? 0
     if (vendor) {
       // VENDOR-CLEANED UNITS ARE THEIR OWN BUCKET (Jon, 2026-08-12). A checkout there needed a
       // clean and earned a fee, but no in-house hour went into it — so it carries revenue and a
@@ -593,14 +612,14 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       // management agreement — never invoiced, never paid for. Room revenue by contract, so it
       // stays out of every cleaning line.
       if (li?.bot) continue
-      if (inMk) { cleaningVendor += fee; if (fee > 0) vendorCleans++ }
+      if (inMk && !pad) { cleaningVendor += fee; if (fee > 0) vendorCleans++ }
       continue
     }
     // Gross accumulates on the SAME base as net (in-house, non-vendor) — comparing gross across all
     // units to net across in-house ones inflated the "channel cut" to 29%, which is impossible for
     // an Airbnb-heavy book. Same rows in, same rows out; the difference is now only the OTA cut.
-    if (inMk) { cleaningInhouse += fee; cleaningGrossAll = round2(cleaningGrossAll + feeGross) }
-    pending.push({ listingId: String(r.listing_id), co, coNext, fee, inMk, source: srcOf(r.source), unit: (li && li.name) || String(r.listing_id) })
+    if (inMk && !pad) { cleaningInhouse += fee; cleaningGrossAll = round2(cleaningGrossAll + feeGross) }
+    pending.push({ listingId: String(r.listing_id), co, coNext, fee, inMk, pad, source: srcOf(r.source), unit: (li && li.name) || String(r.listing_id) })
   }
 
   // TWO PASSES, CONFIDENT ONE FIRST. A clean on the checkout day (or the morning after) is the
@@ -610,6 +629,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const claim = (p: typeof pending[0], t: any) => {
     usedTask[String(t.id)] = true
     feeByTask[String(t.id)] = p.fee
+    // A padded (pre-window) checkout exists only so the clean it paid for carries its fee.
+    // Its dollars belong to the previous window's checkout accounting, not this one's.
+    if (p.pad) return
     if (!p.inMk) return
     // ASSIGNED AND NOT MOVED MEANS IT WAS DONE (Jon, 2026-08-25: "if it was assigned in Breezeway
     // and did not complete but was not moved it was completed — the team sometimes does not
@@ -644,17 +666,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   for (const p of pending) {
     // Same-day first, then next morning — and among equals the lowest task id, so ties never
     // resolve by accident.
-    const hits = cleanPool.filter(t => !usedTask[taskKey(t)] &&
+    // GHOSTS ARE NOT CANDIDATES HERE (the fix behind Jon's 2026-09-01 ask). The ghost of a moved
+    // clean sits exactly on the checkout day, so it was always pass 1's only hit for any move of
+    // two days or more — it claimed the fee, the fee was written off as "not closed", and the
+    // REAL clean two days later counted with $0. Excluding moved rows sends the checkout to the
+    // wide pass, which finds the replacement on the day the unit was actually turned. A ghost can
+    // still catch the fee in pass 2, but only when no real clean exists anywhere in range.
+    const hits = cleanPool.filter(t => !usedTask[taskKey(t)] && !isMoved(t) &&
       String(t.reference_property_id) === p.listingId &&
       (cleanDay(t) === p.co || cleanDay(t) === p.coNext))
-      // A REAL CLEAN OUTRANKS A GHOST, ALWAYS. When a clean is moved, Breezeway leaves the
-      // original behind (deleted) and creates a new task on the new day — and the original
-      // always has the LOWER id and usually the ORIGINAL day, so both the same-day key and the
-      // id tiebreak favoured it. That handed the fee to a clean that never happened, filed it
-      // under "could not credit", and left the housekeeper who did the work with no credit and
-      // no clean. Order: not-moved first, then finished, then same-day, then lowest id.
-      .sort((t1, t2) => (isMoved(t1) ? 1 : 0) - (isMoved(t2) ? 1 : 0)
-        || (isClosed(t1) ? 0 : 1) - (isClosed(t2) ? 0 : 1)
+      .sort((t1, t2) => (isClosed(t1) ? 0 : 1) - (isClosed(t2) ? 0 : 1)
         || (cleanDay(t1) === p.co ? 0 : 1) - (cleanDay(t2) === p.co ? 0 : 1)
         || taskKey(t1).localeCompare(taskKey(t2)))
     if (hits[0]) claim(p, hits[0]); else unclaimed.push(p)
@@ -668,7 +689,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       const d = cleanDay(t)
       if (!d) continue
       const off = Math.round((new Date(d + 'T12:00:00Z').getTime() - day0) / 864e5)
-      if (off < -2 || off > 7) continue
+      // Measured on live data before widening: moves ran 2 days early to 9 days late. The old +7
+      // cutoff filed an 8- or 9-day move under "no clean found".
+      if (off < -2 || off > 9) continue
       // Nearest day wins; a tie goes to the day AFTER the checkout (a clean follows a departure,
       // it does not precede it), and then to the lowest task id. Deterministic all the way down.
       // Same ranking as the first pass: a moved ghost loses to anything real, then closed
@@ -683,7 +706,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
              || (off === best.off && String(t.id).localeCompare(String(best.t.id)) < 0)))) best = { off, t }
     }
     if (!best) {
-      if (p.inMk) {
+      if (p.inMk && !p.pad) {
         feesNoCleanFound = round2(feesNoCleanFound + p.fee)
         const b = noCleanBySource[p.source] = noCleanBySource[p.source] || { fees: 0, checkouts: 0 }
         b.fees = round2(b.fees + p.fee); b.checkouts++
@@ -691,8 +714,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       }
       continue
     }
-    movedCleans++
-    movedOffsets[String(best.off)] = (movedOffsets[String(best.off)] || 0) + 1
+    if (!p.pad) {
+      movedCleans++
+      movedOffsets[String(best.off)] = (movedOffsets[String(best.off)] || 0) + 1
+    }
     claim(p, best.t)
   }
 
@@ -716,7 +741,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // every clean read about 14% more expensive than it was. Revenue is unaffected — a clean with
   // no matched fee adds a clean and $0, which is exactly what happened in real life.
   const cleanLandedDay = (t: any): string =>
-    isClosed(t) ? String(t.finished_at || '').slice(0, 10) : String(t.scheduled_date || '').slice(0, 10)
+    isClosed(t) ? etDay(t.finished_at) : String(t.scheduled_date || '').slice(0, 10)
   let clAudCounted = 0, clAudClosed = 0, clAudOpen = 0, clAudMoved = 0, clAudNoAssignee = 0
   const cleansDone: any[] = []
   for (const t of cleanPool) {
@@ -2099,7 +2124,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       noCleanBySource,
       notClosedBySource,
       noCleanExamples,
-      window: 'checkout day or day+1 first, then nearest clean from 2 days early to 7 days late',
+      window: 'checkout day or day+1 first (real cleans only — ghosts can never claim a fee), then nearest clean from 2 days early to 9 days late',
     },
     coverage: {
       cleansAttributed,

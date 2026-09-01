@@ -135,6 +135,10 @@ export async function rangeTasks(from: string, to: string): Promise<any[]> {
   for (const t of scheduled.concat(undated)) {
     const id = String(t.id || '')
     if (!id || seen[id]) continue
+    // A deleted row is the ghost Breezeway leaves behind when a task is moved to another day —
+    // the replacement is its own row on the new date. Keeping both counted every moved clean
+    // TWICE on this board: once on the day it was promised, once on the day it happened.
+    if (String((t as any).status || '').toLowerCase() === 'deleted') continue
     seen[id] = true
     out.push(t)
   }

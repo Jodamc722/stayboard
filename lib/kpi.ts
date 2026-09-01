@@ -130,7 +130,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     // ---------------------------------------------------------------- reads
     const resFrom = prevFrom
     const resTo = addDays(to, 14)          // far enough forward for arrivals-next-7 and welcome calls
-    const [reservations, tasks, sentiment, lowReviews, glitchRows, openWork, timesheets, syncRows, openGlitchRes, openTaskRes] = await Promise.all([
+    const [reservations, tasks, sentiment, lowReviews, glitchRows, openWork, syncRows, openGlitchRes, openTaskRes] = await Promise.all([
       pageAll((a, b) => db.from('guesty_reservations')
         .select('id,listing_id,listing_name,guest_name,check_in,check_out,nights,status,source,money_total,custom_fields,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
         .gte('check_out', resFrom).lte('check_in', resTo).order('check_out').range(a, b)),
@@ -147,8 +147,6 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       db.from('glitches').select('id,status,category,market,unit,listing_id,created_at,refund_approved')
         .gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false }).limit(1000),
       db.from('field_requests').select('id,status,due_at,priority,building').in('status', ['open', 'in_progress']).limit(1000),
-      db.from('labor_timesheets').select('employee,work_date,hours,cost').neq('source', '__synthetic_test.csv')
-        .gte('work_date', prevFrom).lte('work_date', to).limit(5000),
       db.from('guesty_sync_status').select('entity,last_sync_at').order('entity'),
       // OPEN WORK, the honest version. Requests alone under-report badly — the same rule the day
       // sheet uses counts open glitches plus Breezeway tasks from the last 45 days that nobody
@@ -424,13 +422,25 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     }
     const openGlitchesNow = Number(openGlitchRes.count) || 0
 
+    // PUNCHES, NOT THE CSV LEDGER (Jon, 2026-09-01: one source). This block read the uploaded
+    // labor_timesheets table — a parallel ledger with its own math that could and did disagree
+    // with /labor. It now reads the same audited Homebase punches everything else uses; when a
+    // week failed to fetch, hasData goes false and the board falls back rather than understating.
+    let punchCards: { date: string | null; name: string; hours: number | null; laborCost: number | null }[] = []
+    let punchesComplete = false
+    try {
+      const { getTimecardsAudited } = await import('./homebase-labor')
+      const a = await getTimecardsAudited(prevFrom, to)
+      punchCards = a.cards as any[]
+      punchesComplete = a.complete
+    } catch { /* board falls back to Breezeway-cost basis below */ }
     const laborBlock = (a: string, b: string) => {
-      const rows = (timesheets.data || []).filter((r: any) => inWin(dOf(r.work_date), a, b))
+      const rows = punchCards.filter(r => r.date && r.date >= a && r.date <= b)
       const hours = rows.reduce((s: number, r: any) => s + (Number(r.hours) || 0), 0)
-      const cost = rows.reduce((s: number, r: any) => s + (Number(r.cost) || 0), 0)
+      const cost = rows.reduce((s: number, r: any) => s + (Number(r.laborCost) || 0), 0)
       const people: Record<string, true> = {}
-      for (const r of rows) people[str(r.employee)] = true
-      return { hasData: rows.length > 0, hours: round(hours, 1), cost: Math.round(cost), people: Object.keys(people).length }
+      for (const r of rows) people[str(r.name)] = true
+      return { hasData: punchesComplete && rows.length > 0, hours: round(hours, 1), cost: Math.round(cost), people: Object.keys(people).length }
     }
 
     const stays = stayBlock(from, to)

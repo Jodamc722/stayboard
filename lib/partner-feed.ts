@@ -194,17 +194,21 @@ export async function feedCleans(month: string, opts: PartnerOut): Promise<any[]
  */
 export async function feedLabor(month: string, opts: PartnerOut): Promise<any> {
   const { from, to } = monthRange(month)
-  const db = supabaseAdmin()
   const { getCrew } = await import('@/lib/crew')
-  const [res, crew] = await Promise.all([
-    db.from('labor_timesheets').select('employee,work_date,hours,wage,cost')
-      .neq('source', '__synthetic_test.csv')
-      .gte('work_date', from).lte('work_date', to).limit(20000),
+  const { timecardsRangeAudited } = await import('@/lib/labor-report')
+  // LIVE PUNCHES, NOT THE CSV LEDGER (Jon, 2026-09-01: one source). This feed used to serve the
+  // hand-uploaded labor_timesheets table — a month nobody uploaded read as "no data", and a month
+  // somebody uploaded could disagree with every board in the app. It now serves the same audited
+  // Homebase punches everything else reads, and refuses to serve a month with holes in it rather
+  // than hand a partner an understated payroll.
+  const [tcA, crew] = await Promise.all([
+    timecardsRangeAudited(from, to).catch(() => null),
     getCrew().catch(() => null),
   ])
-  if (res.error) return { month, available: false, reason: String(res.error.message || 'read failed'), rows: [] }
-  const rows = (res.data || []) as any[]
-  if (!rows.length) return { month, available: false, reason: 'no Homebase timesheet uploaded for this month', rows: [] }
+  if (!tcA) return { month, available: false, reason: 'Homebase read failed', rows: [] }
+  if (!tcA.complete) return { month, available: false, reason: 'Homebase did not return every week (' + tcA.failedSpans.join(', ') + ') — retry shortly', rows: [] }
+  const rows = tcA.cards.map(t => ({ employee: t.name, work_date: t.date, hours: t.hours, wage: t.wageRate, cost: t.laborCost }))
+  if (!rows.length) return { month, available: false, reason: 'no punches recorded for this month', rows: [] }
 
   // A person's crew comes from the DECLARED roster, never from what they happened to be assigned
   // (feedback-labor-truth-source). Anyone nobody has placed is reported as `unrostered` with their

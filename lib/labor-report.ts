@@ -26,7 +26,7 @@
 //      a number frozen on the day it was earned goes stale. BILLABLE_LOOKBACK_DAYS is that window.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { getTimecards, type Timecard } from './homebase-labor'
+import { getTimecardsAudited, type Timecard } from './homebase-labor'
 import { getShifts, nameMatches, type Shift } from './homebase'
 import { getLaborSettings, type LaborSettings } from './labor-settings'
 import { computeYesterdayLabor, type YesterdayLabor } from './labor-daily'
@@ -73,14 +73,27 @@ export function kindOfTask(t: any): 'departure' | 'otherClean' | 'inspection' | 
 
 /** Homebase rejects wide date ranges, so anything long is pulled in ≤28-day chunks and stitched. */
 export async function timecardsRange(from: string, to: string): Promise<Timecard[]> {
-  const out: Timecard[] = []
+  return (await timecardsRangeAudited(from, to)).cards
+}
+/**
+ * Chunked pull WITH the audit carried through. The old version swallowed a failed chunk in a bare
+ * catch — up to 28 days of payroll silently missing, and the report printed totals and margins as
+ * fact. Now every missing span is named, and builders can refuse to print money over a hole.
+ */
+export async function timecardsRangeAudited(from: string, to: string): Promise<{ cards: Timecard[]; failedSpans: string[]; complete: boolean }> {
+  const cards: Timecard[] = []
+  const failedSpans: string[] = []
   let cur = from
   while (cur <= to) {
     const end = daysBetween(cur, to) > 27 ? shiftDay(cur, 27) : to
-    try { out.push(...await getTimecards(cur, end)) } catch { /* that chunk is missing, rest still reports */ }
+    try {
+      const a = await getTimecardsAudited(cur, end)
+      cards.push(...a.cards)
+      failedSpans.push(...a.failedWeeks)
+    } catch { failedSpans.push(cur + '..' + end) }
     cur = shiftDay(end, 1)
   }
-  return out
+  return { cards, failedSpans, complete: failedSpans.length === 0 }
 }
 
 export type PersonRow = {
@@ -108,6 +121,9 @@ export type LaborReport = {
 
   // payroll, split by the department the wage is charged to
   totals: { hours: number; overtime: number; payroll: number; people: number }
+  /** false when any Homebase span failed — every payroll figure is then a floor, not a total. */
+  payrollComplete: boolean
+  payrollFailedSpans: string[]
   byDept: Record<Dept, { hours: number; payroll: number; people: number }>
 
   // the work that got done
@@ -153,7 +169,8 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   const settings = await getLaborSettings('default')
 
   // ---- payroll ----------------------------------------------------------------
-  const timecards = await timecardsRange(from, to)
+  const tcA = await timecardsRangeAudited(from, to)
+  const timecards = tcA.cards
 
   // ---- the work, from the billing pull so line items come with it -------------
   const tasks = (await billingRange(from, to)).tasks.filter((t: any) => {
@@ -349,6 +366,11 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   // Ordered by how much money or trust is at stake, not by how easy it is to compute. Every flag
   // names the people involved, because "3 people did X" is a statistic and a list is a task.
   const flags: Flag[] = []
+  if (!tcA.complete) flags.push({
+    level: 'red', kind: 'payroll_incomplete',
+    title: 'Homebase did not return every week — payroll here is a floor, not a total',
+    detail: 'Missing: ' + tcA.failedSpans.join(', '),
+  } as any)
   if (yesterday) {
     if (yesterday.noShows.length) flags.push({
       level: 'red', kind: 'no_show',
@@ -446,5 +468,6 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     costPerClean, hoursPerClean, feePerClean, cleaningMargin, cleaningMarginPct,
     laborPctOfRevenue, band,
     billable, people, yesterday, flags, settings,
+    payrollComplete: tcA.complete, payrollFailedSpans: tcA.failedSpans,
   }
 }
