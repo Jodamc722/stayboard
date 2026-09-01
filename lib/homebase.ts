@@ -304,9 +304,21 @@ const nearWord = (x: string, y: string): boolean => {
 // Same person if first names match (exact or a typo apart) and last names agree
 // (same word, a typo apart, or at least the same initial). Tolerates double
 // spaces, accents, and swapped first/last order.
+// TOKENS THAT NAME A PERSON, nothing else (Jon, 2026-09-01: "if you see the same name even if
+// 'different user', be smart enough to assume it's the same human"). Generational suffixes and
+// middle initials are how one person becomes two on a board: the staff table really did carry
+// "Anthony Perry" and "Anthony Perry III" as separate people. A suffix or a lone initial is
+// dropped BEFORE comparing — unless that would empty the name entirely.
+const SUFFIX_RE = /^(jr|sr|ii|iii|iv|v)\.?$/
+const nameTokens = (s: string): string[] => {
+  const all = norm(s).split(/\s+/).filter(Boolean)
+  const kept = all.filter(t => !SUFFIX_RE.test(t) && t.length > 1)
+  return kept.length ? kept : all
+}
+
 export function nameMatches(a: string, b: string): boolean {
-  const A = norm(a).split(/\s+/).filter(Boolean)
-  const B = norm(b).split(/\s+/).filter(Boolean)
+  const A = nameTokens(a)
+  const B = nameTokens(b)
   if (!A.length || !B.length) return false
   if (A.join(' ') === B.join(' ')) return true
   const af = A[0], bf = B[0]
