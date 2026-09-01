@@ -464,6 +464,35 @@ export async function GET(req: NextRequest) {
       (cY.cpc != null ? ' @ ' + rate(cY.cpc) + '/clean' : '') + '.' +
       (onShift ? ' Today: <b>' + onShift + '</b> on shift' + (cleansDueToday != null ? ', <b>' + cleansDueToday + '</b> cleans due' : '') + '.' : '')
 
+    // ── CAN THESE NUMBERS BE TRUSTED? (Jon, 2026-09-01: "what are we doing to make sure this is
+    // always accurate"). The email states its own basis every morning: whether every Homebase
+    // week answered, how much fee money found no clean, and who is punching with no roster row.
+    // Green and one line when healthy; specific and amber/red when not. The nightly integrity
+    // cron runs the deeper version and emails only on failure.
+    let healthCard = ''
+    try {
+      const pa: any = (ec30 as any).payrollAudit || {}
+      const fa: any = (ec30 as any).feeAudit || {}
+      const unro: any = (ec30 as any).unrostered || {}
+      const faTotal = (Number(fa.credited) || 0) + (Number(fa.cleanNotClosed) || 0) + (Number(fa.cleanNoAssignee) || 0) + (Number(fa.noCleanFound) || 0)
+      const lost = (Number(fa.noCleanFound) || 0) + (Number(fa.cleanNotClosed) || 0)
+      const lostPct = faTotal > 0 ? Math.round((lost / faTotal) * 100) : 0
+      const items: string[] = []
+      items.push(pa.complete !== false
+        ? '<span style="' + GREEN + '">✓</span> every Homebase week answered — hours and wages are actual punches, complete'
+        : '<span style="' + RED + '">✗</span> Homebase weeks missing (' + esc((pa.failedWeeks || []).join(', ')) + ') — payroll is a floor this morning')
+      items.push((lostPct <= 15
+        ? '<span style="' + GREEN + '">✓</span> '
+        : '<span style="' + AMBER + '">!</span> ')
+        + lostPct + '% of cleaning fees without a matched clean' + (lostPct > 15 ? ' — check Data health on the Labor board' : ''))
+      if (Number(unro.people) > 0) items.push('<span style="' + AMBER + '">!</span> ' + unro.people + ' on payroll with no crew set — their wages count in no department')
+      healthCard = '<div style="' + cardStyle + '">' +
+        secTitle('Is this accurate?', '30-day basis &middot; audited nightly') +
+        '<p style="margin:0;font-size:12.5px;line-height:2;color:#374151">' + items.join('<br>') + '</p>' +
+        '<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Cleans count on the day they were actually done (a moved clean counts on its new day, never twice); every dollar of payroll is a Homebase punch, or the stated salary for salaried staff.</p>' +
+        '</div>'
+    } catch { /* additive */ }
+
     const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b1220">' +
       '<div style="max-width:720px;margin:0 auto;padding:18px">' +
       '<div style="background:#111827;border-radius:12px;padding:16px 18px">' +
@@ -476,6 +505,7 @@ export async function GET(req: NextRequest) {
       todayCard +
       crewsCard +
       numbersCard +
+      healthCard +
       '<table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 12px"><tr><td>' +
       '<a href="' + APP_URL + '/labor" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">Open the Labor board &rarr;' +
       '<span style="display:block;font-weight:400;font-size:11.5px;color:#9ca3af;margin-top:2px">Every person, task and billable &middot; the weekly planner lives there too</span></a>' +
