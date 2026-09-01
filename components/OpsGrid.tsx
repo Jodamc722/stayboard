@@ -37,7 +37,7 @@ import { catOfTask, type TaskCat } from '@/lib/task-categories'
 import { SuggestionsProvider, SuggestionsBand, UnitSuggestions, PersonSuggestions, useSuggestions } from '@/components/SuggestionsBand'
 import { AssignPanel } from '@/components/AssignPanel'
 import { DayPlanPanel } from '@/components/DayPlanPanel'
-import { ReviewTab } from '@/components/ReviewTab'
+import { ReviewTab, ReviewCount } from '@/components/ReviewTab'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -1111,12 +1111,11 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         </div>
       )}
 
-      {/* ── SUGGESTED TODAY ────────────────────────────────────────────────────────────────
-          Jon, 2026-08-26: "lets get the suggestion populating… we can't have 200 tasks just auto
-          populate". Below the market chips so it scopes with them, and above the controls because
-          it is about the shape of the day rather than about finding one row. It renders NOTHING
-          when it has nothing to say, which on a heavy turn day is most mornings. ── */}
-      <SuggestionsBand market={mkt} />
+      {/* ── SUGGESTIONS MOVED (Jon, 2026-09-01: "can review and suggestion be the same thing") ──
+          They were a band above the board AND a section inside the Review tab — two places showing
+          the same proposals, which is how two surfaces drift and a coordinator learns to trust
+          neither. One home now: the Review tab, where they sit beside the waiting work under the
+          same assign-and-schedule row. The count is on the tab, so nothing is hidden by the move. ── */}
 
       {/* ── CONTROLS ── */}
       <div className="mt-2.5 flex items-center gap-2 flex-wrap">
@@ -1126,6 +1125,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
               className={'px-3 py-1.5 rounded-[10px] text-[12.5px] font-bold inline-flex items-center gap-1.5 ' +
                 (mode === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
               <Icon size={13} /> {label}
+              {k === 'review' && <ReviewCount market={mkt} />}
             </button>
           ))}
         </div>

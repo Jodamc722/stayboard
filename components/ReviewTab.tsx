@@ -4,6 +4,16 @@
 // Jon, 2026-08-31: "create a review / recommended tab", and earlier: "there can be a review section
 // in Today in Ops for the ops team to review as well… maybe that's safer."
 //
+// ONE LIST (Jon, 2026-09-01: "can review and suggestion be the same thing"). He is right, and the
+// split was mine, not the work's. A coordinator does not think "this is a suggestion, that is a
+// review item" — they think "what needs doing, and when can it be done". The engine's distinction
+// (propose new work vs. re-place existing work) is an implementation detail that was leaking into
+// the interface as two places to look.
+//
+// So both live here, in one list, with one action row: give it to somebody, put it on a day, apply.
+// The only thing that survives the merge is a tag saying which kind a row is, because "create this"
+// and "move this" have genuinely different consequences and somebody should be able to see which.
+//
 // Two halves, and the order is the argument:
 //
 //   RECOMMENDED — outstanding maintenance, each line carrying the next day that unit is actually
@@ -17,7 +27,8 @@
 // Scheduling goes through the same route the rest of the board uses, so there is one code path that
 // moves a task and one place for it to be wrong.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, RefreshCw, CalendarDays, MapPin, AlertTriangle, Check, ExternalLink, Copy } from 'lucide-react'
+import { Loader2, RefreshCw, CalendarClock, MapPin, X, Wrench, Sparkles, ClipboardList, Lightbulb } from 'lucide-react'
+import { useSuggestions, type Sug } from '@/components/SuggestionsBand'
 
 const niceDate = (ymd: string) => {
   try {
@@ -35,7 +46,27 @@ type Item = {
   recommendation: string
 }
 
+/**
+ * The number on the tab. The suggestions band used to shout from above the board; removing it must
+ * not make today's proposals invisible, so the count comes with them. Suggestions only — the
+ * waiting backlog is always there and a permanent badge for it would just be wallpaper.
+ */
+export function ReviewCount({ market }: { market: string }) {
+  const ctx = useSuggestions()
+  const n = ctx?.run?.enabled === false ? 0 : (ctx?.all(market) || []).length
+  if (!n) return null
+  return <span className="ml-1 text-[10px] font-bold px-1 rounded bg-brand-500 text-white tabular-nums">{n}</span>
+}
+
+// One row shape for both kinds, so the list renders once and the difference is a tag.
+type Row =
+  | { kind: 'suggestion'; id: string; unit: string; label: string; dept: string; why: string; sug: Sug }
+  | { kind: 'pending'; id: string; unit: string; label: string; dept: string; why: string; item: Item }
+
+const DEPT_ICON: Record<string, any> = { maintenance: Wrench, housekeeping: Sparkles, inspection: ClipboardList }
+
 export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: () => void }) {
+  const sugCtx = useSuggestions()
   const [data, setData] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -57,14 +88,30 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
   const items: Item[] = useMemo(() => (data?.queue?.items || []).filter((i: Item) => !done.has(i.taskId)), [data, done])
   const summary = data?.queue?.summary || { total: 0, freeTrips: 0, needsATrip: 0, noWindow: 0 }
 
+  // ── THE MERGE ─────────────────────────────────────────────────────────────────────────────
+  // Suggestions first: they are preventative, and the whole reason to do them today is that
+  // somebody is already in the building. Pending work is sorted by how long it has waited, so the
+  // two orderings do not fight — proposals lead, then the backlog by age.
+  const rows: Row[] = useMemo(() => {
+    const sugs = (sugCtx?.all(market) || []).map((sg): Row => ({
+      kind: 'suggestion', id: sg.id, unit: sg.unit, label: sg.label, dept: sg.dept, why: sg.why, sug: sg,
+    }))
+    const pend = items.map((i): Row => ({
+      kind: 'pending', id: i.taskId, unit: i.unit, label: i.task, dept: i.dept, why: i.recommendation, item: i,
+    }))
+    return [...sugs, ...pend]
+  }, [sugCtx, market, items])
+  const sugCount = rows.filter(r => r.kind === 'suggestion').length
+
   // Move one job onto the day the planner recommends. Same endpoint the row-level actions use.
-  async function schedule(i: Item) {
-    if (!i.target || busy) return
+  async function schedule(i: Item, date?: string, assignee?: string) {
+    const when = date || i.target?.date
+    if (!when || busy) return
     setBusy(i.taskId)
     try {
       const r = await fetch('/api/ops-today/task-action', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'schedule', taskId: i.taskId, date: i.target.date }),
+        body: JSON.stringify({ action: 'schedule', taskId: i.taskId, date: when, ...(assignee ? { assignee } : {}) }),
       })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || j?.error) throw new Error(j?.error || 'Could not reschedule.')
@@ -91,12 +138,15 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
       <div className="flex items-start gap-3 flex-wrap mb-3">
         <div className="min-w-0 flex-1">
           <p className="text-[13px] text-ink leading-relaxed">
-            {summary.total === 0
+            {rows.length === 0
               ? <span className="text-muted">Nothing outstanding in this market. Every maintenance job is either scheduled or done.</span>
               : <>
-                  <b>{summary.freeTrips}</b> of {summary.total} ride along free &mdash; somebody is already going into that unit.
-                  {summary.needsATrip > 0 && <> <b>{summary.needsATrip}</b> need a trip into an empty unit.</>}
-                  {summary.noWindow > 0 && <> <b className="text-amber-700">{summary.noWindow}</b> have no empty day in three weeks.</>}
+                  {sugCount > 0 && <><b>{sugCount}</b> suggested for today. </>}
+                  {summary.total > 0 && <>
+                    <b>{summary.freeTrips}</b> of {summary.total} waiting jobs ride along free &mdash; somebody is already going into that unit.
+                    {summary.needsATrip > 0 && <> <b>{summary.needsATrip}</b> need a trip into an empty unit.</>}
+                    {summary.noWindow > 0 && <> <b className="text-amber-700">{summary.noWindow}</b> have no empty day in three weeks.</>}
+                  </>}
                 </>}
           </p>
         </div>
@@ -107,7 +157,7 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
       </div>
 
       <div className="inline-flex rounded-xl border border-line bg-white p-0.5 mb-3">
-        {([['recommended', `Recommended${summary.total ? ` · ${summary.total}` : ''}`],
+        {([['recommended', `Recommended${rows.length ? ` · ${rows.length}` : ''}`],
            ['proposals', `Needs a decision${(data?.dupes?.summary?.groups || 0) + (data?.strays?.closed?.length || 0) ? ` · ${(data?.dupes?.summary?.groups || 0) + (data?.strays?.closed?.length || 0)}` : ''}`]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setHalf(k as any)}
             className={'px-3 py-1.5 rounded-[10px] text-[12.5px] font-bold ' + (half === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
@@ -120,37 +170,14 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
 
       {half === 'recommended' && (
         <div className="rounded-2xl border border-line bg-white overflow-hidden">
-          {items.length === 0 ? (
-            <p className="px-4 py-8 text-center text-[13px] text-muted">Nothing waiting. This is what a clear backlog looks like.</p>
-          ) : items.map(i => (
-            <div key={i.taskId} className="flex items-start gap-3 px-3 py-2.5 border-b border-line last:border-0 hover:bg-app/40">
-              <span className={'shrink-0 mt-0.5 text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (
-                i.target?.hasTrade ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : i.target ? 'bg-sky-50 text-sky-700 border-sky-200'
-                    : 'bg-amber-50 text-amber-700 border-amber-200')}>
-                {i.target?.hasTrade ? 'Free trip' : i.target ? 'Unit empty' : 'No window'}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[12.5px] text-ink">
-                  <b>{i.unit}</b> <span className="text-muted">&middot; {i.task}</span>
-                </p>
-                <p className="text-[11.5px] text-muted mt-0.5">
-                  <MapPin size={9} className="inline -mt-0.5 mr-0.5" />{i.recommendation}
-                </p>
-              </div>
-              <div className="shrink-0 text-right">
-                <p className={'text-[11.5px] font-bold tabular-nums ' + ((i.waitingDays ?? 0) > 0 ? 'text-rose-600' : 'text-muted')}>
-                  {lateWord(i.waitingDays)}
-                </p>
-                {i.target && (
-                  <button onClick={() => schedule(i)} disabled={!!busy}
-                    className="mt-1 inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2 py-1 text-[11px] font-bold disabled:opacity-40">
-                    {busy === i.taskId ? <Loader2 size={10} className="animate-spin" /> : <CalendarDays size={10} />}
-                    Move to {niceDate(i.target.date)}
-                  </button>
-                )}
-              </div>
-            </div>
+          {rows.length === 0 ? (
+            <p className="px-4 py-8 text-center text-[13px] text-muted">Nothing waiting and nothing to suggest. This is what a clear backlog looks like.</p>
+          ) : rows.map(r => (
+            <RowLine key={r.kind + r.id} row={r} today={data?.today || ''} busy={busy}
+              roster={sugCtx?.roster || []}
+              onSchedule={(date, who) => r.kind === 'pending' ? schedule(r.item, date, who) : undefined}
+              onAddSuggestion={(date, who) => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'add', { assignee: who, scheduleDate: date }) : undefined}
+              onDismiss={() => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'dismiss') : undefined} />
           ))}
         </div>
       )}
@@ -211,6 +238,109 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
               )}
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── ONE ROW, EITHER KIND ────────────────────────────────────────────────────────────────────────
+// The action row is deliberately identical for both. A coordinator deciding who does something and
+// when should not have to learn two controls because the engine got there two different ways.
+//
+// Closed by default: the engine's pick is a DEFAULT, not a decision, and putting a name and a date
+// picker on every row at rest turns a scannable list into a form. Open it and you override both.
+function RowLine({ row, today, busy, roster, onSchedule, onAddSuggestion, onDismiss }: {
+  row: Row
+  today: string
+  busy: string | null
+  roster: { id: number; name: string; departments: string[] }[]
+  onSchedule: (date?: string, who?: string) => void
+  onAddSuggestion: (date?: string, who?: string) => void
+  onDismiss: () => void
+}) {
+  const suggested = row.kind === 'suggestion'
+  const target = row.kind === 'pending' ? row.item.target : null
+  const defaultDate = target?.date || today
+  const defaultWho = row.kind === 'suggestion' ? (row.sug.candidates[0] || '') : (target?.who?.[0] || '')
+
+  const [open, setOpen] = useState(false)
+  const [who, setWho] = useState(defaultWho)
+  const [when, setWhen] = useState(defaultDate)
+
+  const Icon = DEPT_ICON[row.dept] || Wrench
+  const mine = busy === row.id
+  const inDept = roster.filter(p => (p.departments || []).some(d => String(d).toLowerCase().includes(String(row.dept).slice(0, 6))))
+  const rest = roster.filter(p => inDept.indexOf(p) < 0)
+
+  const apply = () => {
+    const d = open ? when : defaultDate
+    const w = open ? who : defaultWho
+    if (suggested) onAddSuggestion(d, w)
+    else onSchedule(d, w)
+  }
+
+  const late = row.kind === 'pending' ? row.item.waitingDays : null
+
+  return (
+    <div className={(open ? 'bg-app/60 ' : 'hover:bg-app/40 ') + 'border-b border-line last:border-0'}>
+      <div className="flex items-start gap-2.5 px-3 py-2.5">
+        <span className={'w-5 h-5 rounded-md inline-flex items-center justify-center shrink-0 mt-0.5 ' +
+          (suggested ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500')}>
+          <Icon size={11} strokeWidth={2.6} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[12.5px] text-ink">
+            <span className={'mr-1.5 align-[1px] text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded border ' +
+              (suggested ? 'bg-brand-50 text-brand-700 border-brand-200'
+                : target?.hasTrade ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : target ? 'bg-sky-50 text-sky-700 border-sky-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200')}>
+              {suggested ? 'Suggested' : target?.hasTrade ? 'Free trip' : target ? 'Unit empty' : 'No window'}
+            </span>
+            <b>{row.unit}</b> <span className="text-muted">&middot; {row.label}</span>
+          </p>
+          <p className="text-[11.5px] text-muted mt-0.5"><MapPin size={9} className="inline -mt-0.5 mr-0.5" />{row.why}</p>
+        </div>
+        <div className="shrink-0 flex items-center gap-1">
+          {late != null && late > 0 && (
+            <span className="hidden sm:inline text-[11px] font-bold tabular-nums text-rose-600 mr-1">{late}d late</span>
+          )}
+          <button onClick={apply} disabled={!!busy || (!suggested && !target && !open)}
+            className="rounded-lg bg-ink text-white px-2.5 py-1 text-[11.5px] font-bold whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1">
+            {mine && <Loader2 size={10} className="animate-spin" />}
+            {suggested ? 'Add' : 'Move'}{(open ? who : defaultWho) ? ` \u00b7 ${(open ? who : defaultWho).split(' ')[0]}` : ''}
+          </button>
+          <button onClick={() => setOpen(o => !o)} disabled={!!busy} title="Who does it, and when"
+            className={'rounded-lg border px-1.5 py-1 disabled:opacity-40 ' + (open ? 'border-ink text-ink' : 'border-line text-muted hover:text-ink')}>
+            <CalendarClock size={11} />
+          </button>
+          {suggested && (
+            <button onClick={onDismiss} disabled={!!busy} title="Hides this for 30 days"
+              className="rounded-lg border border-line px-1.5 py-1 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40">
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {open && (
+        <div className="px-3 pb-2.5 pl-[38px] flex items-center gap-1.5 flex-wrap">
+          <span className="text-[11px] text-muted">Give it to</span>
+          <select value={who} onChange={e => setWho(e.target.value)}
+            className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px] max-w-[150px]">
+            <option value="">Nobody yet</option>
+            {inDept.map(p => <option key={'d' + p.id} value={p.name}>{p.name}</option>)}
+            {rest.length > 0 && <option key="sep" disabled>{'\u2500\u2500\u2500\u2500\u2500\u2500'}</option>}
+            {rest.map(p => <option key={'r' + p.id} value={p.name}>{p.name}</option>)}
+          </select>
+          <span className="text-[11px] text-muted">on</span>
+          {/* min=today: a task dated last week never lands on any board, so nobody works it. */}
+          <input type="date" value={when} min={today} onChange={e => setWhen(e.target.value)}
+            className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px]" />
+          {target && when !== target.date && (
+            <span className="text-[11px] text-amber-700">Recommended day was {niceDate(target.date)}.</span>
+          )}
         </div>
       )}
     </div>
