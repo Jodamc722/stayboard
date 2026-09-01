@@ -131,6 +131,10 @@
     {
       "path": "/api/cron/maint-brief",
       "schedule": "46 11 * * *"
+    },
+    {
+      "path": "/api/cron/labor-integrity",
+      "schedule": "12 7 * * *"
     }
   ]
 }
