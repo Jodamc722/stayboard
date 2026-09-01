@@ -150,12 +150,29 @@ export async function GET(req: NextRequest) {
     ])
     const occupied: Record<string, string> = {}
     const occupiedUntil: Record<string, string> = {}
+    // IN THE UNIT vs ARRIVING TODAY — two different guests (Jon, 2026-09-01: "why is this saying
+    // guest is in unit"). The occupancy query spans check_in <= today < check_out, which also
+    // matches TODAY'S ARRIVAL — so on a turn day the incoming guest (in at 4pm, out Thursday)
+    // marked the unit occupied all morning, and the board stamped the departure clean EXTENDED ·
+    // "guest is still in the unit until Thursday" on the exact unit that had to be turned before
+    // 4pm. The cleaner who went in anyway was right and the board was wrong.
+    //
+    // A stay makes the unit "in-house" for the extended check only when it BEGAN BEFORE TODAY —
+    // the guest slept there last night and has not left. Today's arrival is the reason to clean,
+    // never a reason not to. (The day sheet's insideNow() learned this same lesson earlier;
+    // `occupied` keeps the wider tonight-inclusive meaning for the vacant-units list below.)
+    const inHouse: Record<string, string> = {}
+    const inHouseUntil: Record<string, string> = {}
     for (const r of (occRes.data || []) as any[]) {
       if (!isLiveStay(r.status)) continue
       const id = String(r.listing_id)
       occupied[id] = r.guest_name || 'Guest'
       const out = str(r.check_out).slice(0, 10)
       if (out && (!occupiedUntil[id] || out > occupiedUntil[id])) occupiedUntil[id] = out
+      if (str(r.check_in).slice(0, 10) < today) {
+        inHouse[id] = r.guest_name || 'Guest'
+        if (out && (!inHouseUntil[id] || out > inHouseUntil[id])) inHouseUntil[id] = out
+      }
     }
     const nextIn: Record<string, string> = {}
     for (const r of (nextRes.data || []) as any[]) {
@@ -204,7 +221,7 @@ export async function GET(req: NextRequest) {
       const moveState: 'normal' | 'extended' | 'moved' =
         type !== 'departure_clean' ? 'normal'
           : outToday[lid] ? 'normal'
-            : occupied[lid] ? 'extended'
+            : inHouse[lid] ? 'extended'
               : 'moved'
       const clocked = type === 'departure_clean' && !untracked && moveState !== 'extended'
       const finishedMin = t.finished_at ? etMinutes(new Date(t.finished_at)) : null
@@ -222,7 +239,7 @@ export async function GET(req: NextRequest) {
         done, running, clocked, late, atRisk, missed, untracked,
         cat: catOfTaskWith(taskCats, { name: t.name, dept, type }),
         moveState, movedFrom: moveState === 'moved' ? (lastOut[lid] || null) : null,
-        extendedTo: moveState === 'extended' ? (occupiedUntil[lid] || null) : null,
+        extendedTo: moveState === 'extended' ? (inHouseUntil[lid] || null) : null,
       }
     })
     // VACANT UNITS — built from the occupancy read above.
