@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { OpsGrid } from '@/components/OpsGrid'
 import { useCachedFetch } from '@/lib/swr'
+import { matchRoster, samePerson } from '@/lib/roster-match'
 
 
 // ── types (mirrors of what the APIs actually send) ──────────────────────────────────────────────
@@ -203,16 +204,6 @@ export function OpsV2() {
   )
 }
 
-// The cockpit door to the same strip: the Command Center mounts this. It feeds itself (capacity +
-// roster), and "view lanes" deep-links to the board's Staffing tab (?tab=people) — it used to
-// land on whatever tab the device last had open, which for most people was the Grid.
-export function CapacityPanel() {
-  const { data: cap, refresh } = useCachedFetch<CapData>('/api/capacity', { ttl: 5 * 60_000 })
-  const [roster, setRoster] = useState<Roster[]>([])
-  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
-  return <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => { window.location.href = '/plan?tab=people' }} />
-}
-
 // ── THE DAY IN ONE SENTENCE (Jon, 2026-08-31: "we need AI to learn how many tasks are doable,
 // how long things should take"). The learning already happened — lib/capacity measures clean
 // duration per market and bedroom count and each person's real day — this strip is where the
@@ -235,10 +226,8 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | nu
     // The model recommends; a person commits. Assign-kind moves file through the same endpoint
     // every other assign on this page uses. Move-kind stays a recommendation — moving a task
     // between people mid-day is a conversation, not a click.
-    const n = s.toPerson.toLowerCase()
-    const hit = roster.find(r => r.name.toLowerCase() === n)
-      || roster.find(r => r.name.toLowerCase().includes(n.split(' ')[0]) && n.split(' ')[0].length > 3)
-    if (!hit) { setErr('Could not match "' + s.toPerson + '" to the Breezeway roster — assign from the board instead.'); return }
+    const hit = matchRoster(roster, s.toPerson)
+    if (!hit.ok) { setErr(hit.reason); return }
     setBusy(s.stopId + s.toPerson); setErr('')
     try {
       const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: s.stopId, assigneeIds: [hit.id] }) })
@@ -320,25 +309,16 @@ function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing |
   const lanes = useMemo(() => {
     const people = staff?.people || []
     return people.map(p => {
-      const alias = (p.bzAlias || p.name).toLowerCase()
-      const mine = allTasks.filter(t => t.assignees.some(a => {
-        const an = a.toLowerCase()
-        return an === alias || an.includes(alias.split(' ')[0]) && alias.split(' ')[0].length > 3
-      }))
+      const mine = allTasks.filter(t => t.assignees.some(a => samePerson(a, p.bzAlias || p.name) || samePerson(a, p.name)))
       const done = mine.filter(t => t.done).length
       return { p, mine, done }
     }).sort((a, b) => (a.p.clockedIn ? 0 : 1) - (b.p.clockedIn ? 0 : 1) || (a.mine.length === 0 ? 0 : 1) - (b.mine.length === 0 ? 0 : 1))
   }, [staff, allTasks])
 
-  const rosterIdFor = (name: string): number | null => {
-    const n = name.toLowerCase()
-    const hit = roster.find(r => r.name.toLowerCase() === n) || roster.find(r => r.name.toLowerCase().includes(n.split(' ')[0]) && n.split(' ')[0].length > 3)
-    return hit ? hit.id : null
-  }
-
   const pushTo = async (person: StaffPerson, task: Task & { unit: string }) => {
-    const rid = rosterIdFor(person.bzAlias || person.name)
-    if (!rid) { setErr(e => ({ ...e, [person.name]: 'Could not match "' + person.name + '" to the Breezeway roster — assign from the Grid instead.' })); return }
+    const m = matchRoster(roster, person.bzAlias || person.name)
+    if (!m.ok) { setErr(e => ({ ...e, [person.name]: m.reason })); return }
+    const rid = m.id
     setBusyKey(person.name + task.id); setErr(e => ({ ...e, [person.name]: '' }))
     try {
       const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: task.id, assigneeIds: [rid] }) })
@@ -360,11 +340,7 @@ function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing |
         const pct = mine.length ? Math.round((done / mine.length) * 100) : 0
         // The model's pricing of this person's day, when it knows them. Matched by name the same
         // loose way lanes match tasks — both sides ultimately come from Homebase names.
-        const pn = p.name.toLowerCase()
-        const price = (cap?.people || []).find(c => {
-          const cn = c.person.toLowerCase()
-          return cn === pn || (cn.includes(pn.split(' ')[0]) && pn.split(' ')[0].length > 3)
-        }) || null
+        const price = (cap?.people || []).find(c => samePerson(c.person, p.name) || samePerson(c.person, p.bzAlias)) || null
         return (
           <div key={p.name} className={'rounded-2xl border overflow-hidden ' + (idle ? 'border-amber-300' : 'border-line')}>
             <div className="flex items-center gap-3 px-4 py-2.5 bg-white flex-wrap">
