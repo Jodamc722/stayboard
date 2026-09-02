@@ -4,6 +4,7 @@
 import { Shell } from '@/components/Shell'
 import { ScheduleBoard } from '@/components/ScheduleBoard'
 import { LaborStrip } from '@/components/LaborStrip'
+import { CapacityPanel } from '@/components/OpsV2'
 import { CalendarRange } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -18,6 +19,10 @@ export default function SchedulePage() {
       </header>
 
       <LaborStrip />
+      {/* IS THE DAY DOABLE — the measured capacity model (lib/capacity), pointed at whichever day
+          is being planned. The board below decides WHO takes each clean; this line says whether
+          the day fits at all, before anyone starts assigning. */}
+      <div className="mb-4"><CapacityPanel pager /></div>
       <ScheduleBoard />
     </Shell>
   )

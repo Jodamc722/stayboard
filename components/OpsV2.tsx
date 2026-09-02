@@ -208,6 +208,36 @@ export function OpsV2() {
 // how long things should take"). The learning already happened — lib/capacity measures clean
 // duration per market and bedroom count and each person's real day — this strip is where the
 // answer finally faces the person deciding. One line; the moves live behind the chevron.
+// The Turnover Schedule's door to the same strip. Self-feeding, with its own ‹ date › pager —
+// the Scheduler plans TOMORROW, and "does Thursday fit the people we have on Thursday" is
+// exactly the question the model answers. Mount with <CapacityPanel pager />.
+export function CapacityPanel({ pager }: { pager?: boolean }) {
+  const todayYmd = ymdET(new Date())
+  const [date, setDate] = useState(todayYmd)
+  const isToday = date === todayYmd
+  const { data: cap, refresh } = useCachedFetch<CapData>(
+    isToday ? '/api/capacity' : `/api/capacity?date=${date}`, { ttl: 5 * 60_000 })
+  const [roster, setRoster] = useState<Roster[]>([])
+  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  const strip = <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => { window.location.href = '/plan' }} />
+  if (!pager) return strip
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1">
+        <span className="text-[11px] uppercase tracking-wide font-semibold text-muted">
+          Can {isToday ? 'today' : new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' })} hold its plan?
+        </span>
+        <span className="ml-auto inline-flex items-center rounded-lg border border-line bg-white overflow-hidden">
+          <button onClick={() => setDate(d => shiftYmd(d, -1))} className="px-1.5 py-1 text-muted hover:text-ink hover:bg-app" title="Previous day"><ChevronLeft size={12} /></button>
+          {!isToday && <button onClick={() => setDate(todayYmd)} className="px-2 py-1 text-[11px] font-bold text-brand-700 hover:bg-brand-50 border-x border-line">Today</button>}
+          <button onClick={() => setDate(d => shiftYmd(d, 1))} className="px-1.5 py-1 text-muted hover:text-ink hover:bg-app" title="Next day"><ChevronRight size={12} /></button>
+        </span>
+      </div>
+      {strip}
+    </div>
+  )
+}
+
 function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | null; roster: Roster[]; onRefresh: () => void; onPeople: () => void }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState('')
