@@ -199,6 +199,20 @@ function niceDay(iso: string): string {
 }
 
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
+
+/**
+ * One key for one human, across two systems that spell people differently.
+ *
+ * Collapses runs of whitespace, strips diacritics (this is a South-Florida crew; half the roster
+ * has an accent somewhere) and lowercases. Used for every people-mode comparison, so a name only
+ * has to match a person, not a byte sequence.
+ */
+const personKey = (v: any): string =>
+  String(v ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
 const isReal = (t: GTask) => !t.guestyOnly && /^\d+$/.test(String(t.id))
 function daysBetween(a: string, b: string) { const x = new Date(a + 'T12:00:00'), y = new Date(b + 'T12:00:00'); return Math.round((+y - +x) / 86400000) }
 function shortTime(iso: string | null): string {
@@ -926,12 +940,26 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     }
     // PEOPLE AXIS — the same day, re-pivoted. Unassigned work is a row of its own and sorts to the
     // top: it is the only row on this screen nobody is carrying, which makes it the first question.
+    // ── ONE PERSON, ONE KEY ───────────────────────────────────────────────────────────────────
+    // Names arrive from two systems that do not agree about spacing or accents: Breezeway writes
+    // the assignee string on the task, Homebase writes the shift. Keying this map on the RAW string
+    // meant "Gehron Regis" and "Gehron  Regis" were two different people carrying half a day each,
+    // and — worse — the idle check below could not see either of them, so somebody with nineteen
+    // jobs also appeared as a Free row.
+    //
+    // Normalise on the way in, keep the first spelling seen for display.
     const byPerson: Record<string, GTask[]> = {}
+    const displayOf: Record<string, string> = {}
     const unassigned: GTask[] = []
     for (const u of units) for (const t of u.tasks) {
       if (!catMatch(t)) continue
       if (!t.assignees.length) { if (!t.done) unassigned.push(t); continue }
-      for (const n of t.assignees) (byPerson[n] = byPerson[n] || []).push(t)
+      for (const n of t.assignees) {
+        const k = personKey(n)
+        if (!k) continue
+        if (!displayOf[k]) displayOf[k] = String(n).replace(/\s+/g, ' ').trim()
+        ;(byPerson[k] = byPerson[k] || []).push(t)
+      }
     }
     // ── ANYONE ON SHIFT WITH NOTHING ON THEM STILL EXISTS ────────────────────────────────────
     // People mode was built purely by re-pivoting today's TASKS on the assignee string, so somebody
@@ -940,15 +968,19 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     // staffing payload, fetched two lines above where this component is mounted and never passed in.
     const idleNames: string[] = []
     for (const sp of (staff?.people || [])) {
-      const nm = String(sp?.name || '').trim()
+      const nm = String(sp?.name || '').replace(/\s+/g, ' ').trim()
       if (!nm) continue
       if (!(sp.clockedIn || sp.shift)) continue
-      const known = Object.keys(byPerson).some(k => k.toLowerCase() === nm.toLowerCase())
+      // The alias exists because the two systems genuinely disagree about some people's names, and
+      // ignoring it is how a working person got called free. Either spelling counts as "known".
+      const keys = [personKey(nm), personKey(sp.bzAlias)].filter(Boolean)
+      const known = keys.some(k => !!byPerson[k])
       if (!known) idleNames.push(nm)
     }
 
-    const out: Row[] = Object.keys(byPerson).sort().map(name => {
-      const tasks = byPerson[name]
+    const out: Row[] = Object.keys(byPerson).sort((a, b) => (displayOf[a] || a).localeCompare(displayOf[b] || b)).map(key => {
+      const name = displayOf[key] || key
+      const tasks = byPerson[key]
       const doneN = tasks.filter(t => t.done).length
       const running = tasks.filter(t => t.running && !t.done).length
       const late = tasks.filter(t => t.late).length
@@ -958,7 +990,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         : running
           ? { label: 'Working', cls: 'bg-amber-50 text-amber-800 border-amber-200' }
           : { label: 'Not started', cls: 'bg-app text-muted border-line' }
-      const roles = roster.find(p => p.name.toLowerCase() === name.toLowerCase())
+      const roles = roster.find(p => personKey(p.name) === key)
       return {
         key: 'p:' + name, title: name,
         sub: (roles && roles.departments && roles.departments.length ? roles.departments.join(' · ') : ''),
@@ -971,10 +1003,10 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     // Free people sort just under the unassigned pile — the two rows a coordinator needs to put
     // together are then adjacent, which is the whole point of showing them at all.
     for (const nm of idleNames.sort()) {
-      const sp = (staff?.people || []).find(x => String(x?.name || '').toLowerCase() === nm.toLowerCase())
+      const sp = (staff?.people || []).find(x => personKey(x?.name) === personKey(nm))
       out.push({
         key: 'p:free:' + nm, title: nm,
-        sub: (roster.find(p => p.name.toLowerCase() === nm.toLowerCase())?.departments || []).join(' · '),
+        sub: (roster.find(p => personKey(p.name) === personKey(nm))?.departments || []).join(' · '),
         reservation: sp?.clockedIn ? 'On the clock, nothing assigned' : 'On shift, nothing assigned',
         status: { label: 'Free', cls: 'bg-brand-50 text-brand-700 border-brand-200' },
         tasks: [], issues: [], gapNights: null,
