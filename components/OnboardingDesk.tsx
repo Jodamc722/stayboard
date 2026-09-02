@@ -199,7 +199,7 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
   }
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-white w-full sm:max-w-4xl max-h-[92vh] rounded-t-2xl sm:rounded-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-white w-full sm:max-w-5xl max-h-[92vh] rounded-t-2xl sm:rounded-2xl flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-line flex items-center gap-3 flex-wrap">
           <div>
             <h2 className="text-[17px] font-bold text-ink">Inventory standard</h2>
@@ -222,15 +222,15 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
               <tbody className="divide-y divide-line">
                 {rows.map((it, i) => (
                   <tr key={i}>
-                    <td className="py-1.5 pr-2"><input value={it.name} onChange={e => update(i, { name: e.target.value })} className={INPUT + ' w-full py-1.5'} placeholder="Item name" /></td>
-                    <td className="py-1.5 pr-2"><select value={it.category} onChange={e => update(i, { category: e.target.value as Category })} className={INPUT + ' py-1.5'}>{CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}</select></td>
-                    <td className="py-1.5 pr-2"><input type="number" step={it.perGuest ? 0.5 : 1} min={0} value={it.qty} onChange={e => update(i, { qty: Number(e.target.value) || 0 })} className={INPUT + ' w-20 py-1.5'} /></td>
+                    <td className="py-1.5 pr-2 min-w-[220px]"><input value={it.name} onChange={e => update(i, { name: e.target.value })} className={INPUT + ' w-full py-1.5'} placeholder="Item name" /></td>
+                    <td className="py-1.5 pr-2"><select value={it.category} onChange={e => update(i, { category: e.target.value as Category })} className={INPUT + ' py-1.5 text-[12.5px]'}>{CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}</select></td>
+                    <td className="py-1.5 pr-2"><input type="number" step={it.perGuest ? 0.5 : 1} min={0} value={it.qty} onChange={e => update(i, { qty: Number(e.target.value) || 0 })} className={INPUT + ' w-16 py-1.5'} /></td>
                     <td className="py-1.5 pr-2 whitespace-nowrap">
                       <select value={it.perGuest ? 'per' : 'fixed'} onChange={e => update(i, { perGuest: e.target.value === 'per' })} className={INPUT + ' py-1.5'}><option value="fixed">fixed</option><option value="per">× guests</option></select>
                       {it.perGuest && <label className="ml-1.5 text-[12px] text-muted">+ <input type="number" value={it.plus ?? 0} onChange={e => update(i, { plus: Number(e.target.value) || 0 })} className={INPUT + ' w-14 py-1.5'} /></label>}
                     </td>
                     <td className="py-1.5 pr-2 whitespace-nowrap"><input type="number" value={it.min ?? ''} placeholder="–" onChange={e => update(i, { min: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-14 py-1.5'} /> / <input type="number" value={it.max ?? ''} placeholder="–" onChange={e => update(i, { max: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-14 py-1.5'} /></td>
-                    <td className="py-1.5 pr-2"><select value={it.only || ''} onChange={e => update(i, { only: (e.target.value || undefined) as any })} className={INPUT + ' py-1.5'}><option value="">always</option>{ONLY_KEYS.map(k => <option key={k} value={k}>{ONLY_LABEL[k]}</option>)}</select></td>
+                    <td className="py-1.5 pr-2"><select value={it.only || ''} onChange={e => update(i, { only: (e.target.value || undefined) as any })} className={INPUT + ' py-1.5 text-[12.5px] max-w-[150px]'}><option value="">always</option>{ONLY_KEYS.map(k => <option key={k} value={k}>{ONLY_LABEL[k]}</option>)}</select></td>
                     <td className="py-1.5 pr-2 text-right font-bold tabular-nums">{qtyFor(it, occ)}</td>
                     <td className="py-1.5"><button onClick={() => remove(i)} className="w-8 h-8 rounded-lg border border-line text-muted grid place-items-center" aria-label="Remove"><Trash2 size={13} /></button></td>
                   </tr>
