@@ -275,79 +275,13 @@ export async function getShifts(date: string, tz = 'America/New_York'): Promise<
 // case-insensitive, first name + first letter of last name when present.
 // ---------------------------------------------------------------------------
 
-const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
-
-// Small edit distance for typo tolerance ('Rodiguez' vs 'Rodriguez',
-// 'Yunisleydi' vs 'Yunisleidy'). Names come from two systems typed by hand.
-function editDist(a: string, b: string): number {
-  const m = a.length, n = b.length
-  if (!m) return n
-  if (!n) return m
-  let prev: number[] = []
-  for (let j = 0; j <= n; j++) prev[j] = j
-  for (let i = 1; i <= m; i++) {
-    const cur: number[] = [i]
-    for (let j = 1; j <= n; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
-    }
-    prev = cur
-  }
-  return prev[n]
-}
-
-const nearWord = (x: string, y: string): boolean => {
-  if (x === y) return true
-  if (x.length < 4 || y.length < 4) return false
-  return editDist(x, y) <= (Math.min(x.length, y.length) >= 6 ? 2 : 1)
-}
-
-// Same person if first names match (exact or a typo apart) and last names agree
-// (same word, a typo apart, or at least the same initial). Tolerates double
-// spaces, accents, and swapped first/last order.
-// TOKENS THAT NAME A PERSON, nothing else (Jon, 2026-09-01: "if you see the same name even if
-// 'different user', be smart enough to assume it's the same human"). Generational suffixes and
-// middle initials are how one person becomes two on a board: the staff table really did carry
-// "Anthony Perry" and "Anthony Perry III" as separate people. A suffix or a lone initial is
-// dropped BEFORE comparing — unless that would empty the name entirely.
-const SUFFIX_RE = /^(jr|sr|ii|iii|iv|v)\.?$/
-const nameTokens = (s: string): string[] => {
-  const all = norm(s).split(/\s+/).filter(Boolean)
-  const kept = all.filter(t => !SUFFIX_RE.test(t) && t.length > 1)
-  return kept.length ? kept : all
-}
-
-export function nameMatches(a: string, b: string): boolean {
-  const A = nameTokens(a)
-  const B = nameTokens(b)
-  if (!A.length || !B.length) return false
-  if (A.join(' ') === B.join(' ')) return true
-  const af = A[0], bf = B[0]
-  const al = A.length > 1 ? A[A.length - 1] : ''
-  const bl = B.length > 1 ? B[B.length - 1] : ''
-  const firstOk = nearWord(af, bf)
-  if (firstOk && (!al || !bl)) return true            // only a first name on one side
-  const lastOk = !!al && !!bl && (nearWord(al, bl) || al[0] === bl[0])
-  if (firstOk && lastOk) return true
-  // swapped order ('Perez Yunisleidy')
-  return !!al && !!bl && nearWord(af, bl) && nearWord(al, bf)
-}
-
-// Roster-aware last-ditch match: an external (Breezeway) name whose FIRST name
-// matches exactly ONE person on the Homebase roster counts as that person, even
-// when the last names disagree - catches married/maiden-name drift between the
-// two systems ('Shaany Espinoza' vs 'Shaany Christian'). Ambiguous first names
-// (two Marias) never match this way. Returns the roster name, or null.
-export function nameMatchesRoster(external: string, roster: string[]): string | null {
-  for (const r of roster) if (nameMatches(external, r)) return r
-  const ef = norm(external).split(/\s+/).filter(Boolean)[0]
-  if (!ef || ef.length < 4) return null
-  const hits: string[] = []
-  for (const r of roster) {
-    const rf = norm(r).split(/\s+/).filter(Boolean)[0]
-    if (rf && nearWord(ef, rf) && hits.indexOf(r) < 0) hits.push(r)
-  }
-  return hits.length === 1 ? hits[0] : null
-}
+// NAME MATCHING MOVED TO lib/person-name.ts (2026-09-02).
+// It was only ever here by accident of where it was first needed, and being here meant the browser
+// could not use it — which is how the People board grew its own weaker copy and showed a man with
+// nineteen jobs as Free. Re-exported so every existing import keeps working.
+export { personKey, nameTokens, bestSpelling } from './person-name'
+import { norm, nameMatches, nameMatchesRoster } from './person-name'
+export { nameMatches, nameMatchesRoster, norm }
 
 export type StaffingCheck = {
   onShift: Shift[]
