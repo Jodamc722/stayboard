@@ -97,7 +97,7 @@ export function bedsFor(d: UnitDetails, roomKey: string): BedSize[] {
 }
 
 export type Tier = 'must' | 'recommended' | 'suggested'
-export const TIER_LABEL: Record<Tier, string> = { must: 'Must have', recommended: 'Recommended', suggested: 'Suggested' }
+export const TIER_LABEL: Record<Tier, string> = { must: 'Must have', recommended: 'Recommended', suggested: 'Nice to have' }   // Jon: must = the amenities (plates…); recommended = a blender; nice to have = board games
 export const TIERS: Tier[] = ['must', 'recommended', 'suggested']
 
 export type RoomDef = { key: string; name: string; kind: RoomKind; sort: number }
@@ -205,10 +205,12 @@ export const DEFAULT_STANDARD: InventoryStandard = {
     S(F('Board games / books', 'other', 3)), S(F('Charging station / USB', 'electronics', 1)), S(F('Bluetooth speaker', 'electronics', 1)), S(F('Plants / greenery', 'decor', 2)),
   ],
   kitchen: [
-    // appliances — asked in the pre-form; present only when ticked
-    A('fridge', 'Full refrigerator'), A('mini_fridge', 'Mini fridge'), A('stove_oven', 'Stove / oven'), A('cooktop', 'Cooktop'), A('oven', 'Wall / toaster oven'),
-    A('microwave', 'Microwave'), A('dishwasher', 'Dishwasher'), A('coffee', 'Coffee maker'), A('espresso', 'Espresso machine'), A('toaster', 'Toaster'), A('kettle', 'Kettle'),
-    A('blender', 'Blender'), A('air_fryer', 'Air fryer'), A('wine_fridge', 'Wine fridge'), A('ice_maker', 'Ice maker'), A('disposal', 'Garbage disposal'), A('rice_cooker', 'Rice cooker'), A('slow_cooker', 'Slow cooker / Instant Pot'),
+    // appliances — asked in the pre-form; present only when ticked. Tiered the way Jon reads them
+    // (2026-09-02: "the must haves are your amenities — plates etc. Recommended would be blender"):
+    // must = what a guest expects to find; recommended = nice to have; suggested = extras.
+    A('fridge', 'Full refrigerator'), A('mini_fridge', 'Mini fridge'), A('stove_oven', 'Stove / oven'), A('cooktop', 'Cooktop'), A('microwave', 'Microwave'), A('coffee', 'Coffee maker'),
+    A('dishwasher', 'Dishwasher', 'recommended'), A('toaster', 'Toaster', 'recommended'), A('kettle', 'Kettle', 'recommended'), A('blender', 'Blender', 'recommended'), A('oven', 'Wall / toaster oven', 'recommended'), A('disposal', 'Garbage disposal', 'recommended'),
+    A('espresso', 'Espresso machine', 'suggested'), A('air_fryer', 'Air fryer', 'suggested'), A('wine_fridge', 'Wine fridge', 'suggested'), A('ice_maker', 'Ice maker', 'suggested'), A('rice_cooker', 'Rice cooker', 'suggested'), A('slow_cooker', 'Slow cooker / Instant Pot', 'suggested'),
     // table setting — 2 × max occupancy, counted piece by piece
     G('Dinner plates', 'kitchen', 2, TWO), G('Salad / side plates', 'kitchen', 2, TWO), G('Bowls', 'kitchen', 2, TWO), G('Mugs', 'kitchen', 2, TWO),
     G('Water glasses', 'kitchen', 2, TWO), G('Wine glasses', 'kitchen', 2, { min: 6, max: 16 }),
