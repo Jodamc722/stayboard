@@ -375,7 +375,7 @@ function NextRow({ item: i, rail, roster, onChanged }: { item: NextItem; rail: s
             <span className="text-[13px] text-ink/85">{i.title}</span>
           </div>
           <p className="text-[12px] text-muted mt-0.5 leading-snug">{i.why}</p>
-          {i.evidence && <p className="text-[12px] text-ink/70 italic mt-0.5 leading-snug">&ldquo;{i.evidence.quote}&rdquo; <span className="not-italic text-muted">— {i.evidence.stars != null ? i.evidence.stars + '★ · ' : ''}{i.evidence.channel}{i.evidence.date ? ' · ' + i.evidence.date : ''}</span></p>}
+          {i.evidence && <p className="text-[12px] text-ink/70 italic mt-0.5 leading-snug">&ldquo;{i.evidence.quote}&rdquo; <span className="not-italic text-muted">— {i.evidence.stars != null ? (/booking/i.test(i.evidence.channel) ? Math.round(i.evidence.stars * 20) / 10 + '/10 · ' : i.evidence.stars + '★ · ') : ''}{i.evidence.channel}{i.evidence.date ? ' · ' + i.evidence.date : ''}</span></p>}
           {err && <p className="text-[11.5px] text-rose-600 font-semibold mt-1">{err}</p>}
           {done && <p className="text-[11.5px] text-emerald-700 font-semibold mt-1 inline-flex items-center gap-1"><Check size={12} /> {done}</p>}
         </div>
