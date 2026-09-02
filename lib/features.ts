@@ -65,6 +65,10 @@ export const FEATURES: Feature[] = [
   // FF&E Audit (2026-08-10, Jon): one phone link per unit, room by room, EN/ES. A furniture
   // PURCHASING list — deliberately not wired to Breezeway, maintenance or billing.
   { key: 'ffe',           label: 'FF&E Audit',        path: '/ffe', group: 'Operations' },
+  // Onboarding (2026-09-02, Jon): one public link per NEW unit — details → generated rooms →
+  // inventory + room photos — before the unit exists in Guesty; assigned to the listing when it
+  // goes live. /onboard/<code> is the phone side and stays public (OPEN_PREFIXES).
+  { key: 'onboarding',    label: 'Onboarding',        path: '/onboarding', group: 'Operations' },
   { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Portfolio' },
   // Share Links hub (2026-08-18, Jon): "a place where I can create those links based on
   // properties, units, owners and customize them to show different information." Carries live
@@ -160,6 +164,9 @@ export const OPEN_PREFIXES = [
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
   '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/', '/share/',
   '/order/', '/orders-live',
+  // ONBOARDING INVENTORY (Jon, 2026-09-02). /onboard/<code> is a capability link like /walk and
+  // /audit: the code resolves to one onboarding unit, the API checks it on every call.
+  '/onboard/',
   // FIELD BOARDS (Jon, 2026-08-25). /board/<code> is a share link like any other: the code is the
   // capability and the board carries its own passcode, checked server-side in
   // /api/public/field-board. Open here so a cleaner with no Lighthouse account can open the link
@@ -294,7 +301,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq', 'guest-orders'] },
+    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq', 'guest-orders'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
