@@ -55,7 +55,7 @@ const isGone = (s: string) => /delete|cancel/.test(s)
 export type OpsDay = Awaited<ReturnType<typeof buildOpsDay>>
 
 /** Build the Today-in-Ops picture for a date (YYYY-MM-DD, ET) — today when null/invalid. */
-export async function buildOpsDay(dateParam: string | null) {
+export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?: boolean } = {}) {
   const db = supabaseAdmin()
   // Vendor buildings + the 4pm deadline are operator-editable (/users -> Ops presets).
   const presets = await getOpsPresets()
@@ -380,5 +380,10 @@ export async function buildOpsDay(dateParam: string | null) {
   // lastSync tells the coordinator how fresh the vacancy picture is — a stale list is how walk-ins happen
   const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
   const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-  return { ok: true as const, today, isToday, nowMin, lastSync, categories: taskCats, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm, pulse }
+  // The listing map is only shipped when asked for (the Command Center engine reads it in-process
+  // so it does not re-read guesty_listings); the board route never pays for it.
+  const listingMeta = opts.includeMeta
+    ? Object.fromEntries(Object.entries(lmap).map(([id, l]) => [id, { name: l.name, market: l.market, building: l.building, active: l.active }]))
+    : undefined
+  return { ok: true as const, today, isToday, nowMin, lastSync, categories: taskCats, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm, pulse, listingMeta }
 }
