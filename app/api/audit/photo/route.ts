@@ -2,6 +2,7 @@
 // public audit-photos bucket and asks Sonnet vision to identify the item + condition. AI only
 // ASSISTS - the inspector decides what happens with the item (Jon's rule).
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyUploadToken } from '@/lib/upload-token'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
 
@@ -52,8 +53,15 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin()
   let form: FormData
   try { form = await req.formData() } catch { return NextResponse.json({ error: 'multipart form expected' }, { status: 400 }) }
+  // TWO KEYS, ONE DOOR. A share code is the audit's full authority and belongs to people already
+  // inside the walk. The public field-request form gets an `uploadToken` instead: signed, expiring,
+  // scoped to one audit, and good for nothing but this endpoint. See lib/upload-token.ts.
   const code = String(form.get('code') || '')
-  const { data: audits } = await db.from('property_audits').select('*').eq('share_code', code).limit(1)
+  const tokenAuditId = verifyUploadToken(String(form.get('uploadToken') || ''))
+  const q = db.from('property_audits').select('*')
+  const { data: audits } = tokenAuditId
+    ? await q.eq('id', tokenAuditId).limit(1)
+    : await q.eq('share_code', code).limit(1)
   const audit = audits && audits[0]
   if (!audit) return NextResponse.json({ error: 'invalid audit link' }, { status: 401 })
   const file = form.get('file') as File | null
