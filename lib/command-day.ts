@@ -44,6 +44,7 @@ import { marketOf } from './segments'
 import { STAGE_LABEL as CLAIM_STAGE_LABEL } from './claims'
 import { getOpsPresets } from './app-settings'
 import { noBreezewayRegex } from './ops-presets'
+import { ratingDisplay } from './review-scale'
 
 const str = (v: any) => String(v ?? '').trim()
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -51,7 +52,10 @@ const shift = (d: string, n: number) => ymd(new Date(Date.parse(d + 'T12:00:00Z'
 const DONE = /\b(complete|finish|close|approv)/i
 const GONE = /\b(cancel|delet|void)/i
 const INSPECT = /inspect|unit check|quality/i
-const norm5 = (v: any) => { const n = Number(v); return Number.isFinite(n) ? (n > 5 ? n / 2 : n) : NaN }
+// Ratings are STORED on the 5-star scale (lib/review-scale — Booking is /2 at sync), so no halving
+// here; only the DISPLAY string goes back to the channel's native scale.
+const norm5 = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : NaN }
+const starsText = (v: any, ch: any) => ratingDisplay(norm5(v), ch) + (/booking/i.test(str(ch)) ? '' : '★')
 
 export const DISMISS_KEY = 'command_dismissed'
 
@@ -285,7 +289,6 @@ export async function buildCommandDay(): Promise<CommandDay> {
 
   // ── 2. ARRIVALS: big arrivals → inspection cover; feedback; pending work in the unit ─────────
   const bigValue = automation.bigValue || 1000
-  const bigNights = automation.bigNights || 7
   const inspByRes = new Set(autoInsp.filter((a: any) => a.task_id).map((a: any) => str(a.reservation_id)))
   // Done inspections in the last 30 days, per listing (covered even if nothing is open).
   let doneInsp: Record<string, string> = {}
@@ -300,6 +303,10 @@ export async function buildCommandDay(): Promise<CommandDay> {
 
   const arrivalRows: ArrivalRow[] = []
   let missingInspection = 0
+  // A building that is not in Breezeway (Botanica) cannot take a task from here — the row still
+  // shows, the action does not. Same ops-presets rule the board uses for untracked cleans.
+  const noBzRe = noBreezewayRegex(presets.vendorBuildings)
+  const canFile = (lid: string) => { const m = meta[lid]; return !m || !noBzRe.test(m.building + ' ' + m.name) }
   const seenFeedbackUnit = new Set<string>()
   for (const r of arrivalsAll) {
     const lid = str(r.listing_id)
@@ -307,7 +314,8 @@ export async function buildCommandDay(): Promise<CommandDay> {
     const checkIn = str(r.check_in).slice(0, 10)
     const value = Number(r.money_total) || 0
     const nights = Number(r.nights) || 0
-    const big = value >= bigValue || nights >= bigNights
+    // VALUE ONLY (Jon, 2026-08-22): a long cheap stay is not a big arrival.
+    const big = value >= bigValue
     const openInsp = (openByListing[lid] || []).find((t: any) => INSPECT.test(str(t.name)))
     const inspection: ArrivalRow['inspection'] = openInsp ? 'open' : (doneInsp[lid] || inspByRes.has(str(r.id))) ? 'done' : 'none'
     const welcomeDone = truthy(fieldVal(r.custom_fields, 'welcome'))
@@ -322,7 +330,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
         unit, listingId: lid, market: marketOfId(lid),
         title: 'Big arrival ' + (checkIn === today ? 'today' : 'tomorrow') + ' with no pre-arrival inspection',
         why: str(r.guest_name || 'Guest') + ' · ' + nights + ' nights · $' + Math.round(value).toLocaleString('en-US') + '. No inspection open or completed on this unit in 30 days.',
-        action: { type: 'create_task', label: 'Create inspection', payload: {
+        action: !canFile(lid) ? null : { type: 'create_task', label: 'Create inspection', payload: {
           listingId: lid, title: 'Pre-arrival inspection — ' + unit + ' (big arrival)', department: 'inspection', priority: 'high', date: today,
           description: 'Pre-arrival inspection for a big arrival: ' + str(r.guest_name || 'Guest') + ', ' + nights + ' nights, $' + Math.round(value).toLocaleString('en-US') + ', checking in ' + checkIn + '. Walk the unit against the listing photos, test every appliance and the A/C, confirm consumables and linens, and photograph anything below standard.\n\nProposed by Lighthouse Command Center (big arrival).',
         } },
@@ -330,9 +338,17 @@ export async function buildCommandDay(): Promise<CommandDay> {
     }
     // Guest feedback: the worst of the last five reviews, when it is ≤3★.
     if (!seenFeedbackUnit.has(lid)) {
-      const last5 = (reviewsByListing[lid] || []).slice(0, 5)
+      // The worst of the last five reviews — but only when it is RECENT (180 days) and either bad
+      // (≤2★) or names a defect we can send someone to look at. 100 of 287 units carry some ≤3★ in
+      // their last five; without this bar every arrival day became a wall of "feedback" rows.
+      const last5 = (reviewsByListing[lid] || []).slice(0, 5).filter(rv => str(rv.created_at).slice(0, 10) >= shift(today, -180))
       let worst: any = null
-      for (const rv of last5) { const n = norm5(rv.rating); if (Number.isFinite(n) && n <= 3 && (!worst || n < norm5(worst.rating))) worst = rv }
+      for (const rv of last5) {
+        const n = norm5(rv.rating)
+        if (!Number.isFinite(n) || n > 3) continue
+        if (n > 2 && keywordsOf(str(rv.content)).length === 0) continue
+        if (!worst || n < norm5(worst.rating)) worst = rv
+      }
       if (worst) {
         seenFeedbackUnit.add(lid)
         const quote = str(worst.content).replace(/\s+/g, ' ').slice(0, 220)
@@ -341,21 +357,25 @@ export async function buildCommandDay(): Promise<CommandDay> {
         push({
           key: 'fb:' + lid + ':' + str(worst.id), kind: 'feedback', severity: checkIn === today ? 'today' : 'soon', rank: checkIn === today ? 3 : 7,
           unit, listingId: lid, market: marketOfId(lid),
-          title: 'Guest arrives ' + (checkIn === today ? 'today' : 'tomorrow') + ' into a unit with a ' + norm5(worst.rating) + '★ review' + (kw.length ? ' about ' + kw.join(', ') : ''),
+          title: 'Guest arrives ' + (checkIn === today ? 'today' : 'tomorrow') + ' into a unit with a ' + starsText(worst.rating, worst.channel) + ' review' + (kw.length ? ' about ' + kw.join(', ') : ''),
           why: covered ? 'An inspection is already ' + (openInsp ? 'open' : 'done') + ' on this unit — check it covered the complaint.' : 'Nothing open on this unit addresses it. A targeted look before the guest lands is the cheapest fix.',
           evidence: { quote, stars: norm5(worst.rating), date: str(worst.created_at).slice(0, 10), channel: str(worst.channel) },
           action: covered && openInsp
             ? { type: 'open', href: 'https://app.breezeway.io/task/' + str(openInsp.id), label: 'Open inspection', external: true }
+            : !canFile(lid) ? null
             : { type: 'create_task', label: 'Create inspection', payload: {
                 listingId: lid, title: 'Quality inspection — ' + unit + (kw.length ? ' (' + kw[0] + ')' : ''), department: 'inspection', priority: 'high', date: today,
-                description: 'Quality inspection before ' + str(r.guest_name || 'Guest') + ' arrives ' + checkIn + '.\n\nLook specifically at' + (kw.length ? ': ' + kw.join(', ') : ' the areas the guest named') + '.\nRecent guest feedback (' + norm5(worst.rating) + '★, ' + str(worst.channel) + ', ' + str(worst.created_at).slice(0, 10) + '): “' + quote + '”\n\nProposed by Lighthouse Command Center (guest feedback).',
+                description: 'Quality inspection before ' + str(r.guest_name || 'Guest') + ' arrives ' + checkIn + '.\n\nLook specifically at' + (kw.length ? ': ' + kw.join(', ') : ' the areas the guest named') + '.\nRecent guest feedback (' + starsText(worst.rating, worst.channel) + ', ' + str(worst.channel) + ', ' + str(worst.created_at).slice(0, 10) + '): “' + quote + '”\n\nProposed by Lighthouse Command Center (guest feedback).',
               } },
           bzTaskId: openInsp ? str(openInsp.id) : null,
         })
       }
     }
     // Pending open work in the unit (not today's cleans/strips).
-    const pend = (openByListing[lid] || []).filter((t: any) => !/departure clean|strip|walkthrough/i.test(str(t.name)) && str(t.scheduled_date).slice(0, 10) <= checkIn)
+    // Only the backlog counts as "pending": work scheduled BEFORE the arrival day and still open,
+    // or work with nobody on it. Today's planned tasks are already on the Tasks tile.
+    const pend = (openByListing[lid] || []).filter((t: any) => !/departure clean|strip|walkthrough/i.test(str(t.name))
+      && (str(t.scheduled_date).slice(0, 10) < checkIn || !(Array.isArray(t.assignees) && t.assignees.length)) && str(t.scheduled_date).slice(0, 10) <= checkIn)
     if (pend.length) {
       const names = pend.map((t: any) => str(t.name).replace(/^\[moved to [^\]]+\]\s*/i, '')).slice(0, 3)
       const un = pend.find((t: any) => !(Array.isArray(t.assignees) && t.assignees.length))
@@ -363,25 +383,25 @@ export async function buildCommandDay(): Promise<CommandDay> {
         key: 'pend:' + str(r.id), kind: 'pending', severity: checkIn === today ? 'today' : 'soon', rank: checkIn === today ? 4 : 8,
         unit, listingId: lid, market: marketOfId(lid),
         title: pend.length + ' open task' + (pend.length === 1 ? '' : 's') + ' in a unit a guest lands in ' + (checkIn === today ? 'today' : 'tomorrow'),
-        why: names.join(' · ') + (pend.length > 3 ? ' · +' + (pend.length - 3) + ' more' : '') + (un ? ' — at least one has nobody on it.' : '.'),
+        why: names.join(' · ') + (pend.length > 3 ? ' · +' + (pend.length - 3) + ' more' : '') + ' — scheduled ' + pend.map((t: any) => str(t.scheduled_date).slice(5)).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i).slice(0, 3).join(', ') + (un ? '; at least one has nobody on it.' : '.'),
         action: un ? { type: 'assign', taskId: str(un.id), dept: deptOf(un.type_department), label: 'Assign' } : { type: 'open', href: 'https://app.breezeway.io/task/' + str(pend[0].id), label: 'Open task', external: true },
         bzTaskId: str(pend[0].id),
       })
     }
   }
 
-  // ── 3. DUPLICATES: same unit, same job, both open ───────────────────────────────────────────
+  // ── 3. DUPLICATES: same unit, same job, SAME DAY, both open ────────────────────────────────
+  // Jon's tight definition (lib/task-audit): two of a job on one unit on one date. Across dates it
+  // is a series — "Trash Pickup" every Friday is four tasks, not a duplicate.
   for (const lid of Object.keys(openByListing)) {
     const groups: Record<string, any[]> = {}
     for (const t of openByListing[lid]) {
-      const k = auditKey(str(t.name).replace(/^\[moved to [^\]]+\]\s*/i, ''), t.type_department)
+      const k = auditKey(str(t.name).replace(/^\[moved to [^\]]+\]\s*/i, ''), t.type_department) + '@' + str(t.scheduled_date).slice(0, 10)
       ;(groups[k] = groups[k] || []).push(t)
     }
     for (const k of Object.keys(groups)) {
       const g = groups[k]
       if (g.length < 2) continue
-      // A departure clean on two different days is two turns, not a duplicate.
-      if (k === 'departure-clean' && new Set(g.map((t: any) => str(t.scheduled_date).slice(0, 10))).size === g.length) continue
       // Keep the one somebody's name is on (else the oldest); propose cancelling the rest.
       const sorted = g.slice().sort((a: any, b: any) => ((Array.isArray(b.assignees) && b.assignees.length) ? 1 : 0) - ((Array.isArray(a.assignees) && a.assignees.length) ? 1 : 0) || str(a.scheduled_date).localeCompare(str(b.scheduled_date)))
       const keep = sorted[0], extra = sorted[1]
@@ -389,8 +409,8 @@ export async function buildCommandDay(): Promise<CommandDay> {
       push({
         key: 'dup:' + lid + ':' + k, kind: 'duplicate', severity: 'soon', rank: 9,
         unit, listingId: lid, market: marketOfId(lid),
-        title: 'Same job open ' + g.length + ' times: ' + str(keep.name).replace(/^\[moved to [^\]]+\]\s*/i, ''),
-        why: g.map((t: any) => str(t.scheduled_date).slice(5) + (Array.isArray(t.assignees) && t.assignees.length ? ' (' + t.assignees.map((p: any) => p?.name).filter(Boolean).join(', ') + ')' : ' (unassigned)')).join(' · ') + '. Keep ' + str(keep.scheduled_date).slice(5) + ', cancel the other' + (g.length > 2 ? 's' : '') + '.',
+        title: 'Same job open ' + g.length + ' times on ' + str(keep.scheduled_date).slice(5) + ': ' + str(keep.name).replace(/^\[moved to [^\]]+\]\s*/i, '').replace(/\s+/g, ' ').slice(0, 60),
+        why: g.map((t: any) => '#' + str(t.id) + (Array.isArray(t.assignees) && t.assignees.length ? ' (' + t.assignees.map((p: any) => p?.name).filter(Boolean).join(', ') + ')' : ' (unassigned)')).join(' · ') + '. Keep #' + str(keep.id) + ', cancel #' + str(extra.id) + '.',
         action: { type: 'cancel_task', taskId: str(extra.id), label: 'Cancel duplicate' }, bzTaskId: str(keep.id),
       })
     }
@@ -470,7 +490,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
   // ── GUEST DESK (counts + rows; replying lives on /reviews and /messages) ────────────────────
   const deskRows: GuestDeskRow[] = []
   const reviews = ((reviewsToReplyRes.data || []) as any[]).filter(r => meta[str(r.listing_id)] && meta[str(r.listing_id)].active)
-  for (const r of reviews.slice(0, 8)) deskRows.push({ key: 'rv:' + str(r.id), kind: 'review', who: str(r.guest_name) || 'Guest', unit: nameOf(r.listing_id), text: str(r.content).replace(/\s+/g, ' ').slice(0, 140), meta: (Number.isFinite(norm5(r.rating)) ? norm5(r.rating) + '★ · ' : '') + str(r.channel), href: '/reviews' })
+  for (const r of reviews.slice(0, 8)) deskRows.push({ key: 'rv:' + str(r.id), kind: 'review', who: str(r.guest_name) || 'Guest', unit: nameOf(r.listing_id), text: str(r.content).replace(/\s+/g, ' ').slice(0, 140), meta: (Number.isFinite(norm5(r.rating)) ? starsText(r.rating, r.channel) + ' · ' : '') + str(r.channel), href: '/reviews' })
   const convos = (convosRes.data || []) as any[]
   for (const c of convos.slice(0, 8)) deskRows.push({ key: 'msg:' + str(c.id), kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(c.listing_id), text: str(c.last_message_preview).slice(0, 140), meta: (Number(c.unread_count) || 0) + ' unread · ' + str(c.channel), href: '/messages' })
   const welcomeDue = arrivalRows.filter(a => a.today && !a.welcomeDone)
@@ -495,6 +515,16 @@ export async function buildCommandDay(): Promise<CommandDay> {
   // ── rank, dedupe, cap ───────────────────────────────────────────────────────────────────────
   const sevRank = { now: 0, today: 1, soon: 2 }
   next.sort((a, b) => sevRank[a.severity] - sevRank[b.severity] || a.rank - b.rank || a.unit.localeCompare(b.unit))
+  // The 48-hour band is a heads-up, not a worklist: cap each kind so tomorrow never buries today.
+  const SOON_CAP: Partial<Record<NextKind, number>> = { feedback: 5, pending: 5, duplicate: 6 }
+  const seenSoon: Record<string, number> = {}
+  const capped = next.filter(n => {
+    if (n.severity !== 'soon' || n.dismissed) return true
+    const cap = SOON_CAP[n.kind]; if (!cap) return true
+    seenSoon[n.kind] = (seenSoon[n.kind] || 0) + 1
+    return seenSoon[n.kind] <= cap
+  })
+  next.length = 0; next.push(...capped)
   const dismissedCount = next.filter(n => n.dismissed).length
 
   const clean = day.deadline

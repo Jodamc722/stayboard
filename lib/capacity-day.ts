@@ -23,6 +23,8 @@ import { isDepartureCleanName } from './breezeway'
 import { assessDay, spread, unitCost, cleanTableFor, PERFORMED_FLOOR_MIN, type Stop, type DayLoad, type Person } from './capacity'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
+/** Collapse whitespace so the two systems' spellings of one person land in one lane. */
+const personName = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim()
 
 export type DayPicture = {
   date: string
@@ -120,9 +122,12 @@ export async function buildDayPicture(date: string, market?: string): Promise<Da
     if (market && str(li.market).toLowerCase() !== market.toLowerCase()) continue
 
     const isClean = isDepartureCleanName(t.name)
-    const people: string[] = Array.isArray(t.assignees)
-      ? t.assignees.map((a: any) => str(a?.name)).filter(Boolean)
-      : (t.assignee_name ? [str(t.assignee_name)] : [])
+    // ONE PERSON, ONE LANE. Breezeway wrote "Gehron  Regis" (two spaces) on the tasks and Homebase
+    // wrote "Gehron Regis" on the shift, so the model priced two people: one implausible (23 tasks,
+    // no shift) and one at 0% with "room for 3 more cleans" (2026-09-02). Same fix OpsGrid took.
+    const people: string[] = (Array.isArray(t.assignees)
+      ? t.assignees.map((a: any) => str(a?.name))
+      : (t.assignee_name ? [str(t.assignee_name)] : [])).map(personName).filter(Boolean)
 
     const mins = Number(t.total_minutes)
     if (isClean && Number.isFinite(mins) && mins > 0 && mins < PERFORMED_FLOOR_MIN) closedOutToday++
@@ -151,6 +156,7 @@ export async function buildDayPicture(date: string, market?: string): Promise<Da
   const roleOf: Record<string, string> = {}
   for (const s of (shifts as any[])) {
     if (!s?.name || s.open) continue
+    s.name = personName(s.name)
     const a = s.startAt ? new Date(s.startAt).getTime() : NaN
     const b = s.endAt ? new Date(s.endAt).getTime() : NaN
     const mins = Number.isFinite(a) && Number.isFinite(b) ? Math.round((b - a) / 60000) : 0
