@@ -28,10 +28,19 @@ const AUDIT_LINKS = [
   { v: 'owner-audit', label: 'Owner statement audit (reviewers)', path: '/report/owner-audit' },
 ]
 
+// ADMINS ONLY, AND THE CLEARTEXT IS ADMINS ONLY TOO (2026-09-02).
+// This used to be gated on `auth.getUser()` alone — ANY signed-in account. Signup is open and its
+// domain restriction is enforced client-side, so "any signed-in account" was closer to "anyone who
+// wants one". What that account could read: the vendor, marketing, owner-audit and rules passwords,
+// in cleartext. Only the admin password and the vault code were ever held back.
+//
+// Same bar as the rest of Settings: `access.role === 'admin'`.
 export async function GET() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const access = await getAccess()
+  if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
   const password = await currentSharePassword()
   const adminCur = await currentAdminPassword()
   const adminSet = !!adminCur
@@ -49,6 +58,8 @@ export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const access = await getAccess()
+  if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
   try {
     const body = await req.json().catch(() => ({}))
     const db = supabaseAdmin()
@@ -66,6 +77,12 @@ export async function POST(req: NextRequest) {
     }
     // ADMIN password (row id=2) — gates destructive actions like Delete
     if (body.adminPassword !== undefined) {
+      // OWNER ONLY. This password is the last gate on destructive actions — deleting tasks, and the
+      // scheduler's clean deletions. Anyone who can SET it can grant themselves that authority, so
+      // writing it has to be held to the same bar as reading it, which it was not.
+      if (!isSuperadmin(user.email)) {
+        return NextResponse.json({ ok: false, error: 'Only the owner can change the admin password.' }, { status: 403 })
+      }
       const ap = String(body.adminPassword || '').trim()
       if (ap.length < 4) return NextResponse.json({ ok: false, error: 'Admin password must be at least 4 characters.' }, { status: 400 })
       const { error } = await db.from('share_settings').upsert({ id: 2, password: ap, updated_at: new Date().toISOString() })
