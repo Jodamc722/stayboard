@@ -11,17 +11,19 @@
 // "what is Yoslenis carrying?". Breezeway solved that layout well, so this borrows the shape:
 // counters on top that double as filters, one dense row per unit, the tasks as a strip of chips.
 //
-// ── ONE PASS OVER THE DAY, SEVEN COUNTERS ───────────────────────────────────────────────────────
+// ── ONE PASS OVER THE DAY, ONE COUNTER PER CATEGORY ─────────────────────────────────────────────
 // The old strip counted Cleans / Maintenance / Inspections, which put a departure clean, a strip
-// and a linen drop in one number and buried guest-reported problems entirely. Jon asked for the
-// real breakdown: Departure, Cleaning, Glitches, Maintenance, Housekeeping audit, Inspection.
-// `catOf` is the single definition (lib/task-categories.ts, shared with the daily briefs) — so a
-// task can never be counted in one place and coloured as something else in another.
+// and a linen drop in one number. The counters now come from lib/task-categories.ts (editable at
+// Users & admin → Task categories; shipped set = Departure cleans · Inspections · Maintenance ·
+// Other, since the 2026-08-31 board diet folded Glitches into Maintenance and Cleaning into Other).
+// `catOf` is the single definition, shared with the daily briefs — so a task can never be counted
+// in one place and coloured as something else in another.
 //
 // Glitches are the exception to "today": they are open-until-fixed, carry no scheduled date in
-// Breezeway, and matter on the day they are open rather than the day they were filed. That tile
-// reads the open-glitch feed and merges by task id so a glitch that IS scheduled today is not
-// counted twice.
+// Breezeway, and matter on the day they are open rather than the day they were filed. The
+// open-glitch feed is merged by task id into All (and into a `glitch` category IF an operator adds
+// one back) so a glitch that IS scheduled today is not counted twice; a unit with an open issue and
+// no work today still gets a row.
 //
 // Everything actionable here reuses machinery that already works: /api/breezeway/assign for
 // assignment, /api/ops-today/add-task for creation (which now carries a Breezeway template_id),
@@ -1304,7 +1306,9 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
 
       <p className="mt-2 text-[11px] text-muted">
         {shown.length} {mode === 'units' ? 'unit' : 'person'}{shown.length === 1 ? '' : 's'} shown.
-        {' '}Glitches count everything still open, not only what is scheduled today.
+        {/* Only true when a Glitches counter actually exists — the shipped taxonomy folded it into
+            Maintenance on 2026-08-31 and this line kept pointing at a tile that was not there. */}
+        {cats.list.some(c => c.key === 'glitch') ? ' Glitches count everything still open, not only what is scheduled today.' : ' Open guest issues with no work today appear as their own rows.'}
       </p>
       </>
       )}
