@@ -83,6 +83,13 @@ export async function POST(req: NextRequest) {
       if (b.dueDate !== undefined) patch.due_date = /^\d{4}-\d{2}-\d{2}$/.test(str(b.dueDate)) ? str(b.dueDate) : null
       if (b.assignee !== undefined) patch.assignee = str(b.assignee) || null
       if (b.assigneePersonId !== undefined) { const pid = Number(b.assigneePersonId); patch.assignee_person_id = Number.isFinite(pid) && pid > 0 ? pid : null }
+      // ASSIGN REACHES THE CREW (Jon, 2026-09-02: "should be able to assign"). Saving an owner
+      // here used to write only our row — the Breezeway task, the thing the crew actually looks
+      // at, kept its old assignee. When the glitch has a task, the assignment now goes there too.
+      // Best-effort: a Breezeway hiccup must not lose the rest of the save.
+      if (patch.assignee_person_id && g.breezeway_task_id) {
+        try { await updateBreezewayTask(String(g.breezeway_task_id), { assignments: [patch.assignee_person_id] }) } catch { /* our row still saves */ }
+      }
       // Tone is a human judgement and stays editable — the person who took the call may only think
   // to record it afterwards.
   if (b.guestTone !== undefined) patch.guest_tone = ['understanding','frustrated','angry','fishing'].includes(String(b.guestTone).toLowerCase()) ? String(b.guestTone).toLowerCase() : null
@@ -137,6 +144,27 @@ export async function POST(req: NextRequest) {
         const homeId = Number(((props || [])[0] || {}).home_id)
         if (Number.isFinite(homeId)) payload.home_id = homeId
         else payload.reference_property_id = String(g.listing_id)
+      } else {
+        // THE 2026-09-02 BUG. A glitch filed with a typed unit ("Rustic 24") but no linked listing
+        // reached Breezeway with no property at all, and Breezeway's raw 422 came back to the
+        // operator: '{"fields":{"reference_property_id":"reference_property_id required"}}'.
+        // Resolve the typed unit against the Breezeway property list — exact-token match, so
+        // "Rustic 24" finds "Rustic 24 - 2BR" but never "Rustic 241" — and only give up when the
+        // name matches nothing or more than one thing, saying so in words a person can act on.
+        const unitName = str(g.unit).trim()
+        if (unitName) {
+          const toks = unitName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+          const { data: cand } = await db.from('breezeway_properties').select('home_id, name, status').limit(1000)
+          const hits = ((cand || []) as any[]).filter(p => {
+            if (String(p.status || '').toLowerCase() !== 'active') return false
+            const ptoks = String(p.name || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+            return toks.every(t => ptoks.indexOf(t) >= 0)
+          })
+          if (hits.length === 1) payload.home_id = Number(hits[0].home_id)
+        }
+        if (!payload.home_id) {
+          return NextResponse.json({ ok: false, error: 'This glitch is not linked to a unit' + (unitName ? ' and \u201c' + unitName + '\u201d does not match exactly one Breezeway property' : '') + '. Type the right property into the Property box on this panel, or Edit the glitch and set the unit, then push again.' }, { status: 400 })
+        }
       }
       let r = await createBreezewayTask(payload)
       if (!r.ok) {
