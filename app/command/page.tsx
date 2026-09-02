@@ -6,12 +6,11 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { noBreezewayRegex } from '@/lib/ops-presets'
 import { Shell } from '@/components/Shell'
 import { BrainConsole } from '@/components/BrainConsole'
-import { ConnectTools } from '@/components/ConnectTools'
 import { SlackQueueCard } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { MissionFeed } from '@/components/MissionFeed'
 import { GeneratePlanButton } from '@/components/OpsPlanUI'
-import { NeedsHumanPanel } from '@/components/OpsV2'
+import { NeedsHumanPanel, CapacityPanel } from '@/components/OpsV2'
 import {
   Sparkles, Star, MessageSquare, AlertTriangle, LogIn, ClipboardCheck,
   ArrowUpRight, ListChecks, Crown, Wrench,
@@ -64,6 +63,8 @@ export default async function CommandCenterPage() {
     listingsRes,
     bzOverdueRes,
     glitchOverdueRes,
+    departuresRes,
+    occupiedRes,
     bzTodayRes,
   ] = await Promise.all([
     sb.from('guesty_reviews').select('id, listing_id, rating, content, channel, guest_name, created_at')
@@ -75,7 +76,7 @@ export default async function CommandCenterPage() {
       .in('status', ['open', 'in_progress']).lt('due_at', nowIso).order('due_at', { ascending: true }).limit(40),
     sb.from('field_requests').select('id, title, type, building, unit, vendor, amount_usd, priority, approval_status')
       .eq('approval_required', true).order('created_at', { ascending: false }).limit(40),
-    sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, nights, money_total')
+    sb.from('guesty_reservations').select('id, guest_name, listing_name, listing_id, check_in, nights, money_total')
       .eq('check_in', todayStr).neq('status', 'canceled').limit(60),
     sb.from('guesty_reservations').select('id, guest_name, listing_name, check_in, nights, custom_fields, status, money_total')
       .gte('check_in', todayStr).lte('check_in', in2).order('check_in').limit(120),
@@ -104,6 +105,14 @@ export default async function CommandCenterPage() {
     // ...plus open glitches whose due date has passed.
     sb.from('glitches').select('id', { count: 'exact', head: true })
       .not('status', 'in', '("done","resolved","closed")').lt('due_date', todayStr),
+    // THE DAY PULSE (Jon, 2026-09-01: "sharper... see operations and make operational decisions").
+    // Two cheap mirror queries so the first line of the cockpit is the shape of the day itself.
+    // Statuses are filtered in JS the same way the vacancy logic does (/confirm|check/i) — the
+    // mirror holds several spellings and an .in() list would quietly miss one.
+    sb.from('guesty_reservations').select('id, listing_id, status')
+      .eq('check_out', todayStr).limit(1000),
+    sb.from('guesty_reservations').select('id, status')
+      .lte('check_in', todayStr).gt('check_out', todayStr).limit(1000),
     // TODAY'S MAINTENANCE (Jon, 2026-08-14: "Command center should show... Maintenance tasks").
     // The overdue count linked to the board; the actual work was invisible from here.
     sb.from('breezeway_tasks_sync')
@@ -177,6 +186,23 @@ export default async function CommandCenterPage() {
   const welcomeOtherCount = welcomeDue.length - welcomeImportant.length
 
   const checkIns = (checkInsRes.data ?? []).map((r: any) => ({ id: r.id, guest: r.guest_name || 'Guest', listing_name: r.listing_name || '', unit: unitOf(r.listing_name || ''), nights: Number(r.nights) || 0 }))
+
+  // ── THE DAY PULSE ─────────────────────────────────────────────────────────────────────────────
+  // The shape of the day in one line, before any list: how full tonight, what moves today, and how
+  // many turns have zero slack. LIVE = /confirm|check/i, the same test the vacancy logic settled
+  // on; active listings use EXACT status equality (the /active/ substring bug of 2026-07-16
+  // counted every 'inactive' listing as active — never again).
+  const live = (v: any) => /confirm|check/i.test(String(v || ''))
+  const activeCount = (listingsRes.data ?? []).filter((l: any) => String(l.status || '').trim().toLowerCase() === 'active').length
+  const occupiedTonight = ((occupiedRes.data ?? []) as any[]).filter((r: any) => live(r.status)).length
+  const departuresToday = ((departuresRes.data ?? []) as any[]).filter((r: any) => live(r.status))
+  const arrivalIds = new Set(((checkInsRes.data ?? []) as any[]).filter((r: any) => live(r.status)).map((r: any) => String(r.listing_id || '')).filter(Boolean))
+  const sameDayTurns = departuresToday.filter((r: any) => r.listing_id && arrivalIds.has(String(r.listing_id))).length
+  const pulse = {
+    occupancyPct: activeCount ? Math.round((occupiedTonight / activeCount) * 100) : null,
+    occupied: occupiedTonight, active: activeCount,
+    arrivals: checkIns.length, departures: departuresToday.length, sameDayTurns,
+  }
 
   const overdue = (overdueRes.data ?? []).map((r: any) => ({ id: r.id, title: r.title || 'Untitled', type: r.type || '', building: r.building || '', unit: r.unit || '', due_at: r.due_at, priority: (r.priority || 'low').toLowerCase() }))
 
@@ -255,6 +281,19 @@ export default async function CommandCenterPage() {
         </p>
       </header>
 
+      {/* The day in one line, before any list. Plain numbers on purpose — this is the sentence a
+          GM says out loud at 8am, not a chart. */}
+      <div className="mb-4 rounded-xl border border-line bg-white px-4 py-2.5 flex items-center gap-x-4 gap-y-1 flex-wrap text-[13px]">
+        {pulse.occupancyPct != null && (
+          <span className="font-bold text-ink">Tonight {pulse.occupancyPct}% full <span className="font-normal text-muted">({pulse.occupied} of {pulse.active})</span></span>
+        )}
+        <span className="text-ink/80"><b className="text-ink">{pulse.arrivals}</b> arriving</span>
+        <span className="text-ink/80"><b className="text-ink">{pulse.departures}</b> leaving</span>
+        <span className={pulse.sameDayTurns > 0 ? 'font-bold text-amber-700' : 'text-ink/80'}>
+          {pulse.sameDayTurns} same-day {pulse.sameDayTurns === 1 ? 'turn' : 'turns'}
+        </span>
+      </div>
+
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
         {cards.map(c => <AlertCard key={c.label} {...c} />)}
       </div>
@@ -267,6 +306,12 @@ export default async function CommandCenterPage() {
           urgent, two doors). Client component; renders nothing when the field day is clean. */}
       <div className="mb-5">
         <NeedsHumanPanel />
+      </div>
+
+      {/* IS TODAY DOABLE — the same capacity sentence the ops board leads with (one model, two
+          doors, like Needs-a-human above). Renders nothing while the model has no day to price. */}
+      <div className="mb-5">
+        <CapacityPanel />
       </div>
 
       {/* BIG ARRIVALS + TODAY'S MAINTENANCE — the two lists Jon asked to SEE here, not count. */}
@@ -343,7 +388,9 @@ export default async function CommandCenterPage() {
 
         <div className="lg:col-span-1 space-y-4 lg:sticky lg:top-4">
           <SlackQueueCard />
-          <ConnectTools />
+          {/* ConnectTools left the cockpit 2026-09-01: it is Slack SETUP, which lives on
+              /integrations, and connection health lives on the system-check screen now. The
+              approval queue above is the part of Slack that belongs in a command center. */}
           <BrainConsole />
 
           <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
