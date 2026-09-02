@@ -10,6 +10,10 @@
 //                                 POST { action:'create', … }         → mints a code
 //                                 POST { action:'assign', id, listingId } → links to the live Guesty listing
 //                                 POST { action:'archive', id }
+//                                 GET  ?standard=1 / POST { action:'saveStandard', standard } → the inventory
+//                                   standard (items + per-occupancy rules) that generate() reads (lib/onboarding.ts)
+//   EITHER DOOR               POST { code, action:'order' }  → the buy list (counted < expected, worn, missing)
+//                                   becomes lines on an ffe_orders draft, so it lands on the FF&E Orders board (/ffe → Orders, detail at /ffe/order/<id>)
 //
 // Photos go through /api/onboard/photo (multipart). Nothing here touches Breezeway or Guesty; the
 // assignment writes listing_id and nothing else — the inventory stays where it is and becomes
@@ -17,7 +21,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel, getAccess } from '@/lib/access'
-import { roomsFor, itemsFor, newCode, type UnitDetails, type RoomDef } from '@/lib/onboarding'
+import { roomsFor, itemsFor, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
+import { getSetting, setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -60,8 +65,82 @@ function progressOf(rooms: any[], items: any[]) {
   return { rooms: rooms.length, roomsChecked, roomsPhotographed, items: items.length, confirmed, photos, pct: items.length ? Math.round((confirmed / items.length) * 100) : 0 }
 }
 
+/**
+ * THE BUY LIST (Jon, 2026-09-02: "if we count 10 but need 12 it should create an order").
+ * For every CONFIRMED item: worn or missing → replace the full expected count (or what was counted,
+ * for a custom item with no standard); otherwise the shortfall between the standard and the count.
+ * Unconfirmed items are not on it — a blank is not a shortage until someone has stood in the room.
+ */
+function buyList(items: any[]) {
+  const out: { id: string; room_id: string; name: string; category: string; need: number; have: number; expected: number | null; why: 'short' | 'worn' | 'missing' }[] = []
+  for (const i of items) {
+    if (!i.condition) continue
+    const have = Math.max(0, Number(i.qty) || 0)
+    const expected = i.expected == null ? null : Math.max(0, Number(i.expected) || 0)
+    if (i.condition === 'missing') { const need = expected ?? have ?? 1; if (need > 0) out.push({ id: i.id, room_id: i.room_id, name: i.name, category: i.category, need, have: 0, expected, why: 'missing' }); continue }
+    if (i.condition === 'worn') { const need = Math.max(expected ?? 0, have); if (need > 0) out.push({ id: i.id, room_id: i.room_id, name: i.name, category: i.category, need, have, expected, why: 'worn' }); continue }
+    if (expected != null && have < expected) out.push({ id: i.id, room_id: i.room_id, name: i.name, category: i.category, need: expected - have, have, expected, why: 'short' })
+  }
+  return out
+}
+
+/**
+ * Buy list → Purchasing. One draft ffe_orders row per onboarding unit (remembered in order_id), lines
+ * keyed by the onboarding item id so re-running after more counting UPDATES quantities instead of
+ * doubling them. A unit that is not live yet has no Guesty listing_id / owner_id — both NOT NULL on
+ * the 034 tables — so it borrows 'onboard:<code>' as its id; `assign` re-points the lines to the real
+ * listing the day the unit goes live. unit_name and building ride on the line, which is what the
+ * board displays, so the placeholder id never reaches a screen.
+ */
+async function pushOrder(db: ReturnType<typeof supabaseAdmin>, unit: any, rooms: any[], items: any[], who: string | null) {
+  const buy = buyList(items)
+  if (!buy.length) return { ok: false as const, error: 'Nothing to order — no confirmed item is short, worn or missing.' }
+  const now = new Date().toISOString()
+  const key = unit.listing_id || ('onboard:' + unit.code)
+  let orderId: string | null = unit.order_id || null
+  if (orderId) { const { data } = await db.from('ffe_orders').select('id,status').eq('id', orderId).maybeSingle(); if (!data || ['closed'].includes(String(data.status))) orderId = null }
+  if (!orderId) {
+    const ins = await db.from('ffe_orders').insert({
+      owner_id: key, owner_name: unit.owner_name || unit.name, title: unit.name + ' — onboarding inventory',
+      note: 'Built from the onboarding walk' + (unit.building ? ' · ' + unit.building : '') + (unit.unit_no ? ' #' + unit.unit_no : ''),
+      status: 'draft', created_by: who, updated_at: now,
+    }).select('id,order_no').single()
+    if (ins.error) return { ok: false as const, error: ins.error.message }
+    orderId = ins.data.id
+    await db.from('onboarding_units').update({ order_id: orderId, updated_at: now }).eq('id', unit.id)
+  }
+  const roomName: Record<string, string> = {}; const roomKey: Record<string, string> = {}
+  for (const r of rooms) { roomName[r.id] = r.name; roomKey[r.id] = r.key }
+  const { data: existing } = await db.from('ffe_order_lines').select('id,item_key,stage').eq('order_id', orderId)
+  const byItem: Record<string, any> = {}; for (const l of existing || []) byItem[String(l.item_key)] = l
+  let added = 0, updated = 0
+  for (const b of buy) {
+    const have = byItem['onb:' + b.id]
+    const title = b.name + (b.why === 'short' ? ' — short ' + b.need + ' (have ' + b.have + ', need ' + b.expected + ')' : b.why === 'worn' ? ' — worn, replace' : ' — missing')
+    if (have) {
+      if (['draft', 'sent'].includes(String(have.stage))) { await db.from('ffe_order_lines').update({ qty: b.need, title, updated_at: now }).eq('id', have.id); updated++ }
+      continue
+    }
+    const { error } = await db.from('ffe_order_lines').insert({
+      order_id: orderId, listing_id: key, unit_name: unit.name, building: unit.building || null,
+      room: roomKey[b.room_id] || 'other', item_key: 'onb:' + b.id, title, qty: b.need, stage: 'draft',
+      placement: roomName[b.room_id] || null, updated_at: now,
+    })
+    if (error) return { ok: false as const, error: error.message }
+    added++
+  }
+  await db.from('ffe_orders').update({ updated_at: now }).eq('id', orderId)
+  const { data: ord } = await db.from('ffe_orders').select('id,order_no,status').eq('id', orderId).single()
+  return { ok: true as const, order: ord, added, updated, lines: buy.length }
+}
+
 /** Create the rooms + starter items the details imply, skipping anything that already exists. */
+async function loadStandard(): Promise<InventoryStandard> {
+  return mergeStandard(await getSetting<any>(STANDARD_KEY, null))
+}
+
 async function generate(db: ReturnType<typeof supabaseAdmin>, unitId: string, details: UnitDetails) {
+  const standard = await loadStandard()
   const { data: existing } = await db.from('onboarding_rooms').select('id,key').eq('unit_id', unitId)
   const have = new Set((existing || []).map((r: any) => String(r.key)))
   const defs: RoomDef[] = roomsFor(details).filter(r => !have.has(r.key))
@@ -73,7 +152,7 @@ async function generate(db: ReturnType<typeof supabaseAdmin>, unitId: string, de
   const items: any[] = []
   for (const r of (rows || []) as any[]) {
     const def = defs.find(d => d.key === r.key)!
-    itemsFor(def, details).forEach((it, i) => items.push({ unit_id: unitId, room_id: r.id, name: it.name, category: it.category, qty: it.qty, brand: it.brand || null, suggested: true, sort: i }))
+    itemsFor(def, details, standard).forEach((it, i) => items.push({ unit_id: unitId, room_id: r.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, suggested: true, sort: i }))
   }
   if (items.length) { const { error: e2 } = await db.from('onboarding_items').insert(items); if (e2) throw new Error(e2.message) }
   return defs.length
@@ -83,6 +162,12 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const sp = req.nextUrl.searchParams
   try {
+    if (sp.get('standard')) {
+      const gate = await requireLevel('onboarding', 'view')
+      if (!gate.ok) return gate.res
+      const saved = await getSetting<any>(STANDARD_KEY, null)
+      return NextResponse.json({ ok: true, standard: mergeStandard(saved), edited: !!saved, defaults: DEFAULT_STANDARD })
+    }
     if (sp.get('list')) {
       const gate = await requireLevel('onboarding', 'view')
       if (!gate.ok) return gate.res
@@ -90,7 +175,7 @@ export async function GET(req: NextRequest) {
       const ids = (units || []).map((u: any) => u.id)
       const [{ data: rooms }, { data: items }, { data: listings }] = await Promise.all([
         ids.length ? db.from('onboarding_rooms').select('unit_id,photos,checked_at').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
-        ids.length ? db.from('onboarding_items').select('unit_id,condition').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
+        ids.length ? db.from('onboarding_items').select('unit_id,condition,qty,expected').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
         db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000),
       ])
       const lname: Record<string, string> = {}
@@ -99,6 +184,7 @@ export async function GET(req: NextRequest) {
         ...u,
         listing_name: u.listing_id ? (lname[u.listing_id] || u.listing_id) : null,
         progress: progressOf((rooms || []).filter((r: any) => r.unit_id === u.id), (items || []).filter((i: any) => i.unit_id === u.id)),
+        buy: buyList((items || []).filter((i: any) => i.unit_id === u.id)).length,
       }))
       const pick = (listings || []).filter((l: any) => !['inactive', 'disabled', 'archived', 'deleted'].includes(String(l.status || '').toLowerCase()))
         .map((l: any) => ({ id: String(l.id), name: String(l.nickname || l.title || l.id), building: String(l.building || '') }))
@@ -108,7 +194,7 @@ export async function GET(req: NextRequest) {
     const code = str(sp.get('code')).toLowerCase()
     const found = await loadByCode(db, code)
     if (!found) return NextResponse.json({ ok: false, error: 'link not found' }, { status: 404 })
-    return NextResponse.json({ ok: true, ...found, progress: progressOf(found.rooms, found.items) })
+    return NextResponse.json({ ok: true, ...found, progress: progressOf(found.rooms, found.items), buy: buyList(found.items) })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
@@ -121,10 +207,17 @@ export async function POST(req: NextRequest) {
   const now = new Date().toISOString()
   try {
     // ── signed-in actions ──────────────────────────────────────────────────────────────────────
-    if (action === 'create' || action === 'assign' || action === 'archive' || action === 'unassign') {
+    if (action === 'create' || action === 'assign' || action === 'archive' || action === 'unassign' || action === 'saveStandard') {
       const gate = await requireLevel('onboarding', 'edit')
       if (!gate.ok) return gate.res
       const me = gate.access.email || null
+      if (action === 'saveStandard') {
+        // null / 'reset' puts the researched defaults back.
+        if (b.standard == null || b.standard === 'reset') { const r = await setSetting(STANDARD_KEY, null, me); return NextResponse.json({ ok: r.ok, error: r.error, standard: DEFAULT_STANDARD, edited: false }) }
+        const std = mergeStandard(b.standard)
+        const r = await setSetting(STANDARD_KEY, std, me)
+        return NextResponse.json({ ok: r.ok, error: r.error, standard: std, edited: true })
+      }
       if (action === 'create') {
         const name = str(b.name).slice(0, 120)
         if (!name) return NextResponse.json({ ok: false, error: 'A name for the unit is required.' }, { status: 400 })
@@ -149,8 +242,14 @@ export async function POST(req: NextRequest) {
         if (!listingId) return NextResponse.json({ ok: false, error: 'listingId required' }, { status: 400 })
         const { data: l } = await db.from('guesty_listings').select('id').eq('id', listingId).maybeSingle()
         if (!l) return NextResponse.json({ ok: false, error: 'That listing is not in Guesty.' }, { status: 404 })
+        const { data: u0 } = await db.from('onboarding_units').select('code,order_id').eq('id', id).maybeSingle()
         const { error } = await db.from('onboarding_units').update({ listing_id: listingId, linked_at: now, linked_by: me, status: 'linked', updated_at: now }).eq('id', id)
         if (error) throw new Error(error.message)
+        // The buy list was filed under a placeholder id while the unit was not live; it belongs to the listing now.
+        if (u0?.order_id) {
+          await db.from('ffe_order_lines').update({ listing_id: listingId }).eq('order_id', u0.order_id).eq('listing_id', 'onboard:' + u0.code)
+          await db.from('ffe_orders').update({ owner_id: listingId, updated_at: now }).eq('id', u0.order_id).eq('owner_id', 'onboard:' + u0.code)
+        }
         return NextResponse.json({ ok: true })
       }
       if (action === 'unassign') {
@@ -191,8 +290,8 @@ export async function POST(req: NextRequest) {
       const sort = found.rooms.length
       const { data: room, error } = await db.from('onboarding_rooms').insert({ unit_id: unit.id, key, name, kind, sort }).select('*').single()
       if (error) throw new Error(error.message)
-      const its = itemsFor({ key, name, kind, sort }, unit.details || {})
-      if (its.length) await db.from('onboarding_items').insert(its.map((it, i) => ({ unit_id: unit.id, room_id: room.id, name: it.name, category: it.category, qty: it.qty, brand: it.brand || null, suggested: true, sort: i })))
+      const its = itemsFor({ key, name, kind, sort }, unit.details || {}, await loadStandard())
+      if (its.length) await db.from('onboarding_items').insert(its.map((it, i) => ({ unit_id: unit.id, room_id: room.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, suggested: true, sort: i })))
       await touch()
       return NextResponse.json({ ok: true, room })
     }
@@ -221,6 +320,7 @@ export async function POST(req: NextRequest) {
       const { data: item, error } = await db.from('onboarding_items').insert({
         unit_id: unit.id, room_id: roomId, name, category: CATS.includes(b.category) ? b.category : 'other', qty,
         condition: CONDS.includes(b.condition) ? b.condition : null, brand: str(b.brand).slice(0, 120) || null, notes: str(b.notes).slice(0, 1000) || null,
+        expected: b.expected === undefined || b.expected === null || b.expected === '' ? null : Math.max(0, Math.min(999, Math.round(Number(b.expected) || 0))),
         suggested: false, sort: found.items.filter((i: any) => i.room_id === roomId).length,
       }).select('*').single()
       if (error) throw new Error(error.message)
@@ -240,10 +340,18 @@ export async function POST(req: NextRequest) {
         if (b.brand !== undefined) patch.brand = str(b.brand).slice(0, 120) || null
         if (b.notes !== undefined) patch.notes = str(b.notes).slice(0, 1000) || null
         if (b.photoUrl !== undefined) patch.photo_url = str(b.photoUrl) || null
+        // "need" — the walker can correct the standard for THIS unit (a 4-top table needs 4 chairs).
+        if (b.expected !== undefined) patch.expected = b.expected === null || b.expected === '' ? null : Math.max(0, Math.min(999, Math.round(Number(b.expected) || 0)))
         await db.from('onboarding_items').update(patch).eq('id', itemId)
       }
       await touch()
       return NextResponse.json({ ok: true })
+    }
+    if (action === 'order') {
+      const r = await pushOrder(db, unit, found.rooms, found.items, who)
+      if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 400 })
+      await touch()
+      return NextResponse.json(r)
     }
     if (action === 'complete') {
       await db.from('onboarding_units').update({ status: unit.listing_id ? 'linked' : 'complete', completed_at: now, updated_at: now }).eq('id', unit.id)
