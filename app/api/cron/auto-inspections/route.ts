@@ -24,7 +24,12 @@ async function signedIn(): Promise<boolean> {
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET
   const auth = req.headers.get('authorization') || ''
-  const isCron = secret ? auth === 'Bearer ' + secret : (!!req.headers.get('x-vercel-cron') || auth === '')
+  // ANONYMOUS CALLERS ARE NOT CRON (2026-09-02). This read `|| auth === ''`, and an anonymous
+  // request sends no Authorization header — so `auth` IS '' and the clause was true for exactly the
+  // caller it was meant to exclude. CRON_SECRET has never been set on this project, so that branch
+  // was the live one. Vercel's scheduler stamps `x-vercel-cron` on every call; that header is the
+  // whole of the leniency it needs. Same shape as app/api/cron/suggestions.
+  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
   const sp = new URL(req.url).searchParams
   const preview = sp.get('preview') === '1'
 
