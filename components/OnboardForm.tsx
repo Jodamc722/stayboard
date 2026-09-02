@@ -13,11 +13,11 @@
 // Agnostic on purpose: nothing here knows or needs a Guesty listing. The code in the URL is the key.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, Check, ChevronDown, ChevronLeft, Loader2, Minus, Plus, Pencil, Trash2, X, Image as ImageIcon, CheckCircle2, AlertTriangle, ClipboardCopy, RotateCcw, ShoppingCart } from 'lucide-react'
-import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind } from '@/lib/onboarding'
+import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, APPLIANCES, BED_SIZES, TIERS, TIER_LABEL, bedroomKeys, bedsFor, defaultAppliances, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind, type BedSize, type Tier, type ApplianceKey } from '@/lib/onboarding'
 
 type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; address: string | null; owner_name: string | null; owner_contact: string | null; details: UnitDetails; status: string; listing_id: string | null; notes: string | null; completed_at: string | null }
 type Room = { id: string; key: string; name: string; kind: RoomKind; sort: number; photos: { url: string; at: string; caption?: string | null }[]; notes: string | null; checked_at: string | null }
-type Item = { id: string; room_id: string; name: string; category: Category; qty: number; expected: number | null; condition: Condition | null; brand: string | null; notes: string | null; photo_url: string | null; suggested: boolean }
+type Item = { id: string; room_id: string; name: string; category: Category; qty: number; expected: number | null; tier?: Tier; condition: Condition | null; brand: string | null; notes: string | null; photo_url: string | null; suggested: boolean }
 type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number; items: number; confirmed: number; photos: number; pct: number }
 type Buy = { id: string; room_id: string; name: string; category: string; need: number; have: number; expected: number | null; why: 'short' | 'worn' | 'missing' }
 type Data = { ok: true; unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[] }
@@ -169,7 +169,7 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
   const [address, setAddress] = useState(unit.address || '')
   const [ownerName, setOwnerName] = useState(unit.owner_name || '')
   const [ownerContact, setOwnerContact] = useState(unit.owner_contact || '')
-  const [d, setD] = useState<UnitDetails>({ bedrooms: d0.bedrooms ?? 1, bathrooms: d0.bathrooms ?? 1, occupancy: d0.occupancy ?? 4, balconies: d0.balconies ?? 0, washerDryer: d0.washerDryer ?? 'in_unit', sleeperSofa: d0.sleeperSofa ?? 0, kitchen: d0.kitchen ?? 'full', parking: d0.parking ?? 'none', floor: d0.floor ?? '', sqft: d0.sqft, kingBeds: d0.kingBeds, pool: !!d0.pool, gym: !!d0.gym, notes: d0.notes ?? '' })
+  const [d, setD] = useState<UnitDetails>({ bedrooms: d0.bedrooms ?? 1, bathrooms: d0.bathrooms ?? 1, occupancy: d0.occupancy ?? 4, balconies: d0.balconies ?? 0, washerDryer: d0.washerDryer ?? 'in_unit', sleeperSofa: d0.sleeperSofa ?? 0, kitchen: d0.kitchen ?? 'full', parking: d0.parking ?? 'none', floor: d0.floor ?? '', sqft: d0.sqft, kingBeds: d0.kingBeds, pool: !!d0.pool, gym: !!d0.gym, notes: d0.notes ?? '', appliances: d0.appliances ?? defaultAppliances(d0.kitchen ?? 'full'), beds: d0.beds ?? {} })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const set = (k: keyof UnitDetails, v: any) => setD(x => ({ ...x, [k]: v }))
@@ -192,6 +192,7 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
       <div className="rounded-xl bg-app/70 p-3 space-y-3">
         <div className="text-[12px] font-bold uppercase tracking-wide text-muted">Quick section — this generates the rooms</div>
         <Stepper label="Bedrooms" value={d.bedrooms ?? 0} min={0} max={8} onChange={v => set('bedrooms', v)} render={v => v === 0 ? 'Studio' : String(v)} />
+        <BedsEditor d={d} onChange={beds => set('beds', beds)} />
         {/* Jon, 2026-09-02: "the bathroom type should be a ticker like the bedroom one with .5s" —
             every COUNT is a ticker now; only the true either/or questions stay as chips. */}
         <Stepper label="Bathrooms" value={d.bathrooms ?? 1} min={0.5} max={8} step={0.5} onChange={v => set('bathrooms', v)} render={v => String(v)} />
@@ -199,7 +200,13 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
         <Stepper label="Balconies / terraces" value={d.balconies ?? 0} min={0} max={4} onChange={v => set('balconies', v)} render={v => v === 0 ? 'None' : String(v)} />
         <Stepper label="Sleeper sofas" value={d.sleeperSofa ?? 0} min={0} max={4} onChange={v => set('sleeperSofa', v)} render={v => v === 0 ? 'None' : String(v)} />
         <Choice label="Washer / dryer" value={d.washerDryer ?? 'in_unit'} options={[{ v: 'in_unit', l: 'In unit' }, { v: 'shared', l: 'Shared' }, { v: 'none', l: 'None' }]} onChange={v => set('washerDryer', v as any)} />
-        <Choice label="Kitchen" value={d.kitchen ?? 'full'} options={[{ v: 'full', l: 'Full' }, { v: 'kitchenette', l: 'Kitchenette' }, { v: 'none', l: 'None' }]} onChange={v => set('kitchen', v as any)} />
+        <Choice label="Kitchen" value={d.kitchen ?? 'full'} options={[{ v: 'full', l: 'Full kitchen' }, { v: 'kitchenette', l: 'Kitchenette' }, { v: 'none', l: 'No kitchen' }]} onChange={v => { set('kitchen', v as any); set('appliances', defaultAppliances(v as any)) }} />
+        <div>
+          <div className="text-[13px] text-muted mb-1.5">{d.kitchen === 'none' ? 'No kitchen — anything in the room anyway? (a mini fridge, a microwave…)' : d.kitchen === 'kitchenette' ? 'Which appliances does the kitchenette have?' : 'Which appliances are in the kitchen?'}</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {APPLIANCES.map(a => { const on = (d.appliances || []).includes(a.key); return <button key={a.key} type="button" onClick={() => set('appliances', on ? (d.appliances || []).filter(x => x !== a.key) : [...(d.appliances || []), a.key])} className={CHIP + ' min-h-[34px] text-[12.5px] ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{on ? <Check size={13} className="mr-1" /> : null}{a.label}</button> })}
+          </div>
+        </div>
         <Choice label="Parking" value={d.parking ?? 'none'} options={[{ v: 'none', l: 'None' }, { v: 'assigned', l: 'Assigned' }, { v: 'garage', l: 'Garage' }, { v: 'street', l: 'Street' }]} onChange={v => set('parking', v as any)} />
         <div className="grid grid-cols-2 gap-3">
           <div><label className={LABEL}>Floor</label><input value={d.floor || ''} onChange={e => set('floor', e.target.value)} className={INPUT} placeholder="12" /></div>
@@ -214,6 +221,32 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
       {err && <p className="text-[13px] text-rose-600 font-semibold">{err}</p>}
       <button onClick={save} disabled={busy || !name.trim()} className={BTN + ' bg-ink text-white w-full'}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {hasRooms ? 'Save details (adds any new rooms)' : 'Save & generate rooms'}</button>
       {hasRooms && <p className="text-[12px] text-muted">Changing counts adds the rooms now expected; it never removes or renames rooms you have already filled in.</p>}
+    </div>
+  )
+}
+
+// BEDS PER BEDROOM (Jon, 2026-09-02: "bedroom, bed size, number of beds"). Tap a size to add a bed,
+// tap a bed to remove it. Everything on the bed is generated per bed and sized from this.
+function BedsEditor({ d, onChange }: { d: UnitDetails; onChange: (beds: Record<string, BedSize[]>) => void }) {
+  const keys = bedroomKeys(d.bedrooms ?? 0)
+  if (!keys.length) return null
+  const beds = d.beds || {}
+  const setRoom = (k: string, list: BedSize[]) => onChange({ ...beds, [k]: list })
+  return (
+    <div className="rounded-xl border border-line bg-white p-3 space-y-2.5">
+      <div className="text-[13px] font-semibold text-ink">Beds in each bedroom <span className="text-muted font-normal">· tap a size to add, tap a bed to remove</span></div>
+      {keys.map((k, i) => {
+        const list = bedsFor(d, k)
+        return (
+          <div key={k} className="flex items-start gap-2 flex-wrap">
+            <span className="text-[13px] text-ink w-28 shrink-0 pt-1.5">{i === 0 ? 'Master bedroom' : 'Bedroom ' + (i + 1)}</span>
+            <div className="flex gap-1.5 flex-wrap flex-1">
+              {list.map((b, j) => <button key={j} type="button" onClick={() => setRoom(k, list.filter((_, x) => x !== j))} className={CHIP + ' min-h-[34px] text-[12.5px] bg-ink text-white border-ink'}>{BED_SIZES.find(x => x.key === b)?.label || b} <X size={12} className="ml-1 opacity-70" /></button>)}
+              <span className="inline-flex gap-1 flex-wrap">{BED_SIZES.map(b => <button key={b.key} type="button" onClick={() => setRoom(k, [...list, b.key])} className={CHIP + ' min-h-[34px] text-[12px] bg-white text-muted border-line border-dashed'}>+ {b.label.replace(' (2 twins)', '')}</button>)}</span>
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -340,9 +373,21 @@ function RoomView({ code, unit, room, items, onBack, act, reload }: { code: stri
           {items.some(i => !i.condition) && <button onClick={markAllGood} className="text-[12px] font-bold text-brand-700 min-h-[36px] px-2 whitespace-nowrap">All → Good</button>}
         </div>
         {addOpen && <AddItem roomId={room.id} act={act} onDone={async () => { setAddOpen(false); await reload() }} onCancel={() => setAddOpen(false)} />}
-        <div className="divide-y divide-line">
-          {items.map(i => <ItemRow key={i.id} item={i} code={code} act={act} reload={reload} onPhoto={files => upload(files, i.id)} />)}
-        </div>
+        {/* MUST HAVE · RECOMMENDED · SUGGESTED (Jon, 2026-09-02: "must haves should be a section there,
+            recommended, suggestions"). Custom items land in Must have. */}
+        {TIERS.map(t => {
+          const list = items.filter(i => (i.tier || 'must') === t)
+          if (!list.length) return null
+          const conf = list.filter(i => i.condition).length
+          return (
+            <div key={t}>
+              <div className={'px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide flex items-center gap-2 ' + (t === 'must' ? 'bg-ink/5 text-ink' : t === 'recommended' ? 'bg-brand-50 text-brand-800' : 'bg-app text-muted')}>{TIER_LABEL[t]}<span className="font-semibold normal-case tracking-normal opacity-70">{conf}/{list.length}</span></div>
+              <div className="divide-y divide-line">
+                {list.map(i => <ItemRow key={i.id} item={i} code={code} act={act} reload={reload} onPhoto={files => upload(files, i.id)} />)}
+              </div>
+            </div>
+          )
+        })}
         {!addOpen && <div className="px-3 py-2.5 border-t border-line"><button onClick={() => { setAddOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="text-[14px] font-bold text-brand-700 inline-flex items-center gap-1.5 min-h-[40px]"><Plus size={16} /> Add item or furniture</button></div>}
       </section>
 

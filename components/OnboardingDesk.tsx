@@ -2,7 +2,7 @@
 // ONBOARDING DESK — mint links, watch progress, assign to the live listing (Jon, 2026-09-02).
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X } from 'lucide-react'
-import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category } from '@/lib/onboarding'
+import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, APPLIANCES, TIERS, TIER_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category, type Tier } from '@/lib/onboarding'
 
 type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number; items: number; confirmed: number; photos: number; pct: number }
 type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; owner_name: string | null; details: UnitDetails; status: string; listing_id: string | null; listing_name: string | null; created_at: string; updated_at: string; completed_at: string | null; progress: Progress; buy: number; order_id?: string | null }
@@ -181,13 +181,14 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [dirty, setDirty] = useState(false)
+  const [open, setOpen] = useState<number | null>(null)   // the row whose fine print is showing
   useEffect(() => { (async () => {
     try { const r = await fetch('/api/onboard?standard=1', { cache: 'no-store' }); const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load'); setStd(j.standard); setEdited(!!j.edited) } catch (e: any) { setMsg(String(e?.message || e)) }
   })() }, [])
-  const rows = (std && std[kind]) || []
+  const rows: StandardItem[] = (std && std[kind]) || []
   const update = (i: number, patch: Partial<StandardItem>) => { setStd(s => { const n = { ...(s || {}) }; const list = [...(n[kind] || [])]; list[i] = { ...list[i], ...patch }; n[kind] = list; return n }); setDirty(true) }
-  const remove = (i: number) => { setStd(s => { const n = { ...(s || {}) }; n[kind] = (n[kind] || []).filter((_, j) => j !== i); return n }); setDirty(true) }
-  const add = () => { setStd(s => { const n = { ...(s || {}) }; n[kind] = [...(n[kind] || []), { name: '', category: kind === 'kitchen' ? 'kitchen' : 'furniture', qty: 1 }]; return n }); setDirty(true) }
+  const remove = (i: number) => { setStd(s => { const n = { ...(s || {}) }; n[kind] = (n[kind] || []).filter((_, j) => j !== i); return n }); setDirty(true); setOpen(null) }
+  const add = (tier: Tier) => { setStd(s => { const n = { ...(s || {}) }; n[kind] = [...(n[kind] || []), { name: '', category: kind === 'kitchen' ? 'kitchen' : 'furniture', qty: 1, tier }]; setOpen((n[kind] || []).length - 1); return n }); setDirty(true) }
   const save = async (reset = false) => {
     setBusy(true); setMsg('')
     try {
@@ -197,48 +198,77 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
     } catch (e: any) { setMsg(String(e?.message || e)) }
     setBusy(false)
   }
+  // The rule in plain words — what the row means before anyone opens the fine print.
+  const ruleText = (it: StandardItem) => {
+    if (it.appliance) return 'when the unit has one'
+    if (it.perBed) return /pillow/i.test(it.name) ? 'per bed, by bed size' : (it.qty + ' per bed, sized')
+    if (it.perGuest) return it.qty + ' × max guests' + (it.plus ? ' + ' + it.plus : '') + (it.min != null ? ', at least ' + it.min : '') + (it.max != null ? ', at most ' + it.max : '')
+    return it.qty === 1 ? '1 per unit' : it.qty + ' per unit'
+  }
+  const kindNote: Partial<Record<RoomKind, string>> = {
+    kitchen: 'Table settings and flatware run at 2 × max occupancy — one set in use, one in the wash. Appliances appear only when the pre-form says the unit has them.',
+    bedroom: 'Bed items are generated per bed and sized from the pre-form (King sheets ≠ Twin sheets). Pillows follow the bed size: 4 on a King/Queen, 2 on a Twin.',
+    bathroom: 'Bath towels and washcloths at 2 × max occupancy in the first full bath; every other bath gets 4. Hand towels 2 per bath.',
+  }
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-white w-full sm:max-w-5xl max-h-[92vh] rounded-t-2xl sm:rounded-2xl flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="px-4 py-3 border-b border-line flex items-center gap-3 flex-wrap">
-          <div>
+      <div className="bg-white w-full sm:max-w-3xl max-h-[92vh] rounded-t-2xl sm:rounded-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-line flex items-start gap-3">
+          <div className="flex-1 min-w-0">
             <h2 className="text-[17px] font-bold text-ink">Inventory standard</h2>
-            <p className="text-[12px] text-muted">What every new room is stocked with, and how counts scale with occupancy. {edited ? 'Edited from the defaults.' : 'Using the researched STR defaults (dinnerware and flatware at 2× guests, water glasses guests + 4, towels 2× guests, two sheet sets a bed).'}</p>
+            <p className="text-[12.5px] text-muted">What a new unit is expected to hold, by room. The rule of the house: <b className="text-ink">2 per max guest</b> on anything a guest uses at a meal or a shower; one per unit for the rest. {edited ? <span className="text-amber-800 font-semibold">Edited from the defaults.</span> : 'Using the researched STR defaults.'}</p>
           </div>
-          <span className="ml-auto flex items-center gap-2">
-            <label className="text-[12px] text-muted inline-flex items-center gap-1.5">Preview for <input type="number" min={1} max={20} value={occ} onChange={e => setOcc(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} className={INPUT + ' w-16 py-1.5'} /> guests</label>
-            <button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center" aria-label="Close"><X size={15} /></button>
-          </span>
+          <label className="text-[12px] text-muted inline-flex items-center gap-1.5 whitespace-nowrap">Preview for <input type="number" min={1} max={20} value={occ} onChange={e => setOcc(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} className={INPUT + ' w-14 py-1.5'} /> guests</label>
+          <button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center shrink-0" aria-label="Close"><X size={15} /></button>
         </div>
         <div className="px-4 pt-3 flex gap-1.5 flex-wrap">
-          {KIND_ORDER.map(k => <button key={k} onClick={() => setKind(k)} className={'px-3 py-1.5 rounded-full border text-[12.5px] font-semibold ' + (kind === k ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{ROOM_KIND_LABEL[k]} <span className="opacity-60">{(std && std[k] || []).length}</span></button>)}
+          {KIND_ORDER.map(k => <button key={k} onClick={() => { setKind(k); setOpen(null) }} className={'px-3 py-1.5 rounded-full border text-[12.5px] font-semibold ' + (kind === k ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{ROOM_KIND_LABEL[k]} <span className="opacity-60">{(std && std[k] || []).length}</span></button>)}
         </div>
-        <div className="flex-1 overflow-auto px-4 py-3">
-          {!std ? <div className="py-8 text-center text-muted text-[14px]"><Loader2 className="animate-spin inline mr-2" size={16} />Loading…</div> : (
-            <table className="w-full text-[13px]">
-              <thead><tr className="text-[11px] uppercase tracking-wide text-muted text-left">
-                <th className="py-1.5 pr-2 font-semibold">Item</th><th className="py-1.5 pr-2 font-semibold">Category</th><th className="py-1.5 pr-2 font-semibold">Qty</th><th className="py-1.5 pr-2 font-semibold">Rule</th><th className="py-1.5 pr-2 font-semibold">Min / max</th><th className="py-1.5 pr-2 font-semibold">Only when</th><th className="py-1.5 pr-2 font-semibold text-right">For {occ}</th><th></th>
-              </tr></thead>
-              <tbody className="divide-y divide-line">
-                {rows.map((it, i) => (
-                  <tr key={i}>
-                    <td className="py-1.5 pr-2 min-w-[220px]"><input value={it.name} onChange={e => update(i, { name: e.target.value })} className={INPUT + ' w-full py-1.5'} placeholder="Item name" /></td>
-                    <td className="py-1.5 pr-2"><select value={it.category} onChange={e => update(i, { category: e.target.value as Category })} className={INPUT + ' py-1.5 text-[12.5px]'}>{CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}</select></td>
-                    <td className="py-1.5 pr-2"><input type="number" step={it.perGuest ? 0.5 : 1} min={0} value={it.qty} onChange={e => update(i, { qty: Number(e.target.value) || 0 })} className={INPUT + ' w-16 py-1.5'} /></td>
-                    <td className="py-1.5 pr-2 whitespace-nowrap">
-                      <select value={it.perGuest ? 'per' : 'fixed'} onChange={e => update(i, { perGuest: e.target.value === 'per' })} className={INPUT + ' py-1.5'}><option value="fixed">fixed</option><option value="per">× guests</option></select>
-                      {it.perGuest && <label className="ml-1.5 text-[12px] text-muted">+ <input type="number" value={it.plus ?? 0} onChange={e => update(i, { plus: Number(e.target.value) || 0 })} className={INPUT + ' w-14 py-1.5'} /></label>}
-                    </td>
-                    <td className="py-1.5 pr-2 whitespace-nowrap"><input type="number" value={it.min ?? ''} placeholder="–" onChange={e => update(i, { min: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-14 py-1.5'} /> / <input type="number" value={it.max ?? ''} placeholder="–" onChange={e => update(i, { max: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-14 py-1.5'} /></td>
-                    <td className="py-1.5 pr-2"><select value={it.only || ''} onChange={e => update(i, { only: (e.target.value || undefined) as any })} className={INPUT + ' py-1.5 text-[12.5px] max-w-[150px]'}><option value="">always</option>{ONLY_KEYS.map(k => <option key={k} value={k}>{ONLY_LABEL[k]}</option>)}</select></td>
-                    <td className="py-1.5 pr-2 text-right font-bold tabular-nums">{qtyFor(it, occ)}</td>
-                    <td className="py-1.5"><button onClick={() => remove(i)} className="w-8 h-8 rounded-lg border border-line text-muted grid place-items-center" aria-label="Remove"><Trash2 size={13} /></button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {std && <button onClick={add} className="mt-2 text-[13px] font-bold text-brand-700 inline-flex items-center gap-1.5 min-h-[36px]"><Plus size={14} /> Add item to {ROOM_KIND_LABEL[kind]}</button>}
+        {kindNote[kind] && <p className="px-4 pt-2 text-[12px] text-muted">{kindNote[kind]}</p>}
+        <div className="flex-1 overflow-auto px-4 py-3 space-y-4">
+          {!std ? <div className="py-8 text-center text-muted text-[14px]"><Loader2 className="animate-spin inline mr-2" size={16} />Loading…</div> : TIERS.map(tier => {
+            const idx = rows.map((r, i) => [r, i] as const).filter(([r]) => (r.tier || 'must') === tier)
+            return (
+              <section key={tier} className="rounded-2xl border border-line overflow-hidden">
+                <div className={'px-3 py-2 flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide ' + (tier === 'must' ? 'bg-ink text-white' : tier === 'recommended' ? 'bg-brand-50 text-brand-800' : 'bg-app text-muted')}>
+                  {TIER_LABEL[tier]} <span className="font-semibold normal-case tracking-normal opacity-70">{idx.length}</span>
+                  <button onClick={() => add(tier)} className={'ml-auto inline-flex items-center gap-1 normal-case tracking-normal font-bold text-[12px] ' + (tier === 'must' ? 'text-white/90' : 'text-brand-700')}><Plus size={13} /> Add</button>
+                </div>
+                {!idx.length && <div className="px-3 py-3 text-[12.5px] text-muted">Nothing here yet.</div>}
+                <div className="divide-y divide-line">
+                  {idx.map(([it, i]) => (
+                    <div key={i} className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <input value={it.name} onChange={e => update(i, { name: e.target.value })} className={INPUT + ' flex-1 min-w-0 py-1.5 font-semibold'} placeholder="Item name" />
+                        <button onClick={() => setOpen(open === i ? null : i)} className={'text-[12.5px] whitespace-nowrap rounded-lg px-2.5 py-1.5 border ' + (open === i ? 'border-ink bg-ink text-white' : 'border-line bg-app text-ink/80 hover:border-ink')} title="Change the rule">{ruleText(it)}</button>
+                        <span className="w-10 text-right font-bold tabular-nums text-[14px]" title={'For ' + occ + ' guests'}>{it.appliance ? '1' : it.perBed ? (/pillow/i.test(it.name) ? '4' : String(it.qty)) : qtyFor(it, occ)}</span>
+                        <button onClick={() => remove(i)} className="w-8 h-8 rounded-lg border border-line text-muted grid place-items-center shrink-0" aria-label="Remove"><Trash2 size={13} /></button>
+                      </div>
+                      {open === i && (
+                        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[12.5px]">
+                          <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Rule</span>
+                            <select value={it.appliance ? 'appliance' : it.perBed ? 'bed' : it.perGuest ? 'guest' : 'fixed'} onChange={e => { const v = e.target.value; update(i, { perGuest: v === 'guest', perBed: v === 'bed', appliance: v === 'appliance' ? (it.appliance || 'microwave') : undefined }) }} className={INPUT + ' w-full py-1.5'}>
+                              <option value="fixed">Fixed count per unit</option><option value="guest">Per max guest</option>{kind === 'bedroom' && <option value="bed">Per bed (sized)</option>}{kind === 'kitchen' && <option value="appliance">Appliance (if the unit has it)</option>}
+                            </select></label>
+                          {it.appliance ? (
+                            <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Which appliance</span><select value={it.appliance} onChange={e => update(i, { appliance: e.target.value as any })} className={INPUT + ' w-full py-1.5'}>{APPLIANCES.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}</select></label>
+                          ) : (
+                            <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">{it.perGuest ? 'Per guest' : it.perBed ? 'Per bed' : 'Count'}</span><input type="number" step={it.perGuest ? 0.5 : 1} min={0} value={it.qty} onChange={e => update(i, { qty: Number(e.target.value) || 0 })} className={INPUT + ' w-full py-1.5'} /></label>
+                          )}
+                          {it.perGuest && <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Plus</span><input type="number" value={it.plus ?? 0} onChange={e => update(i, { plus: Number(e.target.value) || 0 })} className={INPUT + ' w-full py-1.5'} /></label>}
+                          {it.perGuest && <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">At least / at most</span><span className="flex gap-1"><input type="number" value={it.min ?? ''} placeholder="–" onChange={e => update(i, { min: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-full py-1.5'} /><input type="number" value={it.max ?? ''} placeholder="–" onChange={e => update(i, { max: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-full py-1.5'} /></span></label>}
+                          <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Category</span><select value={it.category} onChange={e => update(i, { category: e.target.value as Category })} className={INPUT + ' w-full py-1.5'}>{CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}</select></label>
+                          <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Tier</span><select value={it.tier || 'must'} onChange={e => update(i, { tier: e.target.value as Tier })} className={INPUT + ' w-full py-1.5'}>{TIERS.map(t => <option key={t} value={t}>{TIER_LABEL[t]}</option>)}</select></label>
+                          <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Only when</span><select value={it.only || ''} onChange={e => update(i, { only: (e.target.value || undefined) as any })} className={INPUT + ' w-full py-1.5'}><option value="">always</option>{ONLY_KEYS.map(k => <option key={k} value={k}>{ONLY_LABEL[k]}</option>)}</select></label>
+                          <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Ask the walker for</span><input value={it.brand || ''} onChange={e => update(i, { brand: e.target.value || undefined })} placeholder="size / model" className={INPUT + ' w-full py-1.5'} /></label>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )
+          })}
         </div>
         <div className="px-4 py-3 border-t border-line flex items-center gap-2 flex-wrap">
           <button onClick={() => save(false)} disabled={busy || !dirty} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save standard</button>
