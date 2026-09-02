@@ -27,7 +27,10 @@
 // Scheduling goes through the same route the rest of the board uses, so there is one code path that
 // moves a task and one place for it to be wrong.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, RefreshCw, CalendarClock, MapPin, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square } from 'lucide-react'
+import { Loader2, RefreshCw, CalendarClock, MapPin, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square, ChevronRight, ChevronDown, ExternalLink, FileText } from 'lucide-react'
+import CommentThread from '@/components/CommentThread'
+
+const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
 import { useSuggestions, type Sug } from '@/components/SuggestionsBand'
 
 const niceDate = (ymd: string) => {
@@ -42,6 +45,7 @@ const lateWord = (n: number | null) =>
 type Item = {
   taskId: string; listingId: string; unit: string; task: string; dept: string
   scheduledDate: string | null; waitingDays: number | null
+  assignees: string[]; status: string; reportUrl: string | null
   target: { date: string; hasTrade: boolean; who: string[] } | null
   recommendation: string
 }
@@ -390,6 +394,10 @@ function RowLine({ row, today, busy, roster, selected, onToggle, onSchedule, onA
   const defaultWho = row.kind === 'suggestion' ? (row.sug.candidates[0] || '') : (target?.who?.[0] || '')
 
   const [open, setOpen] = useState(false)
+  // DETAILS ARE A SEPARATE DISCLOSURE FROM THE SCHEDULER.
+  // Opening "who and when" to read a comment, or opening a comment thread to change a date, are
+  // both the wrong shape. One button changes the job, the other explains it.
+  const [detail, setDetail] = useState(false)
   const [who, setWho] = useState(defaultWho)
   const [when, setWhen] = useState(defaultDate)
 
@@ -412,6 +420,11 @@ function RowLine({ row, today, busy, roster, selected, onToggle, onSchedule, onA
       <div className="flex items-start gap-2.5 px-3 py-2.5">
         <input type="checkbox" checked={selected} onChange={onToggle} disabled={!!busy}
           className="mt-1 shrink-0" aria-label={`Select ${row.unit} ${row.label}`} />
+        <button onClick={() => setDetail(d => !d)} aria-expanded={detail}
+          aria-label={detail ? 'Hide details' : 'Show details'}
+          className="mt-0.5 shrink-0 text-muted hover:text-ink">
+          {detail ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </button>
         <span className={'w-5 h-5 rounded-md inline-flex items-center justify-center shrink-0 mt-0.5 ' +
           (suggested ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500')}>
           <Icon size={11} strokeWidth={2.6} />
@@ -475,6 +488,59 @@ function RowLine({ row, today, busy, roster, selected, onToggle, onSchedule, onA
           {target && when !== target.date && (
             <span className="text-[11px] text-amber-700">Recommended day was {niceDate(target.date)}.</span>
           )}
+        </div>
+      )}
+
+      {/* ── DETAILS ── Everything a normal task row gives you: what it is, where it stands, the
+          field report, the way through to Breezeway, and the thread. A row you can act on but not
+          read is a row people act on wrongly. ── */}
+      {detail && (
+        <div className="px-3 pb-3 pl-[52px]">
+          <div className="rounded-xl border border-line bg-white p-3">
+            {row.kind === 'pending' ? (
+              <>
+                <div className="flex items-start gap-x-4 gap-y-1 flex-wrap text-[11.5px]">
+                  <span className="text-muted">Trade <b className="text-ink capitalize">{row.item.dept}</b></span>
+                  <span className="text-muted">Status <b className="text-ink">{row.item.status || 'open'}</b></span>
+                  <span className="text-muted">Scheduled <b className="text-ink">{row.item.scheduledDate ? niceDate(row.item.scheduledDate) : 'no date'}</b></span>
+                  <span className="text-muted">
+                    {row.item.assignees.length
+                      ? <>On it <b className="text-ink">{row.item.assignees.join(', ')}</b></>
+                      : <b className="text-rose-600">Nobody assigned</b>}
+                  </span>
+                  <span className="ml-auto flex items-center gap-3">
+                    {row.item.reportUrl && (
+                      <a href={row.item.reportUrl} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink">
+                        <FileText size={11} /> Field report
+                      </a>
+                    )}
+                    <a href={bzTask(row.item.taskId)} target="_blank" rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink">
+                      <ExternalLink size={11} /> Open in Breezeway
+                    </a>
+                  </span>
+                </div>
+                <div className="mt-2 border-t border-line pt-2">
+                  <CommentThread type="task" id={row.item.taskId} taskId={row.item.taskId}
+                    label={`${row.unit} — ${row.label}`} link={bzTask(row.item.taskId)} />
+                </div>
+              </>
+            ) : (
+              // A suggestion has no task yet, so there is nothing to comment on and no report to
+              // read. Saying that plainly beats an empty thread that looks broken.
+              <div className="text-[11.5px] text-muted space-y-1">
+                <p><span className="text-ink font-semibold">Why now:</span> {row.sug.why}</p>
+                <div className="flex gap-x-4 flex-wrap">
+                  <span>Trade <b className="text-ink capitalize">{row.sug.dept}</b></span>
+                  <span>About <b className="text-ink">{row.sug.minutes} min</b></span>
+                  <span>{row.sug.lastDone ? <>Last done <b className="text-ink">{niceDate(row.sug.lastDone)}</b></> : <b className="text-ink">No record of it being done</b>}</span>
+                  {row.sug.vacantTonight && <span className="text-emerald-700 font-semibold">Unit is empty tonight</span>}
+                </div>
+                <p className="text-muted/80">Nothing to open yet &mdash; this task does not exist until you add it. Once it does, the report and the comment thread live here.</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
