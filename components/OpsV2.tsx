@@ -15,23 +15,23 @@
 //   than room"; ServiceTitan is technicians × capacity. Ours was unit-only. The People tab is the
 //   missing axis — and it is where push belongs, because push always starts with "who has room?".
 //
-// The Push tab promotes the suggestion queue (the part Jon loves) from a collapsed section at the
-// bottom of the page to a destination: every suggestion grouped by REASON with its evidence, filed
-// into Breezeway one tap at a time or in bulk.
+// 2026-09-02 (Jon: "get rid of the needs a human tab" + "Grid + Staffing only"): the Board tab
+// (Needs-a-human triage over the old TodayInOps board) and the Push tab (a 114-item queue that
+// fired a fixed Audit + PM for every turnover) LEFT this page. Their job — what needs a person,
+// with evidence and one action — is the Command Center's "Do next" list now (lib/command-day),
+// with dismissals shared server-side instead of per-device localStorage ticks. Two tabs remain:
+// GRID (the board, the default) and STAFFING (the person axis + the capacity model).
 //
-// REUSE, NOT REWRITE: the full board (TodayInOps) is untouched and mounts inside "Show all".
 // Assignment uses /api/breezeway/assign, creation /api/ops-today/add-task (which already takes
-// assigneeIds), pushes /api/health/push-task (which already picks the next vacant day). This file
-// is a new front door on machinery that already works.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+// assigneeIds). This file is a front door on machinery that already works.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
-  AlertTriangle, Plus, Search, ChevronDown, Users, Send, X, Loader2, Check, Phone,
-  CheckCircle2, ExternalLink, UserPlus, MessageSquare, LayoutGrid, FileText, ChevronLeft, ChevronRight, CalendarDays,
+  AlertTriangle, Plus, ChevronDown, Users, Send, X, Loader2, Check, FileText, ChevronLeft, ChevronRight, CalendarDays,
 } from 'lucide-react'
-import { TodayInOps } from '@/components/TodayInOps'
 import { OpsGrid } from '@/components/OpsGrid'
 import { useCachedFetch } from '@/lib/swr'
+
 
 // ── types (mirrors of what the APIs actually send) ──────────────────────────────────────────────
 type Task = { id: string; listingId: string; unit: string; market: string; dept: string; type: string; name: string; status: string; assignees: string[]; startedAt: string | null; finishedAt: string | null; minutes: number | null; done: boolean; running: boolean; late: boolean; atRisk: boolean; guestyOnly?: boolean }
@@ -40,20 +40,15 @@ type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: numb
 type BehindRow = { taskId: string; unit: string; checkOutTime: string | null; arrivingAt: string | null; assignee: string | null }
 type VacantU = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
 type OpsData = { ok: boolean; today: string; deadline: Deadline; behind?: { notStarted: number; units: BehindRow[] } | null; units: Unit[]; vacants?: VacantU[]; error?: string }
-type CareItem = { key: string; label: string; short: string; template: string; monthsAgo: number | null; every: number; neverSeen: boolean; due: boolean }
 type Glitch = { id: string; unit: string; issue: string; ageDays?: number; running?: boolean; unassigned?: boolean; assignees?: string[] }
 type StaffPerson = { name: string; role: string | null; clockedIn: boolean; shift: string | null; bzAlias: string | null; tasks: number; cleans: number }
 type Staffing = { ok: boolean; people: StaffPerson[]; summary: { clockedIn: number; nothingAssigned: number; idleNames: string[] } }
 type Roster = { id: number; name: string; departments: string[] }
-type PlanPush = { status: string } | null
-type PlanTask = { key: string; category: string; title: string; detail: string; severity: string; department: string | null; pushable: boolean; push: PlanPush; metric?: string | null; checklist?: string[]; evidence?: { quote: string; channel: string; date: string; stars: number | null }[] }
-type PlanUnit = { listingId: string; listing: string; internalName?: string | null; market: string; tasks: PlanTask[] }
-type PlanData = { ok: boolean; days: { date: string; label: string; units: PlanUnit[] }[] }
 type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null }
 
 // ── The efficiency model (/api/capacity — lib/capacity-day). Built 2026-08-27, measured from
 // 1,372 timed cleans; this page is its first surface. Shapes mirror DayLoad / Suggestion / DayKpi.
-type CapPerson = { person: string; cleans: number; otherTasks: number; workMinutes: number; travelMinutes: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number }
+type CapPerson = { person: string; cleans: number; otherTasks: number; workMinutes: number; travelMinutes: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string }
 type CapSug = { kind: 'assign' | 'move'; stopId: string; unit: string; toPerson: string; fromPerson?: string | null; toBeforePct: number; toAfterPct: number; fromBeforePct?: number; fromAfterPct?: number; addedMinutes: number; why: string }
 type CapKpi = { peopleOnShift: number; cleans: number; otherTasks: number; unassignedCount: number; workMinutes: number; travelMinutes: number; capacityMinutes: number; utilisationPct: number; spreadPct: number; overloaded: number; underloaded: number; implausible: number; closedOutToday: number }
 type CapData = { ok?: boolean; people?: CapPerson[]; suggestions?: CapSug[]; kpi?: CapKpi; notes?: string[]; error?: string }
@@ -64,213 +59,6 @@ const fmtH = (mins: number) => {
   return h ? h + 'h' + (r ? ' ' + r + 'm' : '') : r + 'm'
 }
 
-const fmtLeft = (m: number) => { const a = Math.abs(m); const h = Math.floor(a / 60); return (h ? h + 'h ' : '') + (a % 60) + 'm' }
-
-// One exception row: something on today that needs a human, whatever mechanism noticed it.
-type Exc = {
-  key: string
-  kind: 'turn' | 'late' | 'guest' | 'unassigned' | 'idle'
-  rank: number
-  who: string           // unit name, or the person for 'idle'
-  what: string
-  taskId?: string       // when there is a Breezeway task to act on
-  dept?: string
-  assignee?: string | null
-  // Which activity this belongs to, so the Cleans / Maintenance / Inspections switch can scope the
-  // list (Jon, 2026-08-14: the segmented control from the approved mockup — "super important").
-  // 'any' = rows that should survive every filter (an idle cleaner matters whichever lens is on).
-  act: 'cleans' | 'maintenance' | 'inspections' | 'any'
-  market?: string
-  market2?: string | null
-}
-/** Which activity a Breezeway task belongs to — same buckets the full board's chips use. */
-function actOf(t: Task | undefined | null): Exc['act'] {
-  if (!t) return 'cleans'
-  if (t.type === 'departure_clean' || t.type === 'deep_clean' || t.type === 'strip' || t.dept === 'housekeeping') return 'cleans'
-  if (t.type === 'inspection' || t.type === 'audit' || t.dept === 'inspection') return 'inspections'
-  return 'maintenance'
-}
-const KIND_LABEL: Record<Exc['kind'], string> = { turn: 'Same-day', late: 'Late', guest: 'Guest issue', unassigned: 'Unassigned', idle: 'Idle' }
-const KIND_CLS: Record<Exc['kind'], string> = {
-  turn: 'bg-rose-600 text-white', late: 'bg-rose-100 text-rose-700',
-  guest: 'bg-pink-100 text-pink-700', unassigned: 'bg-amber-100 text-amber-800', idle: 'bg-violet-100 text-violet-700',
-}
-
-/** One definition of "needs a human", shared by the ops board and Command Center. */
-function buildExcs(data: OpsData | undefined, units: Unit[], glitches: Glitch[], staff: Staffing | null | undefined): Exc[] {
-  const out: Exc[] = []
-  const behindBy: Record<string, BehindRow> = {}
-  for (const b of (data?.behind?.units || [])) behindBy[b.unit] = b
-
-  for (const u of units) {
-    if (u.allDone) continue
-    const open = u.tasks.filter(t => !t.done && !t.guestyOnly)
-    const clean = open.find(t => t.type === 'departure_clean' || t.type === 'deep_clean')
-    const b = behindBy[u.unit]
-    if (u.sameDayTurn) {
-      out.push({
-        key: 'turn:' + u.listingId, kind: 'turn', rank: 0, who: u.unit,
-        what: 'Guest arriving today' + (b?.arrivingAt ? ' at ' + b.arrivingAt : '') +
-          (clean ? (clean.running ? ' · clean in progress' : clean.assignees.length ? ' · clean not started (' + clean.assignees.join(', ') + ')' : ' · clean not started, nobody on it') : ' · open work remains'),
-        taskId: clean?.id, dept: clean?.dept || 'housekeeping', assignee: clean?.assignees[0] || null,
-        act: actOf(clean), market: u.market, market2: u.market2,
-      }); continue
-    }
-    if (u.late) {
-      const t = open.find(x => x.late) || clean
-      out.push({
-        key: 'late:' + u.listingId, kind: 'late', rank: 1, who: u.unit,
-        what: (b?.checkOutTime ? 'Out ' + b.checkOutTime + ' · ' : '') + (t ? t.name : 'departure clean') +
-          (t && t.assignees.length ? ' · ' + t.assignees.join(', ') + ' assigned, not started' : ' · unassigned'),
-        taskId: t?.id, dept: t?.dept || 'housekeeping', assignee: t?.assignees[0] || null,
-        act: actOf(t), market: u.market, market2: u.market2,
-      }); continue
-    }
-    if (u.unassigned) {
-      const t = open.find(x => x.assignees.length === 0)
-      out.push({
-        key: 'un:' + u.listingId, kind: 'unassigned', rank: 3, who: u.unit,
-        what: (t ? t.name : 'open work') + (u.guestOut ? ' · guest leaves ' + u.guestOut : ''),
-        taskId: t?.id, dept: t?.dept || 'housekeeping',
-        act: actOf(t), market: u.market, market2: u.market2,
-      })
-    }
-  }
-  for (const g of glitches) {
-    out.push({
-      key: 'gl:' + g.id, kind: 'guest', rank: g.unassigned ? 2 : 4, who: g.unit,
-      what: '“' + g.issue + '”' + (g.ageDays ? ' · ' + g.ageDays + 'd' : '') +
-        (g.unassigned ? ' · unassigned' : (g.assignees && g.assignees.length ? ' · ' + g.assignees.join(', ') + (g.running ? ' on it' : '') : '')),
-      taskId: g.id, dept: 'maintenance', assignee: (g.assignees || [])[0] || null,
-      act: 'maintenance', market: (g as any).market, market2: (g as any).market2,
-    })
-  }
-  for (const n of (staff?.summary?.idleNames || [])) {
-    out.push({ key: 'idle:' + n, kind: 'idle', rank: 3, who: n, what: 'Clocked in, nothing assigned in Breezeway', act: 'any' })
-  }
-  return out.sort((a, b) => a.rank - b.rank || a.who.localeCompare(b.who))
-}
-
-// ── MARK HANDLED (Jon, 2026-08-18: "needs a human... feels hard to take action on"). ──────────
-// The cheapest real action is being able to say "dealt with it": a tap hides the row for the rest
-// of the day, on this device. Deliberately local — it clears YOUR list without closing anyone
-// else's alarm, and everything is back tomorrow. The count of handled rows stays on the header,
-// so a cleared list never silently pretends the day had nothing in it.
-const ackKey = () => 'ops_ack:' + new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-function loadAcks(): Set<string> {
-  try { return new Set<string>(JSON.parse(localStorage.getItem(ackKey()) || '[]')) } catch { return new Set() }
-}
-function saveAcks(s: Set<string>) { try { localStorage.setItem(ackKey(), JSON.stringify(Array.from(s))) } catch { /* private mode */ } }
-
-// The three groups a supervisor actually triages in order. Grouping ≠ hiding: every row is still
-// on screen, the groups just say WHY each one matters and what kind of action clears it.
-const EXC_GROUPS: { key: string; label: string; sub: string; rail: string; match: (e: Exc) => boolean }[] = [
-  { key: 'now', label: 'Act now', sub: 'a guest feels this today', rail: 'border-l-rose-500', match: e => e.kind === 'turn' || e.kind === 'late' },
-  { key: 'own', label: 'Needs an owner', sub: 'work or people with nobody attached', rail: 'border-l-amber-500', match: e => e.kind === 'unassigned' || e.kind === 'idle' },
-  { key: 'guest', label: 'Guest issues', sub: 'open complaints in-house', rail: 'border-l-pink-500', match: e => e.kind === 'guest' },
-]
-
-/**
- * ONE exception row, everywhere — board and Command Center render the same component so an
- * action learned on one page works on the other. Every row carries at least one direct verb:
- * Assign / Reassign (inline roster), Give work (idle), + Task (prefilled sheet), open-in-Breezeway,
- * and Handled. No row is ever a dead end you can only read.
- */
-function ExcRow({ e, roster, open, onToggleAssign, onDone, onGiveWork, onAddTask, onAck, compact }: {
-  e: Exc; roster: Roster[]; open: boolean
-  onToggleAssign: () => void; onDone: () => void
-  onGiveWork: () => void; onAddTask?: (unit: string) => void; onAck?: () => void; compact?: boolean
-}) {
-  const btn = 'text-[12px] font-bold px-2.5 py-1.5 rounded-lg shrink-0'
-  return (
-    <div className={'pl-3 pr-3 ' + (compact ? 'py-2' : 'py-2.5') + ' border-l-4 ' +
-      (e.kind === 'turn' || e.kind === 'late' ? 'border-l-rose-500' : e.kind === 'guest' ? 'border-l-pink-400' : 'border-l-amber-400')}>
-      <div className="flex items-center gap-2.5 flex-wrap">
-        {/* The badge is a fixed 70px column on desktop; on a phone §4 bumps 9.5px type to 11px and
-            "SAME-DAY" split into "SAME-" / "DAY". lh-chip holds it on one line and the width goes
-            auto below 640px so the longer word has room — sm: is the desktop column, unchanged. */}
-        <span className={'lh-chip text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 w-auto sm:w-[70px] text-center ' + KIND_CLS[e.kind]}>{KIND_LABEL[e.kind]}</span>
-        <span className="text-[13.5px] font-bold text-ink shrink-0">{e.who}</span>
-        {e.market ? <span className="text-[10px] font-semibold text-muted bg-app rounded px-1.5 py-0.5 shrink-0">{e.market}</span> : null}
-        <span className={'text-[13px] text-ink/75 flex-1 min-w-[180px] leading-snug' + (compact ? ' truncate' : '')}>{e.what}</span>
-        {/* Below 640px the row wraps and a lone "+ Task" ended up beside the description text,
-            mid-row. Full width on phone keeps every action of the row together on one end line. */}
-        <span className="flex items-center gap-1.5 shrink-0 ml-auto w-full justify-end sm:w-auto">
-          {e.kind === 'idle' ? (
-            <button onClick={onGiveWork} className={btn + ' bg-ink text-white'}>Give work</button>
-          ) : e.taskId && !e.assignee ? (
-            <button onClick={onToggleAssign} className={btn + ' ' + (open ? 'bg-white border border-ink text-ink' : 'bg-ink text-white')}>
-              <UserPlus size={12} className="inline mr-1 -mt-0.5" />Assign
-            </button>
-          ) : e.taskId ? (
-            <button onClick={onToggleAssign} title={'With ' + (e.assignee || 'someone') + ' — tap to reassign'}
-              className={btn + ' border border-line bg-white text-ink hover:border-ink/40'}>{e.assignee ? e.assignee.split(' ')[0] : 'Reassign'} ↺</button>
-          ) : null}
-          {/* + Task only where NO task exists yet (Jon, 2026-08-18: "if task is there, should not
-              let me create a task"). A row with a taskId already IS a task — the actions there are
-              assign and open, and offering "create" was an invitation to duplicates. */}
-          {!compact && e.kind !== 'idle' && !e.taskId && onAddTask ? (
-            <button onClick={() => onAddTask(e.who)} title="File a new task on this unit"
-              className={btn + ' border border-line bg-white text-ink hover:border-ink/40'}>+ Task</button>
-          ) : null}
-          {e.taskId ? (
-            <a href={'https://app.breezeway.io/task/' + e.taskId} target="_blank" rel="noreferrer" title="Open in Breezeway"
-              className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink shrink-0"><ExternalLink size={12} /></a>
-          ) : null}
-          {onAck ? (
-            <button onClick={onAck} title="Handled — hide it for today (on this device)"
-              className="p-1.5 rounded-lg text-muted hover:text-emerald-600 shrink-0"><CheckCircle2 size={15} /></button>
-          ) : null}
-        </span>
-      </div>
-      {open && e.taskId && (
-        <InlineAssign taskId={e.taskId} dept={e.dept || ''} roster={roster} onDone={onDone} />
-      )}
-    </div>
-  )
-}
-
-/**
- * NEEDS A HUMAN, on Mission Control (Jon, 2026-08-14). The same list the ops board leads with —
- * same fetches (shared 30s cache, so bouncing between the two pages costs one request), same rows,
- * same inline Assign. Renders NOTHING when the day is clean: Mission Control is a priority feed,
- * and an empty all-clear box would just push real work down the page.
- */
-export function NeedsHumanPanel() {
-  const { data, refresh } = useCachedFetch<OpsData>('/api/ops-today')
-  const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches')
-  const { data: staff } = useCachedFetch<Staffing>('/api/ops-today/staffing')
-  const [roster, setRoster] = useState<Roster[]>([])
-  const [assignFor, setAssignFor] = useState('')
-  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
-
-  const units: Unit[] = Array.isArray(data?.units) ? data!.units : []
-  const glitches: Glitch[] = (gl && Array.isArray(gl.glitches)) ? gl.glitches : []
-  const excs = useMemo(() => buildExcs(data, units, glitches, staff), [data, units, glitches, staff])
-  if (!excs.length) return null
-
-  const shown = excs.slice(0, 8)
-  return (
-    <div className="rounded-2xl border border-rose-200 bg-white overflow-hidden">
-      <div className="px-4 py-2.5 bg-rose-50/70 border-b border-rose-200 flex items-center gap-2">
-        <AlertTriangle size={14} className="text-rose-700" />
-        <span className="text-[13px] font-bold text-rose-800">Needs a human — {excs.length}</span>
-        <Link href="/plan" className="ml-auto text-[12px] font-semibold text-rose-700 hover:underline">Open the board →</Link>
-      </div>
-      <div className="divide-y divide-line">
-        {shown.map(e => (
-          <ExcRow key={e.key} e={e} roster={roster} open={assignFor === e.key} compact
-            onToggleAssign={() => setAssignFor(assignFor === e.key ? '' : e.key)}
-            onDone={() => { setAssignFor(''); refresh() }}
-            onGiveWork={() => { window.location.href = '/plan' }} />
-        ))}
-        {excs.length > shown.length && (
-          <Link href="/plan" className="block px-4 py-2 text-[12px] font-semibold text-muted hover:text-ink">+ {excs.length - shown.length} more on the board</Link>
-        )}
-      </div>
-    </div>
-  )
-}
 
 /** Today in the market's own timezone — the board is a New York clock, not the browser's. */
 function ymdET(d: Date) {
@@ -317,9 +105,18 @@ export function OpsV2() {
   // holds 'board' for everyone who used this page before today, and there is no way to tell "chose
   // Board" apart from "never chose". Bumping the key gives everybody the new landing once, and
   // whatever they pick after that is theirs and sticks.
-  const [tab, setTab] = useState<'board' | 'grid' | 'people' | 'push'>('grid')
-  useEffect(() => { try { const t = localStorage.getItem('opsv2_tab_v2'); if (t === 'people' || t === 'push' || t === 'board') setTab(t) } catch {} }, [])
-  const pick = (t: 'board' | 'grid' | 'people' | 'push') => { setTab(t); try { localStorage.setItem('opsv2_tab_v2', t) } catch {} }
+  // TWO TABS (2026-09-02). ?tab=people deep-links from the Command Center; otherwise the last
+  // choice on this device. Anyone whose stored choice was the retired Board or Push tab lands on
+  // the Grid.
+  const [tab, setTab] = useState<'grid' | 'people'>('grid')
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get('tab')
+      if (q === 'people') { setTab('people'); return }
+      const t = localStorage.getItem('opsv2_tab_v2'); if (t === 'people') setTab(t)
+    } catch {}
+  }, [])
+  const pick = (t: 'grid' | 'people') => { setTab(t); try { localStorage.setItem('opsv2_tab_v2', t) } catch {} }
 
   // null = closed; '' = open blank; a unit name = open with that unit pre-searched (the "+ Task"
   // button on a Needs-a-human row lands you one keystroke from filing, not five).
@@ -327,14 +124,6 @@ export function OpsV2() {
 
   const units: Unit[] = Array.isArray(data?.units) ? data!.units : []
   const glitches: Glitch[] = (gl && Array.isArray(gl.glitches)) ? gl.glitches : []
-  const d = data?.deadline
-
-  // ── THE EXCEPTIONS, MERGED AND RANKED ─────────────────────────────────────────────────────────
-  // Five mechanisms used to answer "what needs a human" in five idioms (behind band, glitch panel,
-  // needs-attention group, signal chips, staffing block). One list now, worst first. Extracted to
-  // buildExcs so Command Center renders the SAME list (Jon, 2026-08-14: "Command center should
-  // show... needs a human section") — one definition of urgent, two doors to it.
-  const excs: Exc[] = useMemo(() => buildExcs(data, units, glitches, staff), [units, glitches, staff, data])
 
   return (
     <div>
@@ -350,15 +139,12 @@ export function OpsV2() {
       <div className="flex items-end gap-2 border-b border-line mb-2 sm:mb-4">
       <div className="flex items-center gap-4 sm:gap-6 flex-1 min-w-0 overflow-x-auto sm:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {([['grid', 'Grid', null, 'bg-app text-muted'],
-           ['board', 'Board', excs.length, 'bg-rose-100 text-rose-700'],
-           ['people', 'Staffing', staff?.summary?.clockedIn || 0, 'bg-app text-muted'],
-           ['push', 'Push', null, 'bg-violet-100 text-violet-700']] as const).map(([k, label, n, cls]) => (
+           ['people', 'Staffing', staff?.summary?.clockedIn || 0, 'bg-app text-muted']] as const).map(([k, label, n, cls]) => (
           <button key={k} onClick={() => pick(k as any)}
             className={'pb-2.5 pt-1 text-[14px] font-bold inline-flex shrink-0 items-center gap-2 border-b-2 -mb-px ' +
               (tab === k ? 'text-ink border-ink' : 'text-muted border-transparent hover:text-ink')}>
             {label}
             {n != null && n > 0 && <span className={'text-[11px] font-bold rounded-full px-2 py-0.5 ' + cls}>{n}</span>}
-            {k === 'push' && <PushCount />}
           </button>
         ))}
       </div>
@@ -405,29 +191,26 @@ export function OpsV2() {
 
       <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />
 
-      {tab === 'board' && (
-        <BoardTab excs={excs} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} onAddTask={u => setAddFor(u)} />
-      )}
       {tab === 'grid' && (
         <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
           loading={loading} error={error ? String(error) : null}
           onRefresh={refresh} onAddTask={u => setAddFor(u)} />
       )}
       {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} cap={cap || null} />}
-      {tab === 'push' && <PushTab roster={roster} />}
 
       {addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
     </div>
   )
 }
 
-// The cockpit door to the same strip: Mission Control mounts this. It feeds itself (capacity +
-// roster), and "view lanes" navigates to the ops board's Staffing tab instead of switching tabs.
+// The cockpit door to the same strip: the Command Center mounts this. It feeds itself (capacity +
+// roster), and "view lanes" deep-links to the board's Staffing tab (?tab=people) — it used to
+// land on whatever tab the device last had open, which for most people was the Grid.
 export function CapacityPanel() {
   const { data: cap, refresh } = useCachedFetch<CapData>('/api/capacity', { ttl: 5 * 60_000 })
   const [roster, setRoster] = useState<Roster[]>([])
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
-  return <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => { window.location.href = '/plan' }} />
+  return <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => { window.location.href = '/plan?tab=people' }} />
 }
 
 // ── THE DAY IN ONE SENTENCE (Jon, 2026-08-31: "we need AI to learn how many tasks are doable,
@@ -438,6 +221,7 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | nu
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, boolean>>({})
+  const [err, setErr] = useState('')
   const k = cap?.kpi
   if (!cap || !k || !cap.ok) return null
   const load = k.workMinutes + k.travelMinutes
@@ -454,15 +238,15 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | nu
     const n = s.toPerson.toLowerCase()
     const hit = roster.find(r => r.name.toLowerCase() === n)
       || roster.find(r => r.name.toLowerCase().includes(n.split(' ')[0]) && n.split(' ')[0].length > 3)
-    if (!hit) { alert('Could not match "' + s.toPerson + '" to the Breezeway roster — assign from the board instead.'); return }
-    setBusy(s.stopId + s.toPerson)
+    if (!hit) { setErr('Could not match "' + s.toPerson + '" to the Breezeway roster — assign from the board instead.'); return }
+    setBusy(s.stopId + s.toPerson); setErr('')
     try {
       const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: s.stopId, assigneeIds: [hit.id] }) })
       const j = await r.json()
       if (!r.ok || j.error) throw new Error(j.error || 'failed')
       setFiled(f => ({ ...f, [s.stopId]: true }))
       onRefresh()
-    } catch (e: any) { alert(String(e?.message || e)) }
+    } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy('')
   }
 
@@ -509,145 +293,12 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | nu
               )}
             </div>
           ))}
+          {err && <p className="text-[11.5px] text-rose-600 font-semibold">{err}</p>}
           {Array.isArray(cap.notes) && cap.notes.length > 0 && (
             <p className="text-[11px] text-muted pt-1">{cap.notes.join(' · ')}</p>
           )}
         </div>
       )}
-    </div>
-  )
-}
-
-/** The Push tab count badge — fetched lazily so the Board pays nothing for it. */
-function PushCount() {
-  const { data } = useCachedFetch<PlanData>('/api/ops-plan/daily', { ttl: 5 * 60_000 })
-  const n = useMemo(() => {
-    let c = 0
-    for (const day of data?.days || []) for (const u of day.units) for (const t of u.tasks)
-      if (t.pushable && !(t.push && t.push.status)) c++
-    return c
-  }, [data])
-  if (!n) return null
-  return <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-violet-100 text-violet-700">{n}</span>
-}
-
-// ── BOARD: the triage, then THE board ──────────────────────────────────────────────────────────
-//
-// v2 history, honestly: the first cut hid the board behind "Show all" (too hidden), the second
-// stacked a flat task list on top of the old board (Jon, 2026-08-17: "a mess... The Today in Ops
-// board that we had was much better"). This is the landing that survived contact: the simplified
-// Needs-a-human list, then the full original board — its own market tabs, chips, status strip,
-// date picker and unit cards, untouched. The board's internal not-started band and staffing check
-// are suppressed here because the triage above already says both.
-function BoardTab({ excs, roster, onRefresh, onPeople, onAddTask }: {
-  excs: Exc[]; roster: Roster[]; onRefresh: () => void; onPeople: () => void; onAddTask: (unit: string) => void
-}) {
-  const [assignFor, setAssignFor] = useState('')
-  // COLLAPSED IS A CHOICE THAT STICKS (Jon, 2026-08-25: "Let's get rid of the Needs of Humans
-  // section, or just keep that collapsible"). It was already collapsible, but it re-opened on every
-  // page load, so folding it away never actually got it out of anyone's way. Remembered per device;
-  // the count stays on the header while it is shut, so nothing goes quiet just because it is folded.
-  const [folded, setFolded] = useState(false)
-  useEffect(() => { try { if (localStorage.getItem('opsv2_nh_folded') === '1') setFolded(true) } catch {} }, [])
-  const toggleFold = () => setFolded(f => { const n = !f; try { localStorage.setItem('opsv2_nh_folded', n ? '1' : '0') } catch {}; return n })
-  // Handled rows: hidden for today on this device, never silently — the header keeps the count
-  // and one tap brings them back.
-  const [acks, setAcks] = useState<Set<string>>(new Set())
-  const [showAcked, setShowAcked] = useState(false)
-  useEffect(() => { setAcks(loadAcks()) }, [])
-  const ack = (k: string) => setAcks(prev => { const n = new Set(prev); n.add(k); saveAcks(n); return n })
-  const unack = () => { setAcks(new Set()); saveAcks(new Set()) }
-
-  const liveExcs = excs.filter(e => !acks.has(e.key))
-  const ackedCount = excs.length - liveExcs.length
-  const visible = showAcked ? excs : liveExcs
-
-  return (
-    <div>
-      {excs.length > 0 && (
-        <div className="rounded-2xl border border-rose-200 bg-white overflow-hidden mb-3">
-          <button onClick={toggleFold} className="w-full px-4 py-2.5 bg-rose-50/70 flex items-center gap-2 text-left">
-            <AlertTriangle size={14} className="text-rose-700 shrink-0" />
-            <span className="text-[13.5px] font-bold text-rose-800">Needs a human</span>
-            <span className="text-[11px] font-bold text-white bg-rose-600 rounded-full px-2 py-0.5">{liveExcs.length}</span>
-            {ackedCount > 0 && (
-              <span onClick={ev => { ev.stopPropagation(); setShowAcked(s => !s) }}
-                className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 cursor-pointer">
-                {ackedCount} handled{showAcked ? ' · hide' : ''}
-              </span>
-            )}
-            <span className="ml-auto text-[11px] font-semibold text-rose-700/70 hidden sm:inline">{folded ? 'show' : 'hide'}</span>
-            <ChevronDown size={14} className={'text-rose-700/60 transition-transform shrink-0 ' + (folded ? '' : 'rotate-180')} />
-          </button>
-          {!folded && (
-            <div className="border-t border-rose-200">
-              {liveExcs.length === 0 && !showAcked ? (
-                <div className="px-4 py-3 text-[13px] flex items-center gap-2 flex-wrap">
-                  <CheckCircle2 size={15} className="text-emerald-600" />
-                  <span className="font-semibold text-ink">All handled.</span>
-                  <span className="text-muted">{ackedCount} item{ackedCount === 1 ? '' : 's'} marked done today on this device.</span>
-                  <button onClick={unack} className="text-[12px] font-bold text-brand-700 ml-auto">Bring them back</button>
-                </div>
-              ) : EXC_GROUPS.map(g => {
-                const rows = visible.filter(g.match)
-                if (!rows.length) return null
-                return (
-                  <div key={g.key}>
-                    <div className="px-4 pt-2.5 pb-1 flex items-baseline gap-2">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-ink/80">{g.label}</span>
-                      <span className="text-[11px] text-muted">· {rows.length} — {g.sub}</span>
-                    </div>
-                    <div className="divide-y divide-line">
-                      {rows.map(e => (
-                        <div key={e.key} className={acks.has(e.key) ? 'opacity-45' : ''}>
-                          <ExcRow e={e} roster={roster} open={assignFor === e.key}
-                            onToggleAssign={() => setAssignFor(assignFor === e.key ? '' : e.key)}
-                            onDone={() => { setAssignFor(''); onRefresh() }}
-                            onGiveWork={onPeople} onAddTask={onAddTask}
-                            onAck={acks.has(e.key) ? undefined : () => ack(e.key)} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* THE BOARD — the original, full-strength. One set of controls, its own. */}
-      <TodayInOps hideBands />
-    </div>
-  )
-}
-
-/** Assign a Breezeway task inline: filtered roster, one tap, done. */
-function InlineAssign({ taskId, dept, roster, onDone }: { taskId: string; dept: string; roster: Roster[]; onDone: () => void }) {
-  const [busy, setBusy] = useState(0)
-  const [err, setErr] = useState('')
-  const ppl = useMemo(() => {
-    const inDept = roster.filter(p => !p.departments?.length || p.departments.some(x => x.toLowerCase().includes((dept || '').toLowerCase())))
-    return (inDept.length ? inDept : roster).slice(0, 14)
-  }, [roster, dept])
-  const go = async (id: number) => {
-    setBusy(id); setErr('')
-    try {
-      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId, assigneeIds: [id] }) })
-      const j = await r.json()
-      if (!r.ok || j.error) throw new Error(j.error || 'assign failed')
-      onDone()
-    } catch (e: any) { setErr(String(e?.message || e)); setBusy(0) }
-  }
-  return (
-    <div className="mt-2 pt-2 border-t border-line flex items-center gap-1.5 flex-wrap">
-      {ppl.map(p => (
-        <button key={p.id} onClick={() => go(p.id)} disabled={!!busy}
-          className="text-[12px] font-semibold px-2.5 py-1.5 rounded-full border border-line bg-white hover:border-ink/40 disabled:opacity-50">
-          {busy === p.id ? <Loader2 size={11} className="animate-spin inline" /> : null} {p.name}
-        </button>
-      ))}
-      {err && <span className="text-[11.5px] text-rose-600 font-semibold">{err}</span>}
     </div>
   )
 }
@@ -659,6 +310,7 @@ function InlineAssign({ taskId, dept, roster, onDone }: { taskId: string; dept: 
 // would be read as truth. (Optii earns its minutes with an ML model; until we have one, count.)
 function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing | null; units: Unit[]; roster: Roster[]; onRefresh: () => void; cap: CapData | null }) {
   const [busyKey, setBusyKey] = useState('')
+  const [err, setErr] = useState<Record<string, string>>({})
   const allTasks = useMemo(() => units.flatMap(u => u.tasks.map(t => ({ ...t, unit: u.unit }))), [units])
   const unassignedOpen = useMemo(() =>
     allTasks.filter(t => !t.done && !t.guestyOnly && t.assignees.length === 0)
@@ -686,14 +338,14 @@ function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing |
 
   const pushTo = async (person: StaffPerson, task: Task & { unit: string }) => {
     const rid = rosterIdFor(person.bzAlias || person.name)
-    if (!rid) { alert('Could not match "' + person.name + '" to the Breezeway roster — assign from the board instead.'); return }
-    setBusyKey(person.name + task.id)
+    if (!rid) { setErr(e => ({ ...e, [person.name]: 'Could not match "' + person.name + '" to the Breezeway roster — assign from the Grid instead.' })); return }
+    setBusyKey(person.name + task.id); setErr(e => ({ ...e, [person.name]: '' }))
     try {
       const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: task.id, assigneeIds: [rid] }) })
       const j = await r.json()
       if (!r.ok || j.error) throw new Error(j.error || 'failed')
       onRefresh()
-    } catch (e: any) { alert(String(e?.message || e)) }
+    } catch (e: any) { setErr(x => ({ ...x, [person.name]: String(e?.message || e) })) }
     setBusyKey('')
   }
 
@@ -725,7 +377,13 @@ function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing |
                   {p.role || 'Field'}{p.shift ? ' · ' + p.shift : ''} · {p.clockedIn ? 'clocked in' : 'not clocked in'}
                   {p.bzAlias && p.bzAlias !== p.name ? ' · bz: ' + p.bzAlias : ''}
                 </span>
-                {price && price.capacityMinutes > 0 && (
+                {/* The model excludes a person whose day is credited with more than a day can hold
+                    (tasks closed out on the team's behalf) — printing "0% · room for 3 more cleans"
+                    for someone holding 22 tasks was the strip's most-noticed lie (2026-09-02). */}
+                {price && price.verdict === 'implausible' && (
+                  <span className="block text-[11px] font-semibold text-muted">not priced — {mine.length} tasks is more than a day holds; likely closed out on the team&rsquo;s behalf</span>
+                )}
+                {price && price.verdict !== 'implausible' && price.capacityMinutes > 0 && (
                   <span className={'block text-[11px] font-semibold ' + (price.utilisationPct > 100 ? 'text-rose-700' : price.utilisationPct >= 85 ? 'text-amber-700' : 'text-emerald-700')}>
                     ≈ {fmtH(price.loadMinutes)} of {fmtH(price.capacityMinutes)} · {price.utilisationPct}%
                     {price.travelMinutes > 0 ? ' · ' + fmtH(price.travelMinutes) + ' travel' : ''}
@@ -746,6 +404,7 @@ function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing |
                 <span className="text-[12.5px] font-semibold text-amber-900 flex-1 min-w-[160px]">
                   Idle — {unassignedOpen.length ? 'open unassigned work:' : 'no unassigned work open right now.'}
                 </span>
+                {err[p.name] && <span className="w-full text-[11.5px] text-rose-600 font-semibold">{err[p.name]}</span>}
                 {unassignedOpen.slice(0, 3).map(t => (
                   <button key={t.id} onClick={() => pushTo(p, t)} disabled={busyKey === p.name + t.id}
                     className="text-[12px] font-bold px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50 inline-flex items-center gap-1">
@@ -768,253 +427,6 @@ function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing |
           </div>
         )
       })}
-    </div>
-  )
-}
-
-// ── PUSH: the suggestion queue, promoted ───────────────────────────────────────────────────────
-// Everything the plan engine can suggest, grouped by REASON with evidence, filed one tap at a time.
-// The scheduled date defaults to the unit's next vacant day (the push API already computes it).
-function PushTab({ roster }: { roster: Roster[] }) {
-  const { data, loading, refresh } = useCachedFetch<PlanData>('/api/ops-plan/daily', { ttl: 5 * 60_000 })
-  const [busy, setBusy] = useState('')
-  const [filed, setFiled] = useState<Record<string, boolean>>({})
-  const [who, setWho] = useState<Record<string, number | 0>>({})
-  // A pushed task can carry the pusher's own words (Jon, 2026-08-18: "allow you to add comments /
-  // descriptions"), and go to ANYONE on Breezeway — the select shows the whole roster, with the
-  // people whose department fits listed first, never instead.
-  const [note, setNote] = useState<Record<string, string>>({})
-  const [noteOpen, setNoteOpen] = useState<Record<string, boolean>>({})
-  const rosterFor = (dept?: string | null) => {
-    const d = String(dept || '').toLowerCase()
-    const fits = d ? roster.filter(p => p.departments?.some(x => x.toLowerCase().includes(d))) : []
-    const fitIds = new Set(fits.map(p => p.id))
-    return { fits, rest: roster.filter(p => !fitIds.has(p.id)) }
-  }
-
-  // ── THE AM PUSH (Jon, 2026-08-14: "push activities in the AM based on vacant room and guest
-  // feedback or inspection needed, pm needed, batteries needed... or open tasks in unit"). ──
-  // A vacant unit is a free work slot. This crosses today's vacants with (a) open tasks already in
-  // the unit and (b) recurring care that has aged out — batteries, A/C filter, PM, audit, deep
-  // clean, inspection — and files the catch-up work TODAY, while nobody is in the way.
-  const { data: ops } = useCachedFetch<OpsData>('/api/ops-today')
-  const [sig, setSig] = useState<Record<string, { care?: CareItem[]; pending?: any[] }>>({})
-  const vacants = useMemo(() => (ops?.vacants || []).slice(0, 40), [ops])
-  useEffect(() => {
-    const ids = vacants.map(v => v.listingId)
-    if (!ids.length) { setSig({}); return }
-    let alive = true
-    fetch('/api/ops-today/signals?ids=' + encodeURIComponent(ids.join(',')), { cache: 'no-store' })
-      .then(r => r.json()).then(j => { if (alive && j && j.ok) setSig(j.signals || {}) }).catch(() => {})
-    return () => { alive = false }
-  }, [vacants.map(v => v.listingId).join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const vacantRows = useMemo(() => vacants.map(v => {
-    const s = sig[v.listingId] || {}
-    const due = (s.care || []).filter(c => c.due)
-    const pending = (s.pending || []).length
-    return { v, due, pending }
-  }).filter(r => r.due.length > 0 || r.pending > 0 || r.v.openTasks > 0), [vacants, sig])
-
-  const fileCare = async (v: VacantU, c: CareItem) => {
-    const t = SHEET_TEMPLATES.find(x => x.key === c.template)
-    const key = 'care:' + v.listingId + ':' + c.key
-    const uKey = 'unit:' + v.listingId
-    setBusy(key)
-    try {
-      const extra = (note[uKey] || '').trim()
-      const r = await fetch('/api/ops-today/add-task', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listingId: v.listingId, title: t ? t.title : c.label,
-          department: t ? t.department : 'maintenance', priority: t ? t.priority : 'normal',
-          description: (t ? t.base + '\n\n' : '')
-            + (extra ? 'Note from the team: ' + extra + '\n\n' : '')
-            + 'Pushed from Today in Ops: unit is vacant today and this is ' +
-            (c.neverSeen ? 'not on record as ever done.' : String(c.monthsAgo) + ' months old (cadence: every ' + c.every + ').'),
-          date: ops?.today,
-          assigneeIds: who[uKey] ? [who[uKey]] : [],
-        }),
-      })
-      const j = await r.json()
-      if (!r.ok || !j.ok) throw new Error(j.error || 'could not file')
-      setFiled(f => ({ ...f, [key]: true }))
-    } catch (e: any) { alert(String(e?.message || e)) }
-    setBusy('')
-  }
-
-  const groups = useMemo(() => {
-    const g: Record<string, { unit: PlanUnit; task: PlanTask; day: string }[]> = {}
-    for (const day of data?.days || []) for (const u of day.units) for (const t of u.tasks) {
-      if (!t.pushable || (t.push && t.push.status)) continue
-      ;(g[t.category] = g[t.category] || []).push({ unit: u, task: t, day: day.label })
-    }
-    return Object.entries(g).sort((a, b) => b[1].length - a[1].length)
-  }, [data])
-
-  const push = async (unit: PlanUnit, task: PlanTask, key: string) => {
-    setBusy(key)
-    try {
-      const ids = who[key] ? [who[key]] : []
-      const r = await fetch('/api/health/push-task', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listingId: unit.listingId, issueKey: task.key, issueTitle: task.title,
-          action: task.detail, unitName: unit.internalName || unit.listing,
-          severity: task.severity, department: task.department, assigneeIds: ids, confirm: true,
-          note: (note[key] || '').trim() || undefined,
-        }),
-      })
-      const j = await r.json()
-      if (!r.ok || j.error) throw new Error(j.error || 'push failed')
-      setFiled(f => ({ ...f, [key]: true }))
-    } catch (e: any) { alert(String(e?.message || e)) }
-    setBusy('')
-  }
-
-  if (loading && !data) return <div className="text-sm text-muted py-8 text-center">Reading the suggestion engine…</div>
-  if (!groups.length && !vacantRows.length) return (
-    <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">
-      Nothing to suggest right now — no vacant catch-up work, and feedback, PM and audit cadences are all clear.
-      <button onClick={() => refresh()} className="block mx-auto mt-2 text-[12px] font-bold text-brand-700 underline">Check again</button>
-    </div>
-  )
-  return (
-    <div className="space-y-3">
-      <p className="text-[12.5px] text-muted px-1">
-        Work the system recommends before anyone asks for it — vacant units to catch up in, guest feedback,
-        PM age and audit cadence. Pushing files it in Breezeway; pick a person to assign it in the same tap.
-      </p>
-
-      {/* ── VACANT TODAY: the AM push ── */}
-      {vacantRows.length > 0 && (
-        <div className="rounded-2xl border border-emerald-200 bg-white overflow-hidden">
-          <div className="px-4 py-2.5 bg-emerald-50/70 border-b border-emerald-200 flex items-center gap-2">
-            <span className="text-[13px] font-bold text-emerald-900">Vacant today — catch-up day</span>
-            <span className="text-[11.5px] text-emerald-800/70">empty units with open work or care that has aged out</span>
-          </div>
-          <div className="divide-y divide-line">
-            {vacantRows.map(({ v, due, pending }) => (
-              <div key={v.listingId} className="px-4 py-2.5">
-                <div className="flex items-center gap-2.5 flex-wrap">
-                  <span className="text-[13px] font-bold text-ink shrink-0">{v.unit}</span>
-                  <span className="text-[11.5px] text-muted shrink-0">
-                    {v.market}{v.nextArrival ? ' · next guest ' + v.nextArrival.slice(5) : ' · no upcoming booking'}
-                  </span>
-                  {v.openTasks > 0 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">{v.openTasks} task{v.openTasks === 1 ? '' : 's'} today</span>}
-                  {pending > 0 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">{pending} overdue in unit</span>}
-                </div>
-                {due.length > 0 && (() => {
-                  const uKey = 'unit:' + v.listingId
-                  const { fits, rest } = rosterFor('maintenance')
-                  return (
-                    <>
-                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                        {due.map(c => {
-                          const key = 'care:' + v.listingId + ':' + c.key
-                          return filed[key] ? (
-                            <span key={c.key} className="text-[11.5px] font-bold text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> {c.short} filed</span>
-                          ) : (
-                            <button key={c.key} onClick={() => fileCare(v, c)} disabled={busy === key}
-                              title={c.neverSeen ? 'Never on record' : c.monthsAgo + ' months since last (every ' + c.every + ')'}
-                              className="text-[11.5px] font-bold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-1">
-                              {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-                              {c.short}{c.neverSeen ? ' · never' : ' · ' + Math.round(c.monthsAgo || 0) + 'mo'}
-                            </button>
-                          )
-                        })}
-                        {/* Anyone on Breezeway + your own words, applied to whatever gets filed
-                            from this unit's chips (Jon, 2026-08-18). */}
-                        <select value={who[uKey] || 0} onChange={e => setWho(w => ({ ...w, [uKey]: Number(e.target.value) }))}
-                          className="text-[11.5px] border border-line rounded-lg px-1.5 py-1.5 bg-white text-muted max-w-[140px]">
-                          <option value={0}>Assign to…</option>
-                          {fits.length ? <optgroup label="Fits the job">{fits.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null}
-                          {rest.length ? <optgroup label="Everyone">{rest.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null}
-                        </select>
-                        <button onClick={() => setNoteOpen(o => ({ ...o, [uKey]: !o[uKey] }))}
-                          className={'text-[11.5px] font-semibold px-2 py-1.5 rounded-lg border inline-flex items-center gap-1 ' +
-                            ((note[uKey] || '').trim() ? 'border-violet-300 text-violet-700 bg-violet-50' : 'border-line text-muted hover:text-ink')}>
-                          <MessageSquare size={11} /> {noteOpen[uKey] ? 'Hide note' : (note[uKey] || '').trim() ? 'Note added' : '+ Note'}
-                        </button>
-                      </div>
-                      {noteOpen[uKey] ? (
-                        <textarea value={note[uKey] || ''} onChange={e => setNote(n => ({ ...n, [uKey]: e.target.value }))} rows={2}
-                          placeholder="What the person doing this should know — goes into the Breezeway description."
-                          className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
-                      ) : null}
-                    </>
-                  )
-                })()}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {groups.map(([cat, rows]) => (
-        <div key={cat} className="rounded-2xl border border-line bg-white overflow-hidden">
-          <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center gap-2">
-            <span className="text-[13px] font-bold text-ink">{cat}</span>
-            <span className="text-[11.5px] text-muted">{rows.length} suggestion{rows.length === 1 ? '' : 's'}</span>
-          </div>
-          <div className="divide-y divide-line">
-            {rows.map(({ unit, task, day }) => {
-              const key = unit.listingId + '|' + task.key
-              const ev = task.evidence && task.evidence[0]
-              // The WHOLE Breezeway roster (Jon, 2026-08-18: "assign whoever on breezeway") —
-              // department fits float to the top, everyone else stays reachable below them.
-              const { fits, rest } = rosterFor(task.department)
-              return (
-                <div key={key} className="px-4 py-2.5">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[13px] font-bold text-ink">{unit.internalName || unit.listing}</span>
-                        <span className="text-[13px] text-ink/80">{task.title}</span>
-                        {task.severity === 'critical' || task.severity === 'high'
-                          ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">{task.severity}</span> : null}
-                        <span className="text-[11px] text-muted">checkout {day}</span>
-                      </div>
-                      {ev && <p className="text-[12px] text-muted mt-0.5 italic truncate">&ldquo;{ev.quote}&rdquo;{ev.stars != null ? ' · ' + ev.stars + '★' : ''}{ev.date ? ' · ' + ev.date : ''}</p>}
-                      {!ev && task.metric && <p className="text-[12px] text-muted mt-0.5">{task.metric}</p>}
-                    </div>
-                    {/* The action cluster below (a 150px select + Note + Push, ~300px) was held at
-                        shrink-0, which is wider than a phone row and spilled out of the card. It
-                        wraps and may shrink below 640px; from sm: up it is the same one-line row. */}
-                    {filed[key] ? (
-                      <span className="text-[12px] font-bold text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={13} /> Filed</span>
-                    ) : (
-                      <span className="flex items-center gap-1.5 flex-wrap shrink sm:flex-nowrap sm:shrink-0">
-                        <select value={who[key] || 0} onChange={e => setWho(w => ({ ...w, [key]: Number(e.target.value) }))}
-                          className="text-[12px] border border-line rounded-lg px-1.5 py-1.5 bg-white text-muted max-w-[150px]">
-                          <option value={0}>Default crew</option>
-                          {fits.length ? <optgroup label="Fits the job">{fits.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null}
-                          {rest.length ? <optgroup label="Everyone">{rest.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null}
-                        </select>
-                        <button onClick={() => setNoteOpen(o => ({ ...o, [key]: !o[key] }))}
-                          title="Add your own words to the task description"
-                          className={'text-[12px] font-semibold px-2 py-1.5 rounded-lg border inline-flex items-center gap-1 ' +
-                            ((note[key] || '').trim() ? 'border-violet-300 text-violet-700 bg-violet-50' : 'border-line text-muted hover:text-ink')}>
-                          <MessageSquare size={12} /> {(note[key] || '').trim() ? 'Note' : '+ Note'}
-                        </button>
-                        <button onClick={() => push(unit, task, key)} disabled={busy === key}
-                          className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-1">
-                          {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Push
-                        </button>
-                      </span>
-                    )}
-                  </div>
-                  {noteOpen[key] && !filed[key] ? (
-                    <textarea value={note[key] || ''} onChange={e => setNote(n => ({ ...n, [key]: e.target.value }))} rows={2}
-                      placeholder="What the person doing this should know — rides into the Breezeway description with your name."
-                      className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
-                  ) : null}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      ))}
     </div>
   )
 }
