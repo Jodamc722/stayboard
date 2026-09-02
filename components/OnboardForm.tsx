@@ -369,7 +369,7 @@ function RoomView({ code, unit, room, items, onBack, act, reload }: { code: stri
           <span className="text-[12px] text-muted hidden sm:inline">qty in the room · tap a condition to confirm</span>
           {/* Jon, 2026-09-02: "need to be able to add items" — the add button was only at the foot of a
               20-row list. It lives up here too, first thing you see. */}
-          <button onClick={() => setAddOpen(true)} className={BTN + ' ml-auto bg-brand-700 text-white min-h-[36px] px-3 text-[13px]'}><Plus size={15} /> Add item</button>
+          <button onClick={() => setAddOpen(true)} className={BTN + ' ml-auto bg-brand-700 text-white min-h-[36px] px-3 text-[13px] whitespace-nowrap'}><Plus size={15} /> Add item</button>
           {items.some(i => !i.condition) && <button onClick={markAllGood} className="text-[12px] font-bold text-brand-700 min-h-[36px] px-2 whitespace-nowrap">All → Good</button>}
         </div>
         {addOpen && <AddItem roomId={room.id} act={act} onDone={async () => { setAddOpen(false); await reload() }} onCancel={() => setAddOpen(false)} />}
