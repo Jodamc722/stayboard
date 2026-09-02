@@ -13,6 +13,7 @@
 // came from, and are capped per call so the endpoint cannot be used to flood the board.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { signUploadToken } from '@/lib/upload-token'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -91,8 +92,14 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, id, ref, unit: listing.nickname || listing.title || 'Unit' })
 }
 
-// The form needs a share code to attach photos through /api/audit/photo (which is keyed by code).
-// Handing it out only after a unit is chosen keeps the code tied to a real request.
+// The form needs to attach photos through /api/audit/photo. It used to be handed the audit's
+// SHARE CODE for that — which was a hole: the share code is the audit's whole authority, and this
+// endpoint has no login by design. Anyone could walk from a listing id to a code, and a valid code
+// can batch-dispatch that audit's work to staff (/api/audit/task) and open the owner's approval
+// link (/api/audit/approve). Reporting a broken bed should not carry the right to approve spend.
+//
+// It now mints a token that is signed, expires in two hours, is scoped to one audit, and authorises
+// nothing but a photo upload. See lib/upload-token.ts.
 export async function PUT(req: NextRequest) {
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))
@@ -102,5 +109,5 @@ export async function PUT(req: NextRequest) {
   if (!(lrow && lrow[0])) return NextResponse.json({ error: 'That unit was not found.' }, { status: 404 })
   const audit = await auditFor(db, listingId)
   if (!audit) return NextResponse.json({ error: 'Could not open a request for that unit.' }, { status: 500 })
-  return NextResponse.json({ ok: true, code: audit.code })
+  return NextResponse.json({ ok: true, uploadToken: signUploadToken(audit.id) })
 }
