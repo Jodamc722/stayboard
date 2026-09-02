@@ -23,6 +23,9 @@ export default function GlitchesPage() {
   const [err, setErr] = useState('')
   const [market, setMarket] = useState('all')
   const [q, setQ] = useState('')
+  // DEEP LINK (2026-09-02): the Command Center sends /glitches?q=<unit> so a tapped row lands on
+  // that unit's issues rather than on a 200-card board you then have to search again.
+  useEffect(() => { try { const v = new URLSearchParams(window.location.search).get('q'); if (v) setQ(v) } catch {} }, [])
 
   const load = useCallback(async () => {
     try {
