@@ -277,6 +277,9 @@ export async function buildCommandDay(): Promise<CommandDay> {
   const push = (i: Omit<NextItem, 'dismissed'>) => next.push({ ...i, dismissed: dismissed[i.key] || null })
   const bz = (id: string) => 'https://app.breezeway.io/task/' + id
   const FOUR = '4:00 PM'
+  const past4Now = day.deadline.minsLeft < 0
+  /** The due phrase for work tied to today's 4pm arrivals — honest after the hour has passed. */
+  const dueArrival = (isToday: boolean, at?: string | null) => isToday ? (past4Now ? 'arrival window open — now' : 'before ' + (at || FOUR) + ' arrival') : 'tomorrow, before ' + FOUR
 
   // ── 1. THE BOARD: turns, late/at-risk cleans, unowned work (from lib/ops-day) ────────────────
   const units = Array.isArray(day.units) ? day.units : []
@@ -311,7 +314,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
       const nobody = !liveClean.assignees.length
       push({
         key: 'turn:' + u.listingId, kind: 'turn', severity: 'now', rank: 0, owner: 'housekeeping',
-        due: 'before ' + (u.arrivingAt || FOUR) + ' arrival',
+        due: dueArrival(true, u.arrivingAt),
         unit: u.unit, listingId: u.listingId, market: u.market,
         title: 'Same-day turn' + (u.arrivingGuest ? ' — ' + u.arrivingGuest + ' in at ' + (u.arrivingAt || FOUR) : ''),
         why: liveClean.running ? 'Clean in progress' + (liveClean.assignees.length ? ' with ' + liveClean.assignees.join(', ') : '') + '.'
@@ -376,7 +379,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
       missingInspection++
       push({
         key: 'insp:' + str(r.id), kind: 'inspection', severity: isToday ? 'today' : 'soon', rank: isToday ? 2 : 6, owner: 'maintenance',
-        due: isToday ? 'before ' + FOUR + ' arrival' : 'tomorrow, before ' + FOUR,
+        due: dueArrival(isToday),
         unit, listingId: lid, market: marketOfId(lid),
         title: 'Big arrival ' + when + ' with no pre-arrival inspection',
         why: str(r.guest_name || 'Guest') + ' · ' + nights + ' nights · ' + money(value) + '. No inspection open or completed on this unit in 45 days.',
@@ -404,7 +407,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
         const covered = !!openInsp || !!doneInsp[lid]
         push({
           key: 'fb:' + lid + ':' + str(worst.id), kind: 'feedback', severity: isToday ? 'today' : 'soon', rank: isToday ? 3 : 7, owner: 'maintenance',
-          due: isToday ? 'before ' + FOUR + ' arrival' : 'tomorrow, before ' + FOUR,
+          due: dueArrival(isToday),
           unit, listingId: lid, market: marketOfId(lid),
           title: 'Guest arrives ' + when + ' into a unit with a ' + starsText(worst.rating, worst.channel) + ' review' + (kw.length ? ' about ' + kw.join(', ') : ''),
           why: covered ? 'An inspection is already ' + (openInsp ? 'open' : 'done') + ' on this unit — check it covered the complaint.' : canFile(lid) ? 'Nothing open on this unit addresses it. A targeted look before the guest lands is the cheapest fix.' : 'Vendor-run building — flag it to the vendor before the guest lands.',
@@ -429,7 +432,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
       const dates = Array.from(new Set(pend.map((t: any) => str(t.scheduled_date).slice(5)))).slice(0, 3)
       push({
         key: 'pend:' + str(r.id), kind: 'pending', severity: isToday ? 'today' : 'soon', rank: isToday ? 4 : 8, owner: deptOf(pend[0].type_department) === 'housekeeping' ? 'housekeeping' : 'maintenance',
-        due: isToday ? 'before ' + FOUR + ' arrival' : 'tomorrow, before ' + FOUR,
+        due: dueArrival(isToday),
         unit, listingId: lid, market: marketOfId(lid),
         title: pend.length + ' overdue task' + (pend.length === 1 ? '' : 's') + ' in a unit a guest lands in ' + when,
         why: titles.join(' · ') + (pend.length > 3 ? ' · +' + (pend.length - 3) + ' more' : '') + ' — scheduled ' + dates.join(', ') + (un ? '; at least one has nobody on it.' : '.'),
@@ -608,7 +611,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
     state = 'closing'
     if (remaining > 0) drivers.push(remaining + ' clean' + (remaining === 1 ? '' : 's') + ' still open past 4pm')
     if (dl.missed) drivers.push(dl.missed + ' finished late')
-    if (nowRows.length) drivers.push(nowRows.length + ' issue' + (nowRows.length === 1 ? '' : 's') + ' need a person now')
+    if (nowRows.length) drivers.push(nowRows.length + ' issue' + (nowRows.length === 1 ? ' needs' : 's need') + ' a person now')
   } else {
     if (dl.late > 0) { state = 'behind'; drivers.push(dl.late + ' clean' + (dl.late === 1 ? '' : 's') + ' late') }
     if (turnsOpen > 0) { if (state === 'on_track') state = 'at_risk'; drivers.push(turnsOpen + ' same-day turn' + (turnsOpen === 1 ? '' : 's') + ' not started') }
