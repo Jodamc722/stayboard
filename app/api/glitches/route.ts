@@ -119,11 +119,30 @@ export async function POST(req: NextRequest) {
     if (!overview) return NextResponse.json({ ok: false, error: 'Describe the glitch (overview).' }, { status: 400 })
     if (!str(b.category).trim()) return NextResponse.json({ ok: false, error: 'Category is required.' }, { status: 400 })
     if (!str(b.incidentDate).trim()) return NextResponse.json({ ok: false, error: 'Incident date is required.' }, { status: 400 })
+    // LINK THE UNIT AT THE SOURCE (2026-09-02). A glitch saved with a typed unit but no picked
+    // listing is what broke Breezeway pushes — the fix downstream can match the name at push
+    // time, but the RIGHT place to earn the link is the moment of filing, so the calendar, the
+    // intel and every later feature see the unit from the first second. Exact-token match, one
+    // hit only; anything ambiguous stays unlinked rather than guessing.
+    let listingId = str(b.listingId) || null
+    const typedUnit = str(b.unit).trim()
+    if (!listingId && typedUnit) {
+      try {
+        const { data: ls } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, status').limit(2000)
+        const toks = typedUnit.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+        const hits = ((ls || []) as any[]).filter(l => {
+          if (String(l.status || '').trim().toLowerCase() !== 'active') return false
+          const ltoks = String(l.nickname || l.title || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+          return toks.every(t => ltoks.indexOf(t) >= 0)
+        })
+        if (hits.length === 1) listingId = String(hits[0].id)
+      } catch { /* stays unlinked; push-time matching still covers it */ }
+    }
     const row: Record<string, any> = {
       status: 'pool',
       glitch_type: str(b.glitchType) || 'Glitch (Quality Issue)',
       category: str(b.category) || null,
-      listing_id: str(b.listingId) || null,
+      listing_id: listingId,
       unit: str(b.unit) || null,
       market: str(b.market) || null,
       reservation_id: str(b.reservationId) || null,
