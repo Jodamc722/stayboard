@@ -60,12 +60,13 @@ export default function NewOrderPage() {
     // point of asking. Everyone types their own name, every time.
   }, [])
 
-  // Photos upload against the unit's audit share code, so pick the unit first and fetch the code.
+  // Photos upload against a signed, two-hour, upload-only token for this unit's audit — not the
+  // audit's share code, which carries the authority to dispatch work and approve spend.
   useEffect(() => {
     setCode('')
     if (!unitId) return
     fetch('/api/orders/request', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: unitId }) })
-      .then(r => r.json()).then(j => { if (j && j.ok) setCode(j.code) }).catch(() => {})
+      .then(r => r.json()).then(j => { if (j && j.ok) setCode(j.uploadToken || '') }).catch(() => {})
   }, [unitId])
 
   const mine = units.filter(u => !bldg || u.building === bldg)
@@ -76,7 +77,7 @@ export default function NewOrderPage() {
     if (!f || !code) return
     setUpBusy(true)
     try {
-      const fd = new FormData(); fd.append('code', code); fd.append('file', f); fd.append('noai', '1')
+      const fd = new FormData(); fd.append('uploadToken', code); fd.append('file', f); fd.append('noai', '1')
       const r = await fetch('/api/audit/photo', { method: 'POST', body: fd })
       const j = await r.json()
       if (j && j.url) setPhotos(p => p.concat([String(j.url)]).slice(0, 4))
