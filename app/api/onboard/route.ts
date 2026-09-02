@@ -21,7 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel, getAccess } from '@/lib/access'
-import { roomsFor, itemsFor, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
+import { roomsFor, itemsFor, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
@@ -43,6 +43,8 @@ function cleanDetails(d: any): UnitDetails {
     washerDryer: pick(o.washerDryer, ['in_unit', 'shared', 'none']), kitchen: pick(o.kitchen, ['full', 'kitchenette', 'none']),
     parking: pick(o.parking, ['none', 'assigned', 'garage', 'street']),
     floor: str(o.floor).slice(0, 20) || undefined, pool: o.pool === true, gym: o.gym === true, notes: str(o.notes).slice(0, 2000) || undefined,
+    appliances: Array.isArray(o.appliances) ? o.appliances.filter((a: any) => APPLIANCES.some(x => x.key === a)).slice(0, 40) : undefined,
+    beds: o.beds && typeof o.beds === 'object' ? Object.fromEntries(Object.entries(o.beds).filter(([k]) => /^(master_bedroom|bedroom_\d+)$/.test(k)).map(([k, v]) => [k, (Array.isArray(v) ? v : []).filter((b: any) => BED_SIZES.some(x => x.key === b)).slice(0, 6)])) : undefined,
   }
 }
 
@@ -152,7 +154,7 @@ async function generate(db: ReturnType<typeof supabaseAdmin>, unitId: string, de
   const items: any[] = []
   for (const r of (rows || []) as any[]) {
     const def = defs.find(d => d.key === r.key)!
-    itemsFor(def, details, standard).forEach((it, i) => items.push({ unit_id: unitId, room_id: r.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, suggested: true, sort: i }))
+    itemsFor(def, details, standard).forEach((it, i) => items.push({ unit_id: unitId, room_id: r.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, tier: it.tier, suggested: true, sort: i }))
   }
   if (items.length) { const { error: e2 } = await db.from('onboarding_items').insert(items); if (e2) throw new Error(e2.message) }
   return defs.length
@@ -291,7 +293,7 @@ export async function POST(req: NextRequest) {
       const { data: room, error } = await db.from('onboarding_rooms').insert({ unit_id: unit.id, key, name, kind, sort }).select('*').single()
       if (error) throw new Error(error.message)
       const its = itemsFor({ key, name, kind, sort }, unit.details || {}, await loadStandard())
-      if (its.length) await db.from('onboarding_items').insert(its.map((it, i) => ({ unit_id: unit.id, room_id: room.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, suggested: true, sort: i })))
+      if (its.length) await db.from('onboarding_items').insert(its.map((it, i) => ({ unit_id: unit.id, room_id: room.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, tier: it.tier, suggested: true, sort: i })))
       await touch()
       return NextResponse.json({ ok: true, room })
     }
@@ -321,6 +323,7 @@ export async function POST(req: NextRequest) {
         unit_id: unit.id, room_id: roomId, name, category: CATS.includes(b.category) ? b.category : 'other', qty,
         condition: CONDS.includes(b.condition) ? b.condition : null, brand: str(b.brand).slice(0, 120) || null, notes: str(b.notes).slice(0, 1000) || null,
         expected: b.expected === undefined || b.expected === null || b.expected === '' ? null : Math.max(0, Math.min(999, Math.round(Number(b.expected) || 0))),
+        tier: (TIERS as string[]).includes(b.tier) ? b.tier : 'must',
         suggested: false, sort: found.items.filter((i: any) => i.room_id === roomId).length,
       }).select('*').single()
       if (error) throw new Error(error.message)
