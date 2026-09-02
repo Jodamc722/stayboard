@@ -36,6 +36,9 @@ import {
   Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble, Wand2, ListChecks,
 } from 'lucide-react'
 import { catOfTask, type TaskCat } from '@/lib/task-categories'
+// ONE ANSWER TO "IS THIS THE SAME PERSON?" — see lib/person-name.ts. Never compare names here
+// with .toLowerCase(); that is the comparison that put Gehron Regis on the board twice.
+import { personKey, nameMatches, bestSpelling } from '@/lib/person-name'
 import { SuggestionsProvider, UnitSuggestions, PersonSuggestions, useSuggestions } from '@/components/SuggestionsBand'
 import { AssignPanel } from '@/components/AssignPanel'
 import { DayPlanPanel } from '@/components/DayPlanPanel'
@@ -202,19 +205,7 @@ function niceDay(iso: string): string {
 
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
 
-/**
- * One key for one human, across two systems that spell people differently.
- *
- * Collapses runs of whitespace, strips diacritics (this is a South-Florida crew; half the roster
- * has an accent somewhere) and lowercases. Used for every people-mode comparison, so a name only
- * has to match a person, not a byte sequence.
- */
-const personKey = (v: any): string =>
-  String(v ?? '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase()
+
 const isReal = (t: GTask) => !t.guestyOnly && /^\d+$/.test(String(t.id))
 function daysBetween(a: string, b: string) { const x = new Date(a + 'T12:00:00'), y = new Date(b + 'T12:00:00'); return Math.round((+y - +x) / 86400000) }
 function shortTime(iso: string | null): string {
@@ -959,7 +950,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       for (const n of t.assignees) {
         const k = personKey(n)
         if (!k) continue
-        if (!displayOf[k]) displayOf[k] = String(n).replace(/\s+/g, ' ').trim()
+        displayOf[k] = displayOf[k] ? bestSpelling(displayOf[k], String(n)) : String(n).replace(/\s+/g, ' ').trim()
         ;(byPerson[k] = byPerson[k] || []).push(t)
       }
     }
@@ -975,8 +966,17 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       if (!(sp.clockedIn || sp.shift)) continue
       // The alias exists because the two systems genuinely disagree about some people's names, and
       // ignoring it is how a working person got called free. Either spelling counts as "known".
+      // TWO PASSES, CHEAP THEN THOROUGH. The key catches the ordinary cases — spacing, accents,
+      // suffixes — in one hash lookup. Anything still unmatched gets the full comparison, which
+      // also forgives a typo, a swapped first/last, or a maiden name. A person is called Free only
+      // after BOTH have failed, because the cost of being wrong is a coordinator handing work to
+      // somebody already carrying nineteen jobs.
       const keys = [personKey(nm), personKey(sp.bzAlias)].filter(Boolean)
-      const known = keys.some(k => !!byPerson[k])
+      let known = keys.some(k => !!byPerson[k])
+      if (!known) {
+        const cands = [nm, String(sp.bzAlias || '')].filter(Boolean)
+        known = Object.keys(byPerson).some(k => cands.some(c => nameMatches(c, displayOf[k] || k)))
+      }
       if (!known) idleNames.push(nm)
     }
 
@@ -992,7 +992,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         : running
           ? { label: 'Working', cls: 'bg-amber-50 text-amber-800 border-amber-200' }
           : { label: 'Not started', cls: 'bg-app text-muted border-line' }
-      const roles = roster.find(p => personKey(p.name) === key)
+      const roles = roster.find(p => personKey(p.name) === key) || roster.find(p => nameMatches(p.name, name))
       return {
         key: 'p:' + name, title: name,
         sub: (roles && roles.departments && roles.departments.length ? roles.departments.join(' · ') : ''),
@@ -1008,7 +1008,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       const sp = (staff?.people || []).find(x => personKey(x?.name) === personKey(nm))
       out.push({
         key: 'p:free:' + nm, title: nm,
-        sub: (roster.find(p => personKey(p.name) === personKey(nm))?.departments || []).join(' · '),
+        sub: ((roster.find(p => personKey(p.name) === personKey(nm)) || roster.find(p => nameMatches(p.name, nm)))?.departments || []).join(' · '),
         reservation: sp?.clockedIn ? 'On the clock, nothing assigned' : 'On shift, nothing assigned',
         status: { label: 'Free', cls: 'bg-brand-50 text-brand-700 border-brand-200' },
         tasks: [], issues: [], gapNights: null,
