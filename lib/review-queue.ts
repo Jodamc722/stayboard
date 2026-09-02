@@ -27,6 +27,9 @@ export type ReviewItem = {
   scheduledDate: string | null
   /** How long it has been waiting. Null when it is scheduled ahead rather than overdue. */
   waitingDays: number | null
+  assignees: string[]
+  status: string
+  reportUrl: string | null
   target: WorkableDay | null
   /** The sentence a supervisor reads instead of working it out. */
   recommendation: string
@@ -92,6 +95,9 @@ export async function buildReviewQueue(
         task: t.name, dept: t.dept,
         scheduledDate: t.scheduledDate,
         waitingDays: t.overdueDays,
+        assignees: t.assignees || [],
+        status: t.status,
+        reportUrl: t.reportUrl,
         target: win,
         recommendation: !win
           ? 'No empty day in the next three weeks — the unit is booked solid, so this needs a guest-in visit or a schedule change.'

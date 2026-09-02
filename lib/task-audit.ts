@@ -372,6 +372,7 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
               id: p.id, listingId: p.listingId, name: p.name, rawName: p.rawName,
               dept: 'maintenance' as const, scheduledDate: p.date, assignees: [],
               overdueDays: null, future: false, movedBefore: false, byLighthouse: false,
+              status: 'open', reportUrl: null,
             })),
             date,
             { reason: group[0].target!.hasTrade

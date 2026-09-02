@@ -93,6 +93,9 @@ export type PendingTask = {
   dept: 'maintenance' | 'housekeeping' | 'inspection' | 'other'
   /** Lighthouse created this one. Only its own inspections are allowed to ride forward. */
   byLighthouse: boolean
+  /** Enough to open the task properly rather than only act on it blind. */
+  status: string
+  reportUrl: string | null
   scheduledDate: string | null
   assignees: string[]
   /** Days past its scheduled date. null when it is parked in the future or unscheduled. */
@@ -129,7 +132,7 @@ export async function pendingForUnits(
 
   const db = supabaseAdmin()
   const { data, error } = await db.from('breezeway_tasks_sync')
-    .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,description:raw->>description')
+    .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,report_url,description:raw->>description')
     .in('reference_property_id', listingIds.slice(0, 400))
     .gte('scheduled_date', from).lte('scheduled_date', to)
     .not('name', 'ilike', '%departure clean%')
@@ -154,6 +157,8 @@ export async function pendingForUnits(
       name: baseTitle(raw) || 'Task', rawName: raw,
       dept: deptOf(t.type_department),
       byLighthouse: /lighthouse/i.test(str(t.description)),
+      status: str(t.status),
+      reportUrl: t.report_url ? str(t.report_url) : null,
       scheduledDate: sd,
       assignees: Array.isArray(t.assignees)
         ? t.assignees.map((p: any) => str(p && typeof p === 'object' ? (p.name ?? '') : p).replace(/\s+/g, ' ').trim()).filter(Boolean)
