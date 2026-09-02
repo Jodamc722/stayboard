@@ -2,15 +2,14 @@
 // Today in Ops — v2 (Jon, 2026-08-14: "complete revamp", then "feels a bit busy, love the push
 // section" on the first draft).
 //
-// The page is now three tabs behind one sentence: BOARD (exceptions only, full board one tap
-// away), PEOPLE (the person axis — lanes, load, tap-to-push), PUSH (the suggestion queue,
-// promoted from a collapsed section to a destination). The heavy lifting lives in OpsV2;
-// TodayInOps is unchanged and mounts inside Board's "Show all".
+// 2026-09-02 (Jon: "Grid + Staffing only"): two tabs — GRID (the board, default) and STAFFING
+// (the person axis — lanes, load, the capacity model). Board and Push tabs retired; "what needs a
+// person" is the Command Center's Do-next list now. The heavy lifting lives in OpsV2.
 //
 // What left this page and where it went:
-//   • The 3-day improvement plan section — its engine now feeds the Push tab, which is the same
-//     content with the evidence attached and one-tap filing. The /api/ops-plan/daily endpoint is
-//     untouched, so nothing downstream moves.
+//   • The 3-day improvement plan section → the Push tab (2026-08-14) → RETIRED 2026-09-02 along
+//     with the Push tab itself. What a person should do next now lives on the Command Center's
+//     Do-next list (lib/command-day); /api/ops-plan/daily is a 410 stub.
 //   • LaborStrip — cost numbers are a report, not a landing-page instrument; it sits quietly at
 //     the bottom now rather than above the day's work.
 //   • AuditFollowUps stays: it renders nothing when there is nothing outstanding, and when it
