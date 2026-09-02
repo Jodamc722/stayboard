@@ -1,11 +1,11 @@
 'use client'
 // ONBOARDING DESK — mint links, watch progress, assign to the live listing (Jon, 2026-09-02).
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera } from 'lucide-react'
-import { describeUnit, type UnitDetails } from '@/lib/onboarding'
+import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X } from 'lucide-react'
+import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category } from '@/lib/onboarding'
 
 type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number; items: number; confirmed: number; photos: number; pct: number }
-type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; owner_name: string | null; details: UnitDetails; status: string; listing_id: string | null; listing_name: string | null; created_at: string; updated_at: string; completed_at: string | null; progress: Progress }
+type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; owner_name: string | null; details: UnitDetails; status: string; listing_id: string | null; listing_name: string | null; created_at: string; updated_at: string; completed_at: string | null; progress: Progress; buy: number; order_id?: string | null }
 type Listing = { id: string; name: string; building: string }
 
 const BTN = 'inline-flex items-center gap-1.5 rounded-xl font-bold text-[13px] min-h-[38px] px-3.5 disabled:opacity-50'
@@ -17,6 +17,7 @@ export function OnboardingDesk() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [creating, setCreating] = useState(false)
+  const [standardOpen, setStandardOpen] = useState(false)
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState<'open' | 'all'>('open')
 
@@ -37,6 +38,7 @@ export function OnboardingDesk() {
     <div>
       <div className="flex items-center gap-2 flex-wrap mb-3">
         <button onClick={() => setCreating(true)} className={BTN + ' bg-ink text-white'}><Plus size={15} /> New onboarding link</button>
+        <button onClick={() => setStandardOpen(true)} className={BTN + ' border border-line bg-white text-ink'}><Settings2 size={15} /> Inventory standard</button>
         <div className="relative"><Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building, owner" className={INPUT + ' pl-8 w-64'} /></div>
         <div className="ml-auto flex items-center gap-1.5 text-[12.5px]">
           {(['open', 'all'] as const).map(f => <button key={f} onClick={() => setFilter(f)} className={'px-3 py-1.5 rounded-full border font-semibold ' + (filter === f ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{f === 'open' ? 'In progress + ready' : 'All'}</button>)}
@@ -48,6 +50,7 @@ export function OnboardingDesk() {
         ))}
       </div>
 
+      {standardOpen && <StandardSheet onClose={() => setStandardOpen(false)} />}
       {creating && <CreateSheet onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await load() }} />}
       {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
       {loading ? <div className="py-10 text-center text-muted text-[14px]"><Loader2 className="animate-spin inline mr-2" size={16} />Loading…</div>
@@ -142,6 +145,9 @@ function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; on
           <span><b className="text-ink">{p.confirmed}</b>/{p.items} items confirmed</span>
           <span><b className="text-ink">{p.roomsChecked}</b>/{p.rooms} rooms done</span>
           <span className="inline-flex items-center gap-1"><Camera size={12} /> {p.photos}</span>
+          {u.buy > 0 && <span className="inline-flex items-center gap-1 text-amber-800 font-semibold"><ShoppingCart size={12} /> {u.buy} to buy</span>}
+          {u.order_id && <a href={'/ffe/order/' + u.order_id} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline">Purchase order <ExternalLink size={11} /></a>}
+          {u.buy > 0 && !u.order_id && <button onClick={() => post({ action: 'order', code: u.code })} disabled={busy} className="font-semibold text-brand-700 hover:underline">Create purchase order</button>}
           <span className="ml-auto">updated {new Date(u.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
         </div>
       )}
@@ -155,6 +161,92 @@ function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; on
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── THE INVENTORY STANDARD (settings) ──────────────────────────────────────────────────────────
+// Jon, 2026-09-02: "we should be able to add and account for that in user settings". One row per
+// item per room kind; the quantity is a fixed count or a per-guest rule. This is what every NEW
+// room is generated from — a unit already walked keeps its own numbers (the walker can correct
+// "need" on any item there).
+const ONLY_KEYS = Object.keys(ONLY_LABEL) as (keyof typeof ONLY_LABEL)[]
+const KIND_ORDER: RoomKind[] = ['kitchen', 'dining', 'living', 'bedroom', 'bathroom', 'entry', 'laundry', 'balcony', 'other']
+
+function StandardSheet({ onClose }: { onClose: () => void }) {
+  const [std, setStd] = useState<InventoryStandard | null>(null)
+  const [edited, setEdited] = useState(false)
+  const [kind, setKind] = useState<RoomKind>('kitchen')
+  const [occ, setOcc] = useState(6)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [dirty, setDirty] = useState(false)
+  useEffect(() => { (async () => {
+    try { const r = await fetch('/api/onboard?standard=1', { cache: 'no-store' }); const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load'); setStd(j.standard); setEdited(!!j.edited) } catch (e: any) { setMsg(String(e?.message || e)) }
+  })() }, [])
+  const rows = (std && std[kind]) || []
+  const update = (i: number, patch: Partial<StandardItem>) => { setStd(s => { const n = { ...(s || {}) }; const list = [...(n[kind] || [])]; list[i] = { ...list[i], ...patch }; n[kind] = list; return n }); setDirty(true) }
+  const remove = (i: number) => { setStd(s => { const n = { ...(s || {}) }; n[kind] = (n[kind] || []).filter((_, j) => j !== i); return n }); setDirty(true) }
+  const add = () => { setStd(s => { const n = { ...(s || {}) }; n[kind] = [...(n[kind] || []), { name: '', category: kind === 'kitchen' ? 'kitchen' : 'furniture', qty: 1 }]; return n }); setDirty(true) }
+  const save = async (reset = false) => {
+    setBusy(true); setMsg('')
+    try {
+      const r = await fetch('/api/onboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveStandard', standard: reset ? 'reset' : std }) })
+      const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.error || 'Could not save')
+      setStd(j.standard); setEdited(!!j.edited); setDirty(false); setMsg(reset ? 'Back to the researched defaults.' : 'Saved — new rooms use this from now on.')
+    } catch (e: any) { setMsg(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <div className="bg-white w-full sm:max-w-4xl max-h-[92vh] rounded-t-2xl sm:rounded-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-line flex items-center gap-3 flex-wrap">
+          <div>
+            <h2 className="text-[17px] font-bold text-ink">Inventory standard</h2>
+            <p className="text-[12px] text-muted">What every new room is stocked with, and how counts scale with occupancy. {edited ? 'Edited from the defaults.' : 'Using the researched STR defaults (dinnerware and flatware at 2× guests, water glasses guests + 4, towels 2× guests, two sheet sets a bed).'}</p>
+          </div>
+          <span className="ml-auto flex items-center gap-2">
+            <label className="text-[12px] text-muted inline-flex items-center gap-1.5">Preview for <input type="number" min={1} max={20} value={occ} onChange={e => setOcc(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} className={INPUT + ' w-16 py-1.5'} /> guests</label>
+            <button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center" aria-label="Close"><X size={15} /></button>
+          </span>
+        </div>
+        <div className="px-4 pt-3 flex gap-1.5 flex-wrap">
+          {KIND_ORDER.map(k => <button key={k} onClick={() => setKind(k)} className={'px-3 py-1.5 rounded-full border text-[12.5px] font-semibold ' + (kind === k ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{ROOM_KIND_LABEL[k]} <span className="opacity-60">{(std && std[k] || []).length}</span></button>)}
+        </div>
+        <div className="flex-1 overflow-auto px-4 py-3">
+          {!std ? <div className="py-8 text-center text-muted text-[14px]"><Loader2 className="animate-spin inline mr-2" size={16} />Loading…</div> : (
+            <table className="w-full text-[13px]">
+              <thead><tr className="text-[11px] uppercase tracking-wide text-muted text-left">
+                <th className="py-1.5 pr-2 font-semibold">Item</th><th className="py-1.5 pr-2 font-semibold">Category</th><th className="py-1.5 pr-2 font-semibold">Qty</th><th className="py-1.5 pr-2 font-semibold">Rule</th><th className="py-1.5 pr-2 font-semibold">Min / max</th><th className="py-1.5 pr-2 font-semibold">Only when</th><th className="py-1.5 pr-2 font-semibold text-right">For {occ}</th><th></th>
+              </tr></thead>
+              <tbody className="divide-y divide-line">
+                {rows.map((it, i) => (
+                  <tr key={i}>
+                    <td className="py-1.5 pr-2"><input value={it.name} onChange={e => update(i, { name: e.target.value })} className={INPUT + ' w-full py-1.5'} placeholder="Item name" /></td>
+                    <td className="py-1.5 pr-2"><select value={it.category} onChange={e => update(i, { category: e.target.value as Category })} className={INPUT + ' py-1.5'}>{CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}</select></td>
+                    <td className="py-1.5 pr-2"><input type="number" step={it.perGuest ? 0.5 : 1} min={0} value={it.qty} onChange={e => update(i, { qty: Number(e.target.value) || 0 })} className={INPUT + ' w-20 py-1.5'} /></td>
+                    <td className="py-1.5 pr-2 whitespace-nowrap">
+                      <select value={it.perGuest ? 'per' : 'fixed'} onChange={e => update(i, { perGuest: e.target.value === 'per' })} className={INPUT + ' py-1.5'}><option value="fixed">fixed</option><option value="per">× guests</option></select>
+                      {it.perGuest && <label className="ml-1.5 text-[12px] text-muted">+ <input type="number" value={it.plus ?? 0} onChange={e => update(i, { plus: Number(e.target.value) || 0 })} className={INPUT + ' w-14 py-1.5'} /></label>}
+                    </td>
+                    <td className="py-1.5 pr-2 whitespace-nowrap"><input type="number" value={it.min ?? ''} placeholder="–" onChange={e => update(i, { min: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-14 py-1.5'} /> / <input type="number" value={it.max ?? ''} placeholder="–" onChange={e => update(i, { max: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-14 py-1.5'} /></td>
+                    <td className="py-1.5 pr-2"><select value={it.only || ''} onChange={e => update(i, { only: (e.target.value || undefined) as any })} className={INPUT + ' py-1.5'}><option value="">always</option>{ONLY_KEYS.map(k => <option key={k} value={k}>{ONLY_LABEL[k]}</option>)}</select></td>
+                    <td className="py-1.5 pr-2 text-right font-bold tabular-nums">{qtyFor(it, occ)}</td>
+                    <td className="py-1.5"><button onClick={() => remove(i)} className="w-8 h-8 rounded-lg border border-line text-muted grid place-items-center" aria-label="Remove"><Trash2 size={13} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {std && <button onClick={add} className="mt-2 text-[13px] font-bold text-brand-700 inline-flex items-center gap-1.5 min-h-[36px]"><Plus size={14} /> Add item to {ROOM_KIND_LABEL[kind]}</button>}
+        </div>
+        <div className="px-4 py-3 border-t border-line flex items-center gap-2 flex-wrap">
+          <button onClick={() => save(false)} disabled={busy || !dirty} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save standard</button>
+          <button onClick={() => { if (confirm('Put the researched defaults back? Your edits to the standard are discarded.')) save(true) }} disabled={busy} className={BTN + ' border border-line bg-white text-muted'}><RotateCcw size={13} /> Reset to defaults</button>
+          {msg && <span className="text-[12.5px] text-ink/80">{msg}</span>}
+          <span className="ml-auto text-[11.5px] text-muted">Applies to rooms generated from now on. Units already walked keep their numbers.</span>
+        </div>
+      </div>
     </div>
   )
 }

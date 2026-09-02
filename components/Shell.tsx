@@ -12,7 +12,7 @@ import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Sliders, Wrench, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -97,6 +97,9 @@ export const SECTIONS: NavSection[] = [
     title: 'Portfolio',
     items: [
       { to: '/buildings', label: 'Properties', Icon: Building2 },
+      // Onboarding (Jon, 2026-09-02: "can we add the onboarding tab"). Inventory + photos for a
+      // unit BEFORE it is live in Guesty; assigned to a property later from the desk.
+      { to: '/onboarding', label: 'Onboarding', Icon: Boxes },
       { to: '/vault',     label: 'Vault', Icon: Lock },
       // Share Links (2026-08-18, Jon, parallel session): build + customise owner/property links.
       { to: '/links',     label: 'Share Links', Icon: Share2 },
