@@ -416,3 +416,163 @@ export function describeUnit(d: UnitDetails): string {
   if (d.kitchen === 'kitchenette') parts.push('kitchenette'); else if (d.kitchen === 'none') parts.push('no kitchen')
   return parts.join(' · ')
 }
+
+// ── ROOM QUESTIONS — ask before assuming ─────────────────────────────────────────────────────────
+// Jon, 2026-09-03: "the test one has too much going on — it should ask pre-questions before assuming
+// items." So a room opens with three to five quick questions and the list is BUILT from the answers:
+// no TV → no TV, remote, streaming device; a 6-seat table → 6 chairs; a curtain shower → curtain +
+// liner, not a glass door. Answers live on the room (`onboarding_rooms.answers`, migration 066).
+export type RoomQuestion =
+  | { key: string; label: string; type: 'yn'; default: boolean }
+  | { key: string; label: string; type: 'count'; default: number; max: number; unit?: string }
+  | { key: string; label: string; type: 'choice'; default: string; options: { v: string; l: string }[] }
+  | { key: string; label: string; type: 'multi'; default: string[]; options: { v: string; l: string }[] }
+export type RoomAnswers = Record<string, any>
+
+const APPL = (v: string, l = v) => ({ v, l })
+export const KITCHEN_APPLIANCE_OPTIONS = [
+  APPL('Refrigerator', 'Full fridge'), APPL('Mini fridge'), APPL('Stove / oven', 'Stove / oven'), APPL('Cooktop', 'Cooktop only'), APPL('Microwave'), APPL('Dishwasher'),
+  APPL('Coffee maker'), APPL('Toaster'), APPL('Kettle'), APPL('Blender'), APPL('Garbage disposal', 'Disposal'), APPL('Espresso / Nespresso machine', 'Espresso'),
+  APPL('Air fryer'), APPL('Wine fridge'), APPL('Ice maker'), APPL('Rice cooker'), APPL('Slow cooker / Instant Pot', 'Slow cooker'), APPL('Coffee grinder'),
+]
+const KITCHEN_APPLIANCE_NAMES = new Set(KITCHEN_APPLIANCE_OPTIONS.map(o => o.v))
+
+export function roomQuestions(room: RoomDef, d: UnitDetails): RoomQuestion[] {
+  const kitchen = d.kitchen || 'full'
+  switch (room.kind) {
+    case 'entry': return [
+      { key: 'coats', label: 'Coat storage', type: 'choice', default: 'hooks', options: [{ v: 'hooks', l: 'Hooks / rack' }, { v: 'closet', l: 'Closet' }, { v: 'none', l: 'None' }] },
+      { key: 'console', label: 'Console table', type: 'yn', default: true },
+      { key: 'mirror', label: 'Mirror', type: 'yn', default: true },
+    ]
+    case 'living': return [
+      { key: 'tv', label: 'TV in this room', type: 'yn', default: true },
+      { key: 'sleeper', label: 'Sofa is a sleeper', type: 'yn', default: Math.round(n(d.sleeperSofa)) > 0 },
+      { key: 'armchairs', label: 'Armchairs', type: 'count', default: 1, max: 4 },
+      { key: 'lamps', label: 'Lamps', type: 'count', default: 2, max: 6 },
+      { key: 'rug', label: 'Rug', type: 'yn', default: true },
+    ]
+    case 'kitchen': return [
+      { key: 'appliances', label: 'Appliances in the ' + (kitchen === 'none' ? 'unit' : 'kitchen'), type: 'multi',
+        default: kitchen === 'full' ? ['Refrigerator', 'Stove / oven', 'Dishwasher', 'Microwave', 'Coffee maker', 'Toaster', 'Kettle', 'Blender']
+          : kitchen === 'kitchenette' ? ['Mini fridge', 'Cooktop', 'Microwave', 'Coffee maker', 'Toaster', 'Kettle'] : ['Mini fridge', 'Microwave', 'Coffee maker'],
+        options: KITCHEN_APPLIANCE_OPTIONS },
+      { key: 'barstools', label: 'Bar / counter stools', type: 'count', default: kitchen === 'full' ? 2 : 0, max: 8 },
+    ]
+    case 'dining': return [
+      { key: 'seats', label: 'Seats at the table', type: 'count', default: Math.max(2, Math.min(10, Math.round(n(d.occupancy, 4)))), max: 12 },
+      { key: 'highchair', label: 'High chair', type: 'yn', default: false },
+    ]
+    case 'bedroom': return [
+      { key: 'tv', label: 'TV in this room', type: 'yn', default: room.key === 'master_bedroom' },
+      { key: 'closet', label: 'Closet', type: 'choice', default: 'closet', options: [{ v: 'closet', l: 'Closet' }, { v: 'wardrobe', l: 'Wardrobe / armoire' }, { v: 'none', l: 'None' }] },
+      { key: 'desk', label: 'Desk / workspace', type: 'yn', default: false },
+      { key: 'nightstands', label: 'Nightstands', type: 'count', default: 2, max: 4 },
+    ]
+    case 'bathroom': return room.key === 'half_bath' ? [
+      { key: 'storage', label: 'Shelving / storage', type: 'yn', default: false },
+    ] : [
+      { key: 'bath', label: 'Shower / tub', type: 'choice', default: 'shower', options: [{ v: 'shower', l: 'Shower' }, { v: 'tub', l: 'Tub' }, { v: 'both', l: 'Tub + shower' }] },
+      { key: 'door', label: 'Shower enclosure', type: 'choice', default: 'glass', options: [{ v: 'glass', l: 'Glass door' }, { v: 'curtain', l: 'Curtain' }, { v: 'none', l: 'Open / none' }] },
+      { key: 'hairdryer', label: 'Hair dryer', type: 'yn', default: true },
+      { key: 'storage', label: 'Shelving / storage', type: 'yn', default: true },
+    ]
+    case 'balcony': return [
+      { key: 'seats', label: 'Chairs', type: 'count', default: 2, max: 8 },
+      { key: 'table', label: 'Table', type: 'yn', default: true },
+      { key: 'lounge', label: 'Lounge chairs', type: 'count', default: 0, max: 6 },
+      { key: 'grill', label: 'Grill', type: 'yn', default: false },
+    ]
+    case 'laundry': return [
+      { key: 'machines', label: 'Machines', type: 'choice', default: 'separate', options: [{ v: 'separate', l: 'Washer + dryer' }, { v: 'combo', l: 'Washer/dryer combo' }, { v: 'none', l: 'None here' }] },
+      { key: 'iron', label: 'Iron & board here', type: 'yn', default: false },
+    ]
+    case 'office': return [
+      { key: 'monitor', label: 'Monitor', type: 'yn', default: false },
+      { key: 'printer', label: 'Printer', type: 'yn', default: false },
+    ]
+    default: return []
+  }
+}
+
+/** Fill the defaults for anything unanswered, so the generator never sees a hole. */
+export function fullAnswers(room: RoomDef, d: UnitDetails, a: RoomAnswers | null | undefined): RoomAnswers {
+  const out: RoomAnswers = {}
+  for (const q of roomQuestions(room, d)) out[q.key] = a && a[q.key] !== undefined && a[q.key] !== null ? a[q.key] : q.default
+  return out
+}
+
+/** The standard's list for this room, trimmed and sized by the answers. */
+export function applyAnswers(items: ItemDef[], room: RoomDef, d: UnitDetails, a: RoomAnswers): ItemDef[] {
+  const yes = (k: string) => a[k] === true
+  const cnt = (k: string) => Math.max(0, Math.round(n(a[k])))
+  const out: ItemDef[] = []
+  const drop = (re: RegExp) => (it: ItemDef) => !re.test(it.name)
+  let list = items.slice()
+  switch (room.kind) {
+    case 'entry':
+      if (a.coats === 'none') list = list.filter(drop(/coat/i))
+      if (a.coats === 'closet') list = list.map(it => /coat hooks/i.test(it.name) ? { ...it, name: 'Coat closet hangers', qty: 6, category: 'other' as Category } : it)
+      if (!yes('console')) list = list.filter(drop(/console table/i))
+      if (!yes('mirror')) list = list.filter(drop(/^mirror$/i))
+      break
+    case 'living':
+      if (!yes('tv')) list = list.filter(drop(/\bTV\b|streaming/i))
+      if (!yes('sleeper')) list = list.filter(drop(/sleeper/i)); else list = list.filter(drop(/^Sofa$/))
+      list = list.filter(drop(/^Sleeper sofa$/))
+      if (yes('sleeper')) {
+        list.unshift({ name: 'Sleeper sofa', category: 'furniture', qty: 1, tier: 'must' })
+        if (!list.some(it => /sleeper sofa bedding/i.test(it.name))) list.push({ name: 'Sleeper sofa bedding set', category: 'linen', qty: 1, tier: 'must' }, { name: 'Sleeper sofa pillows', category: 'linen', qty: 2, tier: 'must' })
+      }
+      list = list.map(it => /^Armchair$/i.test(it.name) ? { ...it, qty: cnt('armchairs') } : /floor \/ table lamp/i.test(it.name) ? { ...it, qty: cnt('lamps') } : it).filter(it => it.qty > 0 || !/armchair|lamp/i.test(it.name))
+      if (!yes('rug')) list = list.filter(drop(/^rug$/i))
+      break
+    case 'kitchen': {
+      const have = new Set<string>(Array.isArray(a.appliances) ? a.appliances : [])
+      list = list.filter(it => !KITCHEN_APPLIANCE_NAMES.has(it.name) || have.has(it.name))
+      // Anything ticked that the standard did not carry for this kitchen type still gets a line.
+      have.forEach(nm => { if (!list.some(it => it.name === nm)) list.push({ name: nm, category: 'appliance', qty: 1, brand: 'model', tier: 'must' }) })
+      const stools = cnt('barstools')
+      list = list.map(it => /bar stools/i.test(it.name) ? { ...it, qty: stools } : it).filter(it => !/bar stools/i.test(it.name) || stools > 0)
+      break
+    }
+    case 'dining':
+      list = list.map(it => /dining chairs/i.test(it.name) ? { ...it, qty: cnt('seats') } : /placemats/i.test(it.name) ? { ...it, qty: Math.max(it.qty, cnt('seats')) } : it)
+      if (!yes('highchair')) list = list.filter(drop(/high chair/i))
+      break
+    case 'bedroom':
+      if (!yes('tv')) list = list.filter(drop(/\bTV\b/i))
+      if (a.closet === 'none') list = list.filter(drop(/hangers/i))
+      if (a.closet === 'wardrobe' && !list.some(it => /wardrobe/i.test(it.name))) list.push({ name: 'Wardrobe / armoire', category: 'furniture', qty: 1, tier: 'must' })
+      if (yes('desk')) list.push({ name: 'Desk', category: 'furniture', qty: 1, tier: 'must' }, { name: 'Desk chair', category: 'furniture', qty: 1, tier: 'must' })
+      list = list.map(it => /^Nightstands$/i.test(it.name) ? { ...it, qty: cnt('nightstands') } : /^Bedside lamps$/i.test(it.name) ? { ...it, qty: cnt('nightstands') } : it).filter(it => it.qty > 0 || !/nightstand|bedside/i.test(it.name))
+      break
+    case 'bathroom':
+      if (room.key !== 'half_bath') {
+        if (a.bath === 'shower') list = list.filter(drop(/bath mat/i)).concat([{ name: 'Shower mat', category: 'linen', qty: 1, tier: 'must' }])
+        if (a.door === 'curtain') list = list.map(it => /shower curtain \/ glass door/i.test(it.name) ? { ...it, name: 'Shower curtain' } : it)
+        else if (a.door === 'glass') list = list.filter(drop(/shower liner/i)).map(it => /shower curtain \/ glass door/i.test(it.name) ? { ...it, name: 'Glass shower door' } : it)
+        else list = list.filter(drop(/shower curtain|shower liner/i))
+        if (!yes('hairdryer')) list = list.filter(drop(/hair dryer/i))
+      }
+      if (!yes('storage')) list = list.filter(drop(/shelving/i))
+      break
+    case 'balcony':
+      list = list.map(it => /outdoor chairs/i.test(it.name) ? { ...it, qty: cnt('seats') } : /outdoor cushions/i.test(it.name) ? { ...it, qty: cnt('seats') } : /lounge chair/i.test(it.name) ? { ...it, qty: cnt('lounge'), tier: cnt('lounge') ? 'must' : it.tier } : it)
+        .filter(it => it.qty > 0 || !/chairs|cushions|lounge/i.test(it.name))
+      if (!yes('table')) list = list.filter(drop(/outdoor table/i))
+      if (yes('grill')) list.push({ name: 'Grill', category: 'appliance', qty: 1, brand: 'model', tier: 'must' }, { name: 'Grill tools', category: 'other', qty: 1, tier: 'must' })
+      break
+    case 'laundry':
+      if (a.machines === 'none') list = list.filter(drop(/^washer$|^dryer$/i))
+      if (a.machines === 'combo') list = list.filter(drop(/^dryer$/i)).map(it => /^washer$/i.test(it.name) ? { ...it, name: 'Washer / dryer combo' } : it)
+      if (yes('iron')) list = list.map(it => /^Iron$/i.test(it.name) ? { ...it, name: 'Iron & ironing board', tier: 'must' as Tier } : it)
+      break
+    case 'office':
+      if (!yes('monitor')) list = list.filter(drop(/monitor/i))
+      if (!yes('printer')) list = list.filter(drop(/printer/i))
+      break
+  }
+  for (const it of list) if (!out.some(o => o.name === it.name && o.brand === it.brand)) out.push(it)
+  return out
+}
