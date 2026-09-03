@@ -23,7 +23,7 @@ const BTN = 'inline-flex items-center justify-center gap-1.5 rounded-xl font-bol
 const INPUT = 'w-full rounded-xl border border-line bg-white px-3.5 py-3 text-[16px] focus:outline-none focus:border-ink'
 const hrs = (m: number) => (Math.round(m / 6) / 10) + 'h'
 const addDay = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
-const fmtShort = (iso: string) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' })
+const fmtShort = (iso: string) => { const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + d.getDate() }
 const fmtDay = (iso: string) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 const fmtTime = (t?: string | null) => { if (!t) return ''; const m = /^(\d{1,2}):(\d{2})/.exec(t); if (!m) return t; const h = Number(m[1]); return (h % 12 || 12) + (m[2] !== '00' ? ':' + m[2] : '') + (h < 12 ? 'am' : 'pm') }
 
