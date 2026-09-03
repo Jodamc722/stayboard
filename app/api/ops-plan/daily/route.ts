@@ -3,8 +3,8 @@
 // morning, which nobody worked. The tab is gone (Jon: Grid + Staffing only) and its job — what a
 // person should touch next, with evidence and one action — lives in lib/command-day.ts behind
 // /api/command/day. The route stays as a 410 so nothing that still calls it gets a quiet 404.
-// /api/ops-plan/generate and /api/ops-plan/item are UNRELATED (the saved ops plans on /plan/[id])
-// and are untouched.
+// The saved-plan routes that sat next to this one (generate, item) and /plan/[id] went with the
+// September audit; nothing had linked to a saved plan since the Push tab closed.
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'

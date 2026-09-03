@@ -15,6 +15,7 @@
 import { NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { botConnected } from '@/lib/slack'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -35,6 +36,22 @@ export async function GET() {
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
 
+  // WHAT THE APP ACTUALLY USES, NOT WHAT THE CHECK GUESSED (2026-08-31). Three of these rows were
+  // red while the features behind them worked every day, because the check tested an env var the
+  // code does not require: Slack connects via the OAuth install stored in app_settings (the env
+  // token is only the fallback), the briefs send through the Gmail path (lib/gmail-send, a stored
+  // Google connection), and Homebase accepts the Homebase_Secret_id alias with the location
+  // resolved automatically. A health screen that cries wolf teaches people to ignore it, which is
+  // worse than not having one.
+  const slackReady = await botConnected().catch(() => false)
+  let gmailReady = false
+  try {
+    if (has('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET')) {
+      const { count } = await supabaseAdmin().from('google_tokens').select('*', { count: 'exact', head: true })
+      gmailReady = (count || 0) > 0
+    }
+  } catch { /* fall back to the Resend test alone */ }
+
   const env: Check[] = [
     {
       key: 'vault', label: 'Vault encryption key', ok: has('VAULT_KEY'), area: 'Vault',
@@ -42,17 +59,17 @@ export async function GET() {
       fix: 'Generate one with `openssl rand -hex 32`, add it in Vercel as VAULT_KEY, redeploy. Keep a copy somewhere safe — losing it makes existing secrets unreadable.',
     },
     {
-      key: 'homebase', label: 'Homebase (timeclock)', ok: has('HOMEBASE_API_KEY', 'HOMEBASE_LOCATION_UUID'), area: 'Labor & billable hours',
+      key: 'homebase', label: 'Homebase (timeclock)', ok: has('HOMEBASE_API_KEY') || has('Homebase_Secret_id'), area: 'Labor & billable hours',
       breaks: 'Every hours, labor-cost and payroll number. Billable Hours and the labor brief go blank.',
-      fix: 'Homebase → API access. Add HOMEBASE_API_KEY and HOMEBASE_LOCATION_UUID in Vercel, redeploy.',
+      fix: 'Homebase → API access. Add HOMEBASE_API_KEY in Vercel, redeploy. HOMEBASE_LOCATION_UUID is optional — the first location is used when unset.',
     },
     {
-      key: 'email', label: 'Outbound email', ok: has('RESEND_API_KEY', 'NOTIFY_FROM_EMAIL'), area: 'Morning brief, front-desk notices',
+      key: 'email', label: 'Outbound email', ok: gmailReady || has('RESEND_API_KEY', 'NOTIFY_FROM_EMAIL'), area: 'Morning brief, front-desk notices',
       breaks: 'No email leaves the building — briefs, notices and digests only appear on the in-app bell.',
-      fix: 'Verify the domain at resend.com, then add RESEND_API_KEY and NOTIFY_FROM_EMAIL in Vercel and redeploy. Full steps on the Integrations page.',
+      fix: 'Connect a Google account with the Gmail permission on the Integrations page (how the briefs send today), or verify a domain at resend.com and add RESEND_API_KEY + NOTIFY_FROM_EMAIL in Vercel.',
     },
     {
-      key: 'slack', label: 'Slack', ok: has('SLACK_BOT_TOKEN'), area: 'Slack alerts & rules',
+      key: 'slack', label: 'Slack', ok: slackReady, area: 'Slack alerts & rules',
       breaks: 'Alerts have nowhere to go and the channel pickers come up empty.',
       fix: 'Connect Slack from the Integrations page, or set SLACK_BOT_TOKEN in Vercel.',
     },
@@ -82,10 +99,22 @@ export async function GET() {
   const db = supabaseAdmin()
   const jobs: Check[] = []
   try {
-    const { data } = await db.from('guesty_sync_status').select('entity,last_sync_at').limit(20)
+    const { data } = await db.from('guesty_sync_status').select('entity,last_sync_at,last_error').limit(20)
     for (const r of ((data || []) as any[])) {
       const at = r.last_sync_at ? new Date(String(r.last_sync_at)) : null
       const hrs = at ? (Date.now() - at.getTime()) / 3600000 : Infinity
+      // 'auth' is an incident marker, not a job: lib/guesty only writes it when a sync run could
+      // not get a token. One throttled morning in June left a row that read "Guesty sync — auth:
+      // last synced 1631h ago" on this screen forever. A fresh failure belongs here; a stale one
+      // does not.
+      if (String(r.entity) === 'auth') {
+        if (hrs < 6) jobs.push({
+          key: 'sync:auth', label: 'Guesty sync — auth failure', ok: false, area: 'Integrations',
+          breaks: 'The last sync run could not authenticate with Guesty' + (r.last_error ? ': ' + String(r.last_error).slice(0, 120) : '') + '.',
+          fix: 'Check GUESTY_CLIENT_ID / GUESTY_CLIENT_SECRET in Vercel, then re-run the sync from the Integrations page.',
+        })
+        continue
+      }
       jobs.push({
         key: 'sync:' + r.entity, label: 'Guesty sync — ' + String(r.entity),
         ok: hrs < 6, area: 'Integrations',
@@ -150,7 +179,10 @@ export async function GET() {
         }
         for (const ch of Object.keys(theirNewest)) {
           const mine = newest[ch] || ''
-          const behind = !mine || theirNewest[ch] > mine
+          // The sync runs every two hours, so Guesty sitting a few hours ahead of us is the
+          // steady state between runs, not a finding — this row flapped red with a gap of
+          // "about 0 days". Only a full day behind means arrivals are not being stored.
+          const behind = !mine || (new Date(theirNewest[ch]).getTime() - new Date(mine).getTime()) > 86400000
           if (!behind) continue
           const gap = mine
             ? Math.max(0, Math.floor((new Date(theirNewest[ch]).getTime() - new Date(mine).getTime()) / 86400000))
