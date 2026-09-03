@@ -35,7 +35,7 @@ export function ScheduleLinksDesk() {
       <section className="rounded-2xl border border-line bg-white p-4">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[14px] font-bold text-ink">Links</span>
-          <span className="text-[12.5px] text-muted">one per market · send it to the team lead · anyone with the link can schedule</span>
+          <span className="text-[12.5px] text-muted">one per market for the team leads · an "All markets" link is the ops review view (every market, sortable by day / area / building / cleaner / market)</span>
         </div>
         <div className="mt-3 space-y-2">
           {loading && <div className="text-[13px] text-muted"><Loader2 size={14} className="animate-spin inline mr-1" /> Loading…</div>}
@@ -43,9 +43,9 @@ export function ScheduleLinksDesk() {
           {active.map(l => <LinkRow key={l.id} l={l} origin={origin} onRevoke={() => { if (confirm('Revoke the ' + l.market + ' link? The team will lose access until you make a new one.')) post({ action: 'revoke', id: l.id }) }} />)}
         </div>
         <div className="mt-4 pt-3 border-t border-line flex items-center gap-2 flex-wrap">
-          <select value={market} onChange={e => setMarket(e.target.value)} className={INPUT}>{['Miami', 'Broward', 'North'].map(m => <option key={m}>{m}</option>)}</select>
+          <select value={market} onChange={e => setMarket(e.target.value)} className={INPUT}>{['Miami', 'Broward', 'North', 'All'].map(m => <option key={m} value={m}>{m === 'All' ? 'All markets (ops review)' : m}</option>)}</select>
           <input value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="Passcode (optional)" className={INPUT + ' w-44'} />
-          <button disabled={busy} onClick={async () => { await post({ action: 'create', market, passcode }); setPasscode('') }} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} New {market} link</button>
+          <button disabled={busy} onClick={async () => { await post({ action: 'create', market, passcode }); setPasscode('') }} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} New {market === 'All' ? 'ops review' : market} link</button>
           <span className="text-[12px] text-muted">A passcode is a second lock if the link gets forwarded; without one the link alone opens it.</span>
         </div>
       </section>

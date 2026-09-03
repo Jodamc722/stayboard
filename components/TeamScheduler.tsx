@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Check, Loader2, Lock, Search, Send, X, AlertTriangle, MessageSquare, Users, CalendarDays, MapPin, Building2, UserRound, Sparkles, ChevronDown } from 'lucide-react'
 
-type Clean = { listingId: string; unit: string; hub?: string; area?: string; date: string; checkOutTime?: string | null; checkInTime?: string | null; sameDayTurn?: boolean; bedrooms?: number | null; nights?: number; assignedIds?: number[]; assignedNames?: string[]; staged?: boolean; vendor?: string | null; taskStatus?: string | null; doorCode?: string | null }
+type Clean = { listingId: string; unit: string; hub?: string; area?: string; market?: string; date: string; checkOutTime?: string | null; checkInTime?: string | null; sameDayTurn?: boolean; bedrooms?: number | null; nights?: number; assignedIds?: number[]; assignedNames?: string[]; staged?: boolean; vendor?: string | null; taskStatus?: string | null; doorCode?: string | null }
 type Day = { date: string; dow: string; cleans: Clean[] }
 type HK = { id: number; name: string; region: string | null }
 type Sub = { id: string; week_start: string; week_end: string; submitted_by: string | null; note: string | null; status: string; feedback: string | null; reviewed_at: string | null; created_at: string }
@@ -16,8 +16,8 @@ type Data = { ok: true; link: { market: string; label: string }; weekStart: stri
 type Pick = { listingId: string; unit: string; date: string; cleanerId: number; cleanerName: string; why: string }
 type Load = { cleanerId: number; name: string; minutes: number; cleans: number; buildings: string[]; pct: number }
 type Plan = { days: { date: string; load: Load[]; picks: Pick[]; unplaced: { listingId: string; unit: string; why: string }[] }[]; picks: Pick[]; capacityMin: number; summary: string }
-type View = 'day' | 'area' | 'building' | 'cleaner'
-const VIEWS: { id: View; label: string; Icon: any }[] = [{ id: 'day', label: 'Day', Icon: CalendarDays }, { id: 'area', label: 'Area', Icon: MapPin }, { id: 'building', label: 'Building', Icon: Building2 }, { id: 'cleaner', label: 'Cleaner', Icon: UserRound }]
+type View = 'day' | 'area' | 'building' | 'cleaner' | 'market'
+const VIEWS: { id: View; label: string; Icon: any }[] = [{ id: 'day', label: 'Day', Icon: CalendarDays }, { id: 'area', label: 'Area', Icon: MapPin }, { id: 'building', label: 'Building', Icon: Building2 }, { id: 'cleaner', label: 'Cleaner', Icon: UserRound }, { id: 'market', label: 'Market', Icon: MapPin }]
 
 const BTN = 'inline-flex items-center justify-center gap-1.5 rounded-xl font-bold text-[14px] min-h-[44px] px-4 disabled:opacity-50'
 const INPUT = 'w-full rounded-xl border border-line bg-white px-3.5 py-3 text-[16px] focus:outline-none focus:border-ink'
@@ -92,13 +92,13 @@ export function TeamScheduler({ code }: { code: string }) {
   // Area / Building / Cleaner: the same cleans, regrouped. Unassigned leads the cleaner view so the
   // gaps are the first thing you see; every other group sorts by size.
   const groups = useMemo(() => {
-    if (view === 'day') return null
-    const key = (c: Clean) => view === 'area' ? (c.area || 'Other') : view === 'building' ? (c.hub || 'Other') : ((c.assignedNames || [])[0] || '')
+    if (view === 'day' || (view === 'market' && data?.link.market !== 'All')) return null
+    const key = (c: Clean) => view === 'area' ? (c.area || 'Other') : view === 'building' ? (c.hub || 'Other') : view === 'market' ? (c.market || 'Other') : ((c.assignedNames || [])[0] || '')
     const m: Record<string, Clean[]> = {}
     for (const c of all) (m[key(c)] = m[key(c)] || []).push(c)
     const keys = Object.keys(m).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : m[b].length - m[a].length || a.localeCompare(b)))
     return keys.map(k => ({ key: k, label: k || 'Unassigned', cleans: m[k].slice().sort((a, b) => a.date.localeCompare(b.date) || (a.hub || '').localeCompare(b.hub || '') || a.unit.localeCompare(b.unit)) }))
-  }, [all, view])
+  }, [all, view, data])
 
   if (locked) return (
     <Frame title={locked}>
@@ -168,19 +168,19 @@ export function TeamScheduler({ code }: { code: string }) {
       )}
 
       {/* view switcher */}
-      <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-ink/5 mb-3">
-        {VIEWS.map(v => <button key={v.id} onClick={() => pickView(v.id)} className={'min-h-[38px] rounded-lg text-[12.5px] font-bold inline-flex items-center justify-center gap-1 ' + (view === v.id ? 'bg-white text-ink shadow-sm' : 'text-muted')}><v.Icon size={13} /> {v.label}</button>)}
+      <div className={'grid gap-1 p-1 rounded-xl bg-ink/5 mb-3 ' + (data.link.market === 'All' ? 'grid-cols-5' : 'grid-cols-4')}>
+        {VIEWS.filter(v => v.id !== 'market' || data.link.market === 'All').map(v => <button key={v.id} onClick={() => pickView(v.id)} className={'min-h-[38px] rounded-lg text-[12.5px] font-bold inline-flex items-center justify-center gap-1 ' + (view === v.id ? 'bg-white text-ink shadow-sm' : 'text-muted')}><v.Icon size={13} /> {v.label}</button>)}
       </div>
 
       {/* by day */}
-      {view === 'day' && data.days.map(day => (
+      {(view === 'day' || (view === 'market' && data.link.market !== 'All')) && data.days.map(day => (
         <section key={day.date} className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
           <div className={'px-3.5 py-2 flex items-center gap-2 border-b border-line ' + (day.date === data.today ? 'bg-brand-50' : 'bg-ink/5')}>
             <span className="text-[13px] font-bold text-ink">{fmtDay(day.date)}{day.date === data.today ? ' · today' : day.date === tomorrow ? ' · tomorrow' : ''}</span>
             <span className="text-[12px] text-muted ml-auto">{day.cleans.length ? day.cleans.length + ' clean' + (day.cleans.length === 1 ? '' : 's') : 'no cleans'}</span>
           </div>
           {loadFor(day.date).length > 0 && <div className="px-3.5 py-1.5 border-b border-line flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px]">{loadFor(day.date).map(l => <span key={l.cleanerId} className={l.pct > 100 ? 'text-rose-700 font-semibold' : l.pct >= 75 ? 'text-emerald-700' : 'text-muted'}>{l.name.split(' ')[0]} <b>{hrs(l.minutes)}</b></span>)}</div>}
-          {day.cleans.length > 0 && <div className="divide-y divide-line">{day.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} onPick={() => setPicking(c)} />)}</div>}
+          {day.cleans.length > 0 && <div className="divide-y divide-line">{day.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} ops={data.link.market === 'All'} onPick={() => setPicking(c)} />)}</div>}
           {day.date === tomorrow && day.cleans.length > 0 && <div className="px-3.5 py-2 border-t border-line"><button onClick={() => setSubmitting({ date: day.date })} className={BTN + ' w-full bg-ink text-white min-h-[40px] text-[13px]'}><Send size={14} /> Submit tomorrow to Jon{day.cleans.filter(c => !(c.assignedIds || []).length).length ? ' · ' + day.cleans.filter(c => !(c.assignedIds || []).length).length + ' unassigned' : ''}</button></div>}
         </section>
       ))}
@@ -195,7 +195,7 @@ export function TeamScheduler({ code }: { code: string }) {
               <span className={'text-[13px] font-bold ' + (isUnassigned ? 'text-amber-900' : 'text-ink')}>{g.label}</span>
               <span className="text-[12px] text-muted ml-auto">{g.cleans.length} clean{g.cleans.length === 1 ? '' : 's'}{view !== 'cleaner' && open ? <span className="text-amber-700 font-semibold"> · {open} open</span> : null}{view === 'cleaner' && g.key ? ' · ' + new Set(g.cleans.map(c => c.date)).size + ' day' + (new Set(g.cleans.map(c => c.date)).size === 1 ? '' : 's') + ' · ' + hrs((data.plan?.days || []).reduce((s, d) => s + (d.load.find(l => l.name === g.key)?.minutes || 0), 0)) : ''}</span>
             </div>
-            <div className="divide-y divide-line">{g.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} showDate today={data.today} hideHub={view === 'building'} onPick={() => setPicking(c)} />)}</div>
+            <div className="divide-y divide-line">{g.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} showDate today={data.today} hideHub={view === 'building'} ops={data.link.market === 'All' && view !== 'market'} onPick={() => setPicking(c)} />)}</div>
           </section>
         )
       })}
@@ -226,14 +226,14 @@ export function TeamScheduler({ code }: { code: string }) {
   )
 }
 
-function CleanRow({ c, showDate, today, hideHub, onPick }: { c: Clean; showDate?: boolean; today?: string; hideHub?: boolean; onPick: () => void }) {
+function CleanRow({ c, showDate, today, hideHub, ops, onPick }: { c: Clean; showDate?: boolean; today?: string; hideHub?: boolean; ops?: boolean; onPick: () => void }) {
   const name = (c.assignedNames || [])[0]
   return (
     <div className="px-3.5 py-2.5 flex items-center gap-3">
       {showDate && <div className={'shrink-0 w-11 text-center rounded-lg py-1 ' + (c.date === today ? 'bg-brand-50 text-brand-900' : 'bg-ink/5 text-ink')}><div className="text-[10px] font-bold uppercase leading-none">{fmtShort(c.date).split(' ')[0]}</div><div className="text-[15px] font-bold leading-tight">{fmtShort(c.date).split(' ')[1]}</div></div>}
       <div className="flex-1 min-w-0">
         <div className="text-[14.5px] font-semibold text-ink truncate">{c.unit}{c.sameDayTurn ? <span className="ml-1.5 text-[10.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle">same-day</span> : null}</div>
-        <div className="text-[11.5px] text-muted">{[hideHub ? null : c.hub, c.checkOutTime ? 'out ' + fmtTime(c.checkOutTime) : null, c.sameDayTurn && c.checkInTime ? 'in ' + fmtTime(c.checkInTime) : null, c.bedrooms != null ? c.bedrooms + 'BR' : null].filter(Boolean).join(' · ')}</div>
+        <div className="text-[11.5px] text-muted">{[ops ? c.market : null, hideHub ? null : c.hub, c.checkOutTime ? 'out ' + fmtTime(c.checkOutTime) : null, c.sameDayTurn && c.checkInTime ? 'in ' + fmtTime(c.checkInTime) : null, c.bedrooms != null ? c.bedrooms + 'BR' : null].filter(Boolean).join(' · ')}</div>
       </div>
       <button onClick={onPick} className={'shrink-0 rounded-xl border min-h-[40px] px-3 text-[13px] font-bold max-w-[46%] truncate ' + (name ? (c.staged ? 'border-brand-300 bg-brand-50 text-brand-900' : 'border-emerald-300 bg-emerald-50 text-emerald-800') : 'border-dashed border-line bg-white text-muted')}>{name || '+ Assign'}</button>
     </div>
