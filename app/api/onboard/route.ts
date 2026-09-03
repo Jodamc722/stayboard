@@ -21,7 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel, getAccess } from '@/lib/access'
-import { roomsFor, itemsFor, roomQuestions, fullAnswers, applyAnswers, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, ROOM_TYPES, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
+import { roomsFor, itemsFor, roomQuestions, fullAnswers, applyAnswers, unitNeeds, unitCheck, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, ROOM_TYPES, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
@@ -44,6 +44,7 @@ function cleanDetails(d: any): UnitDetails {
     parking: pick(o.parking, ['none', 'assigned', 'garage', 'street']),
     floor: str(o.floor).slice(0, 20) || undefined, pool: o.pool === true, gym: o.gym === true, notes: str(o.notes).slice(0, 2000) || undefined,
     appliances: Array.isArray(o.appliances) ? o.appliances.filter((a: any) => APPLIANCES.some(x => x.key === a)).slice(0, 40) : undefined,
+    na: Array.isArray(o.na) ? Array.from(new Set(o.na.map((x: any) => str(x).slice(0, 120)).filter(Boolean))).slice(0, 300) as string[] : undefined,
     rooms: o.rooms && typeof o.rooms === 'object' ? Object.fromEntries(Object.entries(o.rooms).filter(([k, v]) => ROOM_TYPES.some(t => t.key === k) && Number(v) > 0).map(([k, v]) => [k, Math.max(0, Math.min(6, Math.round(Number(v) || 0)))])) : undefined,
     beds: o.beds && typeof o.beds === 'object' ? Object.fromEntries(Object.entries(o.beds).filter(([k]) => /^(master_bedroom|bedroom_\d+|living)$/.test(k)).map(([k, v]) => [k, (Array.isArray(v) ? v : []).filter((b: any) => BED_SIZES.some(x => x.key === b)).slice(0, 6)])) : undefined,
   }
@@ -74,17 +75,34 @@ function progressOf(rooms: any[], items: any[]) {
  * for a custom item with no standard); otherwise the shortfall between the standard and the count.
  * Unconfirmed items are not on it — a blank is not a shortage until someone has stood in the room.
  */
-function buyList(items: any[]) {
-  const out: { id: string; room_id: string; name: string; category: string; need: number; have: number; expected: number | null; why: 'short' | 'worn' | 'missing' }[] = []
+type BuyRow = { id: string; room_id: string | null; name: string; category: string; need: number; have: number; expected: number | null; why: 'short' | 'worn' | 'missing' }
+/**
+ * THE BUY LIST — unit level (Jon, 2026-09-03: "the goal is to understand what is in the unit").
+ * Needs come from the standard applied to the whole unit; on-hand is summed across every room. Short =
+ * need − on hand; a row flagged missing counts as zero on hand; worn = replace what is worn. An item
+ * the standard expects but nobody added anywhere is NOT assumed missing — the Finish step asks.
+ */
+function buyList(items: any[], needs: ReturnType<typeof unitNeeds>): BuyRow[] {
+  const out: BuyRow[] = []
+  const check = unitCheck(items, needs)
+  for (const c of check) {
+    const rows = items.filter(i => i.name.toLowerCase() === c.name.toLowerCase())
+    const first = rows[0]
+    if (c.short > 0) out.push({ id: first ? first.id : 'need:' + c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), room_id: first ? first.room_id : null, name: c.name + (c.brand ? ' (' + c.brand + ')' : ''), category: c.category, need: c.short, have: c.have, expected: c.qty, why: c.have === 0 && rows.some(r => r.condition === 'missing') ? 'missing' : 'short' })
+    if (c.worn > 0) { const w = rows.find(r => r.condition === 'worn')!; out.push({ id: w.id, room_id: w.room_id, name: c.name + (c.brand ? ' (' + c.brand + ')' : ''), category: c.category, need: c.worn, have: c.have, expected: c.qty, why: 'worn' }) }
+  }
+  // Custom items (not in the standard) the walker flagged worn or missing still get bought.
+  const covered = new Set(needs.map(n => n.name.toLowerCase()))
   for (const i of items) {
-    if (!i.condition) continue
-    const have = Math.max(0, Number(i.qty) || 0)
-    const expected = i.expected == null ? null : Math.max(0, Number(i.expected) || 0)
-    if (i.condition === 'missing') { const need = expected ?? have ?? 1; if (need > 0) out.push({ id: i.id, room_id: i.room_id, name: i.name, category: i.category, need, have: 0, expected, why: 'missing' }); continue }
-    if (i.condition === 'worn') { const need = Math.max(expected ?? 0, have); if (need > 0) out.push({ id: i.id, room_id: i.room_id, name: i.name, category: i.category, need, have, expected, why: 'worn' }); continue }
-    if (expected != null && have < expected) out.push({ id: i.id, room_id: i.room_id, name: i.name, category: i.category, need: expected - have, have, expected, why: 'short' })
+    if (covered.has(String(i.name).toLowerCase())) continue
+    if (i.condition === 'missing') out.push({ id: i.id, room_id: i.room_id, name: i.name, category: i.category, need: Math.max(1, Number(i.expected) || 1), have: 0, expected: i.expected ?? null, why: 'missing' })
+    else if (i.condition === 'worn') out.push({ id: i.id, room_id: i.room_id, name: i.name, category: i.category, need: Math.max(1, Number(i.qty) || 1), have: Number(i.qty) || 0, expected: i.expected ?? null, why: 'worn' })
   }
   return out
+}
+
+async function needsFor(unit: any, rooms: any[]) {
+  return unitNeeds(unit.details || {}, await loadStandard(), rooms.map((r: any) => ({ key: r.key, name: r.name, kind: r.kind, sort: r.sort })))
 }
 
 /**
@@ -96,7 +114,7 @@ function buyList(items: any[]) {
  * board displays, so the placeholder id never reaches a screen.
  */
 async function pushOrder(db: ReturnType<typeof supabaseAdmin>, unit: any, rooms: any[], items: any[], who: string | null) {
-  const buy = buyList(items)
+  const buy = buyList(items, await needsFor(unit, rooms))
   if (!buy.length) return { ok: false as const, error: 'Nothing to order — no confirmed item is short, worn or missing.' }
   const now = new Date().toISOString()
   const key = unit.listing_id || ('onboard:' + unit.code)
@@ -126,8 +144,8 @@ async function pushOrder(db: ReturnType<typeof supabaseAdmin>, unit: any, rooms:
     }
     const { error } = await db.from('ffe_order_lines').insert({
       order_id: orderId, listing_id: key, unit_name: unit.name, building: unit.building || null,
-      room: roomKey[b.room_id] || 'other', item_key: 'onb:' + b.id, title, qty: b.need, stage: 'draft',
-      placement: roomName[b.room_id] || null, updated_at: now,
+      room: (b.room_id && roomKey[b.room_id]) || 'unit', item_key: 'onb:' + b.id, title, qty: b.need, stage: 'draft',
+      placement: (b.room_id && roomName[b.room_id]) || null, updated_at: now,
     })
     if (error) return { ok: false as const, error: error.message }
     added++
@@ -206,18 +224,18 @@ export async function GET(req: NextRequest) {
       const { data: units } = await db.from('onboarding_units').select('*').neq('status', 'archived').order('created_at', { ascending: false }).limit(300)
       const ids = (units || []).map((u: any) => u.id)
       const [{ data: rooms }, { data: items }, { data: listings }] = await Promise.all([
-        ids.length ? db.from('onboarding_rooms').select('unit_id,photos,checked_at').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
-        ids.length ? db.from('onboarding_items').select('unit_id,condition,qty,expected').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
+        ids.length ? db.from('onboarding_rooms').select('unit_id,key,name,kind,sort,photos,checked_at').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
+        ids.length ? db.from('onboarding_items').select('unit_id,room_id,id,name,brand,condition,qty,expected').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
         db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000),
       ])
       const lname: Record<string, string> = {}
       for (const l of (listings || []) as any[]) lname[String(l.id)] = String(l.nickname || l.title || l.id)
-      const out = (units || []).map((u: any) => ({
-        ...u,
-        listing_name: u.listing_id ? (lname[u.listing_id] || u.listing_id) : null,
-        progress: progressOf((rooms || []).filter((r: any) => r.unit_id === u.id), (items || []).filter((i: any) => i.unit_id === u.id)),
-        buy: buyList((items || []).filter((i: any) => i.unit_id === u.id)).length,
-      }))
+      const standard = await loadStandard()
+      const out = (units || []).map((u: any) => {
+        const rs = (rooms || []).filter((r: any) => r.unit_id === u.id); const its = (items || []).filter((i: any) => i.unit_id === u.id)
+        const needs = unitNeeds(u.details || {}, standard, rs.map((r: any) => ({ key: r.key, name: r.name, kind: r.kind, sort: r.sort })))
+        return { ...u, listing_name: u.listing_id ? (lname[u.listing_id] || u.listing_id) : null, progress: progressOf(rs, its), buy: buyList(its, needs).length }
+      })
       const pick = (listings || []).filter((l: any) => !['inactive', 'disabled', 'archived', 'deleted'].includes(String(l.status || '').toLowerCase()))
         .map((l: any) => ({ id: String(l.id), name: String(l.nickname || l.title || l.id), building: String(l.building || '') }))
         .sort((a: any, b: any) => a.name.localeCompare(b.name))
@@ -226,7 +244,8 @@ export async function GET(req: NextRequest) {
     const code = str(sp.get('code')).toLowerCase()
     const found = await loadByCode(db, code)
     if (!found) return NextResponse.json({ ok: false, error: 'link not found' }, { status: 404 })
-    return NextResponse.json({ ok: true, ...found, progress: progressOf(found.rooms, found.items), buy: buyList(found.items) })
+    const needs = await needsFor(found.unit, found.rooms)
+    return NextResponse.json({ ok: true, ...found, progress: progressOf(found.rooms, found.items), needs, check: unitCheck(found.items, needs), buy: buyList(found.items, needs) })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
@@ -324,6 +343,16 @@ export async function POST(req: NextRequest) {
       if (error) throw new Error(error.message)
       await touch()
       return NextResponse.json({ ok: true, room })
+    }
+    // N/A (Jon, 2026-09-03: "should have an option like N/A so it's not an item needed"). Unit-wide: the
+    // item leaves every room's expected list and never reaches the buy list.
+    if (action === 'setNA') {
+      const name = str(b.name).slice(0, 120); if (!name) return NextResponse.json({ ok: false, error: 'name required' }, { status: 400 })
+      const d: any = { ...(unit.details || {}) }
+      const cur: string[] = Array.isArray(d.na) ? d.na : []
+      d.na = b.on === false ? cur.filter(x => x.toLowerCase() !== name.toLowerCase()) : Array.from(new Set([...cur, name]))
+      await touch({ details: d })
+      return NextResponse.json({ ok: true, na: d.na })
     }
     if (action === 'answerRoom') {
       const roomId = str(b.roomId)
