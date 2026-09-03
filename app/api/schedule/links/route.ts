@@ -1,0 +1,48 @@
+// TEAM SCHEDULER LINKS — the desk side (signed in, feature 'schedule').
+//   GET  → links + recent submissions
+//   POST {action:'create', market, label?, passcode?} | {action:'revoke', id} | {action:'feedback', id, feedback} | {action:'reviewed', id}
+import { NextRequest, NextResponse } from 'next/server'
+import { randomBytes } from 'crypto'
+import { requireLevel } from '@/lib/access'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+
+export const dynamic = 'force-dynamic'
+const MARKETS = ['Miami', 'Broward', 'North']
+const str = (v: any) => (v == null ? '' : String(v)).trim()
+
+export async function GET() {
+  const g = await requireLevel('schedule', 'view'); if (!g.ok) return g.res
+  const db = supabaseAdmin()
+  const [{ data: links }, { data: subs }] = await Promise.all([
+    db.from('schedule_links').select('*').order('created_at', { ascending: false }),
+    db.from('schedule_submissions').select('*').order('created_at', { ascending: false }).limit(60),
+  ])
+  return NextResponse.json({ ok: true, links: links || [], submissions: subs || [] })
+}
+
+export async function POST(req: NextRequest) {
+  const g = await requireLevel('schedule', 'edit'); if (!g.ok) return g.res
+  const me = g.access.email || null
+  const b = await req.json().catch(() => ({} as any))
+  const db = supabaseAdmin()
+  const now = new Date().toISOString()
+  try {
+    if (b.action === 'create') {
+      const market = MARKETS.includes(b.market) ? b.market : null
+      if (!market) return NextResponse.json({ ok: false, error: 'market must be Miami, Broward or North' }, { status: 400 })
+      const code = randomBytes(6).toString('hex')
+      const { data, error } = await db.from('schedule_links').insert({ code, market, label: str(b.label).slice(0, 120) || market + ' team schedule', passcode: str(b.passcode).slice(0, 40) || null, created_by: me }).select('*').single()
+      if (error) throw new Error(error.message)
+      return NextResponse.json({ ok: true, link: data, url: '/scheduler/' + code })
+    }
+    const id = str(b.id); if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
+    if (b.action === 'revoke') { await db.from('schedule_links').update({ revoked_at: now }).eq('id', id); return NextResponse.json({ ok: true }) }
+    if (b.action === 'feedback') {
+      const feedback = str(b.feedback).slice(0, 4000)
+      await db.from('schedule_submissions').update({ feedback: feedback || null, status: 'reviewed', reviewed_by: me, reviewed_at: now }).eq('id', id)
+      return NextResponse.json({ ok: true })
+    }
+    if (b.action === 'reviewed') { await db.from('schedule_submissions').update({ status: 'reviewed', reviewed_by: me, reviewed_at: now }).eq('id', id); return NextResponse.json({ ok: true }) }
+    return NextResponse.json({ ok: false, error: 'unknown action' }, { status: 400 })
+  } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
+}
