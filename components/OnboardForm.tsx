@@ -14,10 +14,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, Check, ChevronDown, ChevronLeft, Loader2, Minus, Plus, Pencil, Trash2, X, Image as ImageIcon, CheckCircle2, AlertTriangle, ClipboardCopy, RotateCcw, ShoppingCart } from 'lucide-react'
 import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, ROOM_TYPES, ROOM_GROUP_LABEL, BED_SIZES, TIERS, TIER_LABEL, bedroomKeys, bedroomLabel, bedsFor, roomsChosen, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind, type BedSize, type Tier } from '@/lib/onboarding'
-import { Sparkles, ChevronRight, Play } from 'lucide-react'
+import { Sparkles, ChevronRight, Play, HelpCircle } from 'lucide-react'
+import { roomQuestions, fullAnswers, type RoomQuestion } from '@/lib/onboarding'
 
 type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; address: string | null; owner_name: string | null; owner_contact: string | null; details: UnitDetails; status: string; listing_id: string | null; notes: string | null; completed_at: string | null }
-type Room = { id: string; key: string; name: string; kind: RoomKind; sort: number; photos: { url: string; at: string; caption?: string | null }[]; notes: string | null; checked_at: string | null }
+type Room = { id: string; key: string; name: string; kind: RoomKind; sort: number; photos: { url: string; at: string; caption?: string | null }[]; notes: string | null; checked_at: string | null; answers?: Record<string, any> | null }
 type Item = { id: string; room_id: string; name: string; category: Category; qty: number; expected: number | null; tier?: Tier; condition: Condition | null; brand: string | null; notes: string | null; photo_url: string | null; suggested: boolean }
 type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number; items: number; confirmed: number; photos: number; pct: number }
 type Buy = { id: string; room_id: string; name: string; category: string; need: number; have: number; expected: number | null; why: 'short' | 'worn' | 'missing' }
@@ -125,7 +126,7 @@ export function OnboardForm({ code }: { code: string }) {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[15px] font-bold text-ink truncate">{r.name}</span>
-                  <span className="block text-[12px] text-muted">{ROOM_KIND_LABEL[r.kind]} · {conf}/{its.length} items{bad ? ' · ' + bad + ' worn/missing' : ''}{short ? ' · ' + short + ' short' : ''}{photos ? ' · ' + photos + ' photo' + (photos === 1 ? '' : 's') : ' · no photo yet'}</span>
+                  <span className="block text-[12px] text-muted">{ROOM_KIND_LABEL[r.kind]} · {!r.answers && !its.length ? <span className="text-brand-700 font-semibold">{roomQuestions(r, unit.details || {}).length} quick questions to build the list</span> : <>{conf}/{its.length} items{bad ? ' · ' + bad + ' worn/missing' : ''}{short ? ' · ' + short + ' short' : ''}</>}{photos ? ' · ' + photos + ' photo' + (photos === 1 ? '' : 's') : ' · no photo yet'}</span>
                 </span>
                 {r.checked_at ? <CheckCircle2 size={20} className="text-emerald-600 shrink-0" /> : <span className="w-5 h-5 rounded-full border-2 border-line shrink-0" />}
               </button>
@@ -328,6 +329,10 @@ function AddRoom({ act, reload }: { act: (b: any) => Promise<any>; reload: () =>
 function RoomView({ code, unit, room, items, onBack, act, reload, index, total, onPrev, onNext }: { code: string; unit: Unit; room: Room; items: Item[]; onBack: () => void; act: (b: any) => Promise<any>; reload: () => Promise<void>; index: number; total: number; onPrev?: () => void; onNext: () => void }) {
   const [renaming, setRenaming] = useState(false)
   const [ai, setAi] = useState<any | null>(null)      // the read-back proposal, awaiting approval
+  const qs = roomQuestions(room, unit.details || {})
+  const [asking, setAsking] = useState<boolean>(!room.answers && qs.length > 0)
+  const [folded, setFolded] = useState<Record<string, boolean>>({ recommended: true, suggested: true })
+  useEffect(() => { setAsking(!room.answers && qs.length > 0) }, [room.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const [aiBusy, setAiBusy] = useState(false)
   const readPhotos = async () => {
     setErr(''); setAiBusy(true)
@@ -389,6 +394,11 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
           <div className="text-[12px] text-muted">Room {index + 1} of {total} · {ROOM_KIND_LABEL[room.kind]} · {confirmed}/{items.length} items confirmed</div>
         </div>
       </div>
+
+      {/* ASK BEFORE ASSUMING (Jon, 2026-09-03: "it should ask pre-questions before assuming items").
+          Three to five taps, then the list is built from the answers — not the whole standard. */}
+      {asking && <QuestionsCard room={room} qs={qs} unit={unit} hasItems={items.length > 0} act={act} onDone={async () => { setAsking(false); await reload() }} onSkip={items.length ? () => setAsking(false) : undefined} />}
+      {!asking && qs.length > 0 && <button onClick={() => setAsking(true)} className="mb-3 text-[12.5px] font-semibold text-brand-700 inline-flex items-center gap-1.5 min-h-[32px]"><HelpCircle size={13} /> Room questions{room.answers ? ' · edit answers' : ''}</button>}
 
       {/* photos */}
       <section className="rounded-2xl border border-line bg-white p-3 mb-3">
@@ -472,14 +482,14 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
           return (
             <div key={t}>
               <div className={'px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide flex items-center gap-2 ' + (t === 'must' ? 'bg-ink/5 text-ink' : t === 'recommended' ? 'bg-brand-50 text-brand-800' : 'bg-app text-muted')}>
-                {TIER_LABEL[t]}<span className="font-semibold normal-case tracking-normal opacity-70">{conf}/{list.length}</span>
+                {t !== 'must' ? <button onClick={() => setFolded(f => ({ ...f, [t]: !f[t] }))} className="inline-flex items-center gap-1.5 uppercase tracking-wide font-bold min-h-[30px]"><ChevronDown size={13} className={'transition-transform ' + (folded[t] ? '-rotate-90' : '')} />{TIER_LABEL[t]}</button> : TIER_LABEL[t]}<span className="font-semibold normal-case tracking-normal opacity-70">{conf}/{list.length}</span>
                 {/* The fast path (Jon, 2026-09-03: "as easy as possible to give us a full count"): one tap says
                     "everything in this section is here, in the expected count, in good shape" — then fix the exceptions. */}
                 {conf < list.length && <button onClick={() => markAllGood(list)} className="ml-auto normal-case tracking-normal font-bold text-[12px] text-brand-700 inline-flex items-center gap-1 min-h-[30px]"><Check size={13} /> All here & good</button>}
               </div>
-              <div className="divide-y divide-line">
+              {!(t !== 'must' && folded[t]) && <div className="divide-y divide-line">
                 {list.map(i => <ItemRow key={i.id} item={i} code={code} act={act} reload={reload} onPhoto={files => upload(files, i.id)} />)}
-              </div>
+              </div>}
             </div>
           )
         })}
@@ -502,6 +512,39 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
         <button onClick={onNext} className={BTN + ' border border-line bg-white text-ink'}>{index < total - 1 ? 'Next room' : 'Finish'} <ChevronRight size={16} /></button>
       </div>
     </div>
+  )
+}
+
+function QuestionsCard({ room, qs, unit, hasItems, act, onDone, onSkip }: { room: Room; qs: RoomQuestion[]; unit: Unit; hasItems: boolean; act: (b: any) => Promise<any>; onDone: () => Promise<void>; onSkip?: () => void }) {
+  const [a, setA] = useState<Record<string, any>>(() => fullAnswers(room, unit.details || {}, room.answers))
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const set = (k: string, v: any) => setA(x => ({ ...x, [k]: v }))
+  const chip = (on: boolean) => CHIP + ' min-h-[36px] text-[13px] ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')
+  const build = async () => {
+    setBusy(true); setErr('')
+    try { await act({ action: 'answerRoom', roomId: room.id, answers: a }); await onDone() } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <section className="rounded-2xl border border-brand-200 bg-brand-50/50 p-3 mb-3 space-y-3">
+      <div className="flex items-center gap-2"><HelpCircle size={15} className="text-brand-700" /><span className="font-bold text-[14px] text-ink">{hasItems ? 'Room questions' : 'Before you count — ' + qs.length + ' quick question' + (qs.length === 1 ? '' : 's')}</span><span className="text-[12px] text-muted">the list is built from these</span></div>
+      {qs.map(q => (
+        <div key={q.key}>
+          <div className="text-[13px] font-semibold text-ink mb-1.5">{q.label}</div>
+          {q.type === 'yn' && <div className="flex gap-1.5">{[[true, 'Yes'], [false, 'No']].map(([v, l]) => <button key={String(v)} type="button" onClick={() => set(q.key, v)} className={chip(a[q.key] === v)}>{l as string}</button>)}</div>}
+          {q.type === 'count' && <div className="flex gap-1.5 flex-wrap">{Array.from({ length: q.max + 1 }, (_, i) => i).map(i => <button key={i} type="button" onClick={() => set(q.key, i)} className={chip(a[q.key] === i) + ' min-w-[40px] px-0'}>{i === 0 ? 'None' : i}</button>)}</div>}
+          {q.type === 'choice' && <div className="flex gap-1.5 flex-wrap">{q.options.map(o => <button key={o.v} type="button" onClick={() => set(q.key, o.v)} className={chip(a[q.key] === o.v)}>{o.l}</button>)}</div>}
+          {q.type === 'multi' && <div className="flex gap-1.5 flex-wrap">{q.options.map(o => { const on = Array.isArray(a[q.key]) && a[q.key].includes(o.v); return <button key={o.v} type="button" onClick={() => set(q.key, on ? a[q.key].filter((x: string) => x !== o.v) : [...(a[q.key] || []), o.v])} className={chip(on) + ' text-[12.5px] min-h-[34px]'}>{on ? <Check size={13} className="mr-1" /> : null}{o.l}</button> })}</div>}
+        </div>
+      ))}
+      {err && <p className="text-[13px] text-rose-600 font-semibold">{err}</p>}
+      <div className="flex gap-2">
+        <button onClick={build} disabled={busy} className={BTN + ' bg-ink text-white flex-1'}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {hasItems ? 'Update the list' : 'Build the list'}</button>
+        {onSkip && <button onClick={onSkip} className={BTN + ' border border-line bg-white text-ink'}>Later</button>}
+      </div>
+      {hasItems && <p className="text-[12px] text-muted">Only untouched rows change — anything you counted, photographed or wrote on stays.</p>}
+    </section>
   )
 }
 
