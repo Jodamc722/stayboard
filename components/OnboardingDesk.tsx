@@ -171,7 +171,7 @@ function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; on
 // room is generated from — a unit already walked keeps its own numbers (the walker can correct
 // "need" on any item there).
 const ONLY_KEYS = Object.keys(ONLY_LABEL) as (keyof typeof ONLY_LABEL)[]
-const KIND_ORDER: RoomKind[] = ['kitchen', 'dining', 'living', 'bedroom', 'bathroom', 'entry', 'laundry', 'balcony', 'other']
+const KIND_ORDER: RoomKind[] = ['kitchen', 'dining', 'living', 'bedroom', 'bathroom', 'entry', 'laundry', 'balcony', 'office', 'other']
 
 function StandardSheet({ onClose }: { onClose: () => void }) {
   const [std, setStd] = useState<InventoryStandard | null>(null)

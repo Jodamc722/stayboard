@@ -13,7 +13,8 @@
 // Agnostic on purpose: nothing here knows or needs a Guesty listing. The code in the URL is the key.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, Check, ChevronDown, ChevronLeft, Loader2, Minus, Plus, Pencil, Trash2, X, Image as ImageIcon, CheckCircle2, AlertTriangle, ClipboardCopy, RotateCcw, ShoppingCart } from 'lucide-react'
-import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, BED_SIZES, TIERS, TIER_LABEL, bedroomKeys, bedroomLabel, bedsFor, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind, type BedSize, type Tier } from '@/lib/onboarding'
+import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, ROOM_TYPES, ROOM_GROUP_LABEL, BED_SIZES, TIERS, TIER_LABEL, bedroomKeys, bedroomLabel, bedsFor, roomsChosen, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind, type BedSize, type Tier } from '@/lib/onboarding'
+import { Sparkles, ChevronRight, Play } from 'lucide-react'
 
 type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; address: string | null; owner_name: string | null; owner_contact: string | null; details: UnitDetails; status: string; listing_id: string | null; notes: string | null; completed_at: string | null }
 type Room = { id: string; key: string; name: string; kind: RoomKind; sort: number; photos: { url: string; at: string; caption?: string | null }[]; notes: string | null; checked_at: string | null }
@@ -62,7 +63,10 @@ export function OnboardForm({ code }: { code: string }) {
 
   if (room) return (
     <Frame>
-      <RoomView code={code} unit={unit} room={room} items={items.filter(i => i.room_id === room.id)} onBack={() => setRoomOpen(null)} act={act} reload={load} />
+      <RoomView code={code} unit={unit} room={room} items={items.filter(i => i.room_id === room.id)} onBack={() => setRoomOpen(null)} act={act} reload={load}
+        index={rooms.findIndex(r => r.id === room.id)} total={rooms.length}
+        onPrev={rooms.findIndex(r => r.id === room.id) > 0 ? () => setRoomOpen(rooms[rooms.findIndex(r => r.id === room.id) - 1].id) : undefined}
+        onNext={rooms.findIndex(r => r.id === room.id) < rooms.length - 1 ? () => { setRoomOpen(rooms[rooms.findIndex(r => r.id === room.id) + 1].id); window.scrollTo(0, 0) } : () => { setRoomOpen(null); window.scrollTo(0, document.body.scrollHeight) }} />
     </Frame>
   )
 
@@ -101,7 +105,10 @@ export function OnboardForm({ code }: { code: string }) {
         <div className="px-4 py-3 flex items-center gap-2 border-b border-line">
           <span className={'w-7 h-7 rounded-full grid place-items-center text-[12px] font-bold ' + (rooms.length ? 'bg-ink text-white' : 'bg-app text-muted')}>2</span>
           <span className="font-bold text-ink text-[15px]">Rooms</span>
-          <span className="text-[12px] text-muted">{rooms.length ? rooms.length + ' rooms · tap one to photograph and confirm its items' : 'generated from the details above'}</span>
+          <span className="text-[12px] text-muted">{rooms.length ? rooms.length + ' rooms · tap one, or walk them in order' : 'generated from the details above'}</span>
+          {/* THE FLOW (Jon, 2026-09-03: "it should give you a flow through"): start at the first room not done,
+              photograph, read, confirm, "Next room" — the order is the order you walk the unit. */}
+          {rooms.length > 0 && !done && <button onClick={() => { const next = rooms.find(r => !r.checked_at) || rooms[0]; setRoomOpen(next.id); window.scrollTo(0, 0) }} className={BTN + ' ml-auto bg-brand-700 text-white min-h-[36px] px-3 text-[13px] whitespace-nowrap'}><Play size={14} /> {rooms.some(r => r.checked_at) ? 'Continue walk' : 'Start walk'}</button>}
         </div>
         {rooms.length === 0 && <div className="px-4 py-6 text-[13.5px] text-muted text-center">Save the unit details and the room list appears here — Master bedroom, Master bath, Bedroom 2, Kitchen, Balcony… each pre-filled with what it should hold.</div>}
         <div className="divide-y divide-line">
@@ -169,7 +176,7 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
   const [address, setAddress] = useState(unit.address || '')
   const [ownerName, setOwnerName] = useState(unit.owner_name || '')
   const [ownerContact, setOwnerContact] = useState(unit.owner_contact || '')
-  const [d, setD] = useState<UnitDetails>({ bedrooms: d0.bedrooms ?? 1, bathrooms: d0.bathrooms ?? 1, occupancy: d0.occupancy ?? 4, balconies: d0.balconies ?? 0, washerDryer: d0.washerDryer ?? 'in_unit', sleeperSofa: d0.sleeperSofa ?? 0, kitchen: d0.kitchen ?? 'full', parking: d0.parking ?? 'none', floor: d0.floor ?? '', sqft: d0.sqft, kingBeds: d0.kingBeds, pool: !!d0.pool, gym: !!d0.gym, notes: d0.notes ?? '', beds: d0.beds ?? {} })
+  const [d, setD] = useState<UnitDetails>({ bedrooms: d0.bedrooms ?? 1, bathrooms: d0.bathrooms ?? 1, occupancy: d0.occupancy ?? 4, balconies: d0.balconies ?? 0, washerDryer: d0.washerDryer ?? 'in_unit', sleeperSofa: d0.sleeperSofa ?? 0, kitchen: d0.kitchen ?? 'full', parking: d0.parking ?? 'none', floor: d0.floor ?? '', sqft: d0.sqft, kingBeds: d0.kingBeds, pool: !!d0.pool, gym: !!d0.gym, notes: d0.notes ?? '', beds: d0.beds ?? {}, rooms: d0.rooms ?? undefined })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const set = (k: keyof UnitDetails, v: any) => setD(x => ({ ...x, [k]: v }))
@@ -197,11 +204,14 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
             every COUNT is a ticker now; only the true either/or questions stay as chips. */}
         <Stepper label="Bathrooms" value={d.bathrooms ?? 1} min={0.5} max={8} step={0.5} onChange={v => set('bathrooms', v)} render={v => String(v)} />
         <Stepper label="Occupancy (max guests)" value={d.occupancy ?? 4} min={1} max={20} onChange={v => set('occupancy', v)} />
-        <Stepper label="Balconies / terraces" value={d.balconies ?? 0} min={0} max={4} onChange={v => set('balconies', v)} render={v => v === 0 ? 'None' : String(v)} />
         <Stepper label="Sleeper sofas" value={d.sleeperSofa ?? 0} min={0} max={4} onChange={v => set('sleeperSofa', v)} render={v => v === 0 ? 'None' : String(v)} />
         <Choice label="Washer / dryer" value={d.washerDryer ?? 'in_unit'} options={[{ v: 'in_unit', l: 'In unit' }, { v: 'shared', l: 'Shared' }, { v: 'none', l: 'None' }]} onChange={v => set('washerDryer', v as any)} />
         <Choice label="Kitchen" value={d.kitchen ?? 'full'} options={[{ v: 'full', l: 'Full kitchen' }, { v: 'kitchenette', l: 'Kitchenette' }, { v: 'none', l: 'No kitchen' }]} onChange={v => set('kitchen', v as any)} />
         <p className="text-[12px] text-muted -mt-1">{d.kitchen === 'none' ? 'A "Kitchen corner" is generated anyway — mini fridge, microwave, coffee maker are must-haves even without a kitchen.' : d.kitchen === 'kitchenette' ? 'Generates the kitchenette must-haves: mini fridge, cooktop, microwave, coffee maker, a pan, a pot, knives, a full table setting.' : 'Generates the full-kitchen must-haves: fridge, stove/oven, dishwasher, microwave, coffee maker, pots, pans, knives, a full table setting.'}</p>
+        {/* THE ROOMS THIS UNIT HAS (Jon, 2026-09-03: "rooms should not be standard, they should be based on the
+            opening form — living room, den, entryway, vestibule, terrace, balcony"). Bedrooms, baths and the
+            kitchen come from the counts above; everything else is tapped here. */}
+        <RoomsPicker d={d} onChange={rooms => set('rooms', rooms)} />
         <Choice label="Parking" value={d.parking ?? 'none'} options={[{ v: 'none', l: 'None' }, { v: 'assigned', l: 'Assigned' }, { v: 'garage', l: 'Garage' }, { v: 'street', l: 'Street' }]} onChange={v => set('parking', v as any)} />
         <div className="grid grid-cols-2 gap-3">
           <div><label className={LABEL}>Floor</label><input value={d.floor || ''} onChange={e => set('floor', e.target.value)} className={INPUT} placeholder="12" /></div>
@@ -216,6 +226,34 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
       {err && <p className="text-[13px] text-rose-600 font-semibold">{err}</p>}
       <button onClick={save} disabled={busy || !name.trim()} className={BTN + ' bg-ink text-white w-full'}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {hasRooms ? 'Save details (adds any new rooms)' : 'Save & generate rooms'}</button>
       {hasRooms && <p className="text-[12px] text-muted">Changing counts adds the rooms now expected; it never removes or renames rooms you have already filled in.</p>}
+    </div>
+  )
+}
+
+function RoomsPicker({ d, onChange }: { d: UnitDetails; onChange: (rooms: Record<string, number>) => void }) {
+  const chosen = roomsChosen(d)
+  const setCount = (key: string, c: number) => { const n = { ...chosen }; if (c <= 0) delete n[key]; else n[key] = c; onChange(n) }
+  const groups = Array.from(new Set(ROOM_TYPES.map(t => t.group)))
+  const total = Object.values(chosen).reduce((a, b) => a + b, 0)
+  return (
+    <div className="rounded-xl border border-line bg-white p-3 space-y-2.5">
+      <div className="text-[13px] font-semibold text-ink">Which rooms does this unit have? <span className="text-muted font-normal">· tap to add · {total} + bedrooms, baths and the kitchen</span></div>
+      {groups.map(g => (
+        <div key={g} className="flex items-start gap-2 flex-wrap">
+          <span className="text-[12px] text-muted w-20 shrink-0 pt-2">{ROOM_GROUP_LABEL[g]}</span>
+          <div className="flex gap-1.5 flex-wrap flex-1">
+            {ROOM_TYPES.filter(t => t.group === g).map(t => {
+              const c = chosen[t.key] || 0
+              return (
+                <span key={t.key} className={'inline-flex items-stretch rounded-full border overflow-hidden ' + (c ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>
+                  <button type="button" onClick={() => setCount(t.key, c ? 0 : 1)} className="px-3.5 min-h-[36px] text-[13px] font-semibold inline-flex items-center gap-1">{c ? <Check size={13} /> : null}{t.label}{c > 1 ? ' ×' + c : ''}</button>
+                  {c > 0 && t.countable && <button type="button" onClick={() => setCount(t.key, Math.min(6, c + 1))} className="px-2.5 border-l border-white/30 text-[14px] font-bold" aria-label={'One more ' + t.label}>+</button>}
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -287,8 +325,26 @@ function AddRoom({ act, reload }: { act: (b: any) => Promise<any>; reload: () =>
 }
 
 // ── 2. ROOM VIEW ────────────────────────────────────────────────────────────────────────────────
-function RoomView({ code, unit, room, items, onBack, act, reload }: { code: string; unit: Unit; room: Room; items: Item[]; onBack: () => void; act: (b: any) => Promise<any>; reload: () => Promise<void> }) {
+function RoomView({ code, unit, room, items, onBack, act, reload, index, total, onPrev, onNext }: { code: string; unit: Unit; room: Room; items: Item[]; onBack: () => void; act: (b: any) => Promise<any>; reload: () => Promise<void>; index: number; total: number; onPrev?: () => void; onNext: () => void }) {
   const [renaming, setRenaming] = useState(false)
+  const [ai, setAi] = useState<any | null>(null)      // the read-back proposal, awaiting approval
+  const [aiBusy, setAiBusy] = useState(false)
+  const readPhotos = async () => {
+    setErr(''); setAiBusy(true)
+    try {
+      const r = await fetch('/api/onboard/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, roomId: room.id }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not read the photos')
+      setAi({ ...j, useMatched: Object.fromEntries(j.matched.map((m: any) => [m.itemId, true])), useAdds: j.unmatched.map(() => true) })
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setAiBusy(false)
+  }
+  const applyAi = async () => {
+    if (!ai) return
+    const updates = ai.matched.filter((m: any) => ai.useMatched[m.itemId]).map((m: any) => ({ itemId: m.itemId, qty: m.qty, condition: m.condition, ...(m.brand ? { brand: m.brand } : {}), ...(m.notes ? { notes: m.notes } : {}) }))
+    const adds = ai.unmatched.filter((_: any, i: number) => ai.useAdds[i])
+    await wrap(async () => { await act({ action: 'applyItems', roomId: room.id, updates, adds, ...(ai.roomNotes && !room.notes ? { notes: ai.roomNotes } : {}) }); setAi(null) })
+  }
   const [name, setName] = useState(room.name)
   const [uploading, setUploading] = useState(0)
   const [err, setErr] = useState('')
@@ -330,7 +386,7 @@ function RoomView({ code, unit, room, items, onBack, act, reload }: { code: stri
               <span className="text-[22px] font-bold text-ink leading-tight">{room.name}</span><Pencil size={14} className="text-muted" />
             </button>
           )}
-          <div className="text-[12px] text-muted">{unit.name} · {ROOM_KIND_LABEL[room.kind]} · {confirmed}/{items.length} items confirmed</div>
+          <div className="text-[12px] text-muted">Room {index + 1} of {total} · {ROOM_KIND_LABEL[room.kind]} · {confirmed}/{items.length} items confirmed</div>
         </div>
       </div>
 
@@ -354,6 +410,46 @@ function RoomView({ code, unit, room, items, onBack, act, reload }: { code: stri
           </div>
         )}
         {!photos.length && <p className="text-[12.5px] text-muted">Take a wide shot from the door, then one of anything worn or missing. Several at once is fine.</p>}
+        {/* AI READ-BACK (Jon, 2026-09-03: "it should be smart… scan the room from the photos… identify TV, couch,
+            coffee table, floor lamp… add items"). Proposes counts + conditions and new rows; the walker approves. */}
+        {photos.length > 0 && !ai && (
+          <button onClick={readPhotos} disabled={aiBusy} className={BTN + ' mt-3 w-full border border-brand-200 bg-brand-50 text-brand-800'}>{aiBusy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} {aiBusy ? 'Reading the photos…' : 'Read the photos — fill in what you see'}</button>
+        )}
+        {ai && (
+          <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/60 p-3 space-y-2">
+            <div className="flex items-center gap-2 text-[13px] font-bold text-brand-900"><Sparkles size={14} /> Seen in {ai.photos} photo{ai.photos === 1 ? '' : 's'} — untick anything wrong, then apply</div>
+            {ai.matched.length > 0 && (
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-wide text-brand-800 mb-1">On the list · {ai.matched.length}</div>
+                <div className="space-y-1">{ai.matched.map((m: any) => (
+                  <label key={m.itemId} className="flex items-start gap-2 text-[13px]">
+                    <input type="checkbox" checked={!!ai.useMatched[m.itemId]} onChange={e => setAi({ ...ai, useMatched: { ...ai.useMatched, [m.itemId]: e.target.checked } })} className="mt-1 w-4 h-4" />
+                    <span className="flex-1"><b>{m.listName}</b> → <b>{m.qty}</b>{m.expected != null && m.qty < m.expected ? <span className="text-amber-800"> (need {m.expected})</span> : ''} · {m.condition}{m.brand ? ' · ' + m.brand : ''}{m.seenName && m.seenName.toLowerCase() !== m.listName.toLowerCase() ? <span className="text-muted"> · seen as "{m.seenName}"</span> : ''}{m.notes ? <span className="text-muted"> · {m.notes}</span> : ''}</span>
+                  </label>
+                ))}</div>
+              </div>
+            )}
+            {ai.unmatched.length > 0 && (
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-wide text-brand-800 mb-1">Not on the list — add · {ai.unmatched.length}</div>
+                <div className="space-y-1">{ai.unmatched.map((u: any, i: number) => (
+                  <label key={i} className="flex items-start gap-2 text-[13px]">
+                    <input type="checkbox" checked={!!ai.useAdds[i]} onChange={e => { const a = [...ai.useAdds]; a[i] = e.target.checked; setAi({ ...ai, useAdds: a }) }} className="mt-1 w-4 h-4" />
+                    <span className="flex-1"><b>{u.qty}× {u.name}</b> · {u.condition}{u.brand ? ' · ' + u.brand : ''}{u.notes ? <span className="text-muted"> · {u.notes}</span> : ''}</span>
+                  </label>
+                ))}</div>
+              </div>
+            )}
+            {ai.seenByHand?.length > 0 && <p className="text-[12px] text-brand-900/80"><b>Seen — count these by hand:</b> {ai.seenByHand.map((x: any) => x.name).join(', ')}.</p>}
+            {ai.notSeen.length > 0 && <p className="text-[12px] text-brand-900/80"><b>Not seen in the photos ({ai.notSeen.length}):</b> {ai.notSeen.slice(0, 12).map((x: any) => x.name).join(', ')}{ai.notSeen.length > 12 ? '…' : ''} — check these by hand or mark them missing.</p>}
+            {ai.roomNotes && <p className="text-[12px] text-brand-900/80"><b>Room:</b> {ai.roomNotes}</p>}
+            <div className="flex gap-2">
+              <button onClick={applyAi} className={BTN + ' bg-brand-700 text-white flex-1'}><Check size={16} /> Apply {ai.matched.filter((m: any) => ai.useMatched[m.itemId]).length + ai.unmatched.filter((_: any, i: number) => ai.useAdds[i]).length} changes</button>
+              <button onClick={() => setAi(null)} className={BTN + ' border border-line bg-white text-ink'}>Discard</button>
+              <button onClick={readPhotos} disabled={aiBusy} className={BTN + ' border border-line bg-white text-ink'} aria-label="Read again">{aiBusy ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}</button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* items */}
@@ -397,10 +493,14 @@ function RoomView({ code, unit, room, items, onBack, act, reload }: { code: stri
 
       {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
       <div className="flex gap-2 mb-6">
-        <button onClick={() => wrap(() => act({ action: 'checkRoom', roomId: room.id, checked: !room.checked_at }))} className={BTN + ' flex-1 ' + (room.checked_at ? 'border border-emerald-300 bg-emerald-50 text-emerald-800' : 'bg-ink text-white')}>{room.checked_at ? <><CheckCircle2 size={16} /> Room done — tap to reopen</> : <><Check size={16} /> Mark room done</>}</button>
+        <button onClick={() => wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: !room.checked_at }); if (!room.checked_at) onNext() })} className={BTN + ' flex-1 ' + (room.checked_at ? 'border border-emerald-300 bg-emerald-50 text-emerald-800' : 'bg-ink text-white')}>{room.checked_at ? <><CheckCircle2 size={16} /> Room done — tap to reopen</> : <><Check size={16} /> Room done{index < total - 1 ? ' → next room' : ' → finish'}</>}</button>
         <button onClick={() => { if (confirm('Remove "' + room.name + '" and its ' + items.length + ' items?')) wrap(async () => { await act({ action: 'removeRoom', roomId: room.id }); onBack() }) }} className={BTN + ' border border-line bg-white text-muted'} aria-label="Remove room"><Trash2 size={16} /></button>
       </div>
-      <button onClick={onBack} className={BTN + ' w-full border border-line bg-white text-ink mb-4'}><ChevronLeft size={16} /> Back to rooms</button>
+      <div className="flex gap-2 mb-4">
+        <button onClick={onPrev || onBack} className={BTN + ' border border-line bg-white text-ink'}><ChevronLeft size={16} /> {onPrev ? 'Previous' : 'Rooms'}</button>
+        <button onClick={onBack} className={BTN + ' flex-1 border border-line bg-white text-ink'}>All rooms</button>
+        <button onClick={onNext} className={BTN + ' border border-line bg-white text-ink'}>{index < total - 1 ? 'Next room' : 'Finish'} <ChevronRight size={16} /></button>
+      </div>
     </div>
   )
 }
