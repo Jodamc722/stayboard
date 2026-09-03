@@ -53,7 +53,7 @@ export function ScheduleLinksDesk() {
       <section className="rounded-2xl border border-line bg-white overflow-hidden">
         <div className="px-4 py-3 border-b border-line flex items-center gap-2">
           <span className="text-[14px] font-bold text-ink">Submissions</span>
-          <span className="text-[12.5px] text-muted">{subs.filter(s => s.status !== 'reviewed').length} waiting for review</span>
+          <span className="text-[12.5px] text-muted">{subs.filter(s => s.status !== 'reviewed').length} waiting for review · teams submit the next day each evening, or a whole week</span>
         </div>
         {!subs.length && <div className="px-4 py-8 text-center text-[13px] text-muted">Nothing submitted yet. When a team presses Submit you get an email and it shows here.</div>}
         <div className="divide-y divide-line">{subs.map(s => <SubRow key={s.id} s={s} busy={busy} onFeedback={(fb) => post({ action: 'feedback', id: s.id, feedback: fb })} onReviewed={() => post({ action: 'reviewed', id: s.id })} />)}</div>
@@ -91,7 +91,7 @@ function SubRow({ s, busy, onFeedback, onReviewed }: { s: Sub; busy: boolean; on
       <button onClick={() => setOpen(o => !o)} className="w-full text-left flex items-center gap-2 flex-wrap">
         <ChevronDown size={14} className={'text-muted transition-transform ' + (open ? '' : '-rotate-90')} />
         <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-ink text-white">{s.market}</span>
-        <span className="text-[14px] font-bold text-ink">Week of {fmtD(s.week_start)}</span>
+        <span className="text-[14px] font-bold text-ink">{s.week_start === s.week_end ? new Date(s.week_start + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Week of ' + fmtD(s.week_start)}</span>
         <span className="text-[12.5px] text-muted">{fmt(s.created_at)}{s.submitted_by ? ' · by ' + s.submitted_by : ''} · {snap.length} cleans · <span className={unassigned ? 'text-amber-700 font-semibold' : 'text-emerald-700 font-semibold'}>{unassigned ? unassigned + ' unassigned' : 'all assigned'}</span></span>
         <span className={'ml-auto text-[11px] font-bold uppercase px-2 py-0.5 rounded ' + (s.status === 'reviewed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800')}>{s.status === 'reviewed' ? 'Reviewed' : 'To review'}</span>
         {s.emailed_at && <Mail size={12} className="text-muted" />}

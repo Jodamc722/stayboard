@@ -6,16 +6,24 @@
 // Phone-first, no login. One market. Each clean has one control — the cleaner — and the week ends
 // with one button. Picks are the board's staged rows, so Jon sees them on /schedule as proposed.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Check, Loader2, Lock, Search, Send, X, AlertTriangle, MessageSquare, Users } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Check, Loader2, Lock, Search, Send, X, AlertTriangle, MessageSquare, Users, CalendarDays, MapPin, Building2, UserRound, Sparkles, ChevronDown } from 'lucide-react'
 
-type Clean = { listingId: string; unit: string; hub?: string; date: string; checkOutTime?: string | null; checkInTime?: string | null; sameDayTurn?: boolean; bedrooms?: number | null; nights?: number; assignedIds?: number[]; assignedNames?: string[]; staged?: boolean; vendor?: string | null; taskStatus?: string | null; doorCode?: string | null }
+type Clean = { listingId: string; unit: string; hub?: string; area?: string; date: string; checkOutTime?: string | null; checkInTime?: string | null; sameDayTurn?: boolean; bedrooms?: number | null; nights?: number; assignedIds?: number[]; assignedNames?: string[]; staged?: boolean; vendor?: string | null; taskStatus?: string | null; doorCode?: string | null }
 type Day = { date: string; dow: string; cleans: Clean[] }
 type HK = { id: number; name: string; region: string | null }
 type Sub = { id: string; week_start: string; week_end: string; submitted_by: string | null; note: string | null; status: string; feedback: string | null; reviewed_at: string | null; created_at: string }
-type Data = { ok: true; link: { market: string; label: string }; weekStart: string; weekEnd: string; today: string; prev: string; next: string; days: Day[]; housekeepers: HK[]; teamIds: number[]; submissions: Sub[] }
+type Data = { ok: true; link: { market: string; label: string }; weekStart: string; weekEnd: string; today: string; prev: string; next: string; days: Day[]; housekeepers: HK[]; teamIds: number[]; submissions: Sub[]; hidden?: { count: number; vendors: string[] }; plan?: Plan | null }
+type Pick = { listingId: string; unit: string; date: string; cleanerId: number; cleanerName: string; why: string }
+type Load = { cleanerId: number; name: string; minutes: number; cleans: number; buildings: string[]; pct: number }
+type Plan = { days: { date: string; load: Load[]; picks: Pick[]; unplaced: { listingId: string; unit: string; why: string }[] }[]; picks: Pick[]; capacityMin: number; summary: string }
+type View = 'day' | 'area' | 'building' | 'cleaner'
+const VIEWS: { id: View; label: string; Icon: any }[] = [{ id: 'day', label: 'Day', Icon: CalendarDays }, { id: 'area', label: 'Area', Icon: MapPin }, { id: 'building', label: 'Building', Icon: Building2 }, { id: 'cleaner', label: 'Cleaner', Icon: UserRound }]
 
 const BTN = 'inline-flex items-center justify-center gap-1.5 rounded-xl font-bold text-[14px] min-h-[44px] px-4 disabled:opacity-50'
 const INPUT = 'w-full rounded-xl border border-line bg-white px-3.5 py-3 text-[16px] focus:outline-none focus:border-ink'
+const hrs = (m: number) => (Math.round(m / 6) / 10) + 'h'
+const addDay = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
+const fmtShort = (iso: string) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' })
 const fmtDay = (iso: string) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 const fmtTime = (t?: string | null) => { if (!t) return ''; const m = /^(\d{1,2}):(\d{2})/.exec(t); if (!m) return t; const h = Number(m[1]); return (h % 12 || 12) + (m[2] !== '00' ? ':' + m[2] : '') + (h < 12 ? 'am' : 'pm') }
 
@@ -28,8 +36,12 @@ export function TeamScheduler({ code }: { code: string }) {
   const [loading, setLoading] = useState(true)
   const [weekStart, setWeekStart] = useState<string | null>(null)
   const [picking, setPicking] = useState<Clean | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [submitting, setSubmitting] = useState<null | { date: string | null }>(null)
+  const [applying, setApplying] = useState(false)
+  const [planOpen, setPlanOpen] = useState(false)
   const [submitted, setSubmitted] = useState<{ cleans: number; unassigned: number; emailed: boolean } | null>(null)
+  const [view, setView] = useState<View>(() => { try { return (localStorage.getItem('tsched:view') as View) || 'day' } catch { return 'day' } })
+  const pickView = (v: View) => { setView(v); try { localStorage.setItem('tsched:view', v) } catch {} }
 
   const load = async (ws: string | null = weekStart) => {
     setLoading(true); setErr('')
@@ -58,15 +70,35 @@ export function TeamScheduler({ code }: { code: string }) {
     try { await post({ action: 'stage', listingId: c.listingId, date: c.date, cleanerId: hk ? hk.id : null, cleanerName: hk ? hk.name : null }) } catch (e: any) { setErr(String(e?.message || e)); await load() }
   }
   const submit = async (note: string) => {
-    setSubmitting(true); setErr('')
-    try { const j = await post({ action: 'submit', weekStart: data?.weekStart, note }); setSubmitted({ cleans: j.cleans, unassigned: j.unassigned, emailed: j.emailed }); try { localStorage.setItem('tsched:who', who) } catch {}; await load() } catch (e: any) { setErr(String(e?.message || e)) }
-    setSubmitting(false)
+    setErr('')
+    try { const j = await post({ action: 'submit', weekStart: data?.weekStart, date: submitting?.date || undefined, note }); setSubmitted({ cleans: j.cleans, unassigned: j.unassigned, emailed: j.emailed }); try { localStorage.setItem('tsched:who', who) } catch {}; await load() } catch (e: any) { setErr(String(e?.message || e)) }
+  }
+  // Recommendations: apply one or all. Optimistic like a tap, then reload for the real picture.
+  const applyPicks = async (picks: Pick[]) => {
+    if (!picks.length) return
+    setApplying(true); setErr('')
+    setData(d => d ? { ...d, days: d.days.map(day => ({ ...day, cleans: day.cleans.map(x => { const p = picks.find(k => k.listingId === x.listingId && k.date === x.date); return p ? { ...x, assignedIds: [p.cleanerId], assignedNames: [p.cleanerName], staged: true } : x }) })) } : d)
+    try { await post({ action: 'stageMany', picks: picks.map(p => ({ listingId: p.listingId, date: p.date, cleanerId: p.cleanerId, cleanerName: p.cleanerName })) }) } catch (e: any) { setErr(String(e?.message || e)) }
+    await load(); setApplying(false)
   }
 
   const all = useMemo(() => (data?.days || []).flatMap(d => d.cleans), [data])
   const unassigned = all.filter(c => !(c.assignedIds || []).length).length
   const feedback = useMemo(() => (data?.submissions || []).find(s => s.feedback && s.week_start === data?.weekStart) || (data?.submissions || []).find(s => s.feedback) || null, [data])
-  const lastSub = useMemo(() => (data?.submissions || []).find(s => s.week_start === data?.weekStart) || null, [data])
+  const lastSub = useMemo(() => (data?.submissions || []).find(s => s.week_start >= (data?.weekStart || '') && s.week_start <= (data?.weekEnd || '')) || null, [data])
+  const tomorrow = data ? addDay(data.today, 1) : ''
+  const tomorrowDay = data?.days.find(d => d.date === tomorrow) || null
+  const loadFor = (date: string): Load[] => data?.plan?.days.find(d => d.date === date)?.load || []
+  // Area / Building / Cleaner: the same cleans, regrouped. Unassigned leads the cleaner view so the
+  // gaps are the first thing you see; every other group sorts by size.
+  const groups = useMemo(() => {
+    if (view === 'day') return null
+    const key = (c: Clean) => view === 'area' ? (c.area || 'Other') : view === 'building' ? (c.hub || 'Other') : ((c.assignedNames || [])[0] || '')
+    const m: Record<string, Clean[]> = {}
+    for (const c of all) (m[key(c)] = m[key(c)] || []).push(c)
+    const keys = Object.keys(m).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : m[b].length - m[a].length || a.localeCompare(b)))
+    return keys.map(k => ({ key: k, label: k || 'Unassigned', cleans: m[k].slice().sort((a, b) => a.date.localeCompare(b.date) || (a.hub || '').localeCompare(b.hub || '') || a.unit.localeCompare(b.unit)) }))
+  }, [all, view])
 
   if (locked) return (
     <Frame title={locked}>
@@ -100,33 +132,76 @@ export function TeamScheduler({ code }: { code: string }) {
           <div className="whitespace-pre-wrap">{feedback.feedback}</div>
         </div>
       )}
-      {lastSub && !feedback && <div className="rounded-xl border border-line bg-white px-3.5 py-2 mb-3 text-[12.5px] text-muted">Submitted {new Date(lastSub.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}{lastSub.submitted_by ? ' by ' + lastSub.submitted_by : ''} · {lastSub.status === 'reviewed' ? 'reviewed' : 'waiting for review'}. You can keep editing and submit again.</div>}
+      {lastSub && !feedback && <div className="rounded-xl border border-line bg-white px-3.5 py-2 mb-3 text-[12.5px] text-muted">{lastSub.week_start === lastSub.week_end ? fmtDay(lastSub.week_start) : 'Week'} submitted {new Date(lastSub.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}{lastSub.submitted_by ? ' by ' + lastSub.submitted_by : ''} · {lastSub.status === 'reviewed' ? 'reviewed' : 'waiting for review'}. You can keep editing and submit again.</div>}
 
-      {/* days */}
-      {data.days.map(day => (
-        <section key={day.date} className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
-          <div className={'px-3.5 py-2 flex items-center gap-2 border-b border-line ' + (day.date === data.today ? 'bg-brand-50' : 'bg-ink/5')}>
-            <span className="text-[13px] font-bold text-ink">{fmtDay(day.date)}{day.date === data.today ? ' · today' : ''}</span>
-            <span className="text-[12px] text-muted ml-auto">{day.cleans.length ? day.cleans.length + ' clean' + (day.cleans.length === 1 ? '' : 's') : 'no cleans'}</span>
-          </div>
-          {day.cleans.length > 0 && (
-            <div className="divide-y divide-line">
-              {day.cleans.map(c => {
-                const name = (c.assignedNames || [])[0]
-                return (
-                  <div key={c.listingId + c.date} className="px-3.5 py-2.5 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[14.5px] font-semibold text-ink truncate">{c.unit}{c.sameDayTurn ? <span className="ml-1.5 text-[10.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle">same-day</span> : null}</div>
-                      <div className="text-[11.5px] text-muted">{[c.hub, c.checkOutTime ? 'out ' + fmtTime(c.checkOutTime) : null, c.sameDayTurn && c.checkInTime ? 'in ' + fmtTime(c.checkInTime) : null, c.bedrooms != null ? c.bedrooms + 'BR' : null, c.vendor ? 'vendor: ' + c.vendor : null].filter(Boolean).join(' · ')}</div>
+      {/* recommendations */}
+      {data.plan && (data.plan.picks.length > 0 || data.plan.days.some(d => d.unplaced.length)) && (
+        <section className="rounded-2xl border border-brand-200 bg-white overflow-hidden mb-3">
+          <button onClick={() => setPlanOpen(o => !o)} className="w-full px-3.5 py-2.5 flex items-center gap-2 text-left">
+            <Sparkles size={15} className="text-brand-700 shrink-0" />
+            <div className="flex-1 min-w-0"><div className="text-[13.5px] font-bold text-ink">Suggested picks</div><div className="text-[12px] text-muted truncate">{data.plan.summary} · same building first, then fill the day</div></div>
+            <ChevronDown size={15} className={'text-muted transition-transform ' + (planOpen ? '' : '-rotate-90')} />
+          </button>
+          {planOpen && (
+            <div className="border-t border-line">
+              {data.plan.days.filter(d => d.picks.length || d.unplaced.length).map(d => (
+                <div key={d.date}>
+                  <div className="px-3.5 py-1.5 bg-ink/5 text-[12px] font-bold text-ink flex items-center gap-2">{fmtDay(d.date)}<span className="ml-auto text-muted font-semibold">{d.picks.length} pick{d.picks.length === 1 ? '' : 's'}</span>{d.picks.length > 0 && <button disabled={applying} onClick={() => applyPicks(d.picks)} className="text-brand-700 font-bold">Apply day</button>}</div>
+                  {d.picks.map(p => (
+                    <div key={p.listingId + p.date} className="px-3.5 py-2 flex items-start gap-2 border-t border-line">
+                      <div className="flex-1 min-w-0"><div className="text-[13.5px] font-semibold text-ink truncate">{p.unit}</div><div className="text-[12px] text-muted">{p.why}</div></div>
+                      <button disabled={applying} onClick={() => applyPicks([p])} className="shrink-0 rounded-lg border border-brand-300 bg-brand-50 text-brand-900 text-[12.5px] font-bold min-h-[34px] px-2.5">Apply</button>
                     </div>
-                    <button onClick={() => setPicking(c)} className={'shrink-0 rounded-xl border min-h-[40px] px-3 text-[13px] font-bold max-w-[46%] truncate ' + (name ? (c.staged ? 'border-brand-300 bg-brand-50 text-brand-900' : 'border-emerald-300 bg-emerald-50 text-emerald-800') : 'border-dashed border-line bg-white text-muted')}>{name || '+ Assign'}</button>
-                  </div>
-                )
-              })}
+                  ))}
+                  {d.unplaced.map(u => <div key={u.listingId} className="px-3.5 py-2 border-t border-line text-[12.5px] text-amber-800"><b>{u.unit}</b> — {u.why}</div>)}
+                </div>
+              ))}
+            </div>
+          )}
+          {data.plan.picks.length > 0 && (
+            <div className="px-3.5 py-2.5 border-t border-line flex items-center gap-2">
+              <span className="text-[12px] text-muted flex-1">Applied picks show in purple until Jon confirms.</span>
+              <button disabled={applying} onClick={() => applyPicks(data.plan!.picks)} className={BTN + ' bg-brand-600 text-white min-h-[38px] text-[13px]'}>{applying ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Apply all {data.plan.picks.length}</button>
             </div>
           )}
         </section>
+      )}
+
+      {/* view switcher */}
+      <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-ink/5 mb-3">
+        {VIEWS.map(v => <button key={v.id} onClick={() => pickView(v.id)} className={'min-h-[38px] rounded-lg text-[12.5px] font-bold inline-flex items-center justify-center gap-1 ' + (view === v.id ? 'bg-white text-ink shadow-sm' : 'text-muted')}><v.Icon size={13} /> {v.label}</button>)}
+      </div>
+
+      {/* by day */}
+      {view === 'day' && data.days.map(day => (
+        <section key={day.date} className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
+          <div className={'px-3.5 py-2 flex items-center gap-2 border-b border-line ' + (day.date === data.today ? 'bg-brand-50' : 'bg-ink/5')}>
+            <span className="text-[13px] font-bold text-ink">{fmtDay(day.date)}{day.date === data.today ? ' · today' : day.date === tomorrow ? ' · tomorrow' : ''}</span>
+            <span className="text-[12px] text-muted ml-auto">{day.cleans.length ? day.cleans.length + ' clean' + (day.cleans.length === 1 ? '' : 's') : 'no cleans'}</span>
+          </div>
+          {loadFor(day.date).length > 0 && <div className="px-3.5 py-1.5 border-b border-line flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px]">{loadFor(day.date).map(l => <span key={l.cleanerId} className={l.pct > 100 ? 'text-rose-700 font-semibold' : l.pct >= 75 ? 'text-emerald-700' : 'text-muted'}>{l.name.split(' ')[0]} <b>{hrs(l.minutes)}</b></span>)}</div>}
+          {day.cleans.length > 0 && <div className="divide-y divide-line">{day.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} onPick={() => setPicking(c)} />)}</div>}
+          {day.date === tomorrow && day.cleans.length > 0 && <div className="px-3.5 py-2 border-t border-line"><button onClick={() => setSubmitting({ date: day.date })} className={BTN + ' w-full bg-ink text-white min-h-[40px] text-[13px]'}><Send size={14} /> Submit tomorrow to Jon{day.cleans.filter(c => !(c.assignedIds || []).length).length ? ' · ' + day.cleans.filter(c => !(c.assignedIds || []).length).length + ' unassigned' : ''}</button></div>}
+        </section>
       ))}
+
+      {/* by area / building / cleaner */}
+      {groups && groups.map(g => {
+        const open = g.cleans.filter(c => !(c.assignedIds || []).length).length
+        const isUnassigned = view === 'cleaner' && g.key === ''
+        return (
+          <section key={g.key || '_'} className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
+            <div className={'px-3.5 py-2 flex items-center gap-2 border-b border-line ' + (isUnassigned ? 'bg-amber-50' : 'bg-ink/5')}>
+              <span className={'text-[13px] font-bold ' + (isUnassigned ? 'text-amber-900' : 'text-ink')}>{g.label}</span>
+              <span className="text-[12px] text-muted ml-auto">{g.cleans.length} clean{g.cleans.length === 1 ? '' : 's'}{view !== 'cleaner' && open ? <span className="text-amber-700 font-semibold"> · {open} open</span> : null}{view === 'cleaner' && g.key ? ' · ' + new Set(g.cleans.map(c => c.date)).size + ' day' + (new Set(g.cleans.map(c => c.date)).size === 1 ? '' : 's') + ' · ' + hrs((data.plan?.days || []).reduce((s, d) => s + (d.load.find(l => l.name === g.key)?.minutes || 0), 0)) : ''}</span>
+            </div>
+            <div className="divide-y divide-line">{g.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} showDate today={data.today} hideHub={view === 'building'} onPick={() => setPicking(c)} />)}</div>
+          </section>
+        )
+      })}
+      {groups && !groups.length && <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-[13px] text-muted mb-3">No cleans this week.</div>}
+
+      {data.hidden && data.hidden.count > 0 && <p className="text-[11.5px] text-muted mb-2">{data.hidden.vendors.join(' & ')} {data.hidden.vendors.length === 1 ? 'is' : 'are'} cleaned by a vendor and not shown here ({data.hidden.count} this week).</p>}
 
       {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
       <p className="text-[11.5px] text-muted mb-24">Names shown in purple are your proposals, not yet confirmed. Jon reviews and confirms from the Scheduler.</p>
@@ -134,13 +209,34 @@ export function TeamScheduler({ code }: { code: string }) {
       {/* sticky submit */}
       <div className="fixed inset-x-0 bottom-0 bg-app/95 backdrop-blur border-t border-line px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+10px)]">
         <div className="max-w-xl mx-auto">
-          <button onClick={() => setSubmitting(true)} className={BTN + ' w-full bg-ink text-white'}><Send size={16} /> Submit week to Jon{unassigned ? ' · ' + unassigned + ' unassigned' : ''}</button>
+          {tomorrowDay && tomorrowDay.cleans.length > 0 ? (
+            <div className="flex gap-2">
+              <button onClick={() => setSubmitting({ date: tomorrow })} className={BTN + ' flex-1 bg-ink text-white'}><Send size={16} /> Submit tomorrow · {fmtShort(tomorrow)}</button>
+              <button onClick={() => setSubmitting({ date: null })} className={BTN + ' border border-line bg-white text-ink px-3'}>Week</button>
+            </div>
+          ) : (
+            <button onClick={() => setSubmitting({ date: null })} className={BTN + ' w-full bg-ink text-white'}><Send size={16} /> Submit week to Jon{unassigned ? ' · ' + unassigned + ' unassigned' : ''}</button>
+          )}
         </div>
       </div>
 
       {picking && <CleanerSheet clean={picking} hks={data.housekeepers} teamIds={data.teamIds} onPick={hk => assign(picking, hk)} onClose={() => setPicking(null)} />}
-      {submitting && <SubmitSheet who={who} setWho={setWho} unassigned={unassigned} cleans={all.length} weekLabel={fmtDay(data.weekStart) + ' → ' + fmtDay(data.weekEnd)} result={submitted} busy={false} onSubmit={submit} onClose={() => { setSubmitting(false); setSubmitted(null) }} />}
+      {submitting && (() => { const scoped = submitting.date ? all.filter(c => c.date === submitting.date) : all; return <SubmitSheet who={who} setWho={setWho} unassigned={scoped.filter(c => !(c.assignedIds || []).length).length} cleans={scoped.length} weekLabel={submitting.date ? fmtDay(submitting.date) + (submitting.date === tomorrow ? ' (tomorrow)' : '') : fmtDay(data.weekStart) + ' → ' + fmtDay(data.weekEnd)} result={submitted} busy={false} onSubmit={submit} onClose={() => { setSubmitting(null); setSubmitted(null) }} /> })()}
     </Frame>
+  )
+}
+
+function CleanRow({ c, showDate, today, hideHub, onPick }: { c: Clean; showDate?: boolean; today?: string; hideHub?: boolean; onPick: () => void }) {
+  const name = (c.assignedNames || [])[0]
+  return (
+    <div className="px-3.5 py-2.5 flex items-center gap-3">
+      {showDate && <div className={'shrink-0 w-11 text-center rounded-lg py-1 ' + (c.date === today ? 'bg-brand-50 text-brand-900' : 'bg-ink/5 text-ink')}><div className="text-[10px] font-bold uppercase leading-none">{fmtShort(c.date).split(' ')[0]}</div><div className="text-[15px] font-bold leading-tight">{fmtShort(c.date).split(' ')[1]}</div></div>}
+      <div className="flex-1 min-w-0">
+        <div className="text-[14.5px] font-semibold text-ink truncate">{c.unit}{c.sameDayTurn ? <span className="ml-1.5 text-[10.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle">same-day</span> : null}</div>
+        <div className="text-[11.5px] text-muted">{[hideHub ? null : c.hub, c.checkOutTime ? 'out ' + fmtTime(c.checkOutTime) : null, c.sameDayTurn && c.checkInTime ? 'in ' + fmtTime(c.checkInTime) : null, c.bedrooms != null ? c.bedrooms + 'BR' : null].filter(Boolean).join(' · ')}</div>
+      </div>
+      <button onClick={onPick} className={'shrink-0 rounded-xl border min-h-[40px] px-3 text-[13px] font-bold max-w-[46%] truncate ' + (name ? (c.staged ? 'border-brand-300 bg-brand-50 text-brand-900' : 'border-emerald-300 bg-emerald-50 text-emerald-800') : 'border-dashed border-line bg-white text-muted')}>{name || '+ Assign'}</button>
+    </div>
   )
 }
 
@@ -201,7 +297,7 @@ function SubmitSheet({ who, setWho, unassigned, cleans, weekLabel, result, onSub
           </div>
         ) : (
           <>
-            <div className="text-[16px] font-bold text-ink">Submit the week to Jon</div>
+            <div className="text-[16px] font-bold text-ink">Submit to Jon</div>
             <div className="text-[13px] text-muted">{weekLabel} · {cleans} cleans{unassigned ? <span className="text-amber-700 font-semibold"> · {unassigned} unassigned — that is fine, it will be flagged</span> : ''}</div>
             <div><label className="block text-[12px] font-bold uppercase tracking-wide text-muted mb-1">Your name</label><input value={who} onChange={e => setWho(e.target.value)} className={INPUT} placeholder="Who is submitting" /></div>
             <div><label className="block text-[12px] font-bold uppercase tracking-wide text-muted mb-1">Note for Jon (optional)</label><textarea value={note} onChange={e => setNote(e.target.value)} rows={3} className={INPUT} placeholder="Days off, who is covering, anything he should know" /></div>
