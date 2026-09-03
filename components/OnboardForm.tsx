@@ -15,7 +15,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, Check, ChevronDown, ChevronLeft, Loader2, Minus, Plus, Pencil, Trash2, X, Image as ImageIcon, CheckCircle2, AlertTriangle, ClipboardCopy, RotateCcw, ShoppingCart } from 'lucide-react'
 import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, ROOM_TYPES, ROOM_GROUP_LABEL, BED_SIZES, TIERS, TIER_LABEL, bedroomKeys, bedroomLabel, bedsFor, roomsChosen, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind, type BedSize, type Tier } from '@/lib/onboarding'
 import { Sparkles, ChevronRight, Play } from 'lucide-react'
-import { fullAnswers, applyAnswers, itemsFor, type ItemDef } from '@/lib/onboarding'
 import { searchCatalog, typicalFor, type CatalogItem } from '@/lib/onboarding-catalog'
 import { Search } from 'lucide-react'
 
@@ -23,8 +22,10 @@ type Unit = { id: string; code: string; name: string; building: string | null; u
 type Room = { id: string; key: string; name: string; kind: RoomKind; sort: number; photos: { url: string; at: string; caption?: string | null }[]; notes: string | null; checked_at: string | null; answers?: Record<string, any> | null }
 type Item = { id: string; room_id: string; name: string; category: Category; qty: number; expected: number | null; tier?: Tier; condition: Condition | null; brand: string | null; notes: string | null; photo_url: string | null; suggested: boolean }
 type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number; items: number; confirmed: number; photos: number; pct: number }
-type Buy = { id: string; room_id: string; name: string; category: string; need: number; have: number; expected: number | null; why: 'short' | 'worn' | 'missing' }
-type Data = { ok: true; unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[] }
+type Buy = { id: string; room_id: string | null; name: string; category: string; need: number; have: number; expected: number | null; why: 'short' | 'worn' | 'missing' }
+type Need = { name: string; category: Category; qty: number; brand?: string }
+type CheckRow = Need & { have: number; worn: number; status: 'ok' | 'short' | 'none'; short: number }
+type Data = { ok: true; unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[]; needs: Need[]; check: CheckRow[] }
 
 const BTN = 'inline-flex items-center justify-center gap-1.5 rounded-xl font-bold text-[14px] min-h-[44px] px-4 disabled:opacity-50'
 const CHIP = 'inline-flex items-center justify-center rounded-full border text-[13px] font-semibold min-h-[38px] px-3.5'
@@ -63,13 +64,13 @@ export function OnboardForm({ code }: { code: string }) {
   if (loading) return <Frame><div className="py-16 text-center text-muted text-[14px]"><Loader2 className="animate-spin inline mr-2" size={16} />Opening…</div></Frame>
   if (err || !data) return <Frame><div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-[14px] text-rose-800 flex items-start gap-2"><AlertTriangle size={16} className="mt-0.5 shrink-0" /><div>{err || 'Link not found.'}<div className="text-[12px] mt-1 text-rose-700/80">Ask whoever sent this link to check it in Lighthouse → Onboarding.</div></div></div></Frame>
 
-  const { unit, rooms, items, progress, buy } = data
+  const { unit, rooms, items, progress, buy, check } = data
   const done = unit.status === 'complete' || unit.status === 'linked'
   const room = roomOpen ? rooms.find(r => r.id === roomOpen) || null : null
 
   if (room) return (
     <Frame>
-      <RoomView code={code} unit={unit} room={room} items={items.filter(i => i.room_id === room.id)} onBack={() => setRoomOpen(null)} act={act} reload={load}
+      <RoomView code={code} unit={unit} room={room} items={items.filter(i => i.room_id === room.id)} allItems={items} onBack={() => setRoomOpen(null)} act={act} reload={load}
         index={rooms.findIndex(r => r.id === room.id)} total={rooms.length}
         onPrev={rooms.findIndex(r => r.id === room.id) > 0 ? () => setRoomOpen(rooms[rooms.findIndex(r => r.id === room.id) - 1].id) : undefined}
         onNext={rooms.findIndex(r => r.id === room.id) < rooms.length - 1 ? () => { setRoomOpen(rooms[rooms.findIndex(r => r.id === room.id) + 1].id); window.scrollTo(0, 0) } : () => { setRoomOpen(null); window.scrollTo(0, document.body.scrollHeight) }} />
@@ -148,7 +149,7 @@ export function OnboardForm({ code }: { code: string }) {
             <span className={'w-7 h-7 rounded-full grid place-items-center text-[12px] font-bold ' + (done ? 'bg-emerald-600 text-white' : 'bg-app text-muted')}>3</span>
             <span className="font-bold text-ink text-[15px]">Finish</span>
           </div>
-          <Summary unit={unit} rooms={rooms} items={items} progress={progress} buy={buy} act={act} reload={load} />
+          <Summary unit={unit} rooms={rooms} items={items} progress={progress} buy={buy} check={check} act={act} reload={load} />
           <div className="flex gap-2 mt-3 flex-wrap">
             {!done
               ? <button onClick={async () => { try { await act({ action: 'complete' }); await load() } catch (e: any) { alert(String(e?.message || e)) } }} className={BTN + ' bg-ink text-white flex-1'} disabled={progress.items > 0 && progress.confirmed === 0}><Check size={16} /> Finish inventory</button>
@@ -352,19 +353,11 @@ function AddRoom({ act, reload }: { act: (b: any) => Promise<any>; reload: () =>
 }
 
 // ── 2. ROOM VIEW ────────────────────────────────────────────────────────────────────────────────
-function RoomView({ code, unit, room, items, onBack, act, reload, index, total, onPrev, onNext }: { code: string; unit: Unit; room: Room; items: Item[]; onBack: () => void; act: (b: any) => Promise<any>; reload: () => Promise<void>; index: number; total: number; onPrev?: () => void; onNext: () => void }) {
+function RoomView({ code, unit, room, items, allItems, onBack, act, reload, index, total, onPrev, onNext }: { code: string; unit: Unit; room: Room; items: Item[]; allItems: Item[]; onBack: () => void; act: (b: any) => Promise<any>; reload: () => Promise<void>; index: number; total: number; onPrev?: () => void; onNext: () => void }) {
   const [renaming, setRenaming] = useState(false)
   const [ai, setAi] = useState<any | null>(null)      // the read-back proposal, awaiting approval
-  // THE EXPECTED CHECKLIST (Jon, 2026-09-03: "you're creating default items when you shouldn't"). Nothing
-  // is written into the room by default. The standard's list for a room of this shape is only a folded
-  // checklist of what SHOULD be here — tap "Here" to add it counted, "Not here" to add it as missing.
   const details = unit.details || {}
-  const expected: ItemDef[] = useMemo(() => applyAnswers(itemsFor(room, details), room, details, fullAnswers(room, details, room.answers)), [room.id, room.kind, room.key, unit.details]) // eslint-disable-line react-hooks/exhaustive-deps
   const have = (nm: string) => items.find(i => i.name.toLowerCase() === nm.toLowerCase())
-  const expectedMissing = expected.filter(e => (e.tier || 'must') === 'must' && !have(e.name))
-  const [showExpected, setShowExpected] = useState(false)
-  const [doneCheck, setDoneCheck] = useState(false)
-  const expectedQty = (nm: string) => expected.find(e => e.name.toLowerCase() === nm.toLowerCase())?.qty
   const [aiBusy, setAiBusy] = useState(false)
   const readPhotos = async () => {
     setErr(''); setAiBusy(true)
@@ -496,10 +489,10 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
       {/* ADD WHAT IS THERE (Jon, 2026-09-03: "there should be a search or dropdown menu to add items…
           full list for what's typically found at a property"). Search the catalog, tap to add — the
           count comes from the standard for this unit, the condition starts Good; fix exceptions after. */}
-      <ItemPicker room={room} items={items} expectedQty={expectedQty} onAdd={async (c, qty) => {
+      <ItemPicker room={room} items={items} onAdd={async (c, qty) => {
         const ex = have(c.name)
         if (ex) await wrap(() => act({ action: 'updateItem', itemId: ex.id, qty: ex.qty + (qty || 1), condition: ex.condition || 'good' }))
-        else await wrap(() => act({ action: 'addItem', roomId: room.id, name: c.name, category: c.category, qty: qty ?? expectedQty(c.name) ?? 1, condition: 'good', expected: expectedQty(c.name) ?? null, brand: c.brand === 'size' ? 'size' : c.brand === 'model' ? 'model' : undefined }))
+        else await wrap(() => act({ action: 'addItem', roomId: room.id, name: c.name, category: c.category, qty: qty ?? 1, condition: 'good', brand: c.brand === 'size' ? 'size' : c.brand === 'model' ? 'model' : undefined }))
       }} />
 
       {/* in this room */}
@@ -515,52 +508,15 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
         </section>
       )}
 
-      {/* expected here — folded; the standard as a checklist, never as pre-filled rows */}
-      {expected.length > 0 && (
-        <section className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
-          <button onClick={() => setShowExpected(o => !o)} className="w-full px-3 py-2.5 flex items-center gap-2 text-left">
-            <ChevronDown size={14} className={'text-muted transition-transform ' + (showExpected ? '' : '-rotate-90')} />
-            <span className="text-[13px] font-semibold text-ink">Expected in a {room.name.toLowerCase()} like this</span>
-            <span className={'text-[12px] font-semibold ' + (expectedMissing.length ? 'text-amber-800' : 'text-emerald-700')}>{expectedMissing.length ? expectedMissing.length + ' not added yet' : 'all added'}</span>
-          </button>
-          {showExpected && (
-            <div className="divide-y divide-line border-t border-line">
-              {expected.filter(e => (e.tier || 'must') === 'must').map(e => {
-                const ex = have(e.name)
-                return (
-                  <div key={e.name + (e.brand || '')} className="px-3 py-2 flex items-center gap-2">
-                    <span className="flex-1 min-w-0"><span className="block text-[13.5px] font-semibold text-ink truncate">{e.name}{e.brand && e.brand !== 'size' && e.brand !== 'model' ? <span className="text-muted font-normal"> · {e.brand}</span> : ''}</span><span className="block text-[11.5px] text-muted">need {e.qty}{ex ? ' · added: ' + ex.qty + (ex.condition ? ' · ' + ex.condition : '') : ''}</span></span>
-                    {ex ? <CheckCircle2 size={18} className={ex.condition === 'missing' ? 'text-rose-500' : 'text-emerald-600'} /> : <>
-                      <button onClick={() => wrap(() => act({ action: 'addItem', roomId: room.id, name: e.name, category: e.category, qty: e.qty, condition: 'good', expected: e.qty, brand: e.brand || undefined }))} className="rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 text-[12.5px] font-bold min-h-[34px] px-3">Here</button>
-                      <button onClick={() => wrap(() => act({ action: 'addItem', roomId: room.id, name: e.name, category: e.category, qty: 0, condition: 'missing', expected: e.qty, brand: e.brand || undefined }))} className="rounded-lg border border-line bg-white text-rose-700 text-[12.5px] font-bold min-h-[34px] px-3">Not here</button>
-                    </>}
-                  </div>
-                )
-              })}
-              {expected.some(e => (e.tier || 'must') !== 'must') && <div className="px-3 py-2 text-[11.5px] text-muted">Recommended / nice-to-have extras are in the search above.</div>}
-            </div>
-          )}
-        </section>
-      )}
-
       <section className="rounded-2xl border border-line bg-white p-3 mb-3">
         <label className={LABEL}>Room notes</label>
         <textarea value={notes} onChange={e => setNotes(e.target.value)} onBlur={() => { if (notes !== (room.notes || '')) wrap(() => act({ action: 'roomNotes', roomId: room.id, notes })) }} rows={2} className={INPUT} placeholder="Damage, smells, anything a photo does not show" />
       </section>
 
       {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
-      {doneCheck && !room.checked_at && expectedMissing.length > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 mb-2 text-[13px] text-amber-950">
-          <b>{expectedMissing.length} expected item{expectedMissing.length === 1 ? '' : 's'} not added:</b> {expectedMissing.slice(0, 8).map(e => e.name).join(', ')}{expectedMissing.length > 8 ? '…' : ''}
-          <div className="flex gap-2 mt-2 flex-wrap">
-            <button onClick={() => wrap(() => act({ action: 'applyItems', roomId: room.id, updates: [], adds: expectedMissing.map(e => ({ name: e.name, category: e.category, qty: 0, condition: 'missing', brand: e.brand || null })) }))} className={BTN + ' bg-rose-700 text-white min-h-[38px] text-[13px]'}>Mark them missing → buy list</button>
-            <button onClick={() => wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: true }); onNext() })} className={BTN + ' border border-line bg-white text-ink min-h-[38px] text-[13px]'}>Not needed here — done</button>
-          </div>
-        </div>
-      )}
       <div className="sticky bottom-0 -mx-4 px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+8px)] bg-app/95 backdrop-blur border-t border-line flex gap-2 mb-2">
         <button onClick={onPrev || onBack} className={BTN + ' border border-line bg-white text-ink px-3'} aria-label={onPrev ? 'Previous room' : 'All rooms'}><ChevronLeft size={16} /></button>
-        <button onClick={() => { if (!room.checked_at && expectedMissing.length && !doneCheck) { setDoneCheck(true); setShowExpected(true); return } wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: !room.checked_at }); if (!room.checked_at) onNext() }) }} className={BTN + ' flex-1 ' + (room.checked_at ? 'border border-emerald-300 bg-emerald-50 text-emerald-800' : 'bg-ink text-white')}>{room.checked_at ? <><CheckCircle2 size={16} /> Room done — tap to reopen</> : <><Check size={16} /> Room done{index < total - 1 ? ' → next room' : ' → finish'}</>}</button>
+        <button onClick={() => wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: !room.checked_at }); if (!room.checked_at) onNext() })} className={BTN + ' flex-1 ' + (room.checked_at ? 'border border-emerald-300 bg-emerald-50 text-emerald-800' : 'bg-ink text-white')}>{room.checked_at ? <><CheckCircle2 size={16} /> Room done — tap to reopen</> : <><Check size={16} /> Room done{index < total - 1 ? ' → next room' : ' → finish'}</>}</button>
         <button onClick={() => { if (confirm('Remove "' + room.name + '" and its ' + items.length + ' items?')) wrap(async () => { await act({ action: 'removeRoom', roomId: room.id }); onBack() }) }} className={BTN + ' border border-line bg-white text-muted'} aria-label="Remove room"><Trash2 size={16} /></button>
       </div>
       <div className="flex justify-center gap-4 mb-4 text-[12.5px] font-semibold text-muted">
@@ -571,18 +527,12 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
   )
 }
 
-function ItemPicker({ room, items, expectedQty, onAdd }: { room: Room; items: Item[]; expectedQty: (n: string) => number | undefined; onAdd: (c: CatalogItem, qty?: number) => Promise<void> }) {
+function ItemPicker({ room, items, onAdd }: { room: Room; items: Item[]; onAdd: (c: CatalogItem, qty?: number) => Promise<void> }) {
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
-  // No query: what the standard expects in this room first (in its order), then the rest of what is
-  // typical for the room kind — so a living room leads with sofa, coffee table, TV, not a dehumidifier.
-  const results = useMemo(() => {
-    if (q.trim()) return searchCatalog(q, room.kind, 14)
-    const typ = typicalFor(room.kind, 40)
-    const exp = typ.filter(c => expectedQty(c.name) != null)
-    const rest = typ.filter(c => expectedQty(c.name) == null)
-    return [...exp, ...rest].slice(0, 18)
-  }, [q, room.kind, expectedQty])
+  // No query: what is TYPICALLY found in a room like this (catalog knowledge, not a claim about what
+  // this unit needs — Jon: "don't make assumptions of what's needed in each room").
+  const results = useMemo(() => q.trim() ? searchCatalog(q, room.kind, 14) : typicalFor(room.kind, 18), [q, room.kind])
   const has = (nm: string) => items.find(i => i.name.toLowerCase() === nm.toLowerCase())
   const add = async (c: CatalogItem) => { setBusy(c.name); try { await onAdd(c) } finally { setBusy(null) } }
   const custom = q.trim() && !results.some(r => r.name.toLowerCase() === q.trim().toLowerCase())
@@ -595,16 +545,16 @@ function ItemPicker({ room, items, expectedQty, onAdd }: { room: Room; items: It
       </div>
       <div className="mt-2 flex gap-1.5 flex-wrap">
         {results.map(c => {
-          const ex = has(c.name); const eq = expectedQty(c.name)
+          const ex = has(c.name)
           return (
             <button key={c.name} onClick={() => add(c)} disabled={busy === c.name} className={CHIP + ' min-h-[36px] text-[13px] ' + (ex ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-white text-ink border-line')}>
-              {busy === c.name ? <Loader2 size={13} className="animate-spin mr-1" /> : ex ? <Check size={13} className="mr-1" /> : <Plus size={13} className="mr-1 text-muted" />}{c.name}{ex ? <span className="ml-1 font-bold">×{ex.qty}</span> : eq ? <span className="ml-1 text-muted">×{eq}</span> : null}
+              {busy === c.name ? <Loader2 size={13} className="animate-spin mr-1" /> : ex ? <Check size={13} className="mr-1" /> : <Plus size={13} className="mr-1 text-muted" />}{c.name}{ex ? <span className="ml-1 font-bold">×{ex.qty}</span> : null}
             </button>
           )
         })}
         {custom && <button onClick={() => add({ name: q.trim().slice(0, 120), category: 'other', kinds: [room.kind] })} className={CHIP + ' min-h-[36px] text-[13px] bg-ink text-white border-ink'}><Plus size={13} className="mr-1" /> Add "{q.trim()}"</button>}
       </div>
-      <p className="text-[11.5px] text-muted mt-2">{q ? 'Tap to add. Tap again for one more.' : 'Typical for this room — tap what is here. Search for anything else. ×N is the count for this unit.'}</p>
+      <p className="text-[11.5px] text-muted mt-2">{q ? 'Tap to add. Tap again for one more.' : 'Tap what is here, then set the count. Search for anything else.'}</p>
     </section>
   )
 }
@@ -655,7 +605,7 @@ function ItemRow({ item: i, code, act, reload, onPhoto }: { item: Item; code: st
       <div className="flex items-center gap-2">
         <button onClick={() => setMore(m => !m)} className="flex-1 min-w-0 text-left">
           <span className="block text-[14.5px] font-semibold text-ink leading-tight truncate">{i.name}{i.brand && i.brand !== 'size' && i.brand !== 'model' ? <span className="text-muted font-normal"> · {i.brand}</span> : null}</span>
-          <span className="block text-[11.5px] text-muted">{i.expected != null ? 'need ' + i.expected : CATEGORIES.find(c => c.key === i.category)?.label || i.category}{short ? <span className="text-amber-700 font-bold"> · short {i.expected! - qty}</span> : null}{flagged ? <span className={'font-bold ' + (i.condition === 'fair' ? 'text-amber-700' : 'text-rose-700')}> · {i.condition}</span> : null}{i.photo_url ? ' · 📷' : ''}{i.notes ? ' · note' : ''}</span>
+          <span className="block text-[11.5px] text-muted">{i.brand === 'size' || i.brand === 'model' ? 'add the ' + i.brand : CATEGORIES.find(c => c.key === i.category)?.label || i.category}{flagged ? <span className={'font-bold ' + (i.condition === 'fair' ? 'text-amber-700' : 'text-rose-700')}> · {i.condition}</span> : null}{i.photo_url ? ' · 📷' : ''}{i.notes ? ' · note' : ''}</span>
         </button>
         <div className="flex items-center gap-1 shrink-0">
           <button onClick={() => bump(-1)} className="w-9 h-9 rounded-lg border border-line bg-white grid place-items-center" aria-label="One fewer"><Minus size={14} /></button>
@@ -740,11 +690,21 @@ function summarize(unit: Unit, rooms: Room[], items: Item[]) {
   const flagged = byRoom.flatMap(x => x.flagged.map(i => ({ room: x.r.name, i })))
   return { byRoom, flagged, totalQty: items.reduce((a, i) => a + (i.qty || 0), 0) }
 }
-function Summary({ unit, rooms, items, progress, buy, act, reload }: { unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[]; act: (b: any) => Promise<any>; reload: () => Promise<void> }) {
+function Summary({ unit, rooms, items, progress, buy, check, act, reload }: { unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[]; check: CheckRow[]; act: (b: any) => Promise<any>; reload: () => Promise<void> }) {
   const s = useMemo(() => summarize(unit, rooms, items), [unit, rooms, items])
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
-  const roomName = (id: string) => rooms.find(r => r.id === id)?.name || ''
+  const [showOk, setShowOk] = useState(false)
+  const roomName = (id: string | null) => (id && rooms.find(r => r.id === id)?.name) || 'unit'
+  const notFound = check.filter(c => c.status === 'none')
+  const shortRows = check.filter(c => c.status === 'short')
+  const okRows = check.filter(c => c.status === 'ok')
+  const label = (c: CheckRow) => c.name + (c.brand ? ' (' + c.brand + ')' : '')
+  const run = async (fn: () => Promise<any>) => { setBusy(true); setMsg(''); try { await fn(); await reload() } catch (e: any) { setMsg(String(e?.message || e)) } setBusy(false) }
+  // "Missing" files the item into the unit at zero (first room — placement is not the point) so it
+  // reaches the buy list; "N/A" tells the standard this unit does not need it.
+  const markMissing = (c: CheckRow) => run(() => act({ action: 'addItem', roomId: rooms[0].id, name: c.name, category: c.category, qty: 0, condition: 'missing', expected: c.qty, brand: c.brand || undefined }))
+  const markNA = (c: CheckRow) => run(() => act({ action: 'setNA', name: c.name }))
   const pieces = buy.reduce((a, b) => a + b.need, 0)
   const send = async () => {
     setBusy(true); setMsg('')
@@ -755,6 +715,33 @@ function Summary({ unit, rooms, items, progress, buy, act, reload }: { unit: Uni
   return (
     <div className="text-[13px] text-ink/85 space-y-2">
       <div><b>{rooms.length}</b> rooms · <b>{items.length}</b> line items · <b>{s.totalQty}</b> pieces counted · <b>{progress.photos}</b> photos</div>
+      {/* THE UNIT CHECK (Jon, 2026-09-03: "the goal is to understand what is in the unit"). The standard,
+          applied once to the whole unit, against what was counted anywhere in it. Nothing here was
+          assumed room by room; an item not found anywhere is a QUESTION, not a shortage, until answered. */}
+      {check.length > 0 && (
+        <div className="rounded-xl border border-line bg-white overflow-hidden">
+          <div className="px-3 py-2 flex items-center gap-2 bg-ink/5 text-[11px] font-bold uppercase tracking-wide text-ink">Unit check vs. standard <span className="font-semibold normal-case tracking-normal text-muted">{okRows.length} ok · {shortRows.length} short · {notFound.length} not found</span></div>
+          {notFound.length > 0 && (
+            <div className="divide-y divide-line border-b border-line">
+              <div className="px-3 py-1.5 text-[11.5px] text-muted">Not counted in any room — is it missing, or does this unit not need it?</div>
+              {notFound.map(c => (
+                <div key={label(c)} className="px-3 py-2 flex items-center gap-1.5">
+                  <span className="flex-1 min-w-0"><span className="block text-[13.5px] font-semibold text-ink truncate">{label(c)}</span><span className="block text-[11.5px] text-muted">standard: {c.qty}</span></span>
+                  <button disabled={busy} onClick={() => markMissing(c)} className="rounded-lg border border-rose-200 bg-rose-50 text-rose-800 text-[12.5px] font-bold min-h-[34px] px-3">Missing</button>
+                  <button disabled={busy} onClick={() => markNA(c)} className="rounded-lg border border-line bg-white text-muted text-[12.5px] font-semibold min-h-[34px] px-3">N/A</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {shortRows.length > 0 && (
+            <div className="divide-y divide-line border-b border-line">
+              {shortRows.map(c => <div key={label(c)} className="px-3 py-2 flex items-center gap-2 text-[13px]"><span className="flex-1 font-semibold text-ink">{label(c)}</span><span className="text-amber-800 font-semibold">{c.have} of {c.qty} · short {c.short}</span></div>)}
+            </div>
+          )}
+          <button onClick={() => setShowOk(o => !o)} className="w-full px-3 py-2 text-left text-[12px] text-muted inline-flex items-center gap-1.5"><ChevronDown size={13} className={'transition-transform ' + (showOk ? '' : '-rotate-90')} /> {okRows.length} at or above the standard{(unit.details?.na || []).length ? ' · ' + (unit.details!.na!.length) + ' N/A' : ''}</button>
+          {showOk && <div className="px-3 pb-2 text-[12px] text-muted">{okRows.map(label).join(' · ')}{(unit.details?.na || []).length ? <div className="mt-1">N/A: {(unit.details!.na!).map(n => <button key={n} onClick={() => run(() => act({ action: 'setNA', name: n, on: false }))} className="underline mr-2">{n} ×</button>)}</div> : null}</div>}
+        </div>
+      )}
       {/* THE BUY LIST (Jon, 2026-09-02: "if we count 10 but need 12 it should create an order and push").
           Short = counted under the standard; worn/missing = replace. One tap files it on Purchasing. */}
       {buy.length > 0 ? (
