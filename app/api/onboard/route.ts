@@ -152,16 +152,21 @@ async function generate(db: ReturnType<typeof supabaseAdmin>, unitId: string, de
     .insert(defs.map(r => ({ unit_id: unitId, key: r.key, name: r.name, kind: r.kind, sort: r.sort })))
     .select('id,key,kind,name,sort')
   if (error) throw new Error(error.message)
-  // ASK BEFORE ASSUMING (Jon, 2026-09-03): a room with questions gets its items when the walker
-  // answers them (action 'answerRoom'); only a room with nothing to ask is stocked straight away.
-  const items: any[] = []
-  for (const r of (rows || []) as any[]) {
-    const def = defs.find(d => d.key === r.key)!
-    if (roomQuestions(def, details).length) continue
-    itemsFor(def, details, standard).forEach((it, i) => items.push({ unit_id: unitId, room_id: r.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, tier: it.tier, suggested: true, sort: i }))
-  }
-  if (items.length) { const { error: e2 } = await db.from('onboarding_items').insert(items); if (e2) throw new Error(e2.message) }
+  // ROOMS START EMPTY (Jon, 2026-09-03: "you're creating default items when you shouldn't"). The
+  // standard is the walker's "expected here" checklist and the buy list's yardstick — never rows.
+  void standard
   return defs.length
+}
+
+/** What the standard expects of one item in this room, by name — so an added row knows its "need". */
+async function expectedByName(unit: any, room: any, name: string): Promise<number | null> {
+  try {
+    const def: RoomDef = { key: room.key, name: room.name, kind: room.kind, sort: room.sort }
+    const details: UnitDetails = unit.details || {}
+    const list = applyAnswers(itemsFor(def, details, await loadStandard()), def, details, fullAnswers(def, details, room.answers))
+    const hit = list.find(i => i.name.toLowerCase() === String(name).toLowerCase())
+    return hit ? hit.qty : null
+  } catch { return null }
 }
 
 /** Build (or rebuild, if nothing was touched) a room's list from its answers. */
@@ -317,8 +322,6 @@ export async function POST(req: NextRequest) {
       const sort = found.rooms.length
       const { data: room, error } = await db.from('onboarding_rooms').insert({ unit_id: unit.id, key, name, kind, sort }).select('*').single()
       if (error) throw new Error(error.message)
-      const its = roomQuestions({ key, name, kind, sort }, unit.details || {}).length ? [] : itemsFor({ key, name, kind, sort }, unit.details || {}, await loadStandard())
-      if (its.length) await db.from('onboarding_items').insert(its.map((it, i) => ({ unit_id: unit.id, room_id: room.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, tier: it.tier, suggested: true, sort: i })))
       await touch()
       return NextResponse.json({ ok: true, room })
     }
@@ -351,7 +354,8 @@ export async function POST(req: NextRequest) {
       if (!found.rooms.some((r: any) => r.id === roomId)) return NextResponse.json({ ok: false, error: 'room not found' }, { status: 404 })
       const name = str(b.name).slice(0, 120)
       if (!name) return NextResponse.json({ ok: false, error: 'Item name required' }, { status: 400 })
-      const qty = Math.max(0, Math.min(999, Math.round(Number(b.qty) || 1)))
+      const qty = Math.max(0, Math.min(999, Math.round(Number(b.qty ?? 1))))
+      if (b.expected === undefined || b.expected === null) b.expected = await expectedByName(unit, found.rooms.find((r: any) => r.id === roomId), name)
       const { data: item, error } = await db.from('onboarding_items').insert({
         unit_id: unit.id, room_id: roomId, name, category: CATS.includes(b.category) ? b.category : 'other', qty,
         condition: CONDS.includes(b.condition) ? b.condition : null, brand: str(b.brand).slice(0, 120) || null, notes: str(b.notes).slice(0, 1000) || null,
@@ -403,7 +407,9 @@ export async function POST(req: NextRequest) {
         await db.from('onboarding_items').update(patch).eq('id', id); u++
       }
       let sort = found.items.filter((i: any) => i.room_id === roomId).length
-      const rows = adds.map(x => ({
+      const roomRow = found.rooms.find((r: any) => r.id === roomId)
+      const exp: (number | null)[] = []; for (const x of adds) exp.push(await expectedByName(unit, roomRow, str(x.name)))
+      const rows = adds.map((x, k) => ({ expected: exp[k],
         unit_id: unit.id, room_id: roomId, name: str(x.name).slice(0, 120), category: CATS.includes(x.category) ? x.category : 'other',
         qty: Math.max(0, Math.min(999, Math.round(Number(x.qty) || 1))), condition: CONDS.includes(x.condition) ? x.condition : null,
         brand: str(x.brand).slice(0, 120) || null, notes: str(x.notes).slice(0, 1000) || null, tier: 'must', suggested: false, sort: sort++,
