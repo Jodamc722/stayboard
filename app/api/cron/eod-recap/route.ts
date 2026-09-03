@@ -115,7 +115,15 @@ export async function GET(req: NextRequest) {
     // ── 1. REVENUE CLEANS ──────────────────────────────────────────────────────────────────────
     const hk = KT.housekeeping || {}
     const revCleans = Number(hk.cleans) || 0
+    const depRevenue = Number(hk.revenue) || 0
+    const chargedN = Number(hk.chargedCleanCount) || 0
+    const chargedRev = Number(hk.chargedCleans) || 0
     const revenue = Number(hk.revenueWithCharged ?? hk.revenue) || 0
+    // How the clean count was reached — closed on the board vs assigned today and never closed
+    // (the house rule counts those as done on their scheduled day). Printed so the 5-vs-9 kind of
+    // question answers itself instead of landing in Jon's inbox.
+    const ca = ecT.cleanAudit || {}
+    const caClosed = Number(ca.closed) || 0, caOpen = Number(ca.openCounted) || 0
     const hkPayroll = Number(hk.payroll) || 0
     const mtRev = Number(KT.maintenance?.revenue) || 0
     const payrollAll = Number(KT.allIn?.payroll) || 0
@@ -123,11 +131,13 @@ export async function GET(req: NextRequest) {
     const mkRows = ((ecT.pnl?.perClean?.markets || []) as any[]).filter(m => m.cleans > 0)
     const revenueCard = card(
       secTitle('Revenue cleans today', niceDay(today)) +
-      `<p style="margin:0;font-size:15px;line-height:1.6"><b style="font-size:22px">${revCleans}</b> revenue-generating departure clean${revCleans === 1 ? '' : 's'} &rarr; <b>${money(revenue)}</b> cleaning revenue` +
-      (hk.costPerClean != null ? ` <span style="${MUTED}">&middot; housekeepers ${rate(hk.costPerClean)}/clean</span>` : '') + `</p>` +
+      `<p style="margin:0;font-size:15px;line-height:1.6"><b style="font-size:22px">${revCleans}</b> departure clean${revCleans === 1 ? '' : 's'} by housekeeping &rarr; <b>${money(depRevenue)}</b> in cleaning fees` +
+      (hk.costPerClean != null ? ` <span style="${MUTED}">&middot; ${rate(hk.costPerClean)} of housekeeper pay per clean</span>` : '') + `</p>` +
+      (caOpen > 0 ? `<p style="margin:4px 0 0;font-size:12.5px;color:#6b7280">${caClosed} closed on the board &middot; <span style="${AMBER}">${caOpen} assigned today and never closed</span> &mdash; counted as done, per the house rule; the unit is listed under Priorities.</p>` : '') +
+      (chargedN > 0 ? `<p style="margin:4px 0 0;font-size:12.5px;color:#6b7280">+ ${chargedN} charged mid-stay${chargedN === 1 ? '' : 's'}/refresh${chargedN === 1 ? '' : 'es'} &rarr; ${money(chargedRev)} &mdash; in the revenue total (<b>${money(revenue)}</b>), never in the clean count.</p>` : '') +
       (mkRows.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px"><tr><th style="${th}">Market</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">HK payroll</th><th style="${th};text-align:right">$/clean</th></tr>` +
         mkRows.map(m => `<tr><td style="${td}">${esc(m.label)}</td><td style="${td};text-align:right">${m.cleans}</td><td style="${td};text-align:right">${money(m.housekeeping?.payroll)}</td><td style="${td};text-align:right"><b>${rate(m.housekeeping?.perClean)}</b></td></tr>`).join('') + '</table>' : '') +
-      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">A revenue clean is a departure clean closed in Breezeway today whose checkout carried a cleaning fee (net of the channel cut). Charged mid-stays and refreshes are in the revenue figure, never in the clean count.</p>`
+      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">A departure clean lands on the day it was finished in Breezeway (or its scheduled day if nobody closed it), and carries its checkout's cleaning fee net of the channel cut. Cleans moved to another day count on that day. $/clean is housekeeper wages from Homebase punches divided by these cleans.</p>`
     )
 
     // ── 2. PRIORITIES — did the day's promises get kept ───────────────────────────────────────
@@ -179,7 +189,7 @@ export async function GET(req: NextRequest) {
     const openCards = (ecT.people || []).filter((p: any) => p.openCard || p.hoursSoFar).length
     const laborCard = card(
       secTitle('Payroll vs labor', 'Homebase punches &middot; today') +
-      `<p style="margin:0 0 8px;font-size:14px"><b>${money(payrollAll)}</b> payroll for <b>${totalHours}h</b> &rarr; earned <b>${money(revenue + mtRev)}</b> &rarr; ` +
+      `<p style="margin:0 0 8px;font-size:14px">Earned <b>${money(revenue + mtRev)}</b> <span style="${MUTED}">(${money(revenue)} cleaning + ${money(mtRev)} maintenance billed)</span> against <b>${money(payrollAll)}</b> payroll for <b>${totalHours}h</b> &rarr; ` +
       `<b style="${profit < 0 ? RED : GREEN}">${money(profit)}</b> ${profit < 0 ? 'loss' : 'profit'}` +
       (KT.allIn?.marginPct != null ? ` <span style="${MUTED}">(${Math.round(KT.allIn.marginPct)}% margin)</span>` : '') + `</p>` +
       `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}">Crew</th><th style="${th};text-align:right">Hours</th><th style="${th};text-align:right">Payroll</th><th style="${th};text-align:right">Earned</th><th style="${th};text-align:right">Net</th></tr>${laborRows}</table>` +
@@ -191,9 +201,8 @@ export async function GET(req: NextRequest) {
     const tasksCard = card(
       secTitle('Tasks completed today', `${doneToday.length} closed on the board`) +
       `<p style="margin:0 0 8px;font-size:13px;line-height:1.8">` +
-      `<b>${byKind.clean}</b> departure cleans &middot; <b>${byKind.other}</b> other housekeeping &middot; <b>${byKind.maintenance}</b> maintenance` +
-      (KT.maintenance?.tasksNoCharge ? ` <span style="${AMBER}">(${KT.maintenance.tasksNoCharge} with no charge entered)</span>` : '') +
-      ` &middot; <b>${byKind.inspection}</b> inspections</p>` +
+      `<b>${byKind.clean}</b> departure cleans closed &middot; <b>${byKind.other}</b> other housekeeping &middot; <b>${byKind.maintenance}</b> maintenance &middot; <b>${byKind.inspection}</b> inspections</p>` +
+      (KT.maintenance?.tasksNoCharge ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${AMBER}">${KT.maintenance.tasksNoCharge} job${KT.maintenance.tasksNoCharge === 1 ? '' : 's'} closed by the maintenance crew with no charge entered</span> <span style="${MUTED}">&mdash; billable or not, the field was left blank (17WEST excluded).</span></p>` : '') +
       (topPeople.length ? `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}">Person</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">Other jobs</th></tr>` +
         topPeople.map(p => `<tr><td style="${td}">${esc(p.n)}</td><td style="${td};text-align:right">${p.clean || '<span style="' + MUTED + '">&mdash;</span>'}</td><td style="${td};text-align:right">${p.jobs || '<span style="' + MUTED + '">&mdash;</span>'}</td></tr>`).join('') + '</table>' : '')
     )
@@ -251,13 +260,15 @@ export async function GET(req: NextRequest) {
       (unassignedTm.length ? `<span style="${AMBER}">${unassignedTm.length} clean${unassignedTm.length === 1 ? '' : 's'} on the board with nobody assigned</span>` : `<span style="${GREEN}">Every clean on tomorrow's board has a name on it</span>`) +
       (noCleanTm.length ? ` &middot; <span style="${RED}">${noCleanTm.length} checkout${noCleanTm.length === 1 ? '' : 's'} with no clean created yet</span>` : '') +
       `</p>` +
-      (notable.length ? `<p style="margin:8px 0 0;font-size:12.5px"><span style="${MUTED}">Worth a heads-up:</span> ${esc(notable.slice(0, 6).map(a => `${a.unit} (${a.guest}${a.nights ? ', ' + a.nights + ' nights' : ''}${a.ownerFlag ? ', ' + a.ownerFlag : ''})`).join(' &middot; '))}</p>` : '') +
+      (notable.length ? `<p style="margin:8px 0 0;font-size:12.5px"><span style="${MUTED}">Worth a heads-up:</span> ${notable.slice(0, 6).map(a => esc(`${a.unit} (${a.guest}${a.nights ? ', ' + a.nights + ' nights' : ''}${a.ownerFlag ? ', ' + a.ownerFlag : ''})`)).join(' &middot; ')}</p>` : '') +
       `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">The 7am brief will carry the full run &mdash; this is the shape of the day so nobody is surprised by it.</p>`
     )
 
     // ── assemble ───────────────────────────────────────────────────────────────────────────────
-    const verdict = `<b>${revCleans}</b> revenue clean${revCleans === 1 ? '' : 's'} earned <b>${money(revenue)}</b> against <b>${money(payrollAll)}</b> of payroll ` +
-      `&rarr; <b style="${profit < 0 ? RED : GREEN}">${money(profit)} ${profit < 0 ? 'loss' : 'profit'}</b>. ` +
+    const verdict = `<b>${revCleans}</b> departure clean${revCleans === 1 ? '' : 's'} earned <b>${money(revenue)}</b>` +
+      (mtRev > 0 ? `, maintenance billed <b>${money(mtRev)}</b>` : '') + ` &mdash; <b>${money(revenue + mtRev)}</b> against <b>${money(payrollAll)}</b> of payroll ` +
+      `&rarr; <b style="${profit < 0 ? RED : GREEN}">${money(profit)} ${profit < 0 ? 'loss' : 'profit'}</b>` +
+      (KT.allIn?.marginPct != null ? ` <span style="${MUTED}">(${Math.round(KT.allIn.marginPct)}%)</span>` : '') + `. ` +
       `${allDepDone.length} of ${allDep.length} checkouts cleaned` + (sameDay.length ? `, ${sameDayDone.length} of ${sameDay.length} same-day turns` : '') + `.`
     const html = `<!doctype html><html><body style="margin:0;background:#f5f5f4;${FONT};color:#0b1220">` +
       `<div style="max-width:720px;margin:0 auto;padding:18px">` +
@@ -271,7 +282,7 @@ export async function GET(req: NextRequest) {
       `<a href="${APP_URL}/labor" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">Open the Labor board &rarr;</a></td></tr></table>` +
       `<p style="margin:0;font-size:11px;color:#9ca3af;text-align:center">Sent automatically every evening. Same engine as the Labor board and the morning briefs.</p>` +
       `</div></body></html>`
-    const subject = `EOD ${niceDay(today)}: ${revCleans} revenue cleans, ${money(revenue)} earned, ${money(profit)} ${profit < 0 ? 'loss' : 'profit'}`
+    const subject = `EOD ${niceDay(today)}: ${revCleans} cleans, ${money(revenue + mtRev)} earned vs ${money(payrollAll)} payroll, ${money(profit)} ${profit < 0 ? 'loss' : 'profit'}`
 
     if (preview) return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 
