@@ -27,6 +27,10 @@ const SYSTEM = `You are a short-term-rental onboarding inspector looking at phot
 {"items":[{"name":"Sofa","qty":1,"condition":"good","category":"furniture","brand":"","notes":"","count_by_hand":false}],"room_notes":"one line: damage, wear, anything a photo shows that a list does not"}
 Categories: furniture, appliance, electronics, kitchen, linen, decor, safety, other. Use the checklist's exact names when you see the same thing. At most 40 items.`
 
+// ITEM MODE (Jon, 2026-09-03: "yes" to reading a single item photo — the appliance's model plate, the TV's
+// size, the mattress tag). One object, one answer: brand, model, size, condition, a note.
+const ITEM_SYSTEM = `You are reading ONE photo of a single item in a short-term-rental unit (an appliance, a TV, a piece of furniture, a mattress tag, a label). Identify it and read what is legible: brand, model number, size/dimensions/capacity, and its visible condition (new, good, fair, worn). If a label or plate is readable, transcribe it exactly. Reply with strict minified JSON only: {"name":"Refrigerator","brand":"Samsung","model":"RF28R7351SG","size":"28 cu ft, 36in","condition":"good","notes":"minor scuff on the door","confidence":"high|medium|low"}. Leave a field empty if you cannot read it — never guess a model number.`
+
 const HAND = /plate|bowl|glass|mug|cup|fork|knife|knives|spoon|cutlery|flatware|utensil|hanger|towel|washcloth|pillowcase|sheet|napkin|placemat|coaster|container/i
 
 function parseJson(raw: string): any | null {
@@ -54,12 +58,37 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ ok: false, error: 'AI not configured — add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })
   const b = await req.json().catch(() => ({} as any))
-  const code = str(b.code).toLowerCase(); const roomId = str(b.roomId)
+  const code = str(b.code).toLowerCase(); const roomId = str(b.roomId); const itemId = str(b.itemId)
   if (!CODE_RE.test(code) || !roomId) return NextResponse.json({ ok: false, error: 'code and roomId required' }, { status: 400 })
   const db = supabaseAdmin()
   const { data: unit } = await db.from('onboarding_units').select('id,status,name,details').eq('code', code).maybeSingle()
   if (!unit) return NextResponse.json({ ok: false, error: 'link not found' }, { status: 404 })
   if (unit.status === 'archived') return NextResponse.json({ ok: false, error: 'This link has been closed.' }, { status: 410 })
+
+  // ── one item ──
+  if (itemId) {
+    const { data: item } = await db.from('onboarding_items').select('id,name,brand,photo_url,category').eq('id', itemId).eq('unit_id', unit.id).maybeSingle()
+    if (!item) return NextResponse.json({ ok: false, error: 'item not found' }, { status: 404 })
+    if (!item.photo_url) return NextResponse.json({ ok: false, error: 'Take a photo of the item first.' }, { status: 400 })
+    let text = ''
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: ITEM_SYSTEM, messages: [{ role: 'user', content: [
+          { type: 'text', text: `The checklist calls this item "${item.name}"${item.brand && !['size', 'model'].includes(item.brand) ? ' (' + item.brand + ')' : ''}.` },
+          { type: 'image', source: { type: 'url', url: item.photo_url } },
+        ] }] }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) return NextResponse.json({ ok: false, error: 'AI: ' + (j?.error?.message || r.status) }, { status: 502 })
+      text = (j.content || []).map((c: any) => c.text || '').join('')
+    } catch (e: any) { return NextResponse.json({ ok: false, error: 'AI unreachable: ' + String(e?.message || e) }, { status: 502 }) }
+    const p = parseJson(text)
+    if (!p) return NextResponse.json({ ok: false, error: 'Could not read that photo — try closer, on the label.' }, { status: 502 })
+    const brandBits = [str(p.brand), str(p.model), str(p.size)].filter(Boolean)
+    const conds = CONDITIONS.map(c => c.key).filter(c => c !== 'missing')
+    return NextResponse.json({ ok: true, item: { name: str(p.name).slice(0, 120), brand: brandBits.join(' · ').slice(0, 120), condition: conds.includes(p.condition) ? p.condition : null, notes: str(p.notes).slice(0, 300), confidence: str(p.confidence) || 'medium' } })
+  }
   const [{ data: room }, { data: items }] = await Promise.all([
     db.from('onboarding_rooms').select('id,name,kind,photos').eq('id', roomId).eq('unit_id', unit.id).maybeSingle(),
     db.from('onboarding_items').select('id,name,qty,expected,condition,category,brand').eq('room_id', roomId).order('sort'),
