@@ -135,6 +135,10 @@
     {
       "path": "/api/cron/labor-integrity",
       "schedule": "12 7 * * *"
+    },
+    {
+      "path": "/api/cron/eod-recap",
+      "schedule": "15 0 * * *"
     }
   ]
 }
