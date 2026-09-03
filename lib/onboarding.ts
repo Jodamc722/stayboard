@@ -37,6 +37,7 @@ export type UnitDetails = {
   appliances?: ApplianceKey[]   // what is actually in the unit — asked right after the kitchen question
   beds?: Record<string, BedSize[]>  // per bedroom key (master_bedroom, bedroom_2…): the beds in it, by size
   rooms?: Record<string, number>    // the rooms this unit actually has, by ROOM_TYPES key → count (Jon 2026-09-03: "rooms should not be standard")
+  na?: string[]                     // expected items this unit does NOT need (Jon 2026-09-03: "an option like N/A so it's not an item needed")
   parking?: 'none' | 'assigned' | 'garage' | 'street'
   floor?: string
   sqft?: number
@@ -575,4 +576,45 @@ export function applyAnswers(items: ItemDef[], room: RoomDef, d: UnitDetails, a:
   }
   for (const it of list) if (!out.some(o => o.name === it.name && o.brand === it.brand)) out.push(it)
   return out
+}
+
+// ── UNIT-LEVEL NEEDS ────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-03: "Don't make assumptions of what's needed in each room… not here does not mean
+// it needs to be here — the goal is to understand what is in the unit." So the standard is applied
+// to the UNIT, once: the rooms it has → the standard's list per room → summed by item (sized bed
+// items stay apart: King sheets ≠ Twin sheets). The walker counts what is where; the Finish step
+// compares unit totals to these needs. Items marked N/A for the unit are dropped.
+export type Need = { name: string; category: Category; qty: number; brand?: string }
+export function unitNeeds(d: UnitDetails, standard: InventoryStandard = DEFAULT_STANDARD, rooms?: RoomDef[]): Need[] {
+  const na = new Set((d.na || []).map(x => x.toLowerCase()))
+  const list = rooms && rooms.length ? rooms : roomsFor(d)
+  const by = new Map<string, Need>()
+  for (const r of list) {
+    const items = applyAnswers(itemsFor(r, d, standard), r, d, fullAnswers(r, d, null))
+    for (const it of items) {
+      if ((it.tier || 'must') !== 'must') continue
+      if (na.has(it.name.toLowerCase())) continue
+      const sized = it.brand && it.brand !== 'size' && it.brand !== 'model' ? it.brand : undefined
+      const key = it.name.toLowerCase() + '|' + (sized || '')
+      const cur = by.get(key)
+      if (cur) cur.qty += it.qty; else by.set(key, { name: it.name, category: it.category, qty: it.qty, brand: sized })
+    }
+  }
+  return Array.from(by.values())
+}
+
+/** Unit totals vs needs — the honest buy list. `items` = every row in the unit. */
+export type UnitCheckRow = Need & { have: number; worn: number; status: 'ok' | 'short' | 'none'; short: number }
+export function unitCheck(items: { name: string; brand?: string | null; qty: number; condition?: string | null }[], needs: Need[]): UnitCheckRow[] {
+  const sizedOf = (b?: string | null) => (b && b !== 'size' && b !== 'model' ? b : undefined)
+  return needs.map(n => {
+    const rows = items.filter(i => i.name.toLowerCase() === n.name.toLowerCase() && (!n.brand || (sizedOf(i.brand) || '').toLowerCase() === n.brand.toLowerCase()))
+    const have = rows.filter(i => i.condition !== 'missing' && i.condition !== 'worn').reduce((a, i) => a + (Number(i.qty) || 0), 0)
+    const worn = rows.filter(i => i.condition === 'worn').reduce((a, i) => a + (Number(i.qty) || 0), 0)
+    // No row anywhere = not yet found (the walker decides at Finish: missing, or N/A). Rows marked
+    // missing count as zero on hand, so the shortfall is the whole need.
+    const short = rows.length === 0 ? 0 : Math.max(0, n.qty - have)
+    const status: UnitCheckRow['status'] = rows.length === 0 ? 'none' : short > 0 ? 'short' : 'ok'
+    return { ...n, have, worn, status, short }
+  })
 }
