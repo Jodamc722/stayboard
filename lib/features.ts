@@ -172,6 +172,8 @@ export const OPEN_PREFIXES = [
   // /api/public/field-board. Open here so a cleaner with no Lighthouse account can open the link
   // their supervisor sent; a signed-in user skips the passcode entirely.
   '/board/',
+  // TEAM SCHEDULER LINK (Jon, 2026-09-03): one link per market; picks land in schedule_staged, Submit emails Jon.
+  '/scheduler/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
   // whether a code worked are field techs without logins, and a question only answerable by people
   // who were not at the door is a question that never gets a true answer. The token is the auth.
