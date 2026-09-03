@@ -28,10 +28,11 @@ export async function POST(req: NextRequest) {
   const now = new Date().toISOString()
   try {
     if (b.action === 'create') {
-      const market = MARKETS.includes(b.market) ? b.market : null
-      if (!market) return NextResponse.json({ ok: false, error: 'market must be Miami, Broward or North' }, { status: 400 })
+      // 'All' = the ops review link: every market on one page, sortable, for whoever runs the day.
+      const market = MARKETS.includes(b.market) || b.market === 'All' ? b.market : null
+      if (!market) return NextResponse.json({ ok: false, error: 'market must be Miami, Broward, North or All' }, { status: 400 })
       const code = randomBytes(6).toString('hex')
-      const { data, error } = await db.from('schedule_links').insert({ code, market, label: str(b.label).slice(0, 120) || market + ' team schedule', passcode: str(b.passcode).slice(0, 40) || null, created_by: me }).select('*').single()
+      const { data, error } = await db.from('schedule_links').insert({ code, market, label: str(b.label).slice(0, 120) || (market === 'All' ? 'Ops schedule review · all markets' : market + ' team schedule'), passcode: str(b.passcode).slice(0, 40) || null, created_by: me }).select('*').single()
       if (error) throw new Error(error.message)
       return NextResponse.json({ ok: true, link: data, url: '/scheduler/' + code })
     }
