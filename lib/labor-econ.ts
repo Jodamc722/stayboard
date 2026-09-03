@@ -796,7 +796,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // Day ledger: what this task contributed to this person's DAY. Departure cleans carry their
     // matched net fee; charged cleaning work and billables carry their typed charge.
     {
-      const day = String(t.finished_at || '').slice(0, 10)
+      const day = etDay(t.finished_at)
       if (day) {
         const L = (ledgerT[k] = ledgerT[k] || {})
         const e = (L[day] = L[day] || { cleans: 0, fee: 0, billable: 0 })

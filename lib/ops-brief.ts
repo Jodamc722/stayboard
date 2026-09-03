@@ -17,6 +17,8 @@ import { getOpsPresets, getSetting } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { buildDaySheet } from './daysheet'
 import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
+import { getStaff } from './staffing'
+import { getSalaried } from './salary'
 import { getTimecardsAudited } from './homebase-labor'
 import { kindOfTask, isDepartureCleanTask } from './labor-econ'
 import { isLiveStay } from './stay-status'
@@ -798,12 +800,26 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   let todayShifts: any[] = []
   let todayOpenShifts = 0
   let shiftsLoaded = true
+  // People who are never on the Homebase schedule BY DESIGN — salaried management, vendor and
+  // contractor staff. "Not on the Homebase schedule" is a red flag for an hourly cleaner and
+  // plain noise for Roberto, so the tag says which it is.
+  const offSchedule: { name: string; why: string }[] = []
   if (variant === 'full') {
     try {
       const sh = await getShifts(d.today, 'America/New_York')
       todayShifts = sh.filter((s: any) => !s.open && s.startAt)
       todayOpenShifts = sh.filter((s: any) => s.open).length
     } catch { shiftsLoaded = false }
+    try {
+      const [sal, stf] = await Promise.all([getSalaried(), getStaff()])
+      for (const r of sal) if (r.active !== false) offSchedule.push({ name: r.name, why: 'salaried' })
+      for (const r of stf as any[]) {
+        const et = str(r.employmentType || '').toLowerCase()
+        if (r.salaried) offSchedule.push({ name: r.name, why: 'salaried' })
+        else if (et === 'vendor') offSchedule.push({ name: r.name, why: 'vendor staff' })
+        else if (et === 'contractor') offSchedule.push({ name: r.name, why: 'contractor' })
+      }
+    } catch { /* tags degrade to the amber default */ }
     try { const rep = await blockedUnits(30); fullBlocked = rep.runs } catch { /* brief still sends */ }
     // SEQUENTIAL — the two markets share every upstream and the second ride's the first's caches.
     try { maintMi = await maintData('Miami') } catch { maintMi = null }
@@ -1012,9 +1028,12 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     let shiftTag = ''
     if (opts.showShift && shiftsLoaded) {
       const sh = shiftOf(name)
+      const off = sh ? null : offSchedule.find(o => nameMatches(o.name, name))
       shiftTag = sh
         ? ` <span style="${S.muted};font-size:11.5px">· ${esc(str(sh.label || ''))}</span>`
-        : ` <span style="${S.amber};font-size:11.5px">· not on the Homebase schedule</span>`
+        : off
+          ? ` <span style="${S.muted};font-size:11.5px">· ${esc(off.why)} — no Homebase shift expected</span>`
+          : ` <span style="${S.amber};font-size:11.5px">· not on the Homebase schedule</span>`
     }
     const nothing = !mine.length && !others.length
       ? `<tr><td colspan="3" style="${S.td};padding-left:40px"><span style="${S.amber}">${t('nothing assigned yet')}</span> <span style="${S.muted}">— ${t('on the clock with no work on the board')}</span></td></tr>`
@@ -1112,7 +1131,10 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
         otherUnassigned.map((o: any) => otherRow(o)).join('') : '')
     const scheduledN = todayShifts.length
     const idleN = rosterNames.filter(n => !!shiftOf(n) && !(byPerson[n] || []).length && !(otherByPerson[n] || []).length).length
-    const unschedN = rosterNames.filter(n => shiftsLoaded && !shiftOf(n) && ((byPerson[n] || []).length || (otherByPerson[n] || []).length)).length
+    // Only hourly people count as "holding work but not scheduled" — salaried/vendor staff never
+    // have a Homebase shift, so their work on the board is the normal state, not a gap.
+    const unschedN = rosterNames.filter(n => shiftsLoaded && !shiftOf(n) && !offSchedule.some(o => nameMatches(o.name, n))
+      && ((byPerson[n] || []).length || (otherByPerson[n] || []).length)).length
     const head = shiftsLoaded
       ? `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${scheduledN}</b> on the Homebase schedule` +
         (todayOpenShifts ? ` · <span style="${S.red}">${todayOpenShifts} open shift${todayOpenShifts === 1 ? '' : 's'} unfilled</span>` : '') +
