@@ -986,7 +986,17 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <tr><td style="${S.td};width:30px;text-align:center"><span style="${S.muted};font-size:11px">•</span></td>
     <td style="${S.td}">${esc(t.unit)} <span style="${S.muted};font-size:12px">· ${esc(t.task)}</span>${me ? withOthers(t.assignee, me) : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap">${t.state === 'done' ? `<span style="${S.green}">${tt('done')}</span>` : t.state === 'running' ? `<span style="${S.amber}">${tt('in progress')}</span>` : `<span style="${S.muted}">${tt('to do')}</span>`}</td></tr>`
-  const personBlock = (name: string) => {
+  // THE SCHEDULE, JOINED TO THE WORK (Jon, 2026-09-03: "HK cleaner scheduled, what they are
+  // assigned to, and all teams working and what they are assigned to"). Ops Command used to print
+  // these as two cards — the Homebase roster with counts, then the Breezeway assignments by
+  // person — and a reader had to join them by eye. One card now: every person on the schedule
+  // OR holding work, their shift beside their name, and their run underneath. The two failure
+  // states get their own words, because they are the whole reason to look: scheduled with
+  // nothing assigned (a paid body with no doors), and assigned with no shift (work that will not
+  // get done unless somebody notices).
+  const shiftOf = (name: string): any | null =>
+    todayShifts.find((s: any) => nameMatches(str(s.name), name)) || null
+  const personBlock = (name: string, opts: { showShift?: boolean } = {}) => {
     const mine = (byPerson[name] || []).slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || a.unit.localeCompare(b.unit))
     const others = otherByPerson[name] || []
     const hotN = mine.filter(c => c.sameDayArrival).length
@@ -999,8 +1009,19 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     // when a tech's day has turned into cleans.
     const dep = crewOf(name)
     const depTag = dep ? ` <span style="${S.muted};font-size:11px">· ${esc(t(dep))}</span>` : ''
+    let shiftTag = ''
+    if (opts.showShift && shiftsLoaded) {
+      const sh = shiftOf(name)
+      shiftTag = sh
+        ? ` <span style="${S.muted};font-size:11.5px">· ${esc(str(sh.label || ''))}</span>`
+        : ` <span style="${S.amber};font-size:11.5px">· not on the Homebase schedule</span>`
+    }
+    const nothing = !mine.length && !others.length
+      ? `<tr><td colspan="3" style="${S.td};padding-left:40px"><span style="${S.amber}">${t('nothing assigned yet')}</span> <span style="${S.muted}">— ${t('on the clock with no work on the board')}</span></td></tr>`
+      : ''
     return `
-    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b>${depTag} <span style="${S.muted}">· ${bits}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b>${depTag}${shiftTag} <span style="${S.muted}">${bits ? '· ' + bits : ''}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
+      nothing +
       mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival, name)).join('') +
       others.map((o: any) => otherRow(o, name)).join('')
   }
@@ -1011,6 +1032,60 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       const sb = (byPerson[b] || []).some(c => c.sameDayArrival) ? 0 : 1
       return sa - sb || ((byPerson[b] || []).length - (byPerson[a] || []).length) || a.localeCompare(b)
     })
+  // OPS COMMAND'S ROSTER — everyone scheduled today plus everyone holding work, grouped by crew.
+  // A person's crew comes from the roster; somebody Homebase knows but the roster does not is
+  // placed by their Homebase role text, so a new hire still lands under the right heading.
+  const crewFromRole = (role: string): string => {
+    const r = role.toLowerCase()
+    return /maint|tech|repair|handy|hvac|plumb|electric/.test(r) ? 'maintenance'
+      : /supervis|lead|manager/.test(r) ? 'supervision'
+      : /inspect|audit|quality/.test(r) ? 'inspection'
+      : /clean|housekeep|turn|hk\b/.test(r) ? 'housekeeping' : 'other'
+  }
+  const CREW_ORDER = ['housekeeping', 'supervision', 'maintenance', 'inspection', 'ccs', 'other']
+  const CREW_LABEL: Record<string, string> = {
+    housekeeping: 'Housekeeping', supervision: 'Supervisors', maintenance: 'Maintenance',
+    inspection: 'Inspection', ccs: 'CCS', other: 'Everyone else',
+  }
+  const rosterNames: string[] = Array.from(new Set([
+    ...everyone,
+    ...todayShifts.map((sh: any) => str(sh.name)).filter(Boolean)
+      // a scheduled name that already matches someone holding work is the same person
+      .filter((n: string) => !everyone.some(e => nameMatches(e, n))),
+  ]))
+  const crewOfAnyone = (name: string): string => {
+    const c = crewOf(name)
+    if (c) return c
+    const sh = shiftOf(name)
+    return crewFromRole(str(sh?.role || ''))
+  }
+  const byCrew: Record<string, string[]> = {}
+  for (const n of rosterNames) (byCrew[crewOfAnyone(n)] ||= []).push(n)
+  const orderPeople = (a: string, b: string) => {
+    const sa = (byPerson[a] || []).some(c => c.sameDayArrival) ? 0 : 1
+    const sb = (byPerson[b] || []).some(c => c.sameDayArrival) ? 0 : 1
+    const wa = (byPerson[a] || []).length + (otherByPerson[a] || []).length
+    const wb = (byPerson[b] || []).length + (otherByPerson[b] || []).length
+    return sa - sb || wb - wa || a.localeCompare(b)
+  }
+  const crewBand = (key: string, names: string[]) => {
+    const sched = names.filter(n => !!shiftOf(n)).length
+    const cleansN = names.reduce((a, n) => a + (byPerson[n] || []).length, 0)
+    const jobsN = names.reduce((a, n) => a + (otherByPerson[n] || []).length, 0)
+    const idle = names.filter(n => !(byPerson[n] || []).length && !(otherByPerson[n] || []).length).length
+    const meta = [
+      shiftsLoaded ? `${sched} ${sched === 1 ? 'scheduled' : 'scheduled'}` : `${names.length} on the board`,
+      cleansN ? `${cleansN} ${cleansN === 1 ? 'clean' : 'cleans'}` : '',
+      jobsN ? `${jobsN} ${jobsN === 1 ? 'job' : 'jobs'}` : '',
+      idle ? `<span style="${S.amber}">${idle} with nothing assigned</span>` : '',
+    ].filter(Boolean).join(' · ')
+    return `
+    <tr><td colspan="3" style="padding:10px 10px 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#4338ca;font-weight:700;border-top:2px solid #e0e7ff">${esc(CREW_LABEL[key] || key)} <span style="font-weight:500;letter-spacing:0;text-transform:none;color:#6b7280">· ${meta}</span></td></tr>`
+  }
+  const rosterRows = CREW_ORDER.filter(k => (byCrew[k] || []).length)
+    .map(k => crewBand(k, byCrew[k]) + byCrew[k].slice().sort(orderPeople).map(n => personBlock(n, { showShift: true })).join(''))
+    .join('')
+
   const cleansRows =
     (unassigned.length ? `
     <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${unassigned.length} · ${t('assign these first')}</span></td></tr>` +
@@ -1018,14 +1093,41 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     (otherUnassigned.length ? `
     <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${otherUnassigned.length} ${otherUnassigned.length === 1 ? t('other job') : t('other jobs')} ${t('with nobody on them')}</span></td></tr>` +
       otherUnassigned.map((o: any) => otherRow(o)).join('') : '') +
-    everyone.map(personBlock).join('')
+    everyone.map(n => personBlock(n)).join('')
 
   // ── ON THE SCHEDULE TODAY (Ops Command). Each shift is cross-checked against the clean board:
   // a housekeeper on the clock with zero doors is the day's quietest problem, so it prints amber
   // right on their row instead of waiting for the staffing check at noon. No dollars — this card
   // is people and work.
-  let onTodayCard = ''
+  // ONE CARD: the schedule and the board, joined (Jon, 2026-09-03). Replaces the separate
+  // "On the schedule today" table — its counts live in the header line now.
+  let teamCard = ''
   if (variant === 'full') {
+    const unassignedTop =
+      (unassigned.length ? `
+    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="color:#b91c1c;opacity:.75">· ${unassigned.length} ${unassigned.length === 1 ? 'clean' : 'cleans'} · assign these first</span></td></tr>` +
+        unassigned.map(c => cleanRow(c, null, c.sameDayArrival)).join('') : '') +
+      (otherUnassigned.length ? `
+    <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="color:#b91c1c;opacity:.75">· ${otherUnassigned.length} ${otherUnassigned.length === 1 ? 'other job' : 'other jobs'} with nobody on them</span></td></tr>` +
+        otherUnassigned.map((o: any) => otherRow(o)).join('') : '')
+    const scheduledN = todayShifts.length
+    const idleN = rosterNames.filter(n => !!shiftOf(n) && !(byPerson[n] || []).length && !(otherByPerson[n] || []).length).length
+    const unschedN = rosterNames.filter(n => shiftsLoaded && !shiftOf(n) && ((byPerson[n] || []).length || (otherByPerson[n] || []).length)).length
+    const head = shiftsLoaded
+      ? `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${scheduledN}</b> on the Homebase schedule` +
+        (todayOpenShifts ? ` · <span style="${S.red}">${todayOpenShifts} open shift${todayOpenShifts === 1 ? '' : 's'} unfilled</span>` : '') +
+        (idleN ? ` · <span style="${S.amber}">${idleN} scheduled with nothing assigned</span>` : '') +
+        (unschedN ? ` · <span style="${S.amber}">${unschedN} holding work but not scheduled</span>` : '') +
+        `</p>`
+      : `<p style="margin:0 0 6px;font-size:12.5px;color:#b45309">Homebase did not answer this morning — shifts are missing from this card; the assignments below are still the Breezeway board.</p>`
+    teamCard = card("Today's team — who is scheduled, and what they are on", rosterNames.length,
+      head + `<table width="100%" cellspacing="0" cellpadding="0">${unassignedTop + rosterRows}</table>` +
+      `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">Shift times are Homebase; assignments are the Breezeway board at 7am. Numbered rows are each housekeeper's departure-clean run, in order. Bulleted rows are everything else on that person. A tag beside a unit means the clean is being covered by another crew.</p>`,
+      '#0891b2', `Homebase · Breezeway · ${niceDay(d.today)}`)
+  }
+
+  let onTodayCard = ''
+  if (false) {
     if (!shiftsLoaded) {
       onTodayCard = card('On the schedule today', null,
         `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Homebase did not answer this morning — today's roster is on the <a href="${APP_URL}/labor" style="color:#2563eb">Labor board</a>.</p>`, '#0891b2')
@@ -1479,8 +1581,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     ? card(t('Top priorities — in order'), priorities.length, bare(priorities.slice(0, 8).join('')) + (priorities.length > 8 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${priorities.length - 8} ${t('more on the boards')}</p>` : ''), '#dc2626')
     : card(t('Top priorities'), null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">${t('Nothing on fire.')}</span> <span style="${S.muted}">${t('Work the list below and keep the 4pm deadline in sight.')}</span></p>`, '#059669')}
   ${!isField && fwdCard ? fwdCard : ''}
-  ${onTodayCard}
-  ${card(t("The team's day — every person, in order"), d.cleans.length + hkAll.length,
+  ${variant === 'full' ? teamCard : card(t("The team's day — every person, in order"), d.cleans.length + hkAll.length,
     (d.cleans.length || hkAll.length)
       ? bare(cleansRows) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${lang === 'es' ? t('HK_FOOTNOTE') : 'Everyone scheduled today is here — housekeeping, maintenance, inspections. Numbered rows are the departure-clean run; work them in that order. Bulleted rows are everything else on that person: strips, linen, restocks, mid-stays, inspections and repairs. A tag beside a unit means the clean is being covered by another crew.'}</p>`
       : emptyLine(t('Nothing on the board today.')))}
