@@ -2,7 +2,7 @@
 // ONBOARDING DESK — mint links, watch progress, assign to the live listing (Jon, 2026-09-02).
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X } from 'lucide-react'
-import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, APPLIANCES, TIERS, TIER_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category, type Tier } from '@/lib/onboarding'
+import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, TIERS, TIER_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category, type Tier } from '@/lib/onboarding'
 
 type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number; items: number; confirmed: number; photos: number; pct: number }
 type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; owner_name: string | null; details: UnitDetails; status: string; listing_id: string | null; listing_name: string | null; created_at: string; updated_at: string; completed_at: string | null; progress: Progress; buy: number; order_id?: string | null }
@@ -200,13 +200,17 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
   }
   // The rule in plain words — what the row means before anyone opens the fine print.
   const ruleText = (it: StandardItem) => {
-    if (it.appliance) return 'when the unit has one'
     if (it.perBed) return /pillow/i.test(it.name) ? 'per bed, by bed size' : (it.qty + ' per bed, sized')
     if (it.perGuest) return it.qty + ' × max guests' + (it.plus ? ' + ' + it.plus : '') + (it.min != null ? ', at least ' + it.min : '') + (it.max != null ? ', at most ' + it.max : '')
     return it.qty === 1 ? '1 per unit' : it.qty + ' per unit'
   }
+  const tierNote: Record<Tier, string> = {
+    must: 'What a guest expects to find in a unit of this shape. Conditional on the feature — "full kitchen" rows exist only when there is one — never optional once it does.',
+    recommended: 'What a good listing has and a guest may ask for.',
+    suggested: 'What separates a great listing from a good one.',
+  }
   const kindNote: Partial<Record<RoomKind, string>> = {
-    kitchen: 'Table settings and flatware run at 2 × max occupancy — one set in use, one in the wash. Appliances appear only when the pre-form says the unit has them.',
+    kitchen: 'If there is a kitchen, the appliances, pots, pans, knives and a full table setting are must-haves. Table settings and flatware run at 2 × max occupancy — one set in use, one in the wash. "No kitchen" still gets a Kitchen corner: mini fridge, microwave, coffee maker.',
     bedroom: 'Bed items are generated per bed and sized from the pre-form (King sheets ≠ Twin sheets). Pillows follow the bed size: 4 on a King/Queen, 2 on a Twin.',
     bathroom: 'Bath towels and washcloths at 2 × max occupancy in the first full bath; every other bath gets 4. Hand towels 2 per bath.',
   }
@@ -232,6 +236,7 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
               <section key={tier} className="rounded-2xl border border-line overflow-hidden">
                 <div className={'px-3 py-2 flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide ' + (tier === 'must' ? 'bg-ink text-white' : tier === 'recommended' ? 'bg-brand-50 text-brand-800' : 'bg-app text-muted')}>
                   {TIER_LABEL[tier]} <span className="font-semibold normal-case tracking-normal opacity-70">{idx.length}</span>
+                  <span className="hidden sm:inline font-normal normal-case tracking-normal opacity-70 truncate">— {tierNote[tier]}</span>
                   <button onClick={() => add(tier)} className={'ml-auto inline-flex items-center gap-1 normal-case tracking-normal font-bold text-[12px] ' + (tier === 'must' ? 'text-white/90' : 'text-brand-700')}><Plus size={13} /> Add</button>
                 </div>
                 {!idx.length && <div className="px-3 py-3 text-[12.5px] text-muted">Nothing here yet.</div>}
@@ -240,21 +245,18 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
                     <div key={i} className="px-3 py-2">
                       <div className="flex items-center gap-2">
                         <input value={it.name} onChange={e => update(i, { name: e.target.value })} className={INPUT + ' flex-1 min-w-0 py-1.5 font-semibold'} placeholder="Item name" />
+                        {it.only && <span className="hidden sm:inline text-[11px] whitespace-nowrap rounded-full px-2 py-0.5 bg-app text-muted border border-line" title="Only when">{ONLY_LABEL[it.only]}</span>}
                         <button onClick={() => setOpen(open === i ? null : i)} className={'text-[12.5px] whitespace-nowrap rounded-lg px-2.5 py-1.5 border ' + (open === i ? 'border-ink bg-ink text-white' : 'border-line bg-app text-ink/80 hover:border-ink')} title="Change the rule">{ruleText(it)}</button>
-                        <span className="w-10 text-right font-bold tabular-nums text-[14px]" title={'For ' + occ + ' guests'}>{it.appliance ? '1' : it.perBed ? (/pillow/i.test(it.name) ? '4' : String(it.qty)) : qtyFor(it, occ)}</span>
+                        <span className="w-10 text-right font-bold tabular-nums text-[14px]" title={'For ' + occ + ' guests'}>{it.perBed ? (/pillow/i.test(it.name) ? '4' : String(it.qty)) : qtyFor(it, occ)}</span>
                         <button onClick={() => remove(i)} className="w-8 h-8 rounded-lg border border-line text-muted grid place-items-center shrink-0" aria-label="Remove"><Trash2 size={13} /></button>
                       </div>
                       {open === i && (
                         <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[12.5px]">
                           <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Rule</span>
-                            <select value={it.appliance ? 'appliance' : it.perBed ? 'bed' : it.perGuest ? 'guest' : 'fixed'} onChange={e => { const v = e.target.value; update(i, { perGuest: v === 'guest', perBed: v === 'bed', appliance: v === 'appliance' ? (it.appliance || 'microwave') : undefined }) }} className={INPUT + ' w-full py-1.5'}>
-                              <option value="fixed">Fixed count per unit</option><option value="guest">Per max guest</option>{kind === 'bedroom' && <option value="bed">Per bed (sized)</option>}{kind === 'kitchen' && <option value="appliance">Appliance (if the unit has it)</option>}
+                            <select value={it.perBed ? 'bed' : it.perGuest ? 'guest' : 'fixed'} onChange={e => { const v = e.target.value; update(i, { perGuest: v === 'guest', perBed: v === 'bed', appliance: undefined }) }} className={INPUT + ' w-full py-1.5'}>
+                              <option value="fixed">Fixed count per unit</option><option value="guest">Per max guest</option>{kind === 'bedroom' && <option value="bed">Per bed (sized)</option>}
                             </select></label>
-                          {it.appliance ? (
-                            <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Which appliance</span><select value={it.appliance} onChange={e => update(i, { appliance: e.target.value as any })} className={INPUT + ' w-full py-1.5'}>{APPLIANCES.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}</select></label>
-                          ) : (
-                            <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">{it.perGuest ? 'Per guest' : it.perBed ? 'Per bed' : 'Count'}</span><input type="number" step={it.perGuest ? 0.5 : 1} min={0} value={it.qty} onChange={e => update(i, { qty: Number(e.target.value) || 0 })} className={INPUT + ' w-full py-1.5'} /></label>
-                          )}
+                          <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">{it.perGuest ? 'Per guest' : it.perBed ? 'Per bed' : 'Count'}</span><input type="number" step={it.perGuest ? 0.5 : 1} min={0} value={it.qty} onChange={e => update(i, { qty: Number(e.target.value) || 0 })} className={INPUT + ' w-full py-1.5'} /></label>
                           {it.perGuest && <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Plus</span><input type="number" value={it.plus ?? 0} onChange={e => update(i, { plus: Number(e.target.value) || 0 })} className={INPUT + ' w-full py-1.5'} /></label>}
                           {it.perGuest && <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">At least / at most</span><span className="flex gap-1"><input type="number" value={it.min ?? ''} placeholder="–" onChange={e => update(i, { min: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-full py-1.5'} /><input type="number" value={it.max ?? ''} placeholder="–" onChange={e => update(i, { max: e.target.value === '' ? undefined : Number(e.target.value) })} className={INPUT + ' w-full py-1.5'} /></span></label>}
                           <label className="block"><span className="block text-[11px] uppercase tracking-wide text-muted mb-1">Category</span><select value={it.category} onChange={e => update(i, { category: e.target.value as Category })} className={INPUT + ' w-full py-1.5'}>{CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}</select></label>
