@@ -45,34 +45,18 @@ export type UnitDetails = {
   notes?: string
 }
 
-// THE APPLIANCE QUESTION (Jon, 2026-09-02: "in the pre-form should ask if kitchen, kitchenette, etc.
-// If kitchenette should ask appliances, if full kitchen should ask what… no kitchen but might have
-// mini fridge, maybe microwave"). One list; the kitchen type only changes which are pre-ticked.
+// APPLIANCES ARE NOT A QUESTION, THEY ARE MUST-HAVES (Jon, 2026-09-03: "must-haves aren't appliances.
+// Must-haves are: if kitchen, they need these appliances / cookware, pots, pans, etc."). The pre-form
+// asks only the STRUCTURAL facts — kitchen type, bedrooms, beds, baths — and the standard says what a
+// unit with that shape must hold. The walker confirms the fridge is there like they confirm the
+// forks; a missing one goes on the buy list. `ApplianceKey` / `APPLIANCES` survive only so an older
+// saved standard still parses; nothing new is written with them.
 export type ApplianceKey = 'fridge' | 'mini_fridge' | 'stove_oven' | 'cooktop' | 'oven' | 'microwave' | 'dishwasher' | 'coffee' | 'espresso' | 'toaster' | 'kettle' | 'blender' | 'air_fryer' | 'wine_fridge' | 'ice_maker' | 'disposal' | 'rice_cooker' | 'slow_cooker'
-export const APPLIANCES: { key: ApplianceKey; label: string; full: boolean; kitchenette: boolean; none: boolean }[] = [
-  { key: 'fridge', label: 'Full refrigerator', full: true, kitchenette: false, none: false },
-  { key: 'mini_fridge', label: 'Mini fridge', full: false, kitchenette: true, none: true },
-  { key: 'stove_oven', label: 'Stove / oven (range)', full: true, kitchenette: false, none: false },
-  { key: 'cooktop', label: 'Cooktop only', full: false, kitchenette: true, none: false },
-  { key: 'oven', label: 'Wall / toaster oven', full: false, kitchenette: false, none: false },
-  { key: 'microwave', label: 'Microwave', full: true, kitchenette: true, none: true },
-  { key: 'dishwasher', label: 'Dishwasher', full: true, kitchenette: false, none: false },
-  { key: 'coffee', label: 'Coffee maker', full: true, kitchenette: true, none: true },
-  { key: 'espresso', label: 'Espresso / Nespresso', full: false, kitchenette: false, none: false },
-  { key: 'toaster', label: 'Toaster', full: true, kitchenette: true, none: false },
-  { key: 'kettle', label: 'Kettle', full: true, kitchenette: true, none: false },
-  { key: 'blender', label: 'Blender', full: true, kitchenette: false, none: false },
-  { key: 'air_fryer', label: 'Air fryer', full: false, kitchenette: false, none: false },
-  { key: 'wine_fridge', label: 'Wine fridge', full: false, kitchenette: false, none: false },
-  { key: 'ice_maker', label: 'Ice maker', full: false, kitchenette: false, none: false },
-  { key: 'disposal', label: 'Garbage disposal', full: true, kitchenette: false, none: false },
-  { key: 'rice_cooker', label: 'Rice cooker', full: false, kitchenette: false, none: false },
-  { key: 'slow_cooker', label: 'Slow cooker / Instant Pot', full: false, kitchenette: false, none: false },
+export const APPLIANCES: { key: ApplianceKey; label: string }[] = [
+  { key: 'fridge', label: 'Full refrigerator' }, { key: 'mini_fridge', label: 'Mini fridge' }, { key: 'stove_oven', label: 'Stove / oven' }, { key: 'cooktop', label: 'Cooktop' }, { key: 'oven', label: 'Wall / toaster oven' },
+  { key: 'microwave', label: 'Microwave' }, { key: 'dishwasher', label: 'Dishwasher' }, { key: 'coffee', label: 'Coffee maker' }, { key: 'espresso', label: 'Espresso' }, { key: 'toaster', label: 'Toaster' }, { key: 'kettle', label: 'Kettle' },
+  { key: 'blender', label: 'Blender' }, { key: 'air_fryer', label: 'Air fryer' }, { key: 'wine_fridge', label: 'Wine fridge' }, { key: 'ice_maker', label: 'Ice maker' }, { key: 'disposal', label: 'Garbage disposal' }, { key: 'rice_cooker', label: 'Rice cooker' }, { key: 'slow_cooker', label: 'Slow cooker' },
 ]
-export function defaultAppliances(kitchen: UnitDetails['kitchen']): ApplianceKey[] {
-  const k = kitchen === 'kitchenette' ? 'kitchenette' : kitchen === 'none' ? 'none' : 'full'
-  return APPLIANCES.filter(a => a[k]).map(a => a.key)
-}
 
 // BEDS (Jon, 2026-09-02: "make the item selection super easy — bedroom, bed size, number of beds").
 // Each bedroom lists its beds by size; everything on or around a bed is generated PER BED and sized:
@@ -86,14 +70,16 @@ export const bedLabel = (k: BedSize) => BED_SIZES.find(b => b.key === k)?.label 
 /** Bedroom keys in order — master first — for a bedroom count. */
 export function bedroomKeys(bedrooms: number): string[] {
   const n = Math.max(0, Math.min(8, Math.round(bedrooms || 0)))
+  if (n === 0) return ['living']   // a studio's bed stands in the living area
   const out: string[] = []
   for (let i = 1; i <= n; i++) out.push(i === 1 ? 'master_bedroom' : 'bedroom_' + i)
   return out
 }
+export const bedroomLabel = (key: string, i: number) => key === 'living' ? 'Studio (bed in the living area)' : i === 0 ? 'Master bedroom' : 'Bedroom ' + (i + 1)
 export function bedsFor(d: UnitDetails, roomKey: string): BedSize[] {
   const b = d.beds && Array.isArray(d.beds[roomKey]) ? d.beds[roomKey].filter(x => BED_SIZES.some(s => s.key === x)) : null
   if (b && b.length) return b
-  return roomKey === 'master_bedroom' ? ['king'] : ['queen']
+  return roomKey === 'master_bedroom' || roomKey === 'living' ? ['king'] : ['queen']
 }
 
 export type Tier = 'must' | 'recommended' | 'suggested'
@@ -119,9 +105,9 @@ export function roomsFor(d: UnitDetails): RoomDef[] {
   let s = 0
   out.push({ key: 'entry', name: 'Entry & hallway', kind: 'entry', sort: s++ })
   out.push({ key: 'living', name: beds === 0 ? 'Studio living area' : 'Living room', kind: 'living', sort: s++ })
-  const appl = Array.isArray(d.appliances) ? d.appliances : defaultAppliances(d.kitchen)
-  if (d.kitchen !== 'none') out.push({ key: 'kitchen', name: d.kitchen === 'kitchenette' ? 'Kitchenette' : 'Kitchen', kind: 'kitchen', sort: s++ })
-  else if (appl.length) out.push({ key: 'kitchen', name: 'Kitchen corner', kind: 'kitchen', sort: s++ })   // no kitchen, but a mini fridge and a microwave still get counted
+  // No kitchen still gets a "Kitchen corner": a mini fridge, a microwave and a coffee maker are the
+  // must-haves of a unit with no kitchen (Jon: "no kitchen but might have mini fridge, maybe microwave").
+  out.push({ key: 'kitchen', name: d.kitchen === 'none' ? 'Kitchen corner' : d.kitchen === 'kitchenette' ? 'Kitchenette' : 'Kitchen', kind: 'kitchen', sort: s++ })
   if (beds >= 1) out.push({ key: 'dining', name: 'Dining area', kind: 'dining', sort: s++ })
   if (beds >= 1) out.push({ key: 'master_bedroom', name: 'Master bedroom', kind: 'bedroom', sort: s++ })
   if (beds >= 1 && fullBaths >= 1) out.push({ key: 'master_bath', name: 'Master bath', kind: 'bathroom', sort: s++ })
@@ -164,7 +150,7 @@ export type StandardItem = {
   min?: number
   max?: number
   brand?: string              // a prompt for the walker: 'size', 'model', 'King'
-  only?: 'full' | 'kitchenette' | 'nokitchen' | 'master' | 'nonmaster' | 'sleeper' | 'fullbath' | 'halfbath' | 'studio'
+  only?: 'full' | 'kitchenette' | 'nokitchen' | 'haskitchen' | 'master' | 'nonmaster' | 'sleeper' | 'fullbath' | 'halfbath' | 'studio'
   tier?: Tier                 // must (default) | recommended | suggested — how the form groups it
   appliance?: ApplianceKey    // included only when the unit's appliance list has it
   perBed?: boolean            // bedroom rows: one per bed, sized (brand = King / Queen / Twin…)
@@ -172,23 +158,28 @@ export type StandardItem = {
 export type InventoryStandard = Partial<Record<RoomKind, StandardItem[]>>
 export const STANDARD_KEY = 'onboarding_standard'
 export const ONLY_LABEL: Record<NonNullable<StandardItem['only']>, string> = {
-  full: 'full kitchen only', kitchenette: 'kitchenette only', nokitchen: 'no-kitchen units only', master: 'master bedroom only', nonmaster: 'other bedrooms only',
+  full: 'full kitchen', kitchenette: 'kitchenette', nokitchen: 'no kitchen', haskitchen: 'any kitchen or kitchenette', master: 'master bedroom only', nonmaster: 'other bedrooms only',
   sleeper: 'if sleeper sofa', fullbath: 'full bath only', halfbath: 'half bath only', studio: 'studio only',
 }
 
 const F = (name: string, category: Category, qty: number, extra: Partial<StandardItem> = {}): StandardItem => ({ name, category, qty, ...extra })
 const G = (name: string, category: Category, per: number, extra: Partial<StandardItem> = {}): StandardItem => ({ name, category, qty: per, perGuest: true, ...extra })
 
-// R = recommended, S = suggested; F/G default to must-have. A = an appliance row, present only when
-// the unit's appliance list says so.
+// R = recommended, S = nice to have; F/G default to must-have.
 const R = (it: StandardItem): StandardItem => ({ ...it, tier: 'recommended' })
 const S = (it: StandardItem): StandardItem => ({ ...it, tier: 'suggested' })
-const A = (key: ApplianceKey, name: string, tier: Tier = 'must'): StandardItem => ({ name, category: 'appliance', qty: 1, appliance: key, tier, brand: 'model' })
 
-// "It should be about 2 per max occupancy on most items… based on two" (Jon). Everything a guest
-// uses at a meal or a shower is 2 × max occupancy: one in use, one in the wash. Fixed counts are
-// for things a unit has one of (a sofa, a stock pot). Floors: 8 for a table setting so a 2-guest
-// studio still hosts; caps keep a 16-sleeper from being told to buy 32 wine glasses.
+// HOW TO READ THIS LIST (the onboarder's checklist, Jon 2026-09-03):
+//   MUST HAVE     what a guest expects to find in a unit of this shape — and what we will not list
+//                 without. If there is a kitchen: the fridge, the stove, the microwave, the coffee
+//                 maker, pots, pans, knives, a full table setting. If there is a bed: sheets, pillows,
+//                 a protector. If there is a shower: towels, a mat, a hair dryer. Conditional on the
+//                 feature (`only`), never optional once the feature exists.
+//   RECOMMENDED   what a good listing has and a guest may ask for — blender, toaster, kettle, a
+//                 second pan, a dresser, a rug.
+//   NICE TO HAVE  what separates a great listing — board games, an espresso machine, beach towels.
+// COUNTS: 2 × max guests on anything a guest uses at a meal or a shower (one in use, one in the wash),
+// floor 8 / cap 24; one per unit for the rest; per bed, sized, for anything on a bed.
 const TWO = { min: 8, max: 24 }
 export const DEFAULT_STANDARD: InventoryStandard = {
   entry: [
@@ -205,28 +196,36 @@ export const DEFAULT_STANDARD: InventoryStandard = {
     S(F('Board games / books', 'other', 3)), S(F('Charging station / USB', 'electronics', 1)), S(F('Bluetooth speaker', 'electronics', 1)), S(F('Plants / greenery', 'decor', 2)),
   ],
   kitchen: [
-    // appliances — asked in the pre-form; present only when ticked. Tiered the way Jon reads them
-    // (2026-09-02: "the must haves are your amenities — plates etc. Recommended would be blender"):
-    // must = what a guest expects to find; recommended = nice to have; suggested = extras.
-    A('fridge', 'Full refrigerator'), A('mini_fridge', 'Mini fridge'), A('stove_oven', 'Stove / oven'), A('cooktop', 'Cooktop'), A('microwave', 'Microwave'), A('coffee', 'Coffee maker'),
-    A('dishwasher', 'Dishwasher', 'recommended'), A('toaster', 'Toaster', 'recommended'), A('kettle', 'Kettle', 'recommended'), A('blender', 'Blender', 'recommended'), A('oven', 'Wall / toaster oven', 'recommended'), A('disposal', 'Garbage disposal', 'recommended'),
-    A('espresso', 'Espresso machine', 'suggested'), A('air_fryer', 'Air fryer', 'suggested'), A('wine_fridge', 'Wine fridge', 'suggested'), A('ice_maker', 'Ice maker', 'suggested'), A('rice_cooker', 'Rice cooker', 'suggested'), A('slow_cooker', 'Slow cooker / Instant Pot', 'suggested'),
-    // table setting — 2 × max occupancy, counted piece by piece
-    G('Dinner plates', 'kitchen', 2, TWO), G('Salad / side plates', 'kitchen', 2, TWO), G('Bowls', 'kitchen', 2, TWO), G('Mugs', 'kitchen', 2, TWO),
-    G('Water glasses', 'kitchen', 2, TWO), G('Wine glasses', 'kitchen', 2, { min: 6, max: 16 }),
-    G('Forks', 'kitchen', 2, TWO), G('Knives (table)', 'kitchen', 2, TWO), G('Spoons (table)', 'kitchen', 2, TWO), G('Teaspoons', 'kitchen', 2, TWO),
-    F('Serving spoons (big spoon)', 'kitchen', 3), F('Serving forks', 'kitchen', 2), R(F('Steak knives', 'kitchen', 6)), R(G('Kids plastic cups / plates', 'kitchen', 1, { min: 4, max: 8 })),
-    // cookware
-    F('Frying pan 10in non-stick', 'kitchen', 1), F('Saucepan 3qt w/ lid', 'kitchen', 1), F('Cutting boards', 'kitchen', 2), F("Chef's knife", 'kitchen', 1), F('Paring knife', 'kitchen', 1),
-    F('Spatula', 'kitchen', 2), F('Wooden spoon', 'kitchen', 2), F('Tongs', 'kitchen', 1), F('Can opener', 'kitchen', 1), F('Wine / bottle opener', 'kitchen', 1), F('Mixing bowls', 'kitchen', 3),
-    F('Colander / strainer', 'kitchen', 1), F('Oven mitts', 'kitchen', 2), F('Kitchen towels', 'linen', 4), F('Dish rack', 'kitchen', 1), F('Trash can', 'other', 1), F('Fire extinguisher', 'safety', 1),
-    R(F('Frying pan 8in', 'kitchen', 1)), R(F('Saucepan 1.5qt w/ lid', 'kitchen', 1)), R(F('Stock pot 8qt w/ lid', 'kitchen', 1, { only: 'full' })), R(F('Sauté pan 4qt w/ lid', 'kitchen', 1, { only: 'full' })),
-    R(F('Baking sheets', 'kitchen', 2, { only: 'full' })), R(F('Baking dish 9x13', 'kitchen', 1, { only: 'full' })), R(F('Bread knife', 'kitchen', 1)), R(F('Slotted spoon', 'kitchen', 1)), R(F('Ladle', 'kitchen', 1)),
-    R(F('Whisk', 'kitchen', 1)), R(F('Kitchen shears', 'kitchen', 1)), R(F('Measuring cups set', 'kitchen', 1)), R(F('Measuring spoons set', 'kitchen', 1)), R(F('Peeler', 'kitchen', 1)), R(F('Grater', 'kitchen', 1)),
-    R(F('Serving bowls', 'kitchen', 2)), R(F('Serving platters', 'kitchen', 2)), R(F('Food storage containers', 'kitchen', 6)), R(F('Trivets', 'kitchen', 2)), R(F('Paper towel holder', 'other', 1)),
-    R(F('Salt & pepper shakers', 'kitchen', 1)), R(F('Recycling bin', 'other', 1)), R(F('Cleaning supplies caddy', 'other', 1)), R(F('Bar stools', 'furniture', 2, { only: 'full' })),
-    S(F('Muffin pan', 'kitchen', 1, { only: 'full' })), S(F('Pizza cutter', 'kitchen', 1)), S(F('Potato masher', 'kitchen', 1)), S(F('Cooking thermometer', 'kitchen', 1)), S(F('Coffee grinder', 'appliance', 1)),
-    S(F('Pitcher', 'kitchen', 1)), S(F('Cocktail shaker set', 'kitchen', 1)), S(F('Knife block / magnet', 'kitchen', 1)), S(F('Spice rack (basics)', 'kitchen', 1)),
+    // ── MUST HAVE — if there is a kitchen, these are in it ──
+    // appliances by kitchen type
+    F('Refrigerator', 'appliance', 1, { only: 'full', brand: 'model' }), F('Stove / oven', 'appliance', 1, { only: 'full', brand: 'model' }), F('Dishwasher', 'appliance', 1, { only: 'full', brand: 'model' }),
+    F('Mini fridge', 'appliance', 1, { only: 'kitchenette', brand: 'model' }), F('Cooktop', 'appliance', 1, { only: 'kitchenette', brand: 'model' }),
+    F('Mini fridge', 'appliance', 1, { only: 'nokitchen', brand: 'model' }),
+    F('Microwave', 'appliance', 1, { brand: 'model' }), F('Coffee maker', 'appliance', 1, { brand: 'model' }),
+    // table setting — 2 × max guests, counted piece by piece
+    G('Dinner plates', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Salad / side plates', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Bowls', 'kitchen', 2, { ...TWO, only: 'haskitchen' }),
+    G('Mugs', 'kitchen', 2, TWO), G('Water glasses', 'kitchen', 2, TWO), G('Wine glasses', 'kitchen', 2, { min: 6, max: 16, only: 'haskitchen' }),
+    G('Forks', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Knives (table)', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Spoons (table)', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Teaspoons', 'kitchen', 2, { ...TWO, only: 'haskitchen' }),
+    F('Serving spoons (big spoon)', 'kitchen', 3, { only: 'haskitchen' }), F('Serving forks', 'kitchen', 2, { only: 'haskitchen' }),
+    // cookware & tools — you can cook a meal with only these
+    F('Frying pan 10in non-stick', 'kitchen', 1, { only: 'haskitchen' }), F('Saucepan 3qt w/ lid', 'kitchen', 1, { only: 'haskitchen' }), F('Stock pot 8qt w/ lid', 'kitchen', 1, { only: 'full' }), F('Baking sheet', 'kitchen', 1, { only: 'full' }),
+    F("Chef's knife", 'kitchen', 1, { only: 'haskitchen' }), F('Paring knife', 'kitchen', 1, { only: 'haskitchen' }), F('Cutting boards', 'kitchen', 2, { only: 'haskitchen' }),
+    F('Spatula', 'kitchen', 2, { only: 'haskitchen' }), F('Wooden spoon', 'kitchen', 2, { only: 'haskitchen' }), F('Tongs', 'kitchen', 1, { only: 'haskitchen' }), F('Mixing bowls', 'kitchen', 3, { only: 'haskitchen' }), F('Colander / strainer', 'kitchen', 1, { only: 'haskitchen' }),
+    F('Can opener', 'kitchen', 1, { only: 'haskitchen' }), F('Wine / bottle opener', 'kitchen', 1), F('Oven mitts', 'kitchen', 2, { only: 'haskitchen' }), F('Kitchen towels', 'linen', 4, { only: 'haskitchen' }),
+    F('Dish rack', 'kitchen', 1, { only: 'haskitchen' }), F('Trash can', 'other', 1), F('Fire extinguisher', 'safety', 1, { only: 'haskitchen' }),
+    // ── RECOMMENDED ──
+    R(F('Toaster', 'appliance', 1, { only: 'haskitchen', brand: 'model' })), R(F('Kettle', 'appliance', 1, { brand: 'model' })), R(F('Blender', 'appliance', 1, { only: 'haskitchen', brand: 'model' })), R(F('Garbage disposal', 'appliance', 1, { only: 'full' })),
+    R(F('Frying pan 8in', 'kitchen', 1, { only: 'haskitchen' })), R(F('Saucepan 1.5qt w/ lid', 'kitchen', 1, { only: 'haskitchen' })), R(F('Sauté pan 4qt w/ lid', 'kitchen', 1, { only: 'full' })),
+    R(F('Baking dish 9x13', 'kitchen', 1, { only: 'full' })), R(F('Bread knife', 'kitchen', 1, { only: 'haskitchen' })), R(F('Slotted spoon', 'kitchen', 1, { only: 'haskitchen' })), R(F('Ladle', 'kitchen', 1, { only: 'haskitchen' })),
+    R(F('Whisk', 'kitchen', 1, { only: 'haskitchen' })), R(F('Kitchen shears', 'kitchen', 1, { only: 'haskitchen' })), R(F('Measuring cups set', 'kitchen', 1, { only: 'haskitchen' })), R(F('Measuring spoons set', 'kitchen', 1, { only: 'haskitchen' })),
+    R(F('Peeler', 'kitchen', 1, { only: 'haskitchen' })), R(F('Grater', 'kitchen', 1, { only: 'haskitchen' })), R(F('Steak knives', 'kitchen', 6, { only: 'haskitchen' })), R(G('Kids plastic cups / plates', 'kitchen', 1, { min: 4, max: 8, only: 'haskitchen' })),
+    R(F('Serving bowls', 'kitchen', 2, { only: 'haskitchen' })), R(F('Serving platters', 'kitchen', 2, { only: 'haskitchen' })), R(F('Food storage containers', 'kitchen', 6, { only: 'haskitchen' })), R(F('Trivets', 'kitchen', 2, { only: 'haskitchen' })),
+    R(F('Paper towel holder', 'other', 1)), R(F('Salt & pepper shakers', 'kitchen', 1, { only: 'haskitchen' })), R(F('Recycling bin', 'other', 1)), R(F('Cleaning supplies caddy', 'other', 1)), R(F('Bar stools', 'furniture', 2, { only: 'full' })),
+    // ── NICE TO HAVE ──
+    S(F('Espresso / Nespresso machine', 'appliance', 1)), S(F('Air fryer', 'appliance', 1, { only: 'full' })), S(F('Wine fridge', 'appliance', 1, { only: 'full' })), S(F('Ice maker', 'appliance', 1)),
+    S(F('Rice cooker', 'appliance', 1, { only: 'full' })), S(F('Slow cooker / Instant Pot', 'appliance', 1, { only: 'full' })), S(F('Coffee grinder', 'appliance', 1)),
+    S(F('Muffin pan', 'kitchen', 1, { only: 'full' })), S(F('Pizza cutter', 'kitchen', 1, { only: 'haskitchen' })), S(F('Potato masher', 'kitchen', 1, { only: 'haskitchen' })), S(F('Cooking thermometer', 'kitchen', 1, { only: 'full' })),
+    S(F('Pitcher', 'kitchen', 1)), S(F('Cocktail shaker set', 'kitchen', 1)), S(F('Knife block / magnet', 'kitchen', 1, { only: 'haskitchen' })), S(F('Spice rack (basics)', 'kitchen', 1, { only: 'haskitchen' })),
   ],
   dining: [
     F('Dining table', 'furniture', 1), G('Dining chairs', 'furniture', 1, { min: 2, max: 10 }), F('Pendant / dining light', 'decor', 1),
@@ -296,17 +295,22 @@ export function itemsFor(room: RoomDef, d: UnitDetails, standard: InventoryStand
   const firstFullBath = room.key === 'master_bath' || room.key === 'bathroom_1'
   const sleeper = Math.max(0, Math.round(n(d.sleeperSofa)))
   const beds = Math.round(n(d.bedrooms))
-  const rows = standard[room.kind] || DEFAULT_STANDARD[room.kind] || []
-  const appl = Array.isArray(d.appliances) ? d.appliances : defaultAppliances(d.kitchen)
+  const kitchen = d.kitchen || 'full'
+  // A studio's bed lives in the living area: the bedroom standard's per-bed rows (frame, mattress,
+  // sheets, pillows…) join the living room list so the walker counts them where they stand.
+  const studioLiving = room.kind === 'living' && beds === 0
+  const rows: StandardItem[] = [
+    ...(standard[room.kind] || DEFAULT_STANDARD[room.kind] || []),
+    ...(studioLiving ? (standard.bedroom || DEFAULT_STANDARD.bedroom || []).filter(r => r.perBed || /nightstand|bedside lamp|hangers/i.test(r.name)) : []),
+  ]
   const out: ItemDef[] = []
   for (const it of rows) {
-    if (it.appliance && !appl.includes(it.appliance)) continue
-    // A "kitchen corner" (no kitchen, a mini fridge and a microwave) holds appliances and nothing to cook with.
-    if (room.kind === 'kitchen' && d.kitchen === 'none' && !it.appliance && it.only !== 'nokitchen') continue
+    // Older saved standards may still carry appliance-keyed rows: treat them as plain rows gated by `only`.
     switch (it.only) {
-      case 'full': if (d.kitchen !== 'full' && d.kitchen != null) continue; break
-      case 'kitchenette': if (d.kitchen !== 'kitchenette') continue; break
-      case 'nokitchen': if (d.kitchen !== 'none') continue; break
+      case 'full': if (kitchen !== 'full') continue; break
+      case 'kitchenette': if (kitchen !== 'kitchenette') continue; break
+      case 'nokitchen': if (kitchen !== 'none') continue; break
+      case 'haskitchen': if (kitchen === 'none') continue; break
       case 'master': if (!master) continue; break
       case 'nonmaster': if (master) continue; break
       case 'sleeper': if (!sleeper) continue; break
@@ -315,7 +319,7 @@ export function itemsFor(room: RoomDef, d: UnitDetails, standard: InventoryStand
       case 'studio': if (beds !== 0) continue; break
     }
     if (room.kind === 'living' && sleeper && it.name === 'Sofa') continue          // the sleeper IS the sofa
-    if (it.perBed && room.kind === 'bedroom') {
+    if (it.perBed && (room.kind === 'bedroom' || studioLiving)) {
       // One line per bed SIZE in the room, sized in `brand`, so the walker counts King sheets and Twin sheets apart.
       const beds = bedsFor(d, room.key)
       const bySize: Partial<Record<BedSize, number>> = {}; for (const b of beds) bySize[b] = (bySize[b] || 0) + 1
