@@ -54,8 +54,8 @@ export type UnitDetails = {
 // saved standard still parses; nothing new is written with them.
 export type ApplianceKey = 'fridge' | 'mini_fridge' | 'stove_oven' | 'cooktop' | 'oven' | 'microwave' | 'dishwasher' | 'coffee' | 'espresso' | 'toaster' | 'kettle' | 'blender' | 'air_fryer' | 'wine_fridge' | 'ice_maker' | 'disposal' | 'rice_cooker' | 'slow_cooker'
 export const APPLIANCES: { key: ApplianceKey; label: string }[] = [
-  { key: 'fridge', label: 'Full refrigerator' }, { key: 'mini_fridge', label: 'Mini fridge' }, { key: 'stove_oven', label: 'Stove / oven' }, { key: 'cooktop', label: 'Cooktop' }, { key: 'oven', label: 'Wall / toaster oven' },
-  { key: 'microwave', label: 'Microwave' }, { key: 'dishwasher', label: 'Dishwasher' }, { key: 'coffee', label: 'Coffee maker' }, { key: 'espresso', label: 'Espresso' }, { key: 'toaster', label: 'Toaster' }, { key: 'kettle', label: 'Kettle' },
+  { key: 'fridge', label: 'Full refrigerator' }, { key: 'mini_fridge', label: 'Mini fridge' }, { key: 'stove_oven', label: 'Stove / oven (range)' }, { key: 'cooktop', label: 'Cooktop' }, { key: 'oven', label: 'Wall / toaster oven' },
+  { key: 'microwave', label: 'Microwave' }, { key: 'dishwasher', label: 'Dishwasher' }, { key: 'coffee', label: 'Coffee maker (drip)' }, { key: 'espresso', label: 'Espresso' }, { key: 'toaster', label: 'Toaster' }, { key: 'kettle', label: 'Kettle' },
   { key: 'blender', label: 'Blender' }, { key: 'air_fryer', label: 'Air fryer' }, { key: 'wine_fridge', label: 'Wine fridge' }, { key: 'ice_maker', label: 'Ice maker' }, { key: 'disposal', label: 'Garbage disposal' }, { key: 'rice_cooker', label: 'Rice cooker' }, { key: 'slow_cooker', label: 'Slow cooker' },
 ]
 
@@ -230,39 +230,39 @@ const S = (it: StandardItem): StandardItem => ({ ...it, tier: 'suggested' })
 const TWO = { min: 8, max: 24 }
 export const DEFAULT_STANDARD: InventoryStandard = {
   entry: [
-    F('Smart lock / keypad', 'safety', 1), F('Smoke / CO detector', 'safety', 1), F('Fire extinguisher', 'safety', 1), F('First-aid kit', 'safety', 1),
+    F('Smart lock / keypad', 'safety', 1), F('Smoke detector', 'safety', 1), F('Fire extinguisher', 'safety', 1), F('First-aid kit', 'safety', 1),
     F('Wi-Fi router', 'electronics', 1), F('Doormat', 'decor', 1),
     R(F('Console table', 'furniture', 1)), R(F('Mirror', 'decor', 1)), R(F('Coat hooks / rack', 'furniture', 1)), R(F('Luggage rack', 'furniture', 1)), R(F('Flashlight', 'safety', 1)),
-    S(F('Umbrella', 'other', 2)), S(F('Shoe tray', 'decor', 1)),
+    S(F('Umbrella', 'other', 2)), S(F('Shoe rack / tray', 'decor', 1)),
   ],
   living: [
     F('Sofa', 'furniture', 1), F('Sleeper sofa', 'furniture', 1, { only: 'sleeper' }), F('Sleeper sofa bedding set', 'linen', 1, { only: 'sleeper' }), F('Sleeper sofa pillows', 'linen', 2, { only: 'sleeper' }),
-    F('Coffee table', 'furniture', 1), F('TV', 'electronics', 1, { brand: 'size' }), F('TV remote', 'electronics', 1), F('A/C thermostat', 'appliance', 1), F('Curtains / blinds', 'decor', 1),
-    R(F('Armchair', 'furniture', 1)), R(F('Side table', 'furniture', 2)), R(F('TV stand / console', 'furniture', 1)), R(F('Streaming device', 'electronics', 1)), R(F('Floor / table lamp', 'decor', 2)),
+    F('Coffee table', 'furniture', 1), F('TV', 'electronics', 1, { brand: 'size' }), F('TV remote', 'electronics', 1), F('A/C thermostat', 'appliance', 1), F('Curtains / drapes', 'decor', 1),
+    R(F('Armchair', 'furniture', 1)), R(F('Side table', 'furniture', 2)), R(F('Console / TV stand', 'furniture', 1)), R(F('Streaming device', 'electronics', 1)), R(F('Floor lamp', 'decor', 2)),
     R(F('Rug', 'decor', 1)), R(F('Throw pillows', 'decor', 4)), R(F('Throw blanket', 'linen', 2)), R(F('Wall art', 'decor', 2)),
-    S(F('Board games / books', 'other', 3)), S(F('Charging station / USB', 'electronics', 1)), S(F('Bluetooth speaker', 'electronics', 1)), S(F('Plants / greenery', 'decor', 2)),
+    S(F('Board games', 'other', 3)), S(F('Charging station / USB', 'electronics', 1)), S(F('Bluetooth speaker', 'electronics', 1)), S(F('Plants / greenery', 'decor', 2)),
   ],
   kitchen: [
     // ── MUST HAVE — if there is a kitchen, these are in it ──
     // appliances by kitchen type
-    F('Refrigerator', 'appliance', 1, { only: 'full', brand: 'model' }), F('Stove / oven', 'appliance', 1, { only: 'full', brand: 'model' }), F('Dishwasher', 'appliance', 1, { only: 'full', brand: 'model' }),
+    F('Refrigerator', 'appliance', 1, { only: 'full', brand: 'model' }), F('Stove / oven (range)', 'appliance', 1, { only: 'full', brand: 'model' }), F('Dishwasher', 'appliance', 1, { only: 'full', brand: 'model' }),
     F('Mini fridge', 'appliance', 1, { only: 'kitchenette', brand: 'model' }), F('Cooktop', 'appliance', 1, { only: 'kitchenette', brand: 'model' }),
     F('Mini fridge', 'appliance', 1, { only: 'nokitchen', brand: 'model' }),
-    F('Microwave', 'appliance', 1, { brand: 'model' }), F('Coffee maker', 'appliance', 1, { brand: 'model' }),
+    F('Microwave', 'appliance', 1, { brand: 'model' }), F('Coffee maker (drip)', 'appliance', 1, { brand: 'model' }),
     // table setting — 2 × max guests, counted piece by piece
     G('Dinner plates', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Salad / side plates', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Bowls', 'kitchen', 2, { ...TWO, only: 'haskitchen' }),
     G('Mugs', 'kitchen', 2, TWO), G('Water glasses', 'kitchen', 2, TWO), G('Wine glasses', 'kitchen', 2, { min: 6, max: 16, only: 'haskitchen' }),
     G('Forks', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Knives (table)', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Spoons (table)', 'kitchen', 2, { ...TWO, only: 'haskitchen' }), G('Teaspoons', 'kitchen', 2, { ...TWO, only: 'haskitchen' }),
-    F('Serving spoons (big spoon)', 'kitchen', 3, { only: 'haskitchen' }), F('Serving forks', 'kitchen', 2, { only: 'haskitchen' }),
+    F('Serving spoon (big spoon)', 'kitchen', 3, { only: 'haskitchen' }), F('Serving fork', 'kitchen', 2, { only: 'haskitchen' }),
     // cookware & tools — you can cook a meal with only these
-    F('Frying pan 10in non-stick', 'kitchen', 1, { only: 'haskitchen' }), F('Saucepan 3qt w/ lid', 'kitchen', 1, { only: 'haskitchen' }), F('Stock pot 8qt w/ lid', 'kitchen', 1, { only: 'full' }), F('Baking sheet', 'kitchen', 1, { only: 'full' }),
-    F("Chef's knife", 'kitchen', 1, { only: 'haskitchen' }), F('Paring knife', 'kitchen', 1, { only: 'haskitchen' }), F('Cutting boards', 'kitchen', 2, { only: 'haskitchen' }),
+    F('Frying pan 10in', 'kitchen', 1, { only: 'haskitchen' }), F('Saucepan 3qt w/ lid', 'kitchen', 1, { only: 'haskitchen' }), F('Stock pot 8qt w/ lid', 'kitchen', 1, { only: 'full' }), F('Baking sheet', 'kitchen', 1, { only: 'full' }),
+    F("Chef's knife", 'kitchen', 1, { only: 'haskitchen' }), F('Paring knife', 'kitchen', 1, { only: 'haskitchen' }), F('Cutting board', 'kitchen', 2, { only: 'haskitchen' }),
     F('Spatula', 'kitchen', 2, { only: 'haskitchen' }), F('Wooden spoon', 'kitchen', 2, { only: 'haskitchen' }), F('Tongs', 'kitchen', 1, { only: 'haskitchen' }), F('Mixing bowls', 'kitchen', 3, { only: 'haskitchen' }), F('Colander / strainer', 'kitchen', 1, { only: 'haskitchen' }),
     F('Can opener', 'kitchen', 1, { only: 'haskitchen' }), F('Wine / bottle opener', 'kitchen', 1), F('Oven mitts', 'kitchen', 2, { only: 'haskitchen' }), F('Kitchen towels', 'linen', 4, { only: 'haskitchen' }),
     F('Dish rack', 'kitchen', 1, { only: 'haskitchen' }), F('Trash can', 'other', 1), F('Fire extinguisher', 'safety', 1, { only: 'haskitchen' }),
     // ── RECOMMENDED ──
     R(F('Toaster', 'appliance', 1, { only: 'haskitchen', brand: 'model' })), R(F('Kettle', 'appliance', 1, { brand: 'model' })), R(F('Blender', 'appliance', 1, { only: 'haskitchen', brand: 'model' })), R(F('Garbage disposal', 'appliance', 1, { only: 'full' })),
-    R(F('Frying pan 8in', 'kitchen', 1, { only: 'haskitchen' })), R(F('Saucepan 1.5qt w/ lid', 'kitchen', 1, { only: 'haskitchen' })), R(F('Sauté pan 4qt w/ lid', 'kitchen', 1, { only: 'full' })),
+    R(F('Frying pan 8in', 'kitchen', 1, { only: 'haskitchen' })), R(F('Saucepan 1.5qt w/ lid', 'kitchen', 1, { only: 'haskitchen' })), R(F('Sauté pan w/ lid', 'kitchen', 1, { only: 'full' })),
     R(F('Baking dish 9x13', 'kitchen', 1, { only: 'full' })), R(F('Bread knife', 'kitchen', 1, { only: 'haskitchen' })), R(F('Slotted spoon', 'kitchen', 1, { only: 'haskitchen' })), R(F('Ladle', 'kitchen', 1, { only: 'haskitchen' })),
     R(F('Whisk', 'kitchen', 1, { only: 'haskitchen' })), R(F('Kitchen shears', 'kitchen', 1, { only: 'haskitchen' })), R(F('Measuring cups set', 'kitchen', 1, { only: 'haskitchen' })), R(F('Measuring spoons set', 'kitchen', 1, { only: 'haskitchen' })),
     R(F('Peeler', 'kitchen', 1, { only: 'haskitchen' })), R(F('Grater', 'kitchen', 1, { only: 'haskitchen' })), R(F('Steak knives', 'kitchen', 6, { only: 'haskitchen' })), R(G('Kids plastic cups / plates', 'kitchen', 1, { min: 4, max: 8, only: 'haskitchen' })),
@@ -277,7 +277,7 @@ export const DEFAULT_STANDARD: InventoryStandard = {
   dining: [
     F('Dining table', 'furniture', 1), G('Dining chairs', 'furniture', 1, { min: 2, max: 10 }), F('Pendant / dining light', 'decor', 1),
     R(G('Placemats', 'kitchen', 1, { min: 4, max: 12 })), R(F('Coasters', 'kitchen', 6)), R(F('Wall art', 'decor', 1)),
-    S(F('High chair', 'furniture', 1)), S(G('Cloth napkins', 'linen', 2, TWO)), S(F('Table runner / centerpiece', 'decor', 1)),
+    S(F('High chair', 'furniture', 1)), S(G('Cloth napkins', 'linen', 2, TWO)), S(F('Table runner', 'decor', 1)),
   ],
   bedroom: [
     // per bed, sized from the pre-form (a King and a Twin in one room = two lines each)
@@ -286,30 +286,30 @@ export const DEFAULT_STANDARD: InventoryStandard = {
     F('Nightstands', 'furniture', 2), F('Bedside lamps', 'decor', 2), F('Blackout curtains', 'decor', 1), F('Hangers', 'other', 20), F('Smoke detector', 'safety', 1), F('Safe', 'safety', 1, { only: 'master' }),
     R(F('Headboard', 'furniture', 1, { perBed: true })), R(F('Dresser', 'furniture', 1)), R(F('TV', 'electronics', 1, { brand: 'size' })), R(F('TV remote', 'electronics', 1)), R(F('Mirror', 'decor', 1)),
     R(F('Extra blanket', 'linen', 1)), R(F('Rug', 'decor', 1)), R(F('Wall art', 'decor', 1)), R(F('Alarm clock / charger', 'electronics', 1)), R(F('Iron & ironing board', 'other', 1, { only: 'master' })), R(F('Luggage rack', 'furniture', 1)),
-    S(F('Bench / reading chair', 'furniture', 1)), S(F('Fan', 'appliance', 1)), S(F('Laundry hamper', 'other', 1)), S(F('Full-length mirror', 'decor', 1, { only: 'master' })),
+    S(F('Reading chair', 'furniture', 1)), S(F('Fan', 'appliance', 1)), S(F('Laundry hamper', 'other', 1)), S(F('Full-length mirror', 'decor', 1, { only: 'master' })),
   ],
   bathroom: [
     F('Hand towels', 'linen', 2), F('Soap dispenser', 'other', 1), F('Trash can', 'other', 1), F('Toilet brush', 'other', 1), F('Plunger', 'other', 1), F('Mirror', 'decor', 1), F('Toilet paper holder', 'other', 1), F('Towel bar / hooks', 'other', 1),
     // full bath — bath towels and washcloths at 2 × occupancy in the FIRST full bath (every other bath gets 4)
     G('Bath towels', 'linen', 2, { min: 4, max: 24, only: 'fullbath' }), G('Washcloths', 'linen', 2, { min: 4, max: 24, only: 'fullbath' }), F('Bath mat', 'linen', 1, { only: 'fullbath' }),
     F('Shower curtain / glass door', 'other', 1, { only: 'fullbath' }), F('Hair dryer', 'appliance', 1, { only: 'fullbath' }),
-    R(F('Shower liner', 'other', 1, { only: 'fullbath' })), R(F('Shelving / storage', 'furniture', 1, { only: 'fullbath' })), R(F('Shower caddy', 'other', 1, { only: 'fullbath' })), R(F('Makeup towels (dark)', 'linen', 2, { only: 'fullbath' })),
-    S(G('Pool / beach towels', 'linen', 1, { min: 2, max: 12, only: 'fullbath' })), S(F('Magnifying mirror', 'decor', 1, { only: 'fullbath' })), S(F('Bath robe', 'linen', 2, { only: 'fullbath' })), S(F('Scale', 'other', 1, { only: 'fullbath' })),
+    R(F('Shower liner', 'other', 1, { only: 'fullbath' })), R(F('Bathroom shelving / storage', 'furniture', 1, { only: 'fullbath' })), R(F('Shower caddy / shelf', 'other', 1, { only: 'fullbath' })), R(F('Makeup towels (dark)', 'linen', 2, { only: 'fullbath' })),
+    S(G('Pool / beach towels', 'linen', 1, { min: 2, max: 12, only: 'fullbath' })), S(F('Magnifying mirror', 'decor', 1, { only: 'fullbath' })), S(F('Bath robes', 'linen', 2, { only: 'fullbath' })), S(F('Scale', 'other', 1, { only: 'fullbath' })),
   ],
   balcony: [
     F('Outdoor chairs', 'furniture', 2), F('Outdoor table', 'furniture', 1),
-    R(F('Outdoor light', 'decor', 1)), R(F('Outdoor cushions', 'decor', 2)),
-    S(F('Lounge chair', 'furniture', 1)), S(F('Planter', 'decor', 1)), S(F('Outdoor rug', 'decor', 1)),
+    R(F('Outdoor light / string lights', 'decor', 1)), R(F('Outdoor cushions', 'decor', 2)),
+    S(F('Lounge chairs', 'furniture', 1)), S(F('Planters', 'decor', 1)), S(F('Outdoor rug', 'decor', 1)),
   ],
   laundry: [
     F('Washer', 'appliance', 1, { brand: 'model' }), F('Dryer', 'appliance', 1, { brand: 'model' }), F('Laundry basket', 'other', 1), F('Vacuum', 'appliance', 1), F('Broom & dustpan', 'other', 1), F('Mop & bucket', 'other', 1),
     R(F('Detergent', 'other', 1)), R(F('Drying rack', 'other', 1)), R(F('Spare light bulbs', 'other', 4)), R(F('Spare batteries', 'other', 4)),
-    S(F('Iron', 'other', 1)), S(F('Steamer', 'appliance', 1)), S(F('Lint roller', 'other', 1)),
+    S(F('Iron & ironing board', 'other', 1)), S(F('Steamer', 'appliance', 1)), S(F('Lint roller', 'other', 1)),
   ],
   office: [
-    F('Desk', 'furniture', 1), F('Desk chair', 'furniture', 1), F('Desk lamp', 'decor', 1), F('Power strip / outlets at desk', 'electronics', 1),
+    F('Desk', 'furniture', 1), F('Desk chair', 'furniture', 1), F('Desk lamp', 'decor', 1), F('Power strip', 'electronics', 1),
     R(F('Monitor', 'electronics', 1, { brand: 'size' })), R(F('Bookshelf', 'furniture', 1)), R(F('Wall art', 'decor', 1)), R(F('Rug', 'decor', 1)),
-    S(F('Printer', 'electronics', 1)), S(F('Whiteboard', 'other', 1)), S(F('Sleeper sofa / daybed', 'furniture', 1)),
+    S(F('Printer', 'electronics', 1)), S(F('Whiteboard', 'other', 1)), S(F('Daybed', 'furniture', 1)),
   ],
   other: [],
 }
@@ -431,8 +431,8 @@ export type RoomAnswers = Record<string, any>
 
 const APPL = (v: string, l = v) => ({ v, l })
 export const KITCHEN_APPLIANCE_OPTIONS = [
-  APPL('Refrigerator', 'Full fridge'), APPL('Mini fridge'), APPL('Stove / oven', 'Stove / oven'), APPL('Cooktop', 'Cooktop only'), APPL('Microwave'), APPL('Dishwasher'),
-  APPL('Coffee maker'), APPL('Toaster'), APPL('Kettle'), APPL('Blender'), APPL('Garbage disposal', 'Disposal'), APPL('Espresso / Nespresso machine', 'Espresso'),
+  APPL('Refrigerator', 'Full fridge'), APPL('Mini fridge'), APPL('Stove / oven (range)', 'Stove / oven'), APPL('Cooktop', 'Cooktop only'), APPL('Microwave'), APPL('Dishwasher'),
+  APPL('Coffee maker (drip)', 'Coffee maker'), APPL('Toaster'), APPL('Kettle'), APPL('Blender'), APPL('Garbage disposal', 'Disposal'), APPL('Espresso / Nespresso machine', 'Espresso'),
   APPL('Air fryer'), APPL('Wine fridge'), APPL('Ice maker'), APPL('Rice cooker'), APPL('Slow cooker / Instant Pot', 'Slow cooker'), APPL('Coffee grinder'),
 ]
 const KITCHEN_APPLIANCE_NAMES = new Set(KITCHEN_APPLIANCE_OPTIONS.map(o => o.v))
@@ -454,8 +454,8 @@ export function roomQuestions(room: RoomDef, d: UnitDetails): RoomQuestion[] {
     ]
     case 'kitchen': return [
       { key: 'appliances', label: 'Appliances in the ' + (kitchen === 'none' ? 'unit' : 'kitchen'), type: 'multi',
-        default: kitchen === 'full' ? ['Refrigerator', 'Stove / oven', 'Dishwasher', 'Microwave', 'Coffee maker', 'Toaster', 'Kettle', 'Blender']
-          : kitchen === 'kitchenette' ? ['Mini fridge', 'Cooktop', 'Microwave', 'Coffee maker', 'Toaster', 'Kettle'] : ['Mini fridge', 'Microwave', 'Coffee maker'],
+        default: kitchen === 'full' ? ['Refrigerator', 'Stove / oven (range)', 'Dishwasher', 'Microwave', 'Coffee maker (drip)', 'Toaster', 'Kettle', 'Blender']
+          : kitchen === 'kitchenette' ? ['Mini fridge', 'Cooktop', 'Microwave', 'Coffee maker (drip)', 'Toaster', 'Kettle'] : ['Mini fridge', 'Microwave', 'Coffee maker (drip)'],
         options: KITCHEN_APPLIANCE_OPTIONS },
       { key: 'barstools', label: 'Bar / counter stools', type: 'count', default: kitchen === 'full' ? 2 : 0, max: 8 },
     ]
@@ -470,12 +470,12 @@ export function roomQuestions(room: RoomDef, d: UnitDetails): RoomQuestion[] {
       { key: 'nightstands', label: 'Nightstands', type: 'count', default: 2, max: 4 },
     ]
     case 'bathroom': return room.key === 'half_bath' ? [
-      { key: 'storage', label: 'Shelving / storage', type: 'yn', default: false },
+      { key: 'storage', label: 'Bathroom shelving / storage', type: 'yn', default: false },
     ] : [
       { key: 'bath', label: 'Shower / tub', type: 'choice', default: 'shower', options: [{ v: 'shower', l: 'Shower' }, { v: 'tub', l: 'Tub' }, { v: 'both', l: 'Tub + shower' }] },
       { key: 'door', label: 'Shower enclosure', type: 'choice', default: 'glass', options: [{ v: 'glass', l: 'Glass door' }, { v: 'curtain', l: 'Curtain' }, { v: 'none', l: 'Open / none' }] },
       { key: 'hairdryer', label: 'Hair dryer', type: 'yn', default: true },
-      { key: 'storage', label: 'Shelving / storage', type: 'yn', default: true },
+      { key: 'storage', label: 'Bathroom shelving / storage', type: 'yn', default: true },
     ]
     case 'balcony': return [
       { key: 'seats', label: 'Chairs', type: 'count', default: 2, max: 8 },
@@ -524,7 +524,7 @@ export function applyAnswers(items: ItemDef[], room: RoomDef, d: UnitDetails, a:
         list.unshift({ name: 'Sleeper sofa', category: 'furniture', qty: 1, tier: 'must' })
         if (!list.some(it => /sleeper sofa bedding/i.test(it.name))) list.push({ name: 'Sleeper sofa bedding set', category: 'linen', qty: 1, tier: 'must' }, { name: 'Sleeper sofa pillows', category: 'linen', qty: 2, tier: 'must' })
       }
-      list = list.map(it => /^Armchair$/i.test(it.name) ? { ...it, qty: cnt('armchairs') } : /floor \/ table lamp/i.test(it.name) ? { ...it, qty: cnt('lamps') } : it).filter(it => it.qty > 0 || !/armchair|lamp/i.test(it.name))
+      list = list.map(it => /^Armchair$/i.test(it.name) ? { ...it, qty: cnt('armchairs') } : /floor lamp/i.test(it.name) ? { ...it, qty: cnt('lamps') } : it).filter(it => it.qty > 0 || !/armchair|lamp/i.test(it.name))
       if (!yes('rug')) list = list.filter(drop(/^rug$/i))
       break
     case 'kitchen': {
@@ -566,7 +566,7 @@ export function applyAnswers(items: ItemDef[], room: RoomDef, d: UnitDetails, a:
     case 'laundry':
       if (a.machines === 'none') list = list.filter(drop(/^washer$|^dryer$/i))
       if (a.machines === 'combo') list = list.filter(drop(/^dryer$/i)).map(it => /^washer$/i.test(it.name) ? { ...it, name: 'Washer / dryer combo' } : it)
-      if (yes('iron')) list = list.map(it => /^Iron$/i.test(it.name) ? { ...it, name: 'Iron & ironing board', tier: 'must' as Tier } : it)
+      if (yes('iron')) list = list.map(it => /^Iron & ironing board$/i.test(it.name) ? { ...it, tier: 'must' as Tier } : it)
       break
     case 'office':
       if (!yes('monitor')) list = list.filter(drop(/monitor/i))
