@@ -6,6 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -39,8 +40,9 @@ export async function GET(req: NextRequest) {
     // returns nothing (ilike quirk / odd names), fall back to a recent scan filtered in code.
     const lRes = await db.from('guesty_listings').select('id,nickname,title,building,address_city')
     let rows: any[] = []
-    const nf = await db.from('breezeway_tasks_sync').select(COLS).or('name.ilike.%glitch%,name.ilike.%guest reported%').limit(2000)
-    rows = (nf.data || []) as any[]
+    // PAGED (2026-09-03): lifetime guest-reported tasks pass 1,000; .limit(2000) returned 1,000.
+    const nf = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select(COLS).or('name.ilike.%glitch%,name.ilike.%guest reported%').order('id').range(a, b), 6)
+    rows = (nf.rows || []) as any[]
     if (!rows.length) {
       const scan = await db.from('breezeway_tasks_sync').select(COLS).order('synced_at', { ascending: false }).limit(6000)
       rows = ((scan.data || []) as any[]).filter(t => GLITCH.test(str(t.name)))

@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { BookOpen, ArrowRight, Sparkles } from 'lucide-react'
 import { PushGuestyButton } from '@/components/PushGuestyButton'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,9 +18,11 @@ export default async function GuidebooksPage() {
 
   let rows: any[] = []
   try {
-    const { data } = await supabaseAdmin().from('guidebooks')
+    // PAGED (2026-09-03): the library dedupes by listing over this read, so a 1,000-row cap made
+    // older units' guidebooks vanish from the list while still existing.
+    const { rows: data } = await pageRows<any>((a, b) => supabaseAdmin().from('guidebooks')
       .select('id, listing_id, listing_name, title, theme, status, updated_at')
-      .order('updated_at', { ascending: false }).limit(2000)
+      .order('updated_at', { ascending: false }).order('id').range(a, b), 6)
     rows = data || []
   } catch { /* table missing */ }
 

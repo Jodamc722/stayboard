@@ -207,6 +207,9 @@ export async function pullReservations(listingIds: string[], from: string, toExc
       .in('listing_id', listingIds)
       .gt('check_out', from)
       .lt('check_in', toExcl)
+      // ORDERED PAGING (2026-09-03): PostgREST ranges over an unordered set are not stable —
+      // a window past 1,000 rows could repeat or skip stays. These are the numbers an owner reads.
+      .order('id')
       .range(i * 1000, i * 1000 + 999)
     if (!data || data.length === 0) break
     all = all.concat(data)
@@ -381,6 +384,7 @@ export async function pullTasks(listingIds: string[], listingById: Record<string
       .in('reference_property_id', listingIds)
       .gte('scheduled_date', from)
       .lte('scheduled_date', to)
+      .order('id')
       .range(i * 1000, i * 1000 + 999)
     if (!data || data.length === 0) break
     all = all.concat(data)

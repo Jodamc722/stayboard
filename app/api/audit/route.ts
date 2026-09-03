@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFor } from '@/lib/approval'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -84,10 +85,12 @@ export async function GET(req: NextRequest) {
   const [ar, lr, ir, rr] = await Promise.all([
     db.from('property_audits').select('*').order('created_at', { ascending: false }).limit(300),
     db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000),
-    db.from('audit_items').select('id,audit_id,status,kind').limit(5000),
-    db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())).order('check_out', { ascending: true }).limit(6000),
+    // PAGED + ORDERED (2026-09-03): .limit(5000) with no order handed back an arbitrary 1,000
+    // audit items, so a large audit's progress counts were wrong and unstable between reloads.
+    pageRows<any>((a, b) => db.from('audit_items').select('id,audit_id,status,kind').order('id').range(a, b), 20),
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_out,status').gte('check_out', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())).order('check_out', { ascending: true }).order('id').range(a, b), 12),
   ])
-  const audits = ar.data || []; const lrows = lr.data || []; const items = ir.data || []
+  const audits = ar.data || []; const lrows = lr.data || []; const items = ir.rows
   const lmap: Record<string, any> = {}
   for (const l of lrows) lmap[String(l.id)] = { name: l.nickname || l.title || 'Unit', building: l.building || '' }
   const counts: Record<string, { total: number; open: number; tasks: number }> = {}
@@ -100,7 +103,7 @@ export async function GET(req: NextRequest) {
   }
   const listings = lrows.filter((l: any) => !/inactive/i.test(String(l.status || ''))).map((l: any) => ({ id: String(l.id), name: l.nickname || l.title || 'Unit', building: l.building || '' })).sort((a: any, b: any) => a.name.localeCompare(b.name))
   const nextCk: Record<string, string> = {}
-  for (const r of rr.data || []) {
+  for (const r of rr.rows || []) {
     if (!/confirm|checked/i.test(String(r.status || ''))) continue
     const id = String(r.listing_id)
     if (!nextCk[id]) nextCk[id] = String(r.check_out).slice(0, 10)

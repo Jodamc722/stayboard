@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken as refreshGuestyToken } from '@/lib/guesty'
 import { requireLevel } from '@/lib/access'
+import { writeCustomFields } from '@/lib/guesty-custom-fields'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -165,20 +166,14 @@ export async function POST(req: NextRequest) {
       .filter((w: any) => w && w.fieldId)
       .map((w: any) => ({ fieldId: String(w.fieldId), value: w.value == null ? '' : String(w.value).slice(0, 2000) }))
     if (!writes.length) return NextResponse.json({ error: 'no valid field writes' }, { status: 400 })
-    const rr = await fetch(`${BASE}/reservations/${encodeURIComponent(reservationId)}`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customFields: writes }),
-    })
-    const rt = await rr.text().catch(() => '')
-    if (!rr.ok) return NextResponse.json({ error: `Guesty ${rr.status}: ${rt.slice(0, 240)}` }, { status: 502 })
+    // SAFE WRITE (2026-09-03). This was the last raw `PUT { customFields }` in the app — the call
+    // that REPLACES the booking's whole custom-field array and wiped an Elser confirmation number on
+    // 2026-07-31. writeCustomFields reads the live array first and merges; it refuses to write if
+    // it cannot read, because a write built on a guess is the bug.
+    const wr = await writeCustomFields(reservationId, token, writes)
+    if (!wr.ok) return NextResponse.json({ error: 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240) }, { status: 502 })
     try {
-      let cf = Array.isArray((row as any).custom_fields) ? [...(row as any).custom_fields] : []
-      for (const w of writes) {
-        const idx = cf.findIndex((c: any) => String(fieldIdOf(c) || '') === w.fieldId)
-        if (idx >= 0) cf[idx] = { ...cf[idx], value: w.value }
-        else cf.push({ fieldId: w.fieldId, value: w.value })
-      }
+      const cf = Array.isArray(wr.fields) ? wr.fields : []
       await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
     } catch { /* mirror best-effort */ }
     return NextResponse.json({ ok: true, saved: writes.length })
@@ -201,18 +196,10 @@ export async function POST(req: NextRequest) {
   if (noteOnly) {
     const { notesId, newNotes } = await appendNote('Call note')
     if (!notesId) return NextResponse.json({ error: 'Could not resolve the Reservation Notes custom field id in Guesty.' }, { status: 422 })
-    const r = await fetch(`${BASE}/reservations/${encodeURIComponent(reservationId)}`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customFields: [{ fieldId: notesId, value: newNotes }] }),
-    })
-    const respText = await r.text().catch(() => '')
-    if (!r.ok) return NextResponse.json({ error: `Guesty ${r.status}: ${respText.slice(0, 240)}` }, { status: 502 })
+    const wr = await writeCustomFields(reservationId, token, [{ fieldId: notesId, value: newNotes }])
+    if (!wr.ok) return NextResponse.json({ error: 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240) }, { status: 502 })
     try {
-      let cf = Array.isArray((row as any).custom_fields) ? [...(row as any).custom_fields] : []
-      const nidx = cf.findIndex(isNotes)
-      if (nidx >= 0) cf[nidx] = { ...cf[nidx], value: newNotes }
-      else cf.push({ fieldId: notesId, fieldName: 'Reservation Notes', value: newNotes })
+      const cf = Array.isArray(wr.fields) ? wr.fields : []
       await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
     } catch { /* mirror best-effort */ }
     return NextResponse.json({ ok: true, noteOnly: true, by, at, notes: newNotes })
@@ -249,27 +236,17 @@ export async function POST(req: NextRequest) {
     if (notesId && newNotes) writes.push({ fieldId: notesId, value: newNotes })
   }
 
-  // Guesty Open API: update the reservation custom field value(s).
-  const r = await fetch(`${BASE}/reservations/${encodeURIComponent(reservationId)}`, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customFields: writes }),
-  })
-  const respText = await r.text().catch(() => '')
-  if (!r.ok) return NextResponse.json({ error: `Guesty ${r.status}: ${respText.slice(0, 240)}`, fieldId }, { status: 502 })
+  // Guesty Open API: merge-and-write the reservation custom field value(s) — never a bare PUT.
+  const wr = await writeCustomFields(reservationId, token, writes)
+  if (!wr.ok) return NextResponse.json({ error: 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240), fieldId }, { status: 502 })
 
-  // Mirror locally: welcome value + who/when/note, and the appended internal notes.
+  // Mirror locally: the merged array Guesty now holds, plus who/when/note on the welcome entry.
   try {
-    let cf = Array.isArray((row as any).custom_fields) ? [...(row as any).custom_fields] : []
+    const cf: any[] = Array.isArray(wr.fields) ? wr.fields.map((c: any) => ({ ...c })) : []
     const idx = cf.findIndex((c: any) => String(fieldIdOf(c) || '') === fieldId || isWelcome(c))
     const meta = done ? { _by: by, _at: at, _note: note } : { _by: null, _at: null, _note: '' }
     if (idx >= 0) cf[idx] = { ...cf[idx], value, ...meta }
     else cf.push({ fieldId, fieldName: 'Welcome Call', value, ...meta })
-    if (notesId && newNotes) {
-      const nidx = cf.findIndex(isNotes)
-      if (nidx >= 0) cf[nidx] = { ...cf[nidx], value: newNotes }
-      else cf.push({ fieldId: notesId, fieldName: 'Reservation Notes', value: newNotes })
-    }
     await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
   } catch { /* mirror best-effort */ }
 

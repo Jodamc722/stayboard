@@ -64,6 +64,8 @@ async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv
         .in('status', CONFIRMED)
         .gt('check_out', from)
         .lt('check_in', toExcl)
+        // ORDERED (2026-09-03): unordered ranges past 1,000 rows repeat/skip stays — YTD did.
+        .order('id')
         .range(i * 1000, i * 1000 + 999)
       if (!res.error) { data = res.data || []; break }
       lastErr = res.error
@@ -118,6 +120,7 @@ async function pullChannelStatusMix(sb: any, from: string, toExcl: string): Prom
         .in('status', [...CONFIRMED, 'canceled', 'cancelled'])
         .gt('check_out', from)
         .lt('check_in', toExcl)
+        .order('id')
         .range(i * 1000, i * 1000 + 999)
       if (res.error) return []
       const data = res.data || []

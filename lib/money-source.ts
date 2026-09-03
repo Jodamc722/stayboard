@@ -88,6 +88,7 @@ export type MonthMoney = {
   total: number | null           // gross accom + cleaning — what the KPI board calls total revenue
   adr: number | null             // total ÷ nights sold   (matches our Gross basis: accom + cleaning)
   adrRoomOnly: number | null
+  adrGross: number | null
   revpar: number | null
   kind: 'eom' | 'live' | null
   syncedAt: string | null
@@ -129,7 +130,9 @@ export function aggregateUnitRows(
     otherRevenue: sum(rows, 'other_revenue') || null,
     stayRevenue: sum(rows, 'stay_revenue') || null,
     total: total || null,
-    adr: nights > 0 ? Math.round(total / nights) : null,
+    // Same ADR definition as lib/kpi (2026-09-03): accommodation ÷ nights. Everything-in is adrGross.
+    adr: nights > 0 ? Math.round(grossAccom / nights) : null,
+    adrGross: nights > 0 ? Math.round(total / nights) : null,
     adrRoomOnly: nights > 0 ? Math.round(grossAccom / nights) : null,
     revpar: available > 0 ? Math.round(total / available) : null,
     kind, syncedAt, byUnit,
@@ -355,6 +358,7 @@ export async function applyMoneyOverride(
   set(rev, 'total', m.total, 'revenue.total')
   set(rev, 'adr', m.adr, 'revenue.adr')
   set(rev, 'adrRoomOnly', m.adrRoomOnly, 'revenue.adrRoomOnly')
+  set(rev, 'adrGross', m.adrGross, 'revenue.adrGross')
   set(rev, 'revpar', m.revpar, 'revenue.revpar')
   set(rev, 'occupancy', m.occupancy, 'revenue.occupancy')
   if (m.nights) { rev.nights = m.nights; fields.push('revenue.nights') }

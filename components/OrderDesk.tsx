@@ -116,12 +116,21 @@ export function OrderDesk() {
 
   // Optimistic local patch so the desk feels instant; the POST is fire-and-forget.
   function patchLocal(ids: string[], fn: (it: Row) => Row) { const s = new Set(ids); setRows(list => list.map(x => s.has(x.id) ? fn(x) : x)) }
-  async function saveItem(itemId: string, fields: any) {
-    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', itemId, fields }) }) } catch {}
+  // The optimistic patch stays, but a refused write now rolls it back and says why — a status flip
+  // used to look done even when it 403'd for a below-edit role (2026-09-03).
+  async function saveItem(itemId: string, fields: any): Promise<boolean> {
+    try {
+      const r = await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateItem', itemId, fields }) })
+      const j = await r.json().catch(() => ({} as any))
+      if (!r.ok || j.ok === false || j.error) { setErr('Not saved: ' + (j.error || (r.status === 403 ? 'you do not have edit access to orders.' : 'the server refused (' + r.status + ').'))); return false }
+      return true
+    } catch (e: any) { setErr('Not saved: ' + String(e?.message || e)); return false }
   }
   async function setStatus(it: Row, status: string) {
+    const before = it.status
     patchLocal([it.id], x => ({ ...x, status }))
-    await saveItem(it.id, { status })
+    const ok = await saveItem(it.id, { status })
+    if (!ok) patchLocal([it.id], x => ({ ...x, status: before }))
   }
   async function setApproval(it: Row, approval: string) {
     patchLocal([it.id], x => ({ ...x, details: { ...(x.details || {}), approval: approval === 'none' ? null : approval } }))

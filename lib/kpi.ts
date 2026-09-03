@@ -22,6 +22,7 @@ import { noBreezewayRegex, vendorRegex } from '@/lib/ops-presets'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { canSeeMoney, type Access } from '@/lib/access'
 import { redactMoney } from '@/lib/money'
+import { pageRows } from '@/lib/db-page'
 
 
 const DEAD_LISTING = ['inactive', 'disabled', 'archived', 'deleted']
@@ -144,22 +145,24 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         .select('id,listing_id,rating,content,guest_name,channel,created_at,has_reply')
         .gte('created_at', from + 'T00:00:00Z').lte('rating', 3)
         .order('created_at', { ascending: false }).limit(60),
-      db.from('glitches').select('id,status,category,market,unit,listing_id,created_at,refund_approved')
-        .gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false }).limit(1000),
-      db.from('field_requests').select('id,status,due_at,priority,building').in('status', ['open', 'in_progress']).limit(1000),
+      // PAGED (2026-09-03): both were .limit(1000) — the cap itself. Glitches over two windows
+      // and open requests can exceed it; the counts under-reported exactly when they mattered.
+      pageRows<any>((a, b) => db.from('glitches').select('id,status,category,market,unit,listing_id,created_at,refund_approved')
+        .gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false }).order('id').range(a, b), 6),
+      pageRows<any>((a, b) => db.from('field_requests').select('id,status,due_at,priority,building').in('status', ['open', 'in_progress']).order('id').range(a, b), 4),
       db.from('guesty_sync_status').select('entity,last_sync_at').order('entity'),
       // OPEN WORK, the honest version. Requests alone under-report badly — the same rule the day
       // sheet uses counts open glitches plus Breezeway tasks from the last 45 days that nobody
       // has finished. Kept as head-counts so it costs nothing.
       db.from('glitches').select('id', { count: 'exact', head: true })
         .not('status', 'in', '("done","resolved","closed")'),
-      db.from('breezeway_tasks_sync').select('reference_property_id')
+      pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id')
         .gte('scheduled_date', addDays(today, -45)).lte('scheduled_date', today)
         .is('finished_at', null)
         .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
         .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
         .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
-        .limit(5000),
+        .order('id').range(a, b), 8),
     ])
 
     // ---------------------------------------------------------------- today
@@ -296,7 +299,12 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         roomRevenue: Math.round(room),
         cleaningRevenue: Math.round(cleaning),
         totalRevenue: Math.round(room + cleaning),
-        adr: nights ? Math.round((room + cleaning) / nights) : 0,
+        // ONE ADR (2026-09-03). `adr` is accommodation ÷ nights — the industry definition, the
+        // lib/basis default, what Revenue Center and PriceLabs report. It used to include cleaning
+        // here and nowhere else, so the briefs and Eve quoted an ADR the Revenue page could not
+        // reproduce. The cleaning-inclusive figure is still available as `adrGross`.
+        adr: nights ? Math.round(room / nights) : 0,
+        adrGross: nights ? Math.round((room + cleaning) / nights) : 0,
         adrRoomOnly: nights ? Math.round(room / nights) : 0,
         revpar: available ? round((room + cleaning) / available, 2) : 0,
         byChannel, byBuilding,
@@ -406,7 +414,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const awaitingReply = sentiment.filter(s => s.awaiting_reply && str(s.status || 'open') === 'open').length
 
     const glitchBlock = (a: string, b: string) => {
-      const rows = (glitchRows.data || []).filter((g: any) => inWin(dOf(g.created_at), a, b)
+      const rows = (glitchRows.rows || []).filter((g: any) => inWin(dOf(g.created_at), a, b)
         && (marketFilter === 'all' || str(g.market) === marketFilter))
       // Refunds only. Cost recovery was retired 2026-08-27 — Jon: "cost recovery is not
       // something we track, the refund amount is."
@@ -472,14 +480,14 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const labourKnown = labourCost > 0
 
     // Open work now (not window-bound) — what is sitting on someone's plate right now.
-    const openRows = (openWork.data || []) as any[]
+    const openRows = (openWork.rows || []) as any[]
     const nowIso = new Date().toISOString()
     const overdueWork = openRows.filter(w => w.due_at && str(w.due_at) < nowIso).length
     // Guesty-only buildings (Botanica) left Breezeway with old tasks still sitting in the mirror.
     // Nobody will ever close those, so they are not open work. (Re-applied 2026-07-31 after a
     // parallel-session commit reverted it - keep this block if you touch this file.)
     const noBz = noBreezewayRegex((await getOpsPresets()).vendorBuildings)
-    const openTasks = ((openTaskRes.data || []) as any[]).filter(t => {
+    const openTasks = ((openTaskRes.rows || []) as any[]).filter(t => {
       const li = lmap[String(t.reference_property_id)]
       return !li || !noBz.test(li.building + ' ' + li.name)
     }).length
@@ -592,7 +600,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         occupancyChange: round(stays.occupancy - staysPrev.occupancy, 1),
         nights: stays.nights, available: stays.available,
         adr: money(stays.adr), adrPrev: money(staysPrev.adr), adrChange: money(pctChange(stays.adr, staysPrev.adr)),
-        adrRoomOnly: money(stays.adrRoomOnly),
+        adrGross: money(stays.adrGross), adrRoomOnly: money(stays.adrRoomOnly),
         revpar: money(stays.revpar), revparPrev: money(staysPrev.revpar), revparChange: money(pctChange(stays.revpar, staysPrev.revpar)),
         total: money(stays.totalRevenue), totalPrev: money(staysPrev.totalRevenue), totalChange: money(pctChange(stays.totalRevenue, staysPrev.totalRevenue)),
         channels: Object.keys(stays.byChannel).map(c => ({

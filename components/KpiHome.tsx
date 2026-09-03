@@ -291,8 +291,8 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
             <Tile label="Occupancy" value={pct(r.occupancy, 1)} Icon={Users} href="/revenue"
               sub={r.nights != null ? count(r.nights) + ' of ' + count(r.available) + ' unit-nights' : undefined}
               delta={<Delta v={r.occupancyChange} suffix=" pts" />} accent />
-            <Tile label="ADR (incl. cleaning)" value={canSeeMoney ? exact(r.adr) : '—'} Icon={DollarSign} href="/revenue"
-              sub={canSeeMoney && r.adrRoomOnly != null ? exact(r.adrRoomOnly) + ' room only' : undefined}
+            <Tile label="ADR" value={canSeeMoney ? exact(r.adr) : '—'} Icon={DollarSign} href="/revenue"
+              sub={canSeeMoney && r.adrGross != null ? exact(r.adrGross) + ' incl. cleaning' : undefined}
               delta={<Delta v={r.adrChange} suffix="%" />} />
             <Tile label="RevPAR" value={canSeeMoney ? exact(r.revpar) : '—'} Icon={TrendingUp} href="/revenue"
               sub="revenue per available unit-night" delta={<Delta v={r.revparChange} suffix="%" />} />

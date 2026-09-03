@@ -19,13 +19,19 @@ export function FaqDesk({ listingId }: { listingId?: string } = {}) {
   const [search, setSearch] = useState('')
   const [showList, setShowList] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [err, setErr] = useState('')
 
   useEffect(() => { (async () => { try { const r = await fetch('/api/faq'); const j = await r.json(); setListings((j && j.listings) || []) } catch {} })() }, [])
 
   async function load(id: string) {
     if (!id) { setData(null); return }
     setLoading(true)
-    try { const r = await fetch('/api/faq?listingId=' + encodeURIComponent(id)); const j = await r.json(); setData(j) } catch {}
+    setErr('')
+    try {
+      const r = await fetch('/api/faq?listingId=' + encodeURIComponent(id)); const j = await r.json().catch(() => ({} as any))
+      if (!r.ok || j.ok === false) { setErr(j.error || (r.status === 403 ? 'You do not have access to the Property FAQ.' : 'Could not load (' + r.status + ').')); setData(null) }
+      else setData(j)
+    } catch (e: any) { setErr(String(e?.message || e)) }
     setLoading(false)
   }
   useEffect(() => { load(pick) }, [pick])
@@ -33,7 +39,13 @@ export function FaqDesk({ listingId }: { listingId?: string } = {}) {
 
   async function post(body: any) {
     setBusy(true)
-    try { await fetch('/api/faq', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); await load(pick) } catch {}
+    setErr('')
+    try {
+      const r = await fetch('/api/faq', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const j = await r.json().catch(() => ({} as any))
+      if (!r.ok || j.ok === false || j.error) setErr('Not saved: ' + (j.error || (r.status === 403 ? 'you do not have edit access to the Property FAQ.' : 'the server refused (' + r.status + ').')))
+      await load(pick)
+    } catch (e: any) { setErr('Not saved: ' + String(e?.message || e)) }
     setBusy(false)
   }
   async function addEntry() {
@@ -69,6 +81,7 @@ function Section({ id, title, note, children }: { id: string; title: string; not
 
   return (
     <div className="space-y-4">
+      {err && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700">{err}</div>}
       {!listingId ? (
         <div className="relative max-w-md">
           <input value={search} onChange={e => { setSearch(e.target.value); setShowList(true) }} onFocus={() => setShowList(true)} onBlur={() => setTimeout(() => setShowList(false), 150)} placeholder={pick ? (((listings.find(l => l.id === pick) || {}) as any).name || 'Search a listing…') : 'Search a listing…'} className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />

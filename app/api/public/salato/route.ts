@@ -1,8 +1,10 @@
 // PUBLIC, PII-SAFE Salato board data (sendable link like the vendor links).
 // No guest names / phone / email / notes / plates — only unit, dates, times, guest count, source, SDT.
 import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { salatoListings } from '@/lib/salato-units'
+import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,6 +15,11 @@ function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00')
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 export async function GET(req: NextRequest) {
+  // GATED (2026-09-03). This feed is fifteen days of unit-level occupancy — which units are empty
+  // tonight — and it answered anyone who had the URL. Same team share password + cookie as the
+  // vendor boards and the ID viewer on this very page. Fail closed.
+  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
+  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())
@@ -22,13 +29,16 @@ export async function GET(req: NextRequest) {
     // at /salato → Units without a code change; unset = the old name rule.
     const { match, ids } = await salatoListings(db)
     if (!ids.length) return NextResponse.json({ ok: true, today, arrivals: [], departures: [], active: [] })
-    const { data: res } = await db.from('guesty_reservations').select('id,listing_id,check_in,check_out,nights,status,source,raw').in('listing_id', ids).lte('check_in', end).gte('check_out', start).limit(600)
+    // Only the raw fields this board reads — the full `raw` for 600 bookings was megabytes on a phone.
+    const { data: res } = await db.from('guesty_reservations')
+      .select('id,listing_id,check_in,check_out,nights,status,source,ciLocal:raw->>checkInDateLocalized,coLocal:raw->>checkOutDateLocalized,planned:raw->>plannedArrival,g1:raw->>guestsCount,g2:raw->>numberOfGuests,rawSource:raw->>source')
+      .in('listing_id', ids).lte('check_in', end).gte('check_out', start).order('id').limit(1000)
     const toRow = (r: any) => {
-      const raw = r.raw || {}
-      const checkInTime = raw.checkInDateLocalized ? String(raw.checkInDateLocalized).slice(11, 16) : (raw.plannedArrival ? String(raw.plannedArrival) : null)
-      const checkOutTime = raw.checkOutDateLocalized ? String(raw.checkOutDateLocalized).slice(11, 16) : null
-      const guests = raw.guestsCount ?? raw.numberOfGuests ?? null
-      return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), nights: r.nights ?? null, checkInTime, checkOutTime, guests, source: r.source || raw.source || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
+      const checkInTime = r.ciLocal ? String(r.ciLocal).slice(11, 16) : (r.planned ? String(r.planned) : null)
+      const checkOutTime = r.coLocal ? String(r.coLocal).slice(11, 16) : null
+      const gRaw = r.g1 ?? r.g2
+      const guests = gRaw == null || gRaw === '' ? null : Number(gRaw)
+      return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), nights: r.nights ?? null, checkInTime, checkOutTime, guests, source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
     }
     const rows = ((res || []) as any[]).filter(r => LIVE.test(str(r.status))).map(toRow)
     const arrivals = rows.filter(r => r.checkIn >= today && r.checkIn <= end).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))

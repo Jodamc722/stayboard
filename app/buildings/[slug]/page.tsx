@@ -12,6 +12,8 @@ import { BulkPolicyPanel } from '@/components/BulkPolicyPanel'
 import { BulkPhotoPanel } from '@/components/BulkPhotoPanel'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon, Sparkles, MessageSquare } from 'lucide-react'
+import { ratingToStars } from '@/lib/optimize-score'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,11 +54,15 @@ export default async function BuildingPage({ params }: { params: { slug: string 
   const _cnt: Record<string, number> = {}
   try {
     const sb = supabaseAdmin()
-    const { data: revs } = await sb.from('guesty_reviews').select('listing_id, rating, reply, raw, excluded_from_score').in('listing_id', unitIds).limit(5000)
+    // PAGED + ORDERED + STAR-NORMALISED (2026-09-03). This read was `.limit(5000)` with no order —
+    // an arbitrary 1,000-review sample — and averaged raw ratings, so a Booking.com 9/10 counted
+    // as nine stars. The same unit scored differently here than on /buildings and /listings/[id].
+    const { rows: revs } = await pageRows<any>((a, b) => sb.from('guesty_reviews').select('id, listing_id, rating, reply, raw, excluded_from_score').in('listing_id', unitIds).order('id').range(a, b), 12)
     for (const r of (revs ?? [])) {
       if ((r as any).excluded_from_score) continue
-      if ((r as any).rating == null) continue
-      const _rid = String((r as any).listing_id); _sum[_rid] = (_sum[_rid] || 0) + Number((r as any).rating); _cnt[_rid] = (_cnt[_rid] || 0) + 1
+      const stars = ratingToStars((r as any).rating)
+      if (stars == null) continue
+      const _rid = String((r as any).listing_id); _sum[_rid] = (_sum[_rid] || 0) + stars; _cnt[_rid] = (_cnt[_rid] || 0) + 1
       if (hasHostReply((r as any).raw, (r as any).reply)) continue
       const id = (r as any).listing_id
       notResponded[id] = (notResponded[id] || 0) + 1

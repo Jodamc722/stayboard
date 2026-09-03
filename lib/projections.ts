@@ -29,6 +29,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { getSetting } from '@/lib/app-settings'
+import { pageRows } from '@/lib/db-page'
 
 export const SETTINGS_KEY = 'owner_projections_v1'
 
@@ -181,12 +182,13 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
   const [reviewRows, glitchRes, maintRes] = await Promise.all([
     pageAll((a, b) => db.from('guesty_reviews').select('listing_id,rating')
       .gte('created_at', yearAgo + 'T00:00:00Z').order('created_at').range(a, b), 5),
-    db.from('glitches').select('listing_id,unit,status').not('status', 'in', '("done","resolved","closed")').limit(1000),
-    db.from('breezeway_tasks_sync').select('reference_property_id')
+    // PAGED (2026-09-03): both reads were capped at 1,000 by PostgREST whatever the limit said.
+    pageRows<any>((a, b) => db.from('glitches').select('id,listing_id,unit,status').not('status', 'in', '("done","resolved","closed")').order('id').range(a, b), 4),
+    pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id')
       .gte('scheduled_date', new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10))
       .is('finished_at', null)
       .not('status', 'ilike', '%complet%').not('status', 'ilike', '%close%')
-      .not('status', 'ilike', '%cancel%').not('status', 'ilike', '%delete%').limit(5000),
+      .not('status', 'ilike', '%cancel%').not('status', 'ilike', '%delete%').order('id').range(a, b), 8),
   ])
   const revAgg: Record<string, { n: number; sum: number }> = {}
   for (const r of reviewRows) {
@@ -195,11 +197,11 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
     const e = (revAgg[lid] = revAgg[lid] || { n: 0, sum: 0 }); e.n += 1; e.sum += rt > 5 ? rt / 2 : rt  // 10-scale channels normalised to 5
   }
   const openBy: Record<string, number> = {}
-  for (const g of ((glitchRes.data || []) as any[])) {
+  for (const g of ((glitchRes.rows || []) as any[])) {
     const lid = String(g.listing_id || '')
     if (lid) openBy[lid] = (openBy[lid] || 0) + 1
   }
-  for (const t of ((maintRes.data || []) as any[])) {
+  for (const t of ((maintRes.rows || []) as any[])) {
     const lid = String(t.reference_property_id || '')
     if (lid && lmap[lid]) openBy[lid] = (openBy[lid] || 0) + 1
   }

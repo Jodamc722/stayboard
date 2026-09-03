@@ -490,9 +490,13 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const PAGE = 1000
   let named = true
   for (let off = 0; off < 200_000; off += PAGE) {
+    // ORDERED (2026-09-03): an unordered range past 1,000 rows repeats and skips — the likely
+    // source of the "17 duplicate rows" the dedupe below papers over. Duplicates get deduped;
+    // the skipped rows never came back at all.
     const run = (cols: string) => sb.from('guesty_owner_ledger').select(cols)
       .eq('recognized', true)
       .eq('entry_month', month)
+      .order('id')
       .range(off, off + PAGE - 1)
     let { data, error } = await run(named ? LEDGER_COLS : LEDGER_COLS_PLAIN)
     if (error && named) {
@@ -613,12 +617,20 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // generated statement carrying them.
   const expRes: any[] = []
   {
-    const { data } = await sb.from('guesty_reservations')
-      .select('id, confirmation_code, guest_name, check_in, check_out, status, source, listing_id')
-      .gt('check_out', win.start).lt('check_in', win.endExcl)
-      .not('status', 'in', '(canceled,cancelled,inquiry,declined,expired)')
-      .or('source.ilike.%expedia%,source.ilike.%orbitz%,source.ilike.%travelocity%,source.ilike.%hotels%,source.ilike.%wotif%,source.ilike.%ebookers%,source.ilike.%cheaptickets%')
-      .limit(1000)
+    // Paged + ordered (2026-09-03): .limit(1000) was a silent cap on a scan that must be complete.
+    let data: any[] = []
+    for (let off = 0; off < 20_000; off += PAGE) {
+      const { data: page } = await sb.from('guesty_reservations')
+        .select('id, confirmation_code, guest_name, check_in, check_out, status, source, listing_id')
+        .gt('check_out', win.start).lt('check_in', win.endExcl)
+        .not('status', 'in', '(canceled,cancelled,inquiry,declined,expired)')
+        .or('source.ilike.%expedia%,source.ilike.%orbitz%,source.ilike.%travelocity%,source.ilike.%hotels%,source.ilike.%wotif%,source.ilike.%ebookers%,source.ilike.%cheaptickets%')
+        .order('id')
+        .range(off, off + PAGE - 1)
+      const batch = (page || []) as any[]
+      data = data.concat(batch)
+      if (batch.length < PAGE) break
+    }
     // The mirror holds some bookings TWICE (17 duplicate rows found in July 2026 — same code and
     // listing, different mirror ids). Every scan that reads reservations dedupes on the code, or
     // the board shows the same guest twice and every total built from the scan is inflated.
@@ -649,6 +661,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const { data, error } = await sb.from('guesty_reservations')
       .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, money_total, tags:raw->tags')
       .gt('check_out', win.start).lt('check_in', win.endExcl)
+      .order('id')
       .range(off, off + PAGE - 1)
     if (error) break
     const batch = (data || []) as any[]
@@ -693,6 +706,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const { data, error } = await sb.from('guesty_owner_ledger')
       .select('listing_id, entry_date, amount')
       .eq('recognized', true).eq('entry_month', prevMonth).eq('charge_code', 'AF')
+      .order('id')
       .range(off, off + PAGE - 1)
     if (error) break
     const batch = (data || []) as any[]

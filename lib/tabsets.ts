@@ -24,7 +24,13 @@
 export type TabSetTab = { to: string; label: string }
 export type TabSet = { key: string; label: string; blurb: string; tabs: TabSetTab[] }
 
-export const TAB_SETS: TabSet[] = [
+// BOTH SETS RETIRED 2026-09-03 (the September audit). Quality was Audits + Inspections + FF&E and
+// Orders was Purchasing + Work Orders + Projects; the four extra tabs had no data and no visitors,
+// so each set was one page wearing a costume. Audits and Purchasing are plain rows again. The
+// registry stays so a future set can be declared without re-plumbing Shell.
+export const TAB_SETS: TabSet[] = []
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const RETIRED_TAB_SETS: TabSet[] = [
   {
     key: 'quality', label: 'Quality',
     blurb: 'Every walk of a unit in one place — annual/spot audits, pre-arrival inspections, and the FF&E furniture audit.',

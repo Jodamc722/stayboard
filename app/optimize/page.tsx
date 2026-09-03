@@ -20,5 +20,7 @@ import { redirect } from 'next/navigation'
 export const dynamic = 'force-dynamic'
 
 export default function OptimizeIndex() {
-  redirect('/buildings?view=fix')
+  // Properties reads `?v=` (app/buildings/page.tsx) — `?view=` landed everyone on the Buildings
+  // view instead of Fix-next. Fixed 2026-09-03.
+  redirect('/buildings?v=fix')
 }

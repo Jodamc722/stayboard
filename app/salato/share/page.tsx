@@ -42,15 +42,24 @@ export default function SalatoShare() {
   const [seen, setSeen] = useState<Set<string>>(new Set())
   const seenInit = useRef(false)
 
+  // The board itself is behind the team password now (2026-09-03) — the same one the ID viewer
+  // already asked for. One prompt, one cookie, ninety days.
+  const [boardLocked, setBoardLocked] = useState(false)
+  const [boardPw, setBoardPw] = useState('')
+  const [boardPwErr, setBoardPwErr] = useState('')
+  const [boardPwBusy, setBoardPwBusy] = useState(false)
   const load = useCallback(async () => {
     try {
       setErr('')
       const res = await fetch('/api/public/salato', { cache: 'no-store' })
-      const j: Data = await res.json()
+      const j: any = await res.json()
+      if (res.status === 401 || j.needsPassword) { setBoardLocked(true); setLoading(false); return }
+      setBoardLocked(false)
       if (!res.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
-      setData(j)
+      const d: Data = j
+      setData(d)
       setLastUpdated(new Date())
-      const ids = [...j.arrivals.map(r => 'a' + keyOf(r, 'arrivals')), ...j.departures.map(r => 'd' + keyOf(r, 'departures')), ...j.active.map(r => 'v' + keyOf(r, 'active'))]
+      const ids = [...d.arrivals.map(r => 'a' + keyOf(r, 'arrivals')), ...d.departures.map(r => 'd' + keyOf(r, 'departures')), ...d.active.map(r => 'v' + keyOf(r, 'active'))]
       if (!seenInit.current) { const s = new Set(ids); setSeen(s); seenInit.current = true; try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(s))) } catch {} }
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [])
@@ -115,6 +124,29 @@ export default function SalatoShare() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const unlockBoard = async () => {
+    if (!boardPw.trim()) return
+    setBoardPwBusy(true); setBoardPwErr('')
+    try {
+      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: boardPw }) })
+      const j = await r.json()
+      if (!r.ok || j.ok === false) { setBoardPwErr(j.error || 'Wrong password'); setBoardPwBusy(false); return }
+      setBoardPw(''); setBoardPwBusy(false); setLoading(true); await load()
+    } catch (e: any) { setBoardPwErr(String(e?.message || e)); setBoardPwBusy(false) }
+  }
+  if (boardLocked) {
+    return (
+      <div className='min-h-screen bg-neutral-100 text-neutral-900 px-safe grid place-items-center px-4'>
+        <div className='w-full max-w-sm rounded-2xl bg-white shadow-lg p-5'>
+          <div className='text-base font-bold mb-1'>Salato front desk</div>
+          <div className='text-sm text-neutral-600 mb-3'>Enter the team password to open the board.</div>
+          <input type='password' value={boardPw} onChange={e => setBoardPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') unlockBoard() }} placeholder='Team password' autoFocus className='w-full text-sm border border-neutral-200 rounded-lg px-3 py-2' />
+          {boardPwErr && <div className='text-xs text-rose-600 mt-2'>{boardPwErr}</div>}
+          <button onClick={unlockBoard} disabled={boardPwBusy || !boardPw.trim()} className='mt-3 w-full rounded-lg bg-neutral-900 text-white text-sm font-semibold py-2 disabled:opacity-40'>{boardPwBusy ? 'Checking…' : 'Open board'}</button>
+        </div>
+      </div>
+    )
+  }
   return (
     // No app Shell on this link, so it pads for the phone itself. px-safe goes on the outer element
     // because it would replace the px-4 gutter if it shared one.

@@ -13,6 +13,7 @@ import { isLiveStay } from '@/lib/stay-status'
 import { summariseBehind, fmt12, type BehindRow } from '@/lib/ops-behind'
 import { TASK_CATS_KEY, resolveCats, catOfTaskWith } from '@/lib/task-categories'
 import { getSetting } from '@/lib/app-settings'
+import { pageRows } from '@/lib/db-page'
 
 // Botanica is cleaned by a vendor who does NOT close the task in Breezeway, so its cleans sit at
 // 'not started' forever. Tracking them against 4pm produced 11 false 'at risk' alerts out of 17.
@@ -140,10 +141,12 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   // they'd be in the unit by 4pm, so it is not free to work in.
   const backFrom = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(new Date(today + 'T12:00:00Z').getTime() - 21 * 86400000))
   const [occRes, nextRes, pastRes] = await Promise.all([
-    db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name').lte('check_in', today).gt('check_out', today).limit(4000),
-    db.from('guesty_reservations').select('listing_id,check_in,status').gt('check_in', today).order('check_in', { ascending: true }).limit(4000),
+    // PAGED (2026-09-03): .limit(4000) is 1,000 in practice. Future arrivals alone pass that in
+    // season, and the board's "next arrival" for a vacant unit was the first 1,000 by date.
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name').lte('check_in', today).gt('check_out', today).order('id').range(a, b), 6),
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,status').gt('check_in', today).order('check_in', { ascending: true }).order('id').range(a, b), 8),
     // Recent past checkouts — the other half of "why is a departure clean sitting on today?".
-    db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', backFrom).lt('check_out', today).order('check_out', { ascending: false }).limit(4000),
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_out,status').gte('check_out', backFrom).lt('check_out', today).order('check_out', { ascending: false }).order('id').range(a, b), 6),
   ])
   const occupied: Record<string, string> = {}
   const occupiedUntil: Record<string, string> = {}
@@ -160,7 +163,7 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   // `occupied` keeps the wider tonight-inclusive meaning for the vacant-units list below.)
   const inHouse: Record<string, string> = {}
   const inHouseUntil: Record<string, string> = {}
-  for (const r of (occRes.data || []) as any[]) {
+  for (const r of (occRes.rows || []) as any[]) {
     if (!isLiveStay(r.status)) continue
     const id = String(r.listing_id)
     occupied[id] = r.guest_name || 'Guest'
@@ -172,13 +175,13 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     }
   }
   const nextIn: Record<string, string> = {}
-  for (const r of (nextRes.data || []) as any[]) {
+  for (const r of (nextRes.rows || []) as any[]) {
     if (!isLiveStay(r.status)) continue
     const id = String(r.listing_id)
     if (!nextIn[id]) nextIn[id] = str(r.check_in).slice(0, 10)
   }
   const lastOut: Record<string, string> = {}
-  for (const r of (pastRes.data || []) as any[]) {
+  for (const r of (pastRes.rows || []) as any[]) {
     if (!isLiveStay(r.status)) continue
     const id = String(r.listing_id)
     const d = str(r.check_out).slice(0, 10)

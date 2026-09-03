@@ -26,14 +26,18 @@ export function GuestsDirectory() {
   const [adding, setAdding] = useState(false)
   const [shown, setShown] = useState(50)
 
+  // The search box asks the server (2026-09-03): the API used to hand over its top 2,000 guests
+  // and the browser searched only those. Debounced so typing a name is one request, not eight.
+  const [serverQ, setServerQ] = useState('')
+  useEffect(() => { const t = setTimeout(() => setServerQ(q.trim()), 300); return () => clearTimeout(t) }, [q])
   const load = useCallback(async () => {
     try {
-      const r = await fetch('/api/guests', { cache: 'no-store' })
+      const r = await fetch('/api/guests' + (serverQ ? '?q=' + encodeURIComponent(serverQ) : ''), { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok) throw new Error(j?.message || j?.error || 'Could not load guests.')
       setData({ guests: j.guests || [], totals: j.totals || {} })
     } catch (e: any) { setErr(String(e?.message || e)) }
-  }, [])
+  }, [serverQ])
   useEffect(() => { load() }, [load])
 
   const list = useMemo(() => {

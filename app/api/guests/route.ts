@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -22,7 +23,7 @@ function keyFor(email: string, guestId: string, name: string): string {
   return 'n:' + str(name).trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const gate = await requireLevel('guests', 'view')
   if (!gate.ok) return gate.res
   const db = supabaseAdmin()
@@ -72,7 +73,7 @@ export async function GET() {
     if (g.history.length < 20) g.history.push({ unit: unit || 'Unit', checkIn: ci, checkOut: co, nights: Number(r.nights) || 0, value: Number(r.money_total) || 0, source: str(r.source) })
   }
 
-  const { data: profiles } = await db.from('guest_profiles').select('*').limit(3000)
+  const { rows: profiles } = await pageRows<any>((a, b) => db.from('guest_profiles').select('*').order('id').range(a, b), 10)
   const profBy: Record<string, any> = {}
   for (const p of profiles || []) profBy[str((p as any).guest_key)] = p
 
@@ -97,9 +98,21 @@ export async function GET() {
   }
   guests.sort((a: any, b: any) => b.value - a.value || b.stays - a.stays)
 
+  // SERVER-SIDE SEARCH (2026-09-03). The directory returned the top 2,000 of ~6,000 guests by
+  // lifetime value and the browser searched inside that slice — so a first-time guest arriving
+  // tomorrow, exactly who the front desk looks up, was not findable. Search the whole set here.
+  const q = String(req.nextUrl.searchParams.get('q') || '').trim().toLowerCase()
+  const matches = q
+    ? guests.filter((g: any) => (
+        String(g.name || '') + ' ' + String(g.email || '') + ' ' + String(g.phone || '') + ' ' +
+        (Array.isArray(g.units) ? g.units.join(' ') : '') + ' ' + ((g.profile && g.profile.tags) || []).join(' ')
+      ).toLowerCase().includes(q))
+    : guests
+
   return NextResponse.json({
     ok: true,
-    guests: guests.slice(0, 2000),
+    q,
+    guests: matches.slice(0, q ? 500 : 2000),
     totals: {
       guests: guests.length,
       repeat: guests.filter((g: any) => g.stays >= 2).length,

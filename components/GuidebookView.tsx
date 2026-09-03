@@ -185,17 +185,23 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
     // Re-runs when a photo fails to load, so a card that dies after first paint gets its one ask.
   }, [gb?.id, badPhotos])
 
+  // A save that never checked the response looked saved even when it 403'd for a below-edit
+  // role or 500'd on the server (2026-09-03). Now it says what happened, in words.
   async function save() {
     setBusy(true)
     try {
-      await fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, sections: gb.sections, title: gb.title, theme: gb.theme }) })
+      const r = await fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, sections: gb.sections, title: gb.title, theme: gb.theme }) })
+      const j = await r.json().catch(() => ({} as any))
+      if (!r.ok || j.ok === false || j.error) { alert('Not saved: ' + (j.error || (r.status === 403 ? 'you do not have edit access to guidebooks.' : 'the server refused (' + r.status + '). Try again.'))); return }
       setEdit(false)
-    } finally { setBusy(false) }
+    } catch (e: any) { alert('Not saved: ' + String(e?.message || e)) } finally { setBusy(false) }
   }
 
   async function del() {
     if (!confirm('Delete this guidebook?')) return
-    await fetch('/api/guidebook?id=' + gb.id, { method: 'DELETE' })
+    const r = await fetch('/api/guidebook?id=' + gb.id, { method: 'DELETE' })
+    const j = await r.json().catch(() => ({} as any))
+    if (!r.ok || j.ok === false || j.error) { alert('Not deleted: ' + (j.error || (r.status === 403 ? 'you do not have permission to delete guidebooks.' : 'the server refused (' + r.status + ').'))); return }
     router.push('/guidebooks')
   }
 

@@ -9,6 +9,7 @@ import { getCrew } from '@/lib/crew'
 import { marketOf } from '@/lib/segments'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -37,8 +38,10 @@ export async function GET(req: NextRequest) {
     // Unit list for "Add task" — every active Breezeway property (a new task must exist there).
     let units: { id: string; name: string }[] = []
     try {
-      const { data: props } = await supabaseAdmin().from('breezeway_properties')
-        .select('reference_property_id, status').limit(1000)
+      // PAGED (2026-09-03): the list sat exactly at the 1,000 cap; the next property added would
+      // have silently dropped a unit from "Add task".
+      const { rows: props } = await pageRows<any>((a, b) => supabaseAdmin().from('breezeway_properties')
+        .select('id, reference_property_id, status').order('id').range(a, b), 4)
       const ids = ((props || []) as any[])
         .filter(p => String(p.status || '').toLowerCase() === 'active')
         .map(p => String(p.reference_property_id || '')).filter(Boolean)

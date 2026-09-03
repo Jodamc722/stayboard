@@ -31,6 +31,31 @@ function fileHref(v?: string | null): string {
 }
 function isImage(v?: string | null): boolean { return /\.(jpe?g|png|gif|webp|heic)$/i.test(String(v || '')) }
 
+// SHRINK BEFORE SENDING (2026-09-03). Photos travel as base64 JSON through a Vercel function whose
+// request body tops out at 4.5 MB — and a normal phone photo is 4–5 MB, so uploads died with a
+// generic error and only the earlier files in a batch survived. A claim photo does not need 12
+// megapixels: 1,600px on the long side at JPEG 0.85 is ~300–600 KB and still shows the stain.
+// Anything that is not an image (a PDF receipt) passes through untouched; any failure to shrink
+// falls back to the original so a browser without canvas support still uploads.
+const MAX_EDGE = 1600
+async function shrinkImage(file: File): Promise<File> {
+  if (!/^image\//.test(file.type) || file.size < 900_000) return file
+  try {
+    const bmp = await createImageBitmap(file)
+    const scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height))
+    if (scale >= 1 && file.size < 3_000_000) return file
+    const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale))
+    const c = document.createElement('canvas'); c.width = w; c.height = h
+    const ctx = c.getContext('2d'); if (!ctx) return file
+    ctx.drawImage(bmp, 0, 0, w, h)
+    const blob: Blob | null = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.85))
+    if (!blob || blob.size >= file.size) return file
+    return new File([blob], file.name.replace(/\.[a-z0-9]+$/i, '') + '.jpg', { type: 'image/jpeg' })
+  } catch { return file }
+}
+// Vercel's hard body limit is 4.5 MB; base64 adds a third. Refuse in words instead of a 413.
+const MAX_UPLOAD_BYTES = 3_200_000
+
 async function toB64(file: File): Promise<string> {
   const buf = await file.arrayBuffer()
   const bytes = new Uint8Array(buf)
@@ -339,14 +364,21 @@ function ItemCard({ claimId, item, index, onItems, setErr }: { claimId: string; 
     try {
       const paths: string[] = []
       for (let i = 0; i < files.length && i < 10; i++) {
-        const f = files[i]
+        const f = await shrinkImage(files[i])
+        if (f.size > MAX_UPLOAD_BYTES) {
+          setErr((files[i].name || 'File ' + (i + 1)) + ' is ' + (f.size / 1_000_000).toFixed(1) + ' MB — the limit is 3 MB. Photos are shrunk automatically; for a PDF, export it smaller.' + (paths.length ? ' The first ' + paths.length + ' uploaded.' : ''))
+          break
+        }
         const b64 = await toB64(f)
         const r = await fetch('/api/claims/file', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ b64, filename: f.name, contentType: f.type || 'application/octet-stream', claimId }),
         })
-        const j = await r.json()
-        if (!r.ok || j.ok === false) { setErr(j.error || 'Upload failed.'); break }
+        const j = await r.json().catch(() => ({} as any))
+        if (!r.ok || j.ok === false) {
+          setErr((j.error || (r.status === 413 ? 'That file is too big for the upload.' : 'Upload failed.')) + (paths.length ? ' The first ' + paths.length + ' uploaded.' : ''))
+          break
+        }
         paths.push(String(j.path))
       }
       if (!paths.length) return

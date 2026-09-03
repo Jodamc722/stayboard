@@ -13,7 +13,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 90
 
 export async function GET(req: NextRequest) {
-  const gate = await requireLevel('reports', 'view')
+  // GATE MATCHES THE PAGE (2026-09-03): the page is granted under `blocked`; this answered under
+  // `reports`, so a role given the tab but not Owner Reports got a page that failed to load.
+  const gate = await requireLevel('blocked', 'view')
   if (!gate.ok) return gate.res
   const sp = req.nextUrl.searchParams
   const days = Math.min(Math.max(Number(sp.get('days')) || 30, 1), 120)

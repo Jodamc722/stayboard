@@ -67,8 +67,13 @@ export const SECTIONS: NavSection[] = [
       // TAB SETS (Jon, 2026-08-24: "audits, orders and different tabs all over the place"): the
       // audit-ish pages and the order-ish pages become ONE row each; the pages keep their URLs
       // and roles and get a tab strip at the top. Registry in lib/tabsets.ts.
-      { to: '/audits',   label: 'Quality',  Icon: ClipboardCheck, set: 'quality' },   // Audits · Inspections · FF&E
-      { to: '/orders',   label: 'Orders',   Icon: ShoppingCart, set: 'orders' },       // Purchasing · Work Orders · Projects
+      // RETIRED FROM THE SIDEBAR 2026-09-03 (the September audit): Inspections (0 rows in 30 days,
+      // no migration creates its table), FF&E (empty catalog, a second audit stack), Work Orders
+      // (a third way to file "fix X", every row "Low") and Projects (0 projects ever). None had a
+      // visitor in the usage window. The pages and routes still exist behind their URLs; only the
+      // doors are gone, so the two sets collapsed into the one page each that people use.
+      { to: '/audits',   label: 'Quality',    Icon: ClipboardCheck },
+      { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
     ],
   },
   {
