@@ -21,7 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel, getAccess } from '@/lib/access'
-import { roomsFor, itemsFor, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, ROOM_TYPES, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
+import { roomsFor, itemsFor, roomQuestions, fullAnswers, applyAnswers, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, ROOM_TYPES, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
@@ -152,13 +152,37 @@ async function generate(db: ReturnType<typeof supabaseAdmin>, unitId: string, de
     .insert(defs.map(r => ({ unit_id: unitId, key: r.key, name: r.name, kind: r.kind, sort: r.sort })))
     .select('id,key,kind,name,sort')
   if (error) throw new Error(error.message)
+  // ASK BEFORE ASSUMING (Jon, 2026-09-03): a room with questions gets its items when the walker
+  // answers them (action 'answerRoom'); only a room with nothing to ask is stocked straight away.
   const items: any[] = []
   for (const r of (rows || []) as any[]) {
     const def = defs.find(d => d.key === r.key)!
+    if (roomQuestions(def, details).length) continue
     itemsFor(def, details, standard).forEach((it, i) => items.push({ unit_id: unitId, room_id: r.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, tier: it.tier, suggested: true, sort: i }))
   }
   if (items.length) { const { error: e2 } = await db.from('onboarding_items').insert(items); if (e2) throw new Error(e2.message) }
   return defs.length
+}
+
+/** Build (or rebuild, if nothing was touched) a room's list from its answers. */
+async function stockRoom(db: ReturnType<typeof supabaseAdmin>, unit: any, room: any, answers: Record<string, any>) {
+  const def: RoomDef = { key: room.key, name: room.name, kind: room.kind, sort: room.sort }
+  const details: UnitDetails = unit.details || {}
+  const full = fullAnswers(def, details, answers)
+  const want = applyAnswers(itemsFor(def, details, await loadStandard()), def, details, full)
+  const { data: existing } = await db.from('onboarding_items').select('id,name,brand,condition,suggested,photo_url,notes').eq('room_id', room.id)
+  const cur = (existing || []) as any[]
+  const untouched = cur.filter(i => i.suggested && !i.condition && !i.photo_url && !i.notes)
+  // Rows the walker never touched are the standard's guess — replace the guess. Anything counted,
+  // photographed or written on stays, and only names not already present are added beside it.
+  if (untouched.length) await db.from('onboarding_items').delete().in('id', untouched.map(i => i.id))
+  const keep = cur.filter(i => !untouched.some(u => u.id === i.id))
+  const now = new Date().toISOString()
+  const rows = want.filter(it => !keep.some(k => k.name === it.name && (k.brand || null) === (it.brand || null)))
+    .map((it, i) => ({ unit_id: unit.id, room_id: room.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, tier: it.tier, suggested: true, sort: keep.length + i }))
+  if (rows.length) { const { error } = await db.from('onboarding_items').insert(rows); if (error) throw new Error(error.message) }
+  await db.from('onboarding_rooms').update({ answers: full, updated_at: now }).eq('id', room.id)
+  return { added: rows.length, replaced: untouched.length, kept: keep.length }
 }
 
 export async function GET(req: NextRequest) {
@@ -293,10 +317,18 @@ export async function POST(req: NextRequest) {
       const sort = found.rooms.length
       const { data: room, error } = await db.from('onboarding_rooms').insert({ unit_id: unit.id, key, name, kind, sort }).select('*').single()
       if (error) throw new Error(error.message)
-      const its = itemsFor({ key, name, kind, sort }, unit.details || {}, await loadStandard())
+      const its = roomQuestions({ key, name, kind, sort }, unit.details || {}).length ? [] : itemsFor({ key, name, kind, sort }, unit.details || {}, await loadStandard())
       if (its.length) await db.from('onboarding_items').insert(its.map((it, i) => ({ unit_id: unit.id, room_id: room.id, name: it.name, category: it.category, qty: it.qty, expected: it.qty, brand: it.brand || null, tier: it.tier, suggested: true, sort: i })))
       await touch()
       return NextResponse.json({ ok: true, room })
+    }
+    if (action === 'answerRoom') {
+      const roomId = str(b.roomId)
+      const room = found.rooms.find((r: any) => r.id === roomId)
+      if (!room) return NextResponse.json({ ok: false, error: 'room not found' }, { status: 404 })
+      const r = await stockRoom(db, unit, room, b.answers && typeof b.answers === 'object' ? b.answers : {})
+      await touch()
+      return NextResponse.json({ ok: true, ...r })
     }
     if (action === 'renameRoom' || action === 'removeRoom' || action === 'checkRoom' || action === 'removePhoto' || action === 'roomNotes') {
       const roomId = str(b.roomId)
