@@ -25,7 +25,7 @@ import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { staffByName, resolveStaff } from '@/lib/staffing'
-import { laborEconomics } from '@/lib/labor-econ'
+import { laborEconomics, kindOfTask } from '@/lib/labor-econ'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -272,7 +272,7 @@ export async function GET(req: Request) {
           date: String(t.finished_at).slice(0, 10),
           unit: lmap[String(t.reference_property_id)]?.name || String(t.reference_property_id || 'Unknown'),
           task: t.name || t.type_department || 'Task',
-          kind: classify(t),
+          kind: kindOfTask(t),   // the shared classifier: 'clean' means a departure clean, nothing else
           minutes: num(t.total_minutes),
           pay: num(t.rate_paid),
         }))
