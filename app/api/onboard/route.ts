@@ -44,7 +44,7 @@ function cleanDetails(d: any): UnitDetails {
     parking: pick(o.parking, ['none', 'assigned', 'garage', 'street']),
     floor: str(o.floor).slice(0, 20) || undefined, pool: o.pool === true, gym: o.gym === true, notes: str(o.notes).slice(0, 2000) || undefined,
     appliances: Array.isArray(o.appliances) ? o.appliances.filter((a: any) => APPLIANCES.some(x => x.key === a)).slice(0, 40) : undefined,
-    beds: o.beds && typeof o.beds === 'object' ? Object.fromEntries(Object.entries(o.beds).filter(([k]) => /^(master_bedroom|bedroom_\d+)$/.test(k)).map(([k, v]) => [k, (Array.isArray(v) ? v : []).filter((b: any) => BED_SIZES.some(x => x.key === b)).slice(0, 6)])) : undefined,
+    beds: o.beds && typeof o.beds === 'object' ? Object.fromEntries(Object.entries(o.beds).filter(([k]) => /^(master_bedroom|bedroom_\d+|living)$/.test(k)).map(([k, v]) => [k, (Array.isArray(v) ? v : []).filter((b: any) => BED_SIZES.some(x => x.key === b)).slice(0, 6)])) : undefined,
   }
 }
 
