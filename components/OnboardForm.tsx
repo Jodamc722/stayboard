@@ -515,6 +515,21 @@ function ItemRow({ item: i, code, act, reload, onPhoto }: { item: Item; code: st
   useEffect(() => setQty(i.qty), [i.qty])
   useEffect(() => setNeed(i.expected == null ? '' : String(i.expected)), [i.expected])
   const short = i.expected != null && qty < i.expected && i.condition && i.condition !== 'missing'
+  // ITEM READ-BACK (Jon, 2026-09-03: item photos too — the model plate, the TV size). Runs when a photo of
+  // THIS item is taken; proposes brand/model/size + condition; the walker applies or ignores.
+  const [read, setRead] = useState<any | null>(null)
+  const [reading, setReading] = useState(false)
+  const readItem = async () => {
+    setReading(true); setRead(null)
+    try {
+      const r = await fetch('/api/onboard/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, roomId: i.room_id, itemId: i.id }) })
+      const j = await r.json().catch(() => ({})); if (!r.ok || !j.ok) throw new Error(j.error || 'Could not read')
+      setRead(j.item)
+    } catch (e: any) { setRead({ error: String(e?.message || e) }) }
+    setReading(false)
+  }
+  const prevPhoto = useRef(i.photo_url)
+  useEffect(() => { if (i.photo_url && i.photo_url !== prevPhoto.current) { prevPhoto.current = i.photo_url; setMore(true); readItem() } }, [i.photo_url]) // eslint-disable-line react-hooks/exhaustive-deps
   const save = async (patch: any) => { try { await act({ action: 'updateItem', itemId: i.id, ...patch }); await reload() } catch (e: any) { alert(String(e?.message || e)) } }
   const bump = (d: number) => { const v = Math.max(0, qty + d); setQty(v); save({ qty: v, ...(v === 0 && !i.condition ? { condition: 'missing' } : {}) }) }
   // Missing means none are there — the count follows. Worn or missing asks for the photo that proves it.
@@ -550,7 +565,26 @@ function ItemRow({ item: i, code, act, reload, onPhoto }: { item: Item; code: st
           <input value={brand} onChange={e => setBrand(e.target.value)} onBlur={() => brand !== (i.brand || '') && save({ brand })} className={INPUT} placeholder="Brand / model / size" />
           <div className="flex items-center gap-2"><input inputMode="numeric" value={need} onChange={e => setNeed(e.target.value.replace(/[^0-9]/g, ''))} onBlur={() => need !== (i.expected == null ? '' : String(i.expected)) && save({ expected: need === '' ? null : Number(need) })} className={INPUT} placeholder="Need (standard)" /><span className="text-[11px] text-muted whitespace-nowrap">should have</span></div>
           <input value={notes} onChange={e => setNotes(e.target.value)} onBlur={() => notes !== (i.notes || '') && save({ notes })} className={INPUT + ' col-span-2'} placeholder="Notes" />
-          {i.photo_url && <a href={i.photo_url} target="_blank" rel="noreferrer" className="col-span-2"><img src={i.photo_url} alt={i.name} className="h-28 rounded-xl object-cover" /></a>}
+          {i.photo_url && (
+            <div className="col-span-2 flex gap-3 items-start">
+              <a href={i.photo_url} target="_blank" rel="noreferrer" className="shrink-0"><img src={i.photo_url} alt={i.name} className="h-24 w-24 rounded-xl object-cover" /></a>
+              <div className="flex-1 min-w-0 text-[12.5px]">
+                {reading && <span className="inline-flex items-center gap-1.5 text-brand-800"><Loader2 size={13} className="animate-spin" /> Reading the label…</span>}
+                {read?.error && <span className="text-rose-700">{read.error}</span>}
+                {read && !read.error && (
+                  <div className="rounded-lg border border-brand-200 bg-brand-50/60 px-2.5 py-2 space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-brand-900"><Sparkles size={12} /> Read from the photo <span className="font-normal text-brand-800/70">· {read.confidence}</span></div>
+                    <div className="text-ink">{[read.name && read.name.toLowerCase() !== i.name.toLowerCase() ? 'looks like a ' + read.name : null, read.brand, read.condition, read.notes].filter(Boolean).join(' · ') || 'Nothing legible — try closer, on the label.'}</div>
+                    {(read.brand || read.condition) && <div className="flex gap-2 pt-0.5">
+                      <button onClick={() => { const patch: any = {}; if (read.brand) { patch.brand = read.brand; setBrand(read.brand) } if (read.condition) patch.condition = read.condition; if (read.notes && !notes) { patch.notes = read.notes; setNotes(read.notes) } save(patch); setRead(null) }} className="text-[12px] font-bold text-white bg-brand-700 rounded-lg px-2.5 min-h-[30px]">Apply</button>
+                      <button onClick={() => setRead(null)} className="text-[12px] font-semibold text-muted min-h-[30px] px-1.5">Ignore</button>
+                    </div>}
+                  </div>
+                )}
+                {!reading && !read && <button onClick={readItem} className="inline-flex items-center gap-1 text-[12px] font-bold text-brand-700 min-h-[30px]"><Sparkles size={12} /> Read brand / model from the photo</button>}
+              </div>
+            </div>
+          )}
           <button onClick={() => { if (confirm('Remove "' + i.name + '"?')) act({ action: 'removeItem', itemId: i.id }).then(reload).catch((e: any) => alert(String(e?.message || e))) }} className="col-span-2 text-[13px] font-semibold text-rose-700 inline-flex items-center gap-1 min-h-[36px]"><Trash2 size={14} /> Remove item</button>
         </div>
       )}
