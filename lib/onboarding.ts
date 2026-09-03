@@ -10,7 +10,7 @@
 // Isomorphic on purpose (no server imports): the public form and the API both read this file, so
 // the room a phone shows and the room the server creates are the same definition.
 
-export type RoomKind = 'entry' | 'living' | 'kitchen' | 'dining' | 'bedroom' | 'bathroom' | 'balcony' | 'laundry' | 'other'
+export type RoomKind = 'entry' | 'living' | 'kitchen' | 'dining' | 'bedroom' | 'bathroom' | 'balcony' | 'laundry' | 'office' | 'other'
 export type Category = 'furniture' | 'appliance' | 'electronics' | 'kitchen' | 'linen' | 'decor' | 'safety' | 'other'
 export type Condition = 'new' | 'good' | 'fair' | 'worn' | 'missing'
 export const CONDITIONS: { key: Condition; label: string; cls: string }[] = [
@@ -36,6 +36,7 @@ export type UnitDetails = {
   kitchen?: 'full' | 'kitchenette' | 'none'
   appliances?: ApplianceKey[]   // what is actually in the unit — asked right after the kitchen question
   beds?: Record<string, BedSize[]>  // per bedroom key (master_bedroom, bedroom_2…): the beds in it, by size
+  rooms?: Record<string, number>    // the rooms this unit actually has, by ROOM_TYPES key → count (Jon 2026-09-03: "rooms should not be standard")
   parking?: 'none' | 'assigned' | 'garage' | 'street'
   floor?: string
   sqft?: number
@@ -82,6 +83,45 @@ export function bedsFor(d: UnitDetails, roomKey: string): BedSize[] {
   return roomKey === 'master_bedroom' || roomKey === 'living' ? ['king'] : ['queen']
 }
 
+// THE ROOMS A UNIT HAS (Jon, 2026-09-03: "rooms should not be standard, they should be based on the
+// opening form — living room, den, entryway, vestibule, terrace, balcony, etc."). The opening form
+// shows this catalog; the walker taps what the unit has and how many. Bedrooms, bathrooms and the
+// kitchen come from their own counts. Each type borrows its checklist from a KIND in the standard
+// (a den is stocked like a living room, a terrace like a balcony).
+export type RoomType = { key: string; label: string; kind: RoomKind; group: 'entry' | 'living' | 'dining' | 'outdoor' | 'service'; countable?: boolean; auto?: (d: UnitDetails) => number }
+export const ROOM_TYPES: RoomType[] = [
+  { key: 'entry', label: 'Entryway', kind: 'entry', group: 'entry', auto: () => 1 },
+  { key: 'vestibule', label: 'Vestibule', kind: 'entry', group: 'entry' },
+  { key: 'hallway', label: 'Hallway', kind: 'entry', group: 'entry' },
+  { key: 'living', label: 'Living room', kind: 'living', group: 'living', auto: () => 1 },
+  { key: 'den', label: 'Den / family room', kind: 'living', group: 'living' },
+  { key: 'media', label: 'Media room', kind: 'living', group: 'living' },
+  { key: 'office', label: 'Office / study', kind: 'office', group: 'living' },
+  { key: 'loft', label: 'Loft', kind: 'living', group: 'living' },
+  { key: 'dining', label: 'Dining area', kind: 'dining', group: 'dining', auto: d => (Math.round(n(d.bedrooms)) >= 1 ? 1 : 0) },
+  { key: 'nook', label: 'Breakfast nook', kind: 'dining', group: 'dining' },
+  { key: 'balcony', label: 'Balcony', kind: 'balcony', group: 'outdoor', countable: true, auto: d => Math.max(0, Math.round(n(d.balconies))) },
+  { key: 'terrace', label: 'Terrace', kind: 'balcony', group: 'outdoor', countable: true },
+  { key: 'patio', label: 'Patio / yard', kind: 'balcony', group: 'outdoor' },
+  { key: 'rooftop', label: 'Rooftop', kind: 'balcony', group: 'outdoor' },
+  { key: 'pool', label: 'Pool area', kind: 'balcony', group: 'outdoor' },
+  { key: 'laundry', label: 'Laundry', kind: 'laundry', group: 'service', auto: d => (d.washerDryer === 'in_unit' ? 1 : 0) },
+  { key: 'storage', label: 'Storage / closet', kind: 'other', group: 'service' },
+  { key: 'garage', label: 'Garage', kind: 'other', group: 'service' },
+  { key: 'gym', label: 'Gym', kind: 'other', group: 'service' },
+]
+export const ROOM_GROUP_LABEL: Record<RoomType['group'], string> = { entry: 'Coming in', living: 'Living', dining: 'Eating', outdoor: 'Outdoor', service: 'Service' }
+/** What the opening form pre-ticks before anyone touches the room list. */
+export function defaultRooms(d: UnitDetails): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const t of ROOM_TYPES) { const c = t.auto ? t.auto(d) : 0; if (c > 0) out[t.key] = c }
+  return out
+}
+export function roomsChosen(d: UnitDetails): Record<string, number> {
+  if (d.rooms && typeof d.rooms === 'object') return d.rooms
+  return defaultRooms(d)
+}
+
 export type Tier = 'must' | 'recommended' | 'suggested'
 export const TIER_LABEL: Record<Tier, string> = { must: 'Must have', recommended: 'Recommended', suggested: 'Nice to have' }   // Jon: must = the amenities (plates…); recommended = a blender; nice to have = board games
 export const TIERS: Tier[] = ['must', 'recommended', 'suggested']
@@ -101,14 +141,23 @@ export function roomsFor(d: UnitDetails): RoomDef[] {
   const baths = Math.max(0, Math.min(8, n(d.bathrooms)))
   const fullBaths = Math.floor(baths)
   const halfBath = baths - fullBaths >= 0.5
+  const chosen = roomsChosen(d)
   const out: RoomDef[] = []
   let s = 0
-  out.push({ key: 'entry', name: 'Entry & hallway', kind: 'entry', sort: s++ })
-  out.push({ key: 'living', name: beds === 0 ? 'Studio living area' : 'Living room', kind: 'living', sort: s++ })
+  // Room keys stay stable: the FIRST of a type keeps the bare key ('balcony', 'living') so a unit
+  // walked before the room picker existed still lines up; extras are 'balcony_2', 'terrace_2'…
+  const push = (group: RoomType['group']) => {
+    for (const t of ROOM_TYPES) {
+      if (t.group !== group) continue
+      const c = Math.max(0, Math.min(6, Math.round(n(chosen[t.key]))))
+      for (let i = 1; i <= c; i++) out.push({ key: i === 1 ? t.key : t.key + '_' + i, name: t.key === 'living' && beds === 0 ? 'Studio living area' : t.label + (c > 1 ? ' ' + i : ''), kind: t.kind, sort: s++ })
+    }
+  }
+  push('entry'); push('living')
   // No kitchen still gets a "Kitchen corner": a mini fridge, a microwave and a coffee maker are the
   // must-haves of a unit with no kitchen (Jon: "no kitchen but might have mini fridge, maybe microwave").
   out.push({ key: 'kitchen', name: d.kitchen === 'none' ? 'Kitchen corner' : d.kitchen === 'kitchenette' ? 'Kitchenette' : 'Kitchen', kind: 'kitchen', sort: s++ })
-  if (beds >= 1) out.push({ key: 'dining', name: 'Dining area', kind: 'dining', sort: s++ })
+  push('dining')
   if (beds >= 1) out.push({ key: 'master_bedroom', name: 'Master bedroom', kind: 'bedroom', sort: s++ })
   if (beds >= 1 && fullBaths >= 1) out.push({ key: 'master_bath', name: 'Master bath', kind: 'bathroom', sort: s++ })
   for (let i = 2; i <= beds; i++) out.push({ key: 'bedroom_' + i, name: 'Bedroom ' + ordinal(i), kind: 'bedroom', sort: s++ })
@@ -116,9 +165,7 @@ export function roomsFor(d: UnitDetails): RoomDef[] {
   if (beds === 0 && fullBaths >= 1) out.push({ key: 'bathroom_1', name: 'Bathroom', kind: 'bathroom', sort: s++ })
   for (let i = 2; i <= fullBaths; i++) out.push({ key: 'bathroom_' + i, name: (beds >= 1 && i === 2 ? 'Guest bathroom' : 'Bathroom ' + ordinal(i)), kind: 'bathroom', sort: s++ })
   if (halfBath) out.push({ key: 'half_bath', name: 'Half bath', kind: 'bathroom', sort: s++ })
-  const balc = Math.max(0, Math.min(4, Math.round(n(d.balconies))))
-  for (let i = 1; i <= balc; i++) out.push({ key: 'balcony_' + i, name: balc === 1 ? 'Balcony' : 'Balcony ' + ordinal(i), kind: 'balcony', sort: s++ })
-  if (d.washerDryer === 'in_unit') out.push({ key: 'laundry', name: 'Laundry closet', kind: 'laundry', sort: s++ })
+  push('outdoor'); push('service')
   return out
 }
 
@@ -259,6 +306,11 @@ export const DEFAULT_STANDARD: InventoryStandard = {
     R(F('Detergent', 'other', 1)), R(F('Drying rack', 'other', 1)), R(F('Spare light bulbs', 'other', 4)), R(F('Spare batteries', 'other', 4)),
     S(F('Iron', 'other', 1)), S(F('Steamer', 'appliance', 1)), S(F('Lint roller', 'other', 1)),
   ],
+  office: [
+    F('Desk', 'furniture', 1), F('Desk chair', 'furniture', 1), F('Desk lamp', 'decor', 1), F('Power strip / outlets at desk', 'electronics', 1),
+    R(F('Monitor', 'electronics', 1, { brand: 'size' })), R(F('Bookshelf', 'furniture', 1)), R(F('Wall art', 'decor', 1)), R(F('Rug', 'decor', 1)),
+    S(F('Printer', 'electronics', 1)), S(F('Whiteboard', 'other', 1)), S(F('Sleeper sofa / daybed', 'furniture', 1)),
+  ],
   other: [],
 }
 
@@ -348,7 +400,7 @@ export function newCode(): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-export const ROOM_KIND_LABEL: Record<RoomKind, string> = { entry: 'Entry', living: 'Living', kitchen: 'Kitchen', dining: 'Dining', bedroom: 'Bedroom', bathroom: 'Bathroom', balcony: 'Outdoor', laundry: 'Laundry', other: 'Other' }
+export const ROOM_KIND_LABEL: Record<RoomKind, string> = { entry: 'Entry', living: 'Living', kitchen: 'Kitchen', dining: 'Dining', bedroom: 'Bedroom', bathroom: 'Bathroom', balcony: 'Outdoor', laundry: 'Laundry', office: 'Office', other: 'Other' }
 
 /** One-line summary of the quick section for headers and exports. */
 export function describeUnit(d: UnitDetails): string {
@@ -357,7 +409,8 @@ export function describeUnit(d: UnitDetails): string {
   const ba = n(d.bathrooms, -1); if (ba > 0) parts.push(ba + ' BA')
   if (n(d.occupancy) > 0) parts.push('sleeps ' + n(d.occupancy))
   if (d.beds) { const all = Object.values(d.beds).flat(); if (all.length) { const c: Record<string, number> = {}; for (const x of all) c[x] = (c[x] || 0) + 1; parts.push(Object.entries(c).map(([k, v]) => (v > 1 ? v + ' ' : '') + bedLabel(k as BedSize)).join(' + ')) } }
-  if (n(d.balconies) > 0) parts.push(n(d.balconies) === 1 ? 'balcony' : n(d.balconies) + ' balconies')
+  const ch = roomsChosen(d)
+  for (const t of ROOM_TYPES) { const c = Math.round(n(ch[t.key])); if (c > 0 && !['entry', 'living', 'dining', 'laundry'].includes(t.key)) parts.push((c > 1 ? c + ' ' : '') + t.label.toLowerCase().replace(/ \/.*$/, '') + (c > 1 && t.countable ? 's' : '')) }
   if (d.washerDryer === 'in_unit') parts.push('W/D in unit'); else if (d.washerDryer === 'shared') parts.push('shared laundry')
   if (n(d.sleeperSofa) > 0) parts.push(n(d.sleeperSofa) + ' sleeper sofa' + (n(d.sleeperSofa) > 1 ? 's' : ''))
   if (d.kitchen === 'kitchenette') parts.push('kitchenette'); else if (d.kitchen === 'none') parts.push('no kitchen')
