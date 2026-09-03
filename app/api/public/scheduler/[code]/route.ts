@@ -48,7 +48,9 @@ async function unlocked(link: any, pass: string | null): Promise<boolean> {
 async function marketWeek(market: string, weekStart: string | null) {
   const [full, presets] = await Promise.all([buildSchedule('week', weekStart), getOpsPresets()])
   const hiddenNames = new Set<string>(); let hidden = 0
-  const days = (full.days || []).map((d: any) => ({ date: d.date, dow: d.dow, cleans: (d.markets?.[market] || []).filter((c: any) => {
+  // 'All' is the ops review link — every market, same rules.
+  const pick = (d: any): any[] => market === 'All' ? Object.values(d.markets || {}).flat() : (d.markets?.[market] || [])
+  const days = (full.days || []).map((d: any) => ({ date: d.date, dow: d.dow, cleans: pick(d).filter((c: any) => {
     if (c.movedTo) return false
     if (c.vendor || c.guestyOnly) { hidden++; hiddenNames.add(c.vendor || c.hub || 'vendor'); return false }
     return true
@@ -58,14 +60,24 @@ async function marketWeek(market: string, weekStart: string | null) {
   for (const d of days) for (const c of d.cleans) byId[c.listingId] = byId[c.listingId] || { listingId: c.listingId, unit: c.unit, city: c.city, lat: c.lat, lng: c.lng }
   const areaOf: Record<string, string> = {}
   try { for (const a of clusterAreas(Object.values(byId), presets.timing.areaRadiusKm || 4)) for (const u of a.units) areaOf[u.listingId] = a.label } catch {}
-  for (const d of days) for (const c of d.cleans) c.area = areaOf[c.listingId] || c.city || c.hub || 'Other'
+  for (const d of days) for (const c of d.cleans) { const a = areaOf[c.listingId]; c.area = (a && a !== 'No location') ? a : (c.city || c.hub || 'Other') }
   const hk: any[] = full.housekeepers || []
   // The market's own people first (Breezeway region), then everyone else in housekeeping.
-  const mine = hk.filter(p => String(p.region || '').toLowerCase().includes(market.toLowerCase()))
+  const mine = market === 'All' ? hk : hk.filter(p => String(p.region || '').toLowerCase().includes(market.toLowerCase()))
   const rest = hk.filter(p => !mine.includes(p))
   // Recommendations: stay in the building, fill a day before starting another, say what it does.
   let plan: any = null
-  try { plan = planWeek(days, mine.map(p => ({ id: Number(p.id), name: String(p.name), region: p.region })), presets.timing) } catch {}
+  // On the ops link the plan runs per market so nobody is suggested across the county.
+  try {
+    if (market === 'All') {
+      const mk = Array.from(new Set(days.flatMap((d: any) => d.cleans.map((c: any) => c.market)))) as string[]
+      const parts = mk.map(m => planWeek(days.map((d: any) => ({ date: d.date, cleans: d.cleans.filter((c: any) => c.market === m) })), hk.filter(p => String(p.region || '').toLowerCase().includes(String(m).toLowerCase())).map(p => ({ id: Number(p.id), name: String(p.name), region: p.region })), presets.timing))
+      const byDate: Record<string, any> = {}
+      for (const part of parts) for (const d of part.days) { const t = byDate[d.date] = byDate[d.date] || { date: d.date, load: [], picks: [], unplaced: [] }; t.load.push(...d.load); t.picks.push(...d.picks); t.unplaced.push(...d.unplaced) }
+      const picks = parts.flatMap(p => p.picks); const un = parts.reduce((s, p) => s + p.days.reduce((x, d) => x + d.unplaced.length, 0), 0)
+      plan = { days: days.map((d: any) => byDate[d.date] || { date: d.date, load: [], picks: [], unplaced: [] }), picks, capacityMin: parts[0]?.capacityMin || 480, summary: picks.length ? `${picks.length} pick${picks.length === 1 ? '' : 's'} suggested${un ? ` · ${un} could not fit anyone's day` : ''}` : (un ? `${un} clean${un === 1 ? '' : 's'} do not fit anyone's day` : 'Every clean has someone') }
+    } else plan = planWeek(days, mine.map(p => ({ id: Number(p.id), name: String(p.name), region: p.region })), presets.timing)
+  } catch {}
   return { weekStart: full.weekStart, weekEnd: full.weekEnd, today: full.today, prev: full.prev, next: full.next, days, housekeepers: [...mine, ...rest], teamIds: mine.map(p => p.id), syncedAt: full.syncedAt, hidden: { count: hidden, vendors: Array.from(hiddenNames).sort() }, plan }
 }
 
