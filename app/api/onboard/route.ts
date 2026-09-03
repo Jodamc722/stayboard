@@ -21,7 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel, getAccess } from '@/lib/access'
-import { roomsFor, itemsFor, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
+import { roomsFor, itemsFor, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, ROOM_TYPES, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
@@ -31,7 +31,7 @@ const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const CODE_RE = /^[a-f0-9]{8,32}$/i
 const CONDS = ['new', 'good', 'fair', 'worn', 'missing']
 const CATS = ['furniture', 'appliance', 'electronics', 'kitchen', 'linen', 'decor', 'safety', 'other']
-const KINDS = ['entry', 'living', 'kitchen', 'dining', 'bedroom', 'bathroom', 'balcony', 'laundry', 'other']
+const KINDS = ['entry', 'living', 'kitchen', 'dining', 'bedroom', 'bathroom', 'balcony', 'laundry', 'office', 'other']
 
 function cleanDetails(d: any): UnitDetails {
   const o: any = d && typeof d === 'object' ? d : {}
@@ -44,6 +44,7 @@ function cleanDetails(d: any): UnitDetails {
     parking: pick(o.parking, ['none', 'assigned', 'garage', 'street']),
     floor: str(o.floor).slice(0, 20) || undefined, pool: o.pool === true, gym: o.gym === true, notes: str(o.notes).slice(0, 2000) || undefined,
     appliances: Array.isArray(o.appliances) ? o.appliances.filter((a: any) => APPLIANCES.some(x => x.key === a)).slice(0, 40) : undefined,
+    rooms: o.rooms && typeof o.rooms === 'object' ? Object.fromEntries(Object.entries(o.rooms).filter(([k, v]) => ROOM_TYPES.some(t => t.key === k) && Number(v) > 0).map(([k, v]) => [k, Math.max(0, Math.min(6, Math.round(Number(v) || 0)))])) : undefined,
     beds: o.beds && typeof o.beds === 'object' ? Object.fromEntries(Object.entries(o.beds).filter(([k]) => /^(master_bedroom|bedroom_\d+|living)$/.test(k)).map(([k, v]) => [k, (Array.isArray(v) ? v : []).filter((b: any) => BED_SIZES.some(x => x.key === b)).slice(0, 6)])) : undefined,
   }
 }
@@ -349,6 +350,36 @@ export async function POST(req: NextRequest) {
       }
       await touch()
       return NextResponse.json({ ok: true })
+    }
+    // AI READ-BACK APPLY (Jon, 2026-09-03: "photo add section and AI should add the details… then allow
+    // details to be added"). One round-trip for what the walker approved: counts/conditions on
+    // existing rows, new rows for what the photo showed that the list did not have. Nothing here is
+    // marked confirmed unless the walker approved a condition for it.
+    if (action === 'applyItems') {
+      const roomId = str(b.roomId)
+      if (!found.rooms.some((r: any) => r.id === roomId)) return NextResponse.json({ ok: false, error: 'room not found' }, { status: 404 })
+      const updates: any[] = Array.isArray(b.updates) ? b.updates.slice(0, 200) : []
+      const adds: any[] = Array.isArray(b.adds) ? b.adds.slice(0, 100) : []
+      let u = 0, a = 0
+      for (const x of updates) {
+        const id = str(x.itemId); if (!found.items.some((i: any) => i.id === id && i.room_id === roomId)) continue
+        const patch: Record<string, any> = { updated_at: now, suggested: false }
+        if (x.qty !== undefined) patch.qty = Math.max(0, Math.min(999, Math.round(Number(x.qty) || 0)))
+        if (x.condition !== undefined) patch.condition = CONDS.includes(x.condition) ? x.condition : null
+        if (x.brand) patch.brand = str(x.brand).slice(0, 120)
+        if (x.notes) patch.notes = str(x.notes).slice(0, 1000)
+        await db.from('onboarding_items').update(patch).eq('id', id); u++
+      }
+      let sort = found.items.filter((i: any) => i.room_id === roomId).length
+      const rows = adds.map(x => ({
+        unit_id: unit.id, room_id: roomId, name: str(x.name).slice(0, 120), category: CATS.includes(x.category) ? x.category : 'other',
+        qty: Math.max(0, Math.min(999, Math.round(Number(x.qty) || 1))), condition: CONDS.includes(x.condition) ? x.condition : null,
+        brand: str(x.brand).slice(0, 120) || null, notes: str(x.notes).slice(0, 1000) || null, tier: 'must', suggested: false, sort: sort++,
+      })).filter(r => r.name)
+      if (rows.length) { const { error } = await db.from('onboarding_items').insert(rows); if (error) throw new Error(error.message); a = rows.length }
+      if (b.notes !== undefined) await db.from('onboarding_rooms').update({ notes: str(b.notes).slice(0, 2000) || null, updated_at: now }).eq('id', roomId)
+      await touch()
+      return NextResponse.json({ ok: true, updated: u, added: a })
     }
     if (action === 'order') {
       const r = await pushOrder(db, unit, found.rooms, found.items, who)
