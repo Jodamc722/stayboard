@@ -14,8 +14,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, Check, ChevronDown, ChevronLeft, Loader2, Minus, Plus, Pencil, Trash2, X, Image as ImageIcon, CheckCircle2, AlertTriangle, ClipboardCopy, RotateCcw, ShoppingCart } from 'lucide-react'
 import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, ROOM_TYPES, ROOM_GROUP_LABEL, BED_SIZES, TIERS, TIER_LABEL, bedroomKeys, bedroomLabel, bedsFor, roomsChosen, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind, type BedSize, type Tier } from '@/lib/onboarding'
-import { Sparkles, ChevronRight, Play, HelpCircle } from 'lucide-react'
-import { roomQuestions, fullAnswers, type RoomQuestion } from '@/lib/onboarding'
+import { Sparkles, ChevronRight, Play } from 'lucide-react'
+import { fullAnswers, applyAnswers, itemsFor, type ItemDef } from '@/lib/onboarding'
+import { searchCatalog, typicalFor, type CatalogItem } from '@/lib/onboarding-catalog'
+import { Search } from 'lucide-react'
 
 type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; address: string | null; owner_name: string | null; owner_contact: string | null; details: UnitDetails; status: string; listing_id: string | null; notes: string | null; completed_at: string | null }
 type Room = { id: string; key: string; name: string; kind: RoomKind; sort: number; photos: { url: string; at: string; caption?: string | null }[]; notes: string | null; checked_at: string | null; answers?: Record<string, any> | null }
@@ -114,7 +116,7 @@ export function OnboardForm({ code }: { code: string }) {
               photograph, read, confirm, "Next room" — the order is the order you walk the unit. */}
           {rooms.length > 0 && !done && <button onClick={() => { const next = rooms.find(r => !r.checked_at) || rooms[0]; setRoomOpen(next.id); window.scrollTo(0, 0) }} className={BTN + ' ml-auto bg-brand-700 text-white min-h-[36px] px-3 text-[13px] whitespace-nowrap'}><Play size={14} /> {rooms.some(r => r.checked_at) ? 'Continue walk' : 'Start walk'}</button>}
         </div>
-        {rooms.length === 0 && <div className="px-4 py-6 text-[13.5px] text-muted text-center">Save the unit details and the room list appears here — Master bedroom, Master bath, Bedroom 2, Kitchen, Balcony… each pre-filled with what it should hold.</div>}
+        {rooms.length === 0 && <div className="px-4 py-6 text-[13.5px] text-muted text-center">Save the unit details and the room list appears here — Master bedroom, Master bath, Bedroom 2, Kitchen, Balcony… Rooms start empty; you add what is actually there.</div>}
         <div className="divide-y divide-line">
           {rooms.map(r => {
             const its = items.filter(i => i.room_id === r.id)
@@ -129,7 +131,7 @@ export function OnboardForm({ code }: { code: string }) {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[15px] font-bold text-ink truncate">{r.name}</span>
-                  <span className="block text-[12px] text-muted">{ROOM_KIND_LABEL[r.kind]} · {!r.answers && !its.length ? <span className="text-brand-700 font-semibold">{roomQuestions(r, unit.details || {}).length} quick questions to build the list</span> : <>{conf}/{its.length} items{bad ? ' · ' + bad + ' worn/missing' : ''}{short ? ' · ' + short + ' short' : ''}</>}{photos ? ' · ' + photos + ' photo' + (photos === 1 ? '' : 's') : ' · no photo yet'}</span>
+                  <span className="block text-[12px] text-muted">{ROOM_KIND_LABEL[r.kind]} · {!its.length ? <span className="text-brand-700 font-semibold">nothing added yet</span> : <>{its.length} item{its.length === 1 ? '' : 's'}{conf < its.length ? ' · ' + (its.length - conf) + ' to confirm' : ''}{bad ? ' · ' + bad + ' worn/missing' : ''}{short ? ' · ' + short + ' short' : ''}</>}{photos ? ' · ' + photos + ' photo' + (photos === 1 ? '' : 's') : ' · no photo yet'}</span>
                 </span>
                 {r.checked_at ? <CheckCircle2 size={20} className="text-emerald-600 shrink-0" /> : <span className="w-5 h-5 rounded-full border-2 border-line shrink-0" />}
               </button>
@@ -353,10 +355,16 @@ function AddRoom({ act, reload }: { act: (b: any) => Promise<any>; reload: () =>
 function RoomView({ code, unit, room, items, onBack, act, reload, index, total, onPrev, onNext }: { code: string; unit: Unit; room: Room; items: Item[]; onBack: () => void; act: (b: any) => Promise<any>; reload: () => Promise<void>; index: number; total: number; onPrev?: () => void; onNext: () => void }) {
   const [renaming, setRenaming] = useState(false)
   const [ai, setAi] = useState<any | null>(null)      // the read-back proposal, awaiting approval
-  const qs = roomQuestions(room, unit.details || {})
-  const [asking, setAsking] = useState<boolean>(!room.answers && qs.length > 0)
-  const [folded, setFolded] = useState<Record<string, boolean>>({ recommended: true, suggested: true })
-  useEffect(() => { setAsking(!room.answers && qs.length > 0) }, [room.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // THE EXPECTED CHECKLIST (Jon, 2026-09-03: "you're creating default items when you shouldn't"). Nothing
+  // is written into the room by default. The standard's list for a room of this shape is only a folded
+  // checklist of what SHOULD be here — tap "Here" to add it counted, "Not here" to add it as missing.
+  const details = unit.details || {}
+  const expected: ItemDef[] = useMemo(() => applyAnswers(itemsFor(room, details), room, details, fullAnswers(room, details, room.answers)), [room.id, room.kind, room.key, unit.details]) // eslint-disable-line react-hooks/exhaustive-deps
+  const have = (nm: string) => items.find(i => i.name.toLowerCase() === nm.toLowerCase())
+  const expectedMissing = expected.filter(e => (e.tier || 'must') === 'must' && !have(e.name))
+  const [showExpected, setShowExpected] = useState(false)
+  const [doneCheck, setDoneCheck] = useState(false)
+  const expectedQty = (nm: string) => expected.find(e => e.name.toLowerCase() === nm.toLowerCase())?.qty
   const [aiBusy, setAiBusy] = useState(false)
   const readPhotos = async () => {
     setErr(''); setAiBusy(true)
@@ -419,14 +427,9 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
               <span className="text-[22px] font-bold text-ink leading-tight">{room.name}</span><Pencil size={14} className="text-muted" />
             </button>
           )}
-          <div className="text-[12px] text-muted">Room {index + 1} of {total} · {ROOM_KIND_LABEL[room.kind]} · {confirmed}/{items.length} items confirmed</div>
+          <div className="text-[12px] text-muted">Room {index + 1} of {total} · {items.length ? items.length + ' item' + (items.length === 1 ? '' : 's') + (confirmed < items.length ? ' · ' + (items.length - confirmed) + ' to confirm' : '') : 'nothing added yet'}</div>
         </div>
       </div>
-
-      {/* ASK BEFORE ASSUMING (Jon, 2026-09-03: "it should ask pre-questions before assuming items").
-          Three to five taps, then the list is built from the answers — not the whole standard. */}
-      {asking && <QuestionsCard room={room} qs={qs} unit={unit} hasItems={items.length > 0} act={act} onDone={async () => { setAsking(false); await reload() }} onSkip={items.length ? () => setAsking(false) : undefined} />}
-      {!asking && qs.length > 0 && <button onClick={() => setAsking(true)} className="mb-3 text-[12.5px] font-semibold text-brand-700 inline-flex items-center gap-1.5 min-h-[32px]"><HelpCircle size={13} /> Room questions{room.answers ? ' · edit answers' : ''}</button>}
 
       {/* photos */}
       <section className="rounded-2xl border border-line bg-white p-3 mb-3">
@@ -490,38 +493,55 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
         )}
       </section>
 
-      {/* items */}
-      <section className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
-        <div className="px-3 py-2.5 flex items-center gap-2 border-b border-line">
-          <span className="font-bold text-[14px] text-ink">Inventory</span>
-          <span className="text-[12px] text-muted hidden sm:inline">qty in the room · tap a condition to confirm</span>
-          {/* Jon, 2026-09-02: "need to be able to add items" — the add button was only at the foot of a
-              20-row list. It lives up here too, first thing you see. */}
-          <button onClick={() => setAddOpen(true)} className={BTN + ' ml-auto bg-brand-700 text-white min-h-[36px] px-3 text-[13px] whitespace-nowrap'}><Plus size={15} /> Add item</button>
-        </div>
-        {addOpen && <AddItem roomId={room.id} act={act} onDone={async () => { setAddOpen(false); await reload() }} onCancel={() => setAddOpen(false)} />}
-        {/* MUST HAVE · RECOMMENDED · SUGGESTED (Jon, 2026-09-02: "must haves should be a section there,
-            recommended, suggestions"). Custom items land in Must have. */}
-        {TIERS.map(t => {
-          const list = items.filter(i => (i.tier || 'must') === t)
-          if (!list.length) return null
-          const conf = list.filter(i => i.condition).length
-          return (
-            <div key={t}>
-              <div className={'px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide flex items-center gap-2 ' + (t === 'must' ? 'bg-ink/5 text-ink' : t === 'recommended' ? 'bg-brand-50 text-brand-800' : 'bg-app text-muted')}>
-                {t !== 'must' ? <button onClick={() => setFolded(f => ({ ...f, [t]: !f[t] }))} className="inline-flex items-center gap-1.5 uppercase tracking-wide font-bold min-h-[30px]"><ChevronDown size={13} className={'transition-transform ' + (folded[t] ? '-rotate-90' : '')} />{TIER_LABEL[t]}</button> : TIER_LABEL[t]}<span className="font-semibold normal-case tracking-normal opacity-70">{conf}/{list.length}</span>
-                {/* The fast path (Jon, 2026-09-03: "as easy as possible to give us a full count"): one tap says
-                    "everything in this section is here, in the expected count, in good shape" — then fix the exceptions. */}
-                {conf < list.length && <button onClick={() => markAllGood(list)} className="ml-auto normal-case tracking-normal font-bold text-[12px] text-brand-700 inline-flex items-center gap-1 min-h-[30px]"><Check size={13} /> All here & good</button>}
-              </div>
-              {!(t !== 'must' && folded[t]) && <div className="divide-y divide-line">
-                {list.map(i => <ItemRow key={i.id} item={i} code={code} act={act} reload={reload} onPhoto={files => upload(files, i.id)} />)}
-              </div>}
+      {/* ADD WHAT IS THERE (Jon, 2026-09-03: "there should be a search or dropdown menu to add items…
+          full list for what's typically found at a property"). Search the catalog, tap to add — the
+          count comes from the standard for this unit, the condition starts Good; fix exceptions after. */}
+      <ItemPicker room={room} items={items} expectedQty={expectedQty} onAdd={async (c, qty) => {
+        const ex = have(c.name)
+        if (ex) await wrap(() => act({ action: 'updateItem', itemId: ex.id, qty: ex.qty + (qty || 1), condition: ex.condition || 'good' }))
+        else await wrap(() => act({ action: 'addItem', roomId: room.id, name: c.name, category: c.category, qty: qty ?? expectedQty(c.name) ?? 1, condition: 'good', expected: expectedQty(c.name) ?? null, brand: c.brand === 'size' ? 'size' : c.brand === 'model' ? 'model' : undefined }))
+      }} />
+
+      {/* in this room */}
+      {items.length > 0 && (
+        <section className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
+          <div className="px-3 py-2 flex items-center gap-2 border-b border-line bg-ink/5">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-ink">In this room</span><span className="text-[11px] font-semibold text-muted">{confirmed}/{items.length} confirmed</span>
+            {confirmed < items.length && <button onClick={() => markAllGood(items)} className="ml-auto font-bold text-[12px] text-brand-700 inline-flex items-center gap-1 min-h-[30px]"><Check size={13} /> All good</button>}
+          </div>
+          <div className="divide-y divide-line">
+            {items.map(i => <ItemRow key={i.id} item={i} code={code} act={act} reload={reload} onPhoto={files => upload(files, i.id)} />)}
+          </div>
+        </section>
+      )}
+
+      {/* expected here — folded; the standard as a checklist, never as pre-filled rows */}
+      {expected.length > 0 && (
+        <section className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
+          <button onClick={() => setShowExpected(o => !o)} className="w-full px-3 py-2.5 flex items-center gap-2 text-left">
+            <ChevronDown size={14} className={'text-muted transition-transform ' + (showExpected ? '' : '-rotate-90')} />
+            <span className="text-[13px] font-semibold text-ink">Expected in a {ROOM_KIND_LABEL[room.kind].toLowerCase()} like this</span>
+            <span className={'text-[12px] font-semibold ' + (expectedMissing.length ? 'text-amber-800' : 'text-emerald-700')}>{expectedMissing.length ? expectedMissing.length + ' not added yet' : 'all added'}</span>
+          </button>
+          {showExpected && (
+            <div className="divide-y divide-line border-t border-line">
+              {expected.filter(e => (e.tier || 'must') === 'must').map(e => {
+                const ex = have(e.name)
+                return (
+                  <div key={e.name + (e.brand || '')} className="px-3 py-2 flex items-center gap-2">
+                    <span className="flex-1 min-w-0"><span className="block text-[13.5px] font-semibold text-ink truncate">{e.name}{e.brand && e.brand !== 'size' && e.brand !== 'model' ? <span className="text-muted font-normal"> · {e.brand}</span> : ''}</span><span className="block text-[11.5px] text-muted">need {e.qty}{ex ? ' · added: ' + ex.qty + (ex.condition ? ' · ' + ex.condition : '') : ''}</span></span>
+                    {ex ? <CheckCircle2 size={18} className={ex.condition === 'missing' ? 'text-rose-500' : 'text-emerald-600'} /> : <>
+                      <button onClick={() => wrap(() => act({ action: 'addItem', roomId: room.id, name: e.name, category: e.category, qty: e.qty, condition: 'good', expected: e.qty, brand: e.brand || undefined }))} className="rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 text-[12.5px] font-bold min-h-[34px] px-3">Here</button>
+                      <button onClick={() => wrap(() => act({ action: 'addItem', roomId: room.id, name: e.name, category: e.category, qty: 0, condition: 'missing', expected: e.qty, brand: e.brand || undefined }))} className="rounded-lg border border-line bg-white text-rose-700 text-[12.5px] font-bold min-h-[34px] px-3">Not here</button>
+                    </>}
+                  </div>
+                )
+              })}
+              {expected.some(e => (e.tier || 'must') !== 'must') && <div className="px-3 py-2 text-[11.5px] text-muted">Recommended / nice-to-have extras are in the search above.</div>}
             </div>
-          )
-        })}
-        {!addOpen && <div className="px-3 py-2.5 border-t border-line"><button onClick={() => { setAddOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }) }} className="text-[14px] font-bold text-brand-700 inline-flex items-center gap-1.5 min-h-[40px]"><Plus size={16} /> Add item or furniture</button></div>}
-      </section>
+          )}
+        </section>
+      )}
 
       <section className="rounded-2xl border border-line bg-white p-3 mb-3">
         <label className={LABEL}>Room notes</label>
@@ -529,9 +549,18 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
       </section>
 
       {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
+      {doneCheck && !room.checked_at && expectedMissing.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 mb-2 text-[13px] text-amber-950">
+          <b>{expectedMissing.length} expected item{expectedMissing.length === 1 ? '' : 's'} not added:</b> {expectedMissing.slice(0, 8).map(e => e.name).join(', ')}{expectedMissing.length > 8 ? '…' : ''}
+          <div className="flex gap-2 mt-2 flex-wrap">
+            <button onClick={() => wrap(() => act({ action: 'applyItems', roomId: room.id, updates: [], adds: expectedMissing.map(e => ({ name: e.name, category: e.category, qty: 0, condition: 'missing', brand: e.brand || null })) }))} className={BTN + ' bg-rose-700 text-white min-h-[38px] text-[13px]'}>Mark them missing → buy list</button>
+            <button onClick={() => wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: true }); onNext() })} className={BTN + ' border border-line bg-white text-ink min-h-[38px] text-[13px]'}>Not needed here — done</button>
+          </div>
+        </div>
+      )}
       <div className="sticky bottom-0 -mx-4 px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+8px)] bg-app/95 backdrop-blur border-t border-line flex gap-2 mb-2">
         <button onClick={onPrev || onBack} className={BTN + ' border border-line bg-white text-ink px-3'} aria-label={onPrev ? 'Previous room' : 'All rooms'}><ChevronLeft size={16} /></button>
-        <button onClick={() => wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: !room.checked_at }); if (!room.checked_at) onNext() })} className={BTN + ' flex-1 ' + (room.checked_at ? 'border border-emerald-300 bg-emerald-50 text-emerald-800' : 'bg-ink text-white')}>{room.checked_at ? <><CheckCircle2 size={16} /> Room done — tap to reopen</> : <><Check size={16} /> Room done{index < total - 1 ? ' → next room' : ' → finish'}</>}</button>
+        <button onClick={() => { if (!room.checked_at && expectedMissing.length && !doneCheck) { setDoneCheck(true); setShowExpected(true); return } wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: !room.checked_at }); if (!room.checked_at) onNext() }) }} className={BTN + ' flex-1 ' + (room.checked_at ? 'border border-emerald-300 bg-emerald-50 text-emerald-800' : 'bg-ink text-white')}>{room.checked_at ? <><CheckCircle2 size={16} /> Room done — tap to reopen</> : <><Check size={16} /> Room done{index < total - 1 ? ' → next room' : ' → finish'}</>}</button>
         <button onClick={() => { if (confirm('Remove "' + room.name + '" and its ' + items.length + ' items?')) wrap(async () => { await act({ action: 'removeRoom', roomId: room.id }); onBack() }) }} className={BTN + ' border border-line bg-white text-muted'} aria-label="Remove room"><Trash2 size={16} /></button>
       </div>
       <div className="flex justify-center gap-4 mb-4 text-[12.5px] font-semibold text-muted">
@@ -542,35 +571,32 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
   )
 }
 
-function QuestionsCard({ room, qs, unit, hasItems, act, onDone, onSkip }: { room: Room; qs: RoomQuestion[]; unit: Unit; hasItems: boolean; act: (b: any) => Promise<any>; onDone: () => Promise<void>; onSkip?: () => void }) {
-  const [a, setA] = useState<Record<string, any>>(() => fullAnswers(room, unit.details || {}, room.answers))
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const set = (k: string, v: any) => setA(x => ({ ...x, [k]: v }))
-  const chip = (on: boolean) => CHIP + ' min-h-[36px] text-[13px] ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')
-  const build = async () => {
-    setBusy(true); setErr('')
-    try { await act({ action: 'answerRoom', roomId: room.id, answers: a }); await onDone() } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(false)
-  }
+function ItemPicker({ room, items, expectedQty, onAdd }: { room: Room; items: Item[]; expectedQty: (n: string) => number | undefined; onAdd: (c: CatalogItem, qty?: number) => Promise<void> }) {
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const results = useMemo(() => q.trim() ? searchCatalog(q, room.kind, 14) : typicalFor(room.kind, 16), [q, room.kind])
+  const has = (nm: string) => items.find(i => i.name.toLowerCase() === nm.toLowerCase())
+  const add = async (c: CatalogItem) => { setBusy(c.name); try { await onAdd(c) } finally { setBusy(null) } }
+  const custom = q.trim() && !results.some(r => r.name.toLowerCase() === q.trim().toLowerCase())
   return (
-    <section className="rounded-2xl border border-brand-200 bg-brand-50/50 p-3 mb-3 space-y-3">
-      <div className="flex items-center gap-2"><HelpCircle size={15} className="text-brand-700" /><span className="font-bold text-[14px] text-ink">{hasItems ? 'Room questions' : 'Before you count — ' + qs.length + ' quick question' + (qs.length === 1 ? '' : 's')}</span><span className="text-[12px] text-muted">the list is built from these</span></div>
-      {qs.map(q => (
-        <div key={q.key}>
-          <div className="text-[13px] font-semibold text-ink mb-1.5">{q.label}</div>
-          {q.type === 'yn' && <div className="flex gap-1.5">{[[true, 'Yes'], [false, 'No']].map(([v, l]) => <button key={String(v)} type="button" onClick={() => set(q.key, v)} className={chip(a[q.key] === v)}>{l as string}</button>)}</div>}
-          {q.type === 'count' && <div className="flex gap-1.5 flex-wrap">{Array.from({ length: q.max + 1 }, (_, i) => i).map(i => <button key={i} type="button" onClick={() => set(q.key, i)} className={chip(a[q.key] === i) + ' min-w-[40px] px-0'}>{i === 0 ? 'None' : i}</button>)}</div>}
-          {q.type === 'choice' && <div className="flex gap-1.5 flex-wrap">{q.options.map(o => <button key={o.v} type="button" onClick={() => set(q.key, o.v)} className={chip(a[q.key] === o.v)}>{o.l}</button>)}</div>}
-          {q.type === 'multi' && <div className="flex gap-1.5 flex-wrap">{q.options.map(o => { const on = Array.isArray(a[q.key]) && a[q.key].includes(o.v); return <button key={o.v} type="button" onClick={() => set(q.key, on ? a[q.key].filter((x: string) => x !== o.v) : [...(a[q.key] || []), o.v])} className={chip(on) + ' text-[12.5px] min-h-[34px]'}>{on ? <Check size={13} className="mr-1" /> : null}{o.l}</button> })}</div>}
-        </div>
-      ))}
-      {err && <p className="text-[13px] text-rose-600 font-semibold">{err}</p>}
-      <div className="flex gap-2">
-        <button onClick={build} disabled={busy} className={BTN + ' bg-ink text-white flex-1'}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {hasItems ? 'Update the list' : 'Build the list'}</button>
-        {onSkip && <button onClick={onSkip} className={BTN + ' border border-line bg-white text-ink'}>Later</button>}
+    <section className="rounded-2xl border border-line bg-white p-3 mb-3">
+      <div className="relative">
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+        <input value={q} onChange={e => setQ(e.target.value)} className={INPUT + ' pl-9'} placeholder={'Add what\'s in the ' + room.name.toLowerCase() + '… (sofa, plates, hangers)'} inputMode="search" autoComplete="off" />
+        {q && <button onClick={() => setQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center text-muted" aria-label="Clear"><X size={14} /></button>}
       </div>
-      {hasItems && <p className="text-[12px] text-muted">Only untouched rows change — anything you counted, photographed or wrote on stays.</p>}
+      <div className="mt-2 flex gap-1.5 flex-wrap">
+        {results.map(c => {
+          const ex = has(c.name); const eq = expectedQty(c.name)
+          return (
+            <button key={c.name} onClick={() => add(c)} disabled={busy === c.name} className={CHIP + ' min-h-[36px] text-[13px] ' + (ex ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-white text-ink border-line')}>
+              {busy === c.name ? <Loader2 size={13} className="animate-spin mr-1" /> : ex ? <Check size={13} className="mr-1" /> : <Plus size={13} className="mr-1 text-muted" />}{c.name}{ex ? <span className="ml-1 font-bold">×{ex.qty}</span> : eq ? <span className="ml-1 text-muted">×{eq}</span> : null}
+            </button>
+          )
+        })}
+        {custom && <button onClick={() => add({ name: q.trim().slice(0, 120), category: 'other', kinds: [room.kind] })} className={CHIP + ' min-h-[36px] text-[13px] bg-ink text-white border-ink'}><Plus size={13} className="mr-1" /> Add "{q.trim()}"</button>}
+      </div>
+      <p className="text-[11.5px] text-muted mt-2">{q ? 'Tap to add. Tap again for one more.' : 'Typical for this room — tap what is here. Search for anything else. ×N is the count for this unit.'}</p>
     </section>
   )
 }
