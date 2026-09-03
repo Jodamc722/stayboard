@@ -35,6 +35,7 @@ export function OnboardForm({ code }: { code: string }) {
   const [loading, setLoading] = useState(true)
   const [roomOpen, setRoomOpen] = useState<string | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [startWalk, setStartWalk] = useState(false)
 
   const load = async () => {
     try {
@@ -47,6 +48,8 @@ export function OnboardForm({ code }: { code: string }) {
     setLoading(false)
   }
   useEffect(() => { load() }, [code]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Straight into room 1 after the rooms are built — no second tap on "Start walk".
+  useEffect(() => { if (startWalk && data?.rooms.length) { setStartWalk(false); setRoomOpen(data.rooms[0].id); window.scrollTo(0, 0) } }, [startWalk, data])
 
   const act = async (body: Record<string, any>) => {
     const r = await fetch('/api/onboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, ...body }) })
@@ -98,7 +101,7 @@ export function OnboardForm({ code }: { code: string }) {
           <span className="text-[12px] text-muted ml-1 truncate">{rooms.length ? describeUnit(unit.details || {}) : 'start here'}</span>
           <ChevronDown size={16} className={'ml-auto text-muted transition-transform ' + (detailsOpen ? 'rotate-180' : '')} />
         </button>
-        {detailsOpen && <DetailsForm unit={unit} hasRooms={rooms.length > 0} onSaved={async () => { setDetailsOpen(false); await load() }} act={act} />}
+        {detailsOpen && <DetailsForm unit={unit} hasRooms={rooms.length > 0} onSaved={async () => { setDetailsOpen(false); const fresh = rooms.length === 0; await load(); if (fresh) setStartWalk(true) }} act={act} />}
       </section>
 
       {/* ── 2. rooms ── */}
@@ -186,46 +189,67 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
     try { await act({ action: 'saveDetails', name, building, unitNo, address, ownerName, ownerContact, details: d }); await onSaved() } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }
+  const [infoOpen, setInfoOpen] = useState(!unit.name)
+  const [moreOpen, setMoreOpen] = useState(false)
   return (
     <div className="px-4 pb-4 border-t border-line pt-3 space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2"><label className={LABEL}>Unit name</label><input value={name} onChange={e => setName(e.target.value)} className={INPUT} placeholder="e.g. Elser 3707" /></div>
-        <div><label className={LABEL}>Building</label><input value={building} onChange={e => setBuilding(e.target.value)} className={INPUT} placeholder="Elser" /></div>
-        <div><label className={LABEL}>Unit #</label><input value={unitNo} onChange={e => setUnitNo(e.target.value)} className={INPUT} placeholder="3707" /></div>
-        <div className="col-span-2"><label className={LABEL}>Address</label><input value={address} onChange={e => setAddress(e.target.value)} className={INPUT} placeholder="Street, city" /></div>
-        <div><label className={LABEL}>Owner</label><input value={ownerName} onChange={e => setOwnerName(e.target.value)} className={INPUT} placeholder="Name" /></div>
-        <div><label className={LABEL}>Owner contact</label><input value={ownerContact} onChange={e => setOwnerContact(e.target.value)} className={INPUT} placeholder="Phone or email" /></div>
-      </div>
-
+      {/* THE WALK COMES FIRST (Jon, 2026-09-03: "make it as easy as possible to complete"). The structural
+          questions that generate the rooms are the first thing on screen; office details (address, owner)
+          and extras (parking, floor, sq ft) fold away — they are filled in once, rarely by the walker. */}
       <div className="rounded-xl bg-app/70 p-3 space-y-3">
-        <div className="text-[12px] font-bold uppercase tracking-wide text-muted">Quick section — this generates the rooms</div>
+        <div className="text-[12px] font-bold uppercase tracking-wide text-muted">The unit — this builds the room list</div>
         <Stepper label="Bedrooms" value={d.bedrooms ?? 0} min={0} max={8} onChange={v => set('bedrooms', v)} render={v => v === 0 ? 'Studio' : String(v)} />
         <BedsEditor d={d} onChange={beds => set('beds', beds)} />
-        {/* Jon, 2026-09-02: "the bathroom type should be a ticker like the bedroom one with .5s" —
-            every COUNT is a ticker now; only the true either/or questions stay as chips. */}
         <Stepper label="Bathrooms" value={d.bathrooms ?? 1} min={0.5} max={8} step={0.5} onChange={v => set('bathrooms', v)} render={v => String(v)} />
-        <Stepper label="Occupancy (max guests)" value={d.occupancy ?? 4} min={1} max={20} onChange={v => set('occupancy', v)} />
+        <Stepper label="Max guests" value={d.occupancy ?? 4} min={1} max={20} onChange={v => set('occupancy', v)} />
         <Stepper label="Sleeper sofas" value={d.sleeperSofa ?? 0} min={0} max={4} onChange={v => set('sleeperSofa', v)} render={v => v === 0 ? 'None' : String(v)} />
-        <Choice label="Washer / dryer" value={d.washerDryer ?? 'in_unit'} options={[{ v: 'in_unit', l: 'In unit' }, { v: 'shared', l: 'Shared' }, { v: 'none', l: 'None' }]} onChange={v => set('washerDryer', v as any)} />
         <Choice label="Kitchen" value={d.kitchen ?? 'full'} options={[{ v: 'full', l: 'Full kitchen' }, { v: 'kitchenette', l: 'Kitchenette' }, { v: 'none', l: 'No kitchen' }]} onChange={v => set('kitchen', v as any)} />
-        <p className="text-[12px] text-muted -mt-1">{d.kitchen === 'none' ? 'A "Kitchen corner" is generated anyway — mini fridge, microwave, coffee maker are must-haves even without a kitchen.' : d.kitchen === 'kitchenette' ? 'Generates the kitchenette must-haves: mini fridge, cooktop, microwave, coffee maker, a pan, a pot, knives, a full table setting.' : 'Generates the full-kitchen must-haves: fridge, stove/oven, dishwasher, microwave, coffee maker, pots, pans, knives, a full table setting.'}</p>
-        {/* THE ROOMS THIS UNIT HAS (Jon, 2026-09-03: "rooms should not be standard, they should be based on the
-            opening form — living room, den, entryway, vestibule, terrace, balcony"). Bedrooms, baths and the
-            kitchen come from the counts above; everything else is tapped here. */}
+        <Choice label="Washer / dryer" value={d.washerDryer ?? 'in_unit'} options={[{ v: 'in_unit', l: 'In unit' }, { v: 'shared', l: 'Shared' }, { v: 'none', l: 'None' }]} onChange={v => set('washerDryer', v as any)} />
         <RoomsPicker d={d} onChange={rooms => set('rooms', rooms)} />
-        <Choice label="Parking" value={d.parking ?? 'none'} options={[{ v: 'none', l: 'None' }, { v: 'assigned', l: 'Assigned' }, { v: 'garage', l: 'Garage' }, { v: 'street', l: 'Street' }]} onChange={v => set('parking', v as any)} />
-        <div className="grid grid-cols-2 gap-3">
-          <div><label className={LABEL}>Floor</label><input value={d.floor || ''} onChange={e => set('floor', e.target.value)} className={INPUT} placeholder="12" /></div>
-          <div><label className={LABEL}>Sq ft</label><input inputMode="numeric" value={d.sqft ?? ''} onChange={e => set('sqft', e.target.value ? Number(e.target.value) : undefined)} className={INPUT} placeholder="850" /></div>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Toggle label="Pool access" on={!!d.pool} onChange={v => set('pool', v)} />
-          <Toggle label="Gym access" on={!!d.gym} onChange={v => set('gym', v)} />
-        </div>
-        <div><label className={LABEL}>Notes</label><textarea value={d.notes || ''} onChange={e => set('notes', e.target.value)} rows={2} className={INPUT} placeholder="Access, quirks, anything the team should know" /></div>
+      </div>
+
+      <div className="rounded-xl border border-line bg-white overflow-hidden">
+        <button type="button" onClick={() => setInfoOpen(o => !o)} className="w-full px-3 py-2.5 flex items-center gap-2 text-left">
+          <span className="text-[13px] font-semibold text-ink">Unit info</span>
+          <span className="text-[12px] text-muted truncate">{[name, building, unitNo && '#' + unitNo, ownerName].filter(Boolean).join(' · ') || 'name, building, address, owner'}</span>
+          <ChevronDown size={15} className={'ml-auto text-muted transition-transform ' + (infoOpen ? 'rotate-180' : '')} />
+        </button>
+        {infoOpen && (
+          <div className="px-3 pb-3 grid grid-cols-2 gap-3">
+            <div className="col-span-2"><label className={LABEL}>Unit name</label><input value={name} onChange={e => setName(e.target.value)} className={INPUT} placeholder="e.g. Elser 3707" /></div>
+            <div><label className={LABEL}>Building</label><input value={building} onChange={e => setBuilding(e.target.value)} className={INPUT} placeholder="Elser" /></div>
+            <div><label className={LABEL}>Unit #</label><input value={unitNo} onChange={e => setUnitNo(e.target.value)} className={INPUT} placeholder="3707" /></div>
+            <div className="col-span-2"><label className={LABEL}>Address</label><input value={address} onChange={e => setAddress(e.target.value)} className={INPUT} placeholder="Street, city" /></div>
+            <div><label className={LABEL}>Owner</label><input value={ownerName} onChange={e => setOwnerName(e.target.value)} className={INPUT} placeholder="Name" /></div>
+            <div><label className={LABEL}>Owner contact</label><input value={ownerContact} onChange={e => setOwnerContact(e.target.value)} className={INPUT} placeholder="Phone or email" /></div>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-line bg-white overflow-hidden">
+        <button type="button" onClick={() => setMoreOpen(o => !o)} className="w-full px-3 py-2.5 flex items-center gap-2 text-left">
+          <span className="text-[13px] font-semibold text-ink">More</span>
+          <span className="text-[12px] text-muted truncate">parking, floor, sq ft, pool / gym, notes</span>
+          <ChevronDown size={15} className={'ml-auto text-muted transition-transform ' + (moreOpen ? 'rotate-180' : '')} />
+        </button>
+        {moreOpen && (
+          <div className="px-3 pb-3 space-y-3">
+            <Choice label="Parking" value={d.parking ?? 'none'} options={[{ v: 'none', l: 'None' }, { v: 'assigned', l: 'Assigned' }, { v: 'garage', l: 'Garage' }, { v: 'street', l: 'Street' }]} onChange={v => set('parking', v as any)} />
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className={LABEL}>Floor</label><input value={d.floor || ''} onChange={e => set('floor', e.target.value)} className={INPUT} placeholder="12" /></div>
+              <div><label className={LABEL}>Sq ft</label><input inputMode="numeric" value={d.sqft ?? ''} onChange={e => set('sqft', e.target.value ? Number(e.target.value) : undefined)} className={INPUT} placeholder="850" /></div>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <Toggle label="Pool access" on={!!d.pool} onChange={v => set('pool', v)} />
+              <Toggle label="Gym access" on={!!d.gym} onChange={v => set('gym', v)} />
+            </div>
+            <div><label className={LABEL}>Notes</label><textarea value={d.notes || ''} onChange={e => set('notes', e.target.value)} rows={2} className={INPUT} placeholder="Access, quirks, anything the team should know" /></div>
+          </div>
+        )}
       </div>
       {err && <p className="text-[13px] text-rose-600 font-semibold">{err}</p>}
-      <button onClick={save} disabled={busy || !name.trim()} className={BTN + ' bg-ink text-white w-full'}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {hasRooms ? 'Save details (adds any new rooms)' : 'Save & generate rooms'}</button>
+      <button onClick={save} disabled={busy || !name.trim()} className={BTN + ' bg-ink text-white w-full'}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {hasRooms ? 'Save details (adds any new rooms)' : 'Build the rooms & start the walk'}</button>
+      {!name.trim() && <p className="text-[12px] text-rose-700">Give the unit a name (under Unit info) to continue.</p>}
       {hasRooms && <p className="text-[12px] text-muted">Changing counts adds the rooms now expected; it never removes or renames rooms you have already filled in.</p>}
     </div>
   )
@@ -372,9 +396,13 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
       setUploading(n => n - 1)
     }
     await reload()
+    // A room photo is also the AI's input — read it straight away so the proposal is waiting (Jon:
+    // "photo add section and AI should add the details"). Item photos have their own reader.
+    if (!itemId && !ai) readPhotos()
   }
   const wrap = async (fn: () => Promise<any>) => { setErr(''); try { await fn(); await reload() } catch (e: any) { setErr(String(e?.message || e)) } }
-  const markAllGood = (list: Item[] = items) => wrap(async () => { for (const i of list.filter(x => !x.condition)) await act({ action: 'updateItem', itemId: i.id, condition: 'good' }) })
+  // One round-trip, not one per row (a kitchen has 40).
+  const markAllGood = (list: Item[] = items) => wrap(() => act({ action: 'applyItems', roomId: room.id, updates: list.filter(x => !x.condition).map(i => ({ itemId: i.id, condition: 'good', ...(i.qty === 0 && i.expected ? { qty: i.expected } : {}) })), adds: [] }))
 
   return (
     <div>
@@ -470,7 +498,6 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
           {/* Jon, 2026-09-02: "need to be able to add items" — the add button was only at the foot of a
               20-row list. It lives up here too, first thing you see. */}
           <button onClick={() => setAddOpen(true)} className={BTN + ' ml-auto bg-brand-700 text-white min-h-[36px] px-3 text-[13px] whitespace-nowrap'}><Plus size={15} /> Add item</button>
-          {items.some(i => !i.condition) && <button onClick={() => markAllGood()} className="text-[12px] font-bold text-brand-700 min-h-[36px] px-2 whitespace-nowrap">All → Good</button>}
         </div>
         {addOpen && <AddItem roomId={room.id} act={act} onDone={async () => { setAddOpen(false); await reload() }} onCancel={() => setAddOpen(false)} />}
         {/* MUST HAVE · RECOMMENDED · SUGGESTED (Jon, 2026-09-02: "must haves should be a section there,
@@ -502,14 +529,14 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
       </section>
 
       {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
-      <div className="flex gap-2 mb-6">
+      <div className="sticky bottom-0 -mx-4 px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+8px)] bg-app/95 backdrop-blur border-t border-line flex gap-2 mb-2">
+        <button onClick={onPrev || onBack} className={BTN + ' border border-line bg-white text-ink px-3'} aria-label={onPrev ? 'Previous room' : 'All rooms'}><ChevronLeft size={16} /></button>
         <button onClick={() => wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: !room.checked_at }); if (!room.checked_at) onNext() })} className={BTN + ' flex-1 ' + (room.checked_at ? 'border border-emerald-300 bg-emerald-50 text-emerald-800' : 'bg-ink text-white')}>{room.checked_at ? <><CheckCircle2 size={16} /> Room done — tap to reopen</> : <><Check size={16} /> Room done{index < total - 1 ? ' → next room' : ' → finish'}</>}</button>
         <button onClick={() => { if (confirm('Remove "' + room.name + '" and its ' + items.length + ' items?')) wrap(async () => { await act({ action: 'removeRoom', roomId: room.id }); onBack() }) }} className={BTN + ' border border-line bg-white text-muted'} aria-label="Remove room"><Trash2 size={16} /></button>
       </div>
-      <div className="flex gap-2 mb-4">
-        <button onClick={onPrev || onBack} className={BTN + ' border border-line bg-white text-ink'}><ChevronLeft size={16} /> {onPrev ? 'Previous' : 'Rooms'}</button>
-        <button onClick={onBack} className={BTN + ' flex-1 border border-line bg-white text-ink'}>All rooms</button>
-        <button onClick={onNext} className={BTN + ' border border-line bg-white text-ink'}>{index < total - 1 ? 'Next room' : 'Finish'} <ChevronRight size={16} /></button>
+      <div className="flex justify-center gap-4 mb-4 text-[12.5px] font-semibold text-muted">
+        <button onClick={onBack} className="min-h-[36px]">All rooms</button>
+        <button onClick={onNext} className="min-h-[36px] inline-flex items-center gap-1">Skip to {index < total - 1 ? 'next room' : 'finish'} <ChevronRight size={14} /></button>
       </div>
     </div>
   )
@@ -583,26 +610,36 @@ function ItemRow({ item: i, code, act, reload, onPhoto }: { item: Item; code: st
     save(patch)
     if ((c === 'worn' || c === 'missing') && !i.photo_url) setTimeout(() => fileRef.current?.click(), 250)
   }
+  // ONE TAP FOR THE COMMON CASE (Jon, 2026-09-03: "make it as easy as possible to complete"). The
+  // row is name · count · ✓. ✓ means "here, in good shape". Anything else — fair, worn, missing, a
+  // photo, brand/model, a note — lives behind the flag, so the normal row is one tap, not five chips.
+  const flagged = i.condition === 'fair' || i.condition === 'worn' || i.condition === 'missing'
+  const good = i.condition === 'good' || i.condition === 'new'
+  const tone = good ? 'bg-emerald-50/40' : i.condition === 'fair' ? 'bg-amber-50/60' : flagged ? 'bg-rose-50/50' : 'bg-white'
   return (
-    <div className={'px-3 py-2.5 ' + (i.condition ? '' : 'bg-amber-50/30')}>
+    <div className={'px-3 py-2 ' + tone}>
       <div className="flex items-center gap-2">
         <button onClick={() => setMore(m => !m)} className="flex-1 min-w-0 text-left">
           <span className="block text-[14.5px] font-semibold text-ink leading-tight truncate">{i.name}{i.brand && i.brand !== 'size' && i.brand !== 'model' ? <span className="text-muted font-normal"> · {i.brand}</span> : null}</span>
-          <span className="block text-[11.5px] text-muted">{CATEGORIES.find(c => c.key === i.category)?.label || i.category}{i.expected != null ? ' · need ' + i.expected : ''}{short ? <span className="text-amber-700 font-bold"> · short {i.expected! - qty}</span> : null}{i.suggested && !i.condition ? ' · confirm' : ''}{i.photo_url ? ' · photo' : ''}</span>
+          <span className="block text-[11.5px] text-muted">{i.expected != null ? 'need ' + i.expected : CATEGORIES.find(c => c.key === i.category)?.label || i.category}{short ? <span className="text-amber-700 font-bold"> · short {i.expected! - qty}</span> : null}{flagged ? <span className={'font-bold ' + (i.condition === 'fair' ? 'text-amber-700' : 'text-rose-700')}> · {i.condition}</span> : null}{i.photo_url ? ' · 📷' : ''}{i.notes ? ' · note' : ''}</span>
         </button>
         <div className="flex items-center gap-1 shrink-0">
           <button onClick={() => bump(-1)} className="w-9 h-9 rounded-lg border border-line bg-white grid place-items-center" aria-label="One fewer"><Minus size={14} /></button>
-          <span className={'w-8 text-center text-[15px] font-bold tabular-nums ' + (short ? 'text-amber-700' : '')}>{qty}</span>
+          <span className={'w-7 text-center text-[15px] font-bold tabular-nums ' + (short ? 'text-amber-700' : '')}>{qty}</span>
           <button onClick={() => bump(1)} className="w-9 h-9 rounded-lg border border-line bg-white grid place-items-center" aria-label="One more"><Plus size={14} /></button>
+          <button onClick={() => setCondition(good ? null : 'good')} className={'ml-1 w-10 h-10 rounded-xl grid place-items-center border ' + (good ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-line text-emerald-700')} aria-label={good ? 'Confirmed good — tap to undo' : 'Here and good'}><Check size={18} strokeWidth={3} /></button>
+          <button onClick={() => setMore(m => !m)} className={'w-10 h-10 rounded-xl grid place-items-center border ' + (flagged ? (i.condition === 'fair' ? 'bg-amber-500 border-amber-500 text-white' : 'bg-rose-600 border-rose-600 text-white') : more ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted')} aria-label="Problem, photo or details"><AlertTriangle size={16} /></button>
         </div>
       </div>
-      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-        {CONDITIONS.map(c => (
-          <button key={c.key} onClick={() => setCondition(i.condition === c.key ? null : c.key)} className={'rounded-full border text-[12px] font-semibold min-h-[34px] px-3 ' + (i.condition === c.key ? c.cls : c.key === 'good' && !i.condition ? 'bg-white text-emerald-800 border-emerald-300' : 'bg-white text-ink/70 border-line')}>{c.label}</button>
-        ))}
-        <button onClick={() => fileRef.current?.click()} className={'ml-auto w-9 h-9 rounded-lg border grid place-items-center ' + (i.photo_url ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-line bg-white text-muted')} aria-label="Photo of this item"><Camera size={15} /></button>
-        <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { onPhoto(e.target.files); e.target.value = '' }} />
-      </div>
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { onPhoto(e.target.files); e.target.value = '' }} />
+      {more && (
+        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+          {CONDITIONS.filter(c => c.key !== 'good').map(c => (
+            <button key={c.key} onClick={() => setCondition(i.condition === c.key ? null : c.key)} className={'rounded-full border text-[12px] font-semibold min-h-[34px] px-3 ' + (i.condition === c.key ? c.cls : 'bg-white text-ink/70 border-line')}>{c.label}</button>
+          ))}
+          <button onClick={() => fileRef.current?.click()} className={'ml-auto inline-flex items-center gap-1.5 rounded-lg border px-3 min-h-[34px] text-[12px] font-semibold ' + (i.photo_url ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-line bg-white text-ink')}><Camera size={14} /> {i.photo_url ? 'Retake' : 'Photo'}</button>
+        </div>
+      )}
       {more && (
         <div className="mt-2 grid grid-cols-2 gap-2">
           <input value={brand} onChange={e => setBrand(e.target.value)} onBlur={() => brand !== (i.brand || '') && save({ brand })} className={INPUT} placeholder="Brand / model / size" />
