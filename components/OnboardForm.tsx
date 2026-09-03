@@ -520,7 +520,7 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
         <section className="rounded-2xl border border-line bg-white overflow-hidden mb-3">
           <button onClick={() => setShowExpected(o => !o)} className="w-full px-3 py-2.5 flex items-center gap-2 text-left">
             <ChevronDown size={14} className={'text-muted transition-transform ' + (showExpected ? '' : '-rotate-90')} />
-            <span className="text-[13px] font-semibold text-ink">Expected in a {ROOM_KIND_LABEL[room.kind].toLowerCase()} like this</span>
+            <span className="text-[13px] font-semibold text-ink">Expected in a {room.name.toLowerCase()} like this</span>
             <span className={'text-[12px] font-semibold ' + (expectedMissing.length ? 'text-amber-800' : 'text-emerald-700')}>{expectedMissing.length ? expectedMissing.length + ' not added yet' : 'all added'}</span>
           </button>
           {showExpected && (
@@ -574,7 +574,15 @@ function RoomView({ code, unit, room, items, onBack, act, reload, index, total, 
 function ItemPicker({ room, items, expectedQty, onAdd }: { room: Room; items: Item[]; expectedQty: (n: string) => number | undefined; onAdd: (c: CatalogItem, qty?: number) => Promise<void> }) {
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
-  const results = useMemo(() => q.trim() ? searchCatalog(q, room.kind, 14) : typicalFor(room.kind, 16), [q, room.kind])
+  // No query: what the standard expects in this room first (in its order), then the rest of what is
+  // typical for the room kind — so a living room leads with sofa, coffee table, TV, not a dehumidifier.
+  const results = useMemo(() => {
+    if (q.trim()) return searchCatalog(q, room.kind, 14)
+    const typ = typicalFor(room.kind, 40)
+    const exp = typ.filter(c => expectedQty(c.name) != null)
+    const rest = typ.filter(c => expectedQty(c.name) == null)
+    return [...exp, ...rest].slice(0, 18)
+  }, [q, room.kind, expectedQty])
   const has = (nm: string) => items.find(i => i.name.toLowerCase() === nm.toLowerCase())
   const add = async (c: CatalogItem) => { setBusy(c.name); try { await onAdd(c) } finally { setBusy(null) } }
   const custom = q.trim() && !results.some(r => r.name.toLowerCase() === q.trim().toLowerCase())
