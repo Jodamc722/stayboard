@@ -582,7 +582,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
 
         <Panel title="Listings to optimize"
           note={health ? 'weakest health scores across the portfolio' : 'scoring listings…'}
-          right={<Link href="/health" className="text-[11.5px] font-semibold text-brand-600 hover:underline">All →</Link>}>
+          right={<Link href="/buildings?v=health" className="text-[11.5px] font-semibold text-brand-600 hover:underline">All →</Link>}>
           <ul className="divide-y divide-line/70 max-h-[420px] overflow-auto">
             {((health && health.worst) || []).slice(0, 8).map((l: any) => (
               <li key={l.id}>

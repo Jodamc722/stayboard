@@ -10,8 +10,8 @@ import { applyNavLayout, type NavLayout } from '@/lib/nav-layout'
 import { EveFloat } from '@/components/EveFloat'
 import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
-  ListChecks, Sliders, Wrench, LogOut, RefreshCw, Gauge, Activity, Star, CalendarRange, AlertTriangle, Timer,
-  Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Megaphone, Lock, Plug, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
+  ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
+  Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
   ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
@@ -108,7 +108,7 @@ export const SECTIONS: NavSection[] = [
       { to: '/vault',     label: 'Vault', Icon: Lock },
       // Share Links (2026-08-18, Jon, parallel session): build + customise owner/property links.
       { to: '/links',     label: 'Share Links', Icon: Share2 },
-      { to: '/health',    label: 'Health Score', Icon: Activity },
+      // Health Score is the fourth Properties view since the September audit (/buildings?v=health).
       // Nav diet 2026-08-11 (Jon): Patterns folded into Guest Issues (/glitches → Patterns tab).
       { to: '/blocked',   label: 'Blocked Units', Icon: CalendarOff }, // 2026-08-10 - inventory off the calendar
     ],
@@ -116,11 +116,12 @@ export const SECTIONS: NavSection[] = [
   {
     title: 'Money',
     items: [
-      // The old home page (Jon, 2026-08-24). Same board, same `home` permission key, just no longer
-      // the first thing you see when you open the app.
-      { to: '/kpi',      label: 'KPI board',    Icon: Gauge },
-      { to: '/revenue',  label: 'Revenue',      Icon: TrendingUp },
-      { to: '/marketing', label: 'Direct Bookings', Icon: Megaphone },
+      // One row for KPI board + Revenue Center + Direct bookings (September audit, pass 2). The
+      // three pages keep their URLs and their own permission keys; lib/tabsets.ts draws the strip.
+      // `to` is the row's identity for pins and the sidebar editor, not a route: the set resolves it
+      // to the first tab the person can open. Deliberately not '/kpi', so an older "hide KPI board"
+      // override cannot make the whole Money row vanish.
+      { to: '/money',    label: 'Money',        Icon: TrendingUp, set: 'money' },
       { to: '/billing',  label: 'Billable Hours', Icon: Receipt }, // 2026-08-06 - Breezeway task billing by owner
       // Projections left the sidebar on 2026-08-25 (Jon): the projection builder lives inside
       // Owner Reports now, so this is a plain row again and /projections is reached from there.
@@ -142,11 +143,10 @@ export const SECTIONS: NavSection[] = [
     ],
   },
   {
+    // Integrations and Custom Fields moved inside Users & admin → App settings (September audit,
+    // pass 2). The section keeps its title because Shell appends the Users & admin row to it.
     title: 'Settings',
-    items: [
-      { to: '/integrations', label: 'Integrations', Icon: Plug },
-      { to: '/settings/custom-fields', label: 'Custom Fields', Icon: Sliders },
-    ],
+    items: [],
   },
 ]
 
@@ -287,7 +287,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
   // from ever being mistaken for each other: rearranging the sidebar cannot grant anyone anything,
   // and a role's access cannot be worked around by moving a row.
   const arranged: NavSection[] = applyNavLayout(SECTIONS, navLayout)
-  const sections: NavSection[] = arranged
+  // Users & admin is appended to Settings rather than declared there, so the sidebar editor can
+  // never hide, rename or move it. Settings has no rows of its own any more (September audit,
+  // pass 2), and applyNavLayout drops empty sections, so the section is re-created here if needed.
+  const withSettings: NavSection[] = isAdmin && !arranged.some(sec => sec.title === 'Settings')
+    ? arranged.concat([{ title: 'Settings', items: [] }])
+    : arranged
+  const sections: NavSection[] = withSettings
     .map(sec => sec.title === 'Settings' && isAdmin
       ? { title: sec.title, items: sec.items.concat([{ to: '/users', label: 'Users & admin', Icon: UserCog }]) }
       : sec)

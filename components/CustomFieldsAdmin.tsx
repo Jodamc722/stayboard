@@ -1,6 +1,11 @@
 'use client'
-import { useMemo, useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
+// Guesty custom fields — which ones Lighthouse tracks and which are KPIs.
+//
+// A panel on Users & admin since the September audit (pass 2); it was its own page at
+// /settings/custom-fields, which still redirects here. It used to be handed its rows by a server
+// page and reload them with router.refresh(); now it reads them itself through the same browser
+// client it always wrote with, so it can live inside the settings directory like everything else.
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { Sparkles, Eye, EyeOff, Search, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react'
 
@@ -33,14 +38,23 @@ const KPI_PRESETS = [
   { slug: 'vip',             label: 'VIP',             hint: 'returning or high-value guests' }
 ]
 
-export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: Field[]; syncStatus: SyncStatus }) {
-  const router = useRouter()
-  const [fields, setFields] = useState(initial)
+export function CustomFieldsAdmin() {
+  const [fields, setFields] = useState<Field[]>([])
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(null)
+  const [loaded, setLoaded] = useState(false)
+  const load = useCallback(async () => {
+    const supabase = createClient()
+    const [{ data: rows }, { data: status }] = await Promise.all([
+      supabase.from('guesty_custom_fields').select('*').order('target').order('name'),
+      supabase.from('guesty_sync_status').select('*').eq('entity', 'custom_fields').maybeSingle(),
+    ])
+    setFields((rows as Field[]) ?? []); setSyncStatus((status as SyncStatus) ?? null); setLoaded(true)
+  }, [])
+  useEffect(() => { load() }, [load])
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState<'all' | 'tracked' | 'kpi' | 'untracked'>('all')
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
-  const [, startTransition] = useTransition()
 
   const filtered = useMemo(() => {
     let rows = fields
@@ -78,9 +92,8 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
     const supabase = createClient()
     const { error } = await supabase.from('guesty_custom_fields').update(updates).eq('id', id)
     if (error) {
-      alert(`Save failed: ${error.message}`)
-      // roll back by re-fetching
-      startTransition(() => router.refresh())
+      setSyncMsg({ kind: 'err', text: `Save failed: ${error.message}` })
+      load() // roll back to what the database has
     }
   }
 
@@ -91,7 +104,7 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       setSyncMsg({ kind: 'ok', text: `Synced ${data?.custom_fields ?? 0} custom fields` })
-      startTransition(() => router.refresh())
+      load()
     } catch (e: any) {
       setSyncMsg({ kind: 'err', text: e.message || 'Sync failed' })
     } finally {
@@ -100,15 +113,11 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
   }
 
   return (
-    <div className="max-w-5xl mx-auto">
-      {/* Header */}
+    <div>
       <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
-        <div>
-          <h1 className="text-3xl font-bold text-ink tracking-tight">Custom Fields</h1>
-          <p className="text-sm text-muted mt-1">
-            Pick which Guesty custom fields Lighthouse tracks. Flag the important ones as KPIs to surface them on the dashboard.
-          </p>
-        </div>
+        <p className="text-sm text-muted">
+          Pick which Guesty custom fields Lighthouse tracks. Flag the important ones as KPIs to surface them on the dashboard.
+        </p>
         <button
           onClick={syncNow}
           disabled={syncing}
@@ -178,7 +187,9 @@ export function CustomFieldsManager({ fields: initial, syncStatus }: { fields: F
       </div>
 
       {/* Empty state */}
-      {fields.length === 0 ? (
+      {!loaded ? (
+        <div className="mt-8 text-sm text-muted">Loading fields…</div>
+      ) : fields.length === 0 ? (
         <div className="mt-8 rounded-2xl border border-line bg-white p-10 text-center shadow-soft">
           <div className="text-ink font-semibold">No custom fields synced yet</div>
           <p className="text-sm text-muted mt-1 max-w-md mx-auto">

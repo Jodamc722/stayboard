@@ -2,6 +2,7 @@
 //   Buildings  — rolled-up Optimize Score, guest rating and open ops work per building (unchanged)
 //   All units  — every unit, searchable/sortable/filterable, with occupancy, ADR and RevPAR
 //   Fix next   — the score turned into a ranked worklist, deep-linked to the panel that fixes it
+//   Health     — the weighted Health Score board (was its own /health tab until the September audit)
 //
 // "All units" and "Fix next" were added 2026-08-21. /listings was retired on 2026-08-11 and
 // redirects here, which left no way to reach one of 233 units without first knowing its building —
@@ -21,9 +22,10 @@ import { computeScore, rollupBuilding, ratingToStars, scoreGaps, lastOptimizedOf
 import { BuildingGrid } from '@/components/BuildingGrid'
 import { UnitTable, type UnitRow } from '@/components/UnitTable'
 import { FixNext, type FixItem } from '@/components/FixNext'
+import { HealthBoard } from '@/components/HealthBoard'
 import { unitRevenue, REV_WINDOWS, windowFor, windowRange } from '@/lib/unit-revenue'
 import { BASES, BASIS_SHORT, BASIS_NOTE, type Basis } from '@/lib/basis'
-import { Building2, Rows3, Wrench } from 'lucide-react'
+import { Building2, Rows3, Wrench, Activity } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,8 +42,8 @@ const PERIODS = [
 const DEFAULT_PERIOD = '90'
 function periodFor(v?: string) { return PERIODS.find(p => p.key === v) || PERIODS.find(p => p.key === DEFAULT_PERIOD)! }
 
-type View = 'buildings' | 'units' | 'fix'
-function viewFor(v?: string): View { return v === 'units' || v === 'fix' ? v : 'buildings' }
+type View = 'buildings' | 'units' | 'fix' | 'health'
+function viewFor(v?: string): View { return v === 'units' || v === 'fix' || v === 'health' ? v : 'buildings' }
 
 // Heavy: pulls every listing's Guesty `raw` to compute scores. Cache the rollup across requests and
 // recompute at most every 2 minutes so the portfolio page loads instantly instead of recomputing each hit.
@@ -202,7 +204,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
   if (!user) redirect('/login')
 
   const period = periodFor(searchParams?.d)
-  const view = viewFor(searchParams?.v)
+  let view = viewFor(searchParams?.v)
   const revWin = windowFor(searchParams?.rev)
   const basis: Basis = (BASES as string[]).includes(String(searchParams?.b)) ? (searchParams!.b as Basis) : 'gross'
 
@@ -213,6 +215,10 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
 
   // Bulk AI runs cost real money and write drafts — same gate as the optimizer itself.
   const canEdit = atLeast(access.levels['optimize'], 'edit')
+  // The Health view keeps the `health` permission key it had as a page: anyone who could open
+  // /health sees the tab here, anyone who could not is shown Buildings instead of a blank.
+  const canHealth = atLeast(access.levels['health'], 'view')
+  if (view === 'health' && !canHealth) view = 'buildings'
 
   let unitsWithMoney = units
   let revenueNote: string | null = null
@@ -237,6 +243,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
     { key: 'buildings', label: 'Buildings', Icon: Building2, href: '/buildings' },
     { key: 'units', label: 'All units', Icon: Rows3, href: '/buildings?v=units' },
     { key: 'fix', label: 'Fix next', Icon: Wrench, href: '/buildings?v=fix' },
+    ...(canHealth ? [{ key: 'health' as View, label: 'Health Score', Icon: Activity, href: '/buildings?v=health' }] : []),
   ]
 
   return (
@@ -354,6 +361,8 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
       )}
 
       {view === 'fix' && <FixNext items={fixes} buildings={buildingNames} />}
+
+      {view === 'health' && <HealthBoard />}
     </Shell>
   )
 }

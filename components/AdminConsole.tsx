@@ -31,7 +31,7 @@ import dynamic from 'next/dynamic'
 import {
   Users, ShieldCheck, Sliders, ChevronRight, Search, X, ArrowLeft, Loader2, Lock,
   Activity, ListChecks, Mail, Bot, ShoppingBag, HardHat, Package, MessageSquare,
-  DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2, CalendarClock,
+  DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2, CalendarClock, Plug, Timer, Tags,
 } from 'lucide-react'
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { RolesAdmin } from '@/components/RolesAdmin'
@@ -64,6 +64,11 @@ const L = {
   taskCats: dynamic(() => import('@/components/TaskCategoriesAdmin').then(m => m.TaskCategoriesAdmin), { loading: spin, ssr: false }),
   revAudit: dynamic(() => import('@/components/ReviewAuditPanel').then(m => m.ReviewAuditPanel), { loading: spin, ssr: false }),
   cadences: dynamic(() => import('@/components/CadencesAdmin').then(m => m.CadencesAdmin), { loading: spin, ssr: false }),
+  // Three former pages, folded in by the September audit (pass 2): /integrations, /settings/labor
+  // and /settings/custom-fields all redirect to their panel here.
+  integrations: dynamic(() => import('@/components/IntegrationsAdmin').then(m => m.IntegrationsAdmin), { loading: spin, ssr: false }),
+  laborSettings: dynamic(() => import('@/components/LaborSettings').then(m => m.LaborSettings), { loading: spin, ssr: false }),
+  customFields: dynamic(() => import('@/components/CustomFieldsAdmin').then(m => m.CustomFieldsAdmin), { loading: spin, ssr: false }),
 }
 
 // ── THE DIRECTORY ───────────────────────────────────────────────────────────────────────────────
@@ -96,6 +101,12 @@ const ENTRIES: Entry[] = [
     render: p => <L.nav isAdmin />,
   },
 
+  {
+    key: 'integrations', title: 'Integrations', group: 'Start here', Icon: Plug,
+    blurb: 'The outside apps Lighthouse talks to — Slack, outbound email, Guesty, Breezeway, Homebase — and whether each background feed is actually listening.',
+    find: 'integrations connected apps slack email guesty breezeway homebase feed sync status listening webhook connect',
+    render: () => <L.integrations />,
+  },
   {
     key: 'review-audit', title: 'Review audit', group: 'Start here', Icon: Star,
     blurb: 'Are guest reviews still arriving? Compares checkouts against reviews per channel, and names the recent stays with no review so you can spot-check one on Airbnb.',
@@ -166,6 +177,12 @@ const ENTRIES: Entry[] = [
     render: p => <L.crews isOwner={p.isOwner} />,
   },
   {
+    key: 'labor-settings', title: 'Labor thresholds', group: 'Team & money', Icon: Timer, ownerOnly: true,
+    blurb: 'Per-market labor % bands, clock-in grace, the overtime week and the attribution gate — the numbers behind the Labor board, the Schedule strip and the briefs.',
+    find: 'labor settings threshold band percent grace clock in overtime week attribution gate market homebase',
+    render: () => <L.laborSettings />,
+  },
+  {
     key: 'approvals', title: 'Approval limits', group: 'Team & money', Icon: DollarSign, ownerOnly: true,
     blurb: 'How much can be approved without you, in general and per owner.',
     find: 'approval limit spend ceiling gm auto approve owner override purchase money',
@@ -197,6 +214,12 @@ const ENTRIES: Entry[] = [
     render: () => <L.reviewVoice />,
   },
 
+  {
+    key: 'custom-fields', title: 'Guesty custom fields', group: 'Operations', Icon: Tags,
+    blurb: 'Which Guesty custom fields Lighthouse tracks, and which of them count as KPIs.',
+    find: 'custom field fields guesty track tracked kpi slug sync sensitive guest welcome call verified vip',
+    render: () => <L.customFields />,
+  },
   {
     key: 'share', title: 'Share links & passwords', group: 'Access', Icon: Share2,
     blurb: 'The passwords on the vendor board, owner audit, marketing links, Salato rules and the Vault code.',

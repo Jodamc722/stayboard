@@ -7,7 +7,7 @@
 // reading the thing you are approving. Mentions render as @name rather than <@U0B8DC5VDRQ>, which
 // is the one place we deliberately differ from the raw text.
 //
-// Returns null when the queue is empty, like ConnectTools — a card that says "nothing here" is
+// Returns null when the queue is empty — a card that says "nothing here" is
 // just furniture.
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'

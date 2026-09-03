@@ -77,6 +77,8 @@ export const FEATURES: Feature[] = [
   { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Portfolio' },
   { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
   { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize', group: 'Portfolio' },   // -> /buildings?v=fix; the optimizer itself is per-listing
+  // Health Score is a view on /buildings since 2026-09-03 (/buildings?v=health); /health redirects
+  // there. The KEY stays so every role's setting still decides who sees the tab.
   { key: 'health',        label: 'Health Score',      path: '/health', group: 'Portfolio' },
   // Building Patterns (2026-08-06, Jon): recurring complaint themes per building — prevention layer.
   { key: 'patterns',      label: 'Building Patterns', path: '/patterns', group: 'Portfolio' },

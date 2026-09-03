@@ -24,11 +24,27 @@
 export type TabSetTab = { to: string; label: string }
 export type TabSet = { key: string; label: string; blurb: string; tabs: TabSetTab[] }
 
-// BOTH SETS RETIRED 2026-09-03 (the September audit). Quality was Audits + Inspections + FF&E and
-// Orders was Purchasing + Work Orders + Projects; the four extra tabs had no data and no visitors,
-// so each set was one page wearing a costume. Audits and Purchasing are plain rows again. The
-// registry stays so a future set can be declared without re-plumbing Shell.
-export const TAB_SETS: TabSet[] = []
+// MONEY (2026-09-03, the September audit, pass 2). Three sidebar rows — KPI board, Revenue, Direct
+// Bookings — were three angles on the same question, and the KPI board had already been demoted
+// from the front door. One row now. The routes and gates are untouched on purpose: `home` (the KPI
+// board) is granted to every role while `revenue` is owner/admin-only, so a single merged route
+// would have had to pick one gate for all three. The set draws only the tabs the person can open
+// and links the row to the first of them, which is the KPI board for most people.
+export const TAB_SETS: TabSet[] = [
+  {
+    key: 'money', label: 'Money',
+    blurb: 'The business numbers, the revenue detail behind them, and the direct-booking tracker.',
+    tabs: [
+      { to: '/kpi', label: 'KPI board' },
+      { to: '/revenue', label: 'Revenue Center' },
+      { to: '/marketing', label: 'Direct bookings' },
+    ],
+  },
+]
+
+// QUALITY AND ORDERS RETIRED 2026-09-03 (the September audit). Quality was Audits + Inspections +
+// FF&E and Orders was Purchasing + Work Orders + Projects; the four extra tabs had no data and no
+// visitors, so each set was one page wearing a costume. Audits and Purchasing are plain rows again.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const RETIRED_TAB_SETS: TabSet[] = [
   {

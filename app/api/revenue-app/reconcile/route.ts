@@ -1,7 +1,7 @@
 // Reconcile — the Revenue App's numbers against Lighthouse's own Guesty math, per unit, per month.
 //
 // This is the page that earns the cutover. Our numbers tie to owner statements to the penny
-// (/api/debug/money), so the DELTA column here is a statement about HIS feed: a unit that
+// (proven against the owner audit), so the DELTA column here is a statement about HIS feed: a unit that
 // disagrees is either a basis difference (his net vs our net), a straddling-stay posting
 // difference, a status filter difference, or a genuine bug — and each gets named, never averaged.
 //
