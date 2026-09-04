@@ -1,6 +1,6 @@
 // TEAM SCHEDULER LINKS — the desk side (signed in, feature 'schedule').
 //   GET  → links + recent submissions
-//   POST {action:'create', market, label?, passcode?} | {action:'revoke', id} | {action:'feedback', id, feedback} | {action:'reviewed', id}
+//   POST {action:'create', market, label?, passcode?} | {action:'passcode', id, passcode} | {action:'revoke', id} | {action:'feedback', id, feedback} | {action:'reviewed', id}
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
 import { requireLevel } from '@/lib/access'
@@ -37,6 +37,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, link: data, url: '/scheduler/' + code })
     }
     const id = str(b.id); if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
+    // Change or clear the passcode on a live link. Phones that saved the old one get the gate again.
+    if (b.action === 'passcode') { const pc = str(b.passcode).slice(0, 40) || null; await db.from('schedule_links').update({ passcode: pc }).eq('id', id); return NextResponse.json({ ok: true, passcode: pc }) }
     if (b.action === 'revoke') { await db.from('schedule_links').update({ revoked_at: now }).eq('id', id); return NextResponse.json({ ok: true }) }
     if (b.action === 'feedback') {
       const feedback = str(b.feedback).slice(0, 4000)
