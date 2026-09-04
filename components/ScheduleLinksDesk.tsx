@@ -2,7 +2,7 @@
 // TEAM SCHEDULE LINKS — the desk (Jon, 2026-09-03). Mint a link per market, watch submissions come
 // in, send notes back. Reviewing the actual picks happens on /schedule, where they show as staged.
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Copy, Check, ExternalLink, Loader2, Ban, Link2, MessageSquare, ChevronDown, Mail } from 'lucide-react'
+import { Plus, Copy, Check, ExternalLink, Loader2, Ban, Link2, MessageSquare, ChevronDown, Mail, KeyRound } from 'lucide-react'
 
 type Lnk = { id: string; code: string; market: string; label: string | null; passcode: string | null; created_at: string; revoked_at: string | null }
 type Sub = { id: string; link_code: string; market: string; week_start: string; week_end: string; submitted_by: string | null; note: string | null; snapshot: any[]; status: string; feedback: string | null; reviewed_at: string | null; emailed_at: string | null; created_at: string }
@@ -40,7 +40,7 @@ export function ScheduleLinksDesk() {
         <div className="mt-3 space-y-2">
           {loading && <div className="text-[13px] text-muted"><Loader2 size={14} className="animate-spin inline mr-1" /> Loading…</div>}
           {!loading && !active.length && <div className="text-[13px] text-muted">No links yet.</div>}
-          {active.map(l => <LinkRow key={l.id} l={l} origin={origin} onRevoke={() => { if (confirm('Revoke the ' + l.market + ' link? The team will lose access until you make a new one.')) post({ action: 'revoke', id: l.id }) }} />)}
+          {active.map(l => <LinkRow key={l.id} l={l} origin={origin} onPasscode={(pc) => post({ action: 'passcode', id: l.id, passcode: pc })} onRevoke={() => { if (confirm('Revoke the ' + l.market + ' link? The team will lose access until you make a new one.')) post({ action: 'revoke', id: l.id }) }} />)}
         </div>
         <div className="mt-4 pt-3 border-t border-line flex items-center gap-2 flex-wrap">
           <select value={market} onChange={e => setMarket(e.target.value)} className={INPUT}>{['Miami', 'Broward', 'North', 'All'].map(m => <option key={m} value={m}>{m === 'All' ? 'All markets (ops review)' : m}</option>)}</select>
@@ -62,15 +62,21 @@ export function ScheduleLinksDesk() {
   )
 }
 
-function LinkRow({ l, origin, onRevoke }: { l: Lnk; origin: string; onRevoke: () => void }) {
+function LinkRow({ l, origin, onPasscode, onRevoke }: { l: Lnk; origin: string; onPasscode: (pc: string) => Promise<any>; onRevoke: () => void }) {
   const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [pc, setPc] = useState(l.passcode || '')
   const url = origin + '/scheduler/' + l.code
   return (
     <div className="flex items-center gap-2 flex-wrap rounded-xl border border-line px-3 py-2">
       <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-ink text-white">{l.market}</span>
       <span className="text-[13px] font-semibold text-ink">{l.label || l.market + ' team schedule'}</span>
       <code className="text-[12px] text-muted truncate max-w-[340px]">{url}</code>
-      {l.passcode && <span className="text-[11.5px] text-muted">· passcode <b className="text-ink">{l.passcode}</b></span>}
+      {editing ? (
+        <span className="inline-flex items-center gap-1"><input value={pc} onChange={e => setPc(e.target.value)} className={INPUT + ' w-36 py-1.5 text-[13px]'} placeholder="Passcode (blank = none)" autoFocus onKeyDown={async e => { if (e.key === 'Enter') { await onPasscode(pc); setEditing(false) } if (e.key === 'Escape') setEditing(false) }} /><button onClick={async () => { await onPasscode(pc); setEditing(false) }} className={BTN + ' bg-ink text-white min-h-[32px] px-2.5 text-[12px]'}>Save</button></span>
+      ) : (
+        <button onClick={() => setEditing(true)} className="text-[11.5px] text-muted inline-flex items-center gap-1 hover:text-ink"><KeyRound size={11} /> {l.passcode ? <>passcode <b className="text-ink">{l.passcode}</b></> : 'no passcode — add one'}</button>
+      )}
       <span className="ml-auto flex items-center gap-1.5">
         <button onClick={async () => { try { await navigator.clipboard.writeText(url + (l.passcode ? '  (passcode: ' + l.passcode + ')' : '')); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {} }} className={BTN + ' border border-line bg-white text-ink'}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy link'}</button>
         <a href={'/scheduler/' + l.code} target="_blank" rel="noreferrer" className={BTN + ' border border-line bg-white text-ink'}>Open <ExternalLink size={13} /></a>
