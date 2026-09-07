@@ -814,6 +814,18 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // contractor staff. "Not on the Homebase schedule" is a red flag for an hourly cleaner and
   // plain noise for Roberto, so the tag says which it is.
   const offSchedule: { name: string; why: string }[] = []
+  // THE TEAM SCHEDULE LINK (Jon, 2026-09-07: "add the schedule link and have password StayBroward
+  // and StayMiami"). Each market sheet carries its own live scheduler link and the passcode that
+  // opens it, so the crew can pick up the week from the same email that runs the day.
+  let schedLink: { url: string; passcode: string | null } | null = null
+  if (isField) {
+    try {
+      const { data } = await supabaseAdmin().from('schedule_links').select('code,passcode,created_at')
+        .eq('market', variant).is('revoked_at', null).order('created_at', { ascending: false }).limit(1)
+      const row = (data || [])[0] as any
+      if (row?.code) schedLink = { url: `${APP_URL}/scheduler/${row.code}`, passcode: row.passcode ? String(row.passcode) : null }
+    } catch { /* no link, no button */ }
+  }
   if (variant === 'full') {
     try {
       const sh = await getShifts(d.today, 'America/New_York')
@@ -1673,6 +1685,10 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       pick(
         'Who is clocked in, what each person is on right now, and every job — tap one to open it in Breezeway. This email is the 7am snapshot; that board is live all day.',
         'Quién marcó entrada, en qué está cada persona ahora mismo y todos los trabajos — toque uno para abrirlo en Breezeway. Este correo es la foto de las 7am; ese tablero está en vivo todo el día.')) : ''}
+  ${isField && schedLink ? btn(schedLink.url,
+      pick('Team schedule →', 'Horario del equipo →'),
+      (schedLink.passcode ? `${pick('Passcode', 'Clave')}: <b style="color:#111827">${esc(schedLink.passcode)}</b> · ` : '') +
+      pick('Pick your cleans for the week and press Submit — Jon reviews it and sends notes back.', 'Elija sus limpiezas de la semana y presione Enviar — Jon lo revisa y devuelve notas.')) : ''}
   ${accessNotice(lang)}
 
   ${eyebrow(t('Act now'))}
