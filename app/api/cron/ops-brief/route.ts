@@ -110,11 +110,17 @@ export async function GET(req: NextRequest) {
     { v: 'GM', to: (cfg.gm || []).filter(Boolean) },
   ]
   const out: any[] = []
+  // A SIGNED-IN RESEND OF JUST SOME VARIANTS (Jon, 2026-09-07: "resend briefs" after the revamp):
+  // ?only=Miami,Broward,full re-sends those to their real lists and leaves the vendor briefs
+  // alone — outside companies should not get a duplicate because ours changed shape.
+  const onlyList = String(sp.get('only') || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)
+  const wanted = (v: string) => !onlyList.length || onlyList.includes(v.toLowerCase())
   // EACH VARIANT ON ITS OWN (robustness pass, 2026-08-24): build(v) used to run bare, so one
   // variant throwing — a daysheet hiccup, one bad row — 500'd the whole route and NO brief went
   // out that morning, silently. Now each build/send is isolated, and any failure is reported to
   // the owner below rather than swallowed. Never quiet-skip.
   for (const { v, to } of lists) {
+    if (!wanted(v)) { out.push({ variant: v, skipped: 'not in ?only' }); continue }
     if (!to.length) { out.push({ variant: v, skipped: 'no recipients' }); continue }
     try {
       const b = await build(v, langFor(cfg, v))
@@ -126,6 +132,7 @@ export async function GET(req: NextRequest) {
   }
   // Vendor briefs — external companies, so each group only ever sees its own buildings.
   for (const g of VENDOR_GROUPS) {
+    if (onlyList.length && !wanted('vendor:' + g.key) && !wanted(g.key)) { out.push({ variant: 'vendor:' + g.key, skipped: 'not in ?only' }); continue }
     const to = ((cfg.vendors || {})[g.key] || []).filter(Boolean)
     if (!to.length) { out.push({ variant: 'vendor:' + g.key, skipped: 'no recipients' }); continue }
     try {
