@@ -131,13 +131,13 @@ export async function GET(req: NextRequest) {
     const mkRows = ((ecT.pnl?.perClean?.markets || []) as any[]).filter(m => m.cleans > 0)
     const revenueCard = card(
       secTitle('Revenue cleans today', niceDay(today)) +
-      `<p style="margin:0;font-size:15px;line-height:1.6"><b style="font-size:22px">${revCleans}</b> departure clean${revCleans === 1 ? '' : 's'} by housekeeping &rarr; <b>${money(depRevenue)}</b> in cleaning fees` +
+      `<p style="margin:0;font-size:15px;line-height:1.6"><b style="font-size:22px">${revCleans}</b> departure clean${revCleans === 1 ? '' : 's'}${Number(hk.cleansByOtherCrews) > 0 ? ` <span style="${MUTED}">(${hk.cleansByOtherCrews} covered by other crews)</span>` : ''} &rarr; <b>${money(depRevenue)}</b> in cleaning fees to housekeeping` +
       (hk.costPerClean != null ? ` <span style="${MUTED}">&middot; ${rate(hk.costPerClean)} of housekeeper pay per clean</span>` : '') + `</p>` +
       (caOpen > 0 ? `<p style="margin:4px 0 0;font-size:12.5px;color:#6b7280">${caClosed} closed on the board &middot; <span style="${AMBER}">${caOpen} assigned today and never closed</span> &mdash; counted as done, per the house rule; the unit is listed under Priorities.</p>` : '') +
       (chargedN > 0 ? `<p style="margin:4px 0 0;font-size:12.5px;color:#6b7280">+ ${chargedN} charged mid-stay${chargedN === 1 ? '' : 's'}/refresh${chargedN === 1 ? '' : 'es'} &rarr; ${money(chargedRev)} &mdash; in the revenue total (<b>${money(revenue)}</b>), never in the clean count.</p>` : '') +
       (mkRows.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px"><tr><th style="${th}">Market</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">HK payroll</th><th style="${th};text-align:right">$/clean</th></tr>` +
         mkRows.map(m => `<tr><td style="${td}">${esc(m.label)}</td><td style="${td};text-align:right">${m.cleans}</td><td style="${td};text-align:right">${money(m.housekeeping?.payroll)}</td><td style="${td};text-align:right"><b>${rate(m.housekeeping?.perClean)}</b></td></tr>`).join('') + '</table>' : '') +
-      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">A departure clean lands on the day it was finished in Breezeway (or its scheduled day if nobody closed it), and carries its checkout's cleaning fee net of the channel cut. Cleans moved to another day count on that day. $/clean is housekeeper wages from Homebase punches divided by these cleans.</p>`
+      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">A departure clean lands on the day it was finished in Breezeway (or its scheduled day if nobody closed it), and carries its checkout's cleaning fee net of the channel cut. Cleans moved to another day count on that day. $/clean is housekeeper wages from Homebase punches divided by every departure clean, whichever crew turned the unit — a covered turn lowers the rate; its fee sits on that crew.</p>`
     )
 
     // ── 2. PRIORITIES — did the day's promises get kept ───────────────────────────────────────
