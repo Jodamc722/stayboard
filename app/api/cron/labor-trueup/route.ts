@@ -124,7 +124,7 @@ export async function GET(req: NextRequest) {
         reason: 'payroll incomplete — ' + why,
       }, { status: 503 })
     }
-    const KY: any = ecY.kpi, K7: any = ec7.kpi, K30: any = ec30.kpi
+    const K30: any = ec30.kpi
 
     // ── 1. TODAY — shifts against the 8h standard, and the work on the books ─────────────────
     // Additive: a Homebase or mirror hiccup never blocks the email.
@@ -212,36 +212,102 @@ export async function GET(req: NextRequest) {
         'The <a href="' + APP_URL + '/labor" style="color:#2563eb">Labor board</a> has the live picture.</p></div>'
     }
 
-    // ── 2. THE NUMBERS — one table, three windows ─────────────────────────────────────────────
-    const col = (K: any) => ({
-      cleanRev: K.housekeeping.revenueWithCharged != null ? K.housekeeping.revenueWithCharged : K.housekeeping.revenue,
-      maintRev: K.maintenance.revenue,
-      payroll: K.allIn.payroll,
-      profit: K.allIn.margin,
-      marginPct: K.allIn.marginPct,
-      cleans: K.housekeeping.cleans,
-      cpc: K.housekeeping.costPerClean,
-      noCharge: K.maintenance.tasksNoCharge,
-    })
-    const cY = col(KY), c7 = col(K7), c30 = col(K30)
-    const numRow = (label: string, sub: string, f: (c: ReturnType<typeof col>) => string) =>
-      '<tr><td style="' + td + '"><b>' + label + '</b>' + (sub ? '<br><span style="' + MUTED + ';font-size:11.5px">' + sub + '</span>' : '') + '</td>' +
-      [cY, c7, c30].map(c => '<td style="' + td + ';text-align:right;white-space:nowrap">' + f(c) + '</td>').join('') + '</tr>'
-    const profitCell = (c: ReturnType<typeof col>) =>
-      '<b style="' + ((c.profit || 0) < 0 ? RED : GREEN) + '">' + money(c.profit) + '</b>' +
-      (c.marginPct != null ? ' <span style="' + MUTED + '">(' + pctTxt(c.marginPct) + ')</span>' : '')
-    const numbersTable =
+    // ── 1b. THE THREE TIERS (Jon, 2026-09-07) ─────────────────────────────────────────────────
+    //
+    //   "cost per clean, solely based on housekeeping. Nobody else. Supervisors… look at them
+    //    based on whether they had a departure clean or other billable revenue. Maintenance should
+    //    be any revenue associated with Breezeway tasks or if they complete a departure clean, and
+    //    the cost of cleaning. If maintenance does a departure clean… cost per clean is based
+    //    solely on housekeeping hours — a net positive for housekeeping."
+    //
+    // So: one card, three tiers, three windows. HOUSEKEEPING is the unit cost — housekeeper
+    // wages over EVERY departure clean the market produced (a turn covered by a tech still counts
+    // as a clean; his wages never do). SUPERVISORS are overhead, offset by any clean or charged
+    // job they personally did. MAINTENANCE is billable charges plus the fee of any turn they
+    // covered, against their wages. Then everything, combined.
+    const deptOf = (ec: any, key: string): any => ((ec?.departments || []) as any[]).find(x => x.key === key) || {}
+    const tier = (ec: any) => {
+      const K: any = ec.kpi || {}
+      const hk: any = K.housekeeping || {}
+      const sup = deptOf(ec, 'supervision'), mt = deptOf(ec, 'maintenance'), ccs = deptOf(ec, 'ccs')
+      const mtRev = Number(mt.cleaningRevenue || 0) + Number(mt.billableRevenue || 0)
+      const supRev = Number(sup.cleaningRevenue || 0) + Number(sup.billableRevenue || 0)
+      return {
+        cleans: Number(hk.cleans) || 0,
+        cleansHk: Number(hk.cleansByHousekeepers ?? hk.cleans) || 0,
+        cleansOthers: Number(hk.cleansByOtherCrews) || 0,
+        hkHours: Number(hk.hours) || 0, hkPay: Number(hk.payroll) || 0,
+        cpc: hk.costPerClean, hpc: hk.hoursPerClean,
+        hkFees: Number(hk.revenue) || 0, hkCharged: Number(hk.chargedCleans) || 0,
+        byMk: (ec.costPerCleanByMarket || {}) as Record<string, number | null>,
+        sup: { n: Number(sup.people) || 0, names: sup.names || [], hours: Number(sup.hours) || 0, pay: Number(sup.payroll) || 0,
+               cleans: Number(sup.cleans) || 0, fees: Number(sup.cleaningRevenue) || 0, bill: Number(sup.billableRevenue) || 0, rev: supRev },
+        mt: { n: Number(mt.people) || 0, names: mt.names || [], hours: Number(mt.hours) || 0, pay: Number(mt.payroll) || 0,
+              fees: Number(mt.cleaningRevenue) || 0, bill: Number(mt.billableRevenue) || 0, rev: mtRev,
+              billed: Number(mt.billableTasks) || 0, noCharge: Number(mt.tasksNoCharge) || 0 },
+        ccsPay: Number(ccs.payroll) || 0,
+        allRev: Number(K.allIn?.revenue) || 0, allPay: Number(K.allIn?.payroll) || 0,
+        profit: Number(K.allIn?.margin) || 0, marginPct: K.allIn?.marginPct,
+      }
+    }
+    const TY = tier(ecY), T7 = tier(ec7), T30 = tier(ec30)
+    const WIN = [TY, T7, T30]
+    const tRow = (label: string, sub: string, f: (x: ReturnType<typeof tier>) => string, opts: { strong?: boolean; top?: boolean } = {}) =>
+      '<tr><td style="' + td + (opts.top ? ';border-top:2px solid #e5e7eb' : '') + '">' + (opts.strong ? '<b>' + label + '</b>' : label) +
+      (sub ? '<br><span style="' + MUTED + ';font-size:11.5px">' + sub + '</span>' : '') + '</td>' +
+      WIN.map(x => '<td style="' + td + ';text-align:right;white-space:nowrap' + (opts.top ? ';border-top:2px solid #e5e7eb' : '') + '">' + f(x) + '</td>').join('') + '</tr>'
+    const band = (label: string, sub: string) =>
+      '<tr><td colspan="4" style="padding:12px 9px 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#4338ca;font-weight:700;border-top:2px solid #e0e7ff">' + label +
+      (sub ? ' <span style="font-weight:500;letter-spacing:0;text-transform:none;color:#6b7280">&middot; ' + sub + '</span>' : '') + '</td></tr>'
+    const net = (n: number) => '<b style="' + (n < 0 ? RED : GREEN) + '">' + money(n) + '</b>'
+    const mkLine = (x: ReturnType<typeof tier>) => {
+      const bits = ['miami', 'broward'].filter(k => x.byMk[k] != null).map(k => (k === 'miami' ? 'Miami' : 'Broward') + ' <b>' + rate(x.byMk[k]) + '</b>')
+      return bits.length ? '<span style="font-size:11.5px;color:#374151">' + bits.join(' &middot; ') + '</span>' : '<span style="' + MUTED + '">&mdash;</span>'
+    }
+    const cleansByDay7 = ((ec7 as any).daily || []) as { d: string; cleans: number }[]
+    const dayStrip = cleansByDay7.length
+      ? '<p style="margin:10px 0 0;font-size:12px;color:#374151"><b>Departure cleans by day</b> <span style="' + MUTED + '">&middot; last 7</span> &nbsp; ' +
+        cleansByDay7.map(r => '<span style="white-space:nowrap"><span style="' + MUTED + '">' + new Date(r.d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ }) + '</span> <b>' + (r.cleans || 0) + '</b></span>').join(' &nbsp;&middot;&nbsp; ') + '</p>'
+      : ''
+    const tiersCard = '<div style="' + cardStyle + '">' +
+      secTitle('Labor, in three tiers', 'yesterday &middot; last 7 &middot; last 30 &mdash; punches, never the schedule') +
       '<table width="100%" cellspacing="0" cellpadding="0">' +
       '<tr><th style="' + th + '"></th><th style="' + th + ';text-align:right">Yesterday<br><span style="font-weight:400">' + esc(niceDay(yd)) + '</span></th>' +
       '<th style="' + th + ';text-align:right">Last 7 days</th><th style="' + th + ';text-align:right">Last 30 days</th></tr>' +
-      numRow('Cleaning revenue', 'guest fees net of channel cut, incl. paid cleaning work', c => money(c.cleanRev)) +
-      numRow('Maintenance revenue', 'charges entered on Breezeway tasks', c => money(c.maintRev) +
-        (c.noCharge ? '<br><span style="' + AMBER + ';font-size:11px;font-weight:400">' + c.noCharge + ' tasks no charge entered</span>' : '')) +
-      numRow('Payroll', 'everyone — HK, maintenance, supervisors &amp; salaried management', c => money(c.payroll)) +
-      numRow('Profit', 'revenue minus payroll', profitCell) +
-      numRow('Departure cleans', 'cost / clean is housekeepers only', c =>
-        String(c.cleans || 0) + (c.cpc != null ? ' <span style="' + MUTED + '">&middot; ' + money(c.cpc) + '/clean</span>' : '')) +
-      '</table>'
+      // ── tier 1
+      band('1 &middot; Housekeeping', 'cost per clean &mdash; housekeeper wages only') +
+      tRow('Cost per clean', 'housekeeper payroll &divide; every departure clean', x => x.cpc != null ? '<b style="font-size:17px">' + rate(x.cpc) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>', { strong: true }) +
+      tRow('By market', '', mkLine) +
+      tRow('Departure cleans', 'the denominator &mdash; whoever turned the unit', x => '<b>' + x.cleans + '</b>' +
+        (x.cleansOthers ? '<br><span style="' + GREEN + ';font-size:11px;font-weight:400">' + x.cleansOthers + ' covered by other crews</span>' : '')) +
+      tRow('Housekeeper hours &middot; payroll', 'Homebase punches', x => r1(x.hkHours) + 'h &middot; ' + money(x.hkPay) + (x.hpc != null ? '<br><span style="' + MUTED + ';font-size:11px">' + x.hpc + 'h per clean</span>' : '')) +
+      tRow('Cleaning fees earned', 'net of the channel cut' , x => money(x.hkFees) + (x.hkCharged ? '<br><span style="' + MUTED + ';font-size:11px">+ ' + money(x.hkCharged) + ' charged cleaning work</span>' : '')) +
+      tRow('Housekeeping net', 'fees minus housekeeper payroll', x => net(x.hkFees + x.hkCharged - x.hkPay)) +
+      // ── tier 2
+      band('2 &middot; Supervisors', 'overhead, offset by any clean or charged job they did') +
+      tRow('Payroll', T30.sup.names.slice(0, 4).map((n: string) => esc(n)).join(', ') + (T30.sup.names.length > 4 ? '…' : ''), x => money(x.sup.pay) + (x.sup.hours ? '<br><span style="' + MUTED + ';font-size:11px">' + r1(x.sup.hours) + 'h punched</span>' : '')) +
+      tRow('Revenue they produced', 'departure cleans they turned + charges they closed', x =>
+        (x.sup.rev > 0 ? money(x.sup.rev) + '<br><span style="' + MUTED + ';font-size:11px">' + [x.sup.cleans ? x.sup.cleans + ' clean' + (x.sup.cleans === 1 ? '' : 's') + ' ' + money(x.sup.fees) : '', x.sup.bill ? money(x.sup.bill) + ' billed' : ''].filter(Boolean).join(' &middot; ') + '</span>' : '<span style="' + MUTED + '">none</span>')) +
+      tRow('Supervision net cost', 'what the cleans carry', x => net(x.sup.rev - x.sup.pay)) +
+      // ── tier 3
+      band('3 &middot; Maintenance', 'Breezeway charges + any turn they covered, against their wages') +
+      tRow('Payroll', T30.mt.names.slice(0, 4).map((n: string) => esc(n)).join(', ') + (T30.mt.names.length > 4 ? '…' : ''), x => money(x.mt.pay) + (x.mt.hours ? '<br><span style="' + MUTED + ';font-size:11px">' + r1(x.mt.hours) + 'h punched</span>' : '')) +
+      tRow('Revenue', 'charges entered on tasks + departure-clean fees', x => money(x.mt.rev) +
+        '<br><span style="' + MUTED + ';font-size:11px">' + [x.mt.billed ? x.mt.billed + ' billed ' + money(x.mt.bill) : '', x.mt.fees ? 'cleans ' + money(x.mt.fees) : ''].filter(Boolean).join(' &middot; ') + '</span>' +
+        (x.mt.noCharge ? '<br><span style="' + AMBER + ';font-size:11px;font-weight:400">' + x.mt.noCharge + ' closed with no charge entered</span>' : '')) +
+      tRow('Maintenance net', 'revenue minus maintenance payroll', x => net(x.mt.rev - x.mt.pay)) +
+      // ── combined
+      band('Combined', 'every crew, salaries included') +
+      tRow('Revenue', 'cleaning fees + charged work + maintenance', x => money(x.allRev)) +
+      tRow('Payroll', 'housekeeping + supervisors + maintenance' + (WIN.some(w => w.ccsPay > 0) ? ' + CCS' : ''), x => money(x.allPay)) +
+      tRow('Profit', 'revenue minus payroll', x => net(x.profit) + (x.marginPct != null ? ' <span style="' + MUTED + '">(' + pctTxt(x.marginPct) + ')</span>' : ''), { strong: true }) +
+      tRow('Loaded cost per clean', 'all payroll &divide; departure cleans', x => x.cleans > 0 && x.allPay > 0 ? '<b>' + rate(x.allPay / x.cleans) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>') +
+      '</table>' + dayStrip +
+      '<p style="margin:10px 0 0;font-size:11px;color:#9ca3af;line-height:1.7">' +
+      '<b>Cost per clean</b> is housekeeper wages only, divided by every departure clean done in the market &mdash; a turn a technician or supervisor covered counts as a clean (it lowers the rate) while its fee and their wages stay on their own tier. ' +
+      'A shared Breezeway task is credited to the first field person on it; office staff are never credited. ' +
+      'Every dollar of payroll is a Homebase punch, or the stated salary for salaried people, pro-rated to the window.</p>' +
+      '</div>'
 
     // ── 2a. COST PER CLEAN, BY CREW AND BY MARKET (Jon, 2026-08-29) ───────────────────────────
     //
@@ -288,10 +354,10 @@ export async function GET(req: NextRequest) {
         ].filter(x => x.g && x.g.all && x.g.all.perClean != null)
         const mtRev = grid.total?.maintenance?.revenue || 0
         perCleanCard = '<div style="' + cardStyle + '">' +
-          secTitle('Cost per clean &mdash; by crew, by market', 'last 30 days &middot; ' + niceDay(d30) + ' &ndash; ' + niceDay(yd)) +
+          secTitle('By market &mdash; what a turn carries in each crew', 'last 30 days &middot; ' + niceDay(d30) + ' &ndash; ' + niceDay(yd)) +
           '<table width="100%" cellspacing="0" cellpadding="0">' +
           '<tr><th style="' + th + '"></th>' + headCells + '</tr>' +
-          crewRow('Housekeepers', 'the wages spent turning these units', (m: any) => m.housekeeping) +
+          crewRow('Housekeepers', 'housekeeper wages over every departure clean in the market', (m: any) => m.housekeeping) +
           crewRow('Supervisors', 'allocated by where their tasks were', (m: any) => m.supervision) +
           crewRow('Maintenance', 'allocated by where their tasks were' + (mtRev > 0 ? ' &middot; earned ' + money(mtRev) + ' billable' : ''), (m: any) => m.maintenance) +
           '<tr><td style="' + td + ';border-top:2px solid #0f172a"><b>All three crews</b><br><span style="' + MUTED + ';font-size:11.5px">what a turn really costs in payroll</span></td>' +
@@ -313,109 +379,6 @@ export async function GET(req: NextRequest) {
           '</div>'
       }
     } catch { /* additive — the rest of the email stands without it */ }
-
-    // ── 2b. CREWS — COMPLETED WORK vs HOURS CLOCKED (Jon, 2026-08-22: "We track departure
-    // cleans completed in a particular day, that's how we should determine effectiveness of the
-    // cleaning model… Cleaning rev, number of cleans, other tasks, full picture… Same for
-    // Maintenance, maybe they assist with cleaning, like stripping units… This is completed vs
-    // actual hours worked, not assumed."). Completions come straight from Breezeway finished
-    // tasks (the shared classifier); hours are the engine's AUDITED Homebase clock — never a
-    // schedule, never an estimate. Additive: a mirror hiccup drops the card, never the email.
-    let crewsCard = ''
-    try {
-      const { getCrew } = await import('@/lib/crew')
-      const crew = await getCrew()
-      const db2 = supabaseAdmin()
-      const rowsT: any[] = []
-      // SAME BOUNDS AND SAME DAY RULE AS THE ENGINE (lib/labor-econ): gte(from) / lte(to+'T23:59:59')
-      // and the day is the RAW STRING'S date prefix — never a timezone conversion. The first version
-      // ran finished_at through new Date() + ET formatting, which shifted early-morning closes onto
-      // the previous day and let this card disagree with the numbers table under it.
-      for (let i = 0; i < 6; i++) {
-        const { data, error } = await db2.from('breezeway_tasks_sync')
-          .select('name,type_department,status,finished_at,assignees,finished_by_name')
-          .gte('finished_at', d7).lte('finished_at', yd + 'T23:59:59')
-          .order('finished_at', { ascending: false })
-          .range(i * 1000, i * 1000 + 999)
-        if (error) break
-        rowsT.push(...((data || []) as any[]))
-        if (!data || data.length < 1000) break
-      }
-      const nameOfAny = (v: any): string => {
-        if (!v) return ''
-        if (typeof v === 'string') return v
-        if (typeof v === 'object') return String(v.name || v.full_name || [v.first_name, v.last_name].filter(Boolean).join(' ') || '')
-        return ''
-      }
-      const cleansByDay: Record<string, number> = {}
-      const y = { hkCleans: 0, hkStrips: 0, hkOtherClean: 0, mtTasks: 0, mtCleanAssists: 0, inspections: 0 }
-      for (const t of rowsT) {
-        if (/delete|cancel/.test(String(t.status || '').toLowerCase())) continue
-        const day = String(t.finished_at || '').slice(0, 10)
-        const kind = kindOfTask(t)
-        const nm = String(t.name || '')
-        const isStrip = /strip/i.test(nm)
-        const doers = ([] as any[])
-          .concat(Array.isArray(t.assignees) ? t.assignees : [])
-          .concat([t.finished_by_name])
-          .map(nameOfAny).filter(Boolean)
-        const maintDoer = doers.some(n => { try { return crew.deptOf(n) === 'maintenance' } catch { return false } })
-        if (kind === 'clean') {
-          cleansByDay[day] = (cleansByDay[day] || 0) + 1
-          if (day === yd) { y.hkCleans++; if (maintDoer) y.mtCleanAssists++ }
-        } else if (day === yd) {
-          if (kind === 'maintenance') y.mtTasks++
-          else if (kind === 'inspection') y.inspections++
-          else if (isStrip) { y.hkStrips++; if (maintDoer) y.mtCleanAssists++ }
-          else if (/clean|housekeep/i.test(String(t.type_department || '') + ' ' + nm)) y.hkOtherClean++
-        }
-      }
-      // NO DATA IS NOT ZERO WORK: an empty mirror read would render "0 cleans completed" — a
-      // false alarm about effectiveness when the truth is the data did not load. Name it instead.
-      if (!rowsT.length) throw new Error('no finished tasks returned for the window')
-      const hkHours = Number(KY.housekeeping.hours) || 0
-      const mtHours = Number(KY.maintenance.hours) || 0
-      // ONE DENOMINATOR, NOT TWO. This rate used to divide the ENGINE's housekeeper hours by
-      // THIS CARD's board-completion count — a count that includes vendor- and maintenance-closed
-      // doors the engine never put hours against. The footnote under the table admitted the two
-      // clean counts differ, but the rate quietly mixed them anyway and read low. Both sides of
-      // the division now come from the engine, so the number means what it says.
-      const hkCleansEng = Number(KY.housekeeping.cleans) || 0
-      const perClean = hkCleansEng > 0 && hkHours > 0 ? r1(hkHours / hkCleansEng) : null
-      const dayBits: string[] = []
-      for (let i = 6; i >= 0; i--) {
-        const day = dISO(addDays(now, -(i + 1)))
-        const label = new Date(day + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ })
-        dayBits.push('<span style="white-space:nowrap"><span style="' + MUTED + '">' + label + '</span> <b>' + (cleansByDay[day] || 0) + '</b></span>')
-      }
-      crewsCard = '<div style="' + cardStyle + '">' +
-        secTitle('Crews &mdash; completed vs hours clocked', 'Breezeway completions &middot; actual Homebase hours') +
-        '<table width="100%" cellspacing="0" cellpadding="0">' +
-        '<tr><th style="' + th + '"></th><th style="' + th + ';text-align:right">Completed yesterday</th><th style="' + th + ';text-align:right">Hours clocked</th><th style="' + th + ';text-align:right">Rate</th></tr>' +
-        '<tr><td style="' + td + '"><b>Housekeeping</b><br><span style="' + MUTED + ';font-size:11.5px">effectiveness = departure cleans completed that day</span></td>' +
-        '<td style="' + td + ';text-align:right"><b>' + y.hkCleans + '</b> departure cleans' +
-        ((y.hkStrips || y.hkOtherClean) ? '<br><span style="' + MUTED + ';font-size:11.5px">+ ' + [y.hkStrips ? y.hkStrips + ' strip' + (y.hkStrips === 1 ? '' : 's') : '', y.hkOtherClean ? y.hkOtherClean + ' other cleaning' : ''].filter(Boolean).join(' · ') + '</span>' : '') + '</td>' +
-        '<td style="' + td + ';text-align:right"><b>' + r1(hkHours) + 'h</b></td>' +
-        '<td style="' + td + ';text-align:right">' + (perClean != null ? '<b>' + perClean + 'h</b>/clean' : '&mdash;') + '</td></tr>' +
-        '<tr><td style="' + td + '"><b>Maintenance</b><br><span style="' + MUTED + ';font-size:11.5px">incl. what they did on the cleaning side</span></td>' +
-        '<td style="' + td + ';text-align:right"><b>' + y.mtTasks + '</b> maintenance tasks' +
-        (y.mtCleanAssists ? '<br><span style="' + AMBER + ';font-size:11.5px">+ ' + y.mtCleanAssists + ' cleaning assist' + (y.mtCleanAssists === 1 ? '' : 's') + ' (cleans / strips)</span>' : '') + '</td>' +
-        '<td style="' + td + ';text-align:right"><b>' + r1(mtHours) + 'h</b></td>' +
-        '<td style="' + td + ';text-align:right">' + money(cY.maintRev) + ' billed</td></tr>' +
-        (y.inspections ? '<tr><td style="' + td + '" colspan="4"><span style="' + MUTED + ';font-size:11.5px">' + y.inspections + ' inspection' + (y.inspections === 1 ? '' : 's') + ' also completed yesterday.</span></td></tr>' : '') +
-        '</table>' +
-        '<p style="margin:10px 0 0;font-size:12px;color:#374151"><b>Departure cleans completed by day</b> <span style="' + MUTED + '">&middot; last 7</span> &nbsp; ' + dayBits.join(' &nbsp;&middot;&nbsp; ') + '</p>' +
-        // TWO CLEAN COUNTS, ONE EXPLANATION. This card counts every departure clean closed on the
-        // board, whoever closed it — that IS Jon's effectiveness measure. The table below credits
-        // cleans to housekeepers only (that is what cost/clean divides by). Without this line the
-        // same email carries "25" and "18" and somebody has to ask which is wrong. Neither is.
-        '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">Counts here are board completions &mdash; every departure clean closed yesterday, whoever closed it. The h/clean rate beside them is housekeepers only: their punched hours over the cleans credited to them, the same basis as cost/clean below. The two clean counts differ by vendor- and maintenance-closed doors.</p>' +
-        '</div>'
-    } catch {
-      crewsCard = '<div style="' + cardStyle + '">' + secTitle('Crews &mdash; completed vs hours clocked', '') +
-        '<p style="margin:0;font-size:13px;color:#6b7280">Breezeway completions could not be read this morning, so this card is withheld rather than shown as zeros. ' +
-        'The <a href="' + APP_URL + '/labor" style="color:#2563eb">Labor board</a> has the completed-vs-clocked picture live.</p></div>'
-    }
 
     // Yesterday's schedule flags — one line, names included.
     let flagsLine = ''
@@ -453,15 +416,18 @@ export async function GET(req: NextRequest) {
         (M30.people || []).map((p: any) => esc(p.name)).join(', ') + ' &mdash; ' + money(M30.salaryWindow) + ' over 30 days); the salary is the cost and already sits inside each crew, never added on top.</p>'
       : ''
 
+    // The old five-row numbers table is inside the tiers card now; what remains here is the
+    // clock line and the honest footnotes.
     const numbersCard = '<div style="' + cardStyle + '">' +
-      secTitle('The numbers', 'yesterday &middot; last 7 &middot; last 30 &mdash; same engine as the Labor board') +
-      numbersTable + flagsLine + maturityLine + w17Line + mgmtLine + '</div>'
+      secTitle('Yesterday&rsquo;s clock &amp; footnotes', 'same engine as the Labor board') +
+      flagsLine.replace('margin:10px 0 0', 'margin:0') + maturityLine + w17Line + mgmtLine + '</div>'
 
     // ── header + verdict ──────────────────────────────────────────────────────────────────────
     const verdict =
-      'Yesterday: <b style="' + ((cY.profit || 0) < 0 ? RED : GREEN) + '">' + money(cY.profit) + ' profit</b> on ' +
-      money((cY.cleanRev || 0) + (cY.maintRev || 0)) + ' of revenue &middot; ' + (cY.cleans || 0) + ' cleans' +
-      (cY.cpc != null ? ' @ ' + rate(cY.cpc) + '/clean' : '') + '.' +
+      'Yesterday: <b>' + TY.cleans + ' cleans</b>' + (TY.cpc != null ? ' at <b>' + rate(TY.cpc) + '</b> of housekeeper pay each' : '') +
+      ' &middot; ' + money(TY.allRev) + ' earned against ' + money(TY.allPay) + ' payroll &rarr; <b style="' + (TY.profit < 0 ? RED : GREEN) + '">' + money(TY.profit) + (TY.profit < 0 ? ' loss' : ' profit') + '</b>' +
+      (TY.marginPct != null ? ' (' + pctTxt(TY.marginPct) + ')' : '') + '.' +
+      (T30.cpc != null ? ' 30-day cost per clean <b>' + rate(T30.cpc) + '</b>.' : '') +
       (onShift ? ' Today: <b>' + onShift + '</b> on shift' + (cleansDueToday != null ? ', <b>' + cleansDueToday + '</b> cleans due' : '') + '.' : '')
 
     // ── CAN THESE NUMBERS BE TRUSTED? (Jon, 2026-09-01: "what are we doing to make sure this is
@@ -501,9 +467,9 @@ export async function GET(req: NextRequest) {
       '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + niceDay(today) + '</p></div>' +
       '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:13px 18px;margin:12px 0 0">' +
       '<p style="margin:0;font-size:14px;line-height:1.6">' + verdict + '</p></div>' +
+      tiersCard +
       perCleanCard +
       todayCard +
-      crewsCard +
       numbersCard +
       healthCard +
       '<table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 12px"><tr><td>' +
@@ -540,9 +506,9 @@ export async function GET(req: NextRequest) {
     const moneyPlain = (n: number | null | undefined) =>
       n == null ? '—' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
     const subject = 'Daily labor ' + niceDay(today) + ': ' +
-      moneyPlain(cY.profit) + ' profit yest' +
-      (cY.cpc != null ? ' · ' + moneyPlain(cY.cpc) + '/clean' : '') +
-      ' · 30d margin ' + (c30.marginPct != null ? Math.round(c30.marginPct) + '%' : '—') +
+      TY.cleans + ' cleans' + (TY.cpc != null ? ' @ ' + moneyPlain(TY.cpc) : '') + ' · ' +
+      moneyPlain(TY.profit) + (TY.profit < 0 ? ' loss' : ' profit') + ' yest' +
+      ' · 30d ' + (T30.cpc != null ? moneyPlain(T30.cpc) + '/clean, ' : '') + (T30.marginPct != null ? Math.round(T30.marginPct) + '% margin' : '—') +
       (onShift ? ' · ' + onShift + ' on today' : '')
 
     // Recipients: the union of the old true-up list ('labor_weekly') and the old daily-report
