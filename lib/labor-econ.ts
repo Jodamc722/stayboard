@@ -1478,7 +1478,13 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const hkRevenue = round2(inHouseB.reduce((a, b) => a + b.cleaningRevenue, 0))
   const insp = byDept['inspection']
   const hkCharged = chargedCleanRevenue
+  // SUPERVISORS' OWN OUTPUT COUNTS (Jon, 2026-09-07): a turn a supervisor covered and any charge
+  // they closed is real revenue, offsetting their cost. It used to fall out of every all-in
+  // total because supervision was modelled as pure overhead.
+  const supRevenue = round2(sup.cleaningRevenue + sup.billableRevenue)
+  const ccsRevenue = round2(ccs.cleaningRevenue + ccs.billableRevenue)
   const staffRevenue = round2(hkRevenue + hkCharged + mt.cleaningRevenue + mt.billableRevenue + insp.billableRevenue)
+  const allRevenue = round2(staffRevenue + insp.cleaningRevenue + supRevenue + ccsRevenue)
   const staffPayroll = round2(hkPayrollInHouse + mt.payroll + insp.payroll)
   const hkAllRevenue = round2(hkRevenue + hkCharged)
   const kpi = {
@@ -1665,7 +1671,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     },
     // The whole labor line including the fixed layers, for the one number that hides nothing.
     allIn: {
-      revenue: staffRevenue,
+      revenue: allRevenue,
       // NO managementSalary TERM HERE, ON PURPOSE. Salaries were swapped onto the person rows
       // before the departments were built, so sup / ccs / maintenance already carry them — and
       // hkPayrollInHouse would carry one too if a housekeeper were ever put on salary. Adding
@@ -1676,8 +1682,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       // is where Roberto sits while his crew override says 'other'. Without this term his $80k
       // would drop out of the all-in line the moment the salaries moved onto the person rows.
       payroll: round2(staffPayroll + sup.payroll + ccs.payroll + othDept.salary),
-      margin: round2(staffRevenue - staffPayroll - sup.payroll - ccs.payroll - othDept.salary),
-      marginPct: pct(staffRevenue - staffPayroll - sup.payroll - ccs.payroll - othDept.salary, staffRevenue),
+      margin: round2(allRevenue - staffPayroll - sup.payroll - ccs.payroll - othDept.salary),
+      marginPct: pct(allRevenue - staffPayroll - sup.payroll - ccs.payroll - othDept.salary, allRevenue),
     },
   }
 

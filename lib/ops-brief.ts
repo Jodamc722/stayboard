@@ -808,7 +808,8 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // money: today's Homebase roster, each person cross-checked against the clean assignments below.
   let todayShifts: any[] = []
   let todayOpenShifts = 0
-  let shiftsLoaded = true
+  // Only Ops Command loads Homebase; the field sheets say "on the board", never "0 scheduled".
+  let shiftsLoaded = variant === 'full'
   // People who are never on the Homebase schedule BY DESIGN — salaried management, vendor and
   // contractor staff. "Not on the Homebase schedule" is a red flag for an hourly cleaner and
   // plain noise for Roberto, so the tag says which it is.
@@ -989,15 +990,19 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // "every person, in order" has to mean for the person holding the phone.
   const namesOf = (assignee: string): string[] =>
     String(assignee).split(',').map(x => x.trim()).filter(x => x && !/UNASSIGNED/.test(x))
+  // Breezeway hands some names over all-lowercase ("yessica alvarez"); print them as names.
+  const disp = (n: string): string => /[A-Z]/.test(n) ? n : n.replace(/\b[a-z\u00e0-\u00ff]/g, ch => ch.toUpperCase())
   const withOthers = (assignee: string, me: string): string => {
-    const rest = namesOf(assignee).filter(n => n !== me)
-    return rest.length ? ` <span style="${S.muted};font-size:11.5px">· ${t('with')} ${esc(rest.join(', '))}</span>` : ''
+    const rest = namesOf(assignee).filter(n => !nameMatches(n, me))
+    return rest.length ? ` <span style="${S.muted};font-size:11.5px">· ${t('with')} ${esc(rest.map(disp).join(', '))}</span>` : ''
   }
   // ONE OWNER PER JOB (Jon, 2026-09-07: "show the predominant person assigned — the first person
   // assigned based on the schedule"). A shared job lands on ONE list: the first field person on
   // it. The others are named on the row ("with …"), so nothing is hidden and nothing is counted
   // twice. Office people never own a job that a field person shares.
-  const officeList: string[] = (d as any).officeNames || []
+  // Deduped by fuzzy match — the roster can carry the same person twice ("Karla  Valle").
+  const officeList: string[] = ((d as any).officeNames || []).reduce((acc: string[], n: string) =>
+    acc.some(x => nameMatches(x, n)) ? acc : [...acc, n], [])
   const isOffice = (n: string) => officeList.some(o => nameMatches(o, n))
   const ownerOf = (x: any): string => (x.lead && String(x.lead)) || namesOf(x.assignee)[0] || ''
   const byPerson: Record<string, any[]> = {}
@@ -1055,7 +1060,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       ? `<tr><td colspan="3" style="${S.td};padding-left:40px"><span style="${S.amber}">${t('nothing assigned yet')}</span> <span style="${S.muted}">— ${t('on the clock with no work on the board')}</span></td></tr>`
       : ''
     return `
-    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(name)}</b>${depTag}${shiftTag} <span style="${S.muted}">${bits ? '· ' + bits : ''}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(disp(name))}</b>${depTag}${shiftTag} <span style="${S.muted}">${bits ? '· ' + bits : ''}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
       nothing +
       mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival, name)).join('') +
       others.map((o: any) => otherRow(o, name)).join('')
@@ -1145,9 +1150,9 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // predominant cleaner, who is with them, the arrival that sets the deadline, the state.
   const cleanLine = (c: any, n: number | null) => {
     const owner = ownerOf(c)
-    const rest = namesOf(c.assignee).filter(x => x !== owner)
+    const rest = namesOf(c.assignee).filter(x => !nameMatches(x, owner))
     const who = owner
-      ? `<b>${esc(owner)}</b>${coveringPill(owner)}${rest.length ? ` <span style="${S.muted};font-size:11.5px">· ${t('with')} ${esc(rest.join(', '))}</span>` : ''}`
+      ? `<b>${esc(disp(owner))}</b>${coveringPill(owner)}${rest.length ? ` <span style="${S.muted};font-size:11.5px">· ${t('with')} ${esc(rest.map(disp).join(', '))}</span>` : ''}`
       : `<span style="${S.red}"><b>${t('NO ONE ASSIGNED')}</b></span>`
     return `
     <tr><td style="${S.td};width:30px;text-align:center">${n != null ? numBadge(n, c.sameDayArrival) : ''}</td>
