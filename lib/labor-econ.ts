@@ -365,7 +365,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const qFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -1))
   const qTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 1))
   const taskRowsAll = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
-    .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,total_minutes,rate_paid')
+    .select('id,name,type_department,assignee_name,finished_by_name,assignees,reference_property_id,finished_at,total_minutes,rate_paid')
     .gte('finished_at', qFrom).lte('finished_at', qTo + 'T23:59:59').order('id', { ascending: true }).range(a, b)))
     .filter(t => { const d = etDay(t.finished_at); return d >= from && d <= to })
   const taskRows = taskRowsAll.filter(t => inMarketListing(t.reference_property_id))
@@ -385,7 +385,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // crew did but nobody closed still count on the day it was scheduled.
   const padFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -2))
   const padTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 9))
-  const poolCols = 'id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,scheduled_date,status,total_minutes'
+  const poolCols = 'id,name,type_department,assignee_name,finished_by_name,assignees,reference_property_id,finished_at,scheduled_date,status,total_minutes'
   const poolByFinish = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
     .select(poolCols).gte('finished_at', padFrom).lte('finished_at', padTo + 'T23:59:59').order('id', { ascending: true }).range(a, b))
   const poolBySched = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
@@ -484,11 +484,28 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const rosterNames: string[] = []
   for (const t of timecards) if (t.name && rosterNames.indexOf(t.name) < 0) rosterNames.push(t.name)
   const aliasCache: Record<string, string | null> = {}
-  const doer = (t: any): string | null => {
-    const raw = t.assignee_name || t.finished_by_name || null
-    if (!raw) return null
+  // THE PREDOMINANT DOER (Jon, 2026-09-07: "the first person assigned based on the schedule…
+  // Carla and Roberto, I'm okay with their tasks showing, but they are not in the field").
+  // Breezeway lets several people sit on one task. The person credited with it is the FIRST
+  // assignee who is in the field (staff.field ≠ false); an office person listed ahead of a
+  // cleaner is shown on the task but never earns its clean or its charge. Only when nobody
+  // on it is field crew does the first assignee (or whoever closed it) get the credit.
+  const officeCache: Record<string, boolean> = {}
+  const isOffice = (name: string): boolean => {
+    if (!(name in officeCache)) { const rec = resolveStaff(name, crew.staff); officeCache[name] = !!rec && rec.field === false }
+    return officeCache[name]
+  }
+  const canon = (raw: string): string => {
     if (!(raw in aliasCache)) aliasCache[raw] = rosterNames.length ? nameMatchesRoster(String(raw), rosterNames) : null
     return aliasCache[raw] || String(raw)
+  }
+  const doer = (t: any): string | null => {
+    const listed = (Array.isArray(t.assignees) ? t.assignees : [])
+      .map((a: any) => String((a && typeof a === 'object' ? a.name : a) || '').trim()).filter(Boolean)
+    const first = listed.find((n: string) => !isOffice(canon(n)))
+    const raw = first || listed[0] || t.assignee_name || t.finished_by_name || null
+    if (!raw) return null
+    return canon(String(raw))
   }
 
   // ── cleaning fees: one checkout, one clean, one fee ──────────────────────
@@ -895,6 +912,20 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.costPerClean = p.cleans > 0 && p.payroll > 0 ? round2(p.payroll / p.cleans) : null
   }
 
+  // A CHARGED CLEANING JOB DONE BY A TECH OR A SUPERVISOR is their revenue, not housekeeping's.
+  // The housekeeping block below only totals charged cleans by housekeepers, so without this a
+  // supervisor's $25 linen refresh earned nobody anything. (Jon, 2026-09-07: supervisors and
+  // maintenance are judged on "a departure clean or other billable revenue" they produced.)
+  for (const t of chargedCleanTasks) {
+    const w = doer(t); if (!w) continue
+    const p = acc[keyFor(w)]; if (!p || p.dept === 'housekeeping') continue
+    const chg = chargeOfRaw(t); if (!(chg > 0)) continue
+    p.billableRevenue = round2(p.billableRevenue + chg)
+    p.billableTasks++
+    p.revenue = round2(p.cleaningRevenue + p.billableRevenue)
+    p.margin = round2(p.revenue - p.payroll)
+  }
+
   // WHERE EACH PERSON'S WORK HAPPENED, kept before `_mk` is stripped. The simple P&L below
   // splits a technician's hours and wages across markets by his share of tasks, exactly as a
   // housekeeper's split by her share of cleans — one rule, so the market rows add to the total.
@@ -1252,22 +1283,35 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // a "cost per clean" that answered no question. So the headline denominator is the guest-paid
   // DEPARTURE clean and nothing else, and charged cleaning tasks — mid-stays, refreshes, re-cleans
   // — are totalled on their own line below. Both are real revenue; only one is a turnover.
+  //
+  // EVERY DEPARTURE CLEAN IS IN THE DENOMINATOR, ONLY HOUSEKEEPER WAGES IN THE NUMERATOR (Jon,
+  // 2026-09-07: "cost per clean solely based on housekeeping. Nobody else… If maintenance does a
+  // departure clean, the cost per clean is based solely on housekeeping hours. That would be a
+  // net positive for housekeeping"). So a turn a technician or a supervisor covered still counts
+  // as a clean the market produced — it lowers cost per clean — while its fee stays with the
+  // person who did it (their crew's revenue line), and their wages never enter this ratio.
   const hkCleansByPerson: Record<string, Record<string, number>> = {}
+  const depCleansByMk: Record<string, number> = {}          // every departure clean, any crew
+  const depCleansByOthersMk: Record<string, number> = {}    // …of which, not by a housekeeper
   let chargedCleanCount = 0, chargedCleanRevenue = 0
   for (const rec of cleanRecs) {
-    if (!hkNames[rec.who]) continue
+    const byHk = !!hkNames[rec.who]
     if (rec.charged) {
-      // Extra paid cleaning work. Counted as revenue, never as a turnover.
-      chargedCleanCount++
-      chargedCleanRevenue = round2(chargedCleanRevenue + rec.fee)
+      // Extra paid cleaning work. Counted as revenue, never as a turnover. A non-housekeeper's
+      // charged job was already routed to their own billable line above.
+      if (byHk) { chargedCleanCount++; chargedCleanRevenue = round2(chargedCleanRevenue + rec.fee) }
       continue
     }
     const b = bucketFor(rec.market)
     b.cleans++
+    depCleansByMk[rec.market] = (depCleansByMk[rec.market] || 0) + 1
+    if (!byHk) { depCleansByOthersMk[rec.market] = (depCleansByOthersMk[rec.market] || 0) + 1; continue }
     b.cleaningRevenue = round2(b.cleaningRevenue + rec.fee)
     hkCleansByPerson[rec.who] = hkCleansByPerson[rec.who] || {}
     hkCleansByPerson[rec.who][rec.market] = (hkCleansByPerson[rec.who][rec.market] || 0) + 1
   }
+  const depCleansAll = Object.keys(depCleansByMk).reduce((a, k) => a + depCleansByMk[k], 0)
+  const depCleansByOthers = Object.keys(depCleansByOthersMk).reduce((a, k) => a + depCleansByOthersMk[k], 0)
   // payroll + hours, split by each housekeeper's share of cleans per market
   const bucketNames: Record<string, Record<string, boolean>> = {}
   for (const p of peopleAll) {
@@ -1439,10 +1483,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const hkAllRevenue = round2(hkRevenue + hkCharged)
   const kpi = {
     housekeeping: {
-      cleans: hkCleansInHouse,                       // departure cleans only
-      revenue: hkRevenue,                            // net departure-clean fees
+      cleans: hkCleansInHouse,                       // EVERY departure clean in these markets, any crew
+      cleansByOtherCrews: inHouseB.reduce((a, b) => a + (depCleansByOthersMk[b.key] || 0), 0),
+      cleansByHousekeepers: hkCleansInHouse - inHouseB.reduce((a, b) => a + (depCleansByOthersMk[b.key] || 0), 0),
+      revenue: hkRevenue,                            // net departure-clean fees earned BY HOUSEKEEPERS
       cleaningFees: hkRevenue,
-      basisNote: 'departure cleans, net of the channel commission on the cleaning fee',
+      basisNote: 'housekeeper wages over every departure clean done in the market (a turn covered by a tech or a supervisor still counts as a clean; their wages and its fee stay on their own crew)',
       // Gross guest cleaning fees before the OTA cut, so the difference is visible.
       revenueGross: cleaningGrossAll,
       channelCut: round2(Math.max(0, cleaningGrossAll - cleaningInhouse)),
@@ -1852,13 +1898,15 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       row.revenue += p.cleaningRevenue * share
       row.tasks += Math.round(p.tasks * share)
     })
-    // Cleans land in the market of the unit, never spread — they are counted, not allocated.
-    const mine = hkCleansByPerson[p.name] || {}
-    for (const k of Object.keys(mine)) {
-      const mk = k === 'vendor' ? 'vendor-inhouse' : k
-      const row = hkRows[mk] = hkRows[mk] || emptyRow(mk)
-      row.cleans += mine[k]
-    }
+  }
+  // Cleans land in the market of the unit, never spread — they are counted, not allocated. And
+  // EVERY departure clean counts (Jon, 2026-09-07), whichever crew turned the unit: that is the
+  // denominator the wages above are divided by.
+  for (const k of Object.keys(depCleansByMk)) {
+    if (market !== 'all' && k !== market) continue
+    const mk = k === 'vendor' ? 'vendor-inhouse' : k
+    const row = hkRows[mk] = hkRows[mk] || emptyRow(mk)
+    row.cleans += depCleansByMk[k]
   }
   // ---- maintenance, by market --------------------------------------------------------------
   const mtRows: Record<string, PnlRow> = {}
@@ -1867,7 +1915,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     spread(mtRows, p, mkTasksBy[p.name], (row, share) => {
       row.hours += p.hours * share
       row.payroll += netCost(p) * share
-      row.revenue += p.billableRevenue * share
+      // Billable charges AND the fee of any departure clean the tech covered (Jon, 2026-09-07).
+      row.revenue += (p.billableRevenue + p.cleaningRevenue) * share
       row.tasks += Math.round(p.tasks * share)
       row.tasksBilled += Math.round(p.billableTasks * share)
       row.tasksNoCharge += Math.round(p.tasksNoCharge * share)
@@ -1885,6 +1934,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     spread(supRows, p, mkTasksBy[p.name], (row, share) => {
       row.hours += p.hours * share
       row.payroll += netCost(p) * share
+      // A supervisor is overhead — unless they turned a unit or closed a charged job, in which
+      // case that revenue offsets their cost (Jon, 2026-09-07).
+      row.revenue += (p.billableRevenue + p.cleaningRevenue) * share
       row.tasks += Math.round(p.tasks * share)
     })
   }
@@ -1911,9 +1963,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     hkMarkets.reduce((a, r) => a + r.cleans, 0),
     round2(hkStaff.reduce((a, p) => a + p.cleaningRevenue, 0)))
   const mtTotal = totalOf(mtStaff, 'all', 'All maintenance', 0,
-    round2(mtStaff.reduce((a, p) => a + p.billableRevenue, 0)))
+    round2(mtStaff.reduce((a, p) => a + p.billableRevenue + p.cleaningRevenue, 0)))
   const supMarkets = rowList(supRows)
-  const supTotal = totalOf(supStaff, 'all', 'All supervision', 0, 0)
+  const supTotal = totalOf(supStaff, 'all', 'All supervision', 0,
+    round2(supStaff.reduce((a, p) => a + p.billableRevenue + p.cleaningRevenue, 0)))
 
   // ---- COST PER CLEAN, BY CREW AND BY MARKET (Jon, 2026-08-29) ------------------------------
   //

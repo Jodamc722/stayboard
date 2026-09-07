@@ -45,6 +45,11 @@ export type StaffRow = {
   /** HOW they are employed (Jon, 2026-09-01): 'w2' | 'contractor' | 'agency' | 'vendor'. Fact
    *  only for now — no burden math until Eric's app supplies the real rates. */
   employmentType?: string | null
+  /** IN THE FIELD (Jon, 2026-09-07: "Carla and Roberto… are not in the field, technically").
+   *  true = turns units / walks buildings; false = office/coordination. An office person can be
+   *  on a Breezeway task and it still SHOWS — but they are never the predominant doer when a
+   *  field person shares the task, and never counted in field rosters. Missing column = true. */
+  field?: boolean
 }
 
 /** A vendor company — who they are, which buildings they cover, how they bill (migration 062). */
@@ -93,6 +98,7 @@ export async function getStaff(includeInactive = false): Promise<StaffRow[]> {
       salaryHoursPerWeek: r.salary_hours_per_week == null ? null : num(r.salary_hours_per_week),
       salaryAnnual: r.salary_annual == null ? null : num(r.salary_annual),
       employmentType: r.employment_type ?? null,
+      field: r.field !== false,
     }))
     return includeInactive ? rows : rows.filter(s => s.active)
   } catch { return [] }
@@ -153,7 +159,7 @@ export async function upsertAgency(a: Partial<Agency> & { key: string }): Promis
 
 // Columns migration 057 adds. Kept as a list because the write below has to be able to drop
 // them again — see the retry.
-const V057_COLUMNS = ['dept', 'dept_source', 'title', 'salaried', 'salary_hourly', 'salary_hours_per_week', 'salary_annual', 'employment_type']
+const V057_COLUMNS = ['dept', 'dept_source', 'title', 'salaried', 'salary_hourly', 'salary_hours_per_week', 'salary_annual', 'employment_type', 'field']
 
 export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Promise<{ ok: boolean; error?: string; migrationPending?: boolean }> {
   try {
@@ -172,6 +178,7 @@ export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Prom
     if (s.salaryHourly !== undefined) row.salary_hourly = s.salaryHourly == null ? null : num(s.salaryHourly)
     if (s.salaryHoursPerWeek !== undefined) row.salary_hours_per_week = s.salaryHoursPerWeek == null ? null : num(s.salaryHoursPerWeek)
     if (s.salaryAnnual !== undefined) row.salary_annual = s.salaryAnnual == null ? null : num(s.salaryAnnual)
+    if (s.field !== undefined) row.field = s.field !== false
     if (s.employmentType !== undefined) {
       const et = String(s.employmentType || '').trim().toLowerCase()
       row.employment_type = ['w2', 'contractor', 'agency', 'vendor'].includes(et) ? et : null
