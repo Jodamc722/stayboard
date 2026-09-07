@@ -48,6 +48,8 @@ type Person = {
   // Pay rides the same record as the crew (migration 057) — one row per person, one place to edit.
   title?: string | null
   employmentType?: string | null
+  /** false = office / coordination (Roberto, Karla): tasks show, never the predominant doer. */
+  field?: boolean
   salaried?: boolean
   salaryHourly?: number | null
   salaryHoursPerWeek?: number | null
@@ -89,6 +91,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
   const [edits, setEdits] = useState<Record<string, string>>({})
   type StaffEdit = {
     agency?: string; area?: string; role?: string; title?: string; employmentType?: string
+    field?: boolean
     salaried?: boolean; salaryHourly?: string; salaryHoursPerWeek?: string; salaryAnnual?: string
   }
   const [staffEdits, setStaffEdits] = useState<Record<string, StaffEdit>>({})
@@ -114,6 +117,7 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
     setStaffEdits(s => ({ ...s, [name]: { ...s[name], ...patch } }))
   const salariedOf = (p: Person) => (staffEdits[p.name]?.salaried ?? !!p.salaried)
   const etOf = (p: Person) => (staffEdits[p.name]?.employmentType ?? (p.employmentType || ''))
+  const fieldOf = (p: Person) => (staffEdits[p.name]?.field ?? (p.field !== false))
   const payOf = (p: Person, k: 'salaryHourly' | 'salaryHoursPerWeek' | 'salaryAnnual') => {
     const pend = staffEdits[p.name]?.[k]
     if (pend !== undefined) return pend
@@ -346,6 +350,15 @@ export function CrewRolesAdmin({ isOwner }: { isOwner: boolean }) {
                       <option value="agency">Agency</option>
                       <option value="vendor">Vendor staff</option>
                     </select>
+                    {/* FIELD vs OFFICE (Jon, 2026-09-07). An office person's tasks still show on
+                        every board; they are just never the one credited when a field person
+                        shares the job, and never counted in a field roster. */}
+                    <label className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted cursor-pointer whitespace-nowrap"
+                      title="In the field = turns units / walks buildings. Office = coordination (Roberto, Karla): tasks show, but they are never the predominant doer and never counted as field crew.">
+                      <input type="checkbox" disabled={!isOwner} checked={fieldOf(p)}
+                        onChange={e => setStaff(p.name, { field: e.target.checked })} className="accent-brand-600" />
+                      {fieldOf(p) ? 'In the field' : <span className="text-brand-700 font-semibold">Office</span>}
+                    </label>
                   </td>
                   <td className="px-2.5 py-2 align-top">
                     <select

@@ -209,7 +209,7 @@ export function LaborPanel() {
       <div className="rounded-xl border border-line bg-white px-4 py-3 relative">
         <p className="text-[10px] uppercase tracking-wide text-muted font-bold mb-2">Trend <span className="normal-case font-normal">· {weekly ? 'by week (Sun–Sat)' : 'by day'} · housekeepers only, engine numbers — hover any bar</span></p>
         <div className="flex flex-wrap gap-6">
-          <Panel title="Cost per clean" sub="loaded HK wages ÷ credited cleans — lower is better" val={r => r.cpc} fmtV={n => '$' + n.toFixed(0)} color={() => '#6366f1'} />
+          <Panel title="Cost per clean" sub="housekeeper wages ÷ every departure clean, any crew — lower is better" val={r => r.cpc} fmtV={n => '$' + n.toFixed(0)} color={() => '#6366f1'} />
           <Panel title="HK margin %" sub="net fees kept after loaded wages" val={r => r.marginPct} fmtV={n => n.toFixed(0) + '%'} color={v => (v >= 0 ? '#059669' : '#e11d48')} />
         </div>
         {tip && (
