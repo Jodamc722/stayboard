@@ -229,9 +229,12 @@ export async function POST(req: NextRequest) {
   const photoBlocks = photoBlocksFor(sel)
   const photoRules = sel.labelled ? PHOTO_RULES_LABELLED : PHOTO_RULES_RAW
   const coverageNote = str(raw?._photoScore?.coverageNote)
+  // 2026-09-08: the photo analyst aggregates the features the photos PROVE (pool, bay view, king
+  // bed…). The title should promise those and nothing the photos cannot back up.
+  const photoHooks: string[] = Array.isArray(raw?._photoScore?.hooks) ? raw._photoScore.hooks.map((h: any) => str(h).replace(/-/g, ' ')).filter(Boolean).slice(0, 5) : []
   const photoBrief = sel.labelled
-    ? `PHOTO INDEX: ${sel.photos.length} real photos of this home are attached, covering: ${sel.rooms.join(', ')}.${coverageNote ? ` Coverage note from the photo review: "${coverageNote}".` : ''}`
-    : ''
+    ? `PHOTO INDEX: ${sel.photos.length} real photos of this home are attached, covering: ${sel.rooms.join(', ')}.${coverageNote ? ` Coverage note from the photo review: "${coverageNote}".` : ''}${photoHooks.length ? ` The photos PROVE these features (strongest first): ${photoHooks.join(', ')} — lead the TITLE with the strongest of them.` : ''}`
+    : (photoHooks.length ? `The photos prove these features (strongest first): ${photoHooks.join(', ')} — lead the TITLE with the strongest of them.` : '')
 
   // The house-style exemplar for 'space'. Pinned to one listing if set, otherwise matched by
   // building name (default "17 west", the in-house gold standard).
