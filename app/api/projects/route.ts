@@ -8,11 +8,13 @@
 // Sub-resources (links, steps, photos, notes, owner email) live under /api/projects/[id]/… so this
 // file stays about the project itself.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, isSuperadmin } from '@/lib/access'
+import { personKey, nameMatches } from '@/lib/person-name'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   listProjects, getCategories, addNote, newShareToken, toCents,
   STAGES, PRIORITIES, APPROVALS, todayISO, type Stage,
+  toPerson,
 } from '@/lib/projects'
 
 export const dynamic = 'force-dynamic'
@@ -32,11 +34,18 @@ export async function GET(req: NextRequest) {
       category: str(sp.get('category')) || 'all',
       market: str(sp.get('market')) || 'all',
       lead: str(sp.get('lead')) || 'all',
+      // The board only ever receives what this person may see. See canSee in lib/projects.
+      viewer: { email: g.access.email, superadmin: isSuperadmin(g.access.email) },
     }),
     getCategories(),
   ])
   // Pickers, so the editor can offer real units and real people instead of free text.
   let listings: any[] = [], people: string[] = []
+  // ROSTER: app users AND field staff (Jon, 2026-09-08 — "app users and roster names"). A person
+  // with a login can be notified; a roster name can be assigned but only named. The picker shows
+  // both and marks which is which, deduplicated through the shared matcher so a cleaner who also
+  // has a login is one entry, not two.
+  let roster: { display: string; email: string | null; notifiable: boolean }[] = []
   try {
     const sb = supabaseAdmin()
     const [{ data: l }, { data: u }] = await Promise.all([
@@ -46,8 +55,29 @@ export async function GET(req: NextRequest) {
     listings = ((l || []) as any[]).map(x => ({ id: String(x.id), label: x.nickname || x.title || 'Unit', building: x.building || null }))
       .sort((a, b) => a.label.localeCompare(b.label))
     people = ((u || []) as any[]).map(x => String(x.email)).sort()
+    const seen = new Set<string>()
+    for (const x of ((u || []) as any[])) {
+      const display = String((x.profile && (x.profile.name || x.profile.full_name)) || x.email)
+      const k = personKey(display) || String(x.email).toLowerCase()
+      if (seen.has(k)) continue
+      seen.add(k); seen.add(String(x.email).toLowerCase())
+      roster.push({ display, email: String(x.email).toLowerCase(), notifiable: true })
+    }
+    try {
+      const { breezewayPeopleLite } = await import('@/lib/breezeway')
+      for (const bp of await breezewayPeopleLite()) {
+        const k = personKey(bp.name)
+        if (!k || seen.has(k)) continue
+        // A field person whose name matches an app user is that app user, not a second row.
+        const twin = roster.find(r => nameMatches(r.display, bp.name))
+        if (twin) { seen.add(k); continue }
+        seen.add(k)
+        roster.push({ display: bp.name, email: null, notifiable: false })
+      }
+    } catch { /* Breezeway down: app users alone are still a usable roster */ }
+    roster.sort((a, b) => a.display.localeCompare(b.display))
   } catch {}
-  return NextResponse.json({ ok: true, projects, categories, listings, people, today: todayISO() })
+  return NextResponse.json({ ok: true, projects, categories, listings, people, roster, today: todayISO() })
 }
 
 export async function POST(req: NextRequest) {
@@ -77,6 +107,22 @@ export async function POST(req: NextRequest) {
     }
     const { data, error } = await supabaseAdmin().from('projects').insert(row).select('*').maybeSingle()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    // THE CREATOR IS THE FIRST OWNER. Without this row the project is visible to nobody but the
+    // superadmin the moment it exists — privacy would lock people out of what they just made.
+    // The lead, when named and different, comes in as an owner too.
+    if (data) {
+      const seed = [toPerson(String(g.access.email || ''))]
+      const lead = str(b.lead_email)
+      if (lead && lead.toLowerCase() !== String(g.access.email || '').toLowerCase()) seed.push(toPerson(lead))
+      const extra = (Array.isArray(b.members) ? b.members : []).map((x: any) => toPerson(String(x))).filter((x: any) => x.display)
+      const rows = [
+        ...seed.filter(x => x.display).map(x => ({ project_id: data.id, ...x, role: 'owner', added_by: g.access.email })),
+        ...extra.map((x: any) => ({ project_id: data.id, ...x, role: 'editor', added_by: g.access.email })),
+      ]
+      const { error: mErr } = await supabaseAdmin().from('project_members').upsert(rows, { onConflict: 'project_id,person_key' })
+      if (mErr) return NextResponse.json({ error: 'Project created but membership failed: ' + mErr.message }, { status: 500 })
+      if (b.private) await supabaseAdmin().from('projects').update({ private: true, kind: str(b.kind) === 'one_on_one' ? 'one_on_one' : 'project' }).eq('id', data.id)
+    }
     // Optional units at creation time, so "a rollout across these 12 units" is one step.
     const units: string[] = Array.isArray(b.listingIds) ? b.listingIds.map(String) : []
     if (data && units.length) {
