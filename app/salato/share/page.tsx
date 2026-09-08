@@ -2,7 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 
 type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; verified?: boolean; verifiedAt?: string | null }
-type Data = { ok: boolean; today: string; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
+type Data = { ok: boolean; today: string; unitCount?: number; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
 type ViewData = { ok: boolean; fullName?: string | null; unit?: string | null; signedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
 
 const SEEN_KEY = 'salato_share_seen_v1'
@@ -17,6 +17,20 @@ function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T
 // 12-hour clock: "16:00" -> "4:00 PM" (times come from the API as 24h HH:MM)
 function fmtTime(t: string | null | undefined) { if (!t) return ''; const m = /^(\d{1,2}):(\d{2})/.exec(String(t)); if (!m) return String(t); let h = parseInt(m[1], 10); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + m[2] + ' ' + ap }
 function keyOf(r: Row, mode: string) { return r.unit + '|' + (mode === 'departures' ? r.checkOut : r.checkIn) }
+// A day heading reads better than a date on every row: "Today", "Tomorrow", then the weekday.
+function dayLabel(iso: string, today: string) {
+  if (!iso) return ''
+  if (iso === today) return 'Today'
+  const dd = Math.round((+new Date(iso + 'T12:00:00') - +new Date(today + 'T12:00:00')) / 86400000)
+  if (dd === 1) return 'Tomorrow'
+  if (dd === -1) return 'Yesterday'
+  return fmtDate(iso)
+}
+function groupByDay(rows: Row[], dateOf: (r: Row) => string) {
+  const m: Record<string, Row[]> = {}
+  for (const r of rows) (m[dateOf(r)] = m[dateOf(r)] || []).push(r)
+  return Object.keys(m).sort().map(d => ({ date: d, rows: m[d] }))
+}
 
 export default function SalatoShare() {
   const [data, setData] = useState<Data | null>(null)
@@ -52,7 +66,10 @@ export default function SalatoShare() {
   }, [load])
 
   // "Verify" lists everyone a front desk checks in: upcoming arrivals + in-house guests.
-  const rows = data ? (tab === 'verify' ? data.arrivals.concat(data.active) : data[tab]) : []
+  // Verify tab = everyone the desk checks in (upcoming arrivals + in-house), unverified first.
+  const rows = data ? (tab === 'verify' ? data.arrivals.concat(data.active).slice().sort((a, b) => (a.verified === b.verified ? 0 : a.verified ? 1 : -1)) : data[tab]) : []
+  const dateOf = (r: Row) => tab === 'departures' ? r.checkOut : r.checkIn
+  const groups = groupByDay(rows, dateOf)
   const idPrefix = tab === 'arrivals' ? 'a' : tab === 'departures' ? 'd' : 'v'
   const isNew = (r: Row) => seenInit.current && !seen.has(idPrefix + keyOf(r, tab))
   const allIds = data ? [...data.arrivals.map(r => 'a' + keyOf(r, 'arrivals')), ...data.departures.map(r => 'd' + keyOf(r, 'departures')), ...data.active.map(r => 'v' + keyOf(r, 'active'))] : []
@@ -112,7 +129,7 @@ export default function SalatoShare() {
                   <span className='inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300'><span className='relative flex h-1.5 w-1.5'><span className='animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75'></span><span className='relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400'></span></span>LIVE</span>
                 </div>
                 <h1 className='text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight'>Salato</h1>
-                <p className='text-xs text-neutral-400 mt-1.5'>Front desk{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''} · auto-refreshes every 30 min</p>
+                <p className='text-xs text-neutral-400 mt-1.5'>Front desk{data?.unitCount ? ' · ' + data.unitCount + ' units' : ''}{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''} · auto-refreshes every 30 min</p>
               </div>
               <div className='flex items-center gap-2 flex-wrap gap-y-2'>
                 {newCount > 0 && <button onClick={markSeen} className='text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-400 text-neutral-900 hover:bg-amber-300 transition-colors'>{newCount} new</button>}
@@ -134,50 +151,47 @@ export default function SalatoShare() {
         {loading && !data && <div className='text-neutral-400 text-sm py-10 text-center'>Loading…</div>}
         {err && <div className='text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3'>{err}</div>}
         {data && rows.length === 0 && !loading && <div className='text-neutral-400 text-sm py-10 text-center'>Nothing here right now.</div>}
-        <div className='space-y-2'>
-          {rows.map((r, i) => {
-            const dateIso = tab === 'departures' ? r.checkOut : r.checkIn
-            const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
-            const showVerify = (tab === 'arrivals' || tab === 'active' || tab === 'verify') && !!r.id
-            return (
-              <div key={i} className={'rounded-2xl border bg-white shadow-sm px-4 py-3 ' + (isNew(r) ? 'border-amber-300 ring-1 ring-amber-200' : 'border-neutral-200')}>
-                <div className='flex items-center gap-3'>
-                  <div className='flex-1 min-w-0'>
-                    <div className='flex items-center gap-2 flex-wrap'>
-                      <span className='font-semibold truncate'>{r.unit}</span>
-                      {isNew(r) && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white'>New</span>}
-                      {tab === 'departures' && r.sameDayTurn && <span className='text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200'>Same-day turn</span>}
+
+        {/* Grouped under one heading per day, so the desk reads "who is arriving today" at a
+            glance instead of re-reading the date on every card. */}
+        {data && groups.map(g => (
+          <div key={g.date} className='mb-4'>
+            <div className='flex items-baseline gap-2 px-1 mb-1.5'>
+              <span className='text-sm font-bold text-neutral-900'>{dayLabel(g.date, data.today)}</span>
+              {dayLabel(g.date, data.today) !== fmtDate(g.date) && <span className='text-xs text-neutral-400'>{fmtDate(g.date)}</span>}
+              <span className='flex-1' />
+              <span className='text-xs text-neutral-400'>{g.rows.length}</span>
+            </div>
+            <div className='rounded-2xl border border-neutral-200 bg-white shadow-sm divide-y divide-neutral-100 overflow-hidden'>
+              {g.rows.map((r, i) => {
+                const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
+                const showVerify = (tab === 'arrivals' || tab === 'active' || tab === 'verify') && !!r.id
+                return (
+                  <div key={i} className={'px-4 py-3 ' + (isNew(r) ? 'bg-amber-50/60' : '')}>
+                    <div className='flex items-start gap-3'>
+                      <div className='flex-1 min-w-0'>
+                        <div className='flex items-center gap-2 flex-wrap'>
+                          <span className='text-[15px] font-bold text-neutral-900 truncate'>{r.unit}</span>
+                          {isNew(r) && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white'>New</span>}
+                          {tab === 'departures' && r.sameDayTurn && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700'>Same-day turn</span>}
+                        </div>
+                        <div className='text-xs text-neutral-500 mt-0.5'>
+                          {[time ? (tab === 'departures' ? 'Out ' : 'ETA ') + fmtTime(time) : null,
+                            r.guests ? r.guests + ' guests' : null,
+                            (tab === 'active' || tab === 'verify') ? 'out ' + fmtDate(r.checkOut) : null,
+                            r.source].filter(Boolean).join(' · ')}
+                        </div>
+                      </div>
+                      {showVerify && (r.verified
+                        ? <button onClick={() => r.id && openViewer(r.id)} className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800'>✓ Verified</button>
+                        : <a href={'/salato/verify/' + r.id} target='_blank' rel='noopener noreferrer' className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl bg-neutral-900 text-white'>Verify</a>)}
                     </div>
-                    <div className='text-xs text-neutral-500'>{r.guests ? r.guests + ' guests' : ''}{r.source ? (r.guests ? ' · ' : '') + r.source : ''}</div>
                   </div>
-                  <div className='text-right shrink-0'>
-                    {(tab === 'active' || tab === 'verify') ? (
-                      <>
-                        <div className='text-xs text-neutral-500'>in {fmtDate(r.checkIn)}</div>
-                        <div className='text-sm font-semibold'>out {fmtDate(r.checkOut)}</div>
-                      </>
-                    ) : (
-                      <>
-                        <div className='text-sm font-medium'>{fmtDate(dateIso)}</div>
-                        {time && <div className='text-xs text-emerald-700 font-medium'>{tab === 'departures' ? 'out ' : 'ETA '}{fmtTime(time)}</div>}
-                      </>
-                    )}
-                  </div>
-                </div>
-                {showVerify && (
-                  <div className='mt-3 pt-3 border-t border-neutral-100 flex items-center justify-between gap-2'>
-                    {r.verified
-                      ? <span className='inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700'><span className='inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-[10px]'>✓</span>Verified{r.verifiedAt ? ' · ' + fmtDate(String(r.verifiedAt).slice(0, 10)) : ''}</span>
-                      : <span className='inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700'><span className='inline-flex h-1.5 w-1.5 rounded-full bg-amber-500'></span>Needs verification</span>}
-                    {r.verified
-                      ? <button onClick={() => r.id && openViewer(r.id)} className='text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 transition-colors'>View ID &amp; selfie</button>
-                      : <a href={'/salato/verify/' + r.id} target='_blank' rel='noopener noreferrer' className='text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 text-white hover:bg-neutral-800 transition-colors'>Start verification</a>}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {viewRid && (
