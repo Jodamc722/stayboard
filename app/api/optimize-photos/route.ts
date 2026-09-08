@@ -24,7 +24,7 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
-import { buildOrder, normalizeRooms, titleHooks, isJunkCaption, ORDER_RULE, type PhotoFacts, type ShotType } from '@/lib/photo-order'
+import { buildOrder, normalizeRooms, marketingChecks, titleHooks, isJunkCaption, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType } from '@/lib/photo-order'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -160,8 +160,8 @@ For EVERY photo return:
 - "category": one of living|kitchen|dining|bedroom|bathroom|outdoor|view|amenity|exterior|detail|other. Use "detail" ONLY for tight close-ups of an object (a towel, a coffee maker, a plant) — a wide shot of a kitchen is "kitchen".
 - "subject": ≤ 8 words, what the photo literally shows ("king bed facing balcony with bay view").
 - "shotType": "wide" (shows most of a space), "medium" (part of a space), "detail" (an object).
-- "quality": 0–100 for CONVERTING BOOKINGS: light, sharpness, straight verticals, staging, no clutter, sense of space. Be strict: a dark or tilted phone shot is 30–45; a clean bright wide interior 70–85; a professional hero-grade shot 85+.
-- "faults": any of ["dark","blurry","clutter","people","watermark","signage","vertical","tight","mirror-selfie"], else [].
+- "quality": 0–100 for CONVERTING BOOKINGS, judged the way a guest scanning Airbnb does: natural daylight, sharp, straight verticals, staged and clutter-free, a real sense of space, landscape framing. Be strict: a dark or tilted phone shot is 30–45; a clean bright wide interior 70–85; a professional hero-grade shot 85+. A collage, text overlay or watermark caps at 40.
+- "faults": any of ["dark","blurry","clutter","people","watermark","signage","vertical","tight","mirror-selfie","text","collage"], else []. "vertical" = portrait orientation (taller than wide) — grids crop it. "text" = any words/logos/price overlaid on the image. "collage" = several photos stitched into one frame. Be strict on these three: OTAs suppress or crop them.
 - "sellingPoints": 0–4 tags a guest books for that this photo PROVES: e.g. "pool","infinity-pool","rooftop","ocean-view","bay-view","city-view","balcony","king-bed","workspace","full-kitchen","kitchenette","walk-in-shower","soaking-tub","gym","washer-dryer","natural-light","smart-tv","dining-for-4". Only what is visible.
 - "duplicateOf": the photo NUMBER of a near-identical photo in this batch that is the STRONGER of the two, or null. Two angles of the same room are NOT duplicates; the same angle twice is.
 - "heroWorthy": true only if this photo could be the listing's cover — wide, bright, a space or view a guest would stop scrolling for.
@@ -237,6 +237,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   const proposedOrder = placed.map(p => p._id)
   const hooks = titleHooks(normalized)
   const recommendRemove = placed.filter(p => p.placement.slot === 'demoted').map(p => ({ _id: p._id, reason: p.placement.why }))
+  const checks = marketingChecks(placed, profile)
 
   // Whole-set assessment from the facts — no second model call needed for the number.
   const property = normalized.filter(f => f.kind === 'property')
@@ -258,9 +259,13 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   if (faultCount) notes.push(`${faultCount} weak shot${faultCount === 1 ? '' : 's'} (dark, blurry, signage or clutter) demoted to the end.`)
   if (stockCount) notes.push(`${stockCount} stock/location image${stockCount === 1 ? '' : 's'} — Airbnb ranks listings on real photos; keep at most one, last.`)
   if (missing.length) notes.push(`Not shown: ${missing.join(', ')}. Guests skip listings that hide a room.`)
-  if (allPics.length > 35) notes.push(`${allPics.length} photos is a lot — after removals aim for 25–35; conversion drops when guests stop scrolling.`)
+  const keptN = placed.filter(p => p.placement.slot !== 'demoted').length
+  if (keptN > PLAYBOOK.targetCount.max) notes.push(`${keptN} photos would remain after cuts — aim for ${PLAYBOOK.targetCount.min}–${PLAYBOOK.targetCount.max}; attention drops off after ~30.`)
+  for (const c of checks) if (c.ok === false && (c.key === 'cover' || c.key === 'beds')) notes.unshift(c.detail)
   const coverage = `${rooms.size} spaces shown across ${property.length} real photos (${wide.length} wide)${missing.length ? '; missing ' + missing.join(', ') : ''}.`
-  const quality = Math.max(0, Math.min(100, Math.round(avgQ - Math.min(15, dupCount * 2) - Math.min(10, stockCount * 3) - missing.length * 4)))
+  // The set score is the average photo quality, docked for what costs clicks and bookings.
+  const failed = checks.filter(c => c.ok === false).length
+  const quality = Math.max(0, Math.min(100, Math.round(avgQ - Math.min(15, dupCount * 2) - Math.min(10, stockCount * 3) - missing.length * 4 - failed * 3)))
   const assessment = { quality, coverage, notes: notes.slice(0, 5) }
 
   // ── Title ideas from what the photos prove. Small, fast text call; failure is silent.
@@ -303,7 +308,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
     heroCandidates,
     heroSuggestion: heroCandidates[0] && heroCandidates[0]._id !== proposedOrder[0] ? { _id: heroCandidates[0]._id, why: heroCandidates[0].why } : null,
     assessment, recommendRemove,
-    titleHooks: hooks, titleIdeas, profile, rooms: Array.from(new Set(normalized.map(f => f.room))).sort(), roomVocab,
+    titleHooks: hooks, titleIdeas, checks, playbook: PLAYBOOK, profile, rooms: Array.from(new Set(normalized.map(f => f.room))).sort(), roomVocab,
     overflow: 0,
     presets: cfg.enhance.presets, autoPickEnhance: cfg.enhance.autoPick,
     orderRule: ORDER_RULE,
