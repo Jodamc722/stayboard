@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Loader2, X, Link2, Camera, Mail, Check, AlertTriangle, Clock, DollarSign,
   Trash2, Copy, ExternalLink, ChevronRight, Search, Archive, RefreshCw,
+  MoreHorizontal,
 } from 'lucide-react'
 
 type Health = { state: 'ok' | 'due' | 'late' | 'blocked' | 'done'; daysLeft: number | null; reason: string | null }
@@ -175,7 +176,8 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
                 <div className="space-y-2 min-h-[80px]">
                   {col.map(p => (
                     <Card key={p.id} p={p} cat={catOf(p.category)} canEdit={canEdit}
-                      onOpen={() => setOpenId(p.id)}
+                      onOpen={() => { window.location.href = '/projects/' + p.id }}
+                      onQuick={() => setOpenId(p.id)}
                       onDragStart={() => setDrag(p.id)} onDragEnd={() => setDrag(null)} />
                   ))}
                   {!col.length && <div className="rounded-xl border border-dashed border-line py-6 text-center text-[11px] text-muted">Nothing here</div>}
@@ -195,8 +197,11 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
 }
 
 // ---------------------------------------------------------------- card
-function Card({ p, cat, canEdit, onOpen, onDragStart, onDragEnd }: {
-  p: P; cat: any; canEdit: boolean; onOpen: () => void; onDragStart: () => void; onDragEnd: () => void
+// THE CARD OPENS THE PAGE (Jon, 2026-09-08: Asana-style). The old drawer still holds budget,
+// approval, photos and the vendor share until Wave 2 moves them into the page, so it stays one
+// click away behind a small "quick view" rather than being the destination.
+function Card({ p, cat, canEdit, onOpen, onQuick, onDragStart, onDragEnd }: {
+  p: P; cat: any; canEdit: boolean; onOpen: () => void; onQuick: () => void; onDragStart: () => void; onDragEnd: () => void
 }) {
   const h = p.health
   const accent = h.state === 'late' ? 'border-l-rose-500' : h.state === 'blocked' ? 'border-l-slate-400'
@@ -211,6 +216,8 @@ function Card({ p, cat, canEdit, onOpen, onDragStart, onDragEnd }: {
         <span className={'w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ' + (CAT_DOT[cat?.color] || 'bg-slate-400')} title={cat?.label || p.category} />
         <span className="flex-1 text-[13px] font-semibold text-ink leading-snug">{p.title}</span>
         {p.priority === 'urgent' && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Urgent</span>}
+        <button onClick={e => { e.stopPropagation(); onQuick() }} title="Budget, approval, photos"
+          className="text-muted hover:text-ink shrink-0 -mr-1"><MoreHorizontal size={13} /></button>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[11px] text-muted">
         {p.ref && <span className="tabular-nums">{p.ref}</span>}
