@@ -113,3 +113,9 @@ select s.id, s.project_id, lower(trim(s.assignee)), trim(s.assignee),
 from project_steps s
 where s.assignee is not null and trim(s.assignee) <> ''
 on conflict (task_id, person_key) do nothing;
+
+-- ── 6. service role only, like every other table in 031 ──────────────────────────────────────────────
+-- The browser never reads these directly; the API checks membership with the service key. Without
+-- RLS the anon key could list every project's members.
+alter table project_members        enable row level security;
+alter table project_task_assignees enable row level security;
