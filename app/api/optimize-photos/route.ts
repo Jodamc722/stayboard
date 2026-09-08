@@ -24,7 +24,7 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
-import { buildOrder, titleHooks, isJunkCaption, ORDER_RULE, type PhotoFacts, type ShotType } from '@/lib/photo-order'
+import { buildOrder, normalizeRooms, titleHooks, isJunkCaption, ORDER_RULE, type PhotoFacts, type ShotType } from '@/lib/photo-order'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
   const cfg = await loadListingAiWithPreview(body?.promptPreview)
 
   const sb = supabaseAdmin()
-  const { data: listing, error } = await sb.from('guesty_listings').select('id, title, nickname, building, bedrooms, room_type, max_occupancy, address_city, pictures, raw').eq('id', listingId).single()
+  const { data: listing, error } = await sb.from('guesty_listings').select('id, title, nickname, building, bedrooms, bathrooms, room_type, max_occupancy, address_city, pictures, raw').eq('id', listingId).single()
   if (error || !listing) return NextResponse.json({ error: 'listing not found' }, { status: 404 })
   const raw = (listing as any).raw || {}
   const allPics = readPics(raw, listing)
@@ -140,8 +140,14 @@ export async function POST(req: NextRequest) {
   const prevIndex: Record<string, any> = (raw?._photoIndex && typeof raw._photoIndex === 'object') ? raw._photoIndex : {}
 
   const bedrooms = Number((listing as any).bedrooms)
-  const profile = { bedrooms: Number.isFinite(bedrooms) ? bedrooms : null, isStudio: bedrooms === 0 || /studio/i.test(str((listing as any).nickname) + ' ' + str((listing as any).title) + ' ' + str((listing as any).room_type)) }
-  const unitLine = `${str((listing as any).nickname) || str((listing as any).title) || 'listing'} — ${profile.isStudio ? 'STUDIO' : (profile.bedrooms != null ? profile.bedrooms + '-bedroom' : 'unit')}${(listing as any).max_occupancy ? `, sleeps ${(listing as any).max_occupancy}` : ''}, ${str((listing as any).building) || 'building'}, ${str((listing as any).address_city) || ''}`
+  const bathrooms = Number((listing as any).bathrooms)
+  const profile = { bedrooms: Number.isFinite(bedrooms) ? bedrooms : null, bathrooms: Number.isFinite(bathrooms) ? bathrooms : null, isStudio: bedrooms === 0 || /studio/i.test(str((listing as any).nickname) + ' ' + str((listing as any).title) + ' ' + str((listing as any).room_type)) }
+  const beds = profile.isStudio ? 1 : Math.max(1, profile.bedrooms ?? 1)
+  const baths = Math.max(1, Math.ceil(profile.bathrooms ?? 1))
+  // The room vocabulary the model may use for THIS unit — so batch 1 and batch 3 name the same
+  // bedroom the same way, and nobody invents a bedroom-3 in a 1-bedroom.
+  const roomVocab = ['living', 'dining', 'kitchen', 'entry', 'workspace', ...Array.from({ length: beds }, (_, i) => 'bedroom-' + (i + 1)), ...(baths > 1 ? ['bath-primary', 'bath-guest'] : ['bath-primary']), 'balcony', 'view', 'pool', 'rooftop', 'gym', 'lobby', 'lounge', 'parking', 'exterior', 'other']
+  const unitLine = `${str((listing as any).nickname) || str((listing as any).title) || 'listing'} — ${profile.isStudio ? 'STUDIO' : (profile.bedrooms != null ? profile.bedrooms + '-bedroom' : 'unit')}, ${baths} bath${baths === 1 ? '' : 's'}${(listing as any).max_occupancy ? `, sleeps ${(listing as any).max_occupancy}` : ''}, ${str((listing as any).building) || 'building'}, ${str((listing as any).address_city) || ''}`
 
   // ── PASS 1: facts per photo, in parallel batches. Photo numbers are GLOBAL (1..N) so the model can
   // point at a duplicate in the same batch by number.
@@ -150,7 +156,7 @@ export async function POST(req: NextRequest) {
   const SYS = `You are a short-term-rental photo analyst for Stay Hospitality. You are shown a batch of photos from ONE listing. Report FACTS about each photo — you are NOT choosing the order; a separate engine orders them from your facts, so accuracy per photo is what matters.
 
 For EVERY photo return:
-- "room": the SPECIFIC physical space, stable across photos: "living", "dining", "kitchen", "bedroom-1", "bedroom-2", "bath-primary", "bath-guest", "balcony", "view", "pool", "gym", "rooftop", "lobby", "exterior", "other". Two photos of the same bedroom share the id; different bedrooms do not. In a STUDIO the sleeping/living space is "bedroom-1".
+- "room": the SPECIFIC physical space, using ONLY these ids for this unit: ${roomVocab.map(r => '"' + r + '"').join(', ')}. Two photos of the same bedroom share the id; different bedrooms do not. In a STUDIO the sleeping/living space is "bedroom-1". A rooftop pool deck is "pool" or "rooftop", never "balcony" (balcony = the unit's own). Never invent an id outside this list.
 - "category": one of living|kitchen|dining|bedroom|bathroom|outdoor|view|amenity|exterior|detail|other. Use "detail" ONLY for tight close-ups of an object (a towel, a coffee maker, a plant) — a wide shot of a kitchen is "kitchen".
 - "subject": ≤ 8 words, what the photo literally shows ("king bed facing balcony with bay view").
 - "shotType": "wide" (shows most of a space), "medium" (part of a space), "detail" (an object).
@@ -226,13 +232,14 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   // ── PASS 2: the order, from the facts. Cover = the host's current #1 unless they locked another
   // or asked the engine to choose.
   const heroId = lockedHeroId || (autoHero ? null : allPics[0]._id)
-  const { placed, heroCandidates, sections } = buildOrder(facts, heroId, profile)
+  const normalized = normalizeRooms(facts, profile)
+  const { placed, heroCandidates, sections } = buildOrder(normalized, heroId, profile)
   const proposedOrder = placed.map(p => p._id)
-  const hooks = titleHooks(facts)
+  const hooks = titleHooks(normalized)
   const recommendRemove = placed.filter(p => p.placement.slot === 'demoted').map(p => ({ _id: p._id, reason: p.placement.why }))
 
   // Whole-set assessment from the facts — no second model call needed for the number.
-  const property = facts.filter(f => f.kind === 'property')
+  const property = normalized.filter(f => f.kind === 'property')
   const wide = property.filter(f => f.shotType === 'wide')
   const avgQ = property.length ? Math.round(property.reduce((s, f) => s + f.quality, 0) / property.length) : 0
   const rooms = new Set(property.map(f => f.room))
@@ -272,7 +279,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   const at = new Date().toISOString()
   try {
     const photoIndex: Record<string, any> = {}
-    for (const f of facts) {
+    for (const f of normalized) {
       const human = prevIndex[f._id] && prevIndex[f._id].by === 'human' ? prevIndex[f._id] : null
       photoIndex[f._id] = { room: f.room, category: f.category, kind: f.kind, subject: f.subject, shotType: f.shotType, quality: f.quality, sellingPoints: f.sellingPoints, caption: f.caption, enhance: f.enhance, enhanceWhy: f.enhanceWhy, at, ...(human ? { by: 'human' } : {}) }
     }
@@ -283,7 +290,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   const mirror: Record<string, any> = (raw._photoMirror && typeof raw._photoMirror === 'object') ? raw._photoMirror : {}
   const photos = placed.map(p => ({
     _id: p._id, url: p.url, caption: p.caption, captionIsPlaceholder: isPlaceholderCaption(p.caption) || p.captionSource === 'placeholder',
-    category: p.category, room: p.room, kind: p.kind, subject: p.subject, shotType: p.shotType, quality: p.quality, faults: p.faults, sellingPoints: p.sellingPoints,
+    category: p.category, room: p.room, kind: p.kind, subject: p.subject, shotType: p.shotType, quality: p.quality, faults: p.faults, sellingPoints: p.sellingPoints, duplicateOf: p.duplicateOf, heroWorthy: p.heroWorthy,
     reason: p.placement.why, placement: p.placement, enhance: p.enhance, enhanceWhy: p.enhanceWhy,
     mirrorUrl: str(mirror[p._id]?.orig) || null,
   }))
@@ -296,7 +303,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
     heroCandidates,
     heroSuggestion: heroCandidates[0] && heroCandidates[0]._id !== proposedOrder[0] ? { _id: heroCandidates[0]._id, why: heroCandidates[0].why } : null,
     assessment, recommendRemove,
-    titleHooks: hooks, titleIdeas,
+    titleHooks: hooks, titleIdeas, profile, rooms: Array.from(new Set(normalized.map(f => f.room))).sort(), roomVocab,
     overflow: 0,
     presets: cfg.enhance.presets, autoPickEnhance: cfg.enhance.autoPick,
     orderRule: ORDER_RULE,
