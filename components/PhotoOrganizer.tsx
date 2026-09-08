@@ -34,6 +34,7 @@ type Result = {
   titleHooks?: { hook: string; strength: number }[]
   partial?: string | null
   profile?: { bedrooms: number | null; bathrooms?: number | null; isStudio: boolean }
+  checks?: { key: string; ok: boolean | null; label: string; detail: string }[]
   rooms?: string[]
   roomVocab?: string[]
 }
@@ -80,6 +81,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [titleHooks, setTitleHooks] = useState<{ hook: string; strength: number }[]>([])
   const [copiedTitle, setCopiedTitle] = useState<string | null>(null)
   const [profile, setProfile] = useState<Result['profile']>(undefined)
+  const [checks, setChecks] = useState<NonNullable<Result['checks']>>([])
   const [roomVocab, setRoomVocab] = useState<string[]>([])
   // Press-and-hold compare: shows the OTHER version of the photo while held.
   const [peek, setPeek] = useState<string | null>(null)
@@ -136,6 +138,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       setTitleIdeas(Array.isArray(j.titleIdeas) ? j.titleIdeas : [])
       setTitleHooks(Array.isArray(j.titleHooks) ? j.titleHooks : [])
       setProfile(j.profile); setRoomVocab(Array.isArray(j.roomVocab) ? j.roomVocab : [])
+      setChecks(Array.isArray(j.checks) ? j.checks : [])
       // Duplicates, faults and stock come pre-flagged; ticking them is one click, not ten.
       setToRemove(new Set())
       if (j.partial) setError(String(j.partial))
@@ -546,13 +549,25 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             <div className="rounded-xl border border-brand-200 bg-brand-50/50 px-3.5 py-3">
               <div className="flex items-center gap-2 mb-1.5">
                 <Gauge size={15} className="text-brand-600" />
-                <span className="text-[13px] font-semibold text-ink">Photo quality score</span>
+                <span className="text-[13px] font-semibold text-ink">Photo set score · does it earn the click and the booking?</span>
                 {assessment.quality != null && (
                   <span className={`text-[13px] font-bold px-2 py-0.5 rounded-md ${assessment.quality >= 75 ? 'bg-emerald-100 text-emerald-700' : assessment.quality >= 50 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>{assessment.quality}/100</span>
                 )}
                 <span className="text-[11px] text-muted ml-auto">feeds the listing &amp; health score</span>
               </div>
               {assessment.coverage && <p className="text-[12px] text-ink/80 mb-1">{assessment.coverage}</p>}
+              {/* THE MARKETING CHECK — the two jobs (the click, the booking) as pass/fail, in guest
+                  words, so the score is never a mystery and the next shoot has a list. */}
+              {checks.length > 0 && (
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 my-2">
+                  {checks.map(c => (
+                    <li key={c.key} className="flex items-start gap-1.5 text-[12px]">
+                      <span className={`mt-0.5 shrink-0 w-4 h-4 rounded-full grid place-items-center text-[10px] font-bold ${c.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{c.ok ? '✓' : '!'}</span>
+                      <span><b className="text-ink">{c.label}</b> <span className="text-muted">— {c.detail}</span></span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               {assessment.notes.length > 0 && (
                 <ul className="text-[12px] text-muted space-y-0.5">
                   {assessment.notes.map((n, i) => <li key={i} className="flex items-start gap-1.5"><span className="mt-0.5 text-brand-500">+</span> {n}</li>)}
