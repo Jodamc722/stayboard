@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Loader2, X, Link2, Camera, Mail, Check, AlertTriangle, Clock, DollarSign,
   Trash2, Copy, ExternalLink, ChevronRight, Search, Archive, RefreshCw,
-  MoreHorizontal,
+  MoreHorizontal, Lock, Repeat, LayoutTemplate,
 } from 'lucide-react'
 
 type Health = { state: 'ok' | 'due' | 'late' | 'blocked' | 'done'; daysLeft: number | null; reason: string | null }
@@ -22,8 +22,10 @@ type P = {
   budget_cents: number | null; spent_cents: number; billable: boolean
   owner_name: string | null; approval: string
   share_token: string | null; vendor_name: string | null
+  kind?: string; private?: boolean; recurs?: any; settings?: any; series_key?: string | null
   links: any[]; steps: any[]; progress: Progress; health: Health
 }
+type Tpl = { key: string; label: string; kind: string; category: string; blurb: string; builtIn: boolean; sections: string[]; recurs: any }
 
 const STAGES: [string, string][] = [
   ['idea', 'Idea'], ['planned', 'Planned'], ['in_progress', 'In progress'],
@@ -50,6 +52,7 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
   const [cats, setCats] = useState<any[]>([])
   const [listings, setListings] = useState<any[]>([])
   const [people, setPeople] = useState<string[]>([])
+  const [templates, setTemplates] = useState<Tpl[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [q, setQ] = useState('')
@@ -57,6 +60,7 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
   const [showArchived, setShowArchived] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [createKind, setCreateKind] = useState<'project' | 'personal'>('project')
   const [drag, setDrag] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -66,7 +70,7 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load projects.')
       setProjects(j.projects || []); setCats(j.categories || [])
-      setListings(j.listings || []); setPeople(j.people || [])
+      setListings(j.listings || []); setPeople(j.people || []); setTemplates(j.templates || [])
     } catch (e: any) { setErr(String(e.message || e)) } finally { setLoading(false) }
   }, [cat, showArchived])
   useEffect(() => { load() }, [load])
@@ -88,13 +92,16 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
     || (p.lead_email || '').toLowerCase().includes(needle)
     || (p.owner_name || '').toLowerCase().includes(needle)), [projects, needle])
 
-  const byStage = (s: string) => shown.filter(p => p.stage === s)
+  // PERSONAL BOARDS ARE NOT OPS (Jon, 2026-09-08). They sit in their own strip above the kanban,
+  // never in a stage column, and the summary counts do not include them.
+  const personal = shown.filter(p => p.kind === 'personal')
+  const byStage = (s: string) => shown.filter(p => p.stage === s && p.kind !== 'personal')
   const catOf = (k: string) => cats.find(c => c.key === k)
 
   // The three counts worth pinning at the top: what is late, what is waiting on an owner, and what
   // money is committed but not yet spent.
   const summary = useMemo(() => {
-    const open = shown.filter(p => p.stage !== 'done' && p.stage !== 'cancelled')
+    const open = shown.filter(p => p.stage !== 'done' && p.stage !== 'cancelled' && p.kind !== 'personal')
     return {
       open: open.length,
       late: open.filter(p => p.health.state === 'late').length,
@@ -128,7 +135,7 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
           </button>
           <button onClick={() => { setLoading(true); load() }} title="Refresh" className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink"><RefreshCw size={13} /></button>
           {canEdit && (
-            <button onClick={() => setCreating(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white text-[13px] font-semibold px-3 py-1.5 hover:bg-brand-700">
+            <button onClick={() => { setCreateKind('project'); setCreating(true) }} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white text-[13px] font-semibold px-3 py-1.5 hover:bg-brand-700">
               <Plus size={14} /> New project
             </button>
           )}
@@ -155,7 +162,36 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
             Projects are the work that does not fit a task — a renovation, a rollout across a building,
             onboarding a new property, an SOP someone owns for a month.
           </p>
-          {canEdit && <button onClick={() => setCreating(true)} className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white text-[13px] font-semibold px-3 py-1.5"><Plus size={14} /> Create the first one</button>}
+          {canEdit && <button onClick={() => { setCreateKind('project'); setCreating(true) }} className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white text-[13px] font-semibold px-3 py-1.5"><Plus size={14} /> Create the first one</button>}
+        </div>
+      )}
+
+      {/* YOUR BOARDS — private to you; nobody else sees them, including the superadmin. */}
+      {!loading && (personal.length > 0 || canEdit) && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 px-1 pb-1.5">
+            <span className="text-[12px] font-bold text-ink inline-flex items-center gap-1.5"><Lock size={11} className="text-muted" /> Your boards</span>
+            <span className="text-[11px] text-muted">only you can see these</span>
+            <span className="flex-1 h-px bg-line" />
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {personal.map(p => {
+              const open = p.steps.filter((s: any) => !s.done).length
+              return (
+                <button key={p.id} onClick={() => { window.location.href = '/projects/' + p.id }}
+                  className="shrink-0 w-[220px] text-left rounded-xl border border-line bg-white px-3 py-2.5 hover:border-brand-300 hover:shadow-sm transition">
+                  <span className="block text-[13px] font-semibold text-ink truncate">{p.title}</span>
+                  <span className="block text-[11px] text-muted mt-0.5 tabular-nums">{open ? `${open} open` : p.steps.length ? 'All done' : 'Empty'}{p.recurs ? ' · repeats' : ''}</span>
+                </button>
+              )
+            })}
+            {canEdit && (
+              <button onClick={() => { setCreateKind('personal'); setCreating(true) }}
+                className="shrink-0 w-[160px] rounded-xl border border-dashed border-line bg-white/60 px-3 py-2.5 text-left text-[12.5px] font-semibold text-muted hover:text-ink hover:border-ink">
+                <Plus size={13} className="inline -mt-0.5 mr-1" />New board
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -188,8 +224,8 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
         </div>
       )}
 
-      {creating && <NewProject cats={cats} listings={listings} people={people} me={me}
-        onClose={() => setCreating(false)} onDone={() => { setCreating(false); load() }} />}
+      {creating && <NewProject cats={cats} listings={listings} people={people} me={me} templates={templates} startKind={createKind}
+        onClose={() => { setCreating(false); setCreateKind('project') }} onDone={() => { setCreating(false); setCreateKind('project'); load() }} />}
       {openProject && <Drawer id={openProject.id} canEdit={canEdit} canFull={canFull} listings={listings} people={people} cats={cats}
         onClose={() => setOpenId(null)} onChanged={load} />}
     </div>
@@ -261,7 +297,13 @@ function Card({ p, cat, canEdit, onOpen, onQuick, onDragStart, onDragEnd }: {
 }
 
 // ---------------------------------------------------------------- new project
-function NewProject({ cats, listings, people, me, onClose, onDone }: any) {
+// THREE THINGS TO DECIDE FIRST: what shape it starts in (a template), who it is for (a project,
+// a one-on-one, or my own board), and whether it repeats. Everything else is the old form.
+const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+function NewProject({ cats, listings, people, me, templates, startKind, onClose, onDone }: any) {
+  const personalOnly = startKind === 'personal'
+  const [template, setTemplate] = useState<string>(personalOnly ? 'personal' : '')
+  const [kind, setKind] = useState<'project' | 'one_on_one' | 'personal'>(personalOnly ? 'personal' : 'project')
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
   const [category, setCategory] = useState('renovation')
@@ -270,64 +312,148 @@ function NewProject({ cats, listings, people, me, onClose, onDone }: any) {
   const [budget, setBudget] = useState('')
   const [approval, setApproval] = useState('not_needed')
   const [units, setUnits] = useState<string[]>([])
+  const [members, setMembers] = useState('')
+  const [repeat, setRepeat] = useState<'' | 'week' | '2weeks' | 'month'>('')
+  const [weekday, setWeekday] = useState(1)
+  const [monthDay, setMonthDay] = useState(1)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  const tpl: any = templates.find((t: any) => t.key === template) || null
+  const pick = (t: any) => {
+    setTemplate(t?.key || '')
+    if (t) {
+      setKind(t.kind === 'personal' ? 'personal' : t.kind === 'one_on_one' ? 'one_on_one' : 'project')
+      setCategory(t.category || category)
+      if (t.recurs) { setRepeat(t.recurs.every); setWeekday(t.recurs.weekday ?? 1) } else setRepeat('')
+    }
+  }
+  const isPersonal = kind === 'personal', isOne = kind === 'one_on_one'
 
   const save = async () => {
     if (!title.trim()) { setErr('Give it a title.'); return }
     setBusy(true); setErr(null)
     try {
-      const r = await fetch('/api/projects', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, summary, category, lead_email: lead, due_on: due, budget, approval, listingIds: units }),
-      })
+      const body: any = { title, summary, category, kind, template: template || undefined, due_on: due, listingIds: units }
+      if (!isPersonal) { body.lead_email = lead; body.budget = budget; body.approval = approval; body.members = members.split(/[,;\n]/).map(x => x.trim()).filter(Boolean) }
+      if (repeat) body.recurs = repeat === 'month' ? { every: 'month', day: monthDay } : { every: repeat, weekday }
+      const r = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not create.')
+      if (j.project?.id) { window.location.href = '/projects/' + j.project.id; return }
       onDone()
     } catch (e: any) { setErr(String(e.message || e)) } finally { setBusy(false) }
   }
 
+  const visible = templates.filter((t: any) => personalOnly ? t.kind === 'personal' : true)
+
   return (
-    <Modal title="New project" onClose={onClose}>
+    <Modal title={personalOnly ? 'New board' : 'New project'} sub={personalOnly ? 'Private to you. Arrange it however you like.' : undefined} onClose={onClose} wide>
       {err && <p className="text-[12px] text-rose-700 mb-2">{err}</p>}
+
+      {!personalOnly && (
+        <Field label="Start from">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+            <button onClick={() => pick(null)} className={'text-left rounded-lg border px-2.5 py-2 ' + (!template ? 'border-ink bg-app' : 'border-line bg-white hover:border-ink')}>
+              <span className="block text-[12.5px] font-semibold text-ink">Blank</span>
+              <span className="block text-[11px] text-muted">Just a title. Add sections as you go.</span>
+            </button>
+            {visible.map((t: any) => (
+              <button key={t.key} onClick={() => pick(t)} className={'text-left rounded-lg border px-2.5 py-2 ' + (template === t.key ? 'border-ink bg-app' : 'border-line bg-white hover:border-ink')}>
+                <span className="block text-[12.5px] font-semibold text-ink inline-flex items-center gap-1">
+                  {t.kind === 'personal' ? <Lock size={10} className="text-muted" /> : t.kind === 'one_on_one' ? <Lock size={10} className="text-muted" /> : <LayoutTemplate size={10} className="text-muted" />}{t.label}
+                  {!t.builtIn && <span className="text-[9px] font-bold uppercase text-muted ml-1">team</span>}
+                </span>
+                <span className="block text-[11px] text-muted line-clamp-2">{t.blurb || t.sections.join(' · ')}</span>
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
+
       <Field label="Title">
-        <input autoFocus value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Eden 1101 — bathroom remodel"
+        <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
+          placeholder={isPersonal ? 'e.g. Things I owe people' : isOne ? 'e.g. 1:1 — Roberto' : tpl ? `e.g. ${tpl.label} — Arya` : 'e.g. Eden 1101 — bathroom remodel'}
           className="w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
       </Field>
-      <Field label="What is it">
-        <textarea value={summary} onChange={e => setSummary(e.target.value)} rows={2} placeholder="A sentence the owner would understand."
-          className="w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-      </Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Category">
-          <select value={category} onChange={e => setCategory(e.target.value)} className="w-full text-[13px] rounded-lg border border-line px-2 py-1.5">
-            {cats.map((c: any) => <option key={c.key} value={c.key}>{c.label}</option>)}
-          </select>
+
+      {!isPersonal && (
+        <Field label="What is it">
+          <textarea value={summary} onChange={e => setSummary(e.target.value)} rows={2} placeholder={tpl?.kind === 'one_on_one' ? 'Optional.' : 'A sentence the owner would understand.'}
+            className="w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         </Field>
-        <Field label="Lead">
-          <select value={lead} onChange={e => setLead(e.target.value)} className="w-full text-[13px] rounded-lg border border-line px-2 py-1.5">
-            <option value="">Nobody yet</option>
-            {people.map((p: string) => <option key={p} value={p}>{p}</option>)}
-          </select>
+      )}
+
+      {!isPersonal && (
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Category">
+            <select value={category} onChange={e => setCategory(e.target.value)} className="w-full text-[13px] rounded-lg border border-line px-2 py-1.5">
+              {cats.map((c: any) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+          </Field>
+          <Field label={isOne ? 'The other person' : 'Lead'}>
+            <select value={lead} onChange={e => setLead(e.target.value)} className="w-full text-[13px] rounded-lg border border-line px-2 py-1.5">
+              <option value="">Nobody yet</option>
+              {people.map((p: string) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </Field>
+          {!isOne && <Field label="Due"><input type="date" value={due} onChange={e => setDue(e.target.value)} className="w-full text-[13px] rounded-lg border border-line px-2 py-1.5" /></Field>}
+          {!isOne && <Field label="Budget"><input value={budget} onChange={e => setBudget(e.target.value)} placeholder="$0" className="w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5" /></Field>}
+        </div>
+      )}
+
+      {!isPersonal && (
+        <Field label={isOne ? 'Anyone else in the room' : 'Also on it'}>
+          <input value={members} onChange={e => setMembers(e.target.value)} placeholder="Names or emails, comma-separated. You and the lead are on it already."
+            className="w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5" />
         </Field>
-        <Field label="Due"><input type="date" value={due} onChange={e => setDue(e.target.value)} className="w-full text-[13px] rounded-lg border border-line px-2 py-1.5" /></Field>
-        <Field label="Budget"><input value={budget} onChange={e => setBudget(e.target.value)} placeholder="$0" className="w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5" /></Field>
-      </div>
-      <Field label="Owner approval">
-        <select value={approval} onChange={e => setApproval(e.target.value)} className="w-full text-[13px] rounded-lg border border-line px-2 py-1.5">
-          <option value="not_needed">Not needed</option>
-          <option value="needed">Needs approval</option>
-          <option value="requested">Already asked the owner</option>
-          <option value="approved">Already approved</option>
-        </select>
+      )}
+
+      {/* Repeats — a 1:1 defaults to weekly from its template; anything can be made to repeat. */}
+      <Field label="Repeats">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {([['', 'No'], ['week', 'Weekly'], ['2weeks', 'Every 2 weeks'], ['month', 'Monthly']] as const).map(([v, l]) => (
+            <button key={v} onClick={() => setRepeat(v)} className={'text-[12px] font-semibold rounded-lg px-2.5 py-1 border ' + (repeat === v ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{l}</button>
+          ))}
+          {repeat && repeat !== 'month' && (
+            <select value={weekday} onChange={e => setWeekday(Number(e.target.value))} className="text-[12.5px] rounded-lg border border-line px-2 py-1 bg-white">
+              {WD.map((d, i) => <option key={d} value={i}>{d}</option>)}
+            </select>
+          )}
+          {repeat === 'month' && (
+            <select value={monthDay} onChange={e => setMonthDay(Number(e.target.value))} className="text-[12.5px] rounded-lg border border-line px-2 py-1 bg-white">
+              {Array.from({ length: 28 }, (_, i) => i + 1).map(d => <option key={d} value={d}>on the {d}{['st', 'nd', 'rd'][d - 1] || 'th'}</option>)}
+            </select>
+          )}
+        </div>
+        {repeat && <p className="text-[11px] text-muted mt-1 inline-flex items-center gap-1"><Repeat size={10} /> Each morning it is due, a fresh copy is made and open items roll into Follow-ups.</p>}
       </Field>
-      <Field label={`Units this touches${units.length ? ` (${units.length})` : ''}`}>
-        <UnitPicker listings={listings} value={units} onChange={setUnits} />
-      </Field>
+
+      {!isPersonal && !isOne && (
+        <>
+          <Field label="Owner approval">
+            <select value={approval} onChange={e => setApproval(e.target.value)} className="w-full text-[13px] rounded-lg border border-line px-2 py-1.5">
+              <option value="not_needed">Not needed</option>
+              <option value="needed">Needs approval</option>
+              <option value="requested">Already asked the owner</option>
+              <option value="approved">Already approved</option>
+            </select>
+          </Field>
+          <Field label={`Units this touches${units.length ? ` (${units.length})` : ''}`}>
+            <UnitPicker listings={listings} value={units} onChange={setUnits} />
+          </Field>
+        </>
+      )}
+
+      <p className="text-[11px] text-muted mt-1 inline-flex items-center gap-1">
+        <Lock size={10} />
+        {isPersonal ? 'Only you. Not even the company owner can open it.' : isOne ? 'Private to the people on it.' : 'Visible to the people on it and the superadmin.'}
+      </p>
+
       <div className="flex justify-end gap-2 mt-3">
         <button onClick={onClose} className="text-[13px] px-3 py-1.5 rounded-lg border border-line">Cancel</button>
         <button onClick={save} disabled={busy} className="text-[13px] font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white disabled:opacity-50 inline-flex items-center gap-1.5">
-          {busy && <Loader2 size={13} className="animate-spin" />} Create
+          {busy && <Loader2 size={13} className="animate-spin" />} Create{tpl ? ` from ${tpl.label}` : ''}
         </button>
       </div>
     </Modal>
