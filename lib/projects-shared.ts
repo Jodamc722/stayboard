@@ -7,7 +7,7 @@
 //
 // The split exists for the same reason lib/person-name.ts does: a rule that lives only where the
 // browser cannot reach it gets re-implemented in the browser, and the two drift.
-import { personKey } from './person-name'
+import { personKey, nameMatches, nameTokens, norm } from './person-name'
 
 export const STAGES = ['idea', 'planned', 'in_progress', 'blocked', 'review', 'done', 'cancelled'] as const
 export type Stage = typeof STAGES[number]
@@ -142,6 +142,52 @@ export const ago = (iso: string, now = Date.now()) => {
   if (s < 86400) return Math.round(s / 3600) + 'h'
   if (s < 86400 * 7) return Math.round(s / 86400) + 'd'
   try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(t)) } catch { return iso.slice(0, 10) }
+}
+
+// ── NOTIFICATIONS (Wave 3) ──────────────────────────────────────────────────────────────────────
+export type NotifyType = 'assigned' | 'mentioned' | 'comment' | 'added' | 'due_soon' | 'overdue'
+export type Notification = {
+  id: string; project_id: string; task_id: string | null; note_id: string | null
+  email: string; type: NotifyType; title: string; body: string | null; url: string; actor: string | null
+  created_at: string; read_at: string | null; emailed_at: string | null; digested_at: string | null
+}
+/** What a member gets EMAILED about. The bell in the app shows everything regardless. */
+export type NotifyPrefs = { assigned: boolean; mentions: boolean; comments: boolean; digest: boolean }
+export const DEFAULT_PREFS: NotifyPrefs = { assigned: true, mentions: true, comments: true, digest: true }
+export const prefsOf = (raw: any): NotifyPrefs => ({
+  assigned: raw?.assigned !== false, mentions: raw?.mentions !== false, comments: raw?.comments !== false, digest: raw?.digest !== false,
+})
+
+// ── @MENTIONS ───────────────────────────────────────────────────────────────────────────────────
+// "@Roberto can you look at 407" — the name after the @ is matched against the project's members
+// with the shared name matcher, so @roberto, @Roberto Diaz and @Diaz all reach the same person and
+// a typo does not silently reach nobody. Longest candidate first: "@Luis Mendez" must not stop at
+// "@Luis" when there are two Luises.
+export function parseMentions<M extends { display: string; email?: string | null; person_key?: string }>(body: string, members: M[]): M[] {
+  const out: M[] = []
+  const seen = new Set<string>()
+  const re = /(^|[^\w@])@([A-Za-zÀ-ɏ][\wÀ-ɏ.'-]*(?:\s+[A-Za-zÀ-ɏ][\wÀ-ɏ.'-]*){0,2})/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(String(body || '')))) {
+    const words = m[2].split(/\s+/)
+    for (let n = Math.min(3, words.length); n >= 1; n--) {
+      const cand = words.slice(0, n).join(' ')
+      // Exact-ish first (nameMatches forgives a typo and accepts first-name-only), but a lone
+      // first name that fits two members is ambiguous and reaches neither — better silent than wrong.
+      const hits = members.filter(x => nameMatches(cand, x.display)
+        || (x.email && cand.toLowerCase() === x.email.split('@')[0].toLowerCase())
+        // "@Diaz" — a lone surname is how half the crew refers to the other half.
+        || (n === 1 && nameTokens(x.display).length > 1 && nameTokens(x.display).slice(-1)[0] === norm(cand)))
+      if (hits.length === 1) {
+        const h = hits[0]
+        const k = h.person_key || h.email || h.display
+        if (!seen.has(k)) { seen.add(k); out.push(h) }
+        break
+      }
+      if (hits.length > 1 && n === 1) break
+    }
+  }
+  return out
 }
 
 export type ProjectFull = Project & {
