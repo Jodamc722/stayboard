@@ -11,8 +11,9 @@ import { requireLevel, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   getProject, logEvent, gateProject, ownerApprovalEmail, toCents, LINK_KINDS, canSee, canEdit, toPerson,
-  TASK_STATUSES, TASK_STATUS_LABEL, MEMBER_ROLES, FILES_BUCKET, type Viewer,
+  TASK_STATUSES, TASK_STATUS_LABEL, MEMBER_ROLES, FILES_BUCKET, prefsOf, type Viewer, type Member,
 } from '@/lib/projects'
+import { onAssigned, onAdded, onComment } from '@/lib/project-notify'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -43,16 +44,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const b = await req.json().catch(() => ({}))
     const action = str(b.action)
-    const me = g.access.email
+    const me = String(g.access.email || "")
     const viewer = viewerOf(g.access)
 
     // Every write starts by proving the caller may see the project and may edit it. Same 404 as
     // the read for a non-member; a viewer-role member gets an honest 403 because they already
     // know it exists. A comment is the one write a viewer may make — they were put on the project
     // to take part, and taking part means being able to say something.
-    const gate = await gateProject(id, viewer, action === 'comment' || action === 'note' ? 'view' : 'edit')
+    const gate = await gateProject(id, viewer, ['comment', 'note', 'memberNotify'].includes(action) ? 'view' : 'edit')
     if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
-    const members = gate.members as any[]
+    const members = gate.members as Member[]
+    const projectTitle = async () => String((await sb.from('projects').select('title').eq('id', id).maybeSingle()).data?.title || 'a project')
+    // Notifications are best-effort: a mail-table hiccup must never fail the edit that caused it.
+    const tell = (p: Promise<any>) => p.catch(e => console.error('[projects] notify failed:', String(e?.message || e)))
 
     // Keep the old single-assignee column honest: first assignee, or null.
     const syncLegacyAssignee = async (taskId: string) => {
@@ -76,6 +80,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           { project_id: id, ...who, role, added_by: me }, { onConflict: 'project_id,person_key' })
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         await logEvent(id, me, 'member_added', `added ${who.display} as ${role}`, { who: [who.display], to: role })
+        await tell(onAdded(id, await projectTitle(), who, role, me, members))
+        break
+      }
+      // What I get EMAILED about on this project. Your own row only — nobody sets somebody else's
+      // inbox — and the bell in the app is unaffected either way.
+      case 'memberNotify': {
+        const mine = members.find(m => String(m.email || '').toLowerCase() === String(me || '').toLowerCase())
+        if (!mine) return NextResponse.json({ error: 'You are not on this project by email.' }, { status: 400 })
+        const notify = prefsOf({ ...prefsOf(mine.notify), ...(b.notify || {}) })
+        const { error } = await sb.from('project_members').update({ notify }).eq('id', mine.id)
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         break
       }
       case 'memberRole': {
@@ -127,6 +142,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           await syncLegacyAssignee(data.id)
         }
         await logEvent(id, me, 'task_added', `added ${str(b.parentId) ? 'a subtask' : 'a task'}`, { task_id: data.id, task_title: title.slice(0, 300), who: people.map((x: any) => x.display) })
+        if (people.length) await tell(onAssigned(id, { id: data.id, title: title.slice(0, 300) }, people, me, members))
         return NextResponse.json({ ok: true, taskId: data.id, project: await getProject(id) })
       }
       case 'taskSet': {
@@ -164,7 +180,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           const now = new Set(people.map((x: any) => x.person_key))
           const added = people.filter((x: any) => !was.has(x.person_key)).map((x: any) => x.display)
           const dropped = ((prev || []) as any[]).filter(x => !now.has(x.person_key)).map(x => x.display)
-          if (added.length) await logEvent(id, me, 'task_assigned', `assigned ${added.join(', ')}`, { task_id: taskId, task_title: before.title, who: added, to: 'added' })
+          if (added.length) {
+            await logEvent(id, me, 'task_assigned', `assigned ${added.join(', ')}`, { task_id: taskId, task_title: before.title, who: added, to: 'added' })
+            await tell(onAssigned(id, { id: taskId, title: before.title }, people.filter((x: any) => !was.has(x.person_key)), me, members))
+          }
           if (dropped.length) await logEvent(id, me, 'task_assigned', `unassigned ${dropped.join(', ')}`, { task_id: taskId, task_title: before.title, who: dropped, to: 'removed' })
         }
         // The feed records what CHANGED, not what was saved. A blur that saved the same title is
@@ -284,11 +303,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         const body = str(b.body).slice(0, 4000)
         if (!body) return NextResponse.json({ error: 'Say something first.' }, { status: 400 })
         const taskId = str(b.taskId) || null
-        if (taskId && !(await taskRow(taskId))) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const task = taskId ? await taskRow(taskId) : null
+        if (taskId && !task) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
         const { data, error } = await sb.from('project_notes').insert({
           project_id: id, task_id: taskId, body, author: me, kind: 'comment', via_share: false,
         }).select('id').single()
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        const { data: asg } = taskId ? await sb.from('project_task_assignees').select('person_key,display,email').eq('task_id', taskId) : { data: [] as any[] }
+        await tell(onComment({
+          projectId: id, projectTitle: await projectTitle(), note: { id: data.id, body, task_id: taskId },
+          task: task ? { id: task.id, title: task.title } : null, actor: me, members, taskAssignees: (asg || []) as any[],
+        }))
         return NextResponse.json({ ok: true, noteId: data.id, project: await getProject(id) })
       }
       // Your own words are yours to change; an owner can remove anything. Nobody edits somebody
