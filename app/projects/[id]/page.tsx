@@ -25,7 +25,7 @@ export default async function OneProject({ params }: { params: { id: string } })
   let p
   try { p = await getProject(params.id) } catch { p = null }
   const viewer = { email: access.email, superadmin: isSuperadmin(access.email) }
-  if (!p || !canSee(p.members, viewer)) redirect('/projects')
+  if (!p || !canSee(p.members, viewer, p.kind)) redirect('/projects')
 
   return (
     <Shell>
@@ -34,7 +34,7 @@ export default async function OneProject({ params }: { params: { id: string } })
       <ProjectPage
         initial={p}
         me={access.email || ''}
-        canEdit={atLeast(level, 'edit') && canEdit(p.members, viewer)}
+        canEdit={atLeast(level, 'edit') && canEdit(p.members, viewer, p.kind)}
         canFull={atLeast(level, 'full')}
         superadmin={viewer.superadmin}
       />
