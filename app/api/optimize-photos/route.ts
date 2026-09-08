@@ -261,7 +261,6 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   if (missing.length) notes.push(`Not shown: ${missing.join(', ')}. Guests skip listings that hide a room.`)
   const keptN = placed.filter(p => p.placement.slot !== 'demoted').length
   if (keptN > PLAYBOOK.targetCount.max) notes.push(`${keptN} photos would remain after cuts — aim for ${PLAYBOOK.targetCount.min}–${PLAYBOOK.targetCount.max}; attention drops off after ~30.`)
-  for (const c of checks) if (c.ok === false && (c.key === 'cover' || c.key === 'beds')) notes.unshift(c.detail)
   const coverage = `${rooms.size} spaces shown across ${property.length} real photos (${wide.length} wide)${missing.length ? '; missing ' + missing.join(', ') : ''}.`
   // The set score is the average photo quality, docked for what costs clicks and bookings.
   const failed = checks.filter(c => c.ok === false).length
