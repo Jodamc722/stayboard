@@ -6,3 +6,4 @@ out
 *.log
 .DS_Store
 _ship*/
+tsconfig.tsbuildinfo
