@@ -57,9 +57,12 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
         if (photos.length < 2) {
           next[u.id] = { name: u.name, photos, order: photos.map(p => p._id), changed: false, error: 'fewer than 2 photos' }
         } else {
-          const order = buildOrder(photos)
+          // 2026-09-08: use the engine's order (lib/photo-order) — the same order the unit page
+          // proposes — instead of a weaker local "first 5 + by category" that disagreed with it.
+          const current: string[] = Array.isArray(j.currentOrder) ? j.currentOrder.map(String) : photos.map(p => p._id)
+          const order: string[] = Array.isArray(j.proposedOrder) && j.proposedOrder.length ? j.proposedOrder.map(String) : buildOrder(photos)
           const ordered = order.map(id => photos.find(p => p._id === id)!).filter(Boolean)
-          const changed = order.some((id, idx) => id !== photos[idx]?._id)
+          const changed = order.some((id, idx) => id !== current[idx])
           next[u.id] = { name: u.name, photos: ordered, order, changed }
         }
       } catch (e: any) {

@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2 } from 'lucide-react'
 
 type Photo = {
@@ -10,7 +10,12 @@ type Photo = {
   // photo of one room together, and picks a named enhance preset with a reason.
   room?: string; enhance?: string; enhanceWhy?: string
   mirrorUrl?: string | null   // the untouched original we mirrored — makes "revert" possible
+  // 2026-09-08 (v2): facts from the analyst + where the engine put the photo and why.
+  subject?: string; shotType?: 'wide' | 'medium' | 'detail'; quality?: number; faults?: string[]; sellingPoints?: string[]
+  placement?: { slot: 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'; group: string; why: string; flag?: 'duplicate' | 'fault' | 'stock' | null }
 }
+type Section = { slot: 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'; label: string; ids: string[] }
+type HeroCandidate = { _id: string; score: number; why: string }
 type Preset = { key: string; name: string; when: string }
 type Result = {
   heroId: string
@@ -22,6 +27,11 @@ type Result = {
   overflow?: number
   presets?: Preset[]
   orderRule?: string
+  sections?: Section[]
+  heroCandidates?: HeroCandidate[]
+  titleIdeas?: string[]
+  titleHooks?: { hook: string; strength: number }[]
+  partial?: string | null
 }
 
 const CAT_COLORS: Record<string, string> = {
@@ -60,6 +70,11 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [presets, setPresets] = useState<Preset[]>([])
   const [presetPick, setPresetPick] = useState<Record<string, string>>({})
   const [orderRule, setOrderRule] = useState<string>('')
+  const [sections, setSections] = useState<Section[]>([])
+  const [heroCands, setHeroCands] = useState<HeroCandidate[]>([])
+  const [titleIdeas, setTitleIdeas] = useState<string[]>([])
+  const [titleHooks, setTitleHooks] = useState<{ hook: string; strength: number }[]>([])
+  const [copiedTitle, setCopiedTitle] = useState<string | null>(null)
   // Press-and-hold compare: shows the OTHER version of the photo while held.
   const [peek, setPeek] = useState<string | null>(null)
   // Photos to put back to their mirrored original on push.
@@ -84,7 +99,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const photosRef = useRef<Record<string, Photo>>({})
   photosRef.current = photos
 
-  async function analyze(hero?: string, guidanceText?: string, regenerateCaptions = false): Promise<string[] | null> {
+  async function analyze(hero?: string, guidanceText?: string, regenerateCaptions = false, autoHero = false): Promise<string[] | null> {
     setBusy(true); setError(null); setPushedMsg(null)
     try {
       const r = await fetch('/api/optimize-photos', {
@@ -94,6 +109,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
           ...(hero ? { heroId: hero } : {}),
           ...(guidanceText && guidanceText.trim() ? { guidance: guidanceText.trim() } : {}),
           ...(regenerateCaptions ? { regenerateCaptions: true } : {}),
+          ...(autoHero ? { autoHero: true } : {}),
         }),
       })
       const raw = await r.text()
@@ -109,6 +125,13 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       setHeroSug(j.heroSuggestion || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
       if (Array.isArray(j.presets)) setPresets(j.presets)
       if (typeof j.orderRule === 'string') setOrderRule(j.orderRule)
+      setSections(Array.isArray(j.sections) ? j.sections : [])
+      setHeroCands(Array.isArray(j.heroCandidates) ? j.heroCandidates : [])
+      setTitleIdeas(Array.isArray(j.titleIdeas) ? j.titleIdeas : [])
+      setTitleHooks(Array.isArray(j.titleHooks) ? j.titleHooks : [])
+      // Duplicates, faults and stock come pre-flagged; ticking them is one click, not ten.
+      setToRemove(new Set())
+      if (j.partial) setError(String(j.partial))
       // Seed each photo's preset from the AI's verdict; the dropdown on the card overrides it.
       const picks: Record<string, string> = {}
       ;(j.photos || []).forEach((ph: Photo) => { if (ph.enhance) picks[ph._id] = ph.enhance })
@@ -429,7 +452,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       <div className="px-4 py-3 bg-gradient-to-r from-brand-50 to-white flex items-center justify-between gap-3 flex-wrap">
         <div className="min-w-0 order-last sm:order-none">
           <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Images size={15} className="text-brand-600" /> Organize photos with AI</h2>
-          <p className="text-[12px] text-muted mt-0.5">Orders every photo to maximise bookings and writes a description for each. You pick the cover; nothing goes live until you push.</p>
+          <p className="text-[12px] text-muted mt-0.5">Reads every photo, ranks cover candidates, builds the order room by room, flags duplicates and weak shots, writes descriptions and title ideas. Nothing goes live until you push.</p>
         </div>
         <div className="lh-actions flex flex-wrap items-center gap-2 sm:flex-nowrap sm:flex-shrink-0 order-first sm:order-none w-full sm:w-auto">
           <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={e => addFiles(e.target.files)} />
@@ -497,12 +520,58 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             </div>
           )}
 
+          {/* COVER CANDIDATES — the engine ranks every photo as a cover; the human still picks. */}
+          {heroCands.length > 0 && order.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/50 px-3.5 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Crown size={15} className="text-amber-600" />
+                <span className="text-[13px] font-semibold text-ink">Best cover candidates</span>
+                <span className="text-[11px] text-muted ml-auto">scored on light, width, and what a guest books for</span>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {heroCands.map((c, i) => { const p = photos[c._id]; if (!p) return null; const isCur = c._id === heroId; return (
+                  <button key={c._id} onClick={() => !isCur && setAsHero(c._id)} title={c.why}
+                    className={`shrink-0 w-36 rounded-lg overflow-hidden border text-left ${isCur ? 'border-amber-500 ring-2 ring-amber-300' : 'border-line hover:border-amber-300'}`}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.url} alt="" className="w-full aspect-[4/3] object-cover" loading="lazy" />
+                    <div className="px-1.5 py-1 text-[10.5px] leading-tight">
+                      <span className="font-bold text-ink">#{i + 1} · {c.score}</span>{isCur && <span className="ml-1 text-amber-700 font-semibold">current</span>}
+                      <span className="block text-muted truncate">{p.subject || p.category}</span>
+                    </div>
+                  </button>
+                )})}
+              </div>
+            </div>
+          )}
+
+          {/* TITLE IDEAS — written from what the photos PROVE, so the title never promises a pool
+              the photos do not show. Copy one into the optimizer's title field. */}
+          {titleIdeas.length > 0 && (
+            <div className="rounded-xl border border-line bg-white px-3.5 py-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <Sparkles size={15} className="text-brand-600" />
+                <span className="text-[13px] font-semibold text-ink">Title ideas from the photos</span>
+                {titleHooks.length > 0 && <span className="text-[11px] text-muted ml-auto truncate">proven: {titleHooks.map(h => h.hook.replace(/-/g, ' ')).join(' · ')}</span>}
+              </div>
+              <ul className="space-y-1">
+                {titleIdeas.map(t => (
+                  <li key={t} className="flex items-center gap-2">
+                    <span className="flex-1 text-[13px] text-ink">{t} <span className="text-[10.5px] text-muted">({t.length})</span></span>
+                    <button onClick={async () => { try { await navigator.clipboard.writeText(t); setCopiedTitle(t); setTimeout(() => setCopiedTitle(null), 1500); window.dispatchEvent(new CustomEvent('stay:suggest-title', { detail: { title: t } })) } catch {} }}
+                      className="text-[11px] font-semibold px-2 py-1 rounded-md border border-line bg-white text-ink hover:bg-app">{copiedTitle === t ? 'Copied' : 'Copy'}</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {removeList.length > 0 && (
             <div className="rounded-xl border border-rose-200 bg-rose-50/60 px-3.5 py-3">
               <div className="flex items-center gap-2 mb-2">
                 <Trash2 size={15} className="text-rose-600" />
                 <span className="text-[13px] font-semibold text-ink">Recommended to remove ({removeList.length})</span>
-                <span className="text-[11px] text-muted ml-auto">delete these in Guesty &mdash; Lighthouse never deletes photos for you</span>
+                <button onClick={() => setToRemove(new Set(removeList.map(r => r._id)))} className="ml-auto text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50">Mark all {removeList.length}</button>
+                <button onClick={() => setToRemove(new Set())} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-line bg-white text-muted">Clear</button>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                 {removeList.map(r => { const p = photos[r._id]; if (!p) return null; const marked = toRemove.has(r._id); return (
@@ -530,6 +599,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 <span><span className="font-semibold text-ink">{order.length}</span> photos · cover photo locked at #1{overflow > 0 ? ` · ${overflow} extra kept at the end` : ''}</span>
                 <div className="flex items-center gap-2">
                   {changed && <button onClick={() => setOrder(proposed)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset to AI order</button>}
+                  <button onClick={() => analyze(undefined, undefined, false, true)} disabled={busy} title="Let the engine choose the cover from its ranked candidates" className="inline-flex items-center gap-1 text-[12px] text-amber-700 hover:text-amber-800 disabled:opacity-50"><Crown size={12} /> AI picks cover</button>
                   <button onClick={() => analyze(heroId || undefined)} disabled={busy} className="inline-flex items-center gap-1 text-[12px] text-brand-600 hover:text-brand-700 disabled:opacity-50"><Wand2 size={12} /> Re-run</button>
                 </div>
               </div>
@@ -568,8 +638,23 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 {order.map((id, idx) => {
                   const p = photos[id]; if (!p) return null
                   const isHero = idx === 0
+                  // Storyboard headers: a new row whenever the engine's group changes as the order
+                  // stands NOW (a dragged photo simply starts its own group — honest, not stale).
+                  const grp = isHero ? 'Cover' : (p.placement?.slot === 'showcase' ? 'Showcase' : p.placement?.slot === 'demoted' ? 'Consider removing' : (p.placement?.group || 'Photos'))
+                  const prev = idx > 0 ? photos[order[idx - 1]] : null
+                  const prevGrp = idx === 0 ? null : idx === 1 ? 'Cover' : (prev?.placement?.slot === 'showcase' ? 'Showcase' : prev?.placement?.slot === 'demoted' ? 'Consider removing' : (prev?.placement?.group || 'Photos'))
+                  const header = grp !== prevGrp ? grp : null
+                  const slotTone = p.placement?.slot === 'demoted' ? 'bg-rose-50 text-rose-700 border-rose-200' : p.placement?.slot === 'showcase' ? 'bg-brand-50 text-brand-700 border-brand-200' : p.placement?.slot === 'building' ? 'bg-teal-50 text-teal-700 border-teal-200' : 'bg-app text-muted border-line'
                   return (
-                    <li key={id}
+                    <Fragment key={id}>
+                    {header && (
+                      <li className="col-span-full flex items-center gap-2 pt-2 first:pt-0">
+                        <span className={`text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md border ${slotTone}`}>{header}</span>
+                        <span className="text-[11px] text-muted">{header === 'Cover' ? 'position 1 — yours' : header === 'Showcase' ? 'positions 2–5 — one photo per key space' : header === 'Consider removing' ? 'duplicates, weak shots and stock — tick to remove on push' : 'the tour, room by room'}</span>
+                        <span className="flex-1 border-t border-line" />
+                      </li>
+                    )}
+                    <li
                       draggable={!isHero}
                       onDragStart={() => !isHero && setDragId(id)}
                       onDragOver={e => { if (!isHero) e.preventDefault() }}
@@ -618,6 +703,13 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         )}
                       </div>
                       <div className="p-2 space-y-1">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {typeof p.quality === 'number' && <span title="Conversion quality of this photo (light, sharpness, staging, sense of space)" className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${p.quality >= 75 ? 'bg-emerald-100 text-emerald-700' : p.quality >= 55 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>{p.quality}</span>}
+                          {p.shotType && <span className="text-[10px] font-medium text-muted">{p.shotType}</span>}
+                          {p.placement?.flag === 'duplicate' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">Duplicate</span>}
+                          {p.placement?.flag === 'fault' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Weak</span>}
+                          {p.subject && <span className="text-[10px] text-ink/80 truncate" title={p.subject}>{p.subject}</span>}
+                        </div>
                         <select value={p.category || 'other'} onChange={e => setCategory(id, e.target.value)} title="Photo category — correct the AI's tag" className={`text-[10px] font-semibold pl-1.5 pr-4 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-brand-300 ${CAT_COLORS[p.category || 'other'] || CAT_COLORS.other}`}>
                           {CATS.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
@@ -654,6 +746,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         </div>
                       </div>
                     </li>
+                    </Fragment>
                   )
                 })}
               </ol>

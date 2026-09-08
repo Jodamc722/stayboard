@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Sparkles, Wand2, AlertTriangle, Info, UploadCloud, Check, RotateCcw, RefreshCw, MessageSquarePlus, Pencil } from 'lucide-react'
 
 type Content = { title: string; summary: string; space: string; access: string; neighborhood: string; transit: string; notes: string }
@@ -92,6 +92,13 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
     } catch (e: any) { setError(e?.message || String(e)) } finally { setBusy(false) }
   }
 
+  // 2026-09-08: the photo organizer proposes titles from what the photos prove; "Copy" there also
+  // drops the title straight into this editor when a draft is open.
+  useEffect(() => {
+    const h = (e: Event) => { const t = (e as CustomEvent).detail?.title; if (typeof t === 'string' && t.trim()) { setEdited(p => p ? { ...p, title: t.trim() } : p); setOpen(true) } }
+    window.addEventListener('stay:suggest-title', h)
+    return () => window.removeEventListener('stay:suggest-title', h)
+  }, [])
   function setField(k: keyof Content, v: string) { setEdited(p => p ? { ...p, [k]: v } : p); setPushedMsg(null); setSectionMsg(m => ({ ...m, [k]: '' })) }
   function resetField(k: keyof Content) { if (result) setField(k, (result.proposed as any)[k] || '') }
   function toggle(k: string) { setInclude(p => ({ ...p, [k]: !p[k] })); setPushedMsg(null) }
