@@ -4,11 +4,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { salatoListings } from '@/lib/salato-units'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const SALATO = /salato/i
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -22,10 +22,8 @@ export async function GET(req: NextRequest) {
     const today = ymd(new Date())
     const start = addDays(today, -1)
     const end = addDays(today, 14)
-    const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building')
-    const match: Record<string, string> = {}
-    for (const l of (listings || []) as any[]) { const name = l.nickname || l.title || 'Unit'; if (SALATO.test(str(l.building)) || SALATO.test(name)) match[String(l.id)] = name }
-    const ids = Object.keys(match)
+    // The Salato unit set is editable (lib/salato-units) — /salato → Units.
+    const { match, ids } = await salatoListings(db)
     if (!ids.length) return NextResponse.json({ ok: true, today, arrivals: [], departures: [], active: [], note: 'No Salato listings matched.' })
     const { data: res } = await db.from('guesty_reservations').select('id,listing_id,guest_name,check_in,check_out,nights,status,source,raw').in('listing_id', ids).lte('check_in', end).gte('check_out', start).limit(600)
     // team notes for these reservations (best-effort; table may not exist yet)
