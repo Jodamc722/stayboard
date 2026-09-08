@@ -7,6 +7,7 @@
 // and a done-toggle so clearing the list is one tap per line.
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { NotifyBell } from './NotifyBell'
 import { Check, Circle, CircleDot, Ban, Loader2, RefreshCw, ListChecks, Lock, MapPin, ArrowLeft } from 'lucide-react'
 
 type Item = {
@@ -71,6 +72,7 @@ export function MyTasks({ me }: { me: string }) {
             <h1 className="text-2xl font-bold text-ink tracking-tight">My Tasks</h1>
             <p className="text-[13px] text-muted mt-0.5">{loading && !groups ? 'Loading…' : total === 0 ? 'Nothing assigned to you across any project.' : `${total} open across your projects.`}</p>
           </div>
+          <NotifyBell />
           <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-bold text-muted hover:text-ink disabled:opacity-40">
             {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Refresh
           </button>

@@ -22,8 +22,10 @@ import {
   Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity,
 } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
-import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago } from '@/lib/projects-shared'
+import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf } from '@/lib/projects-shared'
+import { NotifyBell } from './NotifyBell'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -53,7 +55,11 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
 }) {
   const [p, setP] = useState<ProjectFull>(initial)
   const [roster, setRoster] = useState<Roster>([])
-  const [openTask, setOpenTask] = useState<string | null>(null)
+  // A notification links straight to its task: /projects/<id>?task=<taskId> opens the drawer.
+  const sp = useSearchParams()
+  const [openTask, setOpenTask] = useState<string | null>(() => {
+    const t = sp?.get('task'); return t && findTask(initial.tasks, t) ? t : null
+  })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -155,6 +161,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
               <span className="tabular-nums">{total - open} of {total} done{overdue ? ` · ${overdue} overdue` : ''}</span>
             </p>
           </div>
+          <NotifyBell />
         </div>
         {p.summary && <p className="text-[13.5px] text-ink/85 mt-2 max-w-3xl">{p.summary}</p>}
         {err && <p className="mt-2 text-[12.5px] text-rose-700">{err}</p>}
@@ -442,7 +449,7 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
 
         {/* composer pinned to the bottom, like a chat — the field you came here to type in */}
         <div className="border-t border-line px-3 py-2 bg-white">
-          <Composer busy={busy} placeholder={`Comment on “${task.title.slice(0, 40)}${task.title.length > 40 ? '…' : ''}”`}
+          <Composer busy={busy} members={p.members} placeholder={`Comment on “${task.title.slice(0, 40)}${task.title.length > 40 ? '…' : ''}” — @ to mention`}
             onSend={body => act({ action: 'comment', taskId: task.id, body })} />
         </div>
       </div>
@@ -498,7 +505,7 @@ function Feed({ items, me, nameOf, act, busy, superadmin, members, onOpen, empty
                   </div>
                 </div>
               ) : (
-                <p className="text-[13px] text-ink whitespace-pre-wrap break-words leading-relaxed">{n.body}</p>
+                <p className="text-[13px] text-ink whitespace-pre-wrap break-words leading-relaxed"><Mentions text={n.body} /></p>
               )}
               {(mine || isOwner) && editing !== n.id && (
                 <p className="mt-0.5 flex gap-2.5 text-[11px] text-muted">
@@ -514,19 +521,68 @@ function Feed({ items, me, nameOf, act, busy, superadmin, members, onOpen, empty
   )
 }
 
+// "@Roberto Diaz" reads as a name, not a handle. Purely visual — the server decides who was meant.
+function Mentions({ text }: { text: string }) {
+  const parts = String(text || '').split(/(@[A-Za-zÀ-ɏ][\wÀ-ɏ.'-]*(?:\s[A-Z][\wÀ-ɏ.'-]*)?)/g)
+  return <>{parts.map((s, i) => s.startsWith('@') ? <span key={i} className="font-semibold text-brand-700">{s}</span> : <span key={i}>{s}</span>)}</>
+}
+
 // Enter sends, Shift+Enter is a new line — the convention every chat tool taught everyone.
-function Composer({ onSend, busy, placeholder }: { onSend: (body: string) => Promise<any>; busy: boolean; placeholder?: string }) {
+// Typing @ offers the project's members; picking one drops their name in and they get told.
+function Composer({ onSend, busy, placeholder, members }: { onSend: (body: string) => Promise<any>; busy: boolean; placeholder?: string; members: Member[] }) {
   const [v, setV] = useState('')
+  const [caret, setCaret] = useState(0)
+  const [pick, setPick] = useState(0)
+  const ref = useRef<HTMLTextAreaElement | null>(null)
   const send = async () => { const body = v.trim(); if (!body || busy) return; setV(''); const r = await onSend(body); if (r === null) setV(body) }
+
+  // The @-word being typed, if the caret is inside one.
+  const at = useMemo(() => {
+    const before = v.slice(0, caret)
+    const m = before.match(/(?:^|[^\w@])@([\wÀ-ɏ.'-]*)$/)
+    return m ? { start: before.length - m[1].length - 1, q: m[1].toLowerCase() } : null
+  }, [v, caret])
+  const hits = at ? members.filter(m => !at.q || m.display.toLowerCase().includes(at.q) || (m.email || '').toLowerCase().startsWith(at.q)).slice(0, 6) : []
+  const choose = (m: Member) => {
+    if (!at) return
+    const name = m.display   // full name — unambiguous on the server, and reads as a name in the feed
+    const next = v.slice(0, at.start) + '@' + name + ' ' + v.slice(caret)
+    setV(next); setPick(0)
+    const pos = at.start + name.length + 2
+    requestAnimationFrame(() => { ref.current?.focus(); ref.current?.setSelectionRange(pos, pos); setCaret(pos) })
+  }
+  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (hits.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setPick(p => (p + 1) % hits.length); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setPick(p => (p - 1 + hits.length) % hits.length); return }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); choose(hits[pick] || hits[0]); return }
+      if (e.key === 'Escape') { setCaret(-1); return }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
+  }
   return (
-    <div className="flex items-end gap-2">
-      <textarea value={v} onChange={e => setV(e.target.value)} rows={v.includes('\n') ? 3 : 1} placeholder={placeholder || 'Write a comment…'}
-        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-        className="flex-1 resize-none rounded-xl border border-line bg-white px-3 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-ink" />
-      <button onClick={send} disabled={busy || !v.trim()} title="Send (Enter)"
-        className="rounded-xl bg-ink text-white w-9 h-9 inline-flex items-center justify-center disabled:opacity-40 shrink-0">
-        {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-      </button>
+    <div className="relative">
+      {hits.length > 0 && (
+        <div className="absolute bottom-full left-0 mb-1 z-20 w-64 rounded-lg border border-line bg-white shadow-lg overflow-hidden">
+          {hits.map((m, i) => (
+            <button key={m.id} onMouseDown={e => { e.preventDefault(); choose(m) }}
+              className={'w-full text-left px-2.5 py-1.5 text-[12.5px] flex items-center justify-between gap-2 ' + (i === pick ? 'bg-app' : 'hover:bg-app')}>
+              <span>{m.display}</span><span className="text-[10px] text-muted">{m.email ? 'will be notified' : 'name only'}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex items-end gap-2">
+        <textarea ref={ref} value={v} rows={v.includes('\n') ? 3 : 1} placeholder={placeholder || 'Write a comment… @ to mention'}
+          onChange={e => { setV(e.target.value); setCaret(e.target.selectionStart || 0); setPick(0) }}
+          onSelect={e => setCaret((e.target as HTMLTextAreaElement).selectionStart || 0)}
+          onKeyDown={onKey}
+          className="flex-1 resize-none rounded-xl border border-line bg-white px-3 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-ink" />
+        <button onClick={send} disabled={busy || !v.trim()} title="Send (Enter)"
+          className="rounded-xl bg-ink text-white w-9 h-9 inline-flex items-center justify-center disabled:opacity-40 shrink-0">
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+        </button>
+      </div>
     </div>
   )
 }
@@ -647,7 +703,7 @@ function ActivityPanel({ p, me, nameOf, act, busy, onOpen, superadmin }: {
           empty={onlyComments ? 'No comments yet.' : 'Nothing has happened here yet.'} />
       </div>
       <div className="border-t border-line px-3 py-2">
-        <Composer busy={busy} placeholder="Comment on the project…" onSend={body => act({ action: 'comment', body })} />
+        <Composer busy={busy} members={p.members} placeholder="Comment on the project… @ to mention" onSend={body => act({ action: 'comment', body })} />
       </div>
     </div>
   )
@@ -709,6 +765,20 @@ function MembersPanel({ p, roster, me, canEdit, superadmin, act, busy }: {
           )}
         </div>
       )}
+      {p.members.some(isMe) && (() => {
+        const mine = p.members.find(isMe)!
+        const pr = prefsOf(mine.notify)
+        const Tog = ({ k, label }: { k: keyof typeof pr; label: string }) => (
+          <button onClick={() => act({ action: 'memberNotify', notify: { [k]: !pr[k] } })} disabled={busy}
+            className={'text-[10.5px] font-semibold rounded-md px-1.5 py-0.5 border ' + (pr[k] ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{label}</button>
+        )
+        return (
+          <div className="px-3 py-2 border-t border-line flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] text-muted mr-1">Email me:</span>
+            <Tog k="assigned" label="Assigned" /><Tog k="mentions" label="Mentions" /><Tog k="comments" label="Comments" /><Tog k="digest" label="Morning digest" />
+          </div>
+        )
+      })()}
       <div className="px-3 py-2 border-t border-line bg-app/40 flex items-center gap-2">
         <span className="text-[11px] text-muted flex-1">
           {p.private ? 'Only these people can open this project.' : 'Only these people can open this project.'}{superadmin && !p.members.some(isMe) ? ' You see it as owner.' : ''}
