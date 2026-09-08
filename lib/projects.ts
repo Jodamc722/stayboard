@@ -8,8 +8,8 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 export * from './projects-shared'
 import {
-  type Project, type ProjectFull, type Member, type Person, type Task, type Viewer,
-  progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO,
+  type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
+  progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO, canSee, canEdit,
 } from './projects-shared'
 
 export async function getCategories(): Promise<{ key: string; label: string; color: string; sort: number }[]> {
@@ -68,8 +68,8 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
   const [links, steps, photos, notes, members, asg] = await Promise.all([
     sb.from('project_links').select('*').eq('project_id', id).order('created_at'),
     sb.from('project_steps').select('*').eq('project_id', id).order('sort', { nullsFirst: false }).order('created_at'),
-    sb.from('project_photos').select('*').eq('project_id', id).order('created_at', { ascending: false }),
-    sb.from('project_notes').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(200),
+    sb.from('project_photos').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(500),
+    sb.from('project_notes').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(1000),
     sb.from('project_members').select('*').eq('project_id', id).order('created_at'),
     sb.from('project_task_assignees').select('task_id,person_key,display,email').eq('project_id', id),
   ])
@@ -79,7 +79,7 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
   for (const a of (asg.data || []) as any[]) (byTask[a.task_id] = byTask[a.task_id] || []).push({ person_key: a.person_key, display: a.display, email: a.email })
   return {
     ...(p as any),
-    links: L, steps: S, photos: photos.data || [], notes: notes.data || [],
+    links: L, steps: S, photos: await signFiles(photos.data || []), notes: notes.data || [],
     members: (members.data || []) as Member[],
     tasks: nestTasks(S, byTask),
     progress: progressOf(L, S), health: healthOf(p as any, S),
@@ -98,13 +98,66 @@ export async function getProjectByToken(token: string): Promise<ProjectFull | nu
   } catch { return null }
 }
 
+// ---------------------------------------------------------------- files
+// Wave 2 uploads live in a PRIVATE bucket. The row stores the storage key; the URL people open is
+// minted here, per read, and dies in six hours. Old rows from the public bucket have no key and
+// keep their permanent URL — nothing about them changed.
+export const FILES_BUCKET = 'project-files'
+const SIGN_TTL = 6 * 3600
+
+export async function ensureFilesBucket(sb = supabaseAdmin()) {
+  const { data } = await sb.storage.getBucket(FILES_BUCKET)
+  if (data) return
+  const { error } = await sb.storage.createBucket(FILES_BUCKET, { public: false })
+  if (error && !/already exists/i.test(error.message || '')) throw new Error('storage bucket: ' + error.message)
+}
+
+async function signFiles(rows: any[]): Promise<any[]> {
+  const keyed = rows.filter(r => r.storage_path)
+  if (!keyed.length) return rows
+  try {
+    const { data, error } = await supabaseAdmin().storage.from(FILES_BUCKET).createSignedUrls(keyed.map(r => r.storage_path), SIGN_TTL)
+    if (error || !data) throw error || new Error('no urls')
+    const byPath: Record<string, string> = {}
+    for (const d of data) if (d.signedUrl && d.path) byPath[d.path] = d.signedUrl
+    return rows.map(r => (r.storage_path && byPath[r.storage_path]) ? { ...r, url: byPath[r.storage_path] } : r)
+  } catch {
+    // A signing failure must not hide the row. The name still shows; the click fails honestly.
+    return rows
+  }
+}
+
+// ---------------------------------------------------------------- access gate
+// The one membership check every write path uses. 404 for a non-member (the project must not be
+// confirmed to exist), 403 for a member who can look but not touch.
+export async function gateProject(id: string, viewer: Viewer, need: 'view' | 'edit'):
+  Promise<{ ok: true; members: Member[] } | { ok: false; status: number; error: string }> {
+  const sb = supabaseAdmin()
+  const { data: memRows, error: memErr } = await sb.from('project_members').select('*').eq('project_id', id)
+  if (memErr) return { ok: false, status: 500, error: 'Could not check access: ' + memErr.message }
+  const members = (memRows || []) as Member[]
+  const { data: exists, error: exErr } = await sb.from('projects').select('id').eq('id', id).maybeSingle()
+  if (exErr) return { ok: false, status: 500, error: 'Could not check access: ' + exErr.message }
+  if (!exists || !canSee(members, viewer)) return { ok: false, status: 404, error: 'No such project.' }
+  if (need === 'edit' && !canEdit(members, viewer)) return { ok: false, status: 403, error: 'You can view this project but not change it.' }
+  return { ok: true, members }
+}
+
 // ---------------------------------------------------------------- writes
-export async function addNote(projectId: string, body: string, author: string | null, kind: 'comment' | 'event' = 'comment', viaShare = false) {
+export async function addNote(projectId: string, body: string, author: string | null, kind: 'comment' | 'event' = 'comment', viaShare = false,
+  extra: { taskId?: string | null; meta?: any } = {}) {
   try {
     await supabaseAdmin().from('project_notes').insert({
       project_id: projectId, body: String(body).slice(0, 4000), author, kind, via_share: viaShare,
+      task_id: extra.taskId || null, meta: extra.meta || null,
     })
   } catch {}
+}
+
+/** An activity event: what somebody did, with enough structure for the feed to link the task. */
+export async function logEvent(projectId: string, who: string | null, type: EventType, body: string,
+  meta: { task_id?: string; task_title?: string; from?: string | null; to?: string | null; who?: string[]; name?: string } = {}) {
+  await addNote(projectId, body, who, 'event', false, { taskId: meta.task_id || null, meta: { type, ...meta } })
 }
 
 /** 32 hex chars from the crypto RNG — long enough that a link cannot be guessed. */

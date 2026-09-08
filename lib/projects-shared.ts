@@ -103,9 +103,50 @@ export type Task = {
   subtasks: Task[]
 }
 
+// ── COMMENTS, EVENTS AND FILES (Wave 2) ──────────────────────────────────────────────────────────
+// One stream holds both what people SAID (kind=comment) and what people DID (kind=event). An event
+// carries `meta` so the feed can render it with the task linked instead of parsing prose. Both can
+// point at a task; a null task_id is project-level.
+export type EventType =
+  | 'task_added' | 'task_status' | 'task_assigned' | 'task_due' | 'task_deleted' | 'task_moved'
+  | 'member_added' | 'member_removed' | 'member_role' | 'link' | 'unlink' | 'file_added' | 'file_removed'
+  | 'spend' | 'stage' | 'photo'
+export type Note = {
+  id: string; project_id: string; task_id: string | null
+  kind: 'comment' | 'event'; body: string; author: string | null
+  via_share: boolean; created_at: string; edited_at: string | null
+  meta: null | { type: EventType; task_id?: string; task_title?: string; from?: string | null; to?: string | null; who?: string[]; name?: string }
+}
+export type ProjectFile = {
+  id: string; project_id: string; task_id: string | null
+  kind: 'photo' | 'file'; url: string; name: string | null; mime: string | null; bytes: number | null
+  caption: string | null; phase: string; uploaded_by: string | null; via_share: boolean
+  storage_path: string | null; created_at: string
+}
+export const isImage = (f: { mime?: string | null; kind?: string | null; url?: string }) =>
+  f.kind === 'photo' || /^image\//.test(String(f.mime || '')) || /\.(jpe?g|png|gif|webp|heic)(\?|$)/i.test(String(f.url || ''))
+export const fmtBytes = (n: number | null | undefined) => {
+  if (n == null || !Number.isFinite(Number(n))) return ''
+  const b = Number(n)
+  if (b < 1024) return b + ' B'
+  if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB'
+  return (b / 1024 / 1024).toFixed(1) + ' MB'
+}
+/** "just now", "4m", "3h", "2d", else a short date. Feeds read better in relative time. */
+export const ago = (iso: string, now = Date.now()) => {
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  const s = Math.max(0, Math.round((now - t) / 1000))
+  if (s < 45) return 'just now'
+  if (s < 3600) return Math.round(s / 60) + 'm'
+  if (s < 86400) return Math.round(s / 3600) + 'h'
+  if (s < 86400 * 7) return Math.round(s / 86400) + 'd'
+  try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(t)) } catch { return iso.slice(0, 10) }
+}
+
 export type ProjectFull = Project & {
   private: boolean; kind: string; template_key: string | null; recurs: any
-  links: any[]; steps: any[]; photos: any[]; notes: any[]
+  links: any[]; steps: any[]; photos: ProjectFile[]; notes: Note[]
   members: Member[]
   tasks: Task[]
   progress: ReturnType<typeof progressOf>; health: ReturnType<typeof healthOf>
