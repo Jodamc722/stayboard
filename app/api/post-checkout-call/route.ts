@@ -21,12 +21,13 @@ import { appendReservationNote } from '@/lib/guesty-res-notes'
 
 export const dynamic = 'force-dynamic'
 
-const OUTCOMES = ['happy', 'issue', 'no_answer'] as const
+const OUTCOMES = ['happy', 'issue', 'no_answer', 'claim'] as const
 type Outcome = typeof OUTCOMES[number]
 const OUTCOME_LABEL: Record<Outcome, string> = {
   happy: 'Post-checkout call — no issues',
   issue: 'Post-checkout call — ISSUE RAISED',
   no_answer: 'Post-checkout call — no answer',
+  claim: '',
 }
 
 export async function POST(req: NextRequest) {
@@ -51,23 +52,37 @@ export async function POST(req: NextRequest) {
   const outcome: Outcome = (OUTCOMES as readonly string[]).includes(String(body?.outcome)) ? body.outcome : 'happy'
   const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 1000) : ''
   const by = (typeof body?.by === 'string' && body.by.trim()) ? body.by.trim().slice(0, 80) : String(user.email || '').toLowerCase()
+  const callerEmail = String(user.email || '').toLowerCase()
   // "No answer" is logged like the others, but the board keeps the row on the list: a call nobody
   // picked up is a call still to make, with the useful addition that you can see who already tried.
+  // "claim" is a lock — I'm on this one — and bumps nothing.
 
-  const { data: res } = await sb.from('guesty_reservations')
-    .select('listing_id, guest_name, check_out, custom_fields, raw')
-    .eq('id', reservationId).maybeSingle()
+  const [{ data: res }, { data: prev }] = await Promise.all([
+    sb.from('guesty_reservations').select('listing_id, guest_name, check_out, custom_fields, raw').eq('id', reservationId).maybeSingle(),
+    sb.from('guest_calls').select('outcome,attempts').eq('reservation_id', reservationId).eq('kind', 'post_checkout').maybeSingle(),
+  ])
+  const prevAttempts = Number((prev as any)?.attempts) || 0
+  // A completed call is never downgraded by a late claim.
+  if (outcome === 'claim' && prev && ['happy', 'issue'].indexOf(String((prev as any).outcome)) >= 0) {
+    return NextResponse.json({ ok: true, outcome: (prev as any).outcome, unchanged: true })
+  }
 
   const at = new Date().toISOString()
   const { error } = await sb.from('guest_calls').upsert({
     reservation_id: reservationId,
     kind: 'post_checkout',
+    tier: 'post_checkout',
     listing_id: (res as any)?.listing_id || null,
     guest_name: (res as any)?.guest_name || null,
     ref_date: (res as any)?.check_out || null,
-    outcome, note, called_by: by, called_at: at,
+    scheduled_for: (res as any)?.check_out || null,
+    outcome: outcome === 'claim' ? 'in_progress' : outcome,
+    attempts: outcome === 'claim' ? prevAttempts : prevAttempts + 1,
+    ...(note || outcome !== 'claim' ? { note } : {}),   // a bare claim never blanks an earlier note
+    called_by: by, caller_email: callerEmail, called_at: at,
   }, { onConflict: 'reservation_id,kind' })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (outcome === 'claim') return NextResponse.json({ ok: true, outcome: 'in_progress', by, at })
 
   // Guesty note — best effort, never the reason this request fails.
   let noteSynced = false
@@ -86,5 +101,5 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* the local row is the record that matters */ }
 
-  return NextResponse.json({ ok: true, outcome, by, at, noteSynced })
+  return NextResponse.json({ ok: true, outcome, attempts: prevAttempts + 1, by, at, noteSynced })
 }

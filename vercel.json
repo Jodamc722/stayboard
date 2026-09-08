@@ -151,6 +151,10 @@
     {
       "path": "/api/cron/project-recur",
       "schedule": "35 10 * * *"
+    },
+    {
+      "path": "/api/cron/calls-closeout",
+      "schedule": "30 5 * * *"
     }
   ]
 }

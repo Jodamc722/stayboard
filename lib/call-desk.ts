@@ -28,13 +28,15 @@
 // evidence of a guest who was not quite happy either.
 //
 // ── WHO GETS A POST-CHECKOUT CALL ───────────────────────────────────────────────────────────────
-// Not everyone (Jon, 2026-09-08: "only stays worth a call"). With 200+ units, every checkout is a
-// list nobody works. A stay earns the call when there is a reason to think a review is at risk:
-//   · a glitch was logged at that unit DURING the stay,
-//   · the unit is in recovery (above),
-//   · the booking is direct — no OTA to absorb the complaint, and the guest is ours to keep,
-//   · or the stay was worth real money (>= HIGH_VALUE).
-// Each row carries `reasons`, so the caller opens knowing why they are calling.
+// ONLY a guest checking out of a unit in recovery (Jon, 2026-09-08 evening: "should be a post call
+// for only guest checking out of bad unit for recovery"). Recovery therefore bookends every stay at
+// a burned unit: a mandatory welcome call before the guest arrives, and this call when they leave —
+// so the complaint is heard on the phone before it is written in a review, and the review that
+// clears the unit has the best chance of being the good one.
+//
+// Earlier the same day the list was wider (glitch during the stay, direct booking, high value).
+// Those still show on the card as context — a glitch logged mid-stay is the first thing the caller
+// should name — but they no longer put a guest on the list. `reasons` keeps all of them.
 import 'server-only'
 import { pageRows } from '@/lib/db-page'
 import { ratingToStars } from '@/lib/optimize-score'
@@ -239,7 +241,7 @@ export const REASON_LABEL: Record<CallReason, string> = {
   value: 'High-value stay',
 }
 
-/** Why this checkout is worth a call. Empty = it is not; the row does not appear. */
+/** Context for the post-checkout card. Only `recovery` puts the guest on the list (see above). */
 export function postCheckoutReasons(opts: { glitches: StayGlitch[]; inRecovery: boolean; source: string; value: number }): CallReason[] {
   const out: CallReason[] = []
   if (opts.glitches.length) out.push('glitch')
@@ -250,3 +252,369 @@ export function postCheckoutReasons(opts: { glitches: StayGlitch[]; inRecovery: 
 }
 
 export { ymdET }
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// THE CALL CENTER (Jon, 2026-09-08 evening): "make this a robust call center to manage this well".
+//
+// Everything below is what the Calls desk page used to compute inline, moved here so the NIGHTLY
+// CLOSE-OUT runs the identical engine. If the page and the cron each had their own idea of which
+// calls were due, "incomplete" would mean two different things by Friday.
+//
+// ── TIERS ───────────────────────────────────────────────────────────────────────────────────────
+// Every welcome call has a tier, and every tier but `standard` is MANDATORY: it must be completed
+// by the end of its grace period or it closes as incomplete, with a record.
+//   lux      — Arya, Nomad, District 225. Jon's list, 2026-09-08. Deliberately NOT lib/segments'
+//              Lux tag (which also holds 17WEST, Elser, Amrit): that tag drives revenue segmenting,
+//              this one drives who gets a mandatory phone call, and Jon wants them different.
+//   recovery — the unit is waiting for a good review (see the top of this file)
+//   big      — $1,200+ or 10+ nights (Jon). Either trips it.
+//   standard — everyone else: due inside 48 hours of arrival, worth doing, not mandatory.
+// Order of precedence when several apply: LUX > recovery > big — "lux calls get priority" (Jon).
+// A lux unit in recovery keeps the lux tier and carries the recovery FLAG on top (`recovery` is
+// set on the row either way), so the card says both and the call opens with both in mind.
+//
+// ── SAME-DAY CLOSE ──────────────────────────────────────────────────────────────────────────────
+// "If calls not completed same day, please close, incomplete." A welcome call is workable from 48h
+// before arrival through the arrival day itself; a post-checkout call for 48h after departure. The
+// nightly close-out (app/api/cron/calls-closeout) then writes an `incomplete` row for anything left,
+// so the miss is a fact in guest_calls with a tier and a date — not a number that evaporates when
+// the row scrolls out of the window. That is what makes the scoreboard honest.
+import { buildingOf } from '@/lib/segments'
+import { isLiveStay } from '@/lib/stay-status'
+import { unstable_cache } from 'next/cache'
+
+export const CALL_LUX = ['Arya', 'Nomad', 'District 225']
+export const BIG_VALUE = 1200
+export const BIG_NIGHTS = 10
+
+export type Tier = 'recovery' | 'lux' | 'big' | 'standard'
+export const TIER_LABEL: Record<Tier, string> = { recovery: 'Recovery', lux: 'Luxury', big: 'Big booking', standard: 'Standard' }
+
+export function tierOf(o: { listingName: string; building?: string | null; value: number; nights: number; recovery: boolean }): Tier {
+  // The listing's own `building` field first, the name second — a lux unit whose Guesty nickname
+  // is just "409" still resolves through the building it belongs to.
+  const b = buildingOf(o.building || null, o.listingName)
+  if (b && CALL_LUX.some(l => l.toLowerCase() === b.toLowerCase())) return 'lux'
+  if (o.recovery) return 'recovery'
+  if (o.value >= BIG_VALUE || o.nights >= BIG_NIGHTS) return 'big'
+  return 'standard'
+}
+/** Sort weight inside a day: lux first (Jon), then recovery, big, standard. */
+export const TIER_RANK: Record<Tier, number> = { lux: 0, recovery: 1, big: 2, standard: 3 }
+
+/** Outcomes that mean the call HAPPENED. `done` is the pre-outcome legacy value. */
+export const COMPLETED = ['done', 'reached', 'voicemail', 'happy', 'issue']
+export const isCompleted = (outcome: any) => COMPLETED.indexOf(String(outcome || '')) >= 0
+
+// Guesty's reservation customFields arrive as { fieldId, value } with NO field name, and the
+// field-definition name map isn't synced — so we match the "Welcome Call" field by its known id.
+export const WELCOME_FIELD_ID = '68d59ad7e34f25001311d85a'
+const cfId = (c: any) => String((c?.fieldId?._id) || (typeof c?.fieldId === 'string' ? c.fieldId : '') || '')
+export const welcomeOf = (cf: any) => Array.isArray(cf) ? cf.find((c: any) => cfId(c) === WELCOME_FIELD_ID || /welcome/i.test(String(c?.fieldName || c?.name || c?.fieldId?.name || ''))) : undefined
+export const guestyCalled = (cf: any) => { const w = welcomeOf(cf); return !!w && ((typeof w.value === 'string' && w.value.trim().length > 0) || !!w._by) }
+
+const fieldVal = (cf: any, kw: string) => {
+  if (!Array.isArray(cf)) return undefined
+  const ff = cf.find((c: any) => String(c?.fieldName || c?.name || c?.fieldId?.name || '').toLowerCase().includes(kw))
+  return ff ? ff.value : undefined
+}
+const truthy = (v: any) => v === true || v === 1 || (typeof v === 'string' && /^(y|yes|true|done|complete|1|x)/i.test(v.trim()))
+const notesOf = (cf: any) => (Array.isArray(cf) ? ((cf.find((c: any) => /reservation[_ ]?notes/i.test(String(c?.fieldName || c?.name || ''))) || {}).value) : '') || ''
+
+function rollupBuilding(raw: any): string {
+  const s = String(raw || '').toLowerCase()
+  if (!s) return 'Unknown'
+  if (s.includes('botanica')) return 'Botanica'
+  if (s.includes('arya')) return 'Arya'
+  if (s.includes('oasis') || /mahogany|royal\s*palm|bougainvillea|bamboo|sapodilla|jasmine/.test(s)) return 'Oasis'
+  return String(raw)
+}
+
+function moneyStatus(r: any) {
+  const m = (r.money && typeof r.money === 'object') ? r.money : {}
+  const balance = typeof m.balanceDue === 'number' ? m.balanceDue : (Number(r.money_balance) || 0)
+  const total = Number(r.money_total) || 0
+  const paidFull = m.isFullyPaid === true || (total > 0 && balance <= 0.01)
+  const items = Array.isArray(m.invoiceItems) ? m.invoiceItems : []
+  const NOTABLE = /park|pet|resort|early\s*check|late\s*check|crib|baby|amenit|pool\s*heat|extra\s*guest|luggage|transfer|airport/i
+  const STD = /accommodation|cleaning|markup|revenue|host channel|management|commission|tourism|tax|booking fee|marketing|length of stay|verify|resolution/i
+  const addOns = items
+    .map((it: any) => ({ t: String(it.title || it.name || '').trim(), amt: Number(it.amount) || 0 }))
+    .filter((x: any) => x.t && NOTABLE.test(x.t) && !STD.test(x.t))
+  const parking = addOns.find((x: any) => /park/i.test(x.t)) || null
+  return {
+    paidFull, balance,
+    currency: r.money_currency || 'USD',
+    parking: parking ? parking.amt : null,
+    addOns: addOns.filter((x: any) => !/park/i.test(x.t)).slice(0, 4),
+    nights: Number(r.nights) || Number(r.nightsCount) || 0,
+    checkOut: String(r.check_out || '').slice(0, 10),
+  }
+}
+
+// Which units are in recovery changes when a review lands, which is a few times a day at most —
+// but working it out reads every review in the table. Cached for five minutes (and dropped by
+// cron/sync-reviews the moment a review arrives) so opening the desk does not re-scan 3,700
+// reviews each time. A Map does not survive the cache boundary, so entries cross as an array.
+const cachedRecovery = unstable_cache(async () => {
+  const { supabaseAdmin } = await import('@/lib/supabase-admin')
+  const m = await recoveryUnits(supabaseAdmin())
+  return Array.from(m.entries())
+}, ['calls-recovery-units-v1'], { revalidate: 300, tags: ['reviews'] })
+
+export const RES_SELECT = 'id,listing_id,guest_name,guest_phone,listing_name,check_in,check_out,nights,status,money_total,money_paid,money_balance,money_currency,custom_fields,source,money:raw->money,guestId:raw->guest->>_id,nightsCount:raw->>nightsCount'
+
+export type CallLog = { reservation_id: string; kind: string; outcome: string; note: string; called_by: string; caller_email: string; called_at: string; attempts: number; tier: string }
+
+export type WelcomeRow = {
+  id: string; guest: string; guestId: string; listing: string; listingId: string; building: string; check_in: string
+  phone: string; value: number; source: string; notes: string
+  status: ReturnType<typeof moneyStatus>
+  tier: Tier; mandatory: boolean
+  done: boolean; outcome: string; attempts: number
+  callValue: string; calledBy: string; calledAt: string
+  claimedBy: string; claimedAt: string
+  sensitive: boolean
+  due: boolean; dueToday: boolean; lastChance: boolean; closed: boolean; incomplete: boolean
+  prio: number
+  recovery: RecoveryUnit | null
+}
+export type PostRow = {
+  id: string; guest: string; listing: string; listingId: string; building: string; check_in: string; check_out: string
+  phone: string; value: number; source: string; nights: number; notes: string
+  glitches: StayGlitch[]; recovery: RecoveryUnit | null; reasons: CallReason[]
+  done: boolean; outcome: string; attempts: number; calledBy: string; calledAt: string; callNote: string
+  claimedBy: string; claimedAt: string
+  closed: boolean; incomplete: boolean
+}
+export type DeskData = {
+  today: string
+  rows: WelcomeRow[]
+  outRows: PostRow[]
+  recoveryFailed: boolean
+  kpis: Record<string, any>
+}
+
+/**
+ * Everything the Calls desk shows, from one place.
+ *
+ * `today` is an Eastern calendar date. The page passes the real one; the nightly close-out passes
+ * the same, and simply acts on the rows this reports as `closed && !done`.
+ */
+export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
+  const toDate = addDays(today, 14)
+  const graceFrom = addDays(today, -WELCOME_GRACE_DAYS)     // arrivals still inside their grace period
+  // Two days further back than the grace period, so a call that has just closed out is still on the
+  // page (badged Missed) instead of disappearing the moment it goes uncallable.
+  const closedFrom = addDays(graceFrom, -2)
+  const backDate = addDays(today, -POST_GRACE_DAYS)        // checkouts still inside theirs (48h)
+  const postClosedFrom = addDays(backDate, -2)
+
+  const [{ data: arrivals }, { data: departures }, rec] = await Promise.all([
+    sb.from('guesty_reservations').select(RES_SELECT).gte('check_in', closedFrom).lte('check_in', toDate).order('check_in').limit(500),
+    sb.from('guesty_reservations').select(RES_SELECT).gte('check_out', postClosedFrom).lte('check_out', today).order('check_out', { ascending: false }).limit(500),
+    cachedRecovery().then(e => ({ map: new Map<string, RecoveryUnit>(e), failed: false }))
+      // recoveryUnits throws rather than flag units on a partial review scan. Falling back to an
+      // empty map is right; PRETENDING that means "no unit is in recovery" is not, so the failure
+      // travels to the board and is shown instead of a clean bill of health.
+      .catch(() => ({ map: new Map<string, RecoveryUnit>(), failed: true })),
+  ])
+  const recovery = rec.map
+
+  // THE CALL LOG IS JOINED BY RESERVATION ID, not by a snapshotted date (see migration 073).
+  const callIds = Array.from(new Set([...(arrivals || []), ...(departures || [])].map((r: any) => String(r.id))))
+  const idChunks: string[][] = []
+  for (let i = 0; i < callIds.length; i += 200) idChunks.push(callIds.slice(i, i + 200))
+  const logs: CallLog[] = (await Promise.all(idChunks.map(chunk => sb.from('guest_calls')
+    .select('reservation_id,kind,outcome,note,called_by,caller_email,called_at,attempts,tier')
+    .in('reservation_id', chunk).then((r: any) => r.data || [])))).flat()
+  const callLog = new Map<string, CallLog>()
+  for (const c of logs) callLog.set(String(c.reservation_id) + '|' + String(c.kind), c)
+  const logOf = (id: any, kind: 'welcome' | 'post_checkout') => callLog.get(String(id) + '|' + kind) || null
+
+  // Glitches from the EARLIEST CHECK-IN on the departures list, not from the checkout window.
+  const earliestStay = (departures || []).reduce((min: string, r: any) => {
+    const ci = String(r.check_in || '').slice(0, 10)
+    return ci && ci < min ? ci : min
+  }, postClosedFrom)
+  const glitchRows = await glitchesDuringStays(sb, earliestStay)
+  const unlinked = assignUnlinkedGlitches(glitchRows, (departures || []).map((r: any) => String(r.listing_name || '')))
+
+  const dueDate = addDays(today, 2)
+  const recOf = (listingId: any): RecoveryUnit | null => recovery.get(String(listingId || '')) || null
+
+  // The listing's `building` for every unit on the page, so a lux tier never depends on the
+  // nickname happening to contain the building's name.
+  const listingIds = Array.from(new Set([...(arrivals || []), ...(departures || [])].map((r: any) => String(r.listing_id || '')).filter(Boolean)))
+  const buildingOfListing = new Map<string, string>()
+  for (let i = 0; i < listingIds.length; i += 200) {
+    const { data } = await sb.from('guesty_listings').select('id,building').in('id', listingIds.slice(i, i + 200))
+    for (const l of (data || [])) if ((l as any).building) buildingOfListing.set(String((l as any).id), String((l as any).building))
+  }
+
+  // ── WELCOME CALLS ─────────────────────────────────────────────────────────────────────────────
+  const rows: WelcomeRow[] = (arrivals || []).filter((r: any) => isLiveStay(r.status)).map((r: any) => {
+    const listing = String(r.listing_name || '')
+    const check_in = String(r.check_in).slice(0, 10)
+    const recv = recOf(r.listing_id)
+    const value = Number(r.money_total) || 0
+    const st = moneyStatus(r)
+    const tier = tierOf({ listingName: listing, building: buildingOfListing.get(String(r.listing_id || '')) || null, value, nights: st.nights, recovery: !!recv })
+    const mandatory = tier !== 'standard'
+    const lg = logOf(r.id, 'welcome')
+    const localDone = !!lg && isCompleted(lg.outcome)
+    const done = guestyCalled(r.custom_fields) || localDone
+    const incomplete = !!lg && lg.outcome === 'incomplete'
+    const closed = check_in < graceFrom
+    const w: any = welcomeOf(r.custom_fields) || {}
+    return {
+      id: String(r.id), guest: r.guest_name || '', guestId: String(r.guestId || ''), listing, listingId: String(r.listing_id || ''),
+      building: rollupBuilding(listing), check_in,
+      phone: r.guest_phone || '', value, source: r.source || '', notes: notesOf(r.custom_fields), status: st,
+      tier, mandatory,
+      // attempts is a COUNT: a claim writes 0 and 0 must stay 0, or a claim reads as a try.
+      done, outcome: lg ? String(lg.outcome) : '', attempts: lg ? (Number(lg.attempts) || 0) : 0,
+      callValue: typeof w.value === 'string' ? w.value : '',
+      calledBy: (lg && isCompleted(lg.outcome) && lg.called_by) ? String(lg.called_by) : (w._by || ''),
+      calledAt: (lg && isCompleted(lg.outcome) && lg.called_at) ? String(lg.called_at) : (w._at || ''),
+      claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
+      claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
+      sensitive: truthy(fieldVal(r.custom_fields, 'sensitive')),
+      // Standard calls are due inside 48h. MANDATORY calls are due the moment the booking exists:
+      // the point of a mandatory call is that it cannot be the thing that ran out of time.
+      due: (check_in <= dueDate || mandatory) && check_in >= graceFrom,
+      dueToday: check_in <= today && check_in >= graceFrom,
+      // Already arrived and closing tonight — strictly before today.
+      lastChance: check_in < today && check_in >= graceFrom,
+      closed, incomplete,
+      prio: mandatory ? 0 : 1,
+      recovery: recv,
+    }
+  })
+
+  // ── POST-CHECKOUT ─────────────────────────────────────────────────────────────────────────────
+  const outRows: PostRow[] = (departures || [])
+    .filter((r: any) => isLiveStay(r.status))
+    .map((r: any) => {
+      const listingId = String(r.listing_id || '')
+      const checkIn = String(r.check_in || '').slice(0, 10)
+      const checkOut = String(r.check_out || '').slice(0, 10)
+      const glitches = glitchesFor(glitchRows, listingId, String(r.listing_name || ''), checkIn, checkOut, unlinked)
+      // Only a recovery that EXISTED when the guest left. If the low review landed after their
+      // checkout, they were never on this list — often they wrote that review — and the nightly
+      // close-out must not invent a miss for a call nobody was asked to make.
+      const recv0 = recOf(listingId)
+      const recv = recv0 && recv0.at <= checkOut ? recv0 : null
+      const value = Number(r.money_total) || 0
+      const reasons = postCheckoutReasons({ glitches, inRecovery: !!recv, source: r.source || '', value })
+      const lg = logOf(r.id, 'post_checkout')
+      return {
+        id: String(r.id), guest: r.guest_name || '', listing: r.listing_name || '', listingId, building: rollupBuilding(r.listing_name),
+        check_in: checkIn, check_out: checkOut, phone: r.guest_phone || '', value, source: r.source || '',
+        nights: Number(r.nights) || Number(r.nightsCount) || 0, notes: notesOf(r.custom_fields),
+        glitches, recovery: recv, reasons,
+        done: !!lg && isCompleted(lg.outcome),
+        outcome: lg ? String(lg.outcome) : '', attempts: lg ? (Number(lg.attempts) || 0) : 0,
+        calledBy: lg ? String(lg.called_by || '') : '', calledAt: lg ? String(lg.called_at || '') : '', callNote: lg ? String(lg.note || '') : '',
+        claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
+        claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
+        closed: checkOut < backDate,
+        incomplete: !!lg && lg.outcome === 'incomplete',
+      }
+    })
+    .filter((r: PostRow) => !!r.recovery)
+
+  // ── THE NUMBERS AT THE TOP ────────────────────────────────────────────────────────────────────
+  const weekAgo = addDays(today, -7)
+  const { rows: arrivedAll, truncated: coverageShort } = await pageRows<any>((a, b) => sb.from('guesty_reservations')
+    .select('id,status,custom_fields').gte('check_in', weekAgo).lt('check_in', today).order('id').range(a, b), 4)
+  const arrivedRows = arrivedAll.filter((r: any) => isLiveStay(r.status))
+  // A call logged locally counts even if the Guesty field write lagged.
+  const arrivedIds = arrivedRows.map((r: any) => String(r.id))
+  const arrivedLogs: any[] = arrivedIds.length ? (await Promise.all(
+    Array.from({ length: Math.ceil(arrivedIds.length / 200) }, (_, i) => arrivedIds.slice(i * 200, i * 200 + 200))
+      .map(chunk => sb.from('guest_calls').select('reservation_id,outcome').eq('kind', 'welcome').in('reservation_id', chunk).then((r: any) => r.data || []))
+  )).flat() : []
+  const localCalled = new Set(arrivedLogs.filter((l: any) => isCompleted(l.outcome)).map((l: any) => String(l.reservation_id)))
+  const arrivedCalled = arrivedRows.filter((r: any) => guestyCalled(r.custom_fields) || localCalled.has(String(r.id))).length
+
+  const isToday = (iso: string) => !!iso && ymdET(new Date(iso)) === today
+  const open = rows.filter(r => !r.done && !r.closed)
+  const kpis = {
+    dueNow: open.filter(r => r.due).length,
+    dueToday: open.filter(r => r.dueToday).length,
+    lastChance: open.filter(r => r.lastChance).length,
+    mandatoryOpen: open.filter(r => r.mandatory && r.due).length,
+    mandatoryDoneToday: rows.filter(r => r.mandatory && r.done && isToday(r.calledAt)).length,
+    calledToday: rows.filter(r => r.done && isToday(r.calledAt)).length + outRows.filter(r => r.done && isToday(r.calledAt)).length,
+    pending: open.length,
+    coverage: (coverageShort || !arrivedRows.length) ? null : Math.round((arrivedCalled / arrivedRows.length) * 100),
+    coverageOf: arrivedRows.length,
+    coverageMissed: arrivedRows.length - arrivedCalled,
+    coverageShort,
+    recoveryUnits: recovery.size,
+    recoveryCalls: open.filter(r => r.recovery).length,
+    postDue: outRows.filter(r => !r.done && !r.closed).length,
+    closedOut: rows.filter(r => !r.done && r.closed).length + outRows.filter(r => !r.done && r.closed).length,
+    recoveryFailed: rec.failed,
+  }
+
+  return { today, rows, outRows, recoveryFailed: rec.failed, kpis }
+}
+
+/**
+ * NIGHTLY CLOSE-OUT. Every call whose grace period has ended without a completed outcome gets an
+ * `incomplete` row — tier, scheduled day, attempts so far — so the miss exists as data.
+ *
+ * Three rules keep it honest:
+ *   · It REFUSES to run when the recovery scan failed. Without recovery it cannot tell a
+ *     recovery-tier miss from a standard one, or a post-checkout miss from nothing at all — and an
+ *     incomplete row is never rewritten, so a wrong tier would be permanent.
+ *   · It only sends the columns it means to change. A Postgres upsert leaves unsent columns as they
+ *     were, so the claimer's name, the no-answer note and the listing survive on the closed row.
+ *   · It RECONCILES: a call Guesty says was made (field ticked) whose local row is still a claim
+ *     or a no-answer — the done-path log write is best-effort and can fail — is upgraded to `done`,
+ *     so the scoreboard stops counting it as open forever.
+ */
+export async function closeOutCalls(sb: any, today: string): Promise<{ welcome: number; post: number; reconciled: number; skipped: number; refused?: string }> {
+  const d = await loadCallsDesk(sb, today)
+  if (d.recoveryFailed) return { welcome: 0, post: 0, reconciled: 0, skipped: 0, refused: 'recovery scan came back short — not closing anything on a partial read' }
+  const at = new Date().toISOString()
+  let welcome = 0, post = 0, reconciled = 0, skipped = 0
+  const write = async (row: Record<string, any>) => {
+    const { error } = await sb.from('guest_calls').upsert(row, { onConflict: 'reservation_id,kind' })
+    if (error) { skipped++; return false }
+    return true
+  }
+  for (const r of d.rows) {
+    if (r.done) {
+      // Guesty says called; local row (if any) does not. Upgrade it — or create it, so a call
+      // ticked straight in Guesty still counts on the scoreboard (caller unknown).
+      if (!r.outcome || !isCompleted(r.outcome)) {
+        if (await write({
+          reservation_id: r.id, kind: 'welcome', outcome: 'done', tier: r.tier,
+          guest_name: r.guest, listing_id: r.listingId || null, ref_date: r.check_in, scheduled_for: r.check_in,
+          ...(r.calledBy ? { called_by: r.calledBy } : {}), ...(r.calledAt ? { called_at: r.calledAt } : {}),
+        })) reconciled++
+      }
+      continue
+    }
+    if (!r.closed || r.incomplete) continue
+    if (await write({
+      reservation_id: r.id, kind: 'welcome', outcome: 'incomplete', tier: r.tier,
+      attempts: r.attempts || 0, guest_name: r.guest, ref_date: r.check_in,
+      scheduled_for: r.check_in, closed_at: at, called_at: at,
+      ...(r.listingId ? { listing_id: r.listingId } : {}),
+    })) welcome++
+  }
+  for (const r of d.outRows) {
+    if (!r.closed || r.done || r.incomplete) continue
+    if (await write({
+      reservation_id: r.id, kind: 'post_checkout', outcome: 'incomplete', tier: 'post_checkout',
+      attempts: r.attempts || 0, guest_name: r.guest, ref_date: r.check_out,
+      scheduled_for: r.check_out, closed_at: at, called_at: at,
+      ...(r.listingId ? { listing_id: r.listingId } : {}),
+    })) post++
+  }
+  return { welcome, post, reconciled, skipped }
+}

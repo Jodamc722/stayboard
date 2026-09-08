@@ -131,14 +131,49 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const reservationId = body?.reservationId
   const noteOnly = body?.noteOnly === true
-  const done = body?.done !== false // default true (ignored when noteOnly)
-  const value = typeof body?.value === 'string' ? body.value : (done ? 'Completed' : '')
+  // CALL-CENTER OUTCOMES (2026-09-08). `outcome` supersedes the old boolean `done`:
+  //   reached | voicemail  -> the call happened; the Guesty field is written, the log is completed
+  //   no_answer            -> the call did NOT happen; nothing in Guesty, attempts += 1, row stays open
+  //   claim                -> "I'm on this one": a lock in the log so two people never dial the same guest
+  //   undo                 -> clears the Guesty field and the log
+  // The old `done: true/false` still works and maps to reached / undo.
+  const OUTCOMES = ['reached', 'voicemail', 'no_answer', 'claim', 'undo']
+  const outcome: string = OUTCOMES.indexOf(String(body?.outcome)) >= 0 ? String(body.outcome) : (body?.done === false ? 'undo' : 'reached')
+  const done = outcome === 'reached' || outcome === 'voicemail'
+  const TIERS = ['recovery', 'lux', 'big', 'standard']
+  const tier = TIERS.indexOf(String(body?.tier)) >= 0 ? String(body.tier) : 'standard'
+  const value = typeof body?.value === 'string' ? body.value : (outcome === 'voicemail' ? 'Voicemail left' : done ? 'Completed' : '')
   const by = (typeof body?.by === 'string' && body.by.trim()) ? body.by.trim().slice(0, 80) : String(user.email || '').toLowerCase()
+  const callerEmail = String(user.email || '').toLowerCase()
   const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 1000) : ''
   if (!reservationId) return NextResponse.json({ error: 'reservationId required' }, { status: 400 })
   if (noteOnly && !note) return NextResponse.json({ error: 'Type a note first.' }, { status: 400 })
 
   const sb = supabaseAdmin()
+
+  // ── LOG-ONLY OUTCOMES: no Guesty write. A claim and a no-answer are facts about the desk, not
+  // about the reservation, so they live in guest_calls and nowhere else. ──
+  if (outcome === 'claim' || outcome === 'no_answer') {
+    const { data: prev } = await sb.from('guest_calls').select('outcome,attempts,called_by').eq('reservation_id', reservationId).eq('kind', 'welcome').maybeSingle()
+    const { data: meta } = await sb.from('guesty_reservations').select('listing_id, guest_name, check_in').eq('id', reservationId).maybeSingle()
+    // A completed call is never downgraded by a late claim or a stray no-answer press.
+    if (prev && ['done', 'reached', 'voicemail'].indexOf(String((prev as any).outcome)) >= 0) {
+      return NextResponse.json({ ok: true, outcome: (prev as any).outcome, unchanged: true })
+    }
+    const attempts = outcome === 'no_answer' ? (Number((prev as any)?.attempts) || 0) + 1 : (Number((prev as any)?.attempts) || 0)
+    const at0 = new Date().toISOString()
+    // Upsert only touches the columns sent: a claim with an empty draft leaves the last no-answer
+    // note in place instead of blanking it.
+    const { error } = await sb.from('guest_calls').upsert({
+      reservation_id: reservationId, kind: 'welcome', outcome: outcome === 'claim' ? 'in_progress' : 'no_answer',
+      tier, attempts, called_by: by, caller_email: callerEmail, called_at: at0,
+      ...(note ? { note } : {}),
+      listing_id: (meta as any)?.listing_id || null, guest_name: (meta as any)?.guest_name || null,
+      ref_date: (meta as any)?.check_in || null, scheduled_for: (meta as any)?.check_in || null,
+    }, { onConflict: 'reservation_id,kind' })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, outcome: outcome === 'claim' ? 'in_progress' : 'no_answer', attempts, by, at: at0 })
+  }
   const { data: row, error } = await sb.from('guesty_reservations').select('custom_fields, raw').eq('id', reservationId).single()
   if (error || !row) return NextResponse.json({ error: 'reservation not found' }, { status: 404 })
   const raw: any = (row.raw && typeof row.raw === 'object') ? row.raw : {}
@@ -244,20 +279,27 @@ export async function POST(req: NextRequest) {
   // "Called" stays true — but who called and when did not, so every count of calls made today read
   // zero. guest_calls is ours and nothing overwrites it. Best-effort: the Guesty write is the one
   // that decides whether the call is marked, and it has already succeeded by this point.
+  let loggedAttempts = 0
   try {
     if (done) {
-      const { data: meta } = await sb.from('guesty_reservations').select('listing_id, guest_name, check_in').eq('id', reservationId).maybeSingle()
+      const [{ data: meta }, { data: prev }] = await Promise.all([
+        sb.from('guesty_reservations').select('listing_id, guest_name, check_in').eq('id', reservationId).maybeSingle(),
+        sb.from('guest_calls').select('attempts').eq('reservation_id', reservationId).eq('kind', 'welcome').maybeSingle(),
+      ])
+      loggedAttempts = (Number((prev as any)?.attempts) || 0) + 1
       await sb.from('guest_calls').upsert({
-        reservation_id: reservationId, kind: 'welcome', outcome: 'done', note,
-        called_by: by, called_at: at,
+        reservation_id: reservationId, kind: 'welcome', outcome, tier, ...(note ? { note } : {}),
+        attempts: loggedAttempts,
+        called_by: by, caller_email: callerEmail, called_at: at,
         listing_id: (meta as any)?.listing_id || null,
         guest_name: (meta as any)?.guest_name || null,
         ref_date: (meta as any)?.check_in || null,
+        scheduled_for: (meta as any)?.check_in || null,
       }, { onConflict: 'reservation_id,kind' })
     } else {
       await sb.from('guest_calls').delete().eq('reservation_id', reservationId).eq('kind', 'welcome')
     }
   } catch { /* the Guesty field is the source of truth for "was it called" */ }
 
-  return NextResponse.json({ ok: true, done, value, callValue: value, by, at, notes: newNotes })
+  return NextResponse.json({ ok: true, done, outcome, value, callValue: value, by, at, attempts: loggedAttempts, notes: newNotes })
 }
