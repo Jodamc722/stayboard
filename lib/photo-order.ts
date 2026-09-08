@@ -78,7 +78,7 @@ const WALK: { re: RegExp; rank: number; label: string }[] = [
 const CATEGORY_RANK: Record<string, number> = { living: 20, dining: 30, kitchen: 40, bedroom: 50, bathroom: 60, outdoor: 70, view: 75, detail: 78, other: 79, amenity: 90, exterior: 95 }
 const AMENITY_RANK: { re: RegExp; rank: number; label: string }[] = [
   { re: /pool|infinity|beach|marina/, rank: 90, label: 'Pool' },
-  { re: /rooftop|roof|sky/, rank: 91, label: 'Rooftop' },
+  { re: /rooftop|roof|deck|sky/, rank: 91, label: 'Rooftop' },
   { re: /gym|fitness|spa|sauna|wellness/, rank: 92, label: 'Gym & spa' },
   { re: /lounge|club|coworking|game|cinema|theater|theatre/, rank: 93, label: 'Lounges' },
   { re: /lobby|entrance|reception|elevator|hallway|corridor/, rank: 94, label: 'Lobby' },
@@ -91,7 +91,11 @@ const BAD_FAULTS = new Set(['blurry', 'dark', 'signage', 'people', 'watermark', 
 const rk = (s: string) => String(s || '').trim().toLowerCase()
 function walkOf(p: PhotoFacts): { rank: number; label: string } {
   const room = rk(p.room)
-  if (p.category === 'amenity' || p.category === 'exterior') {
+  // A shared space is a building amenity whatever the model called its category — a "pool-deck"
+  // tagged outdoor belongs with the pool, not in the unit's tour (audit: 10 rooftop shots landed
+  // mid-tour under "Outdoor" because their category was outdoor and their room was "pool-deck").
+  const shared = /pool|rooftop|roof-?deck|gym|fitness|spa|sauna|lobby|lounge|coworking|cinema|garage|exterior|facade|marina/
+  if (p.category === 'amenity' || p.category === 'exterior' || shared.test(room)) {
     for (const a of AMENITY_RANK) if (a.re.test(room) || a.re.test(rk(p.subject))) return a
     return { rank: p.category === 'exterior' ? 96 : 93, label: p.category === 'exterior' ? 'Exterior' : 'Building amenities' }
   }
