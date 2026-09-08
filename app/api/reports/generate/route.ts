@@ -239,7 +239,7 @@ export async function POST(req: NextRequest) {
     const seasonLabel = proj.monthLabels[0] + ' – ' + proj.monthLabels[proj.monthLabels.length - 1]
     const pStart = etToday()
     const content: ReportContent = {
-      meta: { scopeLabel, periodStart: pStart, periodEnd: pStart, asOf, activeListings: ids2.length, daysRemaining: 0, generatedAt: new Date().toISOString() },
+      meta: { scopeLabel, periodStart: pStart, periodEnd: pStart, asOf, activeListings: ids2.length, daysRemaining: 0, generatedAt: new Date().toISOString(), kind: 'projection' },
       hero: {
         eyebrow: prettyDate(asOf).toUpperCase(),
         title: scopeLabel,
@@ -563,14 +563,12 @@ export async function POST(req: NextRequest) {
     feeNum: m.channelFees, occNights: m.occupiedNights, availNights: m.availableNights,
   })
 
-  // NEXT SEASON PROJECTION (Jon, 2026-08-22: "create a owner report with the owner report tab
-  // based on this"). The Projections board's numbers for this report's units, frozen into the
-  // content at generation. ADDITIVE: any failure leaves it null and the report generates as
-  // before. Skippable with body.includeProjection === false.
-  let projection: ReportContent['projection'] = null
-  if (body?.includeProjection !== false) {
-    try { projection = await projectionSectionFor(ids) } catch { projection = null }
-  }
+  // NO PROJECTION ON THE OWNER REVIEW (Jon, 2026-09-08: "the projection part in the owner report
+  // is terrible. remove that please"). This used to run projectionSectionFor(ids) on every review
+  // and freeze a month-by-unit forecast grid into a report about what already happened. Owners
+  // could not tell the modelled column from the settled one. The season projection report
+  // (kind 'projection') still builds it — that report says PROJECTION on its face.
+  const projection: ReportContent['projection'] = null
 
   const content: ReportContent = {
     meta: {
