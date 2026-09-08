@@ -63,6 +63,9 @@ export type ReportContent = {
   meta: {
     scopeLabel: string; periodStart: string; periodEnd: string; asOf: string
     activeListings: number; daysRemaining: number; generatedAt: string
+    /** 'review' (the owner performance report) or 'projection' (the standalone season report).
+     *  The Next Season section belongs ONLY to the projection report — see `projection` below. */
+    kind?: 'review' | 'projection'
   }
   hero: { eyebrow: string; title: string; headline: string; preparedFor: string; dateLabel: string; heroImage: string | null }
   snapshot: {
@@ -128,9 +131,15 @@ export type ReportContent = {
   // Per-section revenue basis (see lib/basis.ts). default flows to every section unless overridden.
   // Snapshot cards show a big primary number with a secondary number beneath ('none' hides it).
   basis?: { default?: Basis; snapshotPrimary?: Basis; snapshotSecondary?: Basis | 'none'; snaps?: Basis; byListing?: Basis; byMonth?: Basis; ahead?: Basis }
-  // NEXT SEASON PROJECTION (Jon, 2026-08-22): the Projections board's numbers for THIS report's
-  // units, frozen at generation time (lib/projections.projectionSectionFor). Null when the scope
-  // resolves no projectable units; old reports simply don't have the key and don't render it.
+  // NEXT SEASON PROJECTION — THE STANDALONE PROJECTION REPORT ONLY (Jon, 2026-09-08: "the
+  // projection part in the owner report is terrible. remove that"). It rode along on every owner
+  // REVIEW report as a "Next Season" section: a wide month-by-unit grid of modelled numbers
+  // pinned under a report whose whole promise is what actually happened. Owners read the two as
+  // the same kind of fact, and a projection that misses becomes the thing they remember.
+  //
+  // So the review report no longer carries it. The section still powers the dedicated season
+  // projection report (kind 'projection'), where a forecast is the point and is labelled as one —
+  // that report sets meta.kind and is the only thing that renders this.
   projection?: {
     headline: string; subtitle: string
     monthLabels: string[]
