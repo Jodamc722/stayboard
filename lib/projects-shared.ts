@@ -144,6 +144,72 @@ export const ago = (iso: string, now = Date.now()) => {
   try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(t)) } catch { return iso.slice(0, 10) }
 }
 
+// ── TEMPLATES, RECURRENCE, BOARD SETTINGS (Wave 4) ──────────────────────────────────────────────
+export const PROJECT_KINDS = ['project', 'one_on_one', 'personal'] as const
+export type ProjectKind = typeof PROJECT_KINDS[number]
+
+export type TemplateTask = { title: string; description?: string; priority?: string; dueOffsetDays?: number }
+export type TemplateSection = { name: string; tasks: TemplateTask[] }
+export type Template = {
+  key: string; label: string; kind: ProjectKind; category: string; summary?: string
+  blurb?: string                       // one line for the picker
+  sections: TemplateSection[]
+  settings?: Partial<BoardSettings>
+  recurs?: Recurrence | null           // a suggested schedule (the 1:1 defaults to weekly)
+  builtIn?: boolean
+}
+
+/** How often a project re-creates itself. Lives on the LATEST instance of a series only. */
+export type Recurrence = {
+  every: 'week' | '2weeks' | 'month'
+  weekday?: number                     // 0=Sun … 6=Sat, for week / 2weeks
+  day?: number                         // 1..28, for month
+  next_on: string                      // YYYY-MM-DD — the morning the next instance is made
+  carry?: boolean                      // open tasks roll into the next instance (default true)
+}
+export const RECUR_LABEL: Record<Recurrence['every'], string> = { week: 'Weekly', '2weeks': 'Every 2 weeks', month: 'Monthly' }
+export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/** The next occurrence strictly after `from` (YYYY-MM-DD), by the rule. Pure; tested. */
+export function nextOccurrence(r: { every: Recurrence['every']; weekday?: number; day?: number }, from: string): string {
+  const d = new Date(from + 'T12:00:00Z')
+  const ymd = (x: Date) => x.toISOString().slice(0, 10)
+  if (r.every === 'month') {
+    const day = Math.min(28, Math.max(1, Number(r.day || 1)))
+    const cand = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), day, 12))
+    if (cand <= d) cand.setUTCMonth(cand.getUTCMonth() + 1)
+    return ymd(cand)
+  }
+  const wd = Math.min(6, Math.max(0, Number(r.weekday ?? 1)))
+  let delta = (wd - d.getUTCDay() + 7) % 7
+  // `from` is the previous occurrence when advancing a series (so it IS the weekday, delta 0):
+  // two weeks on from the last one, not from today — a late run does not shift the cadence.
+  // From any other day, the first occurrence is simply the next such weekday.
+  if (delta === 0) delta = r.every === '2weeks' ? 14 : 7
+  d.setUTCDate(d.getUTCDate() + delta)
+  return ymd(d)
+}
+export function describeRecurrence(r: Recurrence | null | undefined): string {
+  if (!r) return ''
+  const when = r.every === 'month' ? `on the ${r.day || 1}${['st', 'nd', 'rd'][((r.day || 1) - 1)] || 'th'}` : `on ${WEEKDAYS[r.weekday ?? 1]}`
+  return `${RECUR_LABEL[r.every]} ${when}`
+}
+
+/** How a board looks. Every field optional; the page supplies defaults. */
+export type BoardSettings = {
+  view: 'list' | 'board'              // sections stacked, or sections as columns
+  accent: 'indigo' | 'emerald' | 'amber' | 'rose' | 'sky' | 'violet' | 'slate'
+  hideDone: boolean
+  sectionOrder: string[]              // explicit order; unknown sections follow in first-used order
+}
+export const DEFAULT_SETTINGS: BoardSettings = { view: 'list', accent: 'indigo', hideDone: false, sectionOrder: [] }
+export const settingsOf = (raw: any): BoardSettings => ({
+  view: raw?.view === 'board' ? 'board' : 'list',
+  accent: ['indigo', 'emerald', 'amber', 'rose', 'sky', 'violet', 'slate'].includes(raw?.accent) ? raw.accent : 'indigo',
+  hideDone: raw?.hideDone === true,
+  sectionOrder: Array.isArray(raw?.sectionOrder) ? raw.sectionOrder.map(String).slice(0, 50) : [],
+})
+
 // ── NOTIFICATIONS (Wave 3) ──────────────────────────────────────────────────────────────────────
 export type NotifyType = 'assigned' | 'mentioned' | 'comment' | 'added' | 'due_soon' | 'overdue'
 export type Notification = {
@@ -191,7 +257,7 @@ export function parseMentions<M extends { display: string; email?: string | null
 }
 
 export type ProjectFull = Project & {
-  private: boolean; kind: string; template_key: string | null; recurs: any
+  private: boolean; kind: string; template_key: string | null; recurs: Recurrence | null; settings: any; series_key: string | null
   links: any[]; steps: any[]; photos: ProjectFile[]; notes: Note[]
   members: Member[]
   tasks: Task[]
@@ -208,14 +274,20 @@ export type ProjectFull = Project & {
 // lists projects without asking.
 export type Viewer = { email: string | null; superadmin: boolean }
 
-export function canSee(members: { email?: string | null; person_key?: string | null }[], viewer: Viewer): boolean {
-  if (viewer.superadmin) return true
+// A PERSONAL BOARD IS THE ONE EXCEPTION TO "PLUS THE SUPERADMIN" (Jon, 2026-09-08: "their own
+// project boards that are private to them, just like Asana"). It is somebody's own list; nobody
+// else is on it and nobody else reads it — not even the owner of the company. Pass the project's
+// kind to get that rule; omit it and the ops rule applies.
+export function canSee(members: { email?: string | null; person_key?: string | null }[], viewer: Viewer, kind?: string | null): boolean {
   const e = String(viewer.email || '').trim().toLowerCase()
-  if (!e) return false
-  return members.some(m => String(m.email || '').trim().toLowerCase() === e)
+  const member = !!e && members.some(m => String(m.email || '').trim().toLowerCase() === e)
+  if (kind === 'personal') return member
+  if (viewer.superadmin) return true
+  return member
 }
 
-export function canEdit(members: { email?: string | null; role?: string | null }[], viewer: Viewer): boolean {
+export function canEdit(members: { email?: string | null; role?: string | null }[], viewer: Viewer, kind?: string | null): boolean {
+  if (kind === 'personal') return canSee(members, viewer, kind)
   if (viewer.superadmin) return true
   const e = String(viewer.email || '').trim().toLowerCase()
   if (!e) return false

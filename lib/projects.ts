@@ -32,12 +32,12 @@ export async function listProjects(opts: { archived?: boolean; category?: string
     // PRIVACY IS APPLIED HERE, NOT IN THE UI. When a viewer is given, the board only ever receives
     // the projects that viewer is a member of. A non-member does not get a greyed-out card; they
     // get nothing, and cannot tell the project exists.
-    if (opts.viewer && !opts.viewer.superadmin) {
+    if (opts.viewer) {
       const e = String(opts.viewer.email || '').trim().toLowerCase()
-      if (!e) return []
-      const { data: mine } = await sb.from('project_members').select('project_id').eq('email', e).limit(2000)
+      const { data: mine } = e ? await sb.from('project_members').select('project_id').eq('email', e).limit(2000) : { data: [] as any[] }
       const ok = new Set(((mine || []) as any[]).map(m => String(m.project_id)))
-      rows = rows.filter(r => ok.has(String(r.id)))
+      // A personal board is its owner's alone — the superadmin's all-access stops at the kind.
+      rows = rows.filter(r => canSee(ok.has(String(r.id)) ? [{ email: e }] : [], opts.viewer!, (r as any).kind))
       if (!rows.length) return []
     }
     const ids = rows.map(r => r.id)
@@ -136,10 +136,10 @@ export async function gateProject(id: string, viewer: Viewer, need: 'view' | 'ed
   const { data: memRows, error: memErr } = await sb.from('project_members').select('*').eq('project_id', id)
   if (memErr) return { ok: false, status: 500, error: 'Could not check access: ' + memErr.message }
   const members = (memRows || []) as Member[]
-  const { data: exists, error: exErr } = await sb.from('projects').select('id').eq('id', id).maybeSingle()
+  const { data: exists, error: exErr } = await sb.from('projects').select('id,kind').eq('id', id).maybeSingle()
   if (exErr) return { ok: false, status: 500, error: 'Could not check access: ' + exErr.message }
-  if (!exists || !canSee(members, viewer)) return { ok: false, status: 404, error: 'No such project.' }
-  if (need === 'edit' && !canEdit(members, viewer)) return { ok: false, status: 403, error: 'You can view this project but not change it.' }
+  if (!exists || !canSee(members, viewer, exists.kind)) return { ok: false, status: 404, error: 'No such project.' }
+  if (need === 'edit' && !canEdit(members, viewer, exists.kind)) return { ok: false, status: 403, error: 'You can view this project but not change it.' }
   return { ok: true, members }
 }
 
