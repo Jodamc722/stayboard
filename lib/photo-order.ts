@@ -58,7 +58,57 @@ export type Slot = 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'
 export type Placement = { slot: Slot; group: string; why: string; flag?: 'duplicate' | 'fault' | 'stock' | null }
 export type Placed = PhotoFacts & { placement: Placement; position: number }
 export type HeroCandidate = { _id: string; score: number; why: string }
-export type UnitProfile = { bedrooms: number | null; isStudio: boolean }
+export type UnitProfile = { bedrooms: number | null; bathrooms?: number | null; isStudio: boolean }
+
+/**
+ * ROOM IDS THAT AGREE WITH EACH OTHER (Jon, 2026-09-08: "need to organize rooms too, make sure it
+ * organized properly"). The vision pass sees 18 photos at a time, so batch 1 may say "bedroom-1",
+ * batch 2 "master-bedroom" and batch 3 "bedroom" for the same bed. This folds every spelling into
+ * one vocabulary and clamps numbers to what the unit actually has: a 1-bedroom cannot have a
+ * "bedroom-2", a studio's sleeping space is always "bedroom-1", one bathroom is always
+ * "bath-primary". Same room → same id → the tour keeps it together.
+ */
+export function normalizeRoom(room: string, category: string, profile: UnitProfile): string {
+  let r = rk(room).replace(/\s+/g, '-').replace(/_/g, '-').replace(/[^a-z0-9-]/g, '')
+  const beds = profile.isStudio ? 1 : Math.max(1, profile.bedrooms ?? 1)
+  const baths = Math.max(1, Math.ceil(profile.bathrooms ?? 1))
+  if (!r) r = category || 'other'
+  // Living / dining / kitchen family
+  if (/^(living|livingroom|living-room|lounge-area|family|great-room|sitting)/.test(r)) return 'living'
+  if (/^(dining|dinette|breakfast)/.test(r)) return 'dining'
+  if (/^(kitchen|kitchenette|galley)/.test(r)) return 'kitchen'
+  if (/^(entry|entrance|foyer|hallway|hall|vestibule)/.test(r)) return 'entry'
+  if (/^(office|den|study|workspace|desk)/.test(r)) return 'workspace'
+  if (/^(laundry|closet|storage|utility|washer)/.test(r)) return 'utility'
+  // Bedrooms: any spelling → bedroom-N, clamped
+  if (/^(bed|bedroom|master|primary-bed|primary|suite|sleeping|studio|guest-bed|kids|bunk)/.test(r) || category === 'bedroom') {
+    let n = Number(r.match(/(\d+)/)?.[1] || 0)
+    if (!n) n = /guest|second|2nd|kids|bunk/.test(r) ? 2 : /third|3rd/.test(r) ? 3 : 1
+    return 'bedroom-' + Math.min(beds, Math.max(1, n))
+  }
+  // Bathrooms: primary first, then guest, half…; clamp to the count
+  if (/^(bath|bathroom|ensuite|en-suite|powder|wc|shower|toilet|restroom)/.test(r) || category === 'bathroom') {
+    const n = Number(r.match(/(\d+)/)?.[1] || 0)
+    const isGuest = /guest|second|2nd|half|powder|hall/.test(r) || n >= 2
+    return baths <= 1 ? 'bath-primary' : (isGuest ? 'bath-guest' : 'bath-primary')
+  }
+  // Unit outdoor vs building outdoor
+  if (/^(balcony|terrace|patio|lanai|porch|deck-private|private-deck|yard|garden)/.test(r)) return 'balcony'
+  if (/^view/.test(r) || (category === 'view' && !/pool|roof/.test(r))) return 'view'
+  if (/pool|infinity|marina|beach/.test(r)) return 'pool'
+  if (/roof|rooftop|sky-?deck|sundeck|deck/.test(r)) return 'rooftop'
+  if (/gym|fitness|spa|sauna|wellness|yoga/.test(r)) return 'gym'
+  if (/lobby|reception|entrance-hall|elevator|corridor|mailroom/.test(r)) return 'lobby'
+  if (/lounge|club|coworking|cinema|theater|theatre|game|billiard/.test(r)) return 'lounge'
+  if (/park|garage|bike|ev-/.test(r)) return 'parking'
+  if (/exterior|building|facade|street|aerial|drone|neighborhood|neighbourhood/.test(r) || category === 'exterior') return 'exterior'
+  if (category === 'outdoor') return 'balcony'
+  if (category === 'amenity') return r || 'amenity'
+  return r
+}
+export function normalizeRooms<T extends { room: string; category: string }>(facts: T[], profile: UnitProfile): T[] {
+  return facts.map(f => ({ ...f, room: normalizeRoom(f.room, f.category, profile) }))
+}
 
 export const ORDER_RULE = '1 cover (yours) · 2–5 showcase: one photo per key space, wide shots only · then the tour room by room (wide → detail) · then building amenities + exterior · duplicates, faulty shots and stock last, flagged for removal'
 
