@@ -11,7 +11,7 @@ import { requireLevel, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   getProject, logEvent, gateProject, ownerApprovalEmail, toCents, LINK_KINDS, canSee, canEdit, toPerson,
-  TASK_STATUSES, TASK_STATUS_LABEL, MEMBER_ROLES, FILES_BUCKET, prefsOf, type Viewer, type Member,
+  TASK_STATUSES, TASK_STATUS_LABEL, MEMBER_ROLES, FILES_BUCKET, prefsOf, settingsOf, describeRecurrence, type Viewer, type Member,
 } from '@/lib/projects'
 import { onAssigned, onAdded, onComment } from '@/lib/project-notify'
 
@@ -32,8 +32,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   try { p = await getProject(params.id) } catch (e: any) {
     return NextResponse.json({ error: 'Could not load the project: ' + String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
-  if (!p || !canSee(p.members, viewerOf(g.access))) return NextResponse.json({ error: 'No such project.' }, { status: 404 })
-  return NextResponse.json({ ok: true, project: p, canEdit: canEdit(p.members, viewerOf(g.access)) })
+  if (!p || !canSee(p.members, viewerOf(g.access), p.kind)) return NextResponse.json({ error: 'No such project.' }, { status: 404 })
+  return NextResponse.json({ ok: true, project: p, canEdit: canEdit(p.members, viewerOf(g.access), p.kind) })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -75,6 +75,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       case 'memberAdd': {
         const who = toPerson(str(b.person))
         if (!who.display) return NextResponse.json({ error: 'Who?' }, { status: 400 })
+        // A personal board stays personal. Wanting a second person on it means it is a project now.
+        const { data: pk } = await sb.from('projects').select('kind').eq('id', id).maybeSingle()
+        if (pk?.kind === 'personal') return NextResponse.json({ error: 'This is your personal board — only you can be on it. Start a project to work with somebody.' }, { status: 400 })
         const role = MEMBER_ROLES.includes(str(b.role) as any) ? str(b.role) : 'editor'
         const { error } = await sb.from('project_members').upsert(
           { project_id: id, ...who, role, added_by: me }, { onConflict: 'project_id,person_key' })
@@ -352,6 +355,40 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (f.storage_path) await sb.storage.from(FILES_BUCKET).remove([f.storage_path]).catch(() => {})
         const t = f.task_id ? await taskRow(f.task_id) : null
         await logEvent(id, me, 'file_removed', `removed ${f.name || (f.kind === 'photo' ? 'a photo' : 'a file')}`, { name: f.name || undefined, task_id: f.task_id || undefined, task_title: t?.title })
+        break
+      }
+
+      // ---- WAVE 4: how the board looks, whether it repeats, saving its shape --------
+      case 'setSettings': {
+        // Merge, so a page that only knows about `view` cannot wipe `sectionOrder`.
+        const { data: cur } = await sb.from('projects').select('settings').eq('id', id).maybeSingle()
+        const next = settingsOf({ ...(cur?.settings || {}), ...(b.settings || {}) })
+        const { error } = await sb.from('projects').update({ settings: next }).eq('id', id)
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        break
+      }
+      case 'setRecurs': {
+        const { normaliseRecurrence } = await import('@/lib/project-templates')
+        const r = b.recurs ? normaliseRecurrence(b.recurs) : null
+        const { error } = await sb.from('projects').update({ recurs: r }).eq('id', id)
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        await logEvent(id, me, 'stage', r ? `set this to repeat — ${describeRecurrence(r)}, next on ${r.next_on}` : 'stopped this from repeating', { name: 'recurrence', to: r ? r.every : null })
+        break
+      }
+      case 'saveTemplate': {
+        const label = str(b.label)
+        if (!label) return NextResponse.json({ error: 'Give the template a name.' }, { status: 400 })
+        const { snapshotTemplate } = await import('@/lib/project-templates')
+        const key = await snapshotTemplate(id, { key: str(b.key) || label, label, createdBy: me })
+        await logEvent(id, me, 'stage', `saved this as the “${label}” template`, { name: 'template', to: key })
+        return NextResponse.json({ ok: true, key, project: await getProject(id) })
+      }
+      case 'applyTemplate': {
+        const { getTemplate, applyTemplate } = await import('@/lib/project-templates')
+        const tpl = await getTemplate(str(b.template))
+        if (!tpl) return NextResponse.json({ error: 'No such template.' }, { status: 404 })
+        const n = await applyTemplate(id, tpl, { startsOn: str(b.starts_on) || null, createdBy: me })
+        await logEvent(id, me, 'stage', `added ${n} task${n === 1 ? '' : 's'} from the ${tpl.label} template`, { name: 'template', to: tpl.key })
         break
       }
 
