@@ -82,6 +82,10 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [copiedTitle, setCopiedTitle] = useState<string | null>(null)
   const [profile, setProfile] = useState<Result['profile']>(undefined)
   const [checks, setChecks] = useState<NonNullable<Result['checks']>>([])
+  // THE FIRST FIVE, in Jon's words "your cover photos". When the host arranges them, the lock holds
+  // positions 1–5 exactly as chosen through every regroup; null = the engine's five.
+  const [fiveLock, setFiveLock] = useState<string[] | null>(null)
+  const [fiveOpen, setFiveOpen] = useState(false)
   const [roomVocab, setRoomVocab] = useState<string[]>([])
   // Press-and-hold compare: shows the OTHER version of the photo while held.
   const [peek, setPeek] = useState<string | null>(null)
@@ -139,6 +143,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       setTitleHooks(Array.isArray(j.titleHooks) ? j.titleHooks : [])
       setProfile(j.profile); setRoomVocab(Array.isArray(j.roomVocab) ? j.roomVocab : [])
       setChecks(Array.isArray(j.checks) ? j.checks : [])
+      setFiveLock(null)
       // Duplicates, faults and stock come pre-flagged; ticking them is one click, not ten.
       setToRemove(new Set())
       if (j.partial) setError(String(j.partial))
@@ -333,7 +338,10 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       const i = prev.indexOf(id)
       const j = i + dir
       if (i <= 0 || j <= 0 || j >= prev.length) return prev // never move into hero slot (0)
-      const next = prev.slice(); [next[i], next[j]] = [next[j], next[i]]; return next
+      const next = prev.slice(); [next[i], next[j]] = [next[j], next[i]]
+      // A hand-move inside the first five is a decision about the five — keep it through regroups.
+      if (i < 5 || j < 5) setFiveLock(next.slice(0, 5))
+      return next
     })
   }
   function setAsHero(id: string) {
@@ -345,7 +353,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     setOrder(prev => {
       const from = prev.indexOf(dragId); const to = prev.indexOf(targetId)
       if (from <= 0 || to <= 0) return prev // hero slot is locked
-      const next = prev.slice(); next.splice(from, 1); next.splice(to, 0, dragId); return next
+      const next = prev.slice(); next.splice(from, 1); next.splice(to, 0, dragId)
+      if (from < 5 || to < 5) setFiveLock(next.slice(0, 5))
+      return next
     })
     setDragId(null)
   }
@@ -374,7 +384,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   // RE-GROUP IN THE BROWSER. The order engine is pure and isomorphic, so a room or category
   // correction rebuilds the order instantly from the facts already on screen — no second vision
   // call. Uploads (not yet in Guesty) stay appended; the cover stays where it is.
-  function regroup(nextPhotos: Record<string, Photo>) {
+  function regroup(nextPhotos: Record<string, Photo>, five?: string[] | null) {
+    const lock = five === undefined ? fiveLock : five
     const ids = order.filter(id => !uploads[id])
     const facts: PhotoFacts[] = ids.map(id => { const p = nextPhotos[id]; return {
       _id: id, url: p.url, room: p.room || p.category || 'other', category: p.category || 'other', subject: p.subject || '',
@@ -382,7 +393,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       faults: p.faults || [], sellingPoints: p.sellingPoints || [], duplicateOf: p.duplicateOf || null, heroWorthy: !!p.heroWorthy,
       caption: p.caption || '', captionSource: 'ai', enhance: p.enhance, enhanceWhy: p.enhanceWhy,
     } })
-    const r = engineOrder(facts, heroId || ids[0] || null, profile || { bedrooms: null, isStudio: false })
+    const r = engineOrder(facts, (lock && lock[0]) || heroId || ids[0] || null, profile || { bedrooms: null, isStudio: false }, lock ? { showcase: lock.slice(1) } : {})
+    if (lock && lock[0] && lock[0] !== heroId) setHeroId(lock[0])
     const merged: Record<string, Photo> = { ...nextPhotos }
     for (const pl of r.placed) merged[pl._id] = { ...merged[pl._id], placement: pl.placement, reason: pl.placement.why }
     setPhotos(merged)
@@ -390,6 +402,13 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     setOrder(newOrder); setProposed(newOrder)
     setRemoveList(r.placed.filter(p => p.placement.slot === 'demoted').map(p => ({ _id: p._id, reason: p.placement.why })))
     setHeroCands(r.heroCandidates)
+  }
+  // Apply an arrangement of the first five: the engine keeps them exactly there and rebuilds the rest.
+  function applyFive(five: string[]) {
+    const clean = five.filter(Boolean)
+    setFiveLock(clean.length ? clean : null)
+    regroup(photos, clean.length ? clean : null)
+    setFiveOpen(false)
   }
   async function setRoom(id: string, v: string) {
     const before = photos[id]?.room
@@ -645,18 +664,22 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                   const isHero = idx === 0
                   // Storyboard headers: a new row whenever the engine's group changes as the order
                   // stands NOW (a dragged photo simply starts its own group — honest, not stale).
-                  const grp = isHero ? 'Cover' : (p.placement?.slot === 'showcase' ? 'Showcase' : p.placement?.slot === 'demoted' ? 'Consider removing' : (p.placement?.group || 'Photos'))
+                  // Positions 1–5 are ONE section — "Cover photos", the five a guest sees in the
+                  // search-card swipe — with its own editor.
+                  const grp = idx < 5 ? 'Cover photos' : (p.placement?.slot === 'demoted' ? 'Consider removing' : (p.placement?.group || 'Photos'))
                   const prev = idx > 0 ? photos[order[idx - 1]] : null
-                  const prevGrp = idx === 0 ? null : idx === 1 ? 'Cover' : (prev?.placement?.slot === 'showcase' ? 'Showcase' : prev?.placement?.slot === 'demoted' ? 'Consider removing' : (prev?.placement?.group || 'Photos'))
+                  const prevGrp = idx === 0 ? null : idx <= 5 ? 'Cover photos' : (prev?.placement?.slot === 'demoted' ? 'Consider removing' : (prev?.placement?.group || 'Photos'))
                   const header = grp !== prevGrp ? grp : null
-                  const slotTone = p.placement?.slot === 'demoted' ? 'bg-rose-50 text-rose-700 border-rose-200' : p.placement?.slot === 'showcase' ? 'bg-brand-50 text-brand-700 border-brand-200' : p.placement?.slot === 'building' ? 'bg-teal-50 text-teal-700 border-teal-200' : 'bg-app text-muted border-line'
+                  const slotTone = idx < 5 ? 'bg-amber-50 text-amber-800 border-amber-200' : p.placement?.slot === 'demoted' ? 'bg-rose-50 text-rose-700 border-rose-200' : p.placement?.slot === 'building' ? 'bg-teal-50 text-teal-700 border-teal-200' : 'bg-app text-muted border-line'
                   return (
                     <Fragment key={id}>
                     {header && (
                       <li className="col-span-full flex items-center gap-2 pt-2 first:pt-0">
                         <span className={`text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md border ${slotTone}`}>{header}</span>
-                        <span className="text-[11px] text-muted">{header === 'Cover' ? 'position 1 — yours' : header === 'Showcase' ? 'positions 2–5 — one photo per key space' : header === 'Consider removing' ? 'duplicates, weak shots and stock — tick to remove on push' : 'the tour, room by room'}</span>
+                        <span className="text-[11px] text-muted">{header === 'Cover photos' ? 'the first five — what a guest sees in the search card and swipes before opening' : header === 'Consider removing' ? 'duplicates, weak shots and stock — tick to remove on push' : 'the tour, room by room'}</span>
                         <span className="flex-1 border-t border-line" />
+                        {header === 'Cover photos' && <button onClick={() => setFiveOpen(true)} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 text-white px-2.5 py-1 text-[11.5px] font-bold hover:bg-amber-600"><Crown size={12} /> Arrange the five</button>}
+                        {header === 'Cover photos' && fiveLock && <button onClick={() => applyFive([])} className="text-[11px] text-muted hover:text-ink">Back to AI five</button>}
                       </li>
                     )}
                     <li
@@ -779,6 +802,85 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
           )}
         </div>
       )}
+
+      {fiveOpen && order.length > 0 && (
+        <FiveSheet
+          initial={order.slice(0, 5)}
+          all={order.filter(id => !uploads[id])}
+          photos={photos}
+          heroCands={heroCands}
+          onApply={applyFive}
+          onClose={() => setFiveOpen(false)}
+        />
+      )}
     </section>
+  )
+}
+
+/**
+ * ARRANGE THE FIVE — the editor for positions 1–5 (Jon: "the most important photos… there should
+ * be a section labeled that, and a way to click into that"). Slot 1 is the cover; 2–5 are the
+ * swipe. Pick a slot, tap any photo below to put it there; arrows reorder; ✕ empties a slot and
+ * the engine fills it with its best remaining pick on Apply.
+ */
+function FiveSheet({ initial, all, photos, heroCands, onApply, onClose }: { initial: string[]; all: string[]; photos: Record<string, Photo>; heroCands: HeroCandidate[]; onApply: (five: string[]) => void; onClose: () => void }) {
+  const [five, setFive] = useState<(string | null)[]>(() => { const f: (string | null)[] = initial.slice(0, 5); while (f.length < 5) f.push(null); return f })
+  const [sel, setSel] = useState(0)
+  const inFive = new Set(five.filter(Boolean) as string[])
+  const put = (id: string) => { setFive(prev => { const n = prev.slice(); const already = n.indexOf(id); if (already >= 0) n[already] = n[sel]; n[sel] = id; return n }); setSel(s => Math.min(4, s + 1)) }
+  const move = (i: number, d: -1 | 1) => setFive(prev => { const j = i + d; if (j < 0 || j > 4) return prev; const n = prev.slice(); [n[i], n[j]] = [n[j], n[i]]; return n })
+  const clear = (i: number) => setFive(prev => { const n = prev.slice(); n[i] = null; return n })
+  const rankOf = (id: string) => { const i = heroCands.findIndex(c => c._id === id); return i >= 0 ? i + 1 : null }
+  const rest = all.filter(id => !inFive.has(id)).slice().sort((a, b) => (photos[b]?.quality || 0) - (photos[a]?.quality || 0))
+  const SLOT_Q = ["cover — earns the click", "what's special", 'where I sleep', 'where I sit / cook', 'where I bathe']
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <div className="bg-white w-full max-w-4xl rounded-t-2xl sm:rounded-2xl max-h-[92dvh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-line flex items-center gap-2">
+          <Crown size={16} className="text-amber-600" />
+          <div className="flex-1 min-w-0"><div className="text-[15px] font-bold text-ink">Cover photos — the first five</div><div className="text-[12px] text-muted">What a guest sees in the search card and swipes before opening. Pick a slot, then tap a photo below to place it.</div></div>
+          <button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center" aria-label="Close"><RotateCcw size={14} className="hidden" /><span className="text-lg leading-none">×</span></button>
+        </div>
+        <div className="overflow-y-auto p-4 space-y-4">
+          <div className="grid grid-cols-5 gap-2">
+            {five.map((id, i) => { const p = id ? photos[id] : null; const active = sel === i; return (
+              <div key={i} className={`rounded-xl border overflow-hidden ${active ? 'border-amber-500 ring-2 ring-amber-300' : 'border-line'} ${i === 0 ? 'col-span-5 sm:col-span-2 sm:row-span-2' : ''}`}>
+                <button onClick={() => setSel(i)} className="block w-full text-left">
+                  {p ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={p.url} alt="" className={`w-full object-cover ${i === 0 ? 'aspect-[4/3]' : 'aspect-[4/3]'}`} /> : <div className={`w-full aspect-[4/3] grid place-items-center text-[12px] text-muted bg-app`}>empty — AI fills on Apply</div>}
+                </button>
+                <div className="px-2 py-1.5 text-[11px] leading-tight">
+                  <div className="flex items-center gap-1"><span className="font-bold text-ink">{i + 1}</span><span className="text-muted truncate">{SLOT_Q[i]}</span></div>
+                  {p && <div className="flex items-center gap-1 mt-0.5"><span className={`font-bold px-1 rounded ${(p.quality || 0) >= 75 ? 'bg-emerald-100 text-emerald-700' : (p.quality || 0) >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>{p.quality ?? '–'}</span><span className="text-ink truncate">{p.subject || p.category}</span>{rankOf(p._id) && <span className="ml-auto text-amber-700 font-semibold whitespace-nowrap">pick #{rankOf(p._id)}</span>}</div>}
+                  <div className="flex items-center gap-1 mt-1">
+                    <button onClick={() => move(i, -1)} disabled={i === 0} className="p-0.5 rounded border border-line text-muted disabled:opacity-30"><ArrowUp size={11} className="-rotate-90" /></button>
+                    <button onClick={() => move(i, 1)} disabled={i === 4} className="p-0.5 rounded border border-line text-muted disabled:opacity-30"><ArrowDown size={11} className="-rotate-90" /></button>
+                    {p && <button onClick={() => clear(i)} className="ml-auto p-0.5 rounded border border-line text-muted hover:text-rose-600" title="Empty this slot"><Trash2 size={11} /></button>}
+                  </div>
+                </div>
+              </div>
+            )})}
+          </div>
+          <div>
+            <div className="text-[12px] font-semibold text-ink mb-1.5">Tap a photo to put it in slot {sel + 1} <span className="text-muted font-normal">· best quality first · crown = the engine's cover picks</span></div>
+            <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-6 gap-1.5">
+              {rest.map(id => { const p = photos[id]; if (!p) return null; const r = rankOf(id); const weak = p.placement?.slot === 'demoted' || (p.faults || []).some(f => ['vertical', 'collage', 'text', 'watermark'].includes(f)); return (
+                <button key={id} onClick={() => put(id)} className={`relative rounded-lg overflow-hidden border text-left ${weak ? 'border-rose-200 opacity-70' : 'border-line hover:border-amber-400'}`} title={`${p.subject || p.category} · quality ${p.quality ?? '–'}${weak ? ' · not recommended for the first five' : ''}`}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={p.url} alt="" className="w-full aspect-[4/3] object-cover" loading="lazy" />
+                  <span className={`absolute top-1 left-1 text-[10px] font-bold px-1 rounded ${(p.quality || 0) >= 75 ? 'bg-emerald-500 text-white' : (p.quality || 0) >= 60 ? 'bg-amber-400 text-white' : 'bg-rose-500 text-white'}`}>{p.quality ?? '–'}</span>
+                  {r && r <= 3 && <span className="absolute top-1 right-1 text-[10px] font-bold px-1 rounded bg-amber-500 text-white inline-flex items-center gap-0.5"><Crown size={9} /> {r}</span>}
+                  <span className="block px-1 py-0.5 text-[10px] text-ink truncate">{(p.room || p.category || '').replace(/-/g, ' ')}{p.shotType ? ' · ' + p.shotType : ''}</span>
+                </button>
+              )})}
+            </div>
+          </div>
+        </div>
+        <div className="px-4 py-3 border-t border-line flex items-center gap-2">
+          <span className="text-[12px] text-muted flex-1">Slot 1 is the cover. Empty slots are filled by the engine. Nothing goes live until you push.</span>
+          <button onClick={onClose} className="rounded-xl border border-line bg-white text-ink px-3.5 py-2 text-sm font-semibold">Cancel</button>
+          <button onClick={() => onApply(five.filter(Boolean) as string[])} className="rounded-xl bg-amber-500 text-white px-4 py-2 text-sm font-bold hover:bg-amber-600">Apply these five</button>
+        </div>
+      </div>
+    </div>
   )
 }
