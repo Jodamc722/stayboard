@@ -139,21 +139,29 @@ const SHOT_RANK: Record<ShotType, number> = { wide: 0, medium: 1, detail: 2 }
 const BAD_FAULTS = new Set(['blurry', 'dark', 'signage', 'people', 'watermark', 'clutter'])
 
 const rk = (s: string) => String(s || '').trim().toLowerCase()
-function walkOf(p: PhotoFacts): { rank: number; label: string } {
+function walkOf(p: PhotoFacts, profile?: UnitProfile): { rank: number; label: string } {
   const room = rk(p.room)
   // A shared space is a building amenity whatever the model called its category — a "pool-deck"
   // tagged outdoor belongs with the pool, not in the unit's tour (audit: 10 rooftop shots landed
   // mid-tour under "Outdoor" because their category was outdoor and their room was "pool-deck").
-  const shared = /pool|rooftop|roof-?deck|gym|fitness|spa|sauna|lobby|lounge|coworking|cinema|garage|exterior|facade|marina/
-  if (p.category === 'amenity' || p.category === 'exterior' || shared.test(room)) {
+  const shared = /pool|rooftop|roof-?deck|gym|fitness|spa|sauna|lobby|lounge|coworking|cinema|garage|parking|exterior|facade|marina/
+  if (shared.test(room)) {
     for (const a of AMENITY_RANK) if (a.re.test(room) || a.re.test(rk(p.subject))) return a
-    return { rank: p.category === 'exterior' ? 96 : 93, label: p.category === 'exterior' ? 'Exterior' : 'Building amenities' }
+    return { rank: 93, label: 'Building amenities' }
   }
+  // A unit room is a unit room even when the model's category says "amenity" (a desk tagged as an
+  // amenity is still the workspace IN the unit) — the room id wins over the category.
   for (const w of WALK) if (w.re.test(room)) {
+    // In a studio the sleeping space IS the living room — it opens the tour.
+    if (profile?.isStudio && w.rank === 50) return { rank: 20, label: 'The room' }
     // bedroom-2 after bedroom-1, bath-guest after bath-primary
     const n = room.match(/(\d+)/)?.[1]
     const bump = n ? Math.min(9, Number(n)) * 0.1 : (/primary|master|main/.test(room) ? 0 : /guest|second|2nd|half|powder/.test(room) ? 0.5 : 0.2)
     return { rank: w.rank + bump, label: w.label + (n ? ' ' + n : (/primary|master|main/.test(room) && w.rank === 60 ? ' (primary)' : /guest|half|powder/.test(room) && w.rank === 60 ? ' (guest)' : '')) }
+  }
+  if (p.category === 'amenity' || p.category === 'exterior') {
+    for (const a of AMENITY_RANK) if (a.re.test(room) || a.re.test(rk(p.subject))) return a
+    return { rank: p.category === 'exterior' ? 96 : 93, label: p.category === 'exterior' ? 'Exterior' : 'Building amenities' }
   }
   const c = CATEGORY_RANK[p.category] ?? 79
   return { rank: c, label: p.category ? p.category[0].toUpperCase() + p.category.slice(1) : 'Other' }
@@ -280,7 +288,7 @@ export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: 
     if (d) { demoted.push({ p, why: `near-duplicate of a stronger shot (${d.subject || d.room})`, flag: 'duplicate' }); continue }
     const bad = p.faults.filter(f => BAD_FAULTS.has(f))
     if (bad.length && p.quality < 50 && (roomCount[rk(p.room)] || 0) > 1) { demoted.push({ p, why: `weak shot — ${bad.join(', ')} · quality ${p.quality}`, flag: 'fault' }); continue }
-    tour.push({ p, walk: walkOf(p) })
+    tour.push({ p, walk: walkOf(p, profile) })
   }
   // Within a room: wide → medium → detail, then quality. Rooms in walk order, then by the room's
   // best photo so a strong bedroom-2 does not outrank bedroom-1 (numbers already order them).
