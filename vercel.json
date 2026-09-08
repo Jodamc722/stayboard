@@ -139,6 +139,14 @@
     {
       "path": "/api/cron/eod-recap",
       "schedule": "15 0 * * *"
+    },
+    {
+      "path": "/api/cron/project-notify",
+      "schedule": "7,22,37,52 * * * *"
+    },
+    {
+      "path": "/api/cron/project-digest",
+      "schedule": "5 11 * * *"
     }
   ]
 }
