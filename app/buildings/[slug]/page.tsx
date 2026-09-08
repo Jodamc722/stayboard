@@ -2,6 +2,7 @@
 // Reached from the Portfolio page (/buildings). Click a unit to open its full detail +
 // AI optimizer at /listings/[id].
 import { redirect, notFound } from 'next/navigation'
+import { unitLabel, unitSubLabel } from '@/lib/unit-label'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { computeScore, rollupBuilding, slugToBuilding, band, bandUi } from '@/lib/optimize-score'
@@ -69,7 +70,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
     units.flatMap((u: any) => Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : []))
   ))
 
-  const bulkUnits = units.map((u: any) => { const amenities = (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])) as string[]; return { id: u.id, name: u.title || u.nickname || u.unit || 'Unit', amenityCount: amenities.length, amenities } })
+  const bulkUnits = units.map((u: any) => { const amenities = (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])) as string[]; return { id: u.id, name: unitLabel(u), amenityCount: amenities.length, amenities } })
   const bulkAddable = Array.from(new Set(siblingAmenities)).sort((a, b) => a.localeCompare(b))
 
   const scored = units.map((l: any) => {
@@ -111,7 +112,10 @@ export default async function BuildingPage({ params }: { params: { slug: string 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {scored.map(({ l, dead, score, suggestions, mustFix }) => {
           const u = bandUi(band(score))
-          const name = l.title || l.nickname || 'Untitled unit'
+          // Lead with the unit's own name ("Arya 1704/1"), not the marketing title — 23 Arya
+          // units share near-identical titles, so the title alone cannot tell you which unit this is.
+          const name = unitLabel(l)
+          const subName = unitSubLabel(l)
           const photoCount = Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(l.raw?.pictures) ? l.raw.pictures.length : 0)
           const topFix = [...mustFix.map((m: string) => m), ...suggestions.slice(0, 3).map((s: any) => s.name)].slice(0, 3)
           return (
@@ -123,7 +127,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
                   {!dead && <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2 py-0.5 rounded-lg text-sm font-bold tabular-nums ring-1 shrink-0 ${u.ring}`} title="Optimize Score">{score}</span>}
                   {dead && <span className="text-[10px] font-semibold text-muted bg-app px-1.5 py-0.5 rounded shrink-0 uppercase tracking-wide">{String(l.status || 'inactive')}</span>}
                 </div>
-                {l.unit && <p className="text-[11px] text-muted mt-0.5">{l.unit}</p>}
+                {subName && <p className="text-[11px] text-muted mt-0.5 line-clamp-1" title={subName}>{subName}</p>}
               </div>
 
               <div className="grid grid-cols-2 divide-x divide-line border-b border-line text-center [&>*:nth-child(n+3)]:border-t [&>*:nth-child(n+3)]:border-line sm:grid-cols-4 sm:[&>*:nth-child(n+3)]:border-t-0">
