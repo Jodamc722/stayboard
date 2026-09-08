@@ -1182,7 +1182,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const snap = c.snapshot || {}
   const plan = c.plan
   const ahead = c.ahead || {}
-  const projection = c.projection || null
+  // THE NEXT SEASON SECTION BELONGS TO THE PROJECTION REPORT, NOT THE OWNER REVIEW (Jon,
+  // 2026-09-08). Reports generated before today still carry the projection content in their
+  // stored JSON, so gating on the report's kind — not on whether the data exists — is what
+  // actually clears it from the reviews already out there. Older projection reports predate
+  // meta.kind, so their hero label stands in for it.
+  const isProjectionReport = String((c.meta || {}).kind || '') === 'projection'
+    || /SEASON PROJECTION/i.test(String((c.hero || {}).dateLabel || ''))
+  const projection = isProjectionReport ? (c.projection || null) : null
   const voices = c.voices || {}
   const projects = c.projects || {}
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
