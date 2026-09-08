@@ -11,6 +11,7 @@
 // panel that duplicated the editor directly beneath it, and the three competing definitions of
 // "optimized" (now one lastOptimizedOf(), with "content looks complete" stated separately).
 import { redirect, notFound } from 'next/navigation'
+import { unitLabel } from '@/lib/unit-label'
 import Link from 'next/link'
 import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
@@ -213,7 +214,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         <div className="flex items-start gap-3 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] uppercase tracking-[0.16em] text-muted font-semibold inline-flex items-center gap-1.5">
-              <Building2 size={12} /> {listing.building || 'Unassigned'}{listing.unit ? ` \u00b7 ${listing.unit}` : ''}
+              <Building2 size={12} /> {unitLabel(listing)}{listing.building && listing.building !== unitLabel(listing) ? ` \u00b7 ${listing.building}` : ''}
             </p>
             <div className="flex items-baseline gap-2.5 flex-wrap mt-0.5">
               <h1 className="text-[22px] font-bold text-ink tracking-tight break-words">{name}</h1>
