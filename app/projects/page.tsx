@@ -10,6 +10,7 @@ import { Shell } from '@/components/Shell'
 import { ProjectBoard } from '@/components/ProjectBoard'
 import { KanbanSquare, ListChecks } from 'lucide-react'
 import Link from 'next/link'
+import { NotifyBell } from '@/components/NotifyBell'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,6 +33,7 @@ export default async function ProjectsPage() {
           <Link href="/projects/mine" className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1 text-[12px] font-bold text-muted hover:text-ink">
             <ListChecks size={12} /> My Tasks
           </Link>
+          <NotifyBell />
         </div>
         <p className="text-[13px] text-muted mt-0.5 max-w-3xl">
           The work that does not fit a task — renovations, rollouts across a building, onboarding a new
