@@ -9,6 +9,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken as refreshGuestyToken } from '@/lib/guesty'
 import { requireLevel } from '@/lib/access'
 import { writeCustomFields } from '@/lib/guesty-custom-fields'
+import { notesDefId } from '@/lib/guesty-res-notes'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -57,21 +58,7 @@ async function welcomeDefId(token: string): Promise<{ id: string | null; tried: 
   }
   return { id: null, tried }
 }
-// The reservation-notes custom field id (internal team notes).
-async function notesDefId(token: string): Promise<string | null> {
-  const urls = [`${BASE}/accounts/${process.env.GUESTY_ACCOUNT_ID || '68af6c6fc3307ffd38a1c2b6'}/custom-fields?limit=200`, `${BASE}/custom-fields?limit=200`]
-  for (const u of urls) {
-    try {
-      const r = await fetch(u, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
-      if (!r.ok) continue
-      const j: any = await r.json().catch(() => ({}))
-      const arr = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || j?.customFields || [])
-      const w = (arr || []).find((d: any) => /reservation[_ ]?notes/i.test(String(d?.name || d?.fieldName || d?.displayName || d?.label || '')))
-      if (w) return w._id || w.id || w.fieldId || null
-    } catch { /* ignore */ }
-  }
-  return null
-}
+// notesDefId now lives in lib/guesty-res-notes (shared with the post-checkout call).
 
 export async function GET(req: NextRequest) {
   const supabase = createClient()
@@ -249,6 +236,28 @@ export async function POST(req: NextRequest) {
     else cf.push({ fieldId, fieldName: 'Welcome Call', value, ...meta })
     await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
   } catch { /* mirror best-effort */ }
+
+  // DURABLE CALL LOG (2026-09-08). The _by/_at keys written onto the mirror above do not survive:
+  // this very write bumps the reservation's lastUpdatedAt, so the next incremental reservations
+  // sync (every 5 minutes, ordered by -lastUpdatedAt) re-fetches this exact booking and replaces
+  // custom_fields with Guesty's array, which has never heard of _at. The field value survives —
+  // "Called" stays true — but who called and when did not, so every count of calls made today read
+  // zero. guest_calls is ours and nothing overwrites it. Best-effort: the Guesty write is the one
+  // that decides whether the call is marked, and it has already succeeded by this point.
+  try {
+    if (done) {
+      const { data: meta } = await sb.from('guesty_reservations').select('listing_id, guest_name, check_in').eq('id', reservationId).maybeSingle()
+      await sb.from('guest_calls').upsert({
+        reservation_id: reservationId, kind: 'welcome', outcome: 'done', note,
+        called_by: by, called_at: at,
+        listing_id: (meta as any)?.listing_id || null,
+        guest_name: (meta as any)?.guest_name || null,
+        ref_date: (meta as any)?.check_in || null,
+      }, { onConflict: 'reservation_id,kind' })
+    } else {
+      await sb.from('guest_calls').delete().eq('reservation_id', reservationId).eq('kind', 'welcome')
+    }
+  } catch { /* the Guesty field is the source of truth for "was it called" */ }
 
   return NextResponse.json({ ok: true, done, value, callValue: value, by, at, notes: newNotes })
 }

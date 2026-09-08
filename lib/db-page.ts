@@ -48,6 +48,13 @@ export async function pageRows<T = any>(
     let data: any[] = []
     try {
       const res: any = await q(p * 1000, p * 1000 + 999)
+      // A POSTGREST ERROR IS NOT AN EMPTY PAGE (fixed 2026-09-08). supabase-js does not throw on a
+      // query error unless you ask it to: a statement timeout, a 5xx under load, an expired key or
+      // a renamed column all RESOLVE, as { data: null, error }. This read `res?.data || []`, got an
+      // empty array, and fell into the `!data.length` branch below — reporting truncated:false, the
+      // one thing this helper exists to get right. Every caller that trusts the flag was being told
+      // a failed scan was a complete one.
+      if (res && res.error) return { rows: out, truncated: true }
       data = res?.data || []
     } catch {
       // A failed page is not proof the range ended — say we stopped early.

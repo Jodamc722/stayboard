@@ -30,7 +30,9 @@ export const FEATURES: Feature[] = [
   { key: 'reservation-emails', label: 'Reservation Emails', path: '/reservation-emails', group: 'Guests' },
   { key: 'messages',      label: 'Messages',          path: '/messages', group: 'Guests' },
   { key: 'reviews',       label: 'Reviews',           path: '/reviews', group: 'Guests' },
-  { key: 'welcome-calls', label: 'Welcome Calls',     path: '/welcome-calls', group: 'Guests' },
+  // The Calls desk since 2026-09-08 — pre-arrival, bad-review recovery and post-checkout calls on
+  // one page. The KEY is unchanged, so every role's existing permission still applies.
+  { key: 'welcome-calls', label: 'Calls desk',       path: '/welcome-calls', group: 'Guests' },
   { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guests' },
   { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guests' },
   // Guest orders (2026-08-24, Jon): the pre-arrival "vending machine" — approve, charge, push.

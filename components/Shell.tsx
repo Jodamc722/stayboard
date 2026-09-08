@@ -83,7 +83,8 @@ export const SECTIONS: NavSection[] = [
       { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
       { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
       { to: '/reviews',      label: 'Reviews',      Icon: Star },
-      { to: '/welcome-calls', label: 'Welcome Calls', Icon: PhoneCall },
+      // Welcome calls became the Calls desk 2026-09-08 (pre-arrival + recovery + post-checkout).
+      { to: '/welcome-calls', label: 'Calls desk', Icon: PhoneCall },
       { to: '/claims',       label: 'Claims',       Icon: ShieldAlert }, // Jon 2026-08-04: claims are guest-driven — lives with Guests
       // The Guest Comms row is gone (Jon, 2026-08-25): it named none of the pages behind it.
       // Front-Desk Notices, Guidebooks and Property FAQ each stand on their own now.

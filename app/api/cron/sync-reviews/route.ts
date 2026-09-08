@@ -11,6 +11,7 @@
 // threw (app/api/sync/guesty/route.ts, where errors are collected into an array and spread into a
 // success response).
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { syncReviewsDetailed } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -124,6 +125,11 @@ export async function GET(req: NextRequest) {
     } catch (e: any) {
       expectedVsActual = [{ error: String(e?.message || e).slice(0, 200) }]
     }
+
+    // A new review can move a unit into or out of recovery on the Calls desk, which caches that
+    // read for five minutes (app/welcome-calls). Drop it here so a review that lands overnight is
+    // reflected the moment the team opens the desk, not five minutes after they do.
+    try { revalidateTag('reviews') } catch { /* cache tag is best-effort */ }
 
     return NextResponse.json({
       ok: true,
