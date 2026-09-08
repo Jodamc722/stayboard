@@ -1,5 +1,6 @@
 'use client'
 import { Fragment, useEffect, useRef, useState } from 'react'
+import { buildOrder as engineOrder, type PhotoFacts } from '@/lib/photo-order'
 import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2 } from 'lucide-react'
 
 type Photo = {
@@ -11,7 +12,7 @@ type Photo = {
   room?: string; enhance?: string; enhanceWhy?: string
   mirrorUrl?: string | null   // the untouched original we mirrored — makes "revert" possible
   // 2026-09-08 (v2): facts from the analyst + where the engine put the photo and why.
-  subject?: string; shotType?: 'wide' | 'medium' | 'detail'; quality?: number; faults?: string[]; sellingPoints?: string[]
+  subject?: string; shotType?: 'wide' | 'medium' | 'detail'; quality?: number; faults?: string[]; sellingPoints?: string[]; duplicateOf?: string | null; heroWorthy?: boolean
   placement?: { slot: 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'; group: string; why: string; flag?: 'duplicate' | 'fault' | 'stock' | null }
 }
 type Section = { slot: 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'; label: string; ids: string[] }
@@ -32,6 +33,9 @@ type Result = {
   titleIdeas?: string[]
   titleHooks?: { hook: string; strength: number }[]
   partial?: string | null
+  profile?: { bedrooms: number | null; bathrooms?: number | null; isStudio: boolean }
+  rooms?: string[]
+  roomVocab?: string[]
 }
 
 const CAT_COLORS: Record<string, string> = {
@@ -75,6 +79,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [titleIdeas, setTitleIdeas] = useState<string[]>([])
   const [titleHooks, setTitleHooks] = useState<{ hook: string; strength: number }[]>([])
   const [copiedTitle, setCopiedTitle] = useState<string | null>(null)
+  const [profile, setProfile] = useState<Result['profile']>(undefined)
+  const [roomVocab, setRoomVocab] = useState<string[]>([])
   // Press-and-hold compare: shows the OTHER version of the photo while held.
   const [peek, setPeek] = useState<string | null>(null)
   // Photos to put back to their mirrored original on push.
@@ -129,6 +135,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       setHeroCands(Array.isArray(j.heroCandidates) ? j.heroCandidates : [])
       setTitleIdeas(Array.isArray(j.titleIdeas) ? j.titleIdeas : [])
       setTitleHooks(Array.isArray(j.titleHooks) ? j.titleHooks : [])
+      setProfile(j.profile); setRoomVocab(Array.isArray(j.roomVocab) ? j.roomVocab : [])
       // Duplicates, faults and stock come pre-flagged; ticking them is one click, not ten.
       setToRemove(new Set())
       if (j.partial) setError(String(j.partial))
@@ -361,9 +368,43 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   // accepted a category, and the next Analyze or page reload wiped it — so every correction anyone
   // made here since the panel shipped was silently thrown away. It saves to _photoIndex marked as a
   // human edit, which the vision pass now respects instead of overwriting on its next run.
+  // RE-GROUP IN THE BROWSER. The order engine is pure and isomorphic, so a room or category
+  // correction rebuilds the order instantly from the facts already on screen — no second vision
+  // call. Uploads (not yet in Guesty) stay appended; the cover stays where it is.
+  function regroup(nextPhotos: Record<string, Photo>) {
+    const ids = order.filter(id => !uploads[id])
+    const facts: PhotoFacts[] = ids.map(id => { const p = nextPhotos[id]; return {
+      _id: id, url: p.url, room: p.room || p.category || 'other', category: p.category || 'other', subject: p.subject || '',
+      shotType: p.shotType || 'medium', quality: typeof p.quality === 'number' ? p.quality : 50, kind: p.kind === 'stock' ? 'stock' : 'property',
+      faults: p.faults || [], sellingPoints: p.sellingPoints || [], duplicateOf: p.duplicateOf || null, heroWorthy: !!p.heroWorthy,
+      caption: p.caption || '', captionSource: 'ai', enhance: p.enhance, enhanceWhy: p.enhanceWhy,
+    } })
+    const r = engineOrder(facts, heroId || ids[0] || null, profile || { bedrooms: null, isStudio: false })
+    const merged: Record<string, Photo> = { ...nextPhotos }
+    for (const pl of r.placed) merged[pl._id] = { ...merged[pl._id], placement: pl.placement, reason: pl.placement.why }
+    setPhotos(merged)
+    const newOrder = [...r.placed.map(p => p._id), ...order.filter(id => uploads[id])]
+    setOrder(newOrder); setProposed(newOrder)
+    setRemoveList(r.placed.filter(p => p.placement.slot === 'demoted').map(p => ({ _id: p._id, reason: p.placement.why })))
+    setHeroCands(r.heroCandidates)
+  }
+  async function setRoom(id: string, v: string) {
+    const before = photos[id]?.room
+    const next = { ...photos, [id]: { ...photos[id], room: v } }
+    regroup(next)
+    setMetaBusy(prev => { const n = new Set(prev); n.add(id); return n })
+    try {
+      const r = await fetch('/api/photo-meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, photoId: id, room: v }) })
+      const j: any = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j?.error || 'Could not save that room.')
+      setMetaSaved(prev => { const n = new Set(prev); n.add(id); return n })
+      setTimeout(() => setMetaSaved(prev => { const n = new Set(prev); n.delete(id); return n }), 2000)
+    } catch (e: any) { regroup({ ...photos, [id]: { ...photos[id], room: before } }); setError(e.message || String(e)) }
+    finally { setMetaBusy(prev => { const n = new Set(prev); n.delete(id); return n }) }
+  }
   async function setCategory(id: string, v: string) {
     const before = photos[id]?.category
-    setPhotos(prev => ({ ...prev, [id]: { ...prev[id], category: v } }))
+    regroup({ ...photos, [id]: { ...photos[id], category: v } })
     setMetaBusy(prev => { const n = new Set(prev); n.add(id); return n })
     try {
       const r = await fetch('/api/photo-meta', {
@@ -376,7 +417,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       setTimeout(() => setMetaSaved(prev => { const n = new Set(prev); n.delete(id); return n }), 2000)
     } catch (e: any) {
       // Put the old value back rather than leaving the screen claiming something that did not save.
-      setPhotos(prev => ({ ...prev, [id]: { ...prev[id], category: before } }))
+      regroup({ ...photos, [id]: { ...photos[id], category: before } })
       setError(e.message || String(e))
     } finally {
       setMetaBusy(prev => { const n = new Set(prev); n.delete(id); return n })
@@ -520,30 +561,6 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             </div>
           )}
 
-          {/* COVER CANDIDATES — the engine ranks every photo as a cover; the human still picks. */}
-          {heroCands.length > 0 && order.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50/50 px-3.5 py-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Crown size={15} className="text-amber-600" />
-                <span className="text-[13px] font-semibold text-ink">Best cover candidates</span>
-                <span className="text-[11px] text-muted ml-auto">scored on light, width, and what a guest books for</span>
-              </div>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {heroCands.map((c, i) => { const p = photos[c._id]; if (!p) return null; const isCur = c._id === heroId; return (
-                  <button key={c._id} onClick={() => !isCur && setAsHero(c._id)} title={c.why}
-                    className={`shrink-0 w-36 rounded-lg overflow-hidden border text-left ${isCur ? 'border-amber-500 ring-2 ring-amber-300' : 'border-line hover:border-amber-300'}`}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={p.url} alt="" className="w-full aspect-[4/3] object-cover" loading="lazy" />
-                    <div className="px-1.5 py-1 text-[10.5px] leading-tight">
-                      <span className="font-bold text-ink">#{i + 1} · {c.score}</span>{isCur && <span className="ml-1 text-amber-700 font-semibold">current</span>}
-                      <span className="block text-muted truncate">{p.subject || p.category}</span>
-                    </div>
-                  </button>
-                )})}
-              </div>
-            </div>
-          )}
-
           {/* TITLE IDEAS — written from what the photos PROVE, so the title never promises a pool
               the photos do not show. Copy one into the optimizer's title field. */}
           {titleIdeas.length > 0 && (
@@ -565,40 +582,13 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             </div>
           )}
 
-          {removeList.length > 0 && (
-            <div className="rounded-xl border border-rose-200 bg-rose-50/60 px-3.5 py-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Trash2 size={15} className="text-rose-600" />
-                <span className="text-[13px] font-semibold text-ink">Recommended to remove ({removeList.length})</span>
-                <button onClick={() => setToRemove(new Set(removeList.map(r => r._id)))} className="ml-auto text-[11px] font-semibold px-2 py-1 rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50">Mark all {removeList.length}</button>
-                <button onClick={() => setToRemove(new Set())} className="text-[11px] font-semibold px-2 py-1 rounded-md border border-line bg-white text-muted">Clear</button>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
-                {removeList.map(r => { const p = photos[r._id]; if (!p) return null; const marked = toRemove.has(r._id); return (
-                  <div key={r._id} className="rounded-lg border border-rose-200 overflow-hidden bg-white">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={p.url} alt="remove candidate" className="w-full aspect-[4/3] object-cover opacity-80" loading="lazy" />
-                    <p className="text-[10px] text-rose-700 leading-snug px-1.5 pt-1.5">{r.reason}</p>
-                    <button onClick={() => toggleRemove(r._id)} className={`w-full text-[10px] font-semibold py-1 ${marked ? 'bg-rose-600 text-white' : 'text-rose-700 hover:bg-rose-50'}`}>{marked ? 'Marked to remove' : 'Mark to remove'}</button>
-                  </div>
-                )})}
-              </div>
-            </div>
-          )}
-
           {order.length > 0 && (
             <>
-              {heroSug && heroSug._id !== heroId && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800 flex items-start justify-between gap-3 flex-wrap">
-                  <span className="flex items-start gap-1.5"><Crown size={14} className="mt-0.5 flex-shrink-0" /> AI thinks a different photo would be a stronger cover: {heroSug.why}</span>
-                  <button onClick={() => setAsHero(heroSug._id)} className="text-amber-900 font-semibold underline whitespace-nowrap">Make it the cover</button>
-                </div>
-              )}
-
               <div className="flex items-center justify-between gap-2 flex-wrap text-[12px] text-muted">
                 <span><span className="font-semibold text-ink">{order.length}</span> photos · cover photo locked at #1{overflow > 0 ? ` · ${overflow} extra kept at the end` : ''}</span>
                 <div className="flex items-center gap-2">
                   {changed && <button onClick={() => setOrder(proposed)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset to AI order</button>}
+                  {removeList.length > 0 && <button onClick={() => setToRemove(prev => prev.size === removeList.length ? new Set() : new Set(removeList.map(r => r._id)))} className="inline-flex items-center gap-1 text-[12px] text-rose-700 hover:text-rose-800"><Trash2 size={12} /> {toRemove.size === removeList.length ? 'Unmark all' : `Mark all ${removeList.length} flagged`}</button>}
                   <button onClick={() => analyze(undefined, undefined, false, true)} disabled={busy} title="Let the engine choose the cover from its ranked candidates" className="inline-flex items-center gap-1 text-[12px] text-amber-700 hover:text-amber-800 disabled:opacity-50"><Crown size={12} /> AI picks cover</button>
                   <button onClick={() => analyze(heroId || undefined)} disabled={busy} className="inline-flex items-center gap-1 text-[12px] text-brand-600 hover:text-brand-700 disabled:opacity-50"><Wand2 size={12} /> Re-run</button>
                 </div>
@@ -663,6 +653,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                       <div className="absolute top-1.5 left-1.5 z-10 flex items-center gap-1">
                         <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md ${isHero ? 'bg-amber-500 text-white' : 'bg-black/60 text-white'}`}>{idx + 1}</span>
                         {isHero && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 inline-flex items-center gap-0.5"><Star size={10} /> Cover</span>}
+                        {(() => { const ci = heroCands.findIndex(c => c._id === id); return ci >= 0 && ci < 3 && !isHero ? <button onClick={() => setAsHero(id)} title={`Cover pick #${ci + 1} (score ${heroCands[ci].score}) — click to make it the cover`} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500 text-white inline-flex items-center gap-0.5"><Crown size={10} /> Cover pick #{ci + 1}</button> : null })()}
                         {p.kind === 'stock' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 inline-flex items-center gap-0.5"><MapPinned size={10} /> Stock</span>}
                         {uploads[id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 inline-flex items-center gap-0.5"><ImagePlus size={10} /> New</span>}
                         {replaced[id] && <button onClick={() => undoReplace(id)} title="Image replaced — click to undo and keep the old photo" className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-800 inline-flex items-center gap-0.5"><RefreshCw size={10} /> Replaced</button>}
@@ -710,10 +701,21 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                           {p.placement?.flag === 'fault' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Weak</span>}
                           {p.subject && <span className="text-[10px] text-ink/80 truncate" title={p.subject}>{p.subject}</span>}
                         </div>
+                        {p.placement?.slot === 'demoted' && !isHero && (
+                          <button onClick={() => toggleRemove(id)} className={`w-full text-left text-[10.5px] leading-snug rounded-md px-1.5 py-1 border ${toRemove.has(id) ? 'bg-rose-600 border-rose-600 text-white' : 'bg-rose-50 border-rose-200 text-rose-800 hover:bg-rose-100'}`}>
+                            <b>{toRemove.has(id) ? 'Removing on push' : 'Suggest removing'}</b> — {p.placement.why}
+                          </button>
+                        )}
+                        {isHero && heroCands[0] && heroCands[0]._id !== id && (
+                          <button onClick={() => setAsHero(heroCands[0]._id)} className="w-full text-left text-[10.5px] leading-snug rounded-md px-1.5 py-1 border bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100"><b>Stronger cover available</b> — {heroCands[0].why} (score {heroCands[0].score}). Click to use it.</button>
+                        )}
+                        <select value={p.room || ''} onChange={e => { const v = e.target.value === '__new' ? (window.prompt('Room id (e.g. bedroom-2, bath-guest, balcony)') || '').trim().toLowerCase().replace(/\s+/g, '-') : e.target.value; if (v) setRoom(id, v) }} title="Which room this photo shows — photos of one room stay together" className="text-[10px] font-semibold pl-1.5 pr-4 py-0.5 rounded border border-line bg-white text-ink cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-brand-300">
+                          {Array.from(new Set([...(roomVocab || []), ...Object.values(photos).map(x => x.room || '').filter(Boolean), p.room || ''])).filter(Boolean).map(r => <option key={r} value={r}>{r.replace(/-/g, ' ')}</option>)}
+                          <option value="__new">other room…</option>
+                        </select>
                         <select value={p.category || 'other'} onChange={e => setCategory(id, e.target.value)} title="Photo category — correct the AI's tag" className={`text-[10px] font-semibold pl-1.5 pr-4 py-0.5 rounded border-0 cursor-pointer appearance-none focus:outline-none focus:ring-1 focus:ring-brand-300 ${CAT_COLORS[p.category || 'other'] || CAT_COLORS.other}`}>
                           {CATS.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
-                        {p.room && <span className="text-[10px] font-medium text-muted ml-1">{p.room.replace(/-/g, ' ')}</span>}
                         {/* Saving state on the tag, because a control that silently does nothing is
                             exactly what this dropdown used to be. */}
                         {metaBusy.has(id) && <Loader2 size={10} className="animate-spin text-muted ml-1 inline" />}
