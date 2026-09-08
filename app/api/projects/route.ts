@@ -13,7 +13,7 @@ import { personKey, nameMatches } from '@/lib/person-name'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   listProjects, getCategories, addNote, newShareToken, toCents,
-  STAGES, PRIORITIES, APPROVALS, todayISO, type Stage,
+  STAGES, PRIORITIES, APPROVALS, PROJECT_KINDS, todayISO, type Stage,
   toPerson,
 } from '@/lib/projects'
 
@@ -77,7 +77,12 @@ export async function GET(req: NextRequest) {
     } catch { /* Breezeway down: app users alone are still a usable roster */ }
     roster.sort((a, b) => a.display.localeCompare(b.display))
   } catch {}
-  return NextResponse.json({ ok: true, projects, categories, listings, people, roster, today: todayISO() })
+  let templates: any[] = []
+  try {
+    const { listTemplates } = await import('@/lib/project-templates')
+    templates = (await listTemplates()).map(t => ({ key: t.key, label: t.label, kind: t.kind, category: t.category, blurb: t.blurb || '', builtIn: !!t.builtIn, sections: t.sections.map(s => s.name), recurs: t.recurs || null }))
+  } catch {}
+  return NextResponse.json({ ok: true, projects, categories, listings, people, roster, templates, today: todayISO() })
 }
 
 export async function POST(req: NextRequest) {
@@ -105,6 +110,18 @@ export async function POST(req: NextRequest) {
       approval: oneOf(b.approval, APPROVALS) || 'not_needed',
       created_by: g.access.email,
     }
+    // Wave 4: what shape it starts in. A template fills sections and tasks; a kind decides who can
+    // see it (personal = only me, one_on_one = private to its members); a recurrence makes it a series.
+    const { getTemplate, applyTemplate, normaliseRecurrence } = await import('@/lib/project-templates')
+    const tpl = str(b.template) ? await getTemplate(str(b.template)) : null
+    const kind = (PROJECT_KINDS as readonly string[]).includes(str(b.kind)) ? str(b.kind) : (tpl?.kind || 'project')
+    const personal = kind === 'personal'
+    if (tpl) { row.category = str(b.category) || tpl.category; if (!row.summary && tpl.summary) row.summary = tpl.summary }
+    if (personal || kind === 'one_on_one') row.private = true
+    row.kind = kind
+    if (personal) { row.lead_email = null; row.stage = 'in_progress' }
+    const recurs = normaliseRecurrence(b.recurs || (tpl?.recurs && b.repeat !== false && kind === 'one_on_one' ? tpl.recurs : null), str(b.starts_on) || undefined)
+    if (recurs) { row.recurs = recurs; if (!row.stage || row.stage === 'idea') row.stage = 'in_progress' }
     const { data, error } = await supabaseAdmin().from('projects').insert(row).select('*').maybeSingle()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     // THE CREATOR IS THE FIRST OWNER. Without this row the project is visible to nobody but the
@@ -113,15 +130,20 @@ export async function POST(req: NextRequest) {
     if (data) {
       const seed = [toPerson(String(g.access.email || ''))]
       const lead = str(b.lead_email)
-      if (lead && lead.toLowerCase() !== String(g.access.email || '').toLowerCase()) seed.push(toPerson(lead))
-      const extra = (Array.isArray(b.members) ? b.members : []).map((x: any) => toPerson(String(x))).filter((x: any) => x.display)
+      if (!personal && lead && lead.toLowerCase() !== String(g.access.email || '').toLowerCase()) seed.push(toPerson(lead))
+      // A personal board has exactly one member, whatever the form sent.
+      const extra = personal ? [] : (Array.isArray(b.members) ? b.members : []).map((x: any) => toPerson(String(x))).filter((x: any) => x.display)
       const rows = [
         ...seed.filter(x => x.display).map(x => ({ project_id: data.id, ...x, role: 'owner', added_by: g.access.email })),
         ...extra.map((x: any) => ({ project_id: data.id, ...x, role: 'editor', added_by: g.access.email })),
       ]
       const { error: mErr } = await supabaseAdmin().from('project_members').upsert(rows, { onConflict: 'project_id,person_key' })
       if (mErr) return NextResponse.json({ error: 'Project created but membership failed: ' + mErr.message }, { status: 500 })
-      if (b.private) await supabaseAdmin().from('projects').update({ private: true, kind: str(b.kind) === 'one_on_one' ? 'one_on_one' : 'project' }).eq('id', data.id)
+      if (b.private && !personal && kind === 'project') await supabaseAdmin().from('projects').update({ private: true }).eq('id', data.id)
+      if (tpl) {
+        try { await applyTemplate(data.id, tpl, { startsOn: str(b.starts_on) || null, createdBy: String(g.access.email || '') }) }
+        catch (e: any) { return NextResponse.json({ error: 'Project created but the template did not apply: ' + String(e?.message || e) }, { status: 500 }) }
+      }
     }
     // Optional units at creation time, so "a rollout across these 12 units" is one step.
     const units: string[] = Array.isArray(b.listingIds) ? b.listingIds.map(String) : []
@@ -130,7 +152,7 @@ export async function POST(req: NextRequest) {
         units.slice(0, 400).map(id => ({ project_id: data.id, kind: 'listing', ref_id: id, label: null })),
       )
     }
-    if (data) await addNote(data.id, `Project created by ${g.access.email || 'someone'}.`, g.access.email, 'event')
+    if (data) await addNote(data.id, `created this ${personal ? 'board' : kind === 'one_on_one' ? 'one-on-one' : 'project'}${tpl ? ` from the ${tpl.label} template` : ''}${recurs ? ' · repeats' : ''}`, g.access.email, 'event', false, { meta: { type: 'stage', name: 'created' } })
     return NextResponse.json({ ok: true, project: data })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e).slice(0, 300) }, { status: 500 })
