@@ -832,24 +832,24 @@ function FiveSheet({ initial, all, photos, heroCands, onApply, onClose }: { init
   const clear = (i: number) => setFive(prev => { const n = prev.slice(); n[i] = null; return n })
   const rankOf = (id: string) => { const i = heroCands.findIndex(c => c._id === id); return i >= 0 ? i + 1 : null }
   const rest = all.filter(id => !inFive.has(id)).slice().sort((a, b) => (photos[b]?.quality || 0) - (photos[a]?.quality || 0))
-  const SLOT_Q = ["cover — earns the click", "what's special", 'where I sleep', 'where I sit / cook', 'where I bathe']
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
       <div className="bg-white w-full max-w-4xl rounded-t-2xl sm:rounded-2xl max-h-[92dvh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-line flex items-center gap-2">
           <Crown size={16} className="text-amber-600" />
-          <div className="flex-1 min-w-0"><div className="text-[15px] font-bold text-ink">Cover photos — the first five</div><div className="text-[12px] text-muted">What a guest sees in the search card and swipes before opening. Pick a slot, then tap a photo below to place it.</div></div>
+          <div className="flex-1 min-w-0"><div className="text-[15px] font-bold text-ink">Cover photos — the first five</div><div className="text-[12px] text-muted">What a guest sees in the search card and swipes before opening. Aim for five different spaces: what&apos;s special · where I sleep · where I sit · where I cook · where I bathe. Pick a slot, then tap a photo below.</div></div>
           <button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center" aria-label="Close"><RotateCcw size={14} className="hidden" /><span className="text-lg leading-none">×</span></button>
         </div>
         <div className="overflow-y-auto p-4 space-y-4">
-          <div className="grid grid-cols-5 gap-2">
+          {/* Laid out like Airbnb's header grid: one big cover, four beside it. */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {five.map((id, i) => { const p = id ? photos[id] : null; const active = sel === i; return (
-              <div key={i} className={`rounded-xl border overflow-hidden ${active ? 'border-amber-500 ring-2 ring-amber-300' : 'border-line'} ${i === 0 ? 'col-span-5 sm:col-span-2 sm:row-span-2' : ''}`}>
+              <div key={i} className={`rounded-xl border overflow-hidden ${active ? 'border-amber-500 ring-2 ring-amber-300' : 'border-line'} ${i === 0 ? 'col-span-2 row-span-2' : ''}`}>
                 <button onClick={() => setSel(i)} className="block w-full text-left">
                   {p ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={p.url} alt="" className={`w-full object-cover ${i === 0 ? 'aspect-[4/3]' : 'aspect-[4/3]'}`} /> : <div className={`w-full aspect-[4/3] grid place-items-center text-[12px] text-muted bg-app`}>empty — AI fills on Apply</div>}
                 </button>
                 <div className="px-2 py-1.5 text-[11px] leading-tight">
-                  <div className="flex items-center gap-1"><span className="font-bold text-ink">{i + 1}</span><span className="text-muted truncate">{SLOT_Q[i]}</span></div>
+                  <div className="flex items-center gap-1"><span className="font-bold text-ink">{i + 1}</span><span className="text-muted truncate">{i === 0 ? 'cover — earns the click' : p ? (p.room || p.category || '').replace(/-/g, ' ') : 'empty'}</span></div>
                   {p && <div className="flex items-center gap-1 mt-0.5"><span className={`font-bold px-1 rounded ${(p.quality || 0) >= 75 ? 'bg-emerald-100 text-emerald-700' : (p.quality || 0) >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>{p.quality ?? '–'}</span><span className="text-ink truncate">{p.subject || p.category}</span>{rankOf(p._id) && <span className="ml-auto text-amber-700 font-semibold whitespace-nowrap">pick #{rankOf(p._id)}</span>}</div>}
                   <div className="flex items-center gap-1 mt-1">
                     <button onClick={() => move(i, -1)} disabled={i === 0} className="p-0.5 rounded border border-line text-muted disabled:opacity-30"><ArrowUp size={11} className="-rotate-90" /></button>
