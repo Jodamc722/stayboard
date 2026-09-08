@@ -273,7 +273,12 @@ function showcaseRecipe(profile: UnitProfile): { label: string; test: (p: PhotoF
  * Build the order. `heroId` is the human's cover (or null to let the engine pick the top candidate).
  * Returns the placed photos in order plus the cover candidates and the sections for the UI.
  */
-export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: UnitProfile): { placed: Placed[]; heroCandidates: HeroCandidate[]; sections: { slot: Slot; label: string; ids: string[] }[] } {
+export type BuildOpts = {
+  /** Positions 2–5 chosen by the host, in order. The engine fills any seat left empty (Jon,
+   *  2026-09-08: "allow me to organize the first five photos, which I would call your cover photos"). */
+  showcase?: string[]
+}
+export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: UnitProfile, opts: BuildOpts = {}): { placed: Placed[]; heroCandidates: HeroCandidate[]; sections: { slot: Slot; label: string; ids: string[] }[] } {
   const byId = new Map(facts.map(p => [p._id, p]))
   const heroCandidates = rankHeroes(facts)
   const hero = (heroId && byId.get(heroId)) || (heroCandidates[0] && byId.get(heroCandidates[0]._id)) || facts[0]
@@ -299,6 +304,14 @@ export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: 
   const pool = facts.filter(p => !used.has(p._id) && showable(p) && !dupOf(p)).sort((a, b) => b.quality - a.quality)
   const takenRooms = new Set<string>([heroRoom])
   const sameSpace = (p: PhotoFacts) => takenRooms.has(rk(p.room)) || (profile.isStudio && (p.category === 'bedroom' || p.category === 'living') && (hero.category === 'bedroom' || hero.category === 'living'))
+  // The host's own picks for 2–5 come first, exactly as ordered; the recipe only fills what is left.
+  for (const id of (opts.showcase || [])) {
+    if (placed.length - 1 >= seatsWanted) break
+    const p = byId.get(id)
+    if (!p || used.has(id)) continue
+    used.add(id); takenRooms.add(rk(p.room))
+    push(p, { slot: 'showcase', group: 'Showcase', why: `your pick — ${p.subject || p.category}${p.shotType === 'wide' ? ', wide' : ''} · quality ${p.quality}` })
+  }
   for (const seat of recipe) {
     if (placed.length - 1 >= seatsWanted) break
     const pick = pool.find(p => !used.has(p._id) && seat.test(p) && !sameSpace(p))
