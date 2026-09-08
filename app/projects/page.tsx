@@ -8,7 +8,8 @@ import { getAccess } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { Shell } from '@/components/Shell'
 import { ProjectBoard } from '@/components/ProjectBoard'
-import { KanbanSquare } from 'lucide-react'
+import { KanbanSquare, ListChecks } from 'lucide-react'
+import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +27,12 @@ export default async function ProjectsPage() {
         <p className="text-[11px] uppercase tracking-wider font-semibold text-muted inline-flex items-center gap-1.5">
           <KanbanSquare size={12} /> Operations
         </p>
-        <h1 className="text-2xl font-bold text-ink tracking-tight">Projects</h1>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-2xl font-bold text-ink tracking-tight">Projects</h1>
+          <Link href="/projects/mine" className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1 text-[12px] font-bold text-muted hover:text-ink">
+            <ListChecks size={12} /> My Tasks
+          </Link>
+        </div>
         <p className="text-[13px] text-muted mt-0.5 max-w-3xl">
           The work that does not fit a task — renovations, rollouts across a building, onboarding a new
           property, anything that runs for weeks and needs someone to own it. Day-to-day jobs stay in
