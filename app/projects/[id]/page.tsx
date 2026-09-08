@@ -7,6 +7,7 @@
 // Server component: access and membership are resolved before anything renders. A non-member is
 // sent to the board with no hint that the project exists — same 404 shape as the API.
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { Shell } from '@/components/Shell'
@@ -28,6 +29,8 @@ export default async function OneProject({ params }: { params: { id: string } })
 
   return (
     <Shell>
+      {/* useSearchParams (the ?task= deep link) wants a Suspense boundary above it. */}
+      <Suspense fallback={null}>
       <ProjectPage
         initial={p}
         me={access.email || ''}
@@ -35,6 +38,7 @@ export default async function OneProject({ params }: { params: { id: string } })
         canFull={atLeast(level, 'full')}
         superadmin={viewer.superadmin}
       />
+      </Suspense>
     </Shell>
   )
 }
