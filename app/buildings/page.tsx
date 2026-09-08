@@ -8,6 +8,7 @@
 // and no money anywhere on the page. Scores come from the shared lib/optimize-score; money comes
 // from lib/unit-revenue, which uses the same conventions as the Revenue page and the Botanica report.
 import { redirect } from 'next/navigation'
+import { unitLabel, unitNumber } from '@/lib/unit-label'
 import Link from 'next/link'
 import { unstable_cache } from 'next/cache'
 import { pageRows } from '@/lib/db-page'
@@ -130,11 +131,12 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
     }
     if (!b.city && l.address_city) b.city = l.address_city
 
-    const title = String(l.title || l.nickname || 'Untitled unit')
+    const title = String(l.title || l.nickname || 'Untitled unit')   // marketing title — scored below
+    const opsName = unitLabel(l)                                      // what a human reads: "Arya 1704/1"
     const gaps = scoreGaps(res)
     const amenities: string[] = Array.isArray(l.amenities) ? l.amenities : []
     units.push({
-      id, name: title, building: name, unit: l.unit || null, dead,
+      id, name: opsName, marketingTitle: title, building: name, unit: unitNumber(l), dead,
       score: res.overall,
       titleLen: title.length,
       sections: res.description.sections.length,
@@ -153,7 +155,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
       for (const g of gaps) {
         // A sub-0.5-point gap is noise on a worklist meant to be worked through in order.
         if (g.points < 0.5) continue
-        fixes.push({ unitId: id, unitName: title, building: name, pillar: g.pillar, label: g.label, note: g.note, points: g.points, severity: g.severity })
+        fixes.push({ unitId: id, unitName: opsName, building: name, pillar: g.pillar, label: g.label, note: g.note, points: g.points, severity: g.severity })
       }
     }
   })
