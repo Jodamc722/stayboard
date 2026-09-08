@@ -6,81 +6,12 @@
 // which is what lets the board say "34 units, 21 done" without owning any of them.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+export * from './projects-shared'
+import {
+  type Project, type ProjectFull, type Member, type Person, type Task, type Viewer,
+  progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO,
+} from './projects-shared'
 
-export const STAGES = ['idea', 'planned', 'in_progress', 'blocked', 'review', 'done', 'cancelled'] as const
-export type Stage = typeof STAGES[number]
-export const STAGE_LABEL: Record<Stage, string> = {
-  idea: 'Idea', planned: 'Planned', in_progress: 'In progress',
-  blocked: 'Blocked', review: 'Review', done: 'Done', cancelled: 'Cancelled',
-}
-/** Columns shown on the board. Done and cancelled are reachable but not a standing column. */
-export const BOARD_STAGES: Stage[] = ['idea', 'planned', 'in_progress', 'blocked', 'review', 'done']
-export const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
-export const APPROVALS = ['not_needed', 'needed', 'requested', 'approved', 'declined'] as const
-export const LINK_KINDS = ['listing', 'reservation', 'task', 'owner', 'building'] as const
-export const PHOTO_PHASES = ['before', 'during', 'after'] as const
-
-const OPEN_STAGES: Stage[] = ['idea', 'planned', 'in_progress', 'blocked', 'review']
-export const isOpenStage = (s: any) => OPEN_STAGES.includes(String(s) as Stage)
-
-export type Project = {
-  id: string; ref: string | null; title: string; summary: string | null
-  category: string; stage: Stage; priority: string
-  lead_email: string | null; market: string | null; building: string | null
-  starts_on: string | null; due_on: string | null; done_on: string | null
-  budget_cents: number | null; spent_cents: number; billable: boolean
-  owner_id: string | null; owner_name: string | null
-  approval: string; approval_note: string | null; approved_at: string | null; approved_by: string | null
-  share_token: string | null; share_expires: string | null; vendor_name: string | null
-  archived: boolean; sort: number | null
-  created_by: string | null; created_at: string; updated_at: string
-}
-
-const num = (v: any): number | null => { const n = Number(v); return Number.isFinite(n) ? n : null }
-export const money = (cents: number | null | undefined) =>
-  cents == null ? null : Math.round(Number(cents)) / 100
-export const toCents = (dollars: any): number | null => {
-  // Strip currency furniture, but a string with NO DIGITS must be null, not 0. Number('') is 0,
-  // so the naive version turned an empty box or a typo into a $0.00 budget — which reads on the
-  // card as "budgeted at nothing" rather than "no budget set". Those are different facts.
-  const cleaned = String(dollars ?? '').replace(/[^0-9.\-]/g, '')
-  if (!/\d/.test(cleaned)) return null
-  const n = Number(cleaned)
-  return Number.isFinite(n) ? Math.round(n * 100) : null
-}
-
-const TZ = 'America/New_York'
-export const todayISO = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ })
-
-/** ONE definition of trouble, so the card, the column count and the digest always agree. */
-export function healthOf(p: Project, steps: { done: boolean }[] = []): {
-  state: 'ok' | 'due' | 'late' | 'blocked' | 'done'
-  daysLeft: number | null
-  reason: string | null
-} {
-  if (p.stage === 'done' || p.stage === 'cancelled') return { state: 'done', daysLeft: null, reason: null }
-  if (p.stage === 'blocked') return { state: 'blocked', daysLeft: null, reason: 'Blocked' }
-  if (!p.due_on) return { state: 'ok', daysLeft: null, reason: null }
-  const days = Math.round(
-    (new Date(p.due_on + 'T12:00:00').getTime() - new Date(todayISO() + 'T12:00:00').getTime()) / 86400000,
-  )
-  if (days < 0) return { state: 'late', daysLeft: days, reason: `${Math.abs(days)}d overdue` }
-  if (days <= 7) return { state: 'due', daysLeft: days, reason: days === 0 ? 'Due today' : `${days}d left` }
-  return { state: 'ok', daysLeft: days, reason: null }
-}
-
-/** Progress from linked units first (a rollout is measured in units), else from the checklist. */
-export function progressOf(links: { kind: string; done: boolean }[], steps: { done: boolean }[]) {
-  const units = links.filter(l => l.kind === 'listing')
-  const src = units.length ? units : steps
-  const total = src.length
-  const done = src.filter((x: any) => x.done).length
-  return { done, total, pct: total ? Math.round((done / total) * 100) : null, basis: units.length ? 'units' : 'steps' }
-}
-
-// ---------------------------------------------------------------- reads
-// FAIL-SOFT: a missing table (migration not run yet) returns empty rather than 500ing the page,
-// same contract as the rest of the app's settings-backed features.
 export async function getCategories(): Promise<{ key: string; label: string; color: string; sort: number }[]> {
   try {
     const { data } = await supabaseAdmin().from('project_categories').select('*').eq('active', true).order('sort')
@@ -88,12 +19,7 @@ export async function getCategories(): Promise<{ key: string; label: string; col
   } catch { return [] }
 }
 
-export type ProjectFull = Project & {
-  links: any[]; steps: any[]; photos: any[]; notes: any[]
-  progress: ReturnType<typeof progressOf>; health: ReturnType<typeof healthOf>
-}
-
-export async function listProjects(opts: { archived?: boolean; category?: string; market?: string; lead?: string } = {}) {
+export async function listProjects(opts: { archived?: boolean; category?: string; market?: string; lead?: string; viewer?: Viewer } = {}) {
   try {
     const sb = supabaseAdmin()
     let q = sb.from('projects').select('*').eq('archived', !!opts.archived)
@@ -101,8 +27,19 @@ export async function listProjects(opts: { archived?: boolean; category?: string
     if (opts.market && opts.market !== 'all') q = q.eq('market', opts.market)
     if (opts.lead && opts.lead !== 'all') q = q.eq('lead_email', opts.lead)
     const { data } = await q.order('sort', { nullsFirst: false }).order('created_at', { ascending: false }).limit(500)
-    const rows = (data || []) as any as Project[]
+    let rows = (data || []) as any as Project[]
     if (!rows.length) return []
+    // PRIVACY IS APPLIED HERE, NOT IN THE UI. When a viewer is given, the board only ever receives
+    // the projects that viewer is a member of. A non-member does not get a greyed-out card; they
+    // get nothing, and cannot tell the project exists.
+    if (opts.viewer && !opts.viewer.superadmin) {
+      const e = String(opts.viewer.email || '').trim().toLowerCase()
+      if (!e) return []
+      const { data: mine } = await sb.from('project_members').select('project_id').eq('email', e).limit(2000)
+      const ok = new Set(((mine || []) as any[]).map(m => String(m.project_id)))
+      rows = rows.filter(r => ok.has(String(r.id)))
+      if (!rows.length) return []
+    }
     const ids = rows.map(r => r.id)
     // Two round trips for the whole board rather than N+1 per card.
     const [{ data: links }, { data: steps }] = await Promise.all([
@@ -122,22 +59,31 @@ export async function listProjects(opts: { archived?: boolean; category?: string
 }
 
 export async function getProject(id: string): Promise<ProjectFull | null> {
-  try {
-    const sb = supabaseAdmin()
-    const { data: p } = await sb.from('projects').select('*').eq('id', id).maybeSingle()
-    if (!p) return null
-    const [{ data: links }, { data: steps }, { data: photos }, { data: notes }] = await Promise.all([
-      sb.from('project_links').select('*').eq('project_id', id).order('created_at'),
-      sb.from('project_steps').select('*').eq('project_id', id).order('sort', { nullsFirst: false }).order('created_at'),
-      sb.from('project_photos').select('*').eq('project_id', id).order('created_at', { ascending: false }),
-      sb.from('project_notes').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(200),
-    ])
-    const L = (links || []) as any[], S = (steps || []) as any[]
-    return {
-      ...(p as any), links: L, steps: S, photos: photos || [], notes: notes || [],
-      progress: progressOf(L, S), health: healthOf(p as any, S),
-    }
-  } catch { return null }
+  const sb = supabaseAdmin()
+  const { data: p, error } = await sb.from('projects').select('*').eq('id', id).maybeSingle()
+  // A failed read is not a missing project. The old version returned null for both, and the page
+  // rendered "not found" for a database blip — the false all-clear the audit was about.
+  if (error) throw new Error('project read failed: ' + error.message)
+  if (!p) return null
+  const [links, steps, photos, notes, members, asg] = await Promise.all([
+    sb.from('project_links').select('*').eq('project_id', id).order('created_at'),
+    sb.from('project_steps').select('*').eq('project_id', id).order('sort', { nullsFirst: false }).order('created_at'),
+    sb.from('project_photos').select('*').eq('project_id', id).order('created_at', { ascending: false }),
+    sb.from('project_notes').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(200),
+    sb.from('project_members').select('*').eq('project_id', id).order('created_at'),
+    sb.from('project_task_assignees').select('task_id,person_key,display,email').eq('project_id', id),
+  ])
+  for (const r of [links, steps, photos, notes, members, asg]) if (r.error) throw new Error('project read failed: ' + r.error.message)
+  const L = (links.data || []) as any[], S = (steps.data || []) as any[]
+  const byTask: Record<string, Person[]> = {}
+  for (const a of (asg.data || []) as any[]) (byTask[a.task_id] = byTask[a.task_id] || []).push({ person_key: a.person_key, display: a.display, email: a.email })
+  return {
+    ...(p as any),
+    links: L, steps: S, photos: photos.data || [], notes: notes.data || [],
+    members: (members.data || []) as Member[],
+    tasks: nestTasks(S, byTask),
+    progress: progressOf(L, S), health: healthOf(p as any, S),
+  }
 }
 
 /** Resolve a vendor share link. Returns null for unknown, revoked or expired tokens. */

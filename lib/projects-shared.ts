@@ -1,0 +1,164 @@
+// PROJECTS — THE PARTS BOTH SIDES OF THE WIRE NEED.
+//
+// Types, constants, the privacy rule and the pure helpers. No imports of anything that touches the
+// database or the environment, so the project page (a client component) can use the same
+// definitions the API does. lib/projects.ts is server-only and re-exports everything here, so
+// nothing that imported from there had to change.
+//
+// The split exists for the same reason lib/person-name.ts does: a rule that lives only where the
+// browser cannot reach it gets re-implemented in the browser, and the two drift.
+import { personKey } from './person-name'
+
+export const STAGES = ['idea', 'planned', 'in_progress', 'blocked', 'review', 'done', 'cancelled'] as const
+export type Stage = typeof STAGES[number]
+export const STAGE_LABEL: Record<Stage, string> = {
+  idea: 'Idea', planned: 'Planned', in_progress: 'In progress',
+  blocked: 'Blocked', review: 'Review', done: 'Done', cancelled: 'Cancelled',
+}
+/** Columns shown on the board. Done and cancelled are reachable but not a standing column. */
+export const BOARD_STAGES: Stage[] = ['idea', 'planned', 'in_progress', 'blocked', 'review', 'done']
+export const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
+export const APPROVALS = ['not_needed', 'needed', 'requested', 'approved', 'declined'] as const
+export const LINK_KINDS = ['listing', 'reservation', 'task', 'owner', 'building'] as const
+export const PHOTO_PHASES = ['before', 'during', 'after'] as const
+
+const OPEN_STAGES: Stage[] = ['idea', 'planned', 'in_progress', 'blocked', 'review']
+export const isOpenStage = (s: any) => OPEN_STAGES.includes(String(s) as Stage)
+
+export type Project = {
+  id: string; ref: string | null; title: string; summary: string | null
+  category: string; stage: Stage; priority: string
+  lead_email: string | null; market: string | null; building: string | null
+  starts_on: string | null; due_on: string | null; done_on: string | null
+  budget_cents: number | null; spent_cents: number; billable: boolean
+  owner_id: string | null; owner_name: string | null
+  approval: string; approval_note: string | null; approved_at: string | null; approved_by: string | null
+  share_token: string | null; share_expires: string | null; vendor_name: string | null
+  archived: boolean; sort: number | null
+  created_by: string | null; created_at: string; updated_at: string
+}
+
+const num = (v: any): number | null => { const n = Number(v); return Number.isFinite(n) ? n : null }
+export const money = (cents: number | null | undefined) =>
+  cents == null ? null : Math.round(Number(cents)) / 100
+export const toCents = (dollars: any): number | null => {
+  // Strip currency furniture, but a string with NO DIGITS must be null, not 0. Number('') is 0,
+  // so the naive version turned an empty box or a typo into a $0.00 budget — which reads on the
+  // card as "budgeted at nothing" rather than "no budget set". Those are different facts.
+  const cleaned = String(dollars ?? '').replace(/[^0-9.\-]/g, '')
+  if (!/\d/.test(cleaned)) return null
+  const n = Number(cleaned)
+  return Number.isFinite(n) ? Math.round(n * 100) : null
+}
+
+const TZ = 'America/New_York'
+export const todayISO = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ })
+
+/** ONE definition of trouble, so the card, the column count and the digest always agree. */
+export function healthOf(p: Project, steps: { done: boolean }[] = []): {
+  state: 'ok' | 'due' | 'late' | 'blocked' | 'done'
+  daysLeft: number | null
+  reason: string | null
+} {
+  if (p.stage === 'done' || p.stage === 'cancelled') return { state: 'done', daysLeft: null, reason: null }
+  if (p.stage === 'blocked') return { state: 'blocked', daysLeft: null, reason: 'Blocked' }
+  if (!p.due_on) return { state: 'ok', daysLeft: null, reason: null }
+  const days = Math.round(
+    (new Date(p.due_on + 'T12:00:00').getTime() - new Date(todayISO() + 'T12:00:00').getTime()) / 86400000,
+  )
+  if (days < 0) return { state: 'late', daysLeft: days, reason: `${Math.abs(days)}d overdue` }
+  if (days <= 7) return { state: 'due', daysLeft: days, reason: days === 0 ? 'Due today' : `${days}d left` }
+  return { state: 'ok', daysLeft: days, reason: null }
+}
+
+/** Progress from linked units first (a rollout is measured in units), else from the checklist. */
+export function progressOf(links: { kind: string; done: boolean }[], steps: { done: boolean }[]) {
+  const units = links.filter(l => l.kind === 'listing')
+  const src = units.length ? units : steps
+  const total = src.length
+  const done = src.filter((x: any) => x.done).length
+  return { done, total, pct: total ? Math.round((done / total) * 100) : null, basis: units.length ? 'units' : 'steps' }
+}
+
+// ---------------------------------------------------------------- reads
+// FAIL-SOFT: a missing table (migration not run yet) returns empty rather than 500ing the page,
+// same contract as the rest of the app's settings-backed features.
+
+export const TASK_STATUSES = ['todo', 'doing', 'blocked', 'done'] as const
+export type TaskStatus = typeof TASK_STATUSES[number]
+export const TASK_STATUS_LABEL: Record<TaskStatus, string> = { todo: 'To do', doing: 'Doing', blocked: 'Blocked', done: 'Done' }
+export const MEMBER_ROLES = ['owner', 'editor', 'viewer'] as const
+
+export type Person = { person_key: string; display: string; email: string | null }
+export type Member = Person & { id: string; project_id: string; role: string; notify: any; added_by: string | null; created_at: string }
+export type Task = {
+  id: string; project_id: string; title: string; description: string | null
+  status: TaskStatus; done: boolean; section: string | null; parent_id: string | null
+  priority: string; due_on: string | null; sort: number | null
+  done_at: string | null; done_by: string | null; created_by: string | null
+  created_at: string; updated_at: string
+  /** Kept in sync with the first assignee for old readers; never the source of truth. */
+  assignee: string | null
+  assignees: Person[]
+  subtasks: Task[]
+}
+
+export type ProjectFull = Project & {
+  private: boolean; kind: string; template_key: string | null; recurs: any
+  links: any[]; steps: any[]; photos: any[]; notes: any[]
+  members: Member[]
+  tasks: Task[]
+  progress: ReturnType<typeof progressOf>; health: ReturnType<typeof healthOf>
+}
+
+// ── WHO CAN SEE A PROJECT ───────────────────────────────────────────────────────────────────────
+// Jon chose "members only, plus owner" (2026-09-08). A project is visible to the people on its
+// members list and to the superadmin, and to nobody else. Not the lead, not "admins", not
+// "everyone with board access" — those were the two looser options and he turned them down,
+// because a one-on-one about Roberto can hold notes about Roberto.
+//
+// So this is the ONLY rule, and every read path goes through it. There is no second code path that
+// lists projects without asking.
+export type Viewer = { email: string | null; superadmin: boolean }
+
+export function canSee(members: { email?: string | null; person_key?: string | null }[], viewer: Viewer): boolean {
+  if (viewer.superadmin) return true
+  const e = String(viewer.email || '').trim().toLowerCase()
+  if (!e) return false
+  return members.some(m => String(m.email || '').trim().toLowerCase() === e)
+}
+
+export function canEdit(members: { email?: string | null; role?: string | null }[], viewer: Viewer): boolean {
+  if (viewer.superadmin) return true
+  const e = String(viewer.email || '').trim().toLowerCase()
+  if (!e) return false
+  const m = members.find(x => String(x.email || '').trim().toLowerCase() === e)
+  return !!m && (m.role === 'owner' || m.role === 'editor')
+}
+
+/** Resolve a typed name or email into the shape the members and assignees tables want. */
+export function toPerson(raw: string): Person {
+  const display = String(raw || '').replace(/\s+/g, ' ').trim()
+  const isEmail = /@/.test(display)
+  return {
+    person_key: isEmail ? display.toLowerCase() : personKey(display),
+    display,
+    email: isEmail ? display.toLowerCase() : null,
+  }
+}
+
+/** Nest flat task rows: top-level tasks carry their subtasks. Order within a level is sort, then created. */
+export function nestTasks(rows: any[], assigneesByTask: Record<string, Person[]>): Task[] {
+  const byId: Record<string, Task> = {}
+  const order = (a: any, b: any) => (a.sort ?? 1e9) - (b.sort ?? 1e9) || String(a.created_at).localeCompare(String(b.created_at))
+  for (const r of rows) {
+    byId[r.id] = { ...r, status: TASK_STATUSES.includes(r.status) ? r.status : (r.done ? 'done' : 'todo'), assignees: assigneesByTask[r.id] || [], subtasks: [] }
+  }
+  const top: Task[] = []
+  for (const r of rows.slice().sort(order)) {
+    const t = byId[r.id]
+    if (r.parent_id && byId[r.parent_id]) byId[r.parent_id].subtasks.push(t)
+    else top.push(t)
+  }
+  return top
+}
