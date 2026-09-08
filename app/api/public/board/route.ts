@@ -8,6 +8,7 @@ import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 import { getAccess } from '@/lib/access'
 import { customFieldNameMap } from '@/lib/custom-fields'
 import { isDepartureCleanName } from '@/lib/breezeway'
+import { salatoListings } from '@/lib/salato-units'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -65,11 +66,15 @@ export async function GET(req: NextRequest) {
     const farEnd = addDays(today, 30)
     const pastStart = addDays(today, -30)
     const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,bedrooms,pictures,cfRaw:raw->customFields,coRaw:raw->>defaultCheckOutTime,ciRaw:raw->>defaultCheckInTime')
+    // The Salato scope reads the team's editable unit set so a new building shows on the vendor
+    // board the moment it is added at /salato → Units; every other scope stays on its name rule.
+    const salatoIds = v === 'salato' ? (await salatoListings(db)).match : null
+    const inScope = (id: string, name: string, building: any) => salatoIds ? salatoIds[id] !== undefined : (scope.re.test(str(building)) || scope.re.test(name))
     const match: Record<string, { name: string; bedrooms: number | null; doorCode: string | null; checkOutTime: string | null; checkInTime: string | null }> = {}
     const bannerCands: { name: string; url: string; count: number; full: boolean }[] = []
     for (const l of (listings || []) as any[]) {
       const name = l.nickname || l.title || 'Unit'
-      if (scope.re.test(str(l.building)) || scope.re.test(name)) {
+      if (inScope(String(l.id), name, l.building)) {
         match[String(l.id)] = { name, bedrooms: l.bedrooms ?? null, doorCode: cfValue({ customFields: l.cfRaw }, DOOR_CODE_FIELD), checkOutTime: l.coRaw || null, checkInTime: l.ciRaw || null }
         // Photos live on the mirror as an array of URL strings (see lib/guesty pictures map).
         const pics = Array.isArray(l.pictures) ? l.pictures.filter((p: any) => typeof p === 'string' && p.indexOf('https://') === 0) : []
