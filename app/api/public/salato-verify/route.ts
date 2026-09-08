@@ -5,6 +5,7 @@
 // The reservation id is the capability, so the guest device does not need the share password.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isSalatoListing } from '@/lib/salato-units'
 import { loadSalatoRules } from '@/lib/salato-rules'
 import { getToken } from '@/lib/guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
@@ -22,7 +23,6 @@ function validEmails(s: string): string[] { const out: string[] = []; const seen
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const SALATO = /salato/i
 const BUCKET = 'salato-verify'
 const RES_NOTES_FIELD = '695f16830cb54c001400b3ff' // Guesty reservation "reservation_notes" custom field
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -35,8 +35,9 @@ async function loadSalatoRes(db: any, rid: string): Promise<{ ok: boolean; unit?
   if (!r) return { ok: false }
   const { data: l } = await db.from('guesty_listings').select('nickname,title,building').eq('id', String(r.listing_id)).maybeSingle()
   const lname = l ? (l.nickname || l.title || '') : ''
-  const isSalato = SALATO.test(str(l?.building)) || SALATO.test(str(lname))
-  if (!isSalato) return { ok: false }
+  // The gate reads the SAME editable set as the board — a unit added at /salato → Units can be
+  // verified immediately; before this it was refused because its name did not say "Salato".
+  if (!(await isSalatoListing(db, String(r.listing_id), l))) return { ok: false }
   const raw = r.raw || {}
   const guest = raw.guest || {}
   const full = r.guest_name || raw.guestName || guest.fullName || [guest.firstName, guest.lastName].filter(Boolean).join(' ') || ''
