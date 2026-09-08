@@ -12,7 +12,9 @@ import Link from 'next/link'
 import { Search, ArrowUpDown, Download, Loader2, Check, AlertTriangle, X, Square, CheckSquare } from 'lucide-react'
 
 export type UnitRow = {
-  id: string; name: string; building: string; unit: string | null
+  // `name` is the OPS name ("Arya 1704/1") — what a human scans the table for. `marketingTitle`
+  // is the guest-facing headline, shown small underneath and still searchable.
+  id: string; name: string; marketingTitle?: string | null; building: string; unit: string | null
   dead: boolean
   score: number
   titleLen: number
@@ -96,7 +98,7 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
     let list = units.filter(u => {
       if (!showDead && u.dead) return false
       if (building && u.building !== building) return false
-      if (needle && !(`${u.name} ${u.building} ${u.unit || ''}`.toLowerCase().includes(needle))) return false
+      if (needle && !(`${u.name} ${u.building} ${u.unit || ''} ${u.marketingTitle || ''}`.toLowerCase().includes(needle))) return false
       for (const f of FILTERS) if (active.has(f.key) && !f.test(u)) return false
       return true
     })
@@ -142,9 +144,9 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
   }
 
   function exportCsv() {
-    const head = ['Unit', 'Building', 'Score', 'Title chars', 'Sections', 'Photos', 'Photo quality', 'Amenities', 'Must fix', `Rating ${periodLabel}`, 'Reviews', `Occupancy ${revLabel}`, `ADR ${revLabel}`, `RevPAR ${revLabel}`, 'Basis', 'Last optimized']
+    const head = ['Unit', 'Listing title', 'Building', 'Score', 'Title chars', 'Sections', 'Photos', 'Photo quality', 'Amenities', 'Must fix', `Rating ${periodLabel}`, 'Reviews', `Occupancy ${revLabel}`, `ADR ${revLabel}`, `RevPAR ${revLabel}`, 'Basis', 'Last optimized']
     const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const body = rows.map(u => [u.name, u.building, u.score, u.titleLen, `${u.sections}/6`, u.photos, u.photoQuality ?? '', u.amenities, u.mustFix, u.rating ?? '', u.reviews, u.occupancy ?? '', u.adr ?? '', u.revpar ?? '', basisLabel, u.lastOptimized || ''].map(esc).join(','))
+    const body = rows.map(u => [u.name, u.marketingTitle || '', u.building, u.score, u.titleLen, `${u.sections}/6`, u.photos, u.photoQuality ?? '', u.amenities, u.mustFix, u.rating ?? '', u.reviews, u.occupancy ?? '', u.adr ?? '', u.revpar ?? '', basisLabel, u.lastOptimized || ''].map(esc).join(','))
     const csv = [head.map(esc).join(','), ...body].join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a')
@@ -250,6 +252,7 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
               )}
               <div className="min-w-0 flex-1">
                 <Link href={`/listings/${u.id}`} className="block font-semibold text-ink text-[13.5px] leading-snug break-words">{u.name}</Link>
+                {u.marketingTitle && u.marketingTitle !== u.name && <span className="block text-[11px] text-muted leading-snug line-clamp-1">{u.marketingTitle}</span>}
                 <div className="text-[11.5px] text-muted">{u.building}</div>
               </div>
               <span className={`shrink-0 inline-flex items-center justify-center min-w-[2.1rem] px-1.5 py-0.5 rounded-md ring-1 font-bold tabular-nums ${scoreClass(u.score)}`}>{u.score}</span>
@@ -313,6 +316,7 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
                 )}
                 <td className="px-2.5 py-2 max-w-[280px]">
                   <Link href={`/listings/${u.id}`} className="font-semibold text-ink hover:text-brand-700 block truncate">{u.name}</Link>
+                  {u.marketingTitle && u.marketingTitle !== u.name && <span className="block text-[11px] text-muted truncate" title={u.marketingTitle}>{u.marketingTitle}</span>}
                 </td>
                 <td className="px-2.5 py-2 text-muted whitespace-nowrap">{u.building}</td>
                 <td className="px-2.5 py-2 text-right">
