@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { SalatoUnitsPicker } from '@/components/SalatoUnitsPicker'
 
 type Note = { id: string; author: string; body: string; at: string }
 type Res = {
@@ -11,10 +12,12 @@ type Res = {
 type Data = { ok: boolean; today: string; arrivals: Res[]; departures: Res[]; active: Res[]; error?: string }
 
 const SEEN_KEY = 'salato_seen_v1'
-const TABS: { key: 'arrivals' | 'departures' | 'active'; label: string }[] = [
+type TabKey = 'arrivals' | 'departures' | 'active' | 'units'
+const TABS: { key: TabKey; label: string }[] = [
   { key: 'arrivals', label: 'Arrivals' },
   { key: 'departures', label: 'Departure cleans' },
   { key: 'active', label: 'Active reservations' },
+  { key: 'units', label: 'Units' },
 ]
 
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
@@ -94,7 +97,7 @@ function Field({ label, value }: { label: string; value: string }) {
 
 export default function SalatoPage() {
   const [data, setData] = useState<Data | null>(null)
-  const [tab, setTab] = useState<'arrivals' | 'departures' | 'active'>('arrivals')
+  const [tab, setTab] = useState<TabKey>('arrivals')
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -133,7 +136,7 @@ export default function SalatoPage() {
     } catch { return false }
   }, [])
 
-  const rows = data ? data[tab] : []
+  const rows = data && tab !== 'units' ? data[tab] : []
   const isNew = (id: string) => seenInit.current && !seen.has(id)
   const newCount = data ? [...data.arrivals, ...data.departures, ...data.active].filter(r => isNew(r.id)).length : 0
   function markAllSeen() { if (!data) return; const s = new Set([...data.arrivals, ...data.departures, ...data.active].map(r => r.id)); setSeen(s); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(s))) } catch {} }
@@ -159,17 +162,21 @@ export default function SalatoPage() {
       {/* "Departure cleans" and "Active reservations" do not shrink below their text, so on a
           375px screen this strip pushed the whole page sideways. Let the strip scroll itself. */}
       <div className='flex gap-1 mb-4 bg-gray-100 rounded-xl p-1 overflow-x-auto'>
-        {TABS.map(t => { const n = data ? data[t.key].length : 0; return (
-          <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition ' + (tab === t.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700')}>{t.label}<span className='ml-1.5 text-xs text-gray-400'>{n}</span></button>
+        {TABS.map(t => { const n = data && t.key !== 'units' ? data[t.key as 'arrivals' | 'departures' | 'active'].length : null; return (
+          <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 whitespace-nowrap text-sm font-medium px-3 py-2 rounded-lg transition ' + (tab === t.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700')}>{t.label}{n != null && <span className='ml-1.5 text-xs text-gray-400'>{n}</span>}</button>
         )})}
       </div>
 
+      {tab === 'units' && <SalatoUnitsPicker onSaved={() => { setLoading(true); load() }} />}
+
+      {tab !== 'units' && <>
       {loading && !data && <div className='text-gray-400 text-sm py-10 text-center'>Loading…</div>}
       {err && <div className='text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3'>{err}</div>}
       {data && rows.length === 0 && !loading && <div className='text-gray-400 text-sm py-10 text-center'>Nothing here for this window.</div>}
       <div className='space-y-2'>
         {rows.map(r => (<Card key={r.id} r={r} mode={tab} expanded={expanded === r.id} onToggle={() => setExpanded(expanded === r.id ? null : r.id)} onAddNote={addNote} isNew={isNew(r.id)} />))}
       </div>
+      </>}
     </div>
     </div>
   )
