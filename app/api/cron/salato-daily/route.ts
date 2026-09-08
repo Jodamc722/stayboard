@@ -19,11 +19,11 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
 import { isLiveStay } from '@/lib/stay-status'
+import { salatoListings } from '@/lib/salato-units'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const SALATO = /salato|salado/i
 const HOTEL = /hotel|front desk|reception|lobby|concierge|group|block/i
 // Live-stay detection is the SHARED rule (lib/stay-status). The local /confirm|checked/ regex
 // this replaced is the exact pattern stay-status was written to retire — it missed 'closed' and
@@ -58,13 +58,8 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin()
     const today = ymd(new Date())
     const horizon = addDays(today, 14)
-    const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building').limit(2000)
-    const unitOf: Record<string, string> = {}
-    for (const l of (listings || []) as any[]) {
-      const name = l.nickname || l.title || 'Unit'
-      if (SALATO.test(str(l.building)) || SALATO.test(name)) unitOf[String(l.id)] = name
-    }
-    const ids = Object.keys(unitOf)
+    // Same editable unit set as the board and the verification gate (lib/salato-units).
+    const { match: unitOf, ids } = await salatoListings(db)
     if (!ids.length) return NextResponse.json({ ok: true, sent: false, reason: 'no Salato listings matched' })
 
     const { data: rows } = await db.from('guesty_reservations')
