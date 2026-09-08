@@ -720,7 +720,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                             exactly what this dropdown used to be. */}
                         {metaBusy.has(id) && <Loader2 size={10} className="animate-spin text-muted ml-1 inline" />}
                         {metaSaved.has(id) && <span className="text-[10px] font-semibold text-emerald-600 ml-1">saved</span>}
-                        {p.reason && <p className="text-[11px] text-muted leading-snug">{p.reason}</p>}
+                        {p.reason && p.placement?.slot !== 'demoted' && <p className="text-[11px] text-muted leading-snug">{p.reason}</p>}
                         {presets.length > 0 && !uploads[id] && (
                           <div className="flex items-center gap-1">
                             <select
