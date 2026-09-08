@@ -147,6 +147,10 @@
     {
       "path": "/api/cron/project-digest",
       "schedule": "5 11 * * *"
+    },
+    {
+      "path": "/api/cron/project-recur",
+      "schedule": "35 10 * * *"
     }
   ]
 }
