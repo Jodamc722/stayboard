@@ -171,7 +171,7 @@ const DEFAULT_ORDER_PROMPT = `Ordering principles (in priority):
 // Was "<=8 word guest-facing caption" in two separately-worded prompts (optimize-photos and
 // photo-caption) that could drift. One spec now, read by both. Jon 2026-08-21: one richer caption
 // that still pushes to Guesty — not a second internal field.
-const DEFAULT_CAPTION_PROMPT = `A specific, guest-facing description of what the photo shows: name the space, what is in it, and the one true thing that sells it. Write it like a listing caption a guest reads under the photo — concrete, warm, never marketing fluff, never a sentence about how it "feels". Ground every word in the image. NEVER include a unit, room or listing number, a brand name you are not certain of, or a claim the photo does not show.`
+const DEFAULT_CAPTION_PROMPT = `A specific, guest-facing description of what the photo shows: name the space first (Airbnb shows captions in its room-by-room photo tour, and guests skim them to confirm what they are looking at), then what is in it, then the one true thing that sells it — the feature a guest would book for (the view, the king bed, the walk-in shower, the workspace). Write it like a listing caption a guest reads under the photo — concrete, warm, sentence case, never marketing fluff, never a sentence about how it "feels", never ALL CAPS or exclamation marks. Ground every word in the image. NEVER include a unit, room or listing number, a brand name you are not certain of, or a claim the photo does not show.`
 
 const DEFAULT_PRESETS: EnhancePreset[] = [
   // "Classic" is the exact recipe every enhanced photo got before 2026-08-21 — kept so the
