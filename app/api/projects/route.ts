@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
   let templates: any[] = []
   try {
     const { listTemplates } = await import('@/lib/project-templates')
-    templates = (await listTemplates()).map(t => ({ key: t.key, label: t.label, kind: t.kind, category: t.category, blurb: t.blurb || '', builtIn: !!t.builtIn, sections: t.sections.map(s => s.name), recurs: t.recurs || null }))
+    templates = (await listTemplates()).map(t => ({ key: t.key, label: t.label, kind: t.kind, category: t.category, blurb: t.blurb || '', builtIn: !!t.builtIn, sections: t.sections.map(s => s.name), recurs: t.recurs || null, icon: t.icon || '📋', accent: t.accent || 'indigo' }))
   } catch {}
   return NextResponse.json({ ok: true, projects, categories, listings, people, roster, templates, today: todayISO() })
 }
