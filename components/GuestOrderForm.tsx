@@ -8,7 +8,22 @@
 // Not the app's indigo ops skin on purpose: the guest sees Stay Hospitality, not Lighthouse.
 import { useEffect, useMemo, useState } from 'react'
 
-export type FormItem = { id?: string; sku: string; name: string; description: string | null; price: number; unit: string | null; category: string; maxQty: number; image: string | null; fewLeft?: number | null }
+export type PriceTier = { min_qty: number; unit_price_usd: number }
+export type FormItem = { id?: string; sku: string; name: string; description: string | null; price: number; unit: string | null; category: string; maxQty: number; image: string | null; fewLeft?: number | null
+  /** Volume breaks on this item — "3+ $2.50 each". Best qualifying break wins, priced server-side. */
+  tiers?: PriceTier[] | null }
+
+/** The unit price at this quantity. Mirrors priceForQty on the server; the server still decides. */
+export function unitPriceFor(c: FormItem, qty: number): { unit: number; tier: PriceTier | null } {
+  let hit: PriceTier | null = null
+  for (const t of (c.tiers || [])) if (qty >= t.min_qty) hit = t
+  return { unit: hit ? hit.unit_price_usd : c.price, tier: hit }
+}
+/** The next break a guest has not reached yet — the nudge that turns 2 into 3. */
+export function nextTier(c: FormItem, qty: number): PriceTier | null {
+  const up = (c.tiers || []).filter(t => qty < t.min_qty).sort((a, b) => a.min_qty - b.min_qty)
+  return up.length ? up[0] : null
+}
 export type PastOrder = { id: string; status: string; items: { name: string; qty: number; line_total_usd: number }[]; total: number; submittedAt: string; deliveryDate: string | null; deliveryNote: string | null; paid: boolean; requested?: string; requestedDate?: string | null }
 export type FormData = {
   stay: { guestFirst: string; unit: string; building: string | null; checkIn: string; checkOut: string | null; checkInLabel: string; checkOutLabel: string; inHouse: boolean; departed: boolean }
@@ -61,7 +76,11 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
   const [submitErr, setSubmitErr] = useState('')
   useEffect(() => { setWhen(data.stay.inHouse ? 'asap' : 'arrival') }, [data.stay.inHouse])
 
-  const lines = useMemo(() => data.catalog.filter(c => (qty[c.sku] || 0) > 0).map(c => ({ ...c, qty: qty[c.sku], total: c.price * qty[c.sku] })), [data, qty])
+  const lines = useMemo(() => data.catalog.filter(c => (qty[c.sku] || 0) > 0).map(c => {
+    const n = qty[c.sku]
+    const { unit, tier } = unitPriceFor(c, n)
+    return { ...c, qty: n, unitPrice: unit, tier, total: Math.round(unit * n * 100) / 100, saved: tier ? Math.round((c.price - unit) * n * 100) / 100 : 0 }
+  }), [data, qty])
   const count = lines.reduce((n, l) => n + l.qty, 0)
   const subtotal = lines.reduce((n, l) => n + l.total, 0)
   const tax = Math.round(subtotal * data.copy.taxPct) / 100
@@ -177,12 +196,21 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline justify-between gap-3">
                       <div className="text-[16px] font-semibold leading-tight">{c.name}</div>
-                      <div className="text-[15px] font-semibold tabular-nums whitespace-nowrap">{money(c.price)}</div>
+                      {(() => { const { unit, tier } = unitPriceFor(c, Math.max(1, n)); return (
+                        <div className="text-right whitespace-nowrap">
+                          <div className="text-[15px] font-semibold tabular-nums">{money(unit)}{tier ? <span className="text-[12px] font-normal text-neutral-400 line-through ml-1.5">{money(c.price)}</span> : null}</div>
+                        </div>
+                      )})()}
                     </div>
                     {c.description ? <div className="text-[13px] text-neutral-600 mt-1 leading-snug">{c.description}</div> : null}
                     <div className="flex items-center gap-2 mt-1">
                       {c.unit ? <div className="text-[12px] text-neutral-400">{c.unit}</div> : null}
                       {c.fewLeft !== null && c.fewLeft !== undefined ? <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">Only {c.fewLeft} left</span> : null}
+                      {/* The multi-buy nudge: what the next break costs, and what it saves. */}
+                      {(() => { const nx = nextTier(c, n); if (!nx || c.price <= 0) return null
+                        const off = Math.round(((c.price - nx.unit_price_usd) / c.price) * 100)
+                        return <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: accent + '1a', color: accent }}>{nx.min_qty}+ {money(nx.unit_price_usd)} each{off > 0 ? ' · save ' + off + '%' : ''}</span>
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -229,13 +257,18 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
             {lines.length === 0 ? <div className="px-4 py-3 text-[13px] text-neutral-500">Nothing in the basket yet.</div> : null}
             {lines.map(l => (
               <div key={l.sku} className="flex items-center justify-between px-4 py-2.5 text-[14px]">
-                <div className="min-w-0"><b>{l.qty}×</b> {l.name}</div>
+                <div className="min-w-0"><b>{l.qty}×</b> {l.name}
+                  {/* Show the break they earned — a discount nobody notices is a discount wasted. */}
+                  {l.tier ? <span className="block text-[11.5px] font-semibold text-emerald-700">{l.tier.min_qty}+ price · {money(l.unitPrice)} each, saving {money(l.saved)}</span> : null}
+                </div>
                 <div className="flex items-center gap-3">
                   <span className="tabular-nums">{money(l.total)}</span>
                   <button onClick={() => bump(l.sku, -l.qty, l.maxQty)} className="text-neutral-400 hover:text-rose-600 text-lg leading-none" aria-label="Remove">×</button>
                 </div>
               </div>
             ))}
+            {(() => { const saved = lines.reduce((n, l) => n + (l.saved || 0), 0); return saved > 0
+              ? <div className="flex justify-between px-4 py-2 text-[13px] font-semibold text-emerald-700"><span>Multi-buy saving</span><span className="tabular-nums">−{money(saved)}</span></div> : null })()}
             {tax ? <div className="flex justify-between px-4 py-2 text-[13px] text-neutral-600"><span>Sales tax ({data.copy.taxPct}%)</span><span className="tabular-nums">{money(tax)}</span></div> : null}
             <div className="flex justify-between px-4 py-3 text-[16px] font-semibold"><span>Total</span><span className="tabular-nums">{money(total)}</span></div>
           </div>

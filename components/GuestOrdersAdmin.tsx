@@ -15,7 +15,7 @@ type Cfg = {
 type Hub = { id: string; label: string; buildings: string[]; listings: string[] }
 type Listing = { id: string; name: string; building: string; market: string }
 type HubStock = { itemId: string; sku: string; name: string; onHand: number; reserved: number; lowAt: number; available: number; state: string }
-type Item = { id?: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null; category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; hubs?: string[] | null; image_url: string | null; track_stock?: boolean }
+type Item = { id?: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null; category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; hubs?: string[] | null; image_url: string | null; track_stock?: boolean; pack_size?: number | null; pack_cost_usd?: number | null; tiers?: { min_qty: number; unit_price_usd: number }[] | null }
 type Bldg = { label: string; market: string; vendor: boolean }
 
 const FEES = ['GUEST_SERVICE', 'BEVERAGE', 'FOOD', 'BREAKFAST', 'MEAL', 'MINIBAR', 'TOWELS', 'LINENS', 'TOILETRIES', 'BABY_BED', 'ADDITIONAL_BED', 'EQUIPMENT_RENTAL', 'LAUNDRY', 'PARKING', 'CONCIERGE', 'GIFT_BASKET', 'MISCELLANEOUS']
@@ -32,6 +32,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
   const [buildings, setBuildings] = useState<Bldg[]>([])
   const [markets, setMarkets] = useState<string[]>(['Miami', 'Broward', 'North'])
   const [scopeOpen, setScopeOpen] = useState<number | null>(null)
+  const [costOpen, setCostOpen] = useState<number | null>(null)
   const [listings, setListings] = useState<Listing[]>([])
   const [unitOpen, setUnitOpen] = useState<number | null>(null)   // hub index whose unit picker is open
   const [unitQ, setUnitQ] = useState('')
@@ -189,11 +190,11 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">Catalog · {catalog.filter(c => c.active).length} live</div>
-          {!ro ? <button onClick={() => setCatalog(k => [...k, { sku: '', name: '', description: '', price_usd: 0, unit_label: '', category: 'Extras', fee_code: 'GUEST_SERVICE', max_qty: 10, sort: (k.length + 1) * 10, active: true, buildings: null, markets: null, hubs: null, image_url: null, track_stock: false }])} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={12} /> Add item</button> : null}
+          {!ro ? <button onClick={() => setCatalog(k => [...k, { sku: '', name: '', description: '', price_usd: 0, unit_label: '', category: 'Extras', fee_code: 'GUEST_SERVICE', max_qty: 10, sort: (k.length + 1) * 10, active: true, buildings: null, markets: null, hubs: null, image_url: null, track_stock: false, pack_size: null, pack_cost_usd: null, tiers: null }])} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Plus size={12} /> Add item</button> : null}
         </div>
         <div className="rounded-xl border border-line overflow-x-auto">
           <table className="w-full text-[12px] min-w-[1000px]">
-            <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-muted bg-app/60"><th className="px-2 py-1.5 w-8">On</th><th className="px-2 py-1.5 w-16">Photo</th><th className="px-2 py-1.5">Name</th><th className="px-2 py-1.5">Description</th><th className="px-2 py-1.5 w-20">Price</th><th className="px-2 py-1.5 w-24">Unit</th><th className="px-2 py-1.5 w-24">Category</th><th className="px-2 py-1.5 w-36">Guesty fee</th><th className="px-2 py-1.5 w-14">Max</th><th className="px-2 py-1.5 w-40">Offered in</th><th className="px-2 py-1.5 w-12" title="Track stock — out of stock hides the item">Stock</th><th className="px-2 py-1.5 w-8"></th></tr></thead>
+            <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-muted bg-app/60"><th className="px-2 py-1.5 w-8">On</th><th className="px-2 py-1.5 w-16">Photo</th><th className="px-2 py-1.5">Name</th><th className="px-2 py-1.5">Description</th><th className="px-2 py-1.5 w-20">Price</th><th className="px-2 py-1.5 w-28" title="What the pack costs us, the per-unit cost it implies, and any multi-buy discount">Cost &amp; packs</th><th className="px-2 py-1.5 w-24">Unit</th><th className="px-2 py-1.5 w-24">Category</th><th className="px-2 py-1.5 w-36">Guesty fee</th><th className="px-2 py-1.5 w-14">Max</th><th className="px-2 py-1.5 w-40">Offered in</th><th className="px-2 py-1.5 w-12" title="Track stock — out of stock hides the item">Stock</th><th className="px-2 py-1.5 w-8"></th></tr></thead>
             <tbody>
               {catalog.map((it, i) => (
                 <tr key={it.id || 'new' + i} className="border-t border-line/60">
@@ -208,6 +209,17 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                   <td className="px-2 py-1"><input value={it.name} onChange={e => setItem(i, { name: e.target.value })} className={box + ' font-semibold'} disabled={ro} /></td>
                   <td className="px-2 py-1"><input value={it.description || ''} onChange={e => setItem(i, { description: e.target.value })} className={box} disabled={ro} /></td>
                   <td className="px-2 py-1"><input type="number" min={0} step={0.5} value={it.price_usd} onChange={e => setItem(i, { price_usd: Number(e.target.value) })} className={box} disabled={ro} /></td>
+                  {/* COST & PACKS — buy by the case, sell by the unit, or sell a discounted
+                      multi-buy. Folded into a panel because these are four numbers nobody needs
+                      while they are editing a name, and the row is already wide. */}
+                  <td className="px-2 py-1 relative">
+                    <button type="button" onClick={() => setCostOpen(costOpen === i ? null : i)} disabled={ro}
+                      className={box + ' text-left truncate ' + (unitCostOf(it) != null || (it.tiers && it.tiers.length) ? 'text-brand-700 font-semibold' : 'text-muted')}
+                      title="Pack cost, per-unit cost, margin and volume price breaks">
+                      {costLabel(it)}
+                    </button>
+                    {costOpen === i ? <CostPanel it={it} onChange={p => setItem(i, p)} onClose={() => setCostOpen(null)} ro={ro} /> : null}
+                  </td>
                   <td className="px-2 py-1"><input value={it.unit_label || ''} onChange={e => setItem(i, { unit_label: e.target.value })} className={box} placeholder="case of 12" disabled={ro} /></td>
                   <td className="px-2 py-1"><input value={it.category || ''} onChange={e => setItem(i, { category: e.target.value })} className={box} placeholder="Drinks" disabled={ro} /></td>
                   <td className="px-2 py-1"><select value={FEES.indexOf(it.fee_code) >= 0 ? it.fee_code : 'GUEST_SERVICE'} onChange={e => setItem(i, { fee_code: e.target.value })} className={box} disabled={ro}>{FEES.map(f => <option key={f} value={f}>{f}</option>)}</select></td>
@@ -402,6 +414,85 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
           </div>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+
+// ── COST & PACKS ─────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-09: "get the cost for the pack and sell them as individual items, or sell multiple
+// items at a discounted rate … in the form builder."
+//
+// Two numbers we pay (pack size + pack cost) and a list of price breaks we offer. Everything else
+// on this panel is derived, because the derived numbers — cost per unit, margin, profit per pack —
+// are the ones that actually decide whether a price is right, and making someone divide 11.88 by
+// 24 in their head is how a menu ends up priced wrong.
+type PriceTier = { min_qty: number; unit_price_usd: number }
+function unitCostOf(it: { cost_usd?: number | null; pack_size?: number | null; pack_cost_usd?: number | null }): number | null {
+  const size = Number(it.pack_size) || 0, cost = Number(it.pack_cost_usd) || 0
+  if (size > 0 && cost > 0) return Math.round((cost / size) * 10000) / 10000
+  return it.cost_usd === null || it.cost_usd === undefined ? null : Number(it.cost_usd)
+}
+const usd = (n: number) => (n < 1 ? (Math.round(n * 100) / 100).toFixed(2).replace(/^0/, '') + '¢'.replace('¢', '') : '$' + (Math.round(n * 100) / 100).toFixed(2))
+const money2 = (n: number) => '$' + (Math.round(n * 100) / 100).toFixed(2)
+function costLabel(it: { price_usd: number; pack_size?: number | null; pack_cost_usd?: number | null; cost_usd?: number | null; tiers?: PriceTier[] | null }): string {
+  const c = unitCostOf(it)
+  const t = (it.tiers || []).length
+  const bits: string[] = []
+  if (c != null) bits.push(money2(c) + '/ea')
+  if (it.pack_size) bits.push('pack ' + it.pack_size)
+  if (t) bits.push(t + ' break' + (t === 1 ? '' : 's'))
+  return bits.length ? bits.join(' · ') : 'Set cost'
+}
+
+function CostPanel({ it, onChange, onClose, ro }: { it: any; onChange: (p: any) => void; onClose: () => void; ro: boolean }) {
+  const tiers: PriceTier[] = Array.isArray(it.tiers) ? it.tiers : []
+  const unitCost = unitCostOf(it)
+  const price = Number(it.price_usd) || 0
+  const margin = unitCost != null && price > 0 ? Math.round(((price - unitCost) / price) * 100) : null
+  const perPack = unitCost != null && it.pack_size ? (price - unitCost) * Number(it.pack_size) : null
+  const setTier = (idx: number, patch: Partial<PriceTier>) => onChange({ tiers: tiers.map((t, k) => k === idx ? { ...t, ...patch } : t) })
+  const inp = 'w-full rounded-lg border border-line px-2 py-1 text-[12px] focus:outline-none focus:border-ink'
+  return (
+    <div className="absolute z-30 right-0 mt-1 w-[22rem] rounded-xl border border-line bg-white shadow-lifted p-3 text-[12px]">
+      <div className="flex items-center justify-between mb-2"><span className="font-semibold text-ink">Cost &amp; packs — {it.name || 'this item'}</span><button onClick={onClose} className="text-muted">Done</button></div>
+
+      <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold mb-1">What we pay</div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block"><span className="text-muted">Units per pack</span>
+          <input type="number" min={0} step={1} value={it.pack_size ?? ''} onChange={e => onChange({ pack_size: e.target.value === '' ? null : Number(e.target.value) })} className={inp} placeholder="24" disabled={ro} /></label>
+        <label className="block"><span className="text-muted">Pack cost</span>
+          <input type="number" min={0} step={0.01} value={it.pack_cost_usd ?? ''} onChange={e => onChange({ pack_cost_usd: e.target.value === '' ? null : Number(e.target.value) })} className={inp} placeholder="11.88" disabled={ro} /></label>
+      </div>
+      <div className={'mt-2 rounded-lg px-2.5 py-2 ' + (margin != null && margin < 0 ? 'bg-rose-50 text-rose-800' : 'bg-app text-ink')}>
+        {unitCost == null ? <span className="text-muted">Enter a pack size and pack cost and the per-unit cost, margin and profit per pack work themselves out.</span> : (
+          <>
+            <div><b>{money2(unitCost)}</b> per unit{it.pack_size ? <span className="text-muted"> — {money2(Number(it.pack_cost_usd) || 0)} ÷ {it.pack_size}</span> : null}</div>
+            <div className="mt-0.5">Sell at <b>{money2(price)}</b> → margin <b>{margin != null ? margin + '%' : '—'}</b>{perPack != null ? <span className="text-muted"> · {money2(perPack)} profit per pack</span> : null}</div>
+            {margin != null && margin < 0 ? <div className="mt-0.5 font-semibold">This sells below cost.</div> : null}
+          </>
+        )}
+      </div>
+
+      <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold mt-3 mb-1">Multi-buy discount</div>
+      <p className="text-muted mb-1.5">Sell the pack as singles at the price above, or cheaper by the handful. The best break a guest qualifies for applies to the whole line.</p>
+      {tiers.length === 0 ? <div className="text-muted mb-1.5">No breaks — every unit is {money2(price)}.</div> : null}
+      {tiers.map((t, k) => {
+        const save = price > 0 ? Math.round(((price - (Number(t.unit_price_usd) || 0)) / price) * 100) : 0
+        return (
+          <div key={k} className="flex items-center gap-1.5 mb-1.5">
+            <span className="text-muted">Buy</span>
+            <input type="number" min={2} step={1} value={t.min_qty} onChange={e => setTier(k, { min_qty: Number(e.target.value) })} className={inp + ' w-14'} disabled={ro} />
+            <span className="text-muted">+ at</span>
+            <input type="number" min={0} step={0.25} value={t.unit_price_usd} onChange={e => setTier(k, { unit_price_usd: Number(e.target.value) })} className={inp + ' w-20'} disabled={ro} />
+            <span className="text-muted">each</span>
+            <span className={'ml-auto font-semibold ' + (save > 0 ? 'text-emerald-700' : 'text-muted')}>{save > 0 ? 'save ' + save + '%' : ''}</span>
+            {!ro ? <button onClick={() => onChange({ tiers: tiers.filter((_, x) => x !== k) })} className="text-muted hover:text-rose-600" title="Remove break"><X size={12} /></button> : null}
+          </div>
+        )
+      })}
+      {!ro ? <button onClick={() => onChange({ tiers: [...tiers, { min_qty: tiers.length ? tiers[tiers.length - 1].min_qty * 2 : 3, unit_price_usd: Math.round(price * 0.85 * 100) / 100 }] })} className="text-[12px] font-semibold text-brand-700 inline-flex items-center gap-1"><Plus size={12} /> Add a price break</button> : null}
+      {tiers.length && unitCost != null ? <div className="mt-2 text-muted">At the deepest break you keep {money2(Math.min(...tiers.map(t => Number(t.unit_price_usd) || 0)) - unitCost)} per unit.</div> : null}
     </div>
   )
 }
