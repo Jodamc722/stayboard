@@ -533,7 +533,7 @@ export function Reputation({ f, setF, onFocusUnit }: {
           <span className="text-[11px] text-muted">
             {showAll
               ? units.length + ' with ' + (d?.minReviews ?? 5) + '+ reviews, worst first'
-              : 'below par, in recovery, or carrying a low review — worst first'}
+              : 'below par, or waiting for a good review since a low one — worst first'}
             {' · '}vs par is pulled toward par on small samples, so a unit with five reviews reads about half its raw gap
           </span>
           <button onClick={() => setShowAll(s => !s)}
