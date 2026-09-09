@@ -1,7 +1,7 @@
 'use client'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { buildOrder as engineOrder, type PhotoFacts } from '@/lib/photo-order'
-import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2 } from 'lucide-react'
+import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2, GripVertical, ChevronsUp, ChevronsDown, CornerLeftUp } from 'lucide-react'
 
 type Photo = {
   _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string
@@ -63,7 +63,19 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [assessment, setAssessment] = useState<Result['assessment']>(null)
   const [removeList, setRemoveList] = useState<{ _id: string; reason: string }[]>([])
   const [toRemove, setToRemove] = useState<Set<string>>(new Set())
+  // POINTER DRAG (2026-09-09, Jon: "it needs to be easier to adjust the photo order"). The native
+  // HTML5 drag it replaces had no touch support (nothing on an iPad), no visible drop target, and
+  // "drop onto a card" semantics nobody could predict. This one: a grip handle starts it, the card
+  // follows the finger or mouse as a ghost, the slot it will land in is drawn as a blue bar, and it
+  // works the same on a phone. `dropAt` is the index the dragged photo will take on release.
   const [dragId, setDragId] = useState<string | null>(null)
+  const [dropAt, setDropAt] = useState<number | null>(null)
+  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null)
+  const cardRefs = useRef<Record<string, HTMLLIElement | null>>({})
+  const orderRef = useRef<string[]>([])
+  // JUMP TO A POSITION: click the number on a card and type where it should go.
+  const [jumpId, setJumpId] = useState<string | null>(null)
+  const [jumpVal, setJumpVal] = useState('')
   const [guidance, setGuidance] = useState('')
   // ENHANCE state: enhanced[id] = hosted enhanced URL; useEnhanced = ids whose enhanced version
   // will replace the live photo on push. Originals are always mirrored to our storage first.
@@ -348,16 +360,71 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     // Make this photo the hero (#1). Re-run analysis with the new hero so the rest re-orders around it.
     setHeroId(id); analyze(id)
   }
-  function onDrop(targetId: string) {
-    if (!dragId || dragId === targetId) { setDragId(null); return }
+  /** Put a photo at a 1-based position. The hero slot (1) is locked; everything else is fair. */
+  const moveTo = useCallback((id: string, pos1: number) => {
     setOrder(prev => {
-      const from = prev.indexOf(dragId); const to = prev.indexOf(targetId)
-      if (from <= 0 || to <= 0) return prev // hero slot is locked
-      const next = prev.slice(); next.splice(from, 1); next.splice(to, 0, dragId)
+      const from = prev.indexOf(id)
+      if (from <= 0) return prev
+      const to = Math.max(1, Math.min(prev.length - 1, Math.round(pos1) - 1))
+      if (to === from) return prev
+      const next = prev.slice(); next.splice(from, 1); next.splice(to, 0, id)
       if (from < 5 || to < 5) setFiveLock(next.slice(0, 5))
       return next
     })
-    setDragId(null)
+  }, [])
+  useEffect(() => { orderRef.current = order }, [order])
+
+  // Where would the pointer drop? Hit-test the cards as laid out NOW: over the left half of a card
+  // means "before it", the right half means "after it"; below the last card means the end.
+  const dropIndexAt = useCallback((x: number, y: number, dragging: string): number | null => {
+    const ids = orderRef.current
+    let best: { idx: number; d: number } | null = null
+    for (let i = 1; i < ids.length; i++) {
+      const el = cardRefs.current[ids[i]]; if (!el) continue
+      const r = el.getBoundingClientRect()
+      if (y < r.top - 8 || y > r.bottom + 8) continue
+      const before = x < r.left + r.width / 2
+      const d = Math.abs(x - (before ? r.left : r.right))
+      if (!best || d < best.d) best = { idx: before ? i : i + 1, d }
+    }
+    if (!best) {
+      const lastEl = cardRefs.current[ids[ids.length - 1]]
+      if (lastEl && y > lastEl.getBoundingClientRect().bottom) return ids.length
+      return null
+    }
+    // Returned in CURRENT positions (so the bar is drawn on the right card); the drop itself
+    // accounts for the dragged card leaving its old slot — see finalPos.
+    return best.idx
+  }, [])
+  /** The 1-based position a photo ends up in when dropped at raw insertion index `raw`. */
+  const finalPos = (raw: number, dragging: string) => {
+    const from = orderRef.current.indexOf(dragging)
+    return (raw > from ? raw - 1 : raw) + 1
+  }
+
+  function startDrag(id: string, e: React.PointerEvent) {
+    if (order.indexOf(id) <= 0) return
+    e.preventDefault(); (e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+    setDragId(id); setGhost({ x: e.clientX, y: e.clientY }); setDropAt(null)
+    const onMove = (ev: PointerEvent) => {
+      setGhost({ x: ev.clientX, y: ev.clientY })
+      setDropAt(dropIndexAt(ev.clientX, ev.clientY, id))
+      // Keep the list moving when the finger is near the top or bottom of the screen.
+      const edge = 60
+      if (ev.clientY < edge) window.scrollBy(0, -12); else if (ev.clientY > window.innerHeight - edge) window.scrollBy(0, 12)
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp)
+      const at = dropIndexAt(ev.clientX, ev.clientY, id)
+      if (at != null) moveTo(id, finalPos(at, id))
+      setDragId(null); setDropAt(null); setGhost(null)
+    }
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp)
+  }
+  function commitJump(id: string) {
+    const n = Number(jumpVal)
+    if (Number.isFinite(n) && n >= 2) moveTo(id, n)
+    setJumpId(null); setJumpVal('')
   }
 
   function toggleRemove(id: string) {
@@ -622,6 +689,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 <span><span className="font-semibold text-ink">{order.length}</span> photos · cover photo locked at #1{overflow > 0 ? ` · ${overflow} extra kept at the end` : ''}</span>
                 <div className="flex items-center gap-2">
                   {changed && <button onClick={() => setOrder(proposed)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset to AI order</button>}
+                  <span className="text-[11.5px] text-muted/80 basis-full sm:basis-auto">Reorder: drag the <b>Drag</b> handle (finger or mouse), or click a photo&rsquo;s number and type where it goes.</span>
                   {removeList.length > 0 && <button onClick={() => setToRemove(prev => prev.size === removeList.length ? new Set() : new Set(removeList.map(r => r._id)))} className="inline-flex items-center gap-1 text-[12px] text-rose-700 hover:text-rose-800"><Trash2 size={12} /> {toRemove.size === removeList.length ? 'Unmark all' : `Mark all ${removeList.length} flagged`}</button>}
                   <button onClick={() => analyze(undefined, undefined, false, true)} disabled={busy} title="Let the engine choose the cover from its ranked candidates" className="inline-flex items-center gap-1 text-[12px] text-amber-700 hover:text-amber-800 disabled:opacity-50"><Crown size={12} /> AI picks cover</button>
                   <button onClick={() => analyze(heroId || undefined)} disabled={busy} className="inline-flex items-center gap-1 text-[12px] text-brand-600 hover:text-brand-700 disabled:opacity-50"><Wand2 size={12} /> Re-run</button>
@@ -658,6 +726,16 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 </button>
               </div>
 
+              {dragId && ghost && photos[dragId] && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={photos[dragId].url} alt="" className="pointer-events-none fixed z-50 w-28 aspect-[4/3] object-cover rounded-lg shadow-2xl ring-2 ring-brand-500 opacity-90"
+                  style={{ left: ghost.x - 56, top: ghost.y - 42 }} />
+              )}
+              {dragId && dropAt != null && (
+                <div className="pointer-events-none fixed z-50 bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-ink text-white px-3 py-1.5 text-[12px] font-semibold shadow-lg">
+                  Drop to make it #{Math.min(finalPos(dropAt, dragId), order.length)}{finalPos(dropAt, dragId) <= 5 ? ' — in the cover five' : ''}
+                </div>
+              )}
               <ol className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {order.map((id, idx) => {
                   const p = photos[id]; if (!p) return null
@@ -683,13 +761,22 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                       </li>
                     )}
                     <li
-                      draggable={!isHero}
-                      onDragStart={() => !isHero && setDragId(id)}
-                      onDragOver={e => { if (!isHero) e.preventDefault() }}
-                      onDrop={() => onDrop(id)}
-                      className={`relative rounded-xl border overflow-hidden bg-app/30 ${isHero ? 'border-amber-300 ring-1 ring-amber-200' : 'border-line cursor-move'} ${dragId === id ? 'opacity-50' : ''}`}>
+                      ref={el => { cardRefs.current[id] = el }}
+                      className={`relative rounded-xl border overflow-hidden bg-app/30 ${isHero ? 'border-amber-300 ring-1 ring-amber-200' : 'border-line'} ${dragId === id ? 'opacity-40' : ''}`}>
+                      {/* The slot the dragged photo will take: a bar on the left edge of the card it lands before,
+                          or the right edge of the last card when it goes to the end. */}
+                      {dragId && dragId !== id && dropAt === idx && <div className="absolute inset-y-1 -left-1.5 w-1 rounded bg-brand-500 z-20" />}
+                      {dragId && dragId !== id && dropAt === order.length && idx === order.length - 1 && <div className="absolute inset-y-1 -right-1.5 w-1 rounded bg-brand-500 z-20" />}
                       <div className="absolute top-1.5 left-1.5 z-10 flex items-center gap-1">
-                        <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md ${isHero ? 'bg-amber-500 text-white' : 'bg-black/60 text-white'}`}>{idx + 1}</span>
+                        {isHero || jumpId !== id ? (
+                          <button onClick={() => { if (!isHero) { setJumpId(id); setJumpVal(String(idx + 1)) } }} title={isHero ? 'Cover photo' : 'Click to type a new position'}
+                            className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md ${isHero ? 'bg-amber-500 text-white' : 'bg-black/60 text-white hover:bg-brand-600'}`}>{idx + 1}</button>
+                        ) : (
+                          <input autoFocus value={jumpVal} onChange={e => setJumpVal(e.target.value.replace(/[^0-9]/g, ''))}
+                            onKeyDown={e => { if (e.key === 'Enter') commitJump(id); if (e.key === 'Escape') { setJumpId(null); setJumpVal('') } }}
+                            onBlur={() => commitJump(id)} inputMode="numeric"
+                            className="w-12 text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-white text-ink border-2 border-brand-500 focus:outline-none" />
+                        )}
                         {isHero && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 inline-flex items-center gap-0.5"><Star size={10} /> Cover</span>}
                         {(() => { const ci = heroCands.findIndex(c => c._id === id); return ci >= 0 && ci < 3 && !isHero ? <button onClick={() => setAsHero(id)} title={`Cover pick #${ci + 1} (score ${heroCands[ci].score}) — click to make it the cover`} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500 text-white inline-flex items-center gap-0.5"><Crown size={10} /> Cover pick #{ci + 1}</button> : null })()}
                         {p.kind === 'stock' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 inline-flex items-center gap-0.5"><MapPinned size={10} /> Stock</span>}
@@ -708,6 +795,13 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                           return flipped && enhanced[id] ? enhanced[id] : p.url
                         })()}
                         alt={p.caption || `photo ${idx + 1}`} className="w-full aspect-[4/3] object-cover" loading="lazy" />
+                      {!isHero && (
+                        <div onPointerDown={e => startDrag(id, e)} title="Drag to reorder — works with a finger too"
+                          className="absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 rounded-md bg-black/60 text-white px-1.5 py-1 text-[10.5px] font-semibold cursor-grab active:cursor-grabbing select-none"
+                          style={{ touchAction: 'none' }}>
+                          <GripVertical size={12} /> Drag
+                        </div>
+                      )}
                       <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-1">
                         {enhanced[id] && (
                           <button
@@ -775,8 +869,11 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         )}
                         <input value={p.caption || ''} onChange={e => setCaption(id, e.target.value)} placeholder="Add a description…" title="Guest-facing photo description — pushed to Guesty" className="w-full text-[11px] rounded border border-line bg-white px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-brand-200" />
                         <div className="flex items-center gap-1 pt-0.5">
-                          {!isHero && <button onClick={() => move(id, -1)} disabled={idx <= 1} title="Move earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>}
-                          {!isHero && <button onClick={() => move(id, 1)} disabled={idx >= order.length - 1} title="Move later" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={12} /></button>}
+                          {!isHero && <button onClick={() => move(id, -1)} disabled={idx <= 1} title="One earlier" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={12} /></button>}
+                          {!isHero && <button onClick={() => move(id, 1)} disabled={idx >= order.length - 1} title="One later" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={12} /></button>}
+                          {!isHero && idx >= 5 && <button onClick={() => moveTo(id, 2)} title="Into the cover five (position 2)" className="p-1 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"><CornerLeftUp size={12} /></button>}
+                          {!isHero && idx > 5 && <button onClick={() => moveTo(id, 6)} title="To the top of the tour (position 6)" className="p-1 rounded border border-line text-muted hover:text-ink"><ChevronsUp size={12} /></button>}
+                          {!isHero && idx < order.length - 1 && <button onClick={() => moveTo(id, order.length)} title="To the end" className="p-1 rounded border border-line text-muted hover:text-ink"><ChevronsDown size={12} /></button>}
                           {!uploads[id] && <button onClick={() => startReplace(id)} disabled={uploadingCount > 0} title="Replace this photo's image with a new upload — keeps its spot and description" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><RefreshCw size={12} /></button>}
                           <button onClick={() => regenCaption(id)} disabled={capBusy.has(id)} title="AI: write a description for this photo (overwrites the current one)" className="p-1 rounded border border-line text-brand-600 hover:text-brand-700 disabled:opacity-40">{capBusy.has(id) ? <RefreshCw size={12} className="animate-spin" /> : <Wand2 size={12} />}</button>
                           {!uploads[id] && <button onClick={() => enhance([id])} disabled={enhancing} title="Enhance this photo (brightness / contrast / sharpen)" className="p-1 rounded border border-line text-muted hover:text-ink disabled:opacity-30"><Sun size={12} /></button>}
