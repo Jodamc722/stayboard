@@ -85,6 +85,14 @@ function ymdET(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'A
 export function addDays(ymd: string, n: number): string {
   const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10)
 }
+/** A quote for the recovery board: one line of whitespace, cut on a word boundary, never mid-word. */
+function clip(raw: any, max = 400): string {
+  const s = String(raw || '').replace(/\s+/g, ' ').trim()
+  if (s.length <= max) return s
+  const cut = s.slice(0, max)
+  const sp = cut.lastIndexOf(' ')
+  return (sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s.,;:!?-]+$/, '') + '…'
+}
 function daysSince(iso: string): number {
   const t = new Date(iso).getTime()
   if (!isFinite(t)) return 0
@@ -136,7 +144,7 @@ export async function recoveryUnits(db: any): Promise<Map<string, RecoveryUnit>>
       rating: ratingToStars(low.rating) ?? 0,
       channel: String(low.channel || ''),
       guest: String(low.guest_name || ''),
-      content: String(low.content || '').replace(/\s+/g, ' ').trim().slice(0, 400),
+      content: clip(low.content),
       at: String(low.created_at).slice(0, 10),
       openDays: daysSince(String(low.created_at)),
       reviewsSince: since.length,
