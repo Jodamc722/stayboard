@@ -12,6 +12,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bucketFor, familyFor, FAMILY_LABEL } from '@/lib/marketing'
 import { marketOf } from '@/lib/segments'
 import { buildTeamSchedule, addDays as addDaysET } from '@/lib/team-schedule'
+import { scheduleLabor } from '@/lib/schedule-labor'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -26,7 +27,17 @@ function shortName(full: string, fullNames: boolean): string {
 }
 const truthy = (v: any) => v === true || v === 1 || (typeof v === 'string' && /^(y|yes|true|done|complete|verified|1|x)/i.test(String(v).trim()))
 
-async function handle(code: string, pw: string) {
+/** The dates the reader picked, bounded. Absent = the window the link was built with. */
+function pickRange(body: any, today: string, windowDays: number): { from: string; to: string } {
+  const ok = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(str(v)) ? str(v) : ''
+  const from = ok(body?.from) || today
+  const asked = ok(body?.to)
+  const cap = addDaysET(from, 41)                        // six weeks, so one link can never scan a year
+  const to = asked && asked >= from ? (asked > cap ? cap : asked) : addDaysET(from, Math.min(windowDays, 14) - 1)
+  return { from, to }
+}
+
+async function handle(code: string, pw: string, body?: any) {
   if (!/^[0-9a-f]{12,32}$/i.test(code)) return NextResponse.json({ error: 'not found' }, { status: 404 })
   const db = supabaseAdmin()
   const { data: rows } = await db.from('share_links').select('*').eq('code', code).limit(1)
@@ -170,11 +181,18 @@ async function handle(code: string, pw: string) {
     // Names are the point here: this is a rota, not guest data, so `guest_names` does not apply.
     // A market-scoped link passes the market through as well as the units, so the planner groups and
     // filters exactly the way the in-app tab does.
+    const range = pickRange(body, today, windowDays)
     const plan = await buildTeamSchedule({
-      from: today, to: addDaysET(today, Math.min(windowDays, 14) - 1),
+      from: range.from, to: range.to,
       listingIds: idList, markets: scopeMarkets,
       dept: sections.team_maint ? 'maintenance' : 'cleaning',
     })
+    // WHAT THE CLEANS COST AND EARNED. Only on the cleaning planner (maintenance is a different
+    // trade and a different rate), and only when this link was switched to show money — the same
+    // one switch that governs every dollar on a share link.
+    if (showMoney && !sections.team_maint) {
+      out.sections.teamLabor = await scheduleLabor(plan, today).catch(() => null)
+    }
     out.sections.team = {
       from: plan.from, to: plan.to, dept: plan.dept, days: plan.days, rules: plan.rules,
       markets: plan.markets.map(m => ({
@@ -215,5 +233,5 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
 }
 export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
   const body = await req.json().catch(() => ({} as any))
-  return handle(str(params.code), str(body?.pw))
+  return handle(str(params.code), str(body?.pw), body)
 }
