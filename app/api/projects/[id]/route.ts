@@ -51,7 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // the read for a non-member; a viewer-role member gets an honest 403 because they already
     // know it exists. A comment is the one write a viewer may make — they were put on the project
     // to take part, and taking part means being able to say something.
-    const gate = await gateProject(id, viewer, ['comment', 'note', 'memberNotify'].includes(action) ? 'view' : 'edit')
+    const gate = await gateProject(id, viewer, ['comment', 'note', 'memberNotify', 'taskProjects'].includes(action) ? 'view' : 'edit')
     if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
     const members = gate.members as Member[]
     const projectTitle = async () => String((await sb.from('projects').select('title').eq('id', id).maybeSingle()).data?.title || 'a project')
@@ -64,9 +64,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await sb.from('project_steps').update({ assignee: data && data[0] ? data[0].display : null }).eq('id', taskId)
     }
     // Events name the task by title; one small read gives the title and the before-state.
+    // A task counts as "in this project" when it lives here OR is homed here from another project
+    // (project_task_homes). Editing a homed task edits the one task — that is what multi-homing is.
     const taskRow = async (taskId: string) => {
-      const { data } = await sb.from('project_steps').select('id,title,status,due_on,section').eq('id', taskId).eq('project_id', id).maybeSingle()
-      return data as { id: string; title: string; status: string; due_on: string | null; section: string | null } | null
+      const { data } = await sb.from('project_steps').select('id,title,status,due_on,section,project_id').eq('id', taskId).maybeSingle()
+      if (!data) return null
+      if (String(data.project_id) === id) return data as any as { id: string; title: string; status: string; due_on: string | null; section: string | null; project_id: string; homed?: boolean }
+      const { data: home } = await sb.from('project_task_homes').select('section').eq('task_id', taskId).eq('project_id', id).maybeSingle()
+      if (!home) return null
+      return { ...(data as any), section: home.section ?? null, homed: true } as { id: string; title: string; status: string; due_on: string | null; section: string | null; project_id: string; homed?: boolean }
     }
     const first = (s: string | null | undefined) => String(s || '').split(/[\s@]/)[0]
 
@@ -164,8 +170,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           patch.status = str(b.status)
           if (patch.status === 'done') patch.done_by = me
         }
+        if (before.homed && patch.section !== undefined) {
+          // Section is per project for a homed task: it moves within THIS board only.
+          await sb.from('project_task_homes').update({ section: patch.section }).eq('task_id', taskId).eq('project_id', id)
+          delete patch.section
+        }
         if (Object.keys(patch).length) {
-          const { error } = await sb.from('project_steps').update(patch).eq('id', taskId).eq('project_id', id)
+          const { error } = await sb.from('project_steps').update(patch).eq('id', taskId)
           if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         }
         // Assignees are replaced as a set, so the client never has to diff.
@@ -206,6 +217,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
       case 'taskDelete': {
         const gone = await taskRow(str(b.taskId))
+        if (gone?.homed) {
+          await sb.from('project_task_homes').delete().eq('task_id', gone.id).eq('project_id', id)
+          await logEvent(id, me, 'task_moved', `removed “${gone.title}” from this project (it still lives in its own)`, { task_title: gone.title })
+          break
+        }
         const { error } = await sb.from('project_steps').delete().eq('id', str(b.taskId)).eq('project_id', id)
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         // No task_id on this one — the task is gone and the row would cascade away with it. The
@@ -416,6 +432,38 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         return NextResponse.json({ ok: true, breezewayTaskId: bzId, reportUrl: r.data.report_url || null, assigned, project: await getProject(id) })
       }
 
+      // ---- ONE TASK, SEVERAL PROJECTS (Jon, 2026-09-09: "assign to multiple projects that I am in")
+      // You may home a task into any project you can edit. The task stays one task.
+      case 'taskAddToProject': {
+        const t = await taskRow(str(b.taskId))
+        if (!t) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const target = str(b.projectId)
+        if (!target || target === String(t.project_id)) return NextResponse.json({ error: 'Pick a different project.' }, { status: 400 })
+        const g2 = await gateProject(target, viewer, 'edit')
+        if (!g2.ok) return NextResponse.json({ error: g2.status === 404 ? 'You are not on that project.' : g2.error }, { status: g2.status })
+        const { error } = await sb.from('project_task_homes').upsert({ task_id: t.id, project_id: target, section: str(b.section) || null, added_by: me }, { onConflict: 'task_id,project_id' })
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        const tt = String((await sb.from('projects').select('title').eq('id', target).maybeSingle()).data?.title || 'another project')
+        await logEvent(id, me, 'task_moved', `also put “${t.title}” in ${tt}`, { task_id: t.id, task_title: t.title, to: target, name: tt })
+        await logEvent(target, me, 'task_added', `brought “${t.title}” in from another project`, { task_id: t.id, task_title: t.title })
+        break
+      }
+      case 'taskRemoveFromProject': {
+        const t = await taskRow(str(b.taskId))
+        if (!t) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const target = str(b.projectId)
+        if (!target) return NextResponse.json({ error: 'Which project?' }, { status: 400 })
+        if (target === String(t.project_id)) return NextResponse.json({ error: 'That is the task’s own project — delete it there instead.' }, { status: 400 })
+        const g2 = await gateProject(target, viewer, 'edit')
+        if (!g2.ok) return NextResponse.json({ error: g2.error }, { status: g2.status })
+        await sb.from('project_task_homes').delete().eq('task_id', t.id).eq('project_id', target)
+        break
+      }
+      case 'taskProjects': {
+        const { taskProjects } = await import('@/lib/projects')
+        return NextResponse.json({ ok: true, projects: await taskProjects(str(b.taskId)) })
+      }
+
       // ---- CUSTOM BOARDS (Jon, 2026-09-09: "build like Asana") ----------------------
       // Drag a task to a section and a position; the server renumbers that section so sort is
       // always dense and the client never computes midpoints.
@@ -425,14 +473,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (!moving) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
         const section = b.section === null || b.section === undefined ? (moving.section || null) : (str(b.section) || null)
         const beforeId = str(b.beforeId) || null
+        // The section's rows: native tasks plus tasks homed here, each with the sort it has HERE.
         let q = sb.from('project_steps').select('id,sort,created_at').eq('project_id', id).is('parent_id', null)
         q = section === null ? q.is('section', null) : q.eq('section', section)
-        const { data: rows } = await q.order('sort', { nullsFirst: false }).order('created_at')
-        const order = ((rows || []) as any[]).map(r => String(r.id)).filter(x => x !== taskId)
+        let hq = sb.from('project_task_homes').select('task_id,sort,created_at').eq('project_id', id)
+        hq = section === null ? hq.is('section', null) : hq.eq('section', section)
+        const [{ data: rows }, { data: hrows }] = await Promise.all([q, hq])
+        const all = [...((rows || []) as any[]).map(r => ({ id: String(r.id), sort: r.sort, created_at: r.created_at, homed: false })),
+                     ...((hrows || []) as any[]).map(r => ({ id: String(r.task_id), sort: r.sort, created_at: r.created_at, homed: true }))]
+          .sort((a, b2) => (a.sort ?? 1e9) - (b2.sort ?? 1e9) || String(a.created_at).localeCompare(String(b2.created_at)))
+        const order = all.map(r => r.id).filter(x => x !== taskId)
         const at = beforeId ? order.indexOf(beforeId) : -1
         if (at >= 0) order.splice(at, 0, taskId); else order.push(taskId)
+        const homedIds = new Set(all.filter(r => r.homed).map(r => r.id)); if (moving.homed) homedIds.add(taskId)
         // One update per row in the section — sections are tens of tasks, not thousands.
-        await Promise.all(order.map((tid, i) => sb.from('project_steps').update(tid === taskId ? { sort: (i + 1) * 10, section } : { sort: (i + 1) * 10 }).eq('id', tid)))
+        await Promise.all(order.map((tid, i) => {
+          const isHome = homedIds.has(tid)
+          const patch = tid === taskId ? { sort: (i + 1) * 10, section } : { sort: (i + 1) * 10 }
+          return isHome ? sb.from('project_task_homes').update(patch).eq('task_id', tid).eq('project_id', id) : sb.from('project_steps').update(patch).eq('id', tid)
+        }))
         if ((moving.section || null) !== section) await logEvent(id, me, 'task_moved', `moved to ${section || 'no section'}`, { task_id: taskId, task_title: moving.title, from: moving.section, to: section })
         break
       }
