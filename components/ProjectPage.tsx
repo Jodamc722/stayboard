@@ -156,6 +156,9 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
   // Drag state for tasks: what is being dragged, so drop targets can accept it.
   const [dragId, setDragId] = useState<string | null>(null)
   const moveTask = (taskId: string, section: string, beforeId: string | null) => act({ action: 'taskMove', taskId, section, beforeId })
+  // The wrench on a row opens the drawer straight onto the Breezeway box — push from the board.
+  const [bzFocus, setBzFocus] = useState<string | null>(null)
+  const pushTask = (taskId: string) => { setBzFocus(taskId); setOpenTask(taskId) }
 
   const open = p.tasks.filter(t => t.status !== 'done').length
   const total = p.tasks.length
@@ -212,7 +215,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
               {sections.map(sec => (
                 <SectionColumn key={sec.name || '__none'} name={sec.name} tasks={sec.tasks} canEdit={canEdit} busy={busy}
                   openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent}
-                  dragId={dragId} setDragId={setDragId} onMove={moveTask} />
+                  dragId={dragId} setDragId={setDragId} onMove={moveTask} onPush={pushTask} />
               ))}
               {canEdit && (
                 <div className="w-[220px] shrink-0 pt-1">
@@ -224,7 +227,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
             sections.map(sec => (
               <Section key={sec.name || '__none'} name={sec.name} tasks={sec.tasks} canEdit={canEdit} busy={busy}
                 openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent}
-                dragId={dragId} setDragId={setDragId} onMove={moveTask} />
+                dragId={dragId} setDragId={setDragId} onMove={moveTask} onPush={pushTask} />
             ))
           )}
           {canEdit && view === 'list' && (
@@ -246,7 +249,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
 
       {current && (
         <TaskDrawer task={current} p={p} roster={roster} me={me} nameOf={nameOf} canEdit={canEdit} busy={busy}
-          onClose={() => setOpenTask(null)} act={act} upload={upload} superadmin={superadmin} />
+          onClose={() => { setOpenTask(null); setBzFocus(null) }} act={act} upload={upload} superadmin={superadmin} bzFocus={bzFocus === current.id} />
       )}
     </div>
   )
@@ -260,7 +263,7 @@ function findTask(list: Task[], id: string): Task | null {
 // ── A SECTION OF TASKS ────────────────────────────────────────────────────────────────────────
 type Counts = Record<string, { comments: number; files: number }>
 type AccentCls = typeof ACCENT[keyof typeof ACCENT]
-type DragProps = { dragId: string | null; setDragId: (id: string | null) => void; onMove: (taskId: string, section: string, beforeId: string | null) => Promise<any> }
+type DragProps = { dragId: string | null; setDragId: (id: string | null) => void; onMove: (taskId: string, section: string, beforeId: string | null) => Promise<any>; onPush?: (taskId: string) => void }
 
 // ── A SECTION HEADER YOU CAN RENAME OR REMOVE ─────────────────────────────────────────────────
 // Click the name to rename it; the × removes the section and drops its tasks to "no section".
@@ -298,7 +301,7 @@ function DropSlot({ active, onDrop, className }: { active: boolean; onDrop: () =
   )
 }
 
-function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove }: {
+function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove, onPush }: {
   name: string; tasks: Task[]; canEdit: boolean; busy: boolean; openId: string | null
   onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls
 } & DragProps) {
@@ -321,7 +324,7 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
             <div key={t.id}>
               <DropSlot active={dragging && dragId !== t.id} onDrop={() => { if (dragId) { onMove(dragId, name, t.id); setDragId(null) } }} className="mx-3" />
               <TaskRow t={t} depth={0} canEdit={canEdit} busy={busy} open={openId === t.id} onOpen={onOpen} act={act} counts={counts}
-                dragId={dragId} setDragId={setDragId} onMove={onMove} />
+                dragId={dragId} setDragId={setDragId} onMove={onMove} onPush={onPush} />
             </div>
           ))}
           <DropSlot active={dragging} onDrop={() => { if (dragId) { onMove(dragId, name, null); setDragId(null) } }} className="mx-3" />
@@ -335,7 +338,7 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
 // ── COLUMNS: the same sections side by side ───────────────────────────────────────────────────
 // A personal board reads better as To do / Doing / Done across the screen; a 1:1 as Wins /
 // Blockers / Follow-ups. Same data, same drawer, one preference. Cards drag between columns.
-function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove }: {
+function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove, onPush }: {
   name: string; tasks: Task[]; canEdit: boolean; busy: boolean; openId: string | null
   onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls
 } & DragProps) {
@@ -377,7 +380,12 @@ function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts
                     {c && c.files > 0 && <span className="inline-flex items-center gap-0.5"><Paperclip size={10} />{c.files}</span>}
                     {t.priority === 'urgent' && <span className="font-bold uppercase text-rose-700">Urgent</span>}
                     {t.priority === 'high' && <span className="font-bold uppercase text-amber-800">High</span>}
+                    {t.breezeway_task_id && <span className={'inline-flex items-center gap-0.5 font-bold uppercase px-1 rounded border ' + (TONE_CLS[t.breezeway?.tone || 'open'])}><Wrench size={9} />{t.breezeway?.status || 'BZ'}</span>}
+                    {!t.breezeway_task_id && canEdit && onPush && <button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="ml-auto text-muted hover:text-ink" title="Push to Breezeway"><Wrench size={11} /></button>}
                   </div>
+                )}
+                {!(t.assignees.length > 0 || t.due_on || t.subtasks.length > 0 || c) && canEdit && onPush && !t.breezeway_task_id && (
+                  <div className="mt-1 pl-6"><button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="text-muted hover:text-ink" title="Push to Breezeway"><Wrench size={11} /></button></div>
                 )}
               </div>
             </div>
@@ -596,7 +604,7 @@ function MoreMenu({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean;
   )
 }
 
-function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, setDragId, onMove }: {
+function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, setDragId, onMove, onPush }: {
   t: Task; depth: number; canEdit: boolean; busy: boolean; open: boolean
   onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts
 } & DragProps) {
@@ -606,7 +614,7 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, s
   const c = counts[t.id]
   return (
     <>
-      <div className={'flex items-center gap-2.5 px-3 py-2 cursor-pointer border-t border-line ' + (open ? 'bg-brand-50/60' : 'hover:bg-app/50') + (dragId === t.id ? ' opacity-40' : '')}
+      <div className={'group/row flex items-center gap-2.5 px-3 py-2 cursor-pointer border-t border-line ' + (open ? 'bg-brand-50/60' : 'hover:bg-app/50') + (dragId === t.id ? ' opacity-40' : '')}
         style={{ paddingLeft: 12 + depth * 22 }} onClick={() => onOpen(t.id)}
         draggable={canEdit && depth === 0} onDragStart={e => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDragId(null)}>
         {depth === 0 && canEdit && <GripVertical size={12} className="text-muted/50 shrink-0 -ml-1 cursor-grab" />}
@@ -617,7 +625,11 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, s
           <Icon size={11} strokeWidth={3} />
         </button>
         <span className={'min-w-0 flex-1 text-[13px] truncate ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
-        {t.breezeway_task_id && <span className={'inline-flex items-center gap-0.5 text-[10px] font-bold uppercase px-1 py-0.5 rounded border shrink-0 ' + (TONE_CLS[t.breezeway?.tone || 'open'])} title="In Breezeway"><Wrench size={9} /> {t.breezeway?.status || 'BZ'}</span>}
+        {t.breezeway_task_id ? (
+          <button onClick={e => { e.stopPropagation(); onPush?.(t.id) }} className={'inline-flex items-center gap-0.5 text-[10px] font-bold uppercase px-1 py-0.5 rounded border shrink-0 ' + (TONE_CLS[t.breezeway?.tone || 'open'])} title="In Breezeway — click to reassign or move"><Wrench size={9} /> {t.breezeway?.status || 'BZ'}</button>
+        ) : (canEdit && depth === 0 && onPush && (
+          <button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="opacity-0 group-hover/row:opacity-100 text-muted hover:text-ink shrink-0" title="Push to Breezeway"><Wrench size={12} /></button>
+        ))}
         {c && c.comments > 0 && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted tabular-nums shrink-0" title={`${c.comments} comment${c.comments === 1 ? '' : 's'}`}><MessageSquare size={11} />{c.comments}</span>}
         {c && c.files > 0 && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted tabular-nums shrink-0" title={`${c.files} file${c.files === 1 ? '' : 's'}`}><Paperclip size={11} />{c.files}</span>}
         {t.assignees.length > 0 && (
@@ -653,7 +665,7 @@ function QuickAdd({ section, act, busy, parentId }: { section: string; act: (b: 
     <div className="flex items-center gap-2.5 px-3 py-1.5" style={{ paddingLeft: parentId ? 34 : 12 }}>
       <Plus size={13} className="text-muted shrink-0" />
       <input ref={ref} value={v} onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') go() }}
-        placeholder={parentId ? 'Add a subtask…' : 'Add a task…'} disabled={busy}
+        placeholder={parentId ? 'Add a checklist item…' : 'Add a task…'} disabled={busy}
         className="flex-1 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
     </div>
   )
@@ -678,9 +690,9 @@ function NewSection({ onAdd, busy }: { onAdd: (name: string) => void; busy: bool
 // Everything about one task, editable in place. Fields save on blur; status and assignees save
 // on change. There is no Save button because there is nothing to batch — each field is its own
 // fact, and a form that holds six unsaved facts is a form that loses them.
-function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, upload, superadmin }: {
+function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, upload, superadmin, bzFocus }: {
   task: Task; p: ProjectFull; roster: Roster; me: string; nameOf: (e: string | null) => string; canEdit: boolean; busy: boolean
-  onClose: () => void; act: (b: any) => Promise<any>; upload: (files: FileList | File[], taskId?: string | null) => Promise<boolean>; superadmin: boolean
+  onClose: () => void; act: (b: any) => Promise<any>; upload: (files: FileList | File[], taskId?: string | null) => Promise<boolean>; superadmin: boolean; bzFocus?: boolean
 }) {
   const files = useMemo(() => p.photos.filter(f => f.task_id === task.id), [p.photos, task.id])
   const feed = useMemo(() => p.notes.filter(n => n.task_id === task.id).slice().reverse(), [p.notes, task.id])
@@ -785,9 +797,12 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
               className="w-full rounded-lg border border-line bg-white px-2.5 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-ink" />
           </div>
 
+          {/* what this task is about — the stay, the owner, the unit, the claim */}
+          <TaskAttached task={task} p={p} canEdit={canEdit} busy={busy} act={act} />
+
           {!task.parent_id && (
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1">Subtasks <span className="normal-case font-normal tabular-nums">{task.subtasks.filter(s => s.status === 'done').length}/{task.subtasks.length}</span></p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1">Checklist <span className="normal-case font-normal tabular-nums">{task.subtasks.filter(s => s.status === 'done').length}/{task.subtasks.length}</span></p>
               <div className="rounded-lg border border-line divide-y divide-line">
                 {task.subtasks.map(s => (
                   <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5">
@@ -806,7 +821,7 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
 
           {/* Breezeway — the field. A task here can become a real task there, and follows it. */}
           {!task.parent_id && (
-            <BreezewayBox task={task} p={p} canEdit={canEdit} busy={busy} act={act} />
+            <BreezewayBox key={task.id + (bzFocus ? ':bz' : '')} task={task} p={p} canEdit={canEdit} busy={busy} act={act} startOpen={!!bzFocus} />
           )}
 
           {/* files on this task */}
@@ -874,57 +889,191 @@ function TaskProjects({ task, p, canEdit, busy, act }: { task: Task; p: ProjectF
   )
 }
 
-// ── BREEZEWAY: send this task to the field, and show what the field says ──────────────────────
-function BreezewayBox({ task, p, canEdit, busy, act }: { task: Task; p: ProjectFull; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any> }) {
-  const units = p.links.filter(l => l.kind === 'listing')
+// ── ATTACHED TO THIS TASK ─────────────────────────────────────────────────────────────────────
+// The same Guesty / claims / glitches search the project uses, scoped to one task. A reservation
+// here is the stay this task is about; a unit here is where the Breezeway task will be created.
+function TaskAttached({ task, p, canEdit, busy, act }: { task: Task; p: ProjectFull; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any> }) {
+  const links = p.links.filter(l => l.task_id === task.id)
+  const [q, setQ] = useState('')
+  const [hits, setHits] = useState<Hit[]>([])
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (q.trim().length < 2) { setHits([]); return }
+    const t = setTimeout(async () => {
+      try { const r = await fetch('/api/projects/search?q=' + encodeURIComponent(q.trim()), { cache: 'no-store' }); const j = await r.json(); setHits((j?.hits || []).filter((h: Hit) => h.kind !== 'building')) } catch { setHits([]) }
+    }, 220)
+    return () => clearTimeout(t)
+  }, [q])
+  const attach = async (h: Hit) => {
+    const body: any = { action: 'link', kind: h.kind, refId: h.id, label: h.label, taskId: task.id }
+    if (h.kind === 'reservation') body.label = `${h.label} · ${h.checkIn} → ${h.checkOut}`
+    await act(body); setQ(''); setHits([]); setOpen(false)
+  }
+  if (!links.length && !canEdit) return null
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted flex-1">Attached <span className="normal-case font-normal tabular-nums">{links.length || ''}</span></p>
+        {canEdit && <button onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink"><Plus size={11} /> Attach</button>}
+      </div>
+      {open && canEdit && (
+        <div className="relative mb-1.5">
+          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Reservation, owner, unit, claim, glitch…" onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); setQ('') } }}
+            className="w-full rounded-lg border border-line bg-white pl-7 pr-2 py-1.5 text-[12.5px]" />
+          {hits.length > 0 && (
+            <div className="absolute z-10 left-0 right-0 mt-1 rounded-lg border border-line bg-white shadow-lg divide-y divide-line max-h-[220px] overflow-y-auto">
+              {hits.map(h => { const I = LINK_ICON[h.kind] || Building2; return (
+                <button key={h.kind + h.id} onClick={() => attach(h)} disabled={busy} className="w-full text-left px-2.5 py-1.5 hover:bg-app flex items-start gap-2">
+                  <I size={12} className="text-muted mt-0.5 shrink-0" />
+                  <span className="min-w-0"><span className="block text-[12.5px] text-ink truncate">{h.label}</span><span className="block text-[10.5px] text-muted truncate">{h.sub}</span></span>
+                  <span className="ml-auto text-[9.5px] font-bold uppercase tracking-wide text-muted shrink-0">{h.kind}</span>
+                </button>
+              )})}
+            </div>
+          )}
+        </div>
+      )}
+      {links.length === 0 ? <p className="text-[12px] text-muted">Nothing attached to this task.</p> : (
+        <div className="rounded-lg border border-line divide-y divide-line">
+          {links.map(o => { const I = LINK_ICON[o.kind] || Building2; const st = o.state; return (
+            <div key={o.kind + o.ref_id} className="px-2.5 py-1.5 flex items-center gap-2">
+              <I size={12} className="text-muted shrink-0" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[12.5px] text-ink truncate">{o.label || o.ref_id}</span>
+                {st?.detail && <span className="block text-[10.5px] text-muted truncate">{st.detail}</span>}
+              </span>
+              {st ? <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (TONE_CLS[st.tone] || TONE_CLS.open)}>{st.label}</span> : <span className="text-[9.5px] font-bold uppercase tracking-wide text-muted">{o.kind}</span>}
+              {st?.href && <a href={st.href} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink size={11} /></a>}
+              {canEdit && <button onClick={() => act({ action: 'unlink', kind: o.kind, refId: o.ref_id, taskId: task.id })} disabled={busy} className="text-muted hover:text-rose-600"><X size={11} /></button>}
+            </div>
+          )})}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── BREEZEWAY: push this task to the field, pick who, pick the checklist; then follow it ──────
+type BzPerson = { id: number; name: string; departments: string[]; region: string | null }
+type BzTemplate = { id: number; name: string; department: string }
+let BZ_CACHE: { at: number; people: BzPerson[]; templates: BzTemplate[] } | null = null
+function useBreezewayPickers(on: boolean) {
+  const [data, setData] = useState<{ people: BzPerson[]; templates: BzTemplate[] } | null>(BZ_CACHE && Date.now() - BZ_CACHE.at < 600000 ? BZ_CACHE : null)
+  useEffect(() => {
+    if (!on || data) return
+    fetch('/api/projects/breezeway', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) { BZ_CACHE = { at: Date.now(), people: j.people || [], templates: j.templates || [] }; setData(BZ_CACHE) } }).catch(() => setData({ people: [], templates: [] }))
+  }, [on, data])
+  return data
+}
+
+function BreezewayBox({ task, p, canEdit, busy, act, startOpen }: { task: Task; p: ProjectFull; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any>; startOpen?: boolean }) {
+  const taskUnits = p.links.filter(l => l.task_id === task.id && l.kind === 'listing')
+  const projUnits = p.links.filter(l => !l.task_id && l.kind === 'listing')
+  const units = [...taskUnits, ...projUnits.filter(u => !taskUnits.some(t => t.ref_id === u.ref_id))]
+  const hasStay = p.links.some(l => l.task_id === task.id && l.kind === 'reservation')
+  const [open, setOpen] = useState(!!startOpen)
   const [listingId, setListingId] = useState(units[0]?.ref_id || '')
   const [department, setDepartment] = useState('maintenance')
   const [priority, setPriority] = useState(task.priority === 'urgent' || task.priority === 'high' ? task.priority : 'normal')
   const [date, setDate] = useState(task.due_on || today())
+  const [templateId, setTemplateId] = useState<string>('')
+  const [who, setWho] = useState<number[] | null>(null)   // null = not chosen yet → matched by name on the server
+  const [filter, setFilter] = useState('')
+  const pick = useBreezewayPickers(open || !!task.breezeway_task_id)
   useEffect(() => { if (!listingId && units[0]) setListingId(units[0].ref_id) }, [units, listingId])
+  // Pre-tick the field people whose names match this task's assignees, so the usual case is one click.
+  useEffect(() => {
+    if (who !== null || !pick?.people?.length || !task.assignees.length) return
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z ]/g, '').trim()
+    const ids = pick.people.filter(bp => task.assignees.some(a => { const A = norm(a.display), B = norm(bp.name); return A === B || (A.split(' ')[0] && B.split(' ')[0] === A.split(' ')[0] && (A.split(' ')[1]?.[0] === B.split(' ')[1]?.[0])) })).map(bp => bp.id)
+    if (ids.length) setWho(ids)
+  }, [pick, task.assignees, who])
   const bz = task.breezeway
+  const people = (pick?.people || []).filter(bp => !filter || bp.name.toLowerCase().includes(filter.toLowerCase()) || (bp.region || '').toLowerCase().includes(filter.toLowerCase()))
+  const toggle = (id: number) => setWho(w => { const cur = w || []; return cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id] })
+  const chosenNames = (who || []).map(id => pick?.people.find(x => x.id === id)?.name).filter(Boolean)
+
+  // Plain JSX, not a nested component: a component defined inside render remounts on every keystroke.
+  const peoplePicker = (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Assign in Breezeway</span>
+        <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Find a person…" className="ml-auto w-36 rounded-md border border-line bg-white px-2 py-0.5 text-[11.5px]" />
+      </div>
+      <div className="flex flex-wrap gap-1 max-h-[120px] overflow-y-auto">
+        {!pick && <span className="text-[11px] text-muted inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Loading people…</span>}
+        {pick && people.slice(0, 60).map(bp => {
+          const on = (who || []).includes(bp.id)
+          return <button key={bp.id} onClick={() => toggle(bp.id)} title={[bp.region, ...bp.departments].filter(Boolean).join(' · ')}
+            className={'rounded-full border px-2 py-0.5 text-[11.5px] ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:border-ink')}>{bp.name}</button>
+        })}
+        {pick && !people.length && <span className="text-[11px] text-muted">Nobody matches.</span>}
+      </div>
+    </div>
+  )
+
   if (task.breezeway_task_id) {
     return (
-      <div className={'rounded-xl border px-3 py-2 ' + (bz?.tone === 'done' ? 'border-emerald-200 bg-emerald-50/60' : bz?.tone === 'bad' ? 'border-rose-200 bg-rose-50/60' : 'border-line bg-app/40')}>
+      <div className={'rounded-xl border px-3 py-2 space-y-2 ' + (bz?.tone === 'done' ? 'border-emerald-200 bg-emerald-50/60' : bz?.tone === 'bad' ? 'border-rose-200 bg-rose-50/60' : 'border-line bg-app/40')}>
         <div className="flex items-center gap-2 text-[12px]">
           <Wrench size={12} className="text-muted" />
           <span className="font-semibold text-ink">In Breezeway</span>
           <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (TONE_CLS[bz?.tone || 'open'])}>{bz?.status || 'created'}</span>
           <span className="text-muted truncate flex-1">{[bz?.assignee, bz?.date].filter(Boolean).join(' · ')}</span>
           {bz?.reportUrl && <a href={bz.reportUrl} target="_blank" rel="noreferrer" className="text-muted hover:text-ink inline-flex items-center gap-1 text-[11px] font-semibold">Report <ExternalLink size={10} /></a>}
+          {canEdit && bz?.tone !== 'done' && <button onClick={() => setOpen(o => !o)} className="text-[11px] font-semibold text-muted hover:text-ink">{open ? 'Close' : 'Reassign / move'}</button>}
         </div>
-        <p className="text-[10.5px] text-muted mt-0.5 pl-5">This task follows the field: it is marked done here when the Breezeway task finishes.</p>
+        {open && canEdit && (
+          <div className="space-y-2 text-[12.5px]">
+            {peoplePicker}
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-1"><span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1" /></label>
+              <button onClick={async () => { const j = await act({ action: 'taskBreezewayUpdate', taskId: task.id, assigneeIds: who || [], date }); if (j?.ok) setOpen(false) }} disabled={busy}
+                className="ml-auto rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-bold disabled:opacity-40 inline-flex items-center gap-1.5">{busy ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />} Push to Breezeway</button>
+            </div>
+          </div>
+        )}
+        {!open && <p className="text-[10.5px] text-muted pl-5">Follows the field: marked done here when the Breezeway task finishes.</p>}
       </div>
     )
   }
   if (!canEdit) return null
   if (!open) return (
-    <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-muted hover:text-ink">
-      <Wrench size={12} /> Send to Breezeway…
+    <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:border-ink">
+      <Wrench size={12} /> Push to Breezeway…
     </button>
   )
   return (
-    <div className="rounded-xl border border-line bg-app/40 px-3 py-2.5 space-y-2 text-[12.5px]">
-      <p className="font-semibold text-ink inline-flex items-center gap-1.5"><Wrench size={12} /> Send to Breezeway</p>
-      {units.length === 0 ? (
-        <p className="text-[11.5px] text-muted">Attach a unit or building under About first — a field task has to live somewhere.</p>
+    <div className="rounded-xl border border-line bg-app/40 px-3 py-2.5 space-y-2.5 text-[12.5px]">
+      <p className="font-semibold text-ink inline-flex items-center gap-1.5"><Wrench size={12} /> Push to Breezeway</p>
+      {units.length === 0 && !hasStay ? (
+        <p className="text-[11.5px] text-muted">Attach a unit or a reservation to this task (above), or a unit or building to the project — a field task has to live somewhere.</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2">
             <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Unit</span>
-              <select value={listingId} onChange={e => setListingId(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{units.map(u => <option key={u.ref_id} value={u.ref_id}>{u.label || u.ref_id}</option>)}</select></label>
+              {units.length ? (
+                <select value={listingId} onChange={e => setListingId(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{units.map(u => <option key={u.ref_id} value={u.ref_id}>{u.label || u.ref_id}{u.task_id ? ' (this task)' : ''}</option>)}</select>
+              ) : <span className="block text-[12px] text-muted py-1">From the attached reservation</span>}
+            </label>
             <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Department</span>
               <select value={department} onChange={e => setDepartment(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{['maintenance', 'housekeeping', 'inspection', 'safety'].map(d => <option key={d} value={d}>{d[0].toUpperCase() + d.slice(1)}</option>)}</select></label>
             <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Priority</span>
               <select value={priority} onChange={e => setPriority(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{['urgent', 'high', 'normal', 'low'].map(d => <option key={d} value={d}>{d[0].toUpperCase() + d.slice(1)}</option>)}</select></label>
             <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Date</span>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1" /></label>
+            <label className="block col-span-2"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Checklist (Breezeway template)</span>
+              <select value={templateId} onChange={e => setTemplateId(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">
+                <option value="">No checklist — just the task</option>
+                {(pick?.templates || []).filter(t => !department || !t.department || t.department === department).map(t => <option key={t.id} value={String(t.id)}>{t.name}{t.department ? ` · ${t.department}` : ''}</option>)}
+              </select></label>
           </div>
-          <p className="text-[11px] text-muted">{task.assignees.length ? `Assigned in Breezeway to ${task.assignees.map(a => first(a.display)).join(', ')} where the names match.` : 'Nobody is assigned yet — it will land unassigned in Breezeway.'}</p>
+          {peoplePicker}
+          <p className="text-[11px] text-muted">{chosenNames.length ? `Goes to ${chosenNames.join(', ')}.` : task.assignees.length ? 'Nobody ticked — the server will match this task’s assignees by name.' : 'Nobody ticked — it will land unassigned in Breezeway.'}</p>
           <div className="flex gap-2 justify-end">
             <button onClick={() => setOpen(false)} className="text-[12px] text-muted hover:text-ink">Cancel</button>
-            <button onClick={async () => { const j = await act({ action: 'taskToBreezeway', taskId: task.id, listingId, department, priority, date }); if (j?.ok) setOpen(false) }} disabled={busy || !listingId}
+            <button onClick={async () => { const j = await act({ action: 'taskToBreezeway', taskId: task.id, listingId: listingId || undefined, department, priority, date, templateId: templateId || undefined, assigneeIds: who || [] }); if (j?.ok) setOpen(false) }} disabled={busy || (!listingId && !hasStay)}
               className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-bold disabled:opacity-40 inline-flex items-center gap-1.5">{busy ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />} Create field task</button>
           </div>
         </>
@@ -1297,9 +1446,10 @@ function LinksPanel({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolea
   }
 
   // Units that arrived as part of a building are shown under it, not as a flat list of thirty.
-  const buildings = p.links.filter(l => l.kind === 'building')
-  const units = p.links.filter(l => l.kind === 'listing')
-  const others = p.links.filter(l => ['reservation', 'owner', 'claim', 'glitch', 'task'].includes(l.kind))
+  const plinks = p.links.filter(l => !l.task_id)   // task-level attachments live in the drawer
+  const buildings = plinks.filter(l => l.kind === 'building')
+  const units = plinks.filter(l => l.kind === 'listing')
+  const others = plinks.filter(l => ['reservation', 'owner', 'claim', 'glitch', 'task'].includes(l.kind))
   const unitsDone = units.filter(u => u.done).length
 
   return (
@@ -1340,7 +1490,7 @@ function LinksPanel({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolea
       )}
 
       <div className="divide-y divide-line">
-        {p.links.length === 0 && !open && (
+        {plinks.length === 0 && !open && (
           <p className="px-3 py-3 text-[12px] text-muted">Not attached to anything yet.{canEdit ? ' Add a building, unit, reservation, owner, claim, glitch or Breezeway task.' : ''}</p>
         )}
         {buildings.map(b => (
