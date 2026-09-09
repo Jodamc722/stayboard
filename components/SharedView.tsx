@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users, RefreshCw } from 'lucide-react'
 import { PlannerView, PlannerLegend, type PGroup } from './PlannerView'
 import { ScheduleLaborStrip } from './ScheduleLaborStrip'
+import { DayCleans } from './DayCleans'
 
 const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 const addDays = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
@@ -29,19 +30,22 @@ export function SharedView({ code }: { code: string }) {
   const [from, setFrom] = useState(todayET())
   const [to, setTo] = useState(addDays(todayET(), 13))
   const [group, setGroup] = useState<PGroup>('team')
+  const [crew, setCrew] = useState<'inhouse' | 'vendor'>('inhouse')
   // The passcode that worked and the span on screen live in refs, not in the loader's dependency
   // list: as state they re-created `load`, the mount effect re-fired, and every date change fetched
   // twice — once explicitly and once again for the new identity.
   const okRef = useRef('')
   const rangeRef = useRef({ from: todayET(), to: addDays(todayET(), 13) })
+  const crewRef = useRef<'inhouse' | 'vendor'>('inhouse')
 
-  const load = useCallback(async (passcode?: string, range?: { from: string; to: string }) => {
+  const load = useCallback(async (passcode?: string, range?: { from: string; to: string }, nextCrew?: 'inhouse' | 'vendor') => {
     setBusy(true); setErr('')
     const pass = passcode != null ? passcode : okRef.current
     if (range) rangeRef.current = range
+    if (nextCrew) crewRef.current = nextCrew
     try {
       const r = (pass || range)
-        ? await fetch('/api/share/' + encodeURIComponent(code), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pw: pass, from: rangeRef.current.from, to: rangeRef.current.to }), cache: 'no-store' })
+        ? await fetch('/api/share/' + encodeURIComponent(code), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pw: pass, from: rangeRef.current.from, to: rangeRef.current.to, crew: crewRef.current }), cache: 'no-store' })
         : await fetch('/api/share/' + encodeURIComponent(code), { cache: 'no-store' })
       const j = await r.json()
       if (r.status === 404) throw new Error('This link is not valid or has been turned off.')
@@ -194,6 +198,14 @@ export function SharedView({ code }: { code: string }) {
                 className="h-8 w-8 grid place-items-center rounded-lg border border-neutral-300 bg-white text-neutral-500 disabled:opacity-40">
                 <RefreshCw className={'w-3.5 h-3.5 ' + (busy ? 'animate-spin' : '')} />
               </button>
+              <div className="inline-flex rounded-lg border border-neutral-300 overflow-hidden bg-white">
+                {(['inhouse', 'vendor'] as const).map(k => (
+                  <button key={k} onClick={() => { setCrew(k); load(undefined, undefined, k) }}
+                    className={'text-[12px] font-semibold px-2.5 h-8 border-l border-neutral-200 first:border-l-0 ' + (crew === k ? 'bg-neutral-900 text-white' : 'text-neutral-500')}>
+                    {k === 'inhouse' ? 'In-house' : 'Vendor'}
+                  </button>
+                ))}
+              </div>
               <div className="inline-flex rounded-lg border border-neutral-300 overflow-hidden bg-white ml-auto">
                 {GROUPS.map(g => (
                   <button key={g.key} onClick={() => setGroup(g.key)}
@@ -206,15 +218,31 @@ export function SharedView({ code }: { code: string }) {
             {s.teamLabor ? <div className="p-3 bg-neutral-50 border-b border-neutral-100"><ScheduleLaborStrip data={s.teamLabor} /></div> : null}
             {/* Same drawing as the staff tab — one component, so what the crew opens and what the
                 office plans on can never drift. Breezeway links only on the maintenance link. */}
-            <div className="p-3 bg-neutral-50">
-              <PlannerView
+            <div className="p-3 bg-neutral-50 space-y-3">
+              {/* THE CLEANS THEMSELVES FIRST (Jon): what is being cleaned today and who has it. */}
+              <DayCleans
                 days={s.team.days || []}
                 blocks={s.team.markets || []}
                 dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
-                showLinks={s.team.dept === 'maintenance'}
-                group={group}
               />
-              <div className="px-1 pt-3">
+              {crew === 'vendor' ? (
+                <p className="text-[11.5px] text-neutral-500 px-1">
+                  Vendor-serviced buildings — Botanica, Park Towers, Amrit, Capri, Lucerne. Their crews rarely carry a
+                  Breezeway assignee, so a clean with nobody on it is filed under the vendor's name. No labor is shown:
+                  this is not our payroll.
+                </p>
+              ) : null}
+              <div>
+                <p className="text-[10.5px] uppercase tracking-wider font-bold text-neutral-400 mb-1.5 px-1">Calendar</p>
+                <PlannerView
+                  days={s.team.days || []}
+                  blocks={s.team.markets || []}
+                  dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
+                  showLinks={s.team.dept === 'maintenance'}
+                  group={group}
+                />
+              </div>
+              <div className="px-1">
                 <PlannerLegend dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'} />
               </div>
             </div>

@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from 'lucide-react'
 import { PlannerView, PlannerLegend, type PDay, type PBlock, type PGroup } from './PlannerView'
 import { ScheduleLaborStrip, type ScheduleLaborData } from './ScheduleLaborStrip'
+import { DayCleans } from './DayCleans'
 
 type Data = {
   from: string; to: string; days: PDay[]; markets: PBlock[]
@@ -40,17 +41,19 @@ export function TeamPlanner() {
   // ALL TEAM FIRST (Jon, 2026-09-09): the review question is "how does the week look across both
   // markets", and splitting by market was answering a question nobody opened this page to ask.
   const [group, setGroup] = useState<PGroup>('team')
+  // In-house is the board. Vendor-serviced buildings are somebody else's crew and get their own tab.
+  const [crew, setCrew] = useState<'inhouse' | 'vendor'>('inhouse')
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
     try {
-      const r = await fetch('/api/team-schedule?dept=' + dept + '&from=' + from + '&to=' + to + '&money=1', { cache: 'no-store' })
+      const r = await fetch('/api/team-schedule?dept=' + dept + '&from=' + from + '&to=' + to + '&crew=' + crew + '&money=1', { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || j?.message || 'Could not load the planner.')
       setData(j)
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
-  }, [from, to, dept])
+  }, [from, to, dept, crew])
   useEffect(() => { load() }, [load])
 
   if (!data && busy) return (
@@ -73,6 +76,12 @@ export function TeamPlanner() {
           <button onClick={() => setDept('cleaning')} className={'text-[13px] font-bold px-4 h-9 ' + (dept === 'cleaning' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Cleaning</button>
           <button onClick={() => setDept('maintenance')} className={'text-[13px] font-bold px-4 h-9 border-l border-line ' + (dept === 'maintenance' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Maintenance</button>
         </div>
+        {dept === 'cleaning' ? (
+          <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white">
+            <button onClick={() => setCrew('inhouse')} className={'text-[13px] font-bold px-4 h-9 ' + (crew === 'inhouse' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>In-house</button>
+            <button onClick={() => setCrew('vendor')} className={'text-[13px] font-bold px-4 h-9 border-l border-line ' + (crew === 'vendor' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Vendor</button>
+          </div>
+        ) : null}
 
         <div className="flex-1" />
 
@@ -124,7 +133,22 @@ export function TeamPlanner() {
 
       {data.labor && dept === 'cleaning' ? <ScheduleLaborStrip data={data.labor} /> : null}
 
-      <PlannerView days={data.days} blocks={data.markets} dept={dept} marketFilter={market} group={group} showLinks />
+      {/* THE DAY FIRST (Jon, 2026-09-09): the actual cleans and who has them. The calendar is the
+          shape of the fortnight and belongs underneath, where it is context rather than the answer. */}
+      <DayCleans days={data.days} blocks={data.markets} dept={dept} marketFilter={market} />
+
+      {crew === 'vendor' ? (
+        <p className="text-[12px] text-muted">
+          Vendor-serviced buildings. Their crews rarely carry a Breezeway assignee, so a clean with nobody on it is
+          filed under the vendor's name; Botanica has no Breezeway tasks at all and its checkouts come from Guesty.
+          Labor is not shown here — this is not our payroll.
+        </p>
+      ) : null}
+
+      <div>
+        <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-2">Calendar</p>
+        <PlannerView days={data.days} blocks={data.markets} dept={dept} marketFilter={market} group={group} showLinks />
+      </div>
 
       <PlannerLegend dept={dept} />
 

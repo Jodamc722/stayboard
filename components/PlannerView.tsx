@@ -20,7 +20,7 @@ import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink } from 'lucide-rea
 
 export type PTag = { key: string; label: string; tone: 'amber' | 'violet' | 'emerald' | 'sky' }
 export type PJob = {
-  unit: string; task: string; status: string; isClean?: boolean
+  unit: string; task: string; status: string; isClean?: boolean; departure?: boolean; vendor?: string | null
   market?: string; url?: string | null; tags?: PTag[]
 }
 export type PPerson = {
