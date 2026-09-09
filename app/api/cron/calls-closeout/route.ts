@@ -1,8 +1,9 @@
 // NIGHTLY CLOSE-OUT for the Calls desk (Jon, 2026-09-08: "if calls not completed same day, please
 // close, incomplete").
 //
-// Runs once after midnight Eastern. Every welcome call whose grace period ended (arrival day over)
-// and every post-checkout call past its 48 hours, with no completed outcome, gets an `incomplete`
+// Runs once after midnight Eastern. Every welcome call whose arrival day is over (no grace day —
+// Jon, 2026-09-09: "no 24 hours to complete") and every post-checkout call past its 48 hours, with
+// no completed outcome, gets an `incomplete`
 // row in guest_calls — tier, scheduled day, attempts so far. That row is what makes "we closed 12
 // mandatory calls incomplete this week" a fact the scoreboard can show, and what a person can be
 // asked about, rather than a number that quietly reset each morning.
