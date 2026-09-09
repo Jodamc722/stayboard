@@ -150,6 +150,9 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
   const [k, setK] = useState<any>(null)
   const [rev, setRev] = useState<any>(null)
   const [health, setHealth] = useState<any>(null)
+  // Cost per clean comes from the labor engine, which is a heavy sweep — so it lands on its own,
+  // after the board has painted, rather than holding up every other tile.
+  const [hk, setHk] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
 
@@ -170,6 +173,8 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       .then(r => r.json()).then(j => { if (j && j.ok) setRev(j) }).catch(() => {})
     fetch('/api/listing-health?slim=1', { cache: 'no-store' })
       .then(r => r.json()).then(j => { if (j && j.summary) setHealth(j) }).catch(() => {})
+    fetch('/api/labor/headline?days=' + days + (market !== 'all' ? '&market=' + encodeURIComponent(market) : ''), { cache: 'no-store' })
+      .then(r => r.json()).then(j => { setHk(j && j.ok ? j : { failed: true }) }).catch(() => setHk({ failed: true }))
   }, [days, market, building, from, to]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [load])
 
@@ -327,12 +332,19 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                 ? (canSeeMoney && lab.costRatio != null ? pct(lab.costRatio, 1) + ' of revenue' : '') + (lab.homebaseConnected ? ' · Homebase' : ' · Breezeway pay')
                 : 'logged on Breezeway tasks · no pay rate on record'}
               delta={lab.known ? <Delta v={lab.costChange} suffix="%" invert /> : undefined} />
-            <Tile label={lab.known ? 'Cost per turn' : 'Minutes per turn'}
-              value={lab.known ? (canSeeMoney ? exact(lab.costPerTurn) : '—') : (c.minutesPerTurn != null ? c.minutesPerTurn + ' min' : '—')}
-              Icon={Brush} href="/cleaners"
-              sub={lab.known
-                ? (c.minutesPerTurn != null ? c.minutesPerTurn + ' min a turn on average' : 'no completion times yet')
-                : 'benchmark: studio 90 · 2BR 120 · 3BR+ 180'} />
+            {/* COST PER CLEAN — from the labor engine and nowhere else. This tile used to divide
+                Breezeway's `rate_paid`, a column that is empty on every task, by housekeeping-
+                department cleans only. Now it is housekeeper wages over every departure clean in
+                the window, whoever performed it, and it says so when the sweep has not landed. */}
+            <Tile label="Cost per clean"
+              value={hk == null ? '…' : hk.failed ? '—' : (canSeeMoney && hk.costPerClean != null ? exact(hk.costPerClean) : '—')}
+              Icon={Brush} href="/labor"
+              sub={hk == null ? 'working out the labor numbers'
+                : hk.failed ? 'the labor sweep did not finish — open Labor'
+                : count(hk.cleans) + ' cleans'
+                  + (hk.coveredByOtherCrews && hk.coveredByOtherCrews.cleans
+                    ? ' · ' + count(hk.coveredByOtherCrews.cleans) + ' covered by other crews' : '')
+                  + (canSeeMoney && hk.revPerClean != null ? ' · ' + exact(hk.revPerClean) + ' a clean in' : '')} />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">

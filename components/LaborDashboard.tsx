@@ -24,6 +24,10 @@ type Report = {
   totals: { hours: number; overtime: number; payroll: number; people: number }
   byDept: Record<Dept, { hours: number; payroll: number; people: number }>
   checkouts: number; vendorCheckouts: number; departureClosed: number
+  /** True when the headline economics came from the labor engine rather than the checkout fallback. */
+  engineBasis?: boolean
+  engineCleans?: number | null
+  coveredByOtherCrews?: { cleans: number; fees: number } | null
   mix: Record<string, { tasks: number; hours: number; materials: number }>
   cleaningRevenue: number
   costPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
@@ -213,9 +217,19 @@ export function LaborDashboard() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <Stat label="Payroll" value={money(data.totals.payroll)} sub={data.totals.hours + 'h · ' + data.totals.people + ' people'} />
             <Stat label="Overtime" value={data.totals.overtime + 'h'} sub="the most expensive hour we buy" tone={data.totals.overtime > 0 ? 'warn' : undefined} />
-            <Stat label="Cleans" value={String(data.checkouts)} sub={data.departureClosed + ' closed in Breezeway'} />
-            <Stat label="Cost / clean" value={money(data.costPerClean)} sub="housekeeping wages ÷ checkouts" />
-            <Stat label="Time / clean" value={data.hoursPerClean != null ? data.hoursPerClean + 'h' : '—'} sub="housekeeping hours ÷ checkouts" />
+            {/* THE CAPTION HAS TO DESCRIBE THE NUMBER ABOVE IT. These read "÷ checkouts" whichever
+                basis was in force, while the figure shown was almost always the engine's — wages
+                over departure CLEANS. Checkouts and cleans are not the same count, and saying so
+                wrongly is how a board stops being trusted. */}
+            <Stat label="Cleans" value={String(data.engineBasis && data.engineCleans != null ? data.engineCleans : data.checkouts)}
+              sub={data.engineBasis
+                ? data.departureClosed + ' closed in Breezeway'
+                  + (data.coveredByOtherCrews && data.coveredByOtherCrews.cleans ? ' · ' + data.coveredByOtherCrews.cleans + ' covered by other crews' : '')
+                : data.checkouts + ' checkouts — the labor sweep did not finish'} />
+            <Stat label="Cost / clean" value={money(data.costPerClean)}
+              sub={data.engineBasis ? 'housekeeping wages ÷ departure cleans' : 'housekeeping wages ÷ checkouts · estimate'} />
+            <Stat label="Time / clean" value={data.hoursPerClean != null ? data.hoursPerClean + 'h' : '—'}
+              sub={data.engineBasis ? 'housekeeping hours ÷ departure cleans' : 'housekeeping hours ÷ checkouts · estimate'} />
             <Stat label="Labor % of rev" value={data.laborPctOfRevenue != null ? data.laborPctOfRevenue + '%' : '—'}
               sub={'goal ≤ ' + data.settings.pct_good + '%'} tone={bandTone as any} />
           </div>

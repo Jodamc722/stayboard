@@ -16,6 +16,7 @@
 // Lives in lib/ (not in the route file) so the route stays a three-line wrapper.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isDepartureCleanName, isPrepTaskName } from './breezeway'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { noBreezewayRegex, vendorRegex } from '@/lib/ops-presets'
@@ -47,7 +48,9 @@ function deptOf(v: any): string {
 }
 function isDone(t: any): boolean { return /complete|finish|close|approv|done/i.test(str(t && t.status)) || !!(t && t.finished_at) }
 function isDead(t: any): boolean { return /delete|cancel/i.test(str(t && t.status)) }
-function isTurn(name: any): boolean { return /departure clean|turnover clean|^clean/i.test(str(name)) }
+// The same test the board and the labor engine use. `^clean` used to be in here, which counted
+// "Clean common areas" as a turnover.
+function isTurn(name: any): boolean { return isDepartureCleanName(name) && !isPrepTaskName(name) }
 
 /** Percentage change, guarding a zero base (which would otherwise read as an infinite gain). */
 function pctChange(now: number, prev: number): number | null {
@@ -361,7 +364,12 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         maintenanceCost: Math.round(dept('maintenance').cost),
         turns, turnMinutes, turnCost: Math.round(turnCost),
         minutesPerTurn: turns ? Math.round(turnMinutes / turns) : null,
-        costPerTurn: turns && turnCost ? round(turnCost / turns, 2) : null,
+        // COST PER CLEAN IS NOT COMPUTED HERE ANY MORE (2026-09-09). This divided Breezeway's
+        // `rate_paid` — a field that is empty on every task in this account — by housekeeping-
+        // DEPARTMENT cleans, so it excluded any turn filed under maintenance and was funded by a
+        // column of zeros, while the tile that showed it was unlocked by a Homebase check. One
+        // number, one place: lib/labor-econ owns it and /api/labor/headline serves it.
+        costPerTurn: null,
         onTimeRate: onTimeBase ? round((onTime / onTimeBase) * 100, 1) : null,
         byDept, byMarket, byBuilding, byDay,
       }

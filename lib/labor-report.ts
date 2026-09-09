@@ -32,6 +32,7 @@ import { getLaborSettings, type LaborSettings } from './labor-settings'
 import { computeYesterdayLabor, type YesterdayLabor } from './labor-daily'
 import { billingRange } from './billing'
 import { isDepartureCleanName } from './breezeway'
+import { pageRows } from './db-page'
 import { isLiveStay } from './stay-status'
 import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
@@ -137,6 +138,10 @@ export type LaborReport = {
   // True when the headline economics above came from lib/labor-econ (net fees, credited
   // departure cleans). False = the engine call failed and the old checkout arithmetic filled in.
   engineBasis?: boolean
+  /** Departure cleans the engine counted — the real denominator when engineBasis is true. */
+  engineCleans: number | null
+  /** Turns a supervisor or technician covered, and what those turns billed. */
+  coveredByOtherCrews: { cleans: number; fees: number } | null
   costPerClean: number | null
   hoursPerClean: number | null
   feePerClean: number | null
@@ -181,7 +186,10 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   // ---- checkouts = cleans owed ------------------------------------------------
   const presets = await getOpsPresets()
   const VEN = vendorRegex(presets.vendorBuildings)
-  const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000)
+  // .limit(2000) never returned more than PostgREST's 1000 (see lib/db-page): every listing past
+  // the cap silently lost its market and its vendor flag, which moved checkouts between markets.
+  const { rows: lRows } = await pageRows<any>((a, b) => db
+    .from('guesty_listings').select('id,nickname,title,building,address_city').order('id').range(a, b), 6)
   const lmap: Record<string, { name: string; vendor: boolean; market: string }> = {}
   for (const l of ((lRows || []) as any[])) {
     const nm = l.nickname || l.title || String(l.id)
@@ -191,9 +199,9 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
       market: String(marketOf(l.building, l.address_city, nm) || 'Miami'),
     }
   }
-  const { data: rRows } = await db.from('guesty_reservations')
-    .select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
-    .gte('check_out', from).lte('check_out', to).limit(4000)
+  const { rows: rRows } = await pageRows<any>((a, b) => db.from('guesty_reservations')
+    .select('id,listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
+    .gte('check_out', from).lte('check_out', to).order('id').range(a, b), 12)
   let checkouts = 0, vendorCheckouts = 0, cleaningRevenue = 0
   for (const r of ((rRows || []) as any[])) {
     if (!isLiveStay(r.status)) continue
@@ -249,6 +257,14 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   const doersOf = (t: any): string[] => Array.from(new Set(
     ([] as any[]).concat(Array.isArray(t.assignees) ? t.assignees : []).concat([t.finishedBy])
       .map(nameOfAny).filter(Boolean)))
+  // WHO GETS THE CLEAN — exactly one person, the way lib/labor-econ decides it. Crediting every
+  // name on the task counted a two-person turn twice, and counted it a third time when somebody
+  // else closed it, so a per-person cost per clean came out at half the real figure. Task HOURS
+  // still go to everyone who touched it: they all really were there.
+  const cleanDoerOf = (t: any): string => {
+    const a = Array.isArray(t.assignees) ? t.assignees.map(nameOfAny).filter(Boolean) : []
+    return a[0] || nameOfAny(t.finishedBy) || ''
+  }
 
   const byName: Record<string, PersonRow> = {}
   for (const t of timecards) {
@@ -274,7 +290,11 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
       if (!hit) continue
       byName[hit].tasks += 1
       byName[hit].taskHours += mins / 60
-      if (kind === 'departure') byName[hit].cleans += 1
+    }
+    if (kind === 'departure') {
+      const who = cleanDoerOf(t)
+      const hit = who ? Object.keys(byName).find(n => nameMatches(who, n)) : null
+      if (hit) byName[hit].cleans += 1
     }
   }
   const people = Object.values(byName).map(p => ({
@@ -297,6 +317,11 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   let hoursPerClean = checkouts > 0 && hkHours > 0 ? r1(hkHours / checkouts) : null
   let feePerClean = checkouts > 0 && cleaningRevenue > 0 ? r2(cleaningRevenue / checkouts) : null
   let engineBasis = false
+  // The engine counts CLEANS; the fallback counts CHECKOUTS. They are different numbers and the
+  // screen used to label whichever one it got as "÷ checkouts", so the caption described the
+  // arithmetic the page was not doing. Both travel now, and so does which one is in force.
+  let engineCleans: number | null = null
+  let coveredByOtherCrews: { cleans: number; fees: number } | null = null
   try {
     const eco = await laborEconomics({ from, to, market: 'all' })
     const H = eco.kpi.housekeeping
@@ -305,6 +330,8 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     costPerClean = H.costPerClean
     hoursPerClean = H.hoursPerClean
     feePerClean = H.revPerClean
+    engineCleans = H.cleans
+    coveredByOtherCrews = H.coveredByOtherCrews || null
     engineBasis = true
   } catch { /* fall back to the local arithmetic rather than sink the page */ }
   const cleaningMargin = hkPayroll > 0 ? r2(cleaningRevenue - hkPayroll) : null
@@ -462,7 +489,7 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   return {
     from, to, days, label, generatedAt: new Date().toISOString(),
     totals, byDept,
-    checkouts, vendorCheckouts, departureClosed, mix,
+    checkouts, vendorCheckouts, departureClosed, mix, engineCleans, coveredByOtherCrews,
     cleaningRevenue: r2(cleaningRevenue),
     engineBasis,
     costPerClean, hoursPerClean, feePerClean, cleaningMargin, cleaningMarginPct,

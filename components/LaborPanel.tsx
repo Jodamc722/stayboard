@@ -4,7 +4,7 @@ import { LaborWeekly } from '@/components/LaborWeekly'
 // v4: custom day/range picker, payroll vs revenue with banding, today strip
 // for in-day decisions, click-a-person task drill-down (Breezeway).
 import { useCallback, useEffect, useState } from 'react'
-import { Clock, AlertTriangle, RefreshCw, DollarSign, ClipboardList, ChevronRight, Zap } from 'lucide-react'
+import { Clock, AlertTriangle, RefreshCw, DollarSign, ClipboardList, ChevronRight, Zap, Users } from 'lucide-react'
 
 const MARKETS = [{ k: 'all', l: 'All' }, { k: 'miami', l: 'Miami' }, { k: 'broward', l: 'Broward' }, { k: 'north', l: 'North' }]
 const PRESETS = [{ d: 7, l: '7d' }, { d: 14, l: '14d' }, { d: 30, l: '30d' }]
@@ -77,6 +77,8 @@ export function LaborPanel() {
   // The shared labor P&L (lib/labor-econ) — same object the briefs print from.
   const econ = (d as any)?.econ
   const pnl = econ?.pnl
+  // The KPI block — revenue over payroll by crew, and the per-head table below it.
+  const kpi = econ?.kpi
   // Per-person P&L keyed by the Homebase spelling, so the People table can show what each person
   // earned (cleaning fees + the charges typed on their tasks) beside what they cost.
   const econBy: Record<string, any> = {}
@@ -334,7 +336,7 @@ export function LaborPanel() {
                 <Stat label="Cleans" value={loading ? '…' : String(d.departments.housekeeping.departureCleans ?? 0)} sub={(d.departments.housekeeping.otherHkTasks ?? 0) + ' other HK tasks'} />
                 <Stat label="Hours" value={loading ? '…' : d.departments.housekeeping.hours + 'h'} sub={d.departments.housekeeping.people + ' people'} />
               </> : <>
-                <Stat label="Cleaning revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="net, credited to housekeepers" />
+                <Stat label="Cleaning revenue" value={loading ? '…' : fmt$(d.departments.housekeeping.revenue)} sub="net fees on every departure clean" />
                 <Stat label="Payroll" value={loading ? '…' : fmt$(d.departments.housekeeping.payroll)} sub={d.departments.housekeeping.hours + 'h · ' + d.departments.housekeeping.people + ' housekeepers'} />
                 <Stat label="Margin" value={loading ? '…' : fmt$(d.departments.housekeeping.margin)} tone={d.departments.housekeeping.margin > 0 ? 'good' : 'bad'} sub="fees − housekeeper wages" />
                 <Stat label="Labor cost / clean" value={loading ? '…' : fmt$(d.departments.housekeeping.costPerClean)} sub={(d.departments.housekeeping.departureCleans ?? 0) + ' departure cleans'} />
@@ -421,6 +423,65 @@ export function LaborPanel() {
       {/* WEEK BY WEEK — the trend Jon asked for: cleans against the hours and payroll that turned
           them, revenue and HK payroll leading. Its own endpoint so the board is not held up by it. */}
       <LaborWeekly market={market} />
+      {/* PER PERSON, BY CREW (Jon, 2026-09-09: "rev per team member vs payroll broken by
+          departments"). The honest part is the blank column: a supervisor and a coordinator earn
+          no revenue of their own — every dollar they touch was counted on somebody else's line —
+          so they are shown as what they cost against the management fee instead of being handed a
+          share of housekeeping's takings. A number that is missing for a stated reason is worth
+          more than one that moves when the cleaners have a good week. */}
+      {kpi && (kpi as any).perHead && (
+        <div className="rounded-xl border border-line bg-white px-3 py-4">
+          <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-1 flex items-center gap-1">
+            <Users size={11} /> Per person, by crew
+          </p>
+          <p className="text-[11px] text-muted px-2 mb-3">{(kpi as any).perHead.basis}.</p>
+          <div className="overflow-x-auto"><table className="w-full text-[12px]">
+            <thead className="text-[10px] uppercase tracking-wide text-muted">
+              <tr className="border-b border-line">
+                <th className="text-left font-semibold py-1.5 pr-2">Crew</th>
+                <th className="text-right font-semibold py-1.5 px-2">People</th>
+                <th className="text-right font-semibold py-1.5 px-2">Payroll</th>
+                <th className="text-right font-semibold py-1.5 px-2">Payroll / person</th>
+                <th className="text-right font-semibold py-1.5 px-2">Revenue</th>
+                <th className="text-right font-semibold py-1.5 px-2">Revenue / person</th>
+                <th className="text-right font-semibold py-1.5 pl-2">Per $1 of wages</th>
+              </tr>
+            </thead>
+            <tbody>
+              {((kpi as any).perHead.rows || []).map((r: any) => (
+                <tr key={r.dept} className="border-b border-line/60">
+                  <td className="py-2 pr-2">
+                    <b>{r.label}</b>
+                    {!r.attributable && <div className="text-[10.5px] text-muted">{r.note}</div>}
+                  </td>
+                  <td className="py-2 px-2 text-right tabular-nums">{r.people}</td>
+                  <td className="py-2 px-2 text-right tabular-nums">{fmt$(r.payroll)}</td>
+                  <td className="py-2 px-2 text-right tabular-nums">{fmt$(r.payrollPerPerson)}</td>
+                  <td className="py-2 px-2 text-right tabular-nums">
+                    {r.attributable ? fmt$(r.revenue)
+                      : <span className="text-muted">{r.pctOfManagementFee != null ? r.pctOfManagementFee + '% of the mgmt fee' : 'no revenue of its own'}</span>}
+                  </td>
+                  <td className="py-2 px-2 text-right tabular-nums">{r.attributable ? fmt$(r.revenuePerPerson) : <span className="text-muted">—</span>}</td>
+                  <td className={'py-2 pl-2 text-right tabular-nums font-semibold ' + (r.revenuePerPayrollDollar == null ? 'text-muted' : r.revenuePerPayrollDollar >= 1 ? 'text-emerald-700' : 'text-rose-700')}>
+                    {r.revenuePerPayrollDollar != null ? '$' + Number(r.revenuePerPayrollDollar).toFixed(2) : '—'}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t-2 border-ink/60">
+                <td className="py-2 pr-2"><b>Everyone</b><div className="text-[10.5px] text-muted">overhead included — what the whole payroll brings back per head</div></td>
+                <td className="py-2 px-2 text-right tabular-nums font-semibold">{(kpi as any).perHead.total.people}</td>
+                <td className="py-2 px-2 text-right tabular-nums font-semibold">{fmt$((kpi as any).perHead.total.payroll)}</td>
+                <td className="py-2 px-2 text-right tabular-nums">{fmt$((kpi as any).perHead.total.payrollPerPerson)}</td>
+                <td className="py-2 px-2 text-right tabular-nums font-semibold">{fmt$((kpi as any).perHead.total.revenue)}</td>
+                <td className="py-2 px-2 text-right tabular-nums font-semibold">{fmt$((kpi as any).perHead.total.revenuePerPerson)}</td>
+                <td className={'py-2 pl-2 text-right tabular-nums font-semibold ' + (((kpi as any).perHead.total.revenuePerPayrollDollar ?? 0) >= 1 ? 'text-emerald-700' : 'text-rose-700')}>
+                  {(kpi as any).perHead.total.revenuePerPayrollDollar != null ? '$' + Number((kpi as any).perHead.total.revenuePerPayrollDollar).toFixed(2) : '—'}
+                </td>
+              </tr>
+            </tbody>
+          </table></div>
+        </div>
+      )}
       {/* TASKS */}
       <div className="rounded-xl border border-line bg-white px-3 py-4">
         <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3 flex items-center gap-1">

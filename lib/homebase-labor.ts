@@ -385,7 +385,10 @@ export function computeLaborKpis(opts: {
 
   const cleaningHours = round1(
     timecards
-      .filter(t => !t.role || /clean|housekeep|turn/i.test(t.role))
+      // A BLANK ROLE IS NOT A CLEANING SHIFT. `!t.role ||` counted every untagged timecard in the
+    // company as housekeeping hours — and the Homebase role field is blank for several of the
+    // crew — so hours per clean carried supervisors, techs and the office (2026-09-09).
+    .filter(t => !!t.role && /clean|housekeep|turn/i.test(t.role))
       .reduce((a, t) => a + (t.hours ?? 0), 0)
   )
 

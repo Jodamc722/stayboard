@@ -42,6 +42,7 @@ import { vendorRegex, type VendorBuilding } from './ops-presets'
 import { nameMatches, nameMatchesRoster } from './homebase'
 import { getSalaried, weeklyCost, annualCost, windowCost, rateLabel, type SalaryRow } from './salary'
 import { getCrew, type Dept, type DeptSource, DEPTS, DEPT_LABEL } from './crew'
+import { isDepartureCleanName, isPrepTaskName } from './breezeway'
 import { resolveStaff, getAgencies } from './staffing'
 import { laborAmount } from './billing'
 
@@ -86,8 +87,13 @@ async function pageAll(q: (a: number, b: number) => any, pages = 30): Promise<an
 // Matching by NAME rather than by department matters: the housekeeping department also contains
 // common-area cleans, pool and fitness rooms, trash routes, office cleaning and linen refreshes —
 // real work, but not a turnover, and counting them as cleans made every clean look cheap.
+// ONE TEST, SHARED (2026-09-09). Three different regexes decided what a departure clean was:
+// this one, lib/breezeway's (the board, the scheduler, the day sheets) and lib/kpi's, which also
+// swept in anything merely STARTING with "Clean". A Spanish-named turn counted on the board and
+// not in cost per clean. lib/breezeway is the canonical pair — it says the turn, and it is not a
+// strip, walkthrough or inspection — so everything reads from it now.
 export const isDepartureCleanTask = (name: any) =>
-  /departure clean|turnover clean|check-?out clean/i.test(String(name || ''))
+  isDepartureCleanName(name) && !isPrepTaskName(name)
 
 export type TaskKind = 'clean' | 'inspection' | 'maintenance' | 'other'
 
@@ -160,7 +166,15 @@ export type PersonEcon = {
   payroll: number
   wageRate: number | null
   cleans: number
+  /** Departure cleans only — `cleans` also carries charged cleaning jobs, which are not turnovers. */
+  depCleans: number
   cleaningRevenue: number
+  /**
+   * Departure-clean fees this person earned that were credited to HOUSEKEEPING instead of to them.
+   * Non-zero only for a supervisor or technician who covered a turn: the clean shows on their row,
+   * the money sits with housekeeping (Jon, 2026-09-09).
+   */
+  cleanFeesToHk: number
   billableRevenue: number
   materials: number            // billable supplies — real money, but not labor
   tasks: number
@@ -777,7 +791,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const acc: Record<string, Acc> = {}
   const blank = (name: string): Acc => ({
     name, dept: 'other', declared: false, deptSource: 'unrostered' as DeptSource, market: '', role: null,
-    hours: 0, payroll: 0, wageRate: null, cleans: 0, cleaningRevenue: 0,
+    hours: 0, payroll: 0, wageRate: null, cleans: 0, depCleans: 0, cleanFeesToHk: 0, cleaningRevenue: 0,
     billableRevenue: 0, materials: 0, tasks: 0, billableTasks: 0, tasksNoCharge: 0,
     onPayroll: false, revenue: 0, margin: 0, costPerClean: null, _mk: {},
   })
@@ -845,6 +859,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const k = keyFor(w)
     const p = acc[k] = acc[k] || blank(w)
     p.cleans++
+    p.depCleans++
     const li = lmap[String(t.reference_property_id)]
     // ROOM MIX (Jon, 2026-08-22: "the type of room that they cleaned — one bedrooms, studios,
     // two bedrooms, three bedrooms"). A 3BR turn is not a studio turn; the mix says whether a
@@ -907,6 +922,22 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const rec = resolveStaff(p.name, crew.staff)
     p.market = (rec?.area ? String(rec.area).toLowerCase() : '') || 'unassigned'
     p.agency = rec && rec.agency ? String(rec.agency) : null
+    // THE CLEANING FEE FOLLOWS THE CLEAN, NOT THE CLEANER (Jon, 2026-09-09: "cleaning rev divided
+    // by HK regardless if the clean is done by Supervisor or maintenance").
+    //
+    // This reverses the 2026-09-07 rule, and the reason is arithmetic. Every departure clean was
+    // already in housekeeping's denominator whoever performed it, while its FEE went to the doer's
+    // own crew — so revenue per clean divided a housekeeper-only numerator by an all-crew
+    // denominator, and margin, labour-% and the market P&L all inherited the mismatch. Housekeeping
+    // was being charged for turns it was not paid for.
+    //
+    // The clean still shows on this person's row, and what they handed over is named in
+    // `cleanFeesToHk` rather than quietly disappearing — a supervisor covering six turns a week is
+    // something to see, not something to net out.
+    if (p.dept !== 'housekeeping' && p.cleaningRevenue > 0) {
+      p.cleanFeesToHk = p.cleaningRevenue
+      p.cleaningRevenue = 0
+    }
     p.revenue = round2(p.cleaningRevenue + p.billableRevenue)
     p.margin = round2(p.revenue - p.payroll)
     p.costPerClean = p.cleans > 0 && p.payroll > 0 ? round2(p.payroll / p.cleans) : null
@@ -1037,7 +1068,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       p = {
         name: r.name, dept: resolved.dept, declared: crew.isDeclared(r.name), deptSource: resolved.source,
         market: (rec?.area ? String(rec.area).toLowerCase() : '') || 'unassigned',
-        role: r.title || null, hours: 0, payroll: 0, wageRate: null, cleans: 0, cleaningRevenue: 0,
+        role: r.title || null, hours: 0, payroll: 0, wageRate: null, cleans: 0, depCleans: 0, cleanFeesToHk: 0, cleaningRevenue: 0,
         billableRevenue: 0, materials: 0, tasks: 0, billableTasks: 0, tasksNoCharge: 0,
         onPayroll: true, revenue: 0, margin: 0, costPerClean: null,
         agency: null, agencyLabel: 'W-2', wagesHomebase: 0, agencyLoad: 0,
@@ -1211,9 +1242,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // 8 Miami and 4 Broward puts two-thirds of her wages on Miami. Assigning a whole person to one
   // market overstates one side and understates the other, and several of the crew cross daily.
   //
-  // Only HOUSEKEEPER wages and HOUSEKEEPER cleans go into these buckets. Supervisors are fixed
-  // overhead and stay out. Maintenance stays out too, even when a tech does a real departure
-  // clean: that fee is his revenue, in his own section.
+  // Only HOUSEKEEPER WAGES go into these buckets — supervisors are fixed overhead and maintenance
+  // is measured on its own work. Every departure CLEAN and every departure FEE goes in, whoever
+  // performed it, so the cost, the count and the money describe one population.
   const hkNames: Record<string, boolean> = {}
   for (const p of peopleAll) if (p.dept === 'housekeeping') hkNames[p.name] = true
 
@@ -1288,11 +1319,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // 2026-09-07: "cost per clean solely based on housekeeping. Nobody else… If maintenance does a
   // departure clean, the cost per clean is based solely on housekeeping hours. That would be a
   // net positive for housekeeping"). So a turn a technician or a supervisor covered still counts
-  // as a clean the market produced — it lowers cost per clean — while its fee stays with the
-  // person who did it (their crew's revenue line), and their wages never enter this ratio.
+  // as a clean the market produced — it lowers cost per clean — and their wages never enter this
+  // ratio.
+  //
+  // AND SO DOES ITS FEE (Jon, 2026-09-09: "cleaning rev divided by HK regardless if the clean is
+  // done by Supervisor or maintenance"). The fee used to stay with the doer's crew, which left
+  // revenue per clean dividing housekeeper-only money by an all-crew count. Both sides of every
+  // housekeeping ratio now come from the same set of turns.
   const hkCleansByPerson: Record<string, Record<string, number>> = {}
   const depCleansByMk: Record<string, number> = {}          // every departure clean, any crew
   const depCleansByOthersMk: Record<string, number> = {}    // …of which, not by a housekeeper
+  const feesByOthersMk: Record<string, number> = {}          // …and what those turns were worth
   let chargedCleanCount = 0, chargedCleanRevenue = 0
   for (const rec of cleanRecs) {
     const byHk = !!hkNames[rec.who]
@@ -1305,8 +1342,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const b = bucketFor(rec.market)
     b.cleans++
     depCleansByMk[rec.market] = (depCleansByMk[rec.market] || 0) + 1
-    if (!byHk) { depCleansByOthersMk[rec.market] = (depCleansByOthersMk[rec.market] || 0) + 1; continue }
+    // THE FEE GOES IN THE SAME BUCKET AS THE CLEAN, ALWAYS. Denominator and numerator now come
+    // from one population, so feePerClean, margin and marginPct mean what they say.
     b.cleaningRevenue = round2(b.cleaningRevenue + rec.fee)
+    if (!byHk) {
+      depCleansByOthersMk[rec.market] = (depCleansByOthersMk[rec.market] || 0) + 1
+      feesByOthersMk[rec.market] = round2((feesByOthersMk[rec.market] || 0) + rec.fee)
+      continue
+    }
+    // Only a housekeeper's clean carries her WAGES into this market — that part is unchanged, and
+    // it is what makes a covered turn a net positive for housekeeping rather than a free lunch.
     hkCleansByPerson[rec.who] = hkCleansByPerson[rec.who] || {}
     hkCleansByPerson[rec.who][rec.market] = (hkCleansByPerson[rec.who][rec.market] || 0) + 1
   }
@@ -1492,9 +1537,15 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       cleans: hkCleansInHouse,                       // EVERY departure clean in these markets, any crew
       cleansByOtherCrews: inHouseB.reduce((a, b) => a + (depCleansByOthersMk[b.key] || 0), 0),
       cleansByHousekeepers: hkCleansInHouse - inHouseB.reduce((a, b) => a + (depCleansByOthersMk[b.key] || 0), 0),
-      revenue: hkRevenue,                            // net departure-clean fees earned BY HOUSEKEEPERS
+      revenue: hkRevenue,                            // net fees on EVERY departure clean in the market
       cleaningFees: hkRevenue,
-      basisNote: 'housekeeper wages over every departure clean done in the market (a turn covered by a tech or a supervisor still counts as a clean; their wages and its fee stay on their own crew)',
+      // What the other crews handed over: turns they covered, and what those turns were worth.
+      // Named rather than netted — six turns a week off a supervisor is a staffing fact.
+      coveredByOtherCrews: {
+        cleans: inHouseB.reduce((a, b) => a + (depCleansByOthersMk[b.key] || 0), 0),
+        fees: round2(inHouseB.reduce((a, b) => a + (feesByOthersMk[b.key] || 0), 0)),
+      },
+      basisNote: 'housekeeper wages over every departure clean done in the market, against the fees on those same cleans — a turn covered by a tech or a supervisor counts as a clean and its fee counts as housekeeping revenue; only their wages stay on their own crew',
       // Gross guest cleaning fees before the OTA cut, so the difference is visible.
       revenueGross: cleaningGrossAll,
       channelCut: round2(Math.max(0, cleaningGrossAll - cleaningInhouse)),
@@ -1631,6 +1682,71 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       pctOfManagementFee: pct(ccs.payroll, managementFee),
       note: 'coordination overhead — carried regardless of revenue',
     },
+    // ── WHAT EACH PERSON EARNS AND WHAT EACH PERSON COSTS, BY CREW ──────────────────────────
+    // Jon, 2026-09-09: "rev per team member vs payroll broken by departments".
+    //
+    // THE HONEST PART IS WHICH CREWS CAN ANSWER IT. Housekeeping and maintenance produce revenue
+    // that is attributable to the work: a departure clean has a fee, a repair has a charge. A
+    // supervisor and a coordinator produce neither — every dollar they touch was already counted
+    // on somebody else's line, and dividing portfolio revenue over their heads would invent a
+    // number that moves when the housekeepers have a good week. So those crews are reported as
+    // what they are, a cost carried by the management fee, and `attributable` says which is which.
+    // A revenue-per-head column that is blank for a reason beats one that is filled with fiction.
+    //
+    // HEADCOUNT IS PEOPLE WHO COST MONEY THIS WINDOW (`onPayroll`) — not everyone on the roster and
+    // not everyone who appears on a task. Somebody who clocked no hours costs nothing and cannot
+    // make a per-head figure worse.
+    perHead: (() => {
+      const revOf: Partial<Record<Dept, number>> = {
+        housekeeping: hkAllRevenue,                                  // every departure fee + charged cleans
+        maintenance: round2(mt.billableRevenue + mt.cleaningRevenue),
+        inspection: round2(insp.billableRevenue + insp.cleaningRevenue),
+      }
+      const payOf: Partial<Record<Dept, number>> = { housekeeping: hkPayrollInHouse }
+      const rows = DEPTS.map(d => {
+        const x = byDept[d]
+        const head = people.filter(p => p.dept === d && p.onPayroll).length
+        const payroll = payOf[d] != null ? (payOf[d] as number) : x.payroll
+        const attributable = revOf[d] != null
+        const revenue = attributable ? (revOf[d] as number) : null
+        return {
+          dept: d,
+          label: x.label,
+          attributable,
+          people: head,
+          hours: x.hours,
+          payroll,
+          payrollPerPerson: head > 0 && payroll > 0 ? round2(payroll / head) : null,
+          revenue,
+          revenuePerPerson: attributable && head > 0 ? round2((revenue as number) / head) : null,
+          // What a dollar of this crew's wages brings back. Above 1 the crew pays for itself.
+          revenuePerPayrollDollar: attributable && payroll > 0 ? round2((revenue as number) / payroll) : null,
+          marginPerPerson: attributable && head > 0 ? round2(((revenue as number) - payroll) / head) : null,
+          // For the overhead crews this is the only ratio that means anything.
+          pctOfManagementFee: attributable ? null : pct(payroll, managementFee),
+          note: attributable ? null : BASIS[d],
+        }
+      }).filter(r => r.people > 0 || r.payroll > 0 || (r.revenue || 0) > 0)
+      const revEarning = rows.filter(r => r.attributable)
+      const headAll = rows.reduce((a, r) => a + r.people, 0)
+      const payAll = round2(rows.reduce((a, r) => a + r.payroll, 0))
+      const revAll = round2(revEarning.reduce((a, r) => a + (r.revenue || 0), 0))
+      return {
+        rows,
+        total: {
+          people: headAll,
+          payroll: payAll,
+          revenue: revAll,
+          // Company-wide revenue per head is over EVERY head, overhead included — that is the
+          // point of the number: what the whole payroll brings back per person carried.
+          revenuePerPerson: headAll > 0 ? round2(revAll / headAll) : null,
+          payrollPerPerson: headAll > 0 && payAll > 0 ? round2(payAll / headAll) : null,
+          revenuePerPayrollDollar: payAll > 0 ? round2(revAll / payAll) : null,
+        },
+        managementFee: round2(managementFee),
+        basis: 'revenue attributable to the crew that produced it, over the people that crew actually paid this window; supervision and coordination earn none of their own and are shown against the management fee instead',
+      }
+    })(),
     // THE 17WEST RECEIPT. Every payroll line above already carries only Stay's share of George
     // Paz + Yoslenis — this names what was taken off and why, so the deduction is auditable.
     seventeenWest: {
