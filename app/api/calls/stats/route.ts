@@ -54,7 +54,8 @@ export async function GET(req: NextRequest) {
   const totals = agg()
   const mandatory = agg()
   const byTier: Record<string, Agg> = {}
-  const byDayMap: Record<string, Agg & { day: string }> = {}
+  // Per day, split the way the desk is judged: MANDATORY must be 100%, OTHER should be completed.
+  const byDayMap: Record<string, Agg & { day: string; mandatory: Agg; other: Agg }> = {}
   const byCallerMap: Record<string, Agg & { name: string; email: string; reached: number; lastAt: string }> = {}
   const bump = (a: Agg, r: any) => {
     const o = String(r.outcome || '')
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
     a.attempts += Number(r.attempts) || 0
     if (o === 'no_answer') a.noAnswer++
   }
-  for (let i = 0; i < days; i++) { const d = addDays(from, i); byDayMap[d] = { ...agg(), day: d } }
+  for (let i = 0; i < days; i++) { const d = addDays(from, i); byDayMap[d] = { ...agg(), day: d, mandatory: agg(), other: agg() } }
 
   for (const r of inWindow) {
     const tier = String(r.tier || (r.kind === 'post_checkout' ? 'post_checkout' : 'standard'))
@@ -76,7 +77,7 @@ export async function GET(req: NextRequest) {
     if (tier !== 'standard' && tier !== 'post_checkout') bump(mandatory, r)
     if (!byTier[tier]) byTier[tier] = agg()
     bump(byTier[tier], r)
-    const d = dayOf(r); if (byDayMap[d]) bump(byDayMap[d], r)
+    const d = dayOf(r); if (byDayMap[d]) { bump(byDayMap[d], r); bump(tier !== 'standard' && tier !== 'post_checkout' ? byDayMap[d].mandatory : byDayMap[d].other, r) }
     // Callers: only rows a person acted on. Incompletes have no caller — they are the desk's miss.
     const email = String(r.caller_email || '').toLowerCase()
     const name = String(r.called_by || '').trim()
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest) {
   const byCaller = Object.values(byCallerMap)
     .map(c => ({ ...c, rate: rate(c), reachRate: c.completed ? Math.round((c.reached / c.completed) * 100) : null }))
     .sort((a, b) => b.completed - a.completed || a.name.localeCompare(b.name))
-  const byDay = Object.values(byDayMap).map(d => ({ ...d, rate: rate(d) }))
+  const byDay = Object.values(byDayMap).map(d => ({ ...d, rate: rate(d), mandatory: { ...d.mandatory, rate: rate(d.mandatory) }, other: { ...d.other, rate: rate(d.other) } }))
   const recentIncomplete = inWindow
     .filter((r: any) => r.outcome === 'incomplete')
     .sort((a: any, b: any) => String(b.scheduled_for || '').localeCompare(String(a.scheduled_for || '')))
