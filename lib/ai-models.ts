@@ -9,6 +9,9 @@
 // call within about a minute and costs nothing per request.
 //
 // The tiers, so the setting page can say what a change means:
+//   fable   — Fable 5.1. The Mythos-class tier above Opus; the judgement calls (Jon, 2026-09-09:
+//             "make sure the suggestions use fable to determine real things to focus on"). Price
+//             below is a placeholder until the console confirms it — treat it as at-least-Opus.
 //   opus    — Opus 4.8. Deepest reasoning. $5 in / $25 out per million tokens.
 //   sonnet  — Sonnet 5. Newer generation, very strong, 2.5x cheaper than Opus. $2 / $10.
 //   sonnet-prev — Sonnet 4.6. What most of the app ran on before 2026-09-09. $3 / $15.
@@ -23,19 +26,24 @@ import { getSetting } from '@/lib/app-settings'
 
 export const AI_MODELS_KEY = 'ai_models'
 
-export type ModelTier = 'opus' | 'sonnet' | 'sonnet-prev' | 'haiku'
+export type ModelTier = 'fable' | 'opus' | 'sonnet' | 'sonnet-prev' | 'haiku'
 export const MODEL_IDS: Record<ModelTier, string> = {
+  fable: 'claude-fable-5-1',
   opus: 'claude-opus-4-8',
   sonnet: 'claude-sonnet-5',
   'sonnet-prev': 'claude-sonnet-4-6',
   haiku: 'claude-haiku-4-5',
 }
 export const MODEL_LABEL: Record<ModelTier, string> = {
-  opus: 'Opus 4.8', sonnet: 'Sonnet 5', 'sonnet-prev': 'Sonnet 4.6', haiku: 'Haiku 4.5',
+  fable: 'Fable 5.1', opus: 'Opus 4.8', sonnet: 'Sonnet 5', 'sonnet-prev': 'Sonnet 4.6', haiku: 'Haiku 4.5',
 }
 /** $ per million tokens, in / out — for the settings page to show what a change costs. */
 export const MODEL_PRICE: Record<ModelTier, { in: number; out: number }> = {
-  opus: { in: 5, out: 25 }, sonnet: { in: 2, out: 10 }, 'sonnet-prev': { in: 3, out: 15 }, haiku: { in: 1, out: 5 },
+  fable: { in: 5, out: 25 }, opus: { in: 5, out: 25 }, sonnet: { in: 2, out: 10 }, 'sonnet-prev': { in: 3, out: 15 }, haiku: { in: 1, out: 5 },
+}
+/** If the account cannot see a tier's model id, the call retries once on this one (lib/anthropic-call). */
+export const MODEL_FALLBACK: Record<ModelTier, string> = {
+  fable: MODEL_IDS.opus, opus: MODEL_IDS['sonnet-prev'], sonnet: MODEL_IDS['sonnet-prev'], 'sonnet-prev': MODEL_IDS.sonnet, haiku: MODEL_IDS['sonnet-prev'],
 }
 
 export type AiTask = {
@@ -90,6 +98,9 @@ export const AI_TASKS: AiTask[] = [
     what: 'Rewords a sentence or a description wherever the Polish button appears.',
     matters: 'Internal and quick; the person is still editing.' },
   // ── Operations ──
+  { key: 'ops-focus', title: 'Today in Ops — Focus', group: 'Operations', def: 'fable',
+    what: 'Reads today\'s crew, cleans and every candidate job (cadence suggestions, waiting backlog, duplicates) and picks the few worth doing today, each with a reason; parks the rest under Review.',
+    matters: 'This is the plan the coordinator works from. A weak pick sends a person across the county for nothing. Cached for two hours per market; a handful of calls a day.' },
   { key: 'audit', title: 'Audits & walkthroughs', group: 'Operations', def: 'opus',
     what: 'Organises audit findings, suggests items, analyses walkthrough photos and notes.',
     matters: 'Becomes the punch list a crew works from.' },
@@ -108,7 +119,7 @@ export const AI_TASKS: AiTask[] = [
 ]
 
 const TASK_KEYS = new Set(AI_TASKS.map(t => t.key))
-const TIERS: ModelTier[] = ['opus', 'sonnet', 'sonnet-prev', 'haiku']
+const TIERS: ModelTier[] = ['fable', 'opus', 'sonnet', 'sonnet-prev', 'haiku']
 export const isTier = (v: any): v is ModelTier => TIERS.indexOf(v) >= 0
 
 // One-minute in-memory cache per server instance. A settings change reaches every route within a
@@ -137,6 +148,11 @@ export async function tierFor(task: string): Promise<ModelTier> {
 /** The model id to send to the API for a task. */
 export async function modelFor(task: string): Promise<string> {
   return MODEL_IDS[await tierFor(task)]
+}
+/** Model id + the one to retry on if the account cannot see it. */
+export async function modelPairFor(task: string): Promise<{ model: string; fallback: string }> {
+  const tier = await tierFor(task)
+  return { model: MODEL_IDS[tier], fallback: MODEL_FALLBACK[tier] }
 }
 /** The whole current table, for the settings page. */
 export async function aiModelTable(): Promise<{ key: string; tier: ModelTier; overridden: boolean }[]> {

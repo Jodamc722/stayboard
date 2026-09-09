@@ -1,46 +1,31 @@
 'use client'
-// REVIEW & RECOMMENDED — the third tab on Today in Ops.
+// FOCUS — the third view on Today in Ops (Jon, 2026-09-09: "make sure the suggestions use fable to
+// determine real things to focus on and clarity about suggestions and things to review").
 //
-// Jon, 2026-08-31: "create a review / recommended tab", and earlier: "there can be a review section
-// in Today in Ops for the ops team to review as well… maybe that's safer."
+// Before this the tab was one merged list — cadence suggestions on top, the waiting backlog under
+// them, a bulk bar, two halves — and a coordinator still had to decide what mattered. Now the model
+// (lib/ops-focus, on the Fable tier by default; Users & admin → AI models) reads the day and every
+// candidate and answers the actual question:
 //
-// ONE LIST (Jon, 2026-09-01: "can review and suggestion be the same thing"). He is right, and the
-// split was mine, not the work's. A coordinator does not think "this is a suggestion, that is a
-// review item" — they think "what needs doing, and when can it be done". The engine's distinction
-// (propose new work vs. re-place existing work) is an implementation detail that was leaking into
-// the interface as two places to look.
+//   FOCUS TODAY   the few worth doing — each with a one-sentence reason and one button.
+//   REVIEW        everything else, grouped by why it waits (free trip · unit empty · no window ·
+//                 suggested but not today), closed by default, opened when you want to plan ahead.
+//   DECISIONS     what the automation would retire and what was done twice — a person approves.
 //
-// So both live here, in one list, with one action row: give it to somebody, put it on a day, apply.
-// The only thing that survives the merge is a tag saying which kind a row is, because "create this"
-// and "move this" have genuinely different consequences and somebody should be able to see which.
-//
-// Two halves, and the order is the argument:
-//
-//   RECOMMENDED — outstanding maintenance, each line carrying the next day that unit is actually
-//   empty. This is the half somebody acts on. A backlog list tells a supervisor they are behind; a
-//   backlog list with a workable date beside every row tells them what to do this morning.
-//
-//   PROPOSALS — what the automation would retire if it were switched on, and what it found done
-//   twice. This is the half somebody APPROVES. It is deliberately not automatic: these cancel
-//   inspections and reschedule real work, and Jon's own instinct was that a human should look first.
-//
-// Scheduling goes through the same route the rest of the board uses, so there is one code path that
-// moves a task and one place for it to be wrong.
+// The rows are still the engines' rows (suggestions from the provider, the backlog from
+// /api/ops-today/review), so Add / Move / Delete go through the exact routes they always did. The
+// model only ORDERS and EXPLAINS; it never touches a task.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, RefreshCw, CalendarClock, MapPin, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square, ChevronRight, ChevronDown, ExternalLink, FileText } from 'lucide-react'
+import { Loader2, RefreshCw, CalendarClock, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square, ChevronRight, ChevronDown, ExternalLink, FileText, Cpu } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
+import { useSuggestions, type Sug } from '@/components/SuggestionsBand'
+import { useCachedFetch, invalidateCache } from '@/lib/swr'
 
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
-import { useSuggestions, type Sug } from '@/components/SuggestionsBand'
-
 const niceDate = (ymd: string) => {
-  try {
-    return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
-      .format(new Date(ymd + 'T12:00:00Z'))
-  } catch { return ymd }
+  try { return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd }
 }
-const lateWord = (n: number | null) =>
-  n == null ? 'scheduled ahead' : n <= 0 ? 'due today' : n === 1 ? '1 day late' : `${n} days late`
+const clock = (iso: string) => { try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) } catch { return '' } }
 
 type Item = {
   taskId: string; listingId: string; unit: string; task: string; dept: string
@@ -49,25 +34,31 @@ type Item = {
   target: { date: string; hasTrade: boolean; who: string[] } | null
   recommendation: string
 }
+type DupGroup = { listingId: string; unit: string; date: string; key: string; keepId: string; tasks: { id: string; name: string; assignees?: string[] }[] }
+type Focus = {
+  ok: boolean; today: string; market: string; model: string; at: string; cached: boolean; fallback?: string
+  verdict: { headline: string; focus: { id: string; reason: string; do: 'add' | 'move' | 'cancel' }[]; review: { id: string; note: string }[]; parked: string }
+  error?: string
+}
+const focusUrl = (market: string, refresh = false) => `/api/ops-today/focus?market=${encodeURIComponent(market)}${refresh ? '&refresh=1' : ''}`
+const dupId = (g: DupGroup) => 'dup:' + g.listingId + '|' + g.date + '|' + g.key
 
-/**
- * The number on the tab. The suggestions band used to shout from above the board; removing it must
- * not make today's proposals invisible, so the count comes with them. Suggestions only — the
- * waiting backlog is always there and a permanent badge for it would just be wallpaper.
- */
-export function ReviewCount({ market }: { market: string }) {
-  const ctx = useSuggestions()
-  const n = ctx?.run?.enabled === false ? 0 : (ctx?.all(market) || []).length
+/** The number on the tab: how many the model says to focus on today. */
+export function ReviewCount({ market }: { market: string | null }) {
+  const { data } = useCachedFetch<Focus>(market ? focusUrl(market) : null, { ttl: 5 * 60_000 })
+  const n = data?.verdict?.focus?.length || 0
   if (!n) return null
   return <span className="ml-1 text-[10px] font-bold px-1 rounded bg-brand-500 text-white tabular-nums">{n}</span>
 }
 
-// One row shape for both kinds, so the list renders once and the difference is a tag.
+// One row shape for every kind, so the list renders once and the difference is a tag.
 type Row =
   | { kind: 'suggestion'; id: string; unit: string; label: string; dept: string; why: string; sug: Sug }
   | { kind: 'pending'; id: string; unit: string; label: string; dept: string; why: string; item: Item }
+  | { kind: 'dup'; id: string; unit: string; label: string; dept: string; why: string; group: DupGroup }
 
 const DEPT_ICON: Record<string, any> = { maintenance: Wrench, housekeeping: Sparkles, inspection: ClipboardList }
+const CARD = 'rounded-2xl border border-line bg-white overflow-hidden'
 
 export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: () => void }) {
   const sugCtx = useSuggestions()
@@ -76,14 +67,13 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [done, setDone] = useState<Set<string>>(new Set())
-  const [half, setHalf] = useState<'recommended' | 'proposals'>('recommended')
-  // BULK IS FOR THE REVERSIBLE THINGS ONLY. Moving and assigning can be undone by moving and
-  // assigning again; deleting cannot. So selection drives move/assign, and delete stays strictly
-  // one row at a time behind a password that names the task — the asymmetry is the safety.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [bulkDate, setBulkDate] = useState('')
   const [bulkWho, setBulkWho] = useState('')
   const [bulkNote, setBulkNote] = useState('')
+  const { data: focus, loading: focusLoading, error: focusErr, refresh: refetchFocus } = useCachedFetch<Focus>(focusUrl(market), { ttl: 5 * 60_000 })
+  const [reasking, setReasking] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -96,73 +86,78 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
   }, [market])
   useEffect(() => { load() }, [load])
 
+  // Re-ask the model: bypass the two-hour cache, then re-read the rows too.
+  const reask = async () => {
+    setReasking(true)
+    try { await fetch(focusUrl(market, true), { cache: 'no-store' }); invalidateCache(focusUrl(market)); await refetchFocus(); await load() } finally { setReasking(false) }
+  }
+
   const items: Item[] = useMemo(() => (data?.queue?.items || []).filter((i: Item) => !done.has(i.taskId)), [data, done])
-  const summary = data?.queue?.summary || { total: 0, freeTrips: 0, needsATrip: 0, noWindow: 0 }
+  const groups: DupGroup[] = useMemo(() => (data?.dupes?.groups || []).filter((g: DupGroup) => !done.has(dupId(g))), [data, done])
 
-  // ── THE MERGE ─────────────────────────────────────────────────────────────────────────────
-  // Suggestions first: they are preventative, and the whole reason to do them today is that
-  // somebody is already in the building. Pending work is sorted by how long it has waited, so the
-  // two orderings do not fight — proposals lead, then the backlog by age.
-  const rows: Row[] = useMemo(() => {
-    const sugs = (sugCtx?.all(market) || []).map((sg): Row => ({
-      kind: 'suggestion', id: sg.id, unit: sg.unit, label: sg.label, dept: sg.dept, why: sg.why, sug: sg,
-    }))
-    const pend = items.map((i): Row => ({
-      kind: 'pending', id: i.taskId, unit: i.unit, label: i.task, dept: i.dept, why: i.recommendation, item: i,
-    }))
-    return [...sugs, ...pend]
-  }, [sugCtx, market, items])
-  const sugCount = rows.filter(r => r.kind === 'suggestion').length
+  // ── every candidate, by id ──
+  const byId = useMemo(() => {
+    const m = new Map<string, Row>()
+    for (const sg of (sugCtx?.all(market) || [])) m.set(sg.id, { kind: 'suggestion', id: sg.id, unit: sg.unit, label: sg.label, dept: sg.dept, why: sg.why, sug: sg })
+    for (const i of items) m.set(i.taskId, { kind: 'pending', id: i.taskId, unit: i.unit, label: i.task, dept: i.dept, why: i.recommendation, item: i })
+    for (const g of groups) m.set(dupId(g), { kind: 'dup', id: dupId(g), unit: g.unit, label: String(g.key).replace(/-/g, ' ') + ' — done twice on ' + g.date, dept: 'maintenance', why: g.tasks.length + ' tasks; keep #' + g.keepId + ', cancel the rest.', group: g })
+    return m
+  }, [sugCtx, market, items, groups])
 
-  // Move one job onto the day the planner recommends. Same endpoint the row-level actions use.
+  // ── the model's split, reconciled with what is actually still on the board ──
+  const picks = useMemo(() => (focus?.verdict?.focus || []).map(p => ({ ...p, row: byId.get(p.id) })).filter(p => !!p.row) as { id: string; reason: string; do: string; row: Row }[], [focus, byId])
+  const picked = useMemo(() => new Set(picks.map(p => p.id)), [picks])
+  const selectable = useMemo(() => picks.filter(p => p.row.kind !== 'dup'), [picks])
+  const noteOf = useMemo(() => { const m: Record<string, string> = {}; for (const r of (focus?.verdict?.review || [])) m[r.id] = r.note; return m }, [focus])
+  const rest = useMemo(() => Array.from(byId.values()).filter(r => !picked.has(r.id)), [byId, picked])
+  const reviewGroups: { key: string; label: string; rows: Row[] }[] = useMemo(() => {
+    const g = (k: string, label: string, rows: Row[]) => ({ key: k, label, rows })
+    return [
+      g('free', 'Free trip — somebody is already going', rest.filter(r => r.kind === 'pending' && r.item.target?.hasTrade)),
+      g('empty', 'Unit empty — needs a person sent', rest.filter(r => r.kind === 'pending' && r.item.target && !r.item.target.hasTrade)),
+      g('none', 'No empty day in three weeks', rest.filter(r => r.kind === 'pending' && !r.item.target)),
+      g('sug', 'Suggested by cadence — not today', rest.filter(r => r.kind === 'suggestion')),
+      g('dup', 'Done twice — cancel the extra', rest.filter(r => r.kind === 'dup')),
+    ].filter(x => x.rows.length)
+  }, [rest])
+  const allRows = useMemo(() => [...picks.map(p => p.row), ...rest], [picks, rest])
+  const strays: any[] = data?.strays?.closed || []
+
+  // ── actions — the same routes as ever ──
   async function schedule(i: Item, date?: string, assignee?: string) {
     const when = date || i.target?.date
     if (!when || busy) return
     setBusy(i.taskId)
     try {
-      const r = await fetch('/api/ops-today/task-action', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'schedule', taskId: i.taskId, date: when, ...(assignee ? { assignee } : {}) }),
-      })
+      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'schedule', taskId: i.taskId, date: when, ...(assignee ? { assignee } : {}) }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || j?.error) throw new Error(j?.error || 'Could not reschedule.')
-      setDone(s => new Set(s).add(i.taskId))
-      onRefresh()
+      setDone(s => new Set(s).add(i.taskId)); onRefresh()
     } catch (e: any) { setError(String(e?.message || e)) } finally { setBusy(null) }
   }
-
-  // ── DELETE ────────────────────────────────────────────────────────────────────────────────
-  // Jon, 2026-09-01: "we should also be able to delete as well."
-  //
-  // Straight to the route that already exists, which requires the embedded admin password and
-  // refuses departure cleans outright — their date comes from the reservation, so a deleted one
-  // just reappears on the next sync looking like a mystery. The prompt NAMES the task and the unit:
-  // a confirmation that does not say what it is about to destroy is not a confirmation.
-  async function remove(i: Item) {
+  // Deleting destroys the record: the route wants the admin password and names the task in the prompt.
+  async function remove(taskId: string, what: string, unit: string, after?: () => void) {
     if (busy) return
-    const pw = window.prompt(`Admin password required to delete \u201c${i.task}\u201d on ${i.unit}:`)
+    const pw = window.prompt(`Admin password required to delete “${what}” on ${unit}:`)
     if (!pw) return
-    setBusy(i.taskId)
+    setBusy(taskId)
     try {
-      const r = await fetch('/api/ops-today/task-action', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', taskId: i.taskId, adminPassword: pw }),
-      })
+      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', taskId, adminPassword: pw }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || j?.error) throw new Error(j?.error || 'Could not delete.')
-      setDone(d => new Set(d).add(i.taskId))
-      setSel(x => { const n = new Set(x); n.delete(i.taskId); return n })
-      onRefresh()
+      setDone(d => new Set(d).add(taskId)); setSel(x => { const n = new Set(x); n.delete(taskId); return n })
+      after?.(); onRefresh()
     } catch (e: any) { setError(String(e?.message || e)) } finally { setBusy(null) }
   }
-
-  // ── BULK ──────────────────────────────────────────────────────────────────────────────────
-  // Sequential, with a per-row receipt. A bulk action that reports only "3 failed" and not WHICH
-  // three is worse than doing them one at a time, because now nobody knows what state the board is
-  // in. Each row that lands disappears from the list; each that does not keeps its place and says
-  // why in the summary line.
+  const cancelExtra = (g: DupGroup) => {
+    const extras = g.tasks.filter(t => t.id !== g.keepId && !done.has(t.id))
+    const extra = extras[0]
+    if (!extra) return
+    // The group leaves the list only when its last extra is gone.
+    remove(extra.id, extra.name, g.unit, () => { if (extras.length <= 1) setDone(d => new Set(d).add(dupId(g))) })
+  }
   async function applySelected() {
-    const chosen = rows.filter(r => sel.has(r.id))
+    const chosen = allRows.filter(r => sel.has(r.id) && r.kind !== 'dup')
     if (!chosen.length || busy) return
     setBulkNote(''); setError(null)
     let ok = 0
@@ -172,372 +167,269 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
       try {
         if (r.kind === 'suggestion') {
           if (!sugCtx) throw new Error('suggestions unavailable')
-          await sugCtx.act(r.sug, 'add', {
-            assignee: bulkWho || (r.sug.candidates[0] || ''),
-            scheduleDate: bulkDate || data?.today || '',
-          })
-        } else {
+          await sugCtx.act(r.sug, 'add', { assignee: bulkWho || (r.sug.candidates[0] || ''), scheduleDate: bulkDate || data?.today || '' })
+        } else if (r.kind === 'pending') {
           const when = bulkDate || r.item.target?.date
           if (!when) throw new Error('no workable day')
-          const res = await fetch('/api/ops-today/task-action', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'schedule', taskId: r.item.taskId, date: when,
-              ...(bulkWho ? { assignee: bulkWho } : (r.item.target?.who?.[0] ? { assignee: r.item.target.who[0] } : {})),
-            }),
-          })
+          const res = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'schedule', taskId: r.item.taskId, date: when, ...(bulkWho ? { assignee: bulkWho } : (r.item.target?.who?.[0] ? { assignee: r.item.target.who[0] } : {})) }) })
           const j = await res.json().catch(() => ({}))
           if (!res.ok || j?.error) throw new Error(j?.error || 'failed')
           setDone(d => new Set(d).add(r.item.taskId))
         }
         ok++
         setSel(x => { const n = new Set(x); n.delete(r.id); return n })
-      } catch (e: any) {
-        failures.push(`${r.unit} — ${String(e?.message || e).slice(0, 60)}`)
-      }
+      } catch (e: any) { failures.push(`${r.unit} — ${String(e?.message || e).slice(0, 60)}`) }
     }
     setBusy(null)
-    setBulkNote(
-      failures.length
-        ? `${ok} applied. ${failures.length} did not: ${failures.slice(0, 3).join('; ')}${failures.length > 3 ? '…' : ''}`
-        : `${ok} applied.`)
+    setBulkNote(failures.length ? `${ok} applied. ${failures.length} did not: ${failures.slice(0, 3).join('; ')}${failures.length > 3 ? '…' : ''}` : `${ok} applied.`)
     onRefresh()
   }
 
+  const rowProps = (r: Row) => ({
+    row: r, today: data?.today || '', busy, roster: sugCtx?.roster || [],
+    selected: sel.has(r.id),
+    onToggle: () => setSel(x => { const n = new Set(x); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n }),
+    onSchedule: (date?: string, who?: string) => r.kind === 'pending' ? schedule(r.item, date, who) : undefined,
+    onAddSuggestion: (date?: string, who?: string) => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'add', { assignee: who, scheduleDate: date }) : undefined,
+    onDismiss: () => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'dismiss') : undefined,
+    onDelete: () => r.kind === 'pending' ? remove(r.item.taskId, r.item.task, r.unit) : r.kind === 'dup' ? cancelExtra(r.group) : undefined,
+  })
+
   if (loading && !data) {
-    return <div className="px-4 py-10 text-center text-[13px] text-muted">
-      <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Working out what is outstanding&hellip;</span>
-    </div>
+    return <div className="px-4 py-10 text-center text-[13px] text-muted"><span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Working out what is outstanding&hellip;</span></div>
   }
   if (error && !data) {
-    return <div className="px-4 py-10 text-center text-[13px]">
-      <p className="text-rose-700">{error}</p>
-      <button onClick={load} className="mt-2 text-[12.5px] font-semibold text-brand-600 hover:underline">Try again</button>
-    </div>
+    return <div className="px-4 py-10 text-center text-[13px]"><p className="text-rose-700">{error}</p><button onClick={load} className="mt-2 text-[12.5px] font-semibold text-brand-600 hover:underline">Try again</button></div>
   }
+  const v = focus?.verdict
+  const decisions = strays.length
 
   return (
-    <div className="p-3 sm:p-4">
-      {/* ── THE SENTENCE, THEN THE LIST ── */}
-      <div className="flex items-start gap-3 flex-wrap mb-3">
+    <div className="p-3 sm:p-4 space-y-4">
+      {/* ── THE VERDICT ── one sentence from the model, and who said it. */}
+      <div className="flex items-start gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] text-ink leading-relaxed">
-            {rows.length === 0
-              ? <span className="text-muted">Nothing outstanding in this market. Every maintenance job is either scheduled or done.</span>
-              : <>
-                  {sugCount > 0 && <><b>{sugCount}</b> suggested for today. </>}
-                  {summary.total > 0 && <>
-                    <b>{summary.freeTrips}</b> of {summary.total} waiting jobs ride along free &mdash; somebody is already going into that unit.
-                    {summary.needsATrip > 0 && <> <b>{summary.needsATrip}</b> need a trip into an empty unit.</>}
-                    {summary.noWindow > 0 && <> <b className="text-amber-700">{summary.noWindow}</b> have no empty day in three weeks.</>}
-                  </>}
-                </>}
-          </p>
+          {focusLoading && !focus
+            ? <p className="text-[13.5px] text-muted inline-flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Reading the day&hellip;</p>
+            : focusErr && !focus
+              ? <p className="text-[13px] text-rose-700">{focusErr}</p>
+              : <p className="text-[14px] font-semibold text-ink leading-snug">{v?.headline || 'Nothing to decide today.'}</p>}
+          {v?.parked && <p className="text-[12px] text-muted mt-0.5">{v.parked}</p>}
+          {focus?.fallback && <p className="text-[11.5px] text-amber-800 mt-1">The model could not answer ({focus.fallback}) — this is the engines&rsquo; own order, not a judgement.</p>}
+          {focus && !focus.fallback && (
+            <p className="text-[11px] text-muted mt-1 inline-flex items-center gap-1"><Cpu size={10} /> {focus.model} · {clock(focus.at)}{focus.cached ? ' · cached' : ''}</p>
+          )}
         </div>
-        <button onClick={load} disabled={loading}
+        <button onClick={reask} disabled={reasking || loading} title="Ask the model again with the board as it is now"
           className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-bold text-muted hover:text-ink disabled:opacity-40">
-          {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Refresh
+          {reasking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Re-ask
         </button>
       </div>
+      {error && <p className="text-[12px] text-rose-700">{error}</p>}
 
-      <div className="inline-flex rounded-xl border border-line bg-white p-0.5 mb-3">
-        {([['recommended', `Recommended${rows.length ? ` · ${rows.length}` : ''}`],
-           ['proposals', `Needs a decision${(data?.dupes?.summary?.groups || 0) + (data?.strays?.closed?.length || 0) ? ` · ${(data?.dupes?.summary?.groups || 0) + (data?.strays?.closed?.length || 0)}` : ''}`]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setHalf(k as any)}
-            className={'px-3 py-1.5 rounded-[10px] text-[12.5px] font-bold ' + (half === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
-            {label}
+      {/* ── BULK ── only when something is selected. */}
+      {sel.size > 0 && (
+        <div className="rounded-xl border border-ink/20 bg-app px-3 py-2 flex items-center gap-2 flex-wrap">
+          <span className="text-[12.5px] font-bold text-ink">{sel.size} selected</span>
+          <span className="text-[11px] text-muted">Give to</span>
+          <select value={bulkWho} onChange={e => setBulkWho(e.target.value)} className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px] max-w-[150px]">
+            <option value="">each row&rsquo;s pick</option>
+            {(sugCtx?.roster || []).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+          </select>
+          <span className="text-[11px] text-muted">on</span>
+          <input type="date" value={bulkDate} min={data?.today || ''} onChange={e => setBulkDate(e.target.value)} className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px]" />
+          {!bulkDate && <span className="text-[11px] text-muted">each row&rsquo;s best day</span>}
+          <button onClick={applySelected} disabled={!!busy} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-bold disabled:opacity-40">{busy ? <Loader2 size={12} className="animate-spin" /> : null} Apply to {sel.size}</button>
+          <button onClick={() => { setSel(new Set()); setBulkNote('') }} disabled={!!busy} className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-muted hover:text-ink disabled:opacity-40">Clear</button>
+        </div>
+      )}
+      {bulkNote && <p className="text-[11.5px] text-muted">{bulkNote}</p>}
+
+      {/* ── FOCUS TODAY ── */}
+      <section>
+        <div className="flex items-center gap-2 mb-1.5 px-1">
+          <h3 className="text-[13.5px] font-bold text-ink inline-flex items-center gap-1.5"><Sparkles size={13} className="text-brand-600" /> Focus today <span className="text-muted font-semibold tabular-nums">{picks.length}</span></h3>
+          {selectable.length > 1 && (
+            <button onClick={() => setSel(s => selectable.every(p => s.has(p.id)) ? new Set() : new Set(selectable.map(p => p.id)))} className="ml-auto inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-muted hover:text-ink">
+              {selectable.every(p => sel.has(p.id)) ? <CheckSquare size={12} /> : <Square size={12} />} Select all
+            </button>
+          )}
+        </div>
+        <div className={CARD}>
+          {picks.length === 0
+            ? <p className="px-4 py-6 text-center text-[13px] text-muted">{focusLoading && !focus ? 'Deciding…' : allRows.length === 0 ? 'Nothing waiting and nothing to suggest. This is what a clear backlog looks like.' : 'Nothing worth pushing today — the day cannot hold it, or nobody is near. The rest is under Review.'}</p>
+            : picks.map(p => <RowLine key={p.row.kind + p.id} {...rowProps(p.row)} reason={p.reason} />)}
+        </div>
+      </section>
+
+      {/* ── REVIEW ── grouped by why it waits; closed at rest. */}
+      <section>
+        <h3 className="text-[13.5px] font-bold text-ink mb-1.5 px-1">Review <span className="text-muted font-semibold tabular-nums">{rest.length}</span></h3>
+        <div className={CARD}>
+          {reviewGroups.length === 0 && <p className="px-4 py-4 text-[12.5px] text-muted">Nothing else is waiting.</p>}
+          {reviewGroups.map(g => {
+            const open = !!openGroups[g.key]
+            return (
+              <div key={g.key} className="border-b border-line last:border-0">
+                <button onClick={() => setOpenGroups(o => ({ ...o, [g.key]: !open }))} aria-expanded={open}
+                  className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-app/50">
+                  {open ? <ChevronDown size={13} className="text-muted" /> : <ChevronRight size={13} className="text-muted" />}
+                  <span className="text-[12.5px] font-semibold text-ink">{g.label}</span>
+                  <span className="text-[11.5px] text-muted tabular-nums">{g.rows.length}</span>
+                </button>
+                {open && <div className="border-t border-line bg-app/30">{g.rows.map(r => <RowLine key={r.kind + r.id} {...rowProps(r)} reason={noteOf[r.id] || undefined} />)}</div>}
+              </div>
+            )
+          })}
+        </div>
+      </section>
+
+      {/* ── DECISIONS ── what the automation would retire. A person approves; nothing here fires. */}
+      {(strays.length > 0 || data?.strays) && (
+        <section>
+          <button onClick={() => setOpenGroups(o => ({ ...o, strays: !o.strays }))} aria-expanded={!!openGroups.strays} className="mb-1.5 px-1 inline-flex items-center gap-1.5 text-[13.5px] font-bold text-ink">
+            {openGroups.strays ? <ChevronDown size={13} className="text-muted" /> : <ChevronRight size={13} className="text-muted" />}
+            Decisions <span className="text-muted font-semibold tabular-nums">{decisions}</span>
           </button>
-        ))}
-      </div>
-
-      {error && <p className="text-[12px] text-rose-700 mb-2">{error}</p>}
-
-      {half === 'recommended' && (
-        <>
-          {/* ── THE BULK BAR ── Appears only when something is selected, so it costs nothing at
-              rest. Leaving the day or the person blank keeps each row's own recommendation, which
-              is the common case: select eight, press Move, and each goes to ITS best day. ── */}
-          {sel.size > 0 && (
-            <div className="mb-2 rounded-xl border border-ink/20 bg-app px-3 py-2 flex items-center gap-2 flex-wrap">
-              <span className="text-[12.5px] font-bold text-ink">{sel.size} selected</span>
-              <span className="text-[11px] text-muted">Give to</span>
-              <select value={bulkWho} onChange={e => setBulkWho(e.target.value)}
-                className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px] max-w-[150px]">
-                <option value="">each row&rsquo;s pick</option>
-                {(sugCtx?.roster || []).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-              </select>
-              <span className="text-[11px] text-muted">on</span>
-              <input type="date" value={bulkDate} min={data?.today || ''} onChange={e => setBulkDate(e.target.value)}
-                className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px]" />
-              {!bulkDate && <span className="text-[11px] text-muted">each row&rsquo;s best day</span>}
-              <button onClick={applySelected} disabled={!!busy}
-                className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-bold disabled:opacity-40">
-                {busy ? <Loader2 size={12} className="animate-spin" /> : null} Apply to {sel.size}
-              </button>
-              <button onClick={() => { setSel(new Set()); setBulkNote('') }} disabled={!!busy}
-                className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-muted hover:text-ink disabled:opacity-40">
-                Clear
-              </button>
+          {openGroups.strays && (
+            <div className={CARD}>
+              <div className="px-3 py-2 bg-app border-b border-line">
+                <p className="text-[12.5px] font-semibold text-ink">{strays.length} inspection{strays.length === 1 ? '' : 's'} would be cancelled</p>
+                <p className="text-[11.5px] text-muted mt-0.5">Open more than a week and not created by Lighthouse. Cancelled, never marked complete — completing one would say the walk happened.{data?.strays?.skipped?.lighthouse ? ` ${data.strays.skipped.lighthouse} left alone, Lighthouse made them.` : ''}</p>
+              </div>
+              <div className="divide-y divide-line max-h-[260px] overflow-y-auto">
+                {strays.slice(0, 60).map((c: any) => (
+                  <div key={c.id} className="px-3 py-1.5 flex items-center gap-2">
+                    <span className="text-[12px] text-ink flex-1 truncate">{c.unit} <span className="text-muted">&middot; {c.name}</span></span>
+                    <span className="text-[11px] text-muted tabular-nums shrink-0">{c.date}</span>
+                  </div>
+                ))}
+                {strays.length === 0 && <p className="px-3 py-3 text-[12px] text-muted">Nothing stray is sitting open.</p>}
+              </div>
+              <p className="px-3 py-2 text-[11px] text-muted border-t border-line bg-app/50">Runs only when the automation is switched on in Settings &rarr; Automations. Until then it is a proposal and nothing else. Duplicates are under Review &rarr; Done twice.</p>
             </div>
           )}
-          {bulkNote && <p className="mb-2 text-[11.5px] text-muted">{bulkNote}</p>}
-
-          <div className="rounded-2xl border border-line bg-white overflow-hidden">
-            {rows.length > 0 && (
-              <div className="px-3 py-1.5 border-b border-line bg-app/60 flex items-center gap-2">
-                <button onClick={() => setSel(s2 => s2.size === rows.length ? new Set() : new Set(rows.map(r => r.id)))}
-                  className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-muted hover:text-ink">
-                  {sel.size === rows.length && rows.length > 0 ? <CheckSquare size={12} /> : <Square size={12} />}
-                  {sel.size === rows.length && rows.length > 0 ? 'Clear all' : 'Select all'}
-                </button>
-              </div>
-            )}
-            {rows.length === 0 ? (
-              <p className="px-4 py-8 text-center text-[13px] text-muted">Nothing waiting and nothing to suggest. This is what a clear backlog looks like.</p>
-            ) : rows.map(r => (
-              <RowLine key={r.kind + r.id} row={r} today={data?.today || ''} busy={busy}
-                roster={sugCtx?.roster || []}
-                selected={sel.has(r.id)}
-                onToggle={() => setSel(x => { const n = new Set(x); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n })}
-                onSchedule={(date, who) => r.kind === 'pending' ? schedule(r.item, date, who) : undefined}
-                onAddSuggestion={(date, who) => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'add', { assignee: who, scheduleDate: date }) : undefined}
-                onDismiss={() => r.kind === 'suggestion' && sugCtx ? sugCtx.act(r.sug, 'dismiss') : undefined}
-                onDelete={() => r.kind === 'pending' ? remove(r.item) : undefined} />
-            ))}
-          </div>
-        </>
-      )}
-
-      {half === 'proposals' && (
-        <div className="space-y-3">
-          {/* ── WHAT THE AUTOMATION WOULD RETIRE ── */}
-          <div className="rounded-2xl border border-line bg-white overflow-hidden">
-            <div className="px-3 py-2 bg-app border-b border-line">
-              <p className="text-[12.5px] font-semibold text-ink">
-                {data?.strays?.closed?.length || 0} inspection{(data?.strays?.closed?.length || 0) === 1 ? '' : 's'} would be cancelled
-              </p>
-              <p className="text-[11.5px] text-muted mt-0.5">
-                Open more than a week and not created by Lighthouse. Cancelled, never marked complete &mdash; completing one
-                would say the walk happened.
-                {data?.strays?.skipped?.lighthouse ? ` ${data.strays.skipped.lighthouse} left alone, Lighthouse made them.` : ''}
-              </p>
-            </div>
-            <div className="divide-y divide-line max-h-[260px] overflow-y-auto">
-              {(data?.strays?.closed || []).slice(0, 60).map((c: any) => (
-                <div key={c.id} className="px-3 py-1.5 flex items-center gap-2">
-                  <span className="text-[12px] text-ink flex-1 truncate">{c.unit} <span className="text-muted">&middot; {c.name}</span></span>
-                  <span className="text-[11px] text-muted tabular-nums shrink-0">{c.date}</span>
-                </div>
-              ))}
-              {(data?.strays?.closed || []).length === 0 && (
-                <p className="px-3 py-3 text-[12px] text-muted">Nothing stray is sitting open.</p>
-              )}
-            </div>
-            <p className="px-3 py-2 text-[11px] text-muted border-t border-line bg-app/50">
-              This runs only when the automation is switched on in Settings &rarr; Automations. Until then it is a proposal and nothing else.
-            </p>
-          </div>
-
-          {/* ── DONE TWICE ── */}
-          <div className="rounded-2xl border border-line bg-white overflow-hidden">
-            <div className="px-3 py-2 bg-app border-b border-line">
-              <p className="text-[12.5px] font-semibold text-ink">
-                {data?.dupes?.summary?.groups || 0} job{(data?.dupes?.summary?.groups || 0) === 1 ? '' : 's'} done twice
-                {(data?.dupes?.summary?.extraTasks || 0) > 0 && <> &middot; {data.dupes.summary.extraTasks} wasted visit{data.dupes.summary.extraTasks === 1 ? '' : 's'}</>}
-              </p>
-              <p className="text-[11.5px] text-muted mt-0.5">Same unit, same day, same kind of job, completed twice &mdash; last 30 days.</p>
-            </div>
-            <div className="divide-y divide-line max-h-[260px] overflow-y-auto">
-              {(data?.dupes?.groups || []).slice(0, 40).map((g: any) => (
-                <div key={g.listingId + g.date + g.key} className="px-3 py-2">
-                  <p className="text-[12px] text-ink"><b>{g.unit}</b> <span className="text-muted">&middot; {g.date} &middot; {String(g.key).replace(/-/g, ' ')}</span></p>
-                  {g.tasks.map((t: any) => (
-                    <p key={t.id} className={'text-[11px] ' + (t.id === g.keepId ? 'text-muted' : 'text-rose-700')}>
-                      {t.id === g.keepId ? 'kept' : 'extra'} &middot; {t.name}
-                      {t.assignees?.length ? ` · ${t.assignees.join(', ')}` : ' · nobody named'}
-                    </p>
-                  ))}
-                </div>
-              ))}
-              {(data?.dupes?.groups || []).length === 0 && (
-                <p className="px-3 py-3 text-[12px] text-muted">Nothing was done twice in the last 30 days.</p>
-              )}
-            </div>
-          </div>
-        </div>
+        </section>
       )}
     </div>
   )
 }
 
-// ── ONE ROW, EITHER KIND ────────────────────────────────────────────────────────────────────────
-// The action row is deliberately identical for both. A coordinator deciding who does something and
-// when should not have to learn two controls because the engine got there two different ways.
-//
-// Closed by default: the engine's pick is a DEFAULT, not a decision, and putting a name and a date
-// picker on every row at rest turns a scannable list into a form. Open it and you override both.
-function RowLine({ row, today, busy, roster, selected, onToggle, onSchedule, onAddSuggestion, onDismiss, onDelete }: {
-  row: Row
-  today: string
-  busy: string | null
-  roster: { id: number; name: string; departments: string[] }[]
-  selected: boolean
-  onToggle: () => void
-  onSchedule: (date?: string, who?: string) => void
-  onAddSuggestion: (date?: string, who?: string) => void
-  onDismiss: () => void
-  onDelete: () => void
+// ── ONE ROW, ANY KIND ───────────────────────────────────────────────────────────────────────────
+// `reason` is the model's sentence; when present it is what the row says, and the engine's own
+// sentence moves into the details. Closed by default: the pick is a default, not a decision.
+function RowLine({ row, today, busy, roster, selected, onToggle, onSchedule, onAddSuggestion, onDismiss, onDelete, reason }: {
+  row: Row; today: string; busy: string | null; roster: { id: number; name: string; departments: string[] }[]
+  selected: boolean; onToggle: () => void
+  onSchedule: (date?: string, who?: string) => void; onAddSuggestion: (date?: string, who?: string) => void
+  onDismiss: () => void; onDelete: () => void; reason?: string
 }) {
   const suggested = row.kind === 'suggestion'
+  const dup = row.kind === 'dup'
   const target = row.kind === 'pending' ? row.item.target : null
   const defaultDate = target?.date || today
   const defaultWho = row.kind === 'suggestion' ? (row.sug.candidates[0] || '') : (target?.who?.[0] || '')
-
   const [open, setOpen] = useState(false)
-  // DETAILS ARE A SEPARATE DISCLOSURE FROM THE SCHEDULER.
-  // Opening "who and when" to read a comment, or opening a comment thread to change a date, are
-  // both the wrong shape. One button changes the job, the other explains it.
   const [detail, setDetail] = useState(false)
   const [who, setWho] = useState(defaultWho)
   const [when, setWhen] = useState(defaultDate)
-
   const Icon = DEPT_ICON[row.dept] || Wrench
   const mine = busy === row.id
   const inDept = roster.filter(p => (p.departments || []).some(d => String(d).toLowerCase().includes(String(row.dept).slice(0, 6))))
   const rest = roster.filter(p => inDept.indexOf(p) < 0)
-
   const apply = () => {
-    const d = open ? when : defaultDate
-    const w = open ? who : defaultWho
-    if (suggested) onAddSuggestion(d, w)
-    else onSchedule(d, w)
+    const d = open ? when : defaultDate, w = open ? who : defaultWho
+    if (suggested) onAddSuggestion(d, w); else if (!dup) onSchedule(d, w)
   }
-
   const late = row.kind === 'pending' ? row.item.waitingDays : null
+  const tag = suggested ? { t: 'Add', c: 'bg-brand-50 text-brand-700 border-brand-200' }
+    : dup ? { t: 'Done twice', c: 'bg-rose-50 text-rose-700 border-rose-200' }
+    : target?.hasTrade ? { t: 'Free trip', c: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    : target ? { t: 'Unit empty ' + niceDate(target.date).replace(/^\w+, /, ''), c: 'bg-sky-50 text-sky-700 border-sky-200' }
+    : { t: 'No window', c: 'bg-amber-50 text-amber-700 border-amber-200' }
 
   return (
     <div className={(open ? 'bg-app/60 ' : 'hover:bg-app/40 ') + 'border-b border-line last:border-0'}>
-      <div className="flex items-start gap-2.5 px-3 py-2.5">
-        <input type="checkbox" checked={selected} onChange={onToggle} disabled={!!busy}
-          className="mt-1 shrink-0" aria-label={`Select ${row.unit} ${row.label}`} />
-        <button onClick={() => setDetail(d => !d)} aria-expanded={detail}
-          aria-label={detail ? 'Hide details' : 'Show details'}
-          className="mt-0.5 shrink-0 text-muted hover:text-ink">
-          {detail ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </button>
-        <span className={'w-5 h-5 rounded-md inline-flex items-center justify-center shrink-0 mt-0.5 ' +
-          (suggested ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500')}>
-          <Icon size={11} strokeWidth={2.6} />
-        </span>
+      <div className="flex items-start gap-2 px-3 py-2">
+        {!dup && <input type="checkbox" checked={selected} onChange={onToggle} disabled={!!busy} className="mt-1 shrink-0" aria-label={`Select ${row.unit} ${row.label}`} />}
+        <span className={'w-5 h-5 rounded-md inline-flex items-center justify-center shrink-0 mt-0.5 ' + (suggested ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500')}><Icon size={11} strokeWidth={2.6} /></span>
         <div className="min-w-0 flex-1">
-          <p className="text-[12.5px] text-ink">
-            <span className={'mr-1.5 align-[1px] text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded border ' +
-              (suggested ? 'bg-brand-50 text-brand-700 border-brand-200'
-                : target?.hasTrade ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : target ? 'bg-sky-50 text-sky-700 border-sky-200'
-                    : 'bg-amber-50 text-amber-700 border-amber-200')}>
-              {suggested ? 'Suggested' : target?.hasTrade ? 'Free trip' : target ? 'Unit empty' : 'No window'}
-            </span>
-            <b>{row.unit}</b> <span className="text-muted">&middot; {row.label}</span>
+          <p className="text-[12.5px] text-ink leading-snug"><b>{row.unit}</b> <span className="text-ink/80">&middot; {row.label}</span></p>
+          <p className="text-[11.5px] text-muted mt-0.5 leading-snug">
+            <span className={'mr-1.5 text-[9.5px] font-bold uppercase tracking-wide px-1 py-px rounded border align-[1px] ' + tag.c}>{tag.t}</span>
+            {reason || row.why}
+            {late != null && late > 0 && <span className="ml-1.5 font-bold text-rose-600 tabular-nums">{late}d late</span>}
           </p>
-          <p className="text-[11.5px] text-muted mt-0.5"><MapPin size={9} className="inline -mt-0.5 mr-0.5" />{row.why}</p>
         </div>
         <div className="shrink-0 flex items-center gap-1">
-          {late != null && late > 0 && (
-            <span className="hidden sm:inline text-[11px] font-bold tabular-nums text-rose-600 mr-1">{late}d late</span>
-          )}
-          <button onClick={apply} disabled={!!busy || (!suggested && !target && !open)}
-            className="rounded-lg bg-ink text-white px-2.5 py-1 text-[11.5px] font-bold whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1">
-            {mine && <Loader2 size={10} className="animate-spin" />}
-            {suggested ? 'Add' : 'Move'}{(open ? who : defaultWho) ? ` \u00b7 ${(open ? who : defaultWho).split(' ')[0]}` : ''}
-          </button>
-          <button onClick={() => setOpen(o => !o)} disabled={!!busy} title="Who does it, and when"
-            className={'rounded-lg border px-1.5 py-1 disabled:opacity-40 ' + (open ? 'border-ink text-ink' : 'border-line text-muted hover:text-ink')}>
-            <CalendarClock size={11} />
-          </button>
-          {suggested ? (
-            <button onClick={onDismiss} disabled={!!busy} title="Hides this for 30 days"
-              className="rounded-lg border border-line px-1.5 py-1 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40">
-              <X size={11} />
-            </button>
-          ) : (
-            // Deleting destroys the record. The route asks for the admin password and names the
-            // task in the prompt; nothing here should make that feel like a one-tap action.
-            <button onClick={onDelete} disabled={!!busy} title="Delete this task — admin password required"
-              className="rounded-lg border border-line px-1.5 py-1 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40">
-              <Trash2 size={11} />
-            </button>
-          )}
+          {dup
+            ? <button onClick={onDelete} disabled={!!busy} className="rounded-lg bg-rose-600 text-white px-2.5 py-1 text-[11.5px] font-bold whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1">{mine && <Loader2 size={10} className="animate-spin" />} Cancel extra</button>
+            : <button onClick={apply} disabled={!!busy || (!suggested && !target && !open)} className="rounded-lg bg-ink text-white px-2.5 py-1 text-[11.5px] font-bold whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1">
+                {mine && <Loader2 size={10} className="animate-spin" />}
+                {suggested ? 'Add' : 'Move'}{(open ? who : defaultWho) ? ` · ${(open ? who : defaultWho).split(' ')[0]}` : ''}
+              </button>}
+          {!dup && <button onClick={() => setOpen(o => !o)} disabled={!!busy} title="Who does it, and when" className={'rounded-lg border px-1.5 py-1 disabled:opacity-40 ' + (open ? 'border-ink text-ink' : 'border-line text-muted hover:text-ink')}><CalendarClock size={11} /></button>}
+          <button onClick={() => setDetail(d => !d)} aria-expanded={detail} title="Details" className={'rounded-lg border px-1.5 py-1 ' + (detail ? 'border-ink text-ink' : 'border-line text-muted hover:text-ink')}>{detail ? <ChevronDown size={11} /> : <ChevronRight size={11} />}</button>
+          {suggested
+            ? <button onClick={onDismiss} disabled={!!busy} title="Hides this for 30 days" className="rounded-lg border border-line px-1.5 py-1 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40"><X size={11} /></button>
+            : !dup && <button onClick={onDelete} disabled={!!busy} title="Delete this task — admin password required" className="rounded-lg border border-line px-1.5 py-1 text-muted hover:text-rose-600 hover:border-rose-200 disabled:opacity-40"><Trash2 size={11} /></button>}
         </div>
       </div>
 
-      {open && (
+      {open && !dup && (
         <div className="px-3 pb-2.5 pl-[38px] flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] text-muted">Give it to</span>
-          <select value={who} onChange={e => setWho(e.target.value)}
-            className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px] max-w-[150px]">
+          <select value={who} onChange={e => setWho(e.target.value)} className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px] max-w-[150px]">
             <option value="">Nobody yet</option>
             {inDept.map(p => <option key={'d' + p.id} value={p.name}>{p.name}</option>)}
-            {rest.length > 0 && <option key="sep" disabled>{'\u2500\u2500\u2500\u2500\u2500\u2500'}</option>}
+            {rest.length > 0 && <option key="sep" disabled>{'──────'}</option>}
             {rest.map(p => <option key={'r' + p.id} value={p.name}>{p.name}</option>)}
           </select>
           <span className="text-[11px] text-muted">on</span>
-          {/* min=today: a task dated last week never lands on any board, so nobody works it. */}
-          <input type="date" value={when} min={today} onChange={e => setWhen(e.target.value)}
-            className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px]" />
-          {target && when !== target.date && (
-            <span className="text-[11px] text-amber-700">Recommended day was {niceDate(target.date)}.</span>
-          )}
+          <input type="date" value={when} min={today} onChange={e => setWhen(e.target.value)} className="rounded-lg border border-line bg-white px-1.5 py-1 text-[11.5px]" />
+          {target && when !== target.date && <span className="text-[11px] text-amber-700">Recommended day was {niceDate(target.date)}.</span>}
         </div>
       )}
 
-      {/* ── DETAILS ── Everything a normal task row gives you: what it is, where it stands, the
-          field report, the way through to Breezeway, and the thread. A row you can act on but not
-          read is a row people act on wrongly. ── */}
       {detail && (
-        <div className="px-3 pb-3 pl-[52px]">
-          <div className="rounded-xl border border-line bg-white p-3">
+        <div className="px-3 pb-3 pl-[38px]">
+          <div className="rounded-xl border border-line bg-white p-3 text-[11.5px]">
+            {reason && <p className="text-muted mb-1.5"><span className="text-ink font-semibold">Engine:</span> {row.why}</p>}
             {row.kind === 'pending' ? (
               <>
-                <div className="flex items-start gap-x-4 gap-y-1 flex-wrap text-[11.5px]">
+                <div className="flex items-start gap-x-4 gap-y-1 flex-wrap">
                   <span className="text-muted">Trade <b className="text-ink capitalize">{row.item.dept}</b></span>
                   <span className="text-muted">Status <b className="text-ink">{row.item.status || 'open'}</b></span>
                   <span className="text-muted">Scheduled <b className="text-ink">{row.item.scheduledDate ? niceDate(row.item.scheduledDate) : 'no date'}</b></span>
-                  <span className="text-muted">
-                    {row.item.assignees.length
-                      ? <>On it <b className="text-ink">{row.item.assignees.join(', ')}</b></>
-                      : <b className="text-rose-600">Nobody assigned</b>}
-                  </span>
+                  <span className="text-muted">{row.item.assignees.length ? <>On it <b className="text-ink">{row.item.assignees.join(', ')}</b></> : <b className="text-rose-600">Nobody assigned</b>}</span>
                   <span className="ml-auto flex items-center gap-3">
-                    {row.item.reportUrl && (
-                      <a href={row.item.reportUrl} target="_blank" rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink">
-                        <FileText size={11} /> Field report
-                      </a>
-                    )}
-                    <a href={bzTask(row.item.taskId)} target="_blank" rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink">
-                      <ExternalLink size={11} /> Open in Breezeway
-                    </a>
+                    {row.item.reportUrl && <a href={row.item.reportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink"><FileText size={11} /> Field report</a>}
+                    <a href={bzTask(row.item.taskId)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink"><ExternalLink size={11} /> Breezeway</a>
                   </span>
                 </div>
                 <div className="mt-2 border-t border-line pt-2">
-                  <CommentThread type="task" id={row.item.taskId} taskId={row.item.taskId}
-                    label={`${row.unit} — ${row.label}`} link={bzTask(row.item.taskId)} />
+                  <CommentThread type="task" id={row.item.taskId} taskId={row.item.taskId} label={`${row.unit} — ${row.label}`} link={bzTask(row.item.taskId)} />
                 </div>
               </>
-            ) : (
-              // A suggestion has no task yet, so there is nothing to comment on and no report to
-              // read. Saying that plainly beats an empty thread that looks broken.
-              <div className="text-[11.5px] text-muted space-y-1">
-                <p><span className="text-ink font-semibold">Why now:</span> {row.sug.why}</p>
+            ) : row.kind === 'suggestion' ? (
+              <div className="text-muted space-y-1">
                 <div className="flex gap-x-4 flex-wrap">
                   <span>Trade <b className="text-ink capitalize">{row.sug.dept}</b></span>
                   <span>About <b className="text-ink">{row.sug.minutes} min</b></span>
                   <span>{row.sug.lastDone ? <>Last done <b className="text-ink">{niceDate(row.sug.lastDone)}</b></> : <b className="text-ink">No record of it being done</b>}</span>
                   {row.sug.vacantTonight && <span className="text-emerald-700 font-semibold">Unit is empty tonight</span>}
                 </div>
-                <p className="text-muted/80">Nothing to open yet &mdash; this task does not exist until you add it. Once it does, the report and the comment thread live here.</p>
+                <p className="text-muted/80">This task does not exist until you add it. Once it does, the report and the comment thread live here.</p>
+              </div>
+            ) : (
+              <div className="space-y-0.5">
+                {row.group.tasks.map(t => (
+                  <p key={t.id} className={t.id === row.group.keepId ? 'text-muted' : 'text-rose-700'}>
+                    {t.id === row.group.keepId ? 'kept' : 'extra'} &middot; {t.name}{t.assignees?.length ? ` · ${t.assignees.join(', ')}` : ' · nobody named'}
+                    <a href={bzTask(t.id)} target="_blank" rel="noreferrer" className="ml-1.5 text-muted hover:text-ink"><ExternalLink size={10} className="inline" /></a>
+                  </p>
+                ))}
               </div>
             )}
           </div>

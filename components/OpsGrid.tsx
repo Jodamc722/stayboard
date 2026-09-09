@@ -31,9 +31,9 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
-  LayoutGrid, Users, X, MapPin, Clock, RefreshCw, ChevronDown,
+  LayoutGrid, Users, X, MapPin, Clock, RefreshCw,
   DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
-  Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble, Wand2, ListChecks,
+  Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble, Wand2,
 } from 'lucide-react'
 import { catOfTask, type TaskCat } from '@/lib/task-categories'
 // ONE ANSWER TO "IS THIS THE SAME PERSON?" — see lib/person-name.ts. Never compare names here
@@ -768,11 +768,15 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   // MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). Remembered per
   // device, because whoever runs Broward runs Broward every morning and should not re-pick it.
   const [mkt, setMkt] = useState<string>('all')
+  // The Focus badge waits for the remembered market — mounting on 'all' and then switching to
+  // Miami would run the engines (and the model) twice on every page load.
+  const [prefsReady, setPrefsReady] = useState(false)
   useEffect(() => {
     try {
       const m = localStorage.getItem('opsgrid_mode'); if (m === 'people' || m === 'review') setMode(m as any)
       const k = localStorage.getItem('opsgrid_market'); if (k) setMkt(k)
     } catch {}
+    setPrefsReady(true)
   }, [])
   const pickMode = (m: 'units' | 'people' | 'review') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
   const pickMkt = (m: string) => { setMkt(m); try { localStorage.setItem('opsgrid_market', m) } catch {} }
@@ -1119,7 +1123,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           label has to truncate. */}
       {/* ONE ROW OF CHIPS (2026-09-09). The five tiles were ~70px tall with a three-line legend
           each; a chip says the same two things — how many, how far along — in one line. */}
-      <div className="flex items-center gap-1.5 flex-wrap">
+      <div className="flex items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-1 px-1">
         {tiles.map(t => (
           <Tile key={t.key} cat={t.cat} c={counts[t.key] || zero()}
             active={t.key === 'all' ? cat === null : cat === t.key}
@@ -1133,80 +1137,62 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           neither. One home now: the Review tab, where they sit beside the waiting work under the
           same assign-and-schedule row. The count is on the tab, so nothing is hidden by the move. ── */}
 
-      {/* ── CONTROLS ── */}
-      <div className="mt-2.5 flex items-center gap-2 flex-wrap">
-        {/* ── MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). It scopes
-            everything — counters included — so it sits first on the control row, not on a row of
-            its own (2026-09-09: one row of controls, not two). ── */}
-        {markets.length > 1 && (
-          <div className="lh-actions inline-flex items-center gap-1 flex-wrap">
-            <MapPin size={13} className="text-muted shrink-0" />
-            <button onClick={() => pickMkt('all')}
-              className={'px-2.5 py-1.5 rounded-full border text-[12px] font-bold ' + (mkt === 'all' ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
-              All
-            </button>
-            {markets.map(m => (
-              <button key={m.key} onClick={() => pickMkt(m.key)}
-                className={'px-2.5 py-1.5 rounded-full border text-[12px] font-bold inline-flex items-center gap-1.5 ' + (mkt === m.key ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
-                {m.key}
-                {m.open > 0 && <span className={'text-[10px] font-bold ' + (mkt === m.key ? 'text-white/70' : 'text-muted')}>{m.open}</span>}
-              </button>
-            ))}
-            <span className="w-px h-5 bg-line mx-1 hidden sm:block" aria-hidden />
-          </div>
-        )}
+      {/* ── ONE ROW OF CONTROLS (Jon, 2026-09-09: "make the filter system easier and less clunky").
+          What it was: a chip row for areas, a mode switch, a search box, Active/All, Plan day, Key,
+          a clear-filter button and a second Add — across two or three lines. What it is: the view
+          (Units · People · Focus), two plain selects (area, active/all), the search, and the two
+          buttons that are only there when they have a job. The category chips above are the third
+          filter; tapping the highlighted one again clears it. ── */}
+      <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
         <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
-          {([['units', 'Units', LayoutGrid], ['people', 'People', Users], ['review', 'Review', ListChecks]] as const).map(([k, label, Icon]) => (
+          {([['units', 'Units', LayoutGrid], ['people', 'People', Users], ['review', 'Focus', Sparkles]] as const).map(([k, label, Icon]) => (
             <button key={k} onClick={() => pickMode(k as any)}
-              className={'px-3 py-1.5 rounded-[10px] text-[12.5px] font-bold inline-flex items-center gap-1.5 ' +
-                (mode === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+              className={'px-2.5 py-1.5 rounded-[10px] text-[12.5px] font-bold inline-flex items-center gap-1.5 ' + (mode === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
               <Icon size={13} /> {label}
-              {k === 'review' && <ReviewCount market={mkt} />}
+              {k === 'review' && <ReviewCount market={prefsReady ? mkt : null} />}
             </button>
           ))}
         </div>
-        {!(searchOpen || q) && (
-          <button onClick={() => setSearchOpen(true)} aria-label="Search"
-            className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink">
-            <Search size={14} />
-          </button>
+        {markets.length > 1 && (
+          <label className="inline-flex items-center gap-1 rounded-xl border border-line bg-white pl-2 pr-1 min-h-[34px]" title="Area">
+            <MapPin size={12} className="text-muted" />
+            <select value={mkt} onChange={e => pickMkt(e.target.value)} aria-label="Area" className="bg-transparent text-[12.5px] font-semibold text-ink py-1 pr-1 focus:outline-none">
+              <option value="all">All areas</option>
+              {markets.map(m => <option key={m.key} value={m.key}>{m.key}{m.open ? ' · ' + m.open : ''}</option>)}
+            </select>
+          </label>
         )}
-        <div className={'relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[140px] sm:max-w-[240px] '
-          + ((searchOpen || q) ? '' : 'hidden sm:block')}>
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-          <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)}
-            onBlur={() => { if (!q) setSearchOpen(false) }}
-            placeholder={mode === 'units' ? 'Find a unit, a task, a name…' : 'Find a person…'}
-            className="w-full rounded-xl border border-line bg-white pl-7 pr-7 py-1.5 text-[12.5px] focus:outline-none focus:border-ink" />
-          {q && <button onClick={() => { setQ(''); setSearchOpen(false) }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
-        </div>
-        <button onClick={() => setActiveOnly(a => !a)}
-          className={'px-2.5 py-1.5 rounded-xl border text-[12px] font-bold ' + (activeOnly ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
-          {activeOnly ? 'Active' : 'All'}
-        </button>
-        {/* PLAN THE DAY. Sits with the controls because it acts on exactly what the controls
-            have selected — the market chips scope the plan the same way they scope the rows. It
-            counts the unowned work in its own label, so the reason to press it is on the button. */}
-        {unownedNow > 0 && (
-          <button onClick={() => setPlanOpen(true)}
-            className="px-2.5 py-1.5 rounded-xl border border-brand-500/40 bg-brand-50 text-brand-700 text-[12px] font-bold inline-flex items-center gap-1.5 hover:bg-brand-100">
-            <Wand2 size={13} /> Plan day
-            <span className="text-[10px] font-bold text-brand-700/70 tabular-nums">{unownedNow}</span>
-          </button>
+        {mode !== 'review' && (
+          <select value={activeOnly ? 'active' : 'all'} onChange={e => setActiveOnly(e.target.value === 'active')} aria-label="Which rows" title="Active = still has work on it; All = the whole portfolio, finished units included"
+            className="rounded-xl border border-line bg-white px-2 py-1.5 text-[12.5px] font-semibold text-ink min-h-[34px] focus:outline-none">
+            <option value="active">Still open</option>
+            <option value="all">Everything</option>
+          </select>
         )}
-        {/* The key sits with the other controls rather than over the table header, where it
-            collided with the Issues label, and where a phone would never have seen it. */}
-        <button onClick={() => setKeyOpen(k => !k)}
-          className={'px-2.5 py-1.5 rounded-xl border text-[12px] font-bold inline-flex items-center gap-1 ' + (keyOpen ? 'bg-app border-ink/30 text-ink' : 'bg-white border-line text-muted hover:text-ink')}>
-          Key {keyOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-        </button>
-        {cat && (
-          <button onClick={() => setCat(null)}
-            className="px-2.5 py-1.5 rounded-xl border border-ink bg-ink text-white text-[12px] font-bold inline-flex items-center gap-1.5">
-            {(() => { const G = metaOf(cats.by, cat).Icon; return <G size={12} strokeWidth={2.6} /> })()}
-            {metaOf(cats.by, cat).label} <X size={11} />
-          </button>
+        {mode !== 'review' && !(searchOpen || q) && (
+          <button onClick={() => setSearchOpen(true)} aria-label="Search" className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink min-h-[34px]"><Search size={14} /></button>
         )}
+        {mode !== 'review' && (
+          <div className={'relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[140px] sm:max-w-[240px] ' + ((searchOpen || q) ? '' : 'hidden sm:block')}>
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+            <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} onBlur={() => { if (!q) setSearchOpen(false) }}
+              placeholder={mode === 'units' ? 'Unit, task, name…' : 'Person…'}
+              className="w-full rounded-xl border border-line bg-white pl-7 pr-7 py-1.5 text-[12.5px] min-h-[34px] focus:outline-none focus:border-ink" />
+            {q && <button onClick={() => { setQ(''); setSearchOpen(false) }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
+          </div>
+        )}
+        <span className="ml-auto inline-flex items-center gap-1.5">
+          {/* PLAN THE DAY — counts the unowned work in its own label; not rendered when there is none. */}
+          {unownedNow > 0 && mode !== 'review' && (
+            <button onClick={() => setPlanOpen(true)} className="px-2.5 py-1.5 rounded-xl border border-brand-500/40 bg-brand-50 text-brand-700 text-[12px] font-bold inline-flex items-center gap-1.5 hover:bg-brand-100 min-h-[34px]">
+              <Wand2 size={13} /> Plan day <span className="text-[10px] font-bold text-brand-700/70 tabular-nums">{unownedNow}</span>
+            </button>
+          )}
+          {mode !== 'review' && (
+            <button onClick={() => setKeyOpen(k => !k)} aria-label="Key" title="What the colours and symbols mean"
+              className={'w-[34px] h-[34px] rounded-xl border text-[12px] font-bold inline-flex items-center justify-center ' + (keyOpen ? 'bg-app border-ink/30 text-ink' : 'bg-white border-line text-muted hover:text-ink')}>?</button>
+          )}
+        </span>
       </div>
 
       {/* ── REVIEW ── The third tab replaces the grid entirely rather than sitting under it: it
