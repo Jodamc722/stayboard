@@ -15,8 +15,9 @@ import { usePathname } from 'next/navigation'
 import { Home, ListChecks, KanbanSquare, Plus, Lock, Search, ChevronDown, ChevronRight, Repeat, Menu } from 'lucide-react'
 import { NotifyBell } from './NotifyBell'
 import { useShellMenu } from './Shell'
+import { iconOf } from '@/lib/projects-shared'
 
-type P = { id: string; title: string; kind?: string; stage: string; recurs?: any; health: { state: string }; progress: { done: number; total: number } }
+type P = { id: string; title: string; kind?: string; stage: string; recurs?: any; settings?: any; health: { state: string }; progress: { done: number; total: number } }
 
 const DOT: Record<string, string> = { late: 'bg-rose-500', blocked: 'bg-slate-400', due: 'bg-amber-400', done: 'bg-emerald-500', ok: 'bg-brand-400' }
 
@@ -88,8 +89,9 @@ export function ProjectsRail() {
                 return (
                   <Link key={p.id} href={'/projects/' + p.id} onClick={() => setMobileOpen(false)}
                     className={'flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] ' + (on ? 'bg-white border border-line text-ink font-semibold' : 'text-ink/85 hover:bg-white/70') + (finished ? ' opacity-60' : '')}>
-                    <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (DOT[p.health?.state] || DOT.ok)} />
+                    <span className="text-[14px] leading-none shrink-0 w-5 text-center" aria-hidden>{iconOf(p)}</span>
                     <span className="truncate flex-1">{p.title}</span>
+                    {!finished && p.health?.state !== 'ok' && p.health?.state !== 'done' && <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (DOT[p.health?.state] || DOT.ok)} title={p.health.state} />}
                     {p.recurs && <Repeat size={10} className="text-muted shrink-0" />}
                     {p.progress?.total > 0 && !finished && <span className="text-[10px] text-muted tabular-nums shrink-0">{p.progress.done}/{p.progress.total}</span>}
                   </Link>

@@ -8,13 +8,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Plus, Lock, Repeat, Clock, AlertTriangle, ListChecks, KanbanSquare, Loader2, LayoutTemplate } from 'lucide-react'
+import { ACCENT_CLS, iconOf, accentOf } from '@/lib/projects-shared'
 
 type P = {
   id: string; title: string; summary: string | null; kind?: string; stage: string; due_on: string | null; recurs?: any
-  lead_email: string | null; building: string | null; market: string | null
+  lead_email: string | null; building: string | null; market: string | null; settings?: any
   health: { state: string; reason: string | null }; progress: { done: number; total: number; pct: number | null; basis: string }
 }
-type Tpl = { key: string; label: string; kind: string; blurb: string }
+type Tpl = { key: string; label: string; kind: string; blurb: string; icon?: string; accent?: string }
 
 const first = (s: string) => String(s || '').split(/[\s@]/)[0]
 const hello = () => { const h = Number(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' })); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening' }
@@ -91,19 +92,22 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
           <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
             {g.items.map(p => {
               const h = p.health
-              const tone = h.state === 'late' ? 'border-l-rose-500' : h.state === 'blocked' ? 'border-l-slate-400' : h.state === 'due' ? 'border-l-amber-400' : h.state === 'done' ? 'border-l-emerald-500' : 'border-l-brand-400'
+              const ac = ACCENT_CLS[accentOf(p)]
               return (
-                <Link key={p.id} href={'/projects/' + p.id} style={{ borderLeftWidth: 3 }}
-                  className={'rounded-xl border border-line bg-white px-3 py-2.5 hover:border-brand-300 hover:shadow-sm transition ' + tone}>
-                  <div className="flex items-start gap-2">
-                    <span className="flex-1 text-[13.5px] font-semibold text-ink leading-snug">{p.title}</span>
+                <Link key={p.id} href={'/projects/' + p.id}
+                  className="group rounded-2xl border border-line bg-white p-3 hover:border-ink/30 hover:shadow-md transition">
+                  <div className="flex items-start gap-2.5">
+                    <span className={'w-10 h-10 rounded-xl border grid place-items-center text-[20px] shrink-0 ' + ac.soft} aria-hidden>{iconOf(p)}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13.5px] font-semibold text-ink leading-snug">{p.title}</span>
+                      {p.summary && <span className="block text-[11.5px] text-muted mt-0.5 line-clamp-2">{p.summary}</span>}
+                    </span>
                     {p.recurs && <Repeat size={11} className="text-muted shrink-0 mt-1" />}
                   </div>
-                  {p.summary && <p className="text-[11.5px] text-muted mt-0.5 line-clamp-2">{p.summary}</p>}
-                  <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px] text-muted">
+                  <div className="mt-2.5 flex items-center gap-2 flex-wrap text-[11px] text-muted">
                     {p.progress.total > 0 && (
                       <span className="inline-flex items-center gap-1.5">
-                        <span className="w-16 h-1.5 rounded-full bg-app overflow-hidden inline-block"><span className="block h-full bg-emerald-500" style={{ width: (p.progress.pct || 0) + '%' }} /></span>
+                        <span className="w-16 h-1.5 rounded-full bg-app overflow-hidden inline-block"><span className={'block h-full ' + ac.solid} style={{ width: (p.progress.pct || 0) + '%' }} /></span>
                         <span className="tabular-nums">{p.progress.done}/{p.progress.total}</span>
                       </span>
                     )}
@@ -130,10 +134,15 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
           <div className="flex gap-2 flex-wrap">
             <Link href="/projects/board?new=1" className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-bold hover:bg-brand-700"><Plus size={13} /> New project</Link>
             <Link href="/projects/board?new=personal" className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-muted hover:text-ink"><Lock size={12} /> Private board</Link>
-            {templates.filter(t => t.kind !== 'personal').slice(0, 6).map(t => (
-              <Link key={t.key} href={'/projects/board?new=' + encodeURIComponent(t.key)} title={t.blurb}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-muted hover:text-ink"><LayoutTemplate size={12} /> {t.label}</Link>
-            ))}
+            {templates.filter(t => t.kind !== 'personal').slice(0, 8).map(t => {
+              const ac = ACCENT_CLS[((t.accent && t.accent in ACCENT_CLS) ? t.accent : 'indigo') as keyof typeof ACCENT_CLS]
+              return (
+                <Link key={t.key} href={'/projects/board?new=' + encodeURIComponent(t.key)} title={t.blurb}
+                  className={'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[12.5px] font-semibold hover:shadow-sm ' + ac.soft + ' ' + ac.text}>
+                  <span className="text-[14px]" aria-hidden>{t.icon || '📋'}</span> {t.label}
+                </Link>
+              )
+            })}
           </div>
         </section>
       )}

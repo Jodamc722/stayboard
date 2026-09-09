@@ -21,10 +21,11 @@ import {
   ArrowLeft, Plus, Check, Circle, CircleDot, Ban, ChevronRight, ChevronDown, X, Users, Building2,
   Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity, Repeat, SlidersHorizontal, LayoutTemplate, LayoutList, Columns3, ArrowUp, ArrowDown, MoreHorizontal, Save,
+  CalendarRange, ChevronLeft, GripVertical, ShieldAlert, Bug, Wrench, ExternalLink, ArrowRightCircle,
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
-import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, type BoardSettings, type Recurrence } from '@/lib/projects-shared'
+import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, type BoardSettings, type Recurrence, type Accent } from '@/lib/projects-shared'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -32,6 +33,9 @@ type Hit =
   | { kind: 'listing'; id: string; label: string; sub: string; building: string | null }
   | { kind: 'reservation'; id: string; label: string; sub: string; listingId: string; checkIn: string; checkOut: string; status: string }
   | { kind: 'owner'; id: string; label: string; sub: string; unitIds: string[] }
+  | { kind: 'claim'; id: string; label: string; sub: string }
+  | { kind: 'glitch'; id: string; label: string; sub: string; listingId: string | null }
+  | { kind: 'task'; id: string; label: string; sub: string; listingId: string | null }
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 const nice = (ymd: string | null) => {
@@ -47,17 +51,11 @@ const STATUS_CLS: Record<string, string> = {
   blocked: 'text-rose-600 border-rose-300 bg-rose-50',
   done: 'text-white bg-emerald-500 border-emerald-500',
 }
-const LINK_ICON: Record<string, any> = { building: Building2, listing: Home, reservation: CalendarDays, owner: UserRound }
-// Static class names so Tailwind ships them; the accent is a preference, not a data-driven colour.
-const ACCENT: Record<BoardSettings['accent'], { bar: string; dot: string; ring: string }> = {
-  indigo: { bar: 'bg-indigo-50/70 border-indigo-100', dot: 'bg-indigo-500', ring: 'ring-indigo-500' },
-  emerald: { bar: 'bg-emerald-50/70 border-emerald-100', dot: 'bg-emerald-500', ring: 'ring-emerald-500' },
-  amber: { bar: 'bg-amber-50/70 border-amber-100', dot: 'bg-amber-500', ring: 'ring-amber-500' },
-  rose: { bar: 'bg-rose-50/70 border-rose-100', dot: 'bg-rose-500', ring: 'ring-rose-500' },
-  sky: { bar: 'bg-sky-50/70 border-sky-100', dot: 'bg-sky-500', ring: 'ring-sky-500' },
-  violet: { bar: 'bg-violet-50/70 border-violet-100', dot: 'bg-violet-500', ring: 'ring-violet-500' },
-  slate: { bar: 'bg-app/60 border-line', dot: 'bg-slate-500', ring: 'ring-slate-500' },
-}
+const LINK_ICON: Record<string, any> = { building: Building2, listing: Home, reservation: CalendarDays, owner: UserRound, claim: ShieldAlert, glitch: Bug, task: Wrench }
+const TONE_CLS: Record<string, string> = { open: 'bg-white border-line text-ink', done: 'bg-emerald-50 border-emerald-200 text-emerald-700', bad: 'bg-rose-50 border-rose-200 text-rose-700', wait: 'bg-amber-50 border-amber-200 text-amber-800' }
+// Accent classes come from lib/projects-shared (ACCENT_CLS) so the rail, the tiles and this page
+// agree on what "violet" looks like. Shaped here for the two spots this page needs.
+const ACCENT = Object.fromEntries((Object.keys(ACCENT_CLS) as Accent[]).map(k => [k, { bar: ACCENT_CLS[k].soft, dot: ACCENT_CLS[k].solid, ring: ACCENT_CLS[k].ring }])) as Record<Accent, { bar: string; dot: string; ring: string }>
 
 export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
   initial: ProjectFull; me: string; canEdit: boolean; canFull: boolean; superadmin: boolean
@@ -152,6 +150,12 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
     return order.map(k => ({ name: k, tasks: by[k].filter(keep) })).filter(sec => sec.name !== '' || sec.tasks.length || !settings.hideDone)
   }, [p.tasks, settings])
   const accent = ACCENT[settings.accent]
+  // A viewer-role member can switch views for themselves without being able to save it.
+  const [localView, setLocalView] = useState<BoardSettings['view'] | null>(null)
+  const view = (canEdit ? settings.view : (localView || settings.view))
+  // Drag state for tasks: what is being dragged, so drop targets can accept it.
+  const [dragId, setDragId] = useState<string | null>(null)
+  const moveTask = (taskId: string, section: string, beforeId: string | null) => act({ action: 'taskMove', taskId, section, beforeId })
 
   const open = p.tasks.filter(t => t.status !== 'done').length
   const total = p.tasks.length
@@ -166,6 +170,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
           <ArrowLeft size={12} /> Projects
         </Link>
         <div className="mt-1.5 flex items-start gap-3 flex-wrap">
+          <span className={'w-11 h-11 rounded-2xl border grid place-items-center text-[22px] shrink-0 ' + accent.bar} aria-hidden>{iconOf(p)}</span>
           <div className="min-w-0 flex-1">
             <h1 className="text-[22px] sm:text-2xl font-bold text-ink tracking-tight leading-tight">{p.title}</h1>
             <p className="text-[12.5px] text-muted mt-1 flex items-center gap-x-3 gap-y-1 flex-wrap">
@@ -185,17 +190,29 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
           </div>
         </div>
         {p.summary && <p className="text-[13.5px] text-ink/85 mt-2 max-w-3xl">{p.summary}</p>}
+        {/* VIEWS, like Asana's tabs under the title. The choice is saved on the project. */}
+        <div className="mt-3 flex items-center gap-1 border-b border-line">
+          {([['list', 'List', LayoutList], ['board', 'Board', Columns3], ['calendar', 'Calendar', CalendarRange]] as const).map(([v, label, I]) => (
+            <button key={v} onClick={() => canEdit ? act({ action: 'setSettings', settings: { view: v } }) : setLocalView(v)}
+              className={'inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-semibold -mb-px border-b-2 ' + (view === v ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink')}>
+              <I size={13} /> {label}
+            </button>
+          ))}
+        </div>
         {err && <p className="mt-2 text-[12.5px] text-rose-700">{err}</p>}
       </div>
 
       <div className="grid lg:grid-cols-[1fr_300px] gap-4 items-start">
         {/* ── TASKS ── */}
         <div className="space-y-3">
-          {settings.view === 'board' ? (
+          {view === 'calendar' ? (
+            <CalendarView tasks={p.tasks} onOpen={setOpenTask} accent={accent} hideDone={settings.hideDone} />
+          ) : view === 'board' ? (
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
               {sections.map(sec => (
                 <SectionColumn key={sec.name || '__none'} name={sec.name} tasks={sec.tasks} canEdit={canEdit} busy={busy}
-                  openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent} />
+                  openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent}
+                  dragId={dragId} setDragId={setDragId} onMove={moveTask} />
               ))}
               {canEdit && (
                 <div className="w-[220px] shrink-0 pt-1">
@@ -206,10 +223,11 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
           ) : (
             sections.map(sec => (
               <Section key={sec.name || '__none'} name={sec.name} tasks={sec.tasks} canEdit={canEdit} busy={busy}
-                openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent} />
+                openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent}
+                dragId={dragId} setDragId={setDragId} onMove={moveTask} />
             ))
           )}
-          {canEdit && settings.view !== 'board' && (
+          {canEdit && view === 'list' && (
             <NewSection onAdd={name => act({ action: 'setSettings', settings: { sectionOrder: [...sections.map(x => x.name).filter(x => x && x !== name), name] } })} busy={busy} />
           )}
           {total === 0 && !canEdit && (
@@ -241,25 +259,73 @@ function findTask(list: Task[], id: string): Task | null {
 
 // ── A SECTION OF TASKS ────────────────────────────────────────────────────────────────────────
 type Counts = Record<string, { comments: number; files: number }>
-type Accent = typeof ACCENT[keyof typeof ACCENT]
-function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent }: {
+type AccentCls = typeof ACCENT[keyof typeof ACCENT]
+type DragProps = { dragId: string | null; setDragId: (id: string | null) => void; onMove: (taskId: string, section: string, beforeId: string | null) => Promise<any> }
+
+// ── A SECTION HEADER YOU CAN RENAME OR REMOVE ─────────────────────────────────────────────────
+// Click the name to rename it; the × removes the section and drops its tasks to "no section".
+function SectionName({ name, canEdit, act, busy, className }: { name: string; canEdit: boolean; act: (b: any) => Promise<any>; busy: boolean; className?: string }) {
+  const [editing, setEditing] = useState(false)
+  const [v, setV] = useState(name)
+  useEffect(() => setV(name), [name])
+  if (!name) return <span className={className}>Tasks</span>
+  if (editing && canEdit) {
+    return (
+      <input autoFocus value={v} onChange={e => setV(e.target.value)} onClick={e => e.stopPropagation()}
+        onBlur={() => { setEditing(false); if (v.trim() && v.trim() !== name) act({ action: 'sectionRename', from: name, to: v.trim() }) }}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setV(name); setEditing(false) } }}
+        className="rounded-md border border-line bg-white px-1.5 py-0.5 text-[12.5px] font-bold text-ink w-40" disabled={busy} />
+    )
+  }
+  return (
+    <span className={'inline-flex items-center gap-1 group/sec ' + (className || '')}>
+      <span onClick={e => { if (canEdit) { e.stopPropagation(); setEditing(true) } }} title={canEdit ? 'Rename section' : undefined} className={canEdit ? 'cursor-text hover:underline decoration-line' : ''}>{name}</span>
+      {canEdit && (
+        <button onClick={e => { e.stopPropagation(); if (confirm(`Remove the “${name}” section? Its tasks stay, without a section.`)) act({ action: 'sectionDelete', name }) }}
+          disabled={busy} title="Remove section" className="opacity-0 group-hover/sec:opacity-100 text-muted hover:text-rose-600"><X size={11} /></button>
+      )}
+    </span>
+  )
+}
+
+// Drop target between rows/cards. Shows a line while something is over it.
+function DropSlot({ active, onDrop, className }: { active: boolean; onDrop: () => void; className?: string }) {
+  const [over, setOver] = useState(false)
+  if (!active) return null
+  return (
+    <div onDragOver={e => { e.preventDefault(); setOver(true) }} onDragLeave={() => setOver(false)} onDrop={e => { e.preventDefault(); setOver(false); onDrop() }}
+      className={'transition-all ' + (over ? 'h-8 rounded-lg border-2 border-dashed border-brand-400 bg-brand-50/60 my-1' : 'h-2 ' ) + (className || '')} />
+  )
+}
+
+function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove }: {
   name: string; tasks: Task[]; canEdit: boolean; busy: boolean; openId: string | null
-  onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: Accent
-}) {
+  onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls
+} & DragProps) {
   const [collapsed, setCollapsed] = useState(false)
   const done = tasks.filter(t => t.status === 'done').length
+  const dragging = !!dragId && canEdit
   return (
-    <div className="rounded-2xl border border-line bg-white overflow-hidden">
+    <div className={'rounded-2xl border bg-white overflow-hidden ' + (dragging ? 'border-brand-200' : 'border-line')}
+      onDragOver={e => { if (dragging) e.preventDefault() }}
+      onDrop={e => { if (dragging && dragId) { e.preventDefault(); onMove(dragId, name, null); setDragId(null) } }}>
       <button onClick={() => setCollapsed(c => !c)}
         className={'w-full flex items-center gap-2 px-3 py-2 border-b text-left ' + accent.bar}>
         {collapsed ? <ChevronRight size={13} className="text-muted" /> : <ChevronDown size={13} className="text-muted" />}
-        <span className="text-[12.5px] font-bold text-ink">{name || 'Tasks'}</span>
+        <SectionName name={name} canEdit={canEdit} act={act} busy={busy} className="text-[12.5px] font-bold text-ink" />
         <span className="text-[11px] text-muted tabular-nums">{done}/{tasks.length}</span>
       </button>
       {!collapsed && (
-        <div className="divide-y divide-line">
-          {tasks.map(t => <TaskRow key={t.id} t={t} depth={0} canEdit={canEdit} busy={busy} open={openId === t.id} onOpen={onOpen} act={act} counts={counts} />)}
-          {canEdit && <QuickAdd section={name} act={act} busy={busy} />}
+        <div>
+          {tasks.map(t => (
+            <div key={t.id}>
+              <DropSlot active={dragging && dragId !== t.id} onDrop={() => { if (dragId) { onMove(dragId, name, t.id); setDragId(null) } }} className="mx-3" />
+              <TaskRow t={t} depth={0} canEdit={canEdit} busy={busy} open={openId === t.id} onOpen={onOpen} act={act} counts={counts}
+                dragId={dragId} setDragId={setDragId} onMove={onMove} />
+            </div>
+          ))}
+          <DropSlot active={dragging} onDrop={() => { if (dragId) { onMove(dragId, name, null); setDragId(null) } }} className="mx-3" />
+          {canEdit && <div className="border-t border-line"><QuickAdd section={name} act={act} busy={busy} /></div>}
         </div>
       )}
     </div>
@@ -268,17 +334,20 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
 
 // ── COLUMNS: the same sections side by side ───────────────────────────────────────────────────
 // A personal board reads better as To do / Doing / Done across the screen; a 1:1 as Wins /
-// Blockers / Follow-ups. Same data, same drawer, one preference.
-function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent }: {
+// Blockers / Follow-ups. Same data, same drawer, one preference. Cards drag between columns.
+function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove }: {
   name: string; tasks: Task[]; canEdit: boolean; busy: boolean; openId: string | null
-  onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: Accent
-}) {
+  onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls
+} & DragProps) {
   const done = tasks.filter(t => t.status === 'done').length
+  const dragging = !!dragId && canEdit
   return (
-    <div className="w-[260px] shrink-0">
+    <div className={'w-[268px] shrink-0 rounded-2xl p-1.5 -m-1.5 ' + (dragging ? 'bg-brand-50/40' : '')}
+      onDragOver={e => { if (dragging) e.preventDefault() }}
+      onDrop={e => { if (dragging && dragId) { e.preventDefault(); onMove(dragId, name, null); setDragId(null) } }}>
       <div className={'flex items-center gap-2 px-2.5 py-1.5 rounded-xl border mb-2 ' + accent.bar}>
         <span className={'w-1.5 h-1.5 rounded-full ' + accent.dot} />
-        <span className="text-[12.5px] font-bold text-ink flex-1 truncate">{name || 'Tasks'}</span>
+        <SectionName name={name} canEdit={canEdit} act={act} busy={busy} className="text-[12.5px] font-bold text-ink flex-1 truncate" />
         <span className="text-[11px] text-muted tabular-nums">{done}/{tasks.length}</span>
       </div>
       <div className="space-y-1.5 min-h-[40px]">
@@ -287,35 +356,90 @@ function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts
           const late = t.status !== 'done' && !!t.due_on && t.due_on < today()
           const c = counts[t.id]
           return (
-            <div key={t.id} onClick={() => onOpen(t.id)}
-              className={'rounded-xl border bg-white px-2.5 py-2 cursor-pointer hover:shadow-sm ' + (openId === t.id ? 'border-ink' : 'border-line hover:border-ink/40')}>
-              <div className="flex items-start gap-2">
-                <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); act({ action: 'taskSet', taskId: t.id, status: t.status === 'done' ? 'todo' : 'done' }) }}
-                  className={'w-4 h-4 mt-0.5 rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]} title={TASK_STATUS_LABEL[t.status]}>
-                  <Icon size={9} strokeWidth={3} />
-                </button>
-                <span className={'text-[12.5px] leading-snug flex-1 ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
-              </div>
-              {(t.assignees.length > 0 || t.due_on || t.subtasks.length > 0 || c) && (
-                <div className="mt-1.5 pl-6 flex items-center gap-2 flex-wrap text-[10.5px] text-muted">
-                  {t.assignees.length > 0 && <span className="truncate max-w-[120px]">{t.assignees.map(a => first(a.display)).join(', ')}</span>}
-                  {t.due_on && <span className={'tabular-nums ' + (late ? 'text-rose-600 font-bold' : '')}>{nice(t.due_on)}</span>}
-                  {t.subtasks.length > 0 && <span className="tabular-nums">{t.subtasks.filter(s => s.status === 'done').length}/{t.subtasks.length}</span>}
-                  {c && c.comments > 0 && <span className="inline-flex items-center gap-0.5"><MessageSquare size={10} />{c.comments}</span>}
-                  {c && c.files > 0 && <span className="inline-flex items-center gap-0.5"><Paperclip size={10} />{c.files}</span>}
-                  {t.priority === 'urgent' && <span className="font-bold uppercase text-rose-700">Urgent</span>}
-                  {t.priority === 'high' && <span className="font-bold uppercase text-amber-800">High</span>}
+            <div key={t.id}>
+              <DropSlot active={dragging && dragId !== t.id} onDrop={() => { if (dragId) { onMove(dragId, name, t.id); setDragId(null) } }} />
+              <div onClick={() => onOpen(t.id)} draggable={canEdit}
+                onDragStart={e => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDragId(null)}
+                className={'rounded-xl border bg-white px-2.5 py-2 cursor-pointer hover:shadow-sm ' + (openId === t.id ? 'border-ink' : 'border-line hover:border-ink/40') + (dragId === t.id ? ' opacity-40' : '')}>
+                <div className="flex items-start gap-2">
+                  <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); act({ action: 'taskSet', taskId: t.id, status: t.status === 'done' ? 'todo' : 'done' }) }}
+                    className={'w-4 h-4 mt-0.5 rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]} title={TASK_STATUS_LABEL[t.status]}>
+                    <Icon size={9} strokeWidth={3} />
+                  </button>
+                  <span className={'text-[12.5px] leading-snug flex-1 ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
                 </div>
-              )}
+                {(t.assignees.length > 0 || t.due_on || t.subtasks.length > 0 || c) && (
+                  <div className="mt-1.5 pl-6 flex items-center gap-2 flex-wrap text-[10.5px] text-muted">
+                    {t.assignees.length > 0 && <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-brand-50 text-brand-700 text-[9px] font-bold inline-flex items-center justify-center">{t.assignees[0].display.slice(0, 1).toUpperCase()}</span><span className="truncate max-w-[110px]">{t.assignees.map(a => first(a.display)).join(', ')}</span></span>}
+                    {t.due_on && <span className={'tabular-nums ' + (late ? 'text-rose-600 font-bold' : '')}>{nice(t.due_on)}</span>}
+                    {t.subtasks.length > 0 && <span className="tabular-nums">{t.subtasks.filter(s => s.status === 'done').length}/{t.subtasks.length}</span>}
+                    {c && c.comments > 0 && <span className="inline-flex items-center gap-0.5"><MessageSquare size={10} />{c.comments}</span>}
+                    {c && c.files > 0 && <span className="inline-flex items-center gap-0.5"><Paperclip size={10} />{c.files}</span>}
+                    {t.priority === 'urgent' && <span className="font-bold uppercase text-rose-700">Urgent</span>}
+                    {t.priority === 'high' && <span className="font-bold uppercase text-amber-800">High</span>}
+                  </div>
+                )}
+              </div>
             </div>
           )
         })}
+        <DropSlot active={dragging} onDrop={() => { if (dragId) { onMove(dragId, name, null); setDragId(null) } }} />
         {canEdit && (
           <div className="rounded-xl border border-dashed border-line bg-white/60">
             <QuickAdd section={name} act={act} busy={busy} />
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── CALENDAR: the month, with tasks on their due dates ────────────────────────────────────────
+function CalendarView({ tasks, onOpen, accent, hideDone }: { tasks: Task[]; onOpen: (id: string) => void; accent: AccentCls; hideDone: boolean }) {
+  const [ym, setYm] = useState(() => today().slice(0, 7))
+  const flat = useMemo(() => { const out: Task[] = []; const walk = (l: Task[]) => l.forEach(t => { out.push(t); walk(t.subtasks) }); walk(tasks); return out.filter(t => !hideDone || t.status !== 'done') }, [tasks, hideDone])
+  const byDay = useMemo(() => { const m: Record<string, Task[]> = {}; for (const t of flat) if (t.due_on) (m[t.due_on] = m[t.due_on] || []).push(t); return m }, [flat])
+  const first = new Date(ym + '-01T12:00:00Z')
+  const startPad = first.getUTCDay()
+  const days = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate()
+  const cells: (string | null)[] = [...Array(startPad).fill(null), ...Array.from({ length: days }, (_, i) => `${ym}-${String(i + 1).padStart(2, '0')}`)]
+  while (cells.length % 7) cells.push(null)
+  const shift = (n: number) => { const d = new Date(ym + '-01T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + n); setYm(d.toISOString().slice(0, 7)) }
+  const label = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(first)
+  const undated = flat.filter(t => !t.due_on && t.status !== 'done')
+  const tdy = today()
+  return (
+    <div className="rounded-2xl border border-line bg-white overflow-hidden">
+      <div className={'flex items-center gap-2 px-3 py-2 border-b ' + accent.bar}>
+        <button onClick={() => shift(-1)} className="text-muted hover:text-ink"><ChevronLeft size={15} /></button>
+        <span className="text-[13px] font-bold text-ink flex-1 text-center">{label}</span>
+        <button onClick={() => setYm(tdy.slice(0, 7))} className="text-[11px] font-semibold text-muted hover:text-ink">Today</button>
+        <button onClick={() => shift(1)} className="text-muted hover:text-ink"><ChevronRight size={15} /></button>
+      </div>
+      <div className="grid grid-cols-7 text-[10.5px] font-bold uppercase tracking-wider text-muted border-b border-line">
+        {WEEKDAYS.map(d => <div key={d} className="px-2 py-1 text-center">{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7">
+        {cells.map((d, i) => (
+          <div key={i} className={'min-h-[88px] border-b border-r border-line p-1 ' + (d ? (d === tdy ? 'bg-brand-50/50' : '') : 'bg-app/40')}>
+            {d && <div className={'text-[11px] tabular-nums mb-0.5 ' + (d === tdy ? 'font-bold text-brand-700' : 'text-muted')}>{Number(d.slice(-2))}</div>}
+            {d && (byDay[d] || []).slice(0, 4).map(t => (
+              <button key={t.id} onClick={() => onOpen(t.id)} title={t.title}
+                className={'block w-full text-left truncate rounded px-1 py-0.5 text-[11px] mb-0.5 ' + (t.status === 'done' ? 'bg-app text-muted line-through' : d < tdy ? 'bg-rose-50 text-rose-800' : 'bg-white border border-line text-ink hover:border-ink')}>
+                {t.title}
+              </button>
+            ))}
+            {d && (byDay[d] || []).length > 4 && <span className="text-[10px] text-muted">+{byDay[d].length - 4} more</span>}
+          </div>
+        ))}
+      </div>
+      {undated.length > 0 && (
+        <div className="px-3 py-2 border-t border-line flex items-center gap-2 flex-wrap text-[11.5px] text-muted">
+          <span className="font-semibold">No date:</span>
+          {undated.slice(0, 12).map(t => <button key={t.id} onClick={() => onOpen(t.id)} className="rounded-md border border-line bg-white px-1.5 py-0.5 text-ink hover:border-ink">{t.title}</button>)}
+          {undated.length > 12 && <span>+{undated.length - 12}</span>}
+        </div>
+      )}
     </div>
   )
 }
@@ -333,6 +457,7 @@ function Customize({ settings, sections, canEdit, act, busy }: {
   }, [open])
   if (!canEdit) return null
   const set = (patch: Partial<BoardSettings>) => act({ action: 'setSettings', settings: patch })
+  const [customIcon, setCustomIcon] = useState('')
   const order = sections.filter(Boolean)
   const move = (i: number, d: -1 | 1) => {
     const next = order.slice(); const j = i + d
@@ -349,16 +474,21 @@ function Customize({ settings, sections, canEdit, act, busy }: {
       {open && (
         <div className="absolute right-0 z-50 mt-1.5 w-[280px] rounded-2xl border border-line bg-white shadow-2xl p-3 space-y-3">
           <div>
-            <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-1">Layout</p>
-            <div className="grid grid-cols-2 gap-1.5">
-              <button onClick={() => set({ view: 'list' })} disabled={busy} className={'rounded-lg border px-2 py-1.5 text-[12px] font-semibold inline-flex items-center justify-center gap-1.5 ' + (settings.view === 'list' ? 'bg-ink text-white border-ink' : 'border-line text-muted hover:text-ink')}><LayoutList size={12} /> List</button>
-              <button onClick={() => set({ view: 'board' })} disabled={busy} className={'rounded-lg border px-2 py-1.5 text-[12px] font-semibold inline-flex items-center justify-center gap-1.5 ' + (settings.view === 'board' ? 'bg-ink text-white border-ink' : 'border-line text-muted hover:text-ink')}><Columns3 size={12} /> Columns</button>
+            <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-1">Icon</p>
+            <div className="flex flex-wrap gap-1">
+              {ICONS.map(ic => (
+                <button key={ic} onClick={() => set({ icon: ic })} disabled={busy}
+                  className={'w-7 h-7 rounded-lg grid place-items-center text-[15px] border ' + (settings.icon === ic ? 'border-ink bg-app' : 'border-transparent hover:border-line')}>{ic}</button>
+              ))}
+              <input value={customIcon} onChange={e => setCustomIcon(e.target.value)} placeholder="any"
+                onKeyDown={e => { if (e.key === 'Enter' && customIcon.trim()) { set({ icon: customIcon.trim().slice(0, 4) }); setCustomIcon('') } }}
+                className="w-12 h-7 rounded-lg border border-line px-1 text-[12px] text-center" title="Type any emoji and press Enter" />
             </div>
           </div>
           <div>
             <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-1">Accent</p>
-            <div className="flex gap-1.5">
-              {(Object.keys(ACCENT) as BoardSettings['accent'][]).map(k => (
+            <div className="flex gap-1.5 flex-wrap">
+              {ACCENTS.map(k => (
                 <button key={k} onClick={() => set({ accent: k })} disabled={busy} title={k}
                   className={'w-6 h-6 rounded-full ' + ACCENT[k].dot + (settings.accent === k ? ' ring-2 ring-offset-2 ' + ACCENT[k].ring : '')} />
               ))}
@@ -466,18 +596,20 @@ function MoreMenu({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean;
   )
 }
 
-function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts }: {
+function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, setDragId, onMove }: {
   t: Task; depth: number; canEdit: boolean; busy: boolean; open: boolean
   onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts
-}) {
+} & DragProps) {
   const Icon = STATUS_ICON[t.status] || Circle
   const late = t.status !== 'done' && !!t.due_on && t.due_on < today()
   const next = (s: string) => (s === 'done' ? 'todo' : 'done')   // one tap toggles done; the drawer has the four states
   const c = counts[t.id]
   return (
     <>
-      <div className={'flex items-center gap-2.5 px-3 py-2 cursor-pointer ' + (open ? 'bg-brand-50/60' : 'hover:bg-app/50')}
-        style={{ paddingLeft: 12 + depth * 22 }} onClick={() => onOpen(t.id)}>
+      <div className={'flex items-center gap-2.5 px-3 py-2 cursor-pointer border-t border-line ' + (open ? 'bg-brand-50/60' : 'hover:bg-app/50') + (dragId === t.id ? ' opacity-40' : '')}
+        style={{ paddingLeft: 12 + depth * 22 }} onClick={() => onOpen(t.id)}
+        draggable={canEdit && depth === 0} onDragStart={e => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDragId(null)}>
+        {depth === 0 && canEdit && <GripVertical size={12} className="text-muted/50 shrink-0 -ml-1 cursor-grab" />}
         {depth > 0 && <CornerDownRight size={11} className="text-muted shrink-0 -ml-1" />}
         <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); act({ action: 'taskSet', taskId: t.id, status: next(t.status) }) }}
           className={'w-5 h-5 rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]}
@@ -485,6 +617,7 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts }: {
           <Icon size={11} strokeWidth={3} />
         </button>
         <span className={'min-w-0 flex-1 text-[13px] truncate ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
+        {t.breezeway_task_id && <span className={'inline-flex items-center gap-0.5 text-[10px] font-bold uppercase px-1 py-0.5 rounded border shrink-0 ' + (TONE_CLS[t.breezeway?.tone || 'open'])} title="In Breezeway"><Wrench size={9} /> {t.breezeway?.status || 'BZ'}</span>}
         {c && c.comments > 0 && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted tabular-nums shrink-0" title={`${c.comments} comment${c.comments === 1 ? '' : 's'}`}><MessageSquare size={11} />{c.comments}</span>}
         {c && c.files > 0 && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted tabular-nums shrink-0" title={`${c.files} file${c.files === 1 ? '' : 's'}`}><Paperclip size={11} />{c.files}</span>}
         {t.assignees.length > 0 && (
@@ -495,7 +628,7 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts }: {
         {t.priority === 'high' && <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">High</span>}
         {t.subtasks.length > 0 && <span className="text-[11px] text-muted tabular-nums shrink-0">{t.subtasks.filter(s => s.status === 'done').length}/{t.subtasks.length}</span>}
       </div>
-      {t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} />)}
+      {t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} dragId={dragId} setDragId={setDragId} onMove={onMove} />)}
     </>
   )
 }
@@ -662,6 +795,11 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
             </div>
           )}
 
+          {/* Breezeway — the field. A task here can become a real task there, and follows it. */}
+          {!task.parent_id && (
+            <BreezewayBox task={task} p={p} canEdit={canEdit} busy={busy} act={act} />
+          )}
+
           {/* files on this task */}
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -690,6 +828,65 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
         </div>
       </div>
     </>
+  )
+}
+
+// ── BREEZEWAY: send this task to the field, and show what the field says ──────────────────────
+function BreezewayBox({ task, p, canEdit, busy, act }: { task: Task; p: ProjectFull; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any> }) {
+  const units = p.links.filter(l => l.kind === 'listing')
+  const [open, setOpen] = useState(false)
+  const [listingId, setListingId] = useState(units[0]?.ref_id || '')
+  const [department, setDepartment] = useState('maintenance')
+  const [priority, setPriority] = useState(task.priority === 'urgent' || task.priority === 'high' ? task.priority : 'normal')
+  const [date, setDate] = useState(task.due_on || today())
+  useEffect(() => { if (!listingId && units[0]) setListingId(units[0].ref_id) }, [units, listingId])
+  const bz = task.breezeway
+  if (task.breezeway_task_id) {
+    return (
+      <div className={'rounded-xl border px-3 py-2 ' + (bz?.tone === 'done' ? 'border-emerald-200 bg-emerald-50/60' : bz?.tone === 'bad' ? 'border-rose-200 bg-rose-50/60' : 'border-line bg-app/40')}>
+        <div className="flex items-center gap-2 text-[12px]">
+          <Wrench size={12} className="text-muted" />
+          <span className="font-semibold text-ink">In Breezeway</span>
+          <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (TONE_CLS[bz?.tone || 'open'])}>{bz?.status || 'created'}</span>
+          <span className="text-muted truncate flex-1">{[bz?.assignee, bz?.date].filter(Boolean).join(' · ')}</span>
+          {bz?.reportUrl && <a href={bz.reportUrl} target="_blank" rel="noreferrer" className="text-muted hover:text-ink inline-flex items-center gap-1 text-[11px] font-semibold">Report <ExternalLink size={10} /></a>}
+        </div>
+        <p className="text-[10.5px] text-muted mt-0.5 pl-5">This task follows the field: it is marked done here when the Breezeway task finishes.</p>
+      </div>
+    )
+  }
+  if (!canEdit) return null
+  if (!open) return (
+    <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-muted hover:text-ink">
+      <Wrench size={12} /> Send to Breezeway…
+    </button>
+  )
+  return (
+    <div className="rounded-xl border border-line bg-app/40 px-3 py-2.5 space-y-2 text-[12.5px]">
+      <p className="font-semibold text-ink inline-flex items-center gap-1.5"><Wrench size={12} /> Send to Breezeway</p>
+      {units.length === 0 ? (
+        <p className="text-[11.5px] text-muted">Attach a unit or building under About first — a field task has to live somewhere.</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Unit</span>
+              <select value={listingId} onChange={e => setListingId(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{units.map(u => <option key={u.ref_id} value={u.ref_id}>{u.label || u.ref_id}</option>)}</select></label>
+            <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Department</span>
+              <select value={department} onChange={e => setDepartment(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{['maintenance', 'housekeeping', 'inspection', 'safety'].map(d => <option key={d} value={d}>{d[0].toUpperCase() + d.slice(1)}</option>)}</select></label>
+            <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Priority</span>
+              <select value={priority} onChange={e => setPriority(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{['urgent', 'high', 'normal', 'low'].map(d => <option key={d} value={d}>{d[0].toUpperCase() + d.slice(1)}</option>)}</select></label>
+            <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Date</span>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1" /></label>
+          </div>
+          <p className="text-[11px] text-muted">{task.assignees.length ? `Assigned in Breezeway to ${task.assignees.map(a => first(a.display)).join(', ')} where the names match.` : 'Nobody is assigned yet — it will land unassigned in Breezeway.'}</p>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setOpen(false)} className="text-[12px] text-muted hover:text-ink">Cancel</button>
+            <button onClick={async () => { const j = await act({ action: 'taskToBreezeway', taskId: task.id, listingId, department, priority, date }); if (j?.ok) setOpen(false) }} disabled={busy || !listingId}
+              className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-bold disabled:opacity-40 inline-flex items-center gap-1.5">{busy ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />} Create field task</button>
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -1059,7 +1256,7 @@ function LinksPanel({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolea
   // Units that arrived as part of a building are shown under it, not as a flat list of thirty.
   const buildings = p.links.filter(l => l.kind === 'building')
   const units = p.links.filter(l => l.kind === 'listing')
-  const others = p.links.filter(l => l.kind === 'reservation' || l.kind === 'owner')
+  const others = p.links.filter(l => ['reservation', 'owner', 'claim', 'glitch', 'task'].includes(l.kind))
   const unitsDone = units.filter(u => u.done).length
 
   return (
@@ -1075,14 +1272,14 @@ function LinksPanel({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolea
         <div className="p-2 border-b border-line">
           <div className="relative">
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Building, unit, guest, code, or owner…"
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Building, unit, guest, owner, claim, glitch or Breezeway task…"
               onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); setQ('') } }}
               className="w-full rounded-lg border border-line bg-white pl-7 pr-2 py-1.5 text-[12.5px]" />
             {searching && <Loader2 size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-muted" />}
           </div>
           {hits.length > 0 && (
             <div className="mt-1.5 rounded-lg border border-line divide-y divide-line max-h-[260px] overflow-y-auto">
-              {hits.map(h => { const I = LINK_ICON[h.kind]; return (
+              {hits.map(h => { const I = LINK_ICON[h.kind] || Building2; return (
                 <button key={h.kind + h.id} onClick={() => attach(h)} disabled={busy}
                   className="w-full text-left px-2.5 py-1.5 hover:bg-app flex items-start gap-2">
                   <I size={12} className="text-muted mt-0.5 shrink-0" />
@@ -1101,7 +1298,7 @@ function LinksPanel({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolea
 
       <div className="divide-y divide-line">
         {p.links.length === 0 && !open && (
-          <p className="px-3 py-3 text-[12px] text-muted">Not attached to anything yet.{canEdit ? ' Add a building, unit, reservation or owner.' : ''}</p>
+          <p className="px-3 py-3 text-[12px] text-muted">Not attached to anything yet.{canEdit ? ' Add a building, unit, reservation, owner, claim, glitch or Breezeway task.' : ''}</p>
         )}
         {buildings.map(b => (
           <div key={b.ref_id} className="px-3 py-2">
@@ -1126,12 +1323,28 @@ function LinksPanel({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolea
             </div>
           </div>
         )}
-        {others.map(o => { const I = LINK_ICON[o.kind]; return (
-          <div key={o.kind + o.ref_id} className="px-3 py-2 flex items-center gap-2">
-            <I size={12} className="text-muted shrink-0" />
-            <span className="text-[12.5px] text-ink flex-1 truncate">{o.label || o.ref_id}</span>
-            <span className="text-[9.5px] font-bold uppercase tracking-wide text-muted">{o.kind}</span>
-            {canEdit && <button onClick={() => act({ action: 'unlink', kind: o.kind, refId: o.ref_id })} disabled={busy} className="text-muted hover:text-rose-600"><X size={11} /></button>}
+        {others.map(o => { const I = LINK_ICON[o.kind] || Building2; const st = o.state; return (
+          <div key={o.kind + o.ref_id} className="px-3 py-2">
+            <div className="flex items-center gap-2">
+              <I size={12} className="text-muted shrink-0" />
+              <span className="text-[12.5px] text-ink flex-1 truncate">{o.label || o.ref_id}</span>
+              {st ? (
+                <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (TONE_CLS[st.tone] || TONE_CLS.open)} title="Live from the source">{st.label}</span>
+              ) : <span className="text-[9.5px] font-bold uppercase tracking-wide text-muted">{o.kind}</span>}
+              {st?.href && <a href={st.href} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open"><ExternalLink size={11} /></a>}
+              {canEdit && <button onClick={() => act({ action: 'unlink', kind: o.kind, refId: o.ref_id })} disabled={busy} className="text-muted hover:text-rose-600"><X size={11} /></button>}
+            </div>
+            {(st?.detail || (canEdit && o.kind !== 'owner')) && (
+              <div className="pl-5 mt-0.5 flex items-center gap-2 text-[10.5px] text-muted">
+                {st?.detail && <span className="truncate">{st.detail}</span>}
+                {canEdit && o.kind !== 'owner' && o.kind !== 'task' && (
+                  <button onClick={() => act({ action: 'linkToTask', kind: o.kind, refId: o.ref_id })} disabled={busy}
+                    className="ml-auto inline-flex items-center gap-1 font-semibold hover:text-ink shrink-0" title="Make a task from this so it can be assigned and dated">
+                    <ArrowRightCircle size={11} /> Make a task
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )})}
       </div>

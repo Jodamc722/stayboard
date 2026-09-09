@@ -11,6 +11,7 @@ import {
   Trash2, Copy, ExternalLink, ChevronRight, Search, Archive, RefreshCw,
   MoreHorizontal, Lock, Repeat, LayoutTemplate,
 } from 'lucide-react'
+import { ACCENT_CLS } from '@/lib/projects-shared'
 
 type Health = { state: 'ok' | 'due' | 'late' | 'blocked' | 'done'; daysLeft: number | null; reason: string | null }
 type Progress = { done: number; total: number; pct: number | null; basis: string }
@@ -25,7 +26,7 @@ type P = {
   kind?: string; private?: boolean; recurs?: any; settings?: any; series_key?: string | null
   links: any[]; steps: any[]; progress: Progress; health: Health
 }
-type Tpl = { key: string; label: string; kind: string; category: string; blurb: string; builtIn: boolean; sections: string[]; recurs: any }
+type Tpl = { key: string; label: string; kind: string; category: string; blurb: string; builtIn: boolean; sections: string[]; recurs: any; icon?: string; accent?: string }
 
 const STAGES: [string, string][] = [
   ['idea', 'Idea'], ['planned', 'Planned'], ['in_progress', 'In progress'],
@@ -180,7 +181,7 @@ export function ProjectBoard({ canEdit, canFull, me, autoNew }: { canEdit: boole
               return (
                 <button key={p.id} onClick={() => { window.location.href = '/projects/' + p.id }}
                   className="shrink-0 w-[220px] text-left rounded-xl border border-line bg-white px-3 py-2.5 hover:border-brand-300 hover:shadow-sm transition">
-                  <span className="block text-[13px] font-semibold text-ink truncate">{p.title}</span>
+                  <span className="flex items-center gap-2"><span className="text-[16px]" aria-hidden>{p.settings?.icon || '🔒'}</span><span className="text-[13px] font-semibold text-ink truncate">{p.title}</span></span>
                   <span className="block text-[11px] text-muted mt-0.5 tabular-nums">{open ? `${open} open` : p.steps.length ? 'All done' : 'Empty'}{p.recurs ? ' · repeats' : ''}</span>
                 </button>
               )
@@ -357,19 +358,20 @@ function NewProject({ cats, listings, people, me, templates, startKind, startTem
       {!personalOnly && (
         <Field label="Start from">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-            <button onClick={() => pick(null)} className={'text-left rounded-lg border px-2.5 py-2 ' + (!template ? 'border-ink bg-app' : 'border-line bg-white hover:border-ink')}>
-              <span className="block text-[12.5px] font-semibold text-ink">Blank</span>
-              <span className="block text-[11px] text-muted">Just a title. Add sections as you go.</span>
+            <button onClick={() => pick(null)} className={'text-left rounded-xl border px-2.5 py-2 flex items-start gap-2 ' + (!template ? 'border-ink bg-app shadow-sm' : 'border-line bg-white hover:border-ink/40')}>
+              <span className="w-8 h-8 rounded-lg border border-line bg-white grid place-items-center text-[16px] shrink-0" aria-hidden>📋</span>
+              <span className="min-w-0"><span className="block text-[12.5px] font-semibold text-ink leading-tight">Blank</span><span className="block text-[11px] text-muted mt-0.5">Just a title. Add sections as you go.</span></span>
             </button>
-            {visible.map((t: any) => (
-              <button key={t.key} onClick={() => pick(t)} className={'text-left rounded-lg border px-2.5 py-2 ' + (template === t.key ? 'border-ink bg-app' : 'border-line bg-white hover:border-ink')}>
-                <span className="block text-[12.5px] font-semibold text-ink inline-flex items-center gap-1">
-                  {t.kind === 'personal' ? <Lock size={10} className="text-muted" /> : t.kind === 'one_on_one' ? <Lock size={10} className="text-muted" /> : <LayoutTemplate size={10} className="text-muted" />}{t.label}
-                  {!t.builtIn && <span className="text-[9px] font-bold uppercase text-muted ml-1">team</span>}
+            {visible.map((t: any) => { const ac = ACCENT_CLS[(t.accent in ACCENT_CLS ? t.accent : 'indigo') as keyof typeof ACCENT_CLS]; return (
+              <button key={t.key} onClick={() => pick(t)} className={'text-left rounded-xl border px-2.5 py-2 flex items-start gap-2 ' + (template === t.key ? 'border-ink bg-app shadow-sm' : 'border-line bg-white hover:border-ink/40')}>
+                <span className={'w-8 h-8 rounded-lg border grid place-items-center text-[16px] shrink-0 ' + ac.soft} aria-hidden>{t.icon || '📋'}</span>
+                <span className="min-w-0">
+                  <span className="block text-[12.5px] font-semibold text-ink leading-tight">{t.label}{!t.builtIn && <span className="text-[9px] font-bold uppercase text-muted ml-1">team</span>}</span>
+                  <span className="block text-[11px] text-muted line-clamp-2 mt-0.5">{t.blurb || t.sections.join(' · ')}</span>
+                  {t.sections.length > 0 && <span className="block text-[10px] text-muted/80 mt-1 truncate">{t.sections.join(' · ')}</span>}
                 </span>
-                <span className="block text-[11px] text-muted line-clamp-2">{t.blurb || t.sections.join(' · ')}</span>
               </button>
-            ))}
+            )})}
           </div>
         </Field>
       )}
