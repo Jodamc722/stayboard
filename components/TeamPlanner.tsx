@@ -143,7 +143,7 @@ export function TeamPlanner() {
 
       {/* THE DAY (Jon, 2026-09-09): the actual cleans and who has them. */}
       {view === 'cleans'
-        ? <DayCleans days={data.days} blocks={data.markets} dept={dept} marketFilter={market} canManage onChanged={load} />
+        ? <DayCleans days={data.days} blocks={data.markets} dept={dept} marketFilter={market} labor={data.labor} canManage onChanged={load} />
         : null}
 
       {crew === 'vendor' ? (

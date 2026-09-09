@@ -19,12 +19,20 @@ export type LaborTotals = {
   cleans: number; other: number; revenue: number
   actualHours: number; actualCost: number; actualDays: number
   scheduledHours: number; scheduledCost: number; scheduledDays: number
+  billable: number
   perClean: number | null; revenuePerClean: number | null
 }
-export type LaborPerson = { name: string; market: string; cleans: number; other: number; days: number; hours: number | null; cost: number | null }
+export type LaborPerson = { name: string; market: string; cleans: number; other: number; days: number; hours: number | null; cost: number | null; billable: number }
+export type DayPerson = {
+  name: string; hours: number | null; cost: number | null; billable: number
+  basis: 'actual' | 'scheduled' | 'none'; offBoard: boolean
+}
 export type ScheduleLaborData = {
   from: string; to: string; today: string
   days: LaborDay[]; people: LaborPerson[]; totals: LaborTotals
+  /** Per person per day, so the cleans board can price a single day. */
+  byDay: Record<string, DayPerson[]>
+  billableByTask: Record<string, number>
   payrollComplete: boolean; notes: string[]
 }
 
@@ -52,7 +60,7 @@ export function ScheduleLaborStrip({ data }: { data: ScheduleLaborData }) {
     <section className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
       <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-line">
         <Stat label="Departure cleans" value={String(t.cleans)} sub={t.other ? t.other + ' other jobs' : 'on this board'} Icon={Sparkles} />
-        <Stat label="Cleaning revenue" value={money(t.revenue)} sub={t.revenuePerClean ? money(t.revenuePerClean) + ' a clean' : undefined} Icon={DollarSign} />
+        <Stat label="Cleaning revenue" value={money(t.revenue)} sub={t.billable ? money(t.billable) + ' owner-billable' : (t.revenuePerClean ? money(t.revenuePerClean) + ' a clean' : undefined)} Icon={DollarSign} />
         <Stat
           label={hasActual ? 'Labor — actual' : 'Labor — scheduled'}
           value={hasActual ? money(t.actualCost) : (t.scheduledCost ? money(t.scheduledCost) : '—')}
@@ -128,6 +136,7 @@ export function ScheduleLaborStrip({ data }: { data: ScheduleLaborData }) {
                 <span className="text-[12.5px] font-semibold text-ink">{p.name}</span>
                 <span className="text-[11.5px] text-muted tabular-nums">{p.cleans} clean{p.cleans === 1 ? '' : 's'}</span>
                 {p.hours != null ? <span className="text-[11px] text-brand-700 tabular-nums">{p.hours}h</span> : null}
+                {p.billable ? <span className="text-[11px] text-emerald-700 tabular-nums">{money(p.billable)}</span> : null}
               </span>
             ))}
           </div>

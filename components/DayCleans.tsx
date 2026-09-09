@@ -47,6 +47,18 @@ import { useMemo, useState } from 'react'
 import { Sparkles, Wrench, Check, Loader2, UserCog, AlertTriangle } from 'lucide-react'
 import type { PDay, PBlock, PJob, PTag } from './PlannerView'
 
+/** What the labor pass knows about one person on one day. */
+export type DayPerson = {
+  name: string; hours: number | null; cost: number | null; billable: number
+  basis: 'actual' | 'scheduled' | 'none'; offBoard: boolean
+}
+export type DayLabor = {
+  byDay: Record<string, DayPerson[]>
+  billableByTask: Record<string, number>
+  payrollComplete: boolean
+}
+const money = (n: number | null | undefined) => n == null ? '—' : '$' + Math.round(n).toLocaleString()
+
 const TAG_CHIP: Record<string, string> = {
   amber: 'bg-amber-50 text-amber-800 ring-amber-200',
   violet: 'bg-violet-50 text-violet-800 ring-violet-200',
@@ -77,11 +89,13 @@ type MarketDay = {
 /** One clean, identified across the people holding it. The task id in-app, the unit on a share link. */
 const keyOf = (j: PJob) => String(j.id || (j.unit + '|' + j.task))
 
-export function DayCleans({ days, blocks, dept, marketFilter, canManage, onChanged }: {
+export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, onChanged }: {
   days: PDay[]
   blocks: PBlock[]
   dept: 'cleaning' | 'maintenance' | 'all'
   marketFilter?: string
+  /** Hours, pay and owner-billable per person per day. Absent on links without money. */
+  labor?: DayLabor | null
   /** Signed-in staff only. The share link leaves this off and stays read-only. */
   canManage?: boolean
   onChanged?: () => void
@@ -173,12 +187,28 @@ export function DayCleans({ days, blocks, dept, marketFilter, canManage, onChang
     return { turnovers, otherCleans, cleaners, support, free, markets: markets.filter(mk => mk.rows.length || mk.support.length || mk.alsoOn.length) }
   }
 
+  // Punch names are Homebase spellings, board names are roster spellings — match the way the rest
+  // of the app does rather than on an exact string, or half the crew reads as having worked zero.
+  const personDay = (date: string, name: string): DayPerson | null => {
+    const list = labor?.byDay?.[date] || []
+    const n = name.trim().toLowerCase()
+    return list.find(x => x.name.trim().toLowerCase() === n)
+      || list.find(x => { const a = x.name.toLowerCase().split(/\s+/)[0], b = n.split(/\s+/)[0]; return !!a && a === b }) || null
+  }
+  const billableOfJob = (j: PJob) => (j.id && labor?.billableByTask ? labor.billableByTask[j.id] || 0 : 0)
+
   const [picked, setPicked] = useState<string>(() => (days.find(d => d.today) || days[0] || { date: '' }).date)
   const day = days.find(d => d.date === picked) || days[0]
   if (!day) return null
   const c = countOf(day.date)
   const label = dept === 'maintenance' ? 'work order' : 'clean'
   const busiest = Math.max(1, ...c.markets.flatMap(mk => mk.rows.map(r => r.cleans.length)))
+  const dayPeople = labor?.byDay?.[day.date] || []
+  const ahead = dayPeople.length > 0 && dayPeople.every(p => p.basis !== 'actual')
+  const dayHours = dayPeople.reduce((a, p) => a + (p.hours || 0), 0)
+  const dayCost = dayPeople.some(p => p.cost != null) ? dayPeople.reduce((a, p) => a + (p.cost || 0), 0) : null
+  const dayBillable = dayPeople.reduce((a, p) => a + (p.billable || 0), 0)
+  const offBoard = dayPeople.filter(p => p.offBoard && (p.hours || 0) > 0)
 
   return (
     <div className="space-y-3">
@@ -239,6 +269,36 @@ export function DayCleans({ days, blocks, dept, marketFilter, canManage, onChang
             ))}
           </div>
         </div>
+        {/* THE KPI LINE. Hours are punched once a day is over and rostered while it is still
+            ahead — never added together, and labelled either way. Billable is what the owner is
+            invoiced for these tasks; cost per clean only appears once the hours are a fact. */}
+        {labor && dayPeople.length ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 border-t border-line divide-x divide-line">
+            <div className="px-5 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-muted">Hours {ahead ? 'rostered' : 'worked'}</p>
+              <p className="text-[17px] font-bold text-ink tabular-nums leading-tight">{dayHours ? dayHours.toFixed(1) : '—'}</p>
+            </div>
+            <div className="px-5 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-muted">Labor {ahead ? 'planned' : 'cost'}</p>
+              <p className="text-[17px] font-bold text-ink tabular-nums leading-tight">{money(dayCost)}</p>
+            </div>
+            <div className="px-5 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-muted">Owner billable</p>
+              <p className="text-[17px] font-bold text-ink tabular-nums leading-tight">{money(dayBillable)}</p>
+            </div>
+            <div className="px-5 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider font-bold text-muted">{ahead ? 'Per clean, planned' : 'Cost per clean'}</p>
+              <p className={'text-[17px] font-bold tabular-nums leading-tight ' + (ahead ? 'text-amber-700' : 'text-ink')}>
+                {dayCost != null && c.turnovers ? money(Math.round(dayCost / c.turnovers)) : '—'}
+              </p>
+            </div>
+          </div>
+        ) : null}
+        {labor && !labor.payrollComplete && !ahead ? (
+          <p className="px-5 py-2 border-t border-amber-200 bg-amber-50 text-[11.5px] text-amber-900">
+            Homebase came back short for part of this window — hours and cost above are a floor, not the figure.
+          </p>
+        ) : null}
       </section>
 
       {/* ── EACH MARKET, PERSON BY PERSON ─────────────────────────────────────────────────── */}
@@ -247,7 +307,16 @@ export function DayCleans({ days, blocks, dept, marketFilter, canManage, onChang
           <p className="text-[13px] text-muted">Nothing assigned on this day.</p>
           <p className="text-[11.5px] text-muted/80 mt-1">Work with nobody on it yet never reaches this board — check the schedule to hand it out.</p>
         </div>
-      ) : c.markets.map(mk => (
+      ) : null}
+
+      {offBoard.length ? (
+        <p className="rounded-2xl bg-white ring-1 ring-line px-5 py-2.5 text-[12px] text-muted">
+          <b className="text-ink font-semibold">Also on the clock, nothing on this board:</b>{' '}
+          {offBoard.map(p => p.name + ' (' + (p.hours || 0) + 'h)').join(' · ')}
+        </p>
+      ) : null}
+
+      {c.markets.map(mk => (
         <section key={mk.market} className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
           <header className="px-5 py-3 border-b border-line flex items-baseline gap-2.5 flex-wrap">
             <h3 className="text-[15px] font-bold text-ink tracking-tight">{mk.market}</h3>
@@ -284,6 +353,23 @@ export function DayCleans({ days, blocks, dept, marketFilter, canManage, onChang
                     </div>
 
                     {/* Load against the busiest person on the board today. */}
+                    {(() => {
+                      const pd = personDay(day.date, r.person)
+                      const bill = r.jobs.reduce((a, j) => a + billableOfJob(j), 0)
+                      if (!labor || (!pd && !bill)) return null
+                      return (
+                        <div className="flex items-center gap-3 mt-2 text-[11.5px] tabular-nums">
+                          <span className="text-muted">
+                            {pd && pd.hours != null
+                              ? <><b className="text-ink">{pd.hours}h</b> {pd.basis === 'scheduled' ? 'rostered' : 'worked'}</>
+                              : <span className="text-muted/70">no hours</span>}
+                          </span>
+                          {pd && pd.cost != null ? <span className="text-muted">{money(pd.cost)} pay</span> : null}
+                          {bill ? <span className="text-emerald-700 font-semibold">{money(bill)} billable</span> : null}
+                        </div>
+                      )
+                    })()}
+
                     <div className="h-1.5 rounded-full bg-app mt-2.5 overflow-hidden">
                       <div className={'h-full rounded-full ' + (heavy ? 'bg-amber-400' : 'bg-brand-400')}
                         style={{ width: Math.round((r.cleans.length / busiest) * 100) + '%' }} />

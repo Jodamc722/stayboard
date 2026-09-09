@@ -234,6 +234,7 @@ export function SharedView({ code }: { code: string }) {
                   days={s.team.days || []}
                   blocks={s.team.markets || []}
                   dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
+                  labor={s.teamLabor || null}
                 />
               ) : null}
               {crew === 'vendor' ? (
