@@ -25,7 +25,10 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
-  const today = new Intl.DateTimeFormat('en-CA', {
+  // The board's date, when the pager has moved off today — the backlog's "next workable day" is
+  // relative to the day you are planning, not to this morning.
+  const qd = String(req.nextUrl.searchParams.get('date') || '')
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(qd) ? qd : new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date())
 

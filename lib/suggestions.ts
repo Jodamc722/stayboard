@@ -684,7 +684,24 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       //
       // So a never-recorded job is proposed ONLY where there is already somebody on site. A job with
       // a real last-done date, genuinely past its interval by escapeAfterDays, still escapes.
-      const escaped = cfg.escapeAfterDays > 0 && daysSince != null && daysOver >= cfg.escapeAfterDays
+      //
+      // OPENED, CAREFULLY (Jon, 2026-09-09: buildings nobody visits were starved of everything).
+      //
+      // The reasoning above is right about ONE thing — a missing record is usually a data gap — and
+      // it can be tested rather than assumed. If this unit has other completed work in the same
+      // history window, then we ARE keeping records for it, and the absence of THIS job is a real
+      // absence, not a gap. That unit escapes. A unit with no history of any kind is genuinely
+      // unknown to us and still waits for somebody to be nearby.
+      //
+      // (A first attempt gated this on `daysOver`, which is a constant for a never-recorded job —
+      // it could never fire. Elapsed time cannot be measured against a record that does not exist;
+      // the presence of OTHER records is the only honest signal available here.)
+      const trackedUnit = !!lastDone[lid] && Object.keys(lastDone[lid]).length > 0
+      const escaped = cfg.escapeAfterDays > 0 && (
+        daysSince != null
+          ? daysOver >= cfg.escapeAfterDays
+          : trackedUnit
+      )
       if (cfg.requireStaffOnSite && !here.length && !near.length && !escaped) { drop('nobody near it'); continue }
 
       const dismissId = `${date.slice(0, 4)}-${lid}-${c.key}`
@@ -755,16 +772,35 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   // "don't push double" means one job for that door today, not one per listing.
   const perUnit: Record<string, number> = {}
   const perPerson: Record<string, number> = {}
+  const perMarket: Record<string, number> = {}
+  // ── THE CAP IS PER MARKET (Jon, 2026-09-09) ─────────────────────────────────────────────────
+  // One portfolio-wide six meant Miami's morning could consume the whole allowance and Broward saw
+  // nothing, on a day when Broward had a technician standing in a building with three jobs due.
+  // Each market gets the day's cap; the day read still decides what that number is.
+  // Both, not either: the portfolio ceiling is the promise ("six extra jobs, decided in a minute"),
+  // and the per-market share is what stops Miami's morning consuming the whole allowance while a
+  // Broward tech stands in a building with three jobs due. Auto-created cadences obey the ceiling.
+  const marketCap = Math.max(2, Math.ceil(day.cap / 2))
   const picked: Suggestion[] = []
   for (const s of out) {
     if (picked.length >= day.cap) { drop('over the daily cap'); continue }
+    const mk = s.market || 'other'
+    if ((perMarket[mk] || 0) >= marketCap) { drop('over the daily share for ' + mk); continue }
     const space = links.spaceOf[s.listingId] || s.listingId
     if ((perUnit[space] || 0) >= cfg.perUnitCap) { drop('unit already has one'); continue }
     // Charge the minutes to the person most likely to take it. With nobody named, the job is
     // unassigned and cannot overload anybody, so it skips this test.
     const who = s.candidates[0] || null
-    if (who && (perPerson[who] || 0) + s.minutes > cfg.perPersonMinutes) { drop("person's day is full"); continue }
+    // ── A CAP MUST NOT MAKE A JOB IMPOSSIBLE (Jon, 2026-09-09) ────────────────────────────────
+    // perPersonMinutes defaults to 90, and the A/C deep clean is 120 minutes and the deep clean
+    // 240 — so `0 + 120 > 90` fired on an EMPTY person, and the two cadences Jon named first could
+    // never be suggested at all while anybody was nearby. The cap is meant to stop stacking, not to
+    // veto long work: a person who has been given nothing yet can always take the first job,
+    // whatever its length. After that the cap does its real job.
+    const already = who ? (perPerson[who] || 0) : 0
+    if (who && already > 0 && already + s.minutes > cfg.perPersonMinutes) { drop("person's day is full"); continue }
     picked.push(s)
+    perMarket[mk] = (perMarket[mk] || 0) + 1
     perUnit[space] = (perUnit[space] || 0) + 1
     if (who) perPerson[who] = (perPerson[who] || 0) + s.minutes
   }

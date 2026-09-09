@@ -23,6 +23,8 @@ import { marketOf } from './segments'
 import { buildSuggestions, type Suggestion } from './suggestions'
 import { buildReviewQueue, type ReviewItem } from './review-queue'
 import { auditDuplicates, type DupGroup } from './task-audit'
+import { buildDayPicture } from './capacity-day'
+import { buildOpsDay } from './ops-day'
 import { anthropicMessages } from './anthropic-call'
 import { modelPairFor } from './ai-models'
 import { createHash } from 'crypto'
@@ -55,6 +57,7 @@ export type FocusResult = {
 }
 
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
+const shiftDay = (d: string, n: number) => ymd(new Date(Date.parse(d + 'T12:00:00Z') + n * 86400000))
 const str = (v: any) => String(v ?? '').trim()
 export const dupId = (g: DupGroup) => 'dup:' + g.listingId + '|' + g.date + '|' + g.key
 
@@ -63,16 +66,18 @@ type Cached = { hash: string; at: string; model: string; verdict: FocusVerdict; 
 // One build per market at a time per instance: the badge and the tab mount together and would
 // otherwise both miss the cold cache and both pay for the model.
 const inflight = new Map<string, Promise<FocusResult>>()
-export function buildOpsFocus(market: string, opts: { refresh?: boolean } = {}): Promise<FocusResult> {
-  const k = market + (opts.refresh ? '!' : '')
+export function buildOpsFocus(market: string, opts: { refresh?: boolean; date?: string } = {}): Promise<FocusResult> {
+  const k = market + '|' + (opts.date || '') + (opts.refresh ? '!' : '')
   const cur = inflight.get(k); if (cur) return cur
   const p = buildOpsFocusNow(market, opts).finally(() => inflight.delete(k))
   inflight.set(k, p)
   return p
 }
 
-async function buildOpsFocusNow(market: string, opts: { refresh?: boolean } = {}): Promise<FocusResult> {
-  const today = ymd(new Date())
+async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?: string } = {}): Promise<FocusResult> {
+  // The day being planned, which is not always today: the pager moves and the verdict must move
+  // with it, or a coordinator planning tomorrow reads today's answer (2026-09-09 audit).
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.date || '')) ? String(opts.date) : ymd(new Date())
   const db = supabaseAdmin()
 
   // ── CHEAP CACHE CHECK FIRST (2026-09-09 audit) ───────────────────────────────────────────────
@@ -100,10 +105,15 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean } = {}
     nameOf[String(l.id)] = name
     ids.push(String(l.id))
   }
-  const [run, queue, dupes] = await Promise.all([
+  const [run, queue, dupes, crew, board] = await Promise.all([
     buildSuggestions(today),
     buildReviewQueue(ids, today, { nameOf, horizon: 21, limit: 200 }),
     auditDuplicates({ listingIds: ids, days: 30, today }),
+    // WHO IS ACTUALLY WORKING, AND HOW LOADED THEY ARE (2026-09-09 audit). The model was picking
+    // "send Roberto" while blind to whether Roberto is on shift, already at 141%, or in the other
+    // county. The capacity model has all three and was never in the prompt.
+    buildDayPicture(today).catch(() => null),
+    buildOpsDay(today).catch(() => null),
   ])
   // Same market rule as the client's all(market) (SuggestionsBand): vendor buildings file under 'Vendor', never under their geography.
   const sugs: Suggestion[] = run.enabled === false ? [] : run.suggestions.filter(s => market === 'all' || (market === 'Vendor' ? s.vendor : s.market === market && !s.vendor))
@@ -116,6 +126,11 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean } = {}
   // ── cache: same candidates, same day, under two hours → same answer ──
   const hash = createHash('sha1').update(JSON.stringify({
     today, market, heavy: run.day.heavy, cap: run.day.cap,
+    // The crew's shape is part of the question, so a verdict does not survive somebody clocking out.
+    // BUCKETED. Utilisation moves with every assignment, and an exact percentage in the hash meant
+    // a new model call roughly every 20 minutes per market. Quarter-bands are what the judgement
+    // actually turns on: has room / nearly full / full / over.
+    c: (crew?.people || []).map(p => p.person + ':' + Math.min(5, Math.round(p.utilisationPct / 25))),
     s: sugs.map(s => s.id + ':' + s.candidates.join(',')),
     w: waiting.map(w => w.taskId + ':' + (w.target?.date || '') + ':' + (w.target?.hasTrade ? 1 : 0)),
     d: groups.map(dupId),
@@ -137,6 +152,43 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean } = {}
   const day = run.day
   const lines: string[] = []
   lines.push(`DAY ${today} · market ${market} · ${day.openCleans} departure cleans still open · ${day.cleaners} cleaners · load ${day.load}/cleaner · ${day.heavy ? 'HEAVY turn day' : 'normal day'} · engine cap for new jobs today: ${day.cap}${day.verdict ? ' · ' + day.verdict : ''}`)
+
+  // ── THE CREW, AS THE CAPACITY MODEL PRICES THEM ──────────────────────────────────────────────
+  // Names, trade, how loaded, and how much room is left. This is what turns "send somebody" into
+  // "send Yoslenis, who is in the building and has room for two more".
+  const people = (crew?.people || []).filter(p => p.verdict !== 'implausible')
+  if (people.length) {
+    lines.push('')
+    lines.push('CREW TODAY — who is on, and how full their day already is. Never propose work for somebody over 100%.')
+    for (const p of people.slice(0, 24)) {
+      lines.push(`  ${p.person} ;; ${p.cleans} clean${p.cleans === 1 ? '' : 's'}${p.otherTasks ? ' + ' + p.otherTasks + ' other' : ''} ;; ${p.utilisationPct}% loaded ;; ${p.utilisationPct > 100 ? 'OVER — do not add' : p.headroomCleans > 0 ? 'room for about ' + p.headroomCleans + ' more' : 'full'}`)
+    }
+    const idle = people.filter(p => p.capacityMinutes > 0 && p.cleans + p.otherTasks === 0).map(p => p.person)
+    if (idle.length) lines.push(`  IDLE, nothing assigned at all: ${idle.join(', ')} — work near them is close to free.`)
+  } else {
+    lines.push('')
+    lines.push('CREW TODAY — not available (no Homebase shifts read). Do not claim anyone is free or nearby.')
+  }
+
+  // ── WHAT THE BOARD IS ALREADY CARRYING ───────────────────────────────────────────────────────
+  // Unowned cleans outrank any preventative job: the model should be stingy on a day with holes in
+  // the turn coverage, and it could not see them.
+  if (board) {
+    // THIS MARKET'S board, not the portfolio's — a Broward verdict quoting Miami's open cleans is
+    // worse than no verdict. Staged cleans are spoken for, so they are not "nobody on it".
+    const all = Array.isArray(board.units) ? board.units : []
+    const units = market === 'all' ? all : all.filter((u: any) => u.market === market || u.market2 === market)
+    const unowned = units.flatMap((u: any) => (u.tasks || [])
+      .filter((t: any) => !t.done && !t.guestyOnly && !(t.assignees || []).length
+        && !(u.stagedFor && (t.type === 'departure_clean' || /clean/i.test(String(t.name || '')))))
+      .map(() => u.unit))
+    // Counted from this market's own rows, for the same reason.
+    const cleans = units.flatMap((u: any) => (u.tasks || []).filter((t: any) => t.type === 'departure_clean' && !t.guestyOnly))
+    const dl: any = board.deadline || {}
+    lines.push('')
+    lines.push(`BOARD (${market}) — ${cleans.filter((t: any) => !t.done).length} of ${cleans.length} cleans still open, ${cleans.filter((t: any) => t.late).length} late, ${cleans.filter((t: any) => t.atRisk).length} at risk against ${dl.dueBy || 'the deadline'}.`
+      + (unowned.length ? ` ${unowned.length} task${unowned.length === 1 ? '' : 's'} on the board have NOBODY on them (${Array.from(new Set(unowned)).slice(0, 6).join(', ')}) — those matter more than anything below.` : ' Everything on the board has a name on it.'))
+  }
   lines.push('')
   lines.push('CANDIDATES — one per line, fields as key=value separated by " ;; ". The id field is the WHOLE string between id=" and the closing quote (ids contain | characters). S = preventative job the cadence engine says is due and could happen today (nobody has filed it yet; picking it means "add"). P = maintenance already on the books, waiting; target = next day the unit is empty; "with <name>" means a technician is already booked there (picking it means "move" it onto that day). D = the same job completed twice on one unit (picking it means "cancel" the extra).')
   const q = (v: string) => '"' + v.replace(/"/g, "'") + '"'
@@ -145,7 +197,7 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean } = {}
   for (const g of groups) lines.push(`D id=${q(dupId(g))} ;; unit=${g.unit} ;; job=${g.key.replace(/-/g, ' ')} ;; date=${g.date} ;; ${g.tasks.length} tasks, keep ${g.keepId}`)
 
   const system = `You are the operations lead's morning planner for a short-term rental company running ~300 units across Miami and Broward. A coordinator reads your output and acts on it; nothing you say is executed automatically.
-Pick what is REAL and DOABLE today: a technician already in the building or unit, a unit empty today with someone near it, a badly late job with a workable day, a duplicate that wastes a visit. On a heavy turn day be stingy. Never pick more than ${MAX_FOCUS}; fewer is fine; zero is fine if the day cannot hold it. Every reason is one concrete sentence a coordinator can act on — who, where, why today — not a restatement of the line. Everything you do not pick goes under review automatically; add a "review" note ONLY for the few (at most 10) where a coordinator needs a word of context (e.g. "guest in until Fri", "needs a vendor"). Copy ids exactly. Return JSON only:
+Pick what is REAL and DOABLE today: a technician already in the building or unit, a unit empty today with someone near it, a badly late job with a workable day, a duplicate that wastes a visit. You are given the crew and how loaded each person already is — never propose work for somebody over 100%, prefer whoever has real room, and if the board still has cleans with nobody on them, say so in the headline and pick almost nothing. On a heavy turn day be stingy. Never pick more than ${MAX_FOCUS}; fewer is fine; zero is fine if the day cannot hold it. Every reason is one concrete sentence a coordinator can act on — who, where, why today — not a restatement of the line. Everything you do not pick goes under review automatically; add a "review" note ONLY for the few (at most 10) where a coordinator needs a word of context (e.g. "guest in until Fri", "needs a vendor"). Copy ids exactly. Return JSON only:
 {"headline": "<one sentence, the day's shape and how many to focus on>", "focus": [{"id": "<id>", "do": "add"|"move"|"cancel", "reason": "<sentence>"}], "review": [{"id": "<id>", "note": "<a few words>"}], "parked": "<one sentence: what was left and why>"}`
 
   const key = process.env.ANTHROPIC_API_KEY
@@ -191,7 +243,10 @@ Pick what is REAL and DOABLE today: a technician already in the building or unit
   // a window of many seconds now — so two markets building at once would clobber each other's entry.
   const fresh = (await getSetting<Record<string, Cached>>(OPS_FOCUS_KEY, {}).catch(() => all)) || all
   const next: Record<string, Cached> = {}
-  for (const k of Object.keys(fresh)) if (k.startsWith(today + '|')) next[k] = fresh[k]
+  // Keep the last few days, not only this one: paging the date pager to tomorrow and back used to
+  // wipe today's verdict and pay for the model twice.
+  const keep = [today, ymd(new Date()), shiftDay(today, 1), shiftDay(today, -1)]
+  for (const k of Object.keys(fresh)) if (keep.some(d => k.startsWith(d + '|'))) next[k] = fresh[k]
   next[cacheKey] = { hash, at, model: answeredBy, verdict: clean, candidates }
   await setSetting(OPS_FOCUS_KEY, next, null).catch(() => {})
   return { ok: true, today, market, verdict: clean, candidates, model: answeredBy, at, cached: false }

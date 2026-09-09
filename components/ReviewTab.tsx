@@ -40,12 +40,14 @@ type Focus = {
   verdict: { headline: string; focus: { id: string; reason: string; do: 'add' | 'move' | 'cancel' }[]; review: { id: string; note: string }[]; parked: string }
   error?: string
 }
-const focusUrl = (market: string, refresh = false) => `/api/ops-today/focus?market=${encodeURIComponent(market)}${refresh ? '&refresh=1' : ''}`
+const focusUrl = (market: string, refresh = false, date?: string) => `/api/ops-today/focus?market=${encodeURIComponent(market)}${refresh ? '&refresh=1' : ''}` + (date ? `&date=${date}` : '')
 const dupId = (g: DupGroup) => 'dup:' + g.listingId + '|' + g.date + '|' + g.key
 
 /** The number on the tab: how many the model says to focus on today. */
-export function ReviewCount({ market }: { market: string | null }) {
-  const { data } = useCachedFetch<Focus>(market ? focusUrl(market) : null, { ttl: 5 * 60_000 })
+export function ReviewCount({ market, date }: { market: string | null; date?: string }) {
+  // The SAME url the tab uses, or the badge and the tab are two cache entries, two requests and two
+  // model calls on every board load — which is what the in-flight guard exists to prevent.
+  const { data } = useCachedFetch<Focus>(market ? focusUrl(market, false, date) : null, { ttl: 5 * 60_000 })
   const n = data?.verdict?.focus?.length || 0
   if (!n) return null
   return <span className="ml-1 text-[10px] font-bold px-1 rounded bg-brand-500 text-white tabular-nums">{n}</span>
@@ -60,7 +62,7 @@ type Row =
 const DEPT_ICON: Record<string, any> = { maintenance: Wrench, housekeeping: Sparkles, inspection: ClipboardList }
 const CARD = 'rounded-2xl border border-line bg-white overflow-hidden'
 
-export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: () => void }) {
+export function ReviewTab({ market, date, onRefresh }: { market: string; date?: string; onRefresh: () => void }) {
   const sugCtx = useSuggestions()
   const [data, setData] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
@@ -72,24 +74,24 @@ export function ReviewTab({ market, onRefresh }: { market: string; onRefresh: ()
   const [bulkDate, setBulkDate] = useState('')
   const [bulkWho, setBulkWho] = useState('')
   const [bulkNote, setBulkNote] = useState('')
-  const { data: focus, loading: focusLoading, error: focusErr, refresh: refetchFocus } = useCachedFetch<Focus>(focusUrl(market), { ttl: 5 * 60_000 })
+  const { data: focus, loading: focusLoading, error: focusErr, refresh: refetchFocus } = useCachedFetch<Focus>(focusUrl(market, false, date), { ttl: 5 * 60_000 })
   const [reasking, setReasking] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const r = await fetch(`/api/ops-today/review?market=${encodeURIComponent(market)}`, { cache: 'no-store' })
+      const r = await fetch(`/api/ops-today/review?market=${encodeURIComponent(market)}` + (date ? `&date=${date}` : ''), { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || j.ok === false) throw new Error(j?.error || 'Could not load the review.')
       setData(j)
     } catch (e: any) { setError(String(e?.message || e)) } finally { setLoading(false) }
-  }, [market])
+  }, [market, date])
   useEffect(() => { load() }, [load])
 
   // Re-ask the model: bypass the two-hour cache, then re-read the rows too.
   const reask = async () => {
     setReasking(true)
-    try { await fetch(focusUrl(market, true), { cache: 'no-store' }); invalidateCache(focusUrl(market)); await refetchFocus(); await load() } finally { setReasking(false) }
+    try { await fetch(focusUrl(market, true, date), { cache: 'no-store' }); invalidateCache(focusUrl(market, false, date)); await refetchFocus(); await load() } finally { setReasking(false) }
   }
 
   const items: Item[] = useMemo(() => (data?.queue?.items || []).filter((i: Item) => !done.has(i.taskId)), [data, done])

@@ -84,7 +84,10 @@ export function OpsV2() {
   const { data, loading, error, refresh } = useCachedFetch<OpsData>(
     isToday ? '/api/ops-today' : `/api/ops-today?date=${date}`)
   const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches')
-  const { data: staff, error: staffErr } = useCachedFetch<Staffing>('/api/ops-today/staffing')
+  // THE BOARD'S DATE, NOT TODAY'S (2026-09-09 audit). The route has taken ?date= since it was
+  // written and the client never sent one, so planning tomorrow was done against today's clock-ins.
+  const { data: staff, error: staffErr } = useCachedFetch<Staffing>(
+    isToday ? '/api/ops-today/staffing' : `/api/ops-today/staffing?date=${date}`)
   // The capacity model prices the same day the board is showing — today or a planned date.
   const { data: cap } = useCachedFetch<CapData>(
     isToday ? '/api/capacity' : `/api/capacity?date=${date}`, { ttl: 5 * 60_000 })
@@ -201,13 +204,13 @@ export function OpsV2() {
       {tab === 'grid' && (
         <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
           loading={loading} error={error ? String(error) : null}
-          onRefresh={refresh} onAddTask={u => setAddFor(u)} openSheet={sheet} onSheet={onSheet}
+          onRefresh={refresh} onAddTask={u => setAddFor(u)} openSheet={sheet} onSheet={onSheet} boardDate={date}
           aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} compact />} />
       )}
       {tab === 'people' && <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />}
       {tab === 'people' && <PeopleTab staff={staff || null} staffErr={staffErr ? String(staffErr) : null} units={units} roster={roster} onRefresh={refresh} cap={cap || null} />}
 
-      {sheet === 'add' && addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
+      {sheet === 'add' && addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} boardDate={date} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
     </div>
   )
 }
@@ -500,7 +503,7 @@ const SHEET_TEMPLATES: { key: string; label: string; hint: string; department: s
 type Intel = { lastFeedback?: { rating: number | null; date: string | null; excerpt: string | null } | null; checklist?: string[] }
 type BzTpl = { id: number; name: string; department: string; description: string }
 
-function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roster[]; onClose: () => void; onDone: () => void; initialQuery?: string }) {
+function AddTaskSheet({ roster, onClose, onDone, initialQuery, boardDate }: { roster: Roster[]; onClose: () => void; onDone: () => void; initialQuery?: string; boardDate?: string }) {
   const [listings, setListings] = useState<Listing[]>([])
   const [unitsReady, setUnitsReady] = useState(false)
   const [unitsErr, setUnitsErr] = useState(false)
@@ -518,7 +521,12 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
   const [title, setTitle] = useState('')
   const [dept, setDept] = useState('maintenance')
   const [prio, setPrio] = useState('normal')
-  const [date, setDate] = useState('')
+  // Defaults to the day the board is showing: adding a task while looking at tomorrow and having it
+  // land on today is the kind of surprise that costs a trip.
+  const [date, setDate] = useState(boardDate || '')
+  // If the board's day changes under the sheet, follow it — filing tomorrow's task onto today is a
+  // wasted trip. (The sheet unmounts on close, so this only matters while it is open.)
+  useEffect(() => { setDate(boardDate || '') }, [boardDate])
   const [desc, setDesc] = useState('')
   const [picked, setPicked] = useState<number[]>([])
   const [intel, setIntel] = useState<Intel | null>(null)

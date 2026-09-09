@@ -65,9 +65,14 @@ export function DayPlanPanel({ units, roster, staff, today, onClose, onApplied }
     const out: PlanTask[] = []
     for (const u of units) {
       if (u.guestyOnly) continue
+      // ALREADY SPOKEN FOR BY THE SCHEDULER (2026-09-09 audit). /schedule stages a cleaner against a
+      // unit before anybody pushes it to Breezeway; proposing a second person for that clean is how
+      // two people turn up at one door.
+      const stagedClean = (u as any).stagedFor as string | null | undefined
       for (const t of u.tasks) {
         if (t.done || t.guestyOnly) continue
         if ((t.assignees || []).length) continue
+        if (stagedClean && (/clean/i.test(t.name) || /housekeep/i.test(t.dept))) continue
         if (doneIds.has(t.id)) continue
         out.push({
           id: t.id, name: t.name, unit: u.unit, listingId: u.listingId,

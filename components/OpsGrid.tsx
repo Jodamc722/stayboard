@@ -31,7 +31,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
-  LayoutGrid, Users, X, MapPin, Clock, RefreshCw,
+  LayoutGrid, Users, X, MapPin, Clock, RefreshCw, CalendarClock,
   DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
   Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble, Wand2,
 } from 'lucide-react'
@@ -43,6 +43,7 @@ import { SuggestionsProvider, UnitSuggestions, PersonSuggestions, useSuggestions
 import { AssignPanel } from '@/components/AssignPanel'
 import { DayPlanPanel } from '@/components/DayPlanPanel'
 import { ReviewTab, ReviewCount } from '@/components/ReviewTab'
+import { DueCalendar, DueCount } from '@/components/DueCalendar'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -63,6 +64,8 @@ export type GUnit = {
   listingId: string; unit: string; market: string; market2?: string | null; building?: string | null
   city?: string | null; address?: string | null; bedrooms?: number | null
   guestOut: string | null; arrivingGuest?: string | null; arrivingAt?: string | null
+  /** Staged in the Scheduler, not yet pushed to Breezeway — spoken for, not unowned. */
+  stagedFor?: string | null
   checkOutTime?: string | null; sameDayTurn: boolean; nights?: number | null; arrivingNights?: number | null
   qc?: { issue: string; status: string; reportUrl: string | null }[]
   tasks: GTask[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; guestyOnly?: boolean
@@ -737,7 +740,7 @@ function fmtAgo(iso: string): string {
   return `${h}h ${m % 60}m ago`
 }
 
-export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, openSheet, onSheet, aside }: {
+export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, openSheet, onSheet, boardDate, aside }: {
   data: GData | undefined
   glitches: GGlitch[]
   roster: GRoster[]
@@ -749,13 +752,15 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   /** Which sheet the page has open — one at a time, owned by OpsV2. */
   openSheet: 'add' | 'plan' | null
   onSheet: (s: 'add' | 'plan' | null) => void
+  /** The day the board is showing — Focus and the PM ledger answer for THAT day, not for today. */
+  boardDate?: string
   /** The crew line (the capacity model, compact) — rides on the day line so the clock and the crew are one strip, not two banners. */
   aside?: React.ReactNode
 }) {
   // A THIRD TAB (Jon, 2026-08-31: "create a review / recommended tab"). Units and People both
   // answer "what is happening today". Review answers "what is hanging over us, and when could we
   // clear it" — a different question, so it earns its own tab rather than another filter.
-  const [mode, setMode] = useState<'units' | 'people' | 'review'>('units')
+  const [mode, setMode] = useState<'units' | 'people' | 'review' | 'due'>('units')
   const [cat, setCat] = useState<Cat | null>(null)
   const [q, setQ] = useState('')
   // The search box is a whole line of a phone screen for something you use once a day. On a phone
@@ -782,12 +787,12 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const [prefsReady, setPrefsReady] = useState(false)
   useEffect(() => {
     try {
-      const m = localStorage.getItem('opsgrid_mode'); if (m === 'people' || m === 'review') setMode(m as any)
+      const m = localStorage.getItem('opsgrid_mode'); if (m === 'people' || m === 'review' || m === 'due') setMode(m as any)
       const k = localStorage.getItem('opsgrid_market'); if (k) setMkt(k)
     } catch {}
     setPrefsReady(true)
   }, [])
-  const pickMode = (m: 'units' | 'people' | 'review') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
+  const pickMode = (m: 'units' | 'people' | 'review' | 'due') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
   const pickMkt = (m: string) => { setMkt(m); try { localStorage.setItem('opsgrid_market', m) } catch {} }
 
   const allUnits: GUnit[] = Array.isArray(data?.units) ? data!.units : []
@@ -814,8 +819,11 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   // How much work on this slice of the board nobody owns. It is the label on the Plan day button
   // and the reason it exists — when it is zero the button is not rendered at all, because a button
   // that opens a panel saying "nothing to do" is a button that trains people not to press it.
+  // Staged cleans do not count: the panel skips them, so counting them here produced "Plan day 1"
+  // opening a panel with nothing in it — the exact thing this count exists to prevent.
   const unownedNow = useMemo(() => units.reduce((n, u) =>
-    u.guestyOnly ? n : n + u.tasks.filter(t => !t.done && !t.guestyOnly && !(t.assignees || []).length).length, 0), [units])
+    u.guestyOnly ? n : n + u.tasks.filter(t => !t.done && !t.guestyOnly && !(t.assignees || []).length
+      && !(u.stagedFor && (t.type === 'departure_clean' || /clean/i.test(t.name) || /housekeep/i.test(t.dept)))).length, 0), [units])
 
   // The chips are built from the WHOLE day, not the filtered slice — otherwise picking a market
   // hides every other market and you cannot get back without knowing the names.
@@ -887,6 +895,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     const catMatch = (t: GTask) => !cat || catKeyOf(t) === cat
     if (mode === 'units') {
       const rowsForUnits: Row[] = units.map(u => {
+        const staged = u.stagedFor || null
         const tasks = u.tasks.filter(catMatch)
         const res = u.sameDayTurn
           ? 'TURN · out ' + (u.checkOutTime || '') + ' → in ' + (u.arrivingAt || '4:00 PM') + (u.arrivingGuest ? ' · ' + u.arrivingGuest : '')
@@ -909,7 +918,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         return {
           key: 'u:' + u.listingId, title: u.unit,
           sub: [u.building, u.city].filter(Boolean).join(' · ') || u.market,
-          reservation: res, status: unitStatus(u), tasks, issues,
+          reservation: staged ? res + ' · staged for ' + staged : res,
+          status: unitStatus(u), tasks, issues,
           gapNights: gapByListing[u.listingId] ?? null,
           urgent: (u.late ? 100 : 0) + (u.atRisk ? 50 : 0) + (u.sameDayTurn ? 20 : 0) + (u.unassigned ? 10 : 0) + issues.length,
           listingId: u.listingId,
@@ -967,7 +977,11 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     }
     for (const u of units) for (const t of u.tasks) {
       if (!catMatch(t)) continue
-      if (!t.assignees.length) { if (!t.done) unassigned.push(t); continue }
+      if (!t.assignees.length) {
+        const stagedClean = !!u.stagedFor && (t.type === 'departure_clean' || /clean/i.test(t.name) || /housekeep/i.test(t.dept))
+        if (!t.done && !stagedClean) unassigned.push(t)
+        continue
+      }
       for (const n of t.assignees) {
         const k = personKey(n)
         if (!k) continue
@@ -1179,11 +1193,12 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           filter; tapping the highlighted one again clears it. ── */}
       <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
         <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
-          {([['units', 'Units', LayoutGrid], ['people', 'People', Users], ['review', 'Focus', Sparkles]] as const).map(([k, label, Icon]) => (
+          {([['units', 'Units', LayoutGrid], ['people', 'People', Users], ['review', 'Focus', Sparkles], ['due', 'Due', CalendarClock]] as const).map(([k, label, Icon]) => (
             <button key={k} onClick={() => pickMode(k as any)}
               className={'px-2.5 py-1.5 rounded-[10px] text-[12.5px] font-bold inline-flex items-center gap-1.5 ' + (mode === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
               <Icon size={13} /> {label}
-              {k === 'review' && <ReviewCount market={prefsReady ? mkt : null} />}
+              {k === 'review' && <ReviewCount market={prefsReady ? mkt : null} date={boardDate} />}
+              {k === 'due' && <DueCount market={prefsReady ? mkt : null} date={boardDate} />}
             </button>
           ))}
         </div>
@@ -1196,17 +1211,17 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             </select>
           </label>
         )}
-        {mode !== 'review' && (
+        {mode !== 'review' && mode !== 'due' && (
           <select value={activeOnly ? 'active' : 'all'} onChange={e => setActiveOnly(e.target.value === 'active')} aria-label="Which rows" title="Active = still has work on it; All = the whole portfolio, finished units included"
             className="rounded-xl border border-line bg-white px-2 py-1.5 text-[12.5px] font-semibold text-ink min-h-[34px] focus:outline-none">
             <option value="active">Still open</option>
             <option value="all">Everything</option>
           </select>
         )}
-        {mode !== 'review' && !(searchOpen || q) && (
+        {mode !== 'review' && mode !== 'due' && !(searchOpen || q) && (
           <button onClick={() => setSearchOpen(true)} aria-label="Search" className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink min-h-[34px]"><Search size={14} /></button>
         )}
-        {mode !== 'review' && (
+        {mode !== 'review' && mode !== 'due' && (
           <div className={'relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[140px] sm:max-w-[240px] ' + ((searchOpen || q) ? '' : 'hidden sm:block')}>
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
             <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} onBlur={() => { if (!q) setSearchOpen(false) }}
@@ -1217,12 +1232,12 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         )}
         <span className="ml-auto inline-flex items-center gap-1.5">
           {/* PLAN THE DAY — counts the unowned work in its own label; not rendered when there is none. */}
-          {unownedNow > 0 && mode !== 'review' && (
+          {unownedNow > 0 && mode !== 'review' && mode !== 'due' && (
             <button onClick={() => setPlanOpen(true)} className="px-2.5 py-1.5 rounded-xl border border-brand-500/40 bg-brand-50 text-brand-700 text-[12px] font-bold inline-flex items-center gap-1.5 hover:bg-brand-100 min-h-[34px]">
               <Wand2 size={13} /> Plan day <span className="text-[10px] font-bold text-brand-700/70 tabular-nums">{unownedNow}</span>
             </button>
           )}
-          {mode !== 'review' && (
+          {mode !== 'review' && mode !== 'due' && (
             <button onClick={() => setKeyOpen(k => !k)} aria-label="Key" title="What the colours and symbols mean"
               className={'w-[34px] h-[34px] rounded-xl border text-[12px] font-bold inline-flex items-center justify-center ' + (keyOpen ? 'bg-app border-ink/30 text-ink' : 'bg-white border-line text-muted hover:text-ink')}>?</button>
           )}
@@ -1232,9 +1247,13 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       {/* ── REVIEW ── The third tab replaces the grid entirely rather than sitting under it: it
           answers a different question, and stacking it below eighty rows is how a panel becomes
           something nobody scrolls to. ── */}
-      {mode === 'review' ? (
+      {mode === 'due' ? (
         <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
-          <ReviewTab market={mkt} onRefresh={onRefresh} />
+          <DueCalendar market={mkt} date={boardDate} onRefresh={onRefresh} />
+        </div>
+      ) : mode === 'review' ? (
+        <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
+          <ReviewTab market={mkt} date={boardDate} onRefresh={onRefresh} />
         </div>
       ) : (
       <>

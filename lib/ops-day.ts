@@ -29,6 +29,9 @@ function etMinutes(d: Date) {
   return (Number(p[0]) % 24) * 60 + Number(p[1])
 }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
+/** Is this the turnover clean a Scheduler staging would be about? One definition, three callers. */
+export const isCleanish = (t: { name?: any; dept?: any; type?: any }) =>
+  t.type === 'departure_clean' || /clean/i.test(str(t.name)) || /housekeep/i.test(str(t.dept))
 /** Minutes-since-midnight as a clock face. The deadline is an operator setting, so it is never typed out. */
 function clockOf(min: number): string {
   const m = Math.max(0, Math.round(min)) % (24 * 60)
@@ -164,7 +167,7 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   // they'd be in the unit by 4pm, so it is not free to work in.
   const backFrom = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(new Date(today + 'T12:00:00Z').getTime() - 21 * 86400000))
   const ahead90 = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(new Date(today + 'T12:00:00Z').getTime() + 90 * 86400000))
-  const [occRes, nextRes, pastRes] = await Promise.all([
+  const [occRes, nextRes, pastRes, stagedRes] = await Promise.all([
     // PAGED (2026-09-03): .limit(4000) is 1,000 in practice. Future arrivals alone pass that in
     // season, and the board's "next arrival" for a vacant unit was the first 1,000 by date.
     pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name').lte('check_in', today).gt('check_out', today).order('id').range(a, b), 6),
@@ -174,11 +177,21 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,status').gt('check_in', today).lte('check_in', ahead90).order('check_in', { ascending: true }).order('id').range(a, b), 4),
     // Recent past checkouts — the other half of "why is a departure clean sitting on today?".
     pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_out,status').gte('check_out', backFrom).lt('check_out', today).order('check_out', { ascending: false }).order('id').range(a, b), 6),
+    // THE SCHEDULER'S STAGED PICKS (2026-09-09 audit). /schedule stages a cleaner against a unit and
+    // a day before anybody pushes it to Breezeway. This board never read that table, so Plan day
+    // happily proposed a second person for a clean the Scheduler had already spoken for — two
+    // writers, no shared staging. A staged clean is not unowned; it is spoken for.
+    db.from('schedule_staged').select('listing_id,cleaner_name').eq('date', today),
   ])
   // A TRUNCATED OCCUPANCY SCAN IS NOT AN EMPTY ONE. pageRows returns truncated:true on a PostgREST
   // error; unread occupancy makes every departure clean look 'moved' and every unit vacant.
   if (occRes.truncated) throw new Error('could not read occupancy — the scan stopped early')
   if (nextRes.truncated || pastRes.truncated) degradedReads.push('arrival history')
+  const stagedFor: Record<string, string> = {}
+  if (stagedRes && (stagedRes as any).error) degradedReads.push('the Scheduler\'s staged picks')
+  else for (const r of (((stagedRes as any)?.data || []) as any[])) {
+    const nm = str(r.cleaner_name); if (nm) stagedFor[String(r.listing_id)] = nm
+  }
   const occupied: Record<string, string> = {}
   const occupiedUntil: Record<string, string> = {}
   // IN THE UNIT vs ARRIVING TODAY — two different guests (Jon, 2026-09-01: "why is this saying
@@ -341,7 +354,12 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     u.tasks.sort((a: any, b: any) => (ORDER[a.type] ?? 9) - (ORDER[b.type] ?? 9))
     u.late = u.tasks.some((t: any) => t.late)
     u.atRisk = u.tasks.some((t: any) => t.atRisk)
-    u.unassigned = u.tasks.some((t: any) => t.assignees.length === 0 && !t.done)
+    // A clean the Scheduler has already staged a cleaner against is NOT unowned — nobody should be
+    // sent to it a second time from here, and the row says who it is waiting on. Scoped to CLEANS:
+    // a staged cleaner says nothing about an unowned maintenance task in the same unit, and letting
+    // it mask one would drop that unit out of the urgency ranking entirely.
+    u.stagedFor = stagedFor[u.listingId] || null
+    u.unassigned = u.tasks.some((t: any) => t.assignees.length === 0 && !t.done && !(u.stagedFor && isCleanish(t)))
     u.untracked = u.tasks.some((t: any) => t.untracked)
     u.allDone = u.tasks.every((t: any) => t.done)
     u.guestyOnly = !!u.guestyOnly || u.tasks.every((t: any) => t.guestyOnly)

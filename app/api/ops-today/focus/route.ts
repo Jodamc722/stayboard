@@ -14,8 +14,10 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   const refresh = req.nextUrl.searchParams.get('refresh') === '1'
+  const qd = String(req.nextUrl.searchParams.get('date') || '')
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(qd) ? qd : undefined
   try {
-    return NextResponse.json(await buildOpsFocus(market, { refresh }))
+    return NextResponse.json(await buildOpsFocus(market, { refresh, date }))
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
