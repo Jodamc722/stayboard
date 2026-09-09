@@ -27,10 +27,11 @@ export default function OpsPlanPage() {
       {/* HIDDEN ON A PHONE. Shell's mobile app bar already prints "Today in Ops" (lib/nav), so this
           block repeated the page title plus an eyebrow — about 70px of a 750px screen, on the one
           page where vertical space decides how many units you can see before scrolling. */}
-      <header className="mb-4 hidden sm:block">
-        <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><ClipboardList size={13} /> Operations</p>
-        <div className="flex items-center gap-3 flex-wrap mt-1">
-          <h1 className="text-3xl font-bold text-ink tracking-tight">Today in Ops</h1>
+      {/* SMALLER THAN THE CLOCK (2026-09-09 audit). A 30px page title above a 13px deadline put the
+          least useful text on the screen first; the sidebar already says where you are. */}
+      <header className="mb-3 hidden sm:block">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-[20px] font-bold text-ink tracking-tight inline-flex items-center gap-1.5"><ClipboardList size={15} className="text-muted" /> Today in Ops</h1>
           {/* Paper copy of the day for whoever is running the field. */}
           <Link href="/plan/print" className="hidden sm:inline-flex text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app items-center gap-1.5 text-muted hover:text-ink"
             title="Printable day sheet: arrivals, departures, owner stays, work orders, open issues and vacant units">

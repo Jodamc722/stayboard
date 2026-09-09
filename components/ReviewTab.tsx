@@ -8,9 +8,10 @@
 // candidate and answers the actual question:
 //
 //   FOCUS TODAY   the few worth doing — each with a one-sentence reason and one button.
-//   REVIEW        everything else, grouped by why it waits (free trip · unit empty · no window ·
-//                 suggested but not today), closed by default, opened when you want to plan ahead.
-//   DECISIONS     what the automation would retire and what was done twice — a person approves.
+//   REVIEW        the rest of the backlog, grouped by why it waits (free trip · unit empty · no
+//                 window · done twice), closed by default, opened when you want to plan ahead.
+//                 Preventative jobs the engine parked for today are NOT here — the Due ledger is
+//                 their home, and listing them twice is how two surfaces drift.
 //
 // The rows are still the engines' rows (suggestions from the provider, the backlog from
 // /api/ops-today/review), so Add / Move / Delete go through the exact routes they always did. The
@@ -110,20 +111,24 @@ export function ReviewTab({ market, date, onRefresh }: { market: string; date?: 
   const picks = useMemo(() => (focus?.verdict?.focus || []).map(p => ({ ...p, row: byId.get(p.id) })).filter(p => !!p.row) as { id: string; reason: string; do: string; row: Row }[], [focus, byId])
   const picked = useMemo(() => new Set(picks.map(p => p.id)), [picks])
   const selectable = useMemo(() => picks.filter(p => p.row.kind !== 'dup'), [picks])
+  const suggestionsParked = useMemo(() => Array.from(byId.values()).filter(r => !picked.has(r.id) && r.kind === 'suggestion').length, [byId, picked])
   const noteOf = useMemo(() => { const m: Record<string, string> = {}; for (const r of (focus?.verdict?.review || [])) m[r.id] = r.note; return m }, [focus])
-  const rest = useMemo(() => Array.from(byId.values()).filter(r => !picked.has(r.id)), [byId, picked])
+  // Cadence suggestions the model did not pick are NOT listed here: by the engine's own rule they
+  // were dropped for today, and the Due ledger is the forward view that owns them. So they leave
+  // `rest` entirely — otherwise the count above the list counts rows the list does not show.
+  const rest = useMemo(() => Array.from(byId.values()).filter(r => !picked.has(r.id) && r.kind !== 'suggestion'), [byId, picked])
   const reviewGroups: { key: string; label: string; rows: Row[] }[] = useMemo(() => {
     const g = (k: string, label: string, rows: Row[]) => ({ key: k, label, rows })
     return [
       g('free', 'Free trip — somebody is already going', rest.filter(r => r.kind === 'pending' && r.item.target?.hasTrade)),
       g('empty', 'Unit empty — needs a person sent', rest.filter(r => r.kind === 'pending' && r.item.target && !r.item.target.hasTrade)),
       g('none', 'No empty day in three weeks', rest.filter(r => r.kind === 'pending' && !r.item.target)),
-      g('sug', 'Suggested by cadence — not today', rest.filter(r => r.kind === 'suggestion')),
+      // "Suggested by cadence — not today" is gone: by the engine's own rule those were dropped for
+      // today, and the Due view is now the forward ledger they belong in.
       g('dup', 'Done twice — cancel the extra', rest.filter(r => r.kind === 'dup')),
     ].filter(x => x.rows.length)
   }, [rest])
   const allRows = useMemo(() => [...picks.map(p => p.row), ...rest], [picks, rest])
-  const strays: any[] = data?.strays?.closed || []
 
   // ── actions — the same routes as ever ──
   async function schedule(i: Item, date?: string, assignee?: string) {
@@ -205,7 +210,6 @@ export function ReviewTab({ market, date, onRefresh }: { market: string; date?: 
     return <div className="px-4 py-10 text-center text-[13px]"><p className="text-rose-700">{error}</p><button onClick={load} className="mt-2 text-[12.5px] font-semibold text-brand-600 hover:underline">Try again</button></div>
   }
   const v = focus?.verdict
-  const decisions = strays.length
 
   return (
     <div className="p-3 sm:p-4 space-y-4">
@@ -220,7 +224,7 @@ export function ReviewTab({ market, date, onRefresh }: { market: string; date?: 
           {v?.parked && <p className="text-[12px] text-muted mt-0.5">{v.parked}</p>}
           {focus?.fallback && <p className="text-[11.5px] text-amber-800 mt-1">The model could not answer ({focus.fallback}) — this is the engines&rsquo; own order, not a judgement.</p>}
           {focus && !focus.fallback && (
-            <p className="text-[11px] text-muted mt-1 inline-flex items-center gap-1"><Cpu size={10} /> {focus.model} · {clock(focus.at)}{focus.cached ? ' · cached' : ''}</p>
+            <p className="text-[11px] text-muted mt-1 inline-flex items-center gap-1" title={'Model: ' + focus.model}><Cpu size={10} /> AI · {clock(focus.at)}{focus.cached ? ' · cached' : ''}</p>
           )}
         </div>
         <button onClick={reask} disabled={reasking || loading} title="Ask the model again with the board as it is now"
@@ -267,7 +271,10 @@ export function ReviewTab({ market, date, onRefresh }: { market: string; date?: 
 
       {/* ── REVIEW ── grouped by why it waits; closed at rest. */}
       <section>
-        <h3 className="text-[13.5px] font-bold text-ink mb-1.5 px-1">Review <span className="text-muted font-semibold tabular-nums">{rest.length}</span></h3>
+        <h3 className="text-[13.5px] font-bold text-ink mb-1.5 px-1">
+          Review <span className="text-muted font-semibold tabular-nums">{rest.length}</span>
+          {suggestionsParked > 0 && <span className="ml-2 text-[11.5px] font-normal text-muted">· {suggestionsParked} preventative job{suggestionsParked === 1 ? '' : 's'} not for today — see Due</span>}
+        </h3>
         <div className={CARD}>
           {reviewGroups.length === 0 && <p className="px-4 py-4 text-[12.5px] text-muted">Nothing else is waiting.</p>}
           {reviewGroups.map(g => {
@@ -287,33 +294,10 @@ export function ReviewTab({ market, date, onRefresh }: { market: string; date?: 
         </div>
       </section>
 
-      {/* ── DECISIONS ── what the automation would retire. A person approves; nothing here fires. */}
-      {(strays.length > 0 || data?.strays) && (
-        <section>
-          <button onClick={() => setOpenGroups(o => ({ ...o, strays: !o.strays }))} aria-expanded={!!openGroups.strays} className="mb-1.5 px-1 inline-flex items-center gap-1.5 text-[13.5px] font-bold text-ink">
-            {openGroups.strays ? <ChevronDown size={13} className="text-muted" /> : <ChevronRight size={13} className="text-muted" />}
-            Decisions <span className="text-muted font-semibold tabular-nums">{decisions}</span>
-          </button>
-          {openGroups.strays && (
-            <div className={CARD}>
-              <div className="px-3 py-2 bg-app border-b border-line">
-                <p className="text-[12.5px] font-semibold text-ink">{strays.length} inspection{strays.length === 1 ? '' : 's'} would be cancelled</p>
-                <p className="text-[11.5px] text-muted mt-0.5">Open more than a week and not created by Lighthouse. Cancelled, never marked complete — completing one would say the walk happened.{data?.strays?.skipped?.lighthouse ? ` ${data.strays.skipped.lighthouse} left alone, Lighthouse made them.` : ''}</p>
-              </div>
-              <div className="divide-y divide-line max-h-[260px] overflow-y-auto">
-                {strays.slice(0, 60).map((c: any) => (
-                  <div key={c.id} className="px-3 py-1.5 flex items-center gap-2">
-                    <span className="text-[12px] text-ink flex-1 truncate">{c.unit} <span className="text-muted">&middot; {c.name}</span></span>
-                    <span className="text-[11px] text-muted tabular-nums shrink-0">{c.date}</span>
-                  </div>
-                ))}
-                {strays.length === 0 && <p className="px-3 py-3 text-[12px] text-muted">Nothing stray is sitting open.</p>}
-              </div>
-              <p className="px-3 py-2 text-[11px] text-muted border-t border-line bg-app/50">Runs only when the automation is switched on in Settings &rarr; Automations. Until then it is a proposal and nothing else. Duplicates are under Review &rarr; Done twice.</p>
-            </div>
-          )}
-        </section>
-      )}
+      {/* DECISIONS lived here — the automation's stray-inspection proposals, with no button on them.
+          A list that fires nothing is a settings page, not an ops floor; it lives in Settings →
+          Automations, where the switch that would act on it is. Duplicates kept their row, because
+          those DO have a button. (2026-09-09 audit.) */}
     </div>
   )
 }

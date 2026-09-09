@@ -175,12 +175,13 @@ const metaOf = (by: Record<string, CatMeta>, key: string): CatMeta =>
 //             alarm, it is an exclusion: the job exists and must not be done today. Keeping rose
 //             out of it means rose now means exactly one thing on this board — a human is needed.
 type TaskState = 'done' | 'running' | 'open' | 'unassigned'
-const STATE: Record<TaskState, { label: string; chip: string; swatch: string }> = {
-  done: { label: 'Finished', chip: 'bg-emerald-500 border-emerald-500 text-white', swatch: 'bg-emerald-500 border-emerald-500' },
-  running: { label: 'In progress', chip: 'bg-amber-400 border-amber-400 text-white', swatch: 'bg-amber-400 border-amber-400' },
-  open: { label: 'Not started', chip: 'bg-white border-slate-300 text-slate-500', swatch: 'bg-white border-slate-300' },
+// `swatch` went with the Key popover it existed for (2026-09-09).
+const STATE: Record<TaskState, { label: string; chip: string }> = {
+  done: { label: 'Finished', chip: 'bg-emerald-500 border-emerald-500 text-white' },
+  running: { label: 'In progress', chip: 'bg-amber-400 border-amber-400 text-white' },
+  open: { label: 'Not started', chip: 'bg-white border-slate-300 text-slate-500' },
   // Same paint as `open` — an unassigned task IS not-started; the dot says nobody owns it.
-  unassigned: { label: 'Nobody assigned', chip: 'bg-white border-slate-300 text-slate-500', swatch: 'bg-white border-slate-300' },
+  unassigned: { label: 'Nobody assigned', chip: 'bg-white border-slate-300 text-slate-500' },
 }
 const stateOf = (t: GTask): TaskState =>
   t.done ? 'done' : t.running ? 'running' : t.assignees.length ? 'open' : 'unassigned'
@@ -249,28 +250,36 @@ function Tile({ cat, c, active, onClick }: { cat: CatMeta | null; c: Counts; act
   return (
     <button onClick={onClick} title={cat ? cat.label + ' — ' + c.done + ' done · ' + c.running + ' in progress · ' + c.open + ' to go' : 'Everything open'}
       aria-pressed={active}
-      className={'inline-flex items-center gap-1.5 rounded-xl border px-2 py-1.5 bg-white transition-colors min-h-[34px] ' +
-        (active ? 'border-ink shadow-sm' : 'border-line hover:border-ink/25')}>
-      {G && <G size={12} strokeWidth={2.5} className="text-slate-500 shrink-0" />}
-      <span className="text-[12px] font-bold text-ink whitespace-nowrap">{cat ? cat.label : 'Everything'}</span>
-      <span className="text-[12px] font-bold text-ink tabular-nums">{c.total}</span>
+      className={'inline-flex items-center gap-1.5 rounded-xl border px-2 py-1.5 transition-colors min-h-[34px] ' +
+        (active ? 'bg-ink border-ink text-white' : 'bg-white border-line hover:border-ink/25')}>
+      {G && <G size={12} strokeWidth={2.5} className={(active ? 'text-white/80' : 'text-slate-500') + ' shrink-0'} />}
+      <span className={'text-[12px] font-bold whitespace-nowrap ' + (active ? 'text-white' : 'text-ink')}>{cat ? cat.label : 'Everything'}</span>
+      <span className={'text-[12px] font-bold tabular-nums ' + (active ? 'text-white' : 'text-ink')}>{c.total}</span>
       {c.total > 0 && (
         <>
           {/* The 4px bar keeps the completion palette the task chips use — green done, amber running, grey untouched. */}
-          <span className="w-8 h-1 rounded-full bg-slate-200 overflow-hidden flex shrink-0" aria-hidden>
+          <span className={'w-8 h-1 rounded-full overflow-hidden flex shrink-0 ' + (active ? 'bg-white/25' : 'bg-slate-200')} aria-hidden>
             {c.done > 0 && <span className="bg-emerald-500 h-full" style={{ width: pct(c.done) + '%' }} />}
             {c.running > 0 && <span className="bg-amber-400 h-full" style={{ width: pct(c.running) + '%' }} />}
           </span>
-          {left === 0 && <span className="text-[10.5px] text-emerald-700 font-semibold whitespace-nowrap">done</span>}
+          {left === 0 && <span className={'text-[11px] font-semibold whitespace-nowrap ' + (active ? 'text-white/80' : 'text-emerald-700')}>done</span>}
         </>
       )}
     </button>
   )
 }
 
-// ── STATUS — the unit-level word, Breezeway's vocabulary ────────────────────────────────────────
-// Ready / Dirty / In progress / Open. "Dirty" is reserved for the one that costs money: the guest
-// has gone and the turnover has not been touched.
+// ── STATUS — the unit-level word ────────────────────────────────────────────────────────────────
+//
+// THREE TINTS, AND EVERYTHING ELSE IS NEUTRAL (2026-09-09 audit). This file's own contract says
+// colour carries progress and rose means "a human is needed". In practice rose was also on Dirty —
+// an ordinary, owned, on-time turn — so the strongest signal on the board fired on the most common
+// state and stopped meaning anything. Now:
+//     emerald  finished / ready
+//     amber    under way
+//     rose     a person is needed right now (the guest is still inside)
+//     neutral  every ordinary state, including a turn nobody has started yet
+// "Dirty" also goes: it is Breezeway's word for a normal turnover, and it reads like an accusation.
 function unitStatus(u: GUnit): { label: string; cls: string } {
   const open = u.tasks.filter(t => !t.done)
   const clean = u.tasks.find(t => t.type === 'departure_clean')
@@ -279,8 +288,8 @@ function unitStatus(u: GUnit): { label: string; cls: string } {
   // to read "Dirty" here, which is the one word that would send somebody to the door.
   if (clean && !clean.done && clean.moveState === 'extended') return { label: 'Guest still in', cls: 'bg-rose-100 text-rose-800 border-rose-300' }
   if (u.tasks.some(t => t.running && !t.done)) return { label: 'In progress', cls: 'bg-amber-50 text-amber-800 border-amber-200' }
-  if (clean && !clean.done && clean.moveState === 'moved') return { label: 'Held for clean', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' }
-  if (u.guestOut && clean && !clean.done) return { label: 'Dirty', cls: 'bg-rose-50 text-rose-700 border-rose-200' }
+  if (clean && !clean.done && clean.moveState === 'moved') return { label: 'Held for clean', cls: 'bg-app text-muted border-line' }
+  if (u.guestOut && clean && !clean.done) return { label: 'To turn', cls: 'bg-app text-ink border-line' }
   return { label: 'Open', cls: 'bg-app text-muted border-line' }
 }
 
@@ -320,7 +329,8 @@ function TaskChip({ t }: { t: GTask }) {
         onMouseLeave={() => { if (!pinned) setAt(null) }}
         onClick={ev => { ev.stopPropagation(); place(); setPinned(p => !p) }}
         aria-label={c.label + ': ' + t.name}
-        className={'relative w-6 h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
+        aria-expanded={open}
+        className={'relative w-7 h-7 lg:w-6 lg:h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
           STATE[state].chip +
           // SWITCHED OFF, NOT ALARMED. A guest is still in the unit, so this job must not happen
           // today. Muting it says that in the one way an alarm colour cannot: it removes the chip
@@ -342,13 +352,13 @@ function TaskChip({ t }: { t: GTask }) {
             onClick={ev => ev.stopPropagation()}>
             <div className="flex items-center gap-1.5 mb-1">
               <span className={'w-4 h-4 rounded-[4px] border inline-flex items-center justify-center ' + STATE[state].chip}><Glyph size={10} strokeWidth={2.6} /></span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-line bg-app text-muted">{c.label}</span>
+              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md border border-line bg-app text-muted">{c.label}</span>
             </div>
             <p className="text-[12.5px] font-bold text-ink leading-snug">{t.name}</p>
             <p className="text-[11.5px] text-muted mt-0.5">{t.unit}</p>
             {mv && (
               <div className="mt-1.5 rounded-lg bg-app px-2 py-1.5">
-                <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded ' + mv.cls}>{mv.tag}</span>
+                <span className={'text-[11px] font-bold px-1.5 py-0.5 rounded ' + mv.cls}>{mv.tag}</span>
                 <p className="text-[11.5px] text-ink mt-1 leading-snug">{mv.line}</p>
               </div>
             )}
@@ -362,9 +372,17 @@ function TaskChip({ t }: { t: GTask }) {
             <p className="text-[11.5px] mt-0.5">
               {t.assignees.length
                 ? <span className="text-muted">{t.assignees.join(', ')}</span>
-                : <span className="font-bold text-rose-600">Nobody assigned</span>}
+                : <span className="font-bold text-rose-600">Nobody assigned <span className="font-normal text-muted">— that is what the dot on the chip means</span></span>}
             </p>
-            {t.late && <p className="text-[11px] font-bold text-rose-700 mt-1">Past the 4pm deadline.</p>}
+            {/* The projection, where the chip is. */}
+            {t.landsAt && !t.done && (
+              <p className={'text-[11.5px] mt-0.5 ' + (t.landsAt.overMin > 0 ? 'font-bold text-rose-700' : 'text-muted')}>
+                {t.landsAt.confidence === 'loose' ? 'Roughly lands ' : 'Lands '}{t.landsAt.at}
+                <span className="font-normal text-muted"> · {t.landsAt.person}, stop {t.landsAt.position} of {t.landsAt.of}</span>
+              </p>
+            )}
+            {t.moveState === 'extended' && <p className="text-[11.5px] text-muted mt-1">The chip is faded because the guest is still inside — this one is not to be done today.</p>}
+            {t.late && <p className="text-[11px] font-bold text-rose-700 mt-1">Past the deadline.</p>}
             {isReal(t) && (
               <div className="mt-2 pt-2 border-t border-line flex items-center gap-3">
                 <a href={bzTask(t.id)} target="_blank" rel="noreferrer"
@@ -478,12 +496,12 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           primary interaction on the most-used screen in the app, unreachable by keyboard. */}
       <div role="button" tabIndex={0} aria-expanded={open}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}
-        className={'relative flex flex-wrap items-center gap-x-2 gap-y-0.5 lg:grid lg:grid-cols-12 lg:gap-3 px-3 py-2 lg:py-2.5 hover:bg-app/60 cursor-pointer focus:outline-none focus-visible:bg-app '
+        className={'relative flex flex-wrap items-center gap-x-2 gap-y-0.5 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(150px,auto)_minmax(0,4fr)_minmax(0,2.4fr)_minmax(60px,auto)] lg:gap-3 px-3 py-2 lg:py-2.5 hover:bg-app/60 cursor-pointer focus:outline-none focus-visible:bg-app '
           + (row.late ? 'before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-rose-500'
             : row.atRisk ? 'before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-amber-400' : '')}
         onClick={() => setOpen(o => !o)}>
         {/* who / what */}
-        <div className="order-1 flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:col-span-3 lg:flex-none lg:gap-2">
+        <div className="order-1 flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:gap-2">
           <ChevronRight size={14} className={'text-muted shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
           <div className="min-w-0">
             <div className="text-[13.5px] font-bold text-ink truncate">{row.title}</div>
@@ -492,40 +510,40 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           </div>
         </div>
         {/* status — beside the name on a phone, its own column on desktop */}
-        <div className="order-2 flex items-center gap-1.5 shrink-0 lg:order-none lg:col-span-2 lg:gap-2">
-          <span className={'text-[10.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + row.status.cls}>{row.status.label}</span>
+        <div className="order-2 flex items-center gap-1.5 flex-wrap min-w-0 shrink-0 lg:shrink lg:order-none lg:gap-2">
+          <span className={'text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + row.status.cls}>{row.status.label}</span>
           {total > 0 && (
-            <span className="text-[10.5px] font-semibold text-muted tabular-nums" title={done + ' of ' + total + ' finished'}>
+            <span className="text-[11px] font-semibold text-muted tabular-nums" title={done + ' of ' + total + ' finished'}>
               {done}/{total}
             </span>
           )}
           {/* Issues and the free-nights count join the headline on a phone: they are the two things
               that decide whether this row needs you, so they belong where the eye already is. */}
           {row.issues.length > 0 && (
-            <span className="lg:hidden text-[10.5px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1"
+            <span className="lg:hidden text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1"
               title={row.issues.map(i => i.text).join(' · ')}>
               <AlertTriangle size={10} />{row.issues.length}
             </span>
           )}
           {row.gapNights != null && (
-            <span className="lg:hidden text-[10.5px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">{row.gapNights}n</span>
+            <span className="lg:hidden text-[11px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">{row.gapNights}n</span>
           )}
           {/* LATE AND AT RISK, IN WORDS. The rail catches the eye down the column; this says which
               one it is without opening anything. */}
-          {row.late && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 whitespace-nowrap">LATE</span>}
-          {!row.late && row.atRisk && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">AT RISK</span>}
+          {row.late && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 whitespace-nowrap">LATE</span>}
+          {!row.late && row.atRisk && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">AT RISK</span>}
           {/* THE PROJECTION, not the hour. "lands 4:40 PM" says which clean is the problem and why
               — where it sits in that person's run — instead of flagging every unstarted clean at
               2:30. A loose guess (no shift on record) is shown with a ~ and never in red. */}
           {row.lands && (
             <span title={row.lands.person + ' — stop ' + row.lands.position + ' of ' + row.lands.of + (row.lands.confidence === 'started' ? ' (started, so this is measured from the real start)' : row.lands.confidence === 'loose' ? ' (no shift on record, so this assumes a 9am start)' : ' (from the priced run order)')}
-              className={'text-[10.5px] font-semibold tabular-nums whitespace-nowrap ' + (row.lands.confidence === 'loose' ? 'text-muted' : row.lands.overMin > 0 ? 'text-rose-700' : 'text-muted')}>
+              className={'text-[11px] font-semibold tabular-nums whitespace-nowrap ' + (row.lands.confidence === 'loose' ? 'text-muted' : row.lands.overMin > 0 ? 'text-rose-700' : 'text-muted')}>
               {row.lands.confidence === 'loose' ? '~' : ''}lands {row.lands.at}
             </span>
           )}
         </div>
         {/* reservation / shift context — full width on a phone, carrying the city with it */}
-        <div className="order-3 w-full min-w-0 lg:order-none lg:col-span-3 lg:w-auto">
+        <div className="order-3 w-full min-w-0 lg:order-none lg:w-auto">
           <span className="block truncate text-[11.5px] text-muted lg:whitespace-nowrap">
             <span className="lg:hidden">{[metaSub, row.reservation].filter(Boolean).join(' \u00b7 ')}</span>
             <span className="hidden lg:inline">{row.reservation}</span>
@@ -545,22 +563,22 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           )}
         </div>
         {/* the day's work */}
-        <div className="order-4 w-full flex items-center gap-1 flex-wrap lg:order-none lg:col-span-3 lg:w-auto">
+        <div className="order-4 w-full flex items-center gap-1 flex-wrap lg:order-none lg:w-auto">
           {row.tasks.length === 0
             ? <span className="text-[11px] text-muted">No tasks today</span>
             : row.tasks.slice(0, 14).map(t => <TaskChip key={t.id} t={t} />)}
-          {row.tasks.length > 14 && <span className="text-[10.5px] text-muted font-semibold">+{row.tasks.length - 14}</span>}
+          {row.tasks.length > 14 && <span className="text-[11px] text-muted font-semibold">+{row.tasks.length - 14}</span>}
         </div>
         {/* issues + gap — desktop keeps its own right-hand column */}
-        <div className="hidden lg:col-span-1 lg:flex items-center gap-2 lg:justify-end">
+        <div className="hidden lg:flex items-center gap-2 lg:justify-end">
           {row.issues.length > 0 && (
-            <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1"
+            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1"
               title={row.issues.map(i => i.text).join(' · ')}>
               <AlertTriangle size={10} />{row.issues.length}
             </span>
           )}
           {row.gapNights != null && (
-            <span className="text-[10.5px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">
+            <span className="text-[11px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">
               {row.gapNights}n
             </span>
           )}
@@ -571,7 +589,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
         <div className="px-3 pb-3 pt-1 bg-app/40" onClick={e => e.stopPropagation()}>
           {row.issues.length > 0 && (
             <div className="mb-2 rounded-xl border border-rose-200 bg-rose-50/60 overflow-hidden">
-              <p className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-rose-800 border-b border-rose-200">
+              <p className="px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-rose-800 border-b border-rose-200">
                 {row.issues.length} open {row.issues.length === 1 ? 'issue' : 'issues'} on this unit
               </p>
               <div className="divide-y divide-rose-200/70">
@@ -579,15 +597,15 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
                   <div key={i.id || n} className="px-2.5 py-1.5 flex items-center gap-2 flex-wrap">
                     <span className="text-[11.5px] font-semibold text-rose-900 min-w-0 flex-1">{i.text}</span>
                     {i.ageDays != null && (
-                      <span className={'text-[10px] font-bold tabular-nums shrink-0 ' + (i.ageDays > 7 ? 'text-rose-700' : 'text-rose-600/70')}>
+                      <span className={'text-[11px] font-bold tabular-nums shrink-0 ' + (i.ageDays > 7 ? 'text-rose-700' : 'text-muted')}>
                         {i.ageDays}d open
                       </span>
                     )}
                     {i.kind === 'glitch' && (
                       i.unassigned
-                        ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Nobody on it</span>
+                        ? <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Nobody on it</span>
                         : i.assignees?.length
-                          ? <span className="text-[10.5px] text-rose-800/80 shrink-0">{i.assignees.join(', ')}{i.running ? ' · working' : ''}</span>
+                          ? <span className="text-[11px] text-rose-800 shrink-0">{i.assignees.join(', ')}{i.running ? ' · working' : ''}</span>
                           : null
                     )}
                     {i.reportUrl && (
@@ -718,14 +736,14 @@ function TaskLine({ t, roster, mode, onRefresh, comment, units, staff, unitMeta 
       <div className="flex items-center gap-2 flex-wrap">
         <span className={'w-4 h-4 rounded-[4px] border shrink-0 inline-flex items-center justify-center ' + STATE[stateOf(t)].chip}><c.Icon size={9} strokeWidth={2.6} /></span>
         <span className="text-[12.5px] font-semibold text-ink">{t.name}</span>
-        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-line bg-app text-muted">{c.short}</span>
+        <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md border border-line bg-app text-muted">{c.short}</span>
         {t.done
-          ? <span className="text-[10.5px] font-bold text-emerald-700">Finished{t.finishedAt ? ' ' + shortTime(t.finishedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
+          ? <span className="text-[11px] font-bold text-emerald-700">Finished{t.finishedAt ? ' ' + shortTime(t.finishedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
           : t.running
-            ? <span className="text-[10.5px] font-bold text-amber-700">In progress{t.startedAt ? ' since ' + shortTime(t.startedAt) : ''}</span>
-            : <span className="text-[10.5px] font-bold text-muted">Not started</span>}
-        {t.late && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-rose-600 text-white">Late</span>}
-        {mv && <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md ' + mv.cls} title={mv.line}>{mv.tag}</span>}
+            ? <span className="text-[11px] font-bold text-amber-700">In progress{t.startedAt ? ' since ' + shortTime(t.startedAt) : ''}</span>
+            : <span className="text-[11px] font-bold text-muted">Not started</span>}
+        {t.late && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-600 text-white">Late</span>}
+        {mv && <span className={'text-[11px] font-bold px-1.5 py-0.5 rounded-md ' + mv.cls} title={mv.line}>{mv.tag}</span>}
         {mode === 'units' && (
           t.assignees.length
             ? <span className="text-[11.5px] text-muted">{t.assignees.join(', ')}</span>
@@ -855,7 +873,6 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const searchRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => { if (searchOpen && searchRef.current) searchRef.current.focus() }, [searchOpen])
   const [activeOnly, setActiveOnly] = useState(true)
-  const [keyOpen, setKeyOpen] = useState(false)
   // PLAN THE DAY (Jon, 2026-08-27: "need the AI systems to help assign or build tasks to ensure we
   // give the team a full and directional day"). Opens over the board it is planning, so the numbers
   // in the header and the plan behind it are the same numbers.
@@ -1039,7 +1056,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         rowsForUnits.push({
           key: 'g:' + g.unit, title: g.unit, sub: 'open issue \u00b7 nothing scheduled today',
           reservation: 'No work on the board today',
-          status: { label: 'Issue open', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+          status: { label: 'Issue open', cls: 'bg-app text-ink border-line' },
           tasks: [], issues, gapNights: null, urgent: 40 + issues.length,
         })
       }
@@ -1148,7 +1165,9 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         priced: pricedOf(nm), pricedIsWholeDay: mkt !== 'all',
         reservation: (sp?.clockedIn ? 'On the clock' : 'On shift') + ', nothing assigned'
           + (mkt !== 'all' ? ' anywhere today' : ''),
-        status: { label: 'Free', cls: 'bg-brand-50 text-brand-700 border-brand-200' },
+        // NOT emerald: "Done for today" is emerald, and these two mean opposite things in the one
+        // column a coordinator scans to answer "who can take this".
+        status: { label: 'Free', cls: 'bg-white text-ink border-ink/40 font-bold' },
         tasks: [], issues: [], gapNights: null,
         // Above ordinary working people, below the unassigned pile: an idle person is not urgent in
         // itself, but it is the answer to the row directly above them.
@@ -1283,13 +1302,16 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       {dl && dl.cleans > 0 && (
         <div className={'mb-3 rounded-xl border ' + (dl.late > 0 ? 'border-rose-300' : dl.atRisk > 0 ? 'border-amber-300' : 'border-line')}>
           <div className={'rounded-xl px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap ' + (dl.late > 0 ? 'bg-rose-50' : dl.atRisk > 0 ? 'bg-amber-50' : 'bg-app')}>
-            <span className="inline-flex items-baseline gap-1.5 shrink-0">
-              <Clock size={13} className={dl.late > 0 ? 'text-rose-600' : dl.atRisk > 0 ? 'text-amber-600' : 'text-muted'} />
-              <span className="text-[13px] font-black text-ink tabular-nums">{dl.dueBy}</span>
-              <span className={'text-[12px] font-bold tabular-nums ' + (dl.passed ? 'text-rose-700' : 'text-muted')}>{clock}</span>
+            {/* THE BIGGEST THING ON THE PAGE (2026-09-09 audit). The whole job of this board is a
+                deadline, and the deadline was 13px — smaller than a unit name, under a 30px page
+                title. The countdown is what a coordinator checks first, so it reads first. */}
+            <span className="inline-flex items-baseline gap-2 shrink-0">
+              <Clock size={16} className={dl.late > 0 ? 'text-rose-600' : dl.atRisk > 0 ? 'text-amber-600' : 'text-muted'} />
+              <span className="text-[22px] font-black text-ink tabular-nums leading-none">{dl.dueBy}</span>
+              <span className={'text-[14px] font-bold tabular-nums ' + (dl.passed ? 'text-rose-700' : dl.late > 0 ? 'text-rose-700' : dl.atRisk > 0 ? 'text-amber-700' : 'text-muted')}>{clock}</span>
             </span>
             <span className="text-line hidden sm:inline">|</span>
-            <span className="text-[12px] text-muted">
+            <span className="text-[13px] text-muted">
               <b className="text-ink tabular-nums">{dl.remaining}</b> of {dl.cleans} cleans still open
               {dl.running > 0 && <> &middot; <b className="text-amber-700 tabular-nums">{dl.running}</b> under way</>}
             </span>
@@ -1308,7 +1330,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             {aside}
             {/* HOW OLD IS THIS. The route computes lastSync precisely so a coordinator can tell —
                 its own comment says "a stale list is how walk-ins happen" — and nothing showed it. */}
-            <span className="text-[10.5px] text-muted shrink-0 inline-flex items-center gap-1.5">
+            <span className="text-[11px] text-muted shrink-0 inline-flex items-center gap-1.5">
               {loading && <Loader2 size={10} className="animate-spin" />}
               {data?.lastSync ? `synced ${fmtAgo(data.lastSync)}` : today}
               <button onClick={onRefresh} className="hover:text-ink" title="Refresh now"><RefreshCw size={11} /></button>
@@ -1357,7 +1379,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         {markets.length > 1 && (
           <label className="inline-flex items-center gap-1 rounded-xl border border-line bg-white pl-2 pr-1 min-h-[34px]" title="Area">
             <MapPin size={12} className="text-muted" />
-            <select value={mkt} onChange={e => pickMkt(e.target.value)} aria-label="Area" className="bg-transparent text-[12.5px] font-semibold text-ink py-1 pr-1 focus:outline-none">
+            <select value={mkt} onChange={e => pickMkt(e.target.value)} aria-label="Area" className="bg-transparent text-[12.5px] font-semibold text-ink py-1 pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/40 rounded">
               <option value="all">All areas</option>
               {markets.map(m => <option key={m.key} value={m.key}>{m.key}{m.open ? ' · ' + m.open : ''}</option>)}
             </select>
@@ -1365,7 +1387,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         )}
         {mode !== 'review' && mode !== 'due' && (
           <select value={activeOnly ? 'active' : 'all'} onChange={e => setActiveOnly(e.target.value === 'active')} aria-label="Which rows" title="Active = still has work on it; All = the whole portfolio, finished units included"
-            className="rounded-xl border border-line bg-white px-2 py-1.5 text-[12.5px] font-semibold text-ink min-h-[34px] focus:outline-none">
+            className="rounded-xl border border-line bg-white px-2 py-1.5 text-[12.5px] font-semibold text-ink min-h-[34px] focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/40">
             <option value="active">Still open</option>
             <option value="all">Everything</option>
           </select>
@@ -1386,12 +1408,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           {/* PLAN THE DAY — counts the unowned work in its own label; not rendered when there is none. */}
           {unownedNow > 0 && mode !== 'review' && mode !== 'due' && (
             <button onClick={() => setPlanOpen(true)} className="px-2.5 py-1.5 rounded-xl border border-brand-500/40 bg-brand-50 text-brand-700 text-[12px] font-bold inline-flex items-center gap-1.5 hover:bg-brand-100 min-h-[34px]">
-              <Wand2 size={13} /> Plan day <span className="text-[10px] font-bold text-brand-700/70 tabular-nums">{unownedNow}</span>
+              <Wand2 size={13} /> Plan day <span className="text-[11px] font-bold text-brand-700 tabular-nums">{unownedNow}</span>
             </button>
-          )}
-          {mode !== 'review' && mode !== 'due' && (
-            <button onClick={() => setKeyOpen(k => !k)} aria-label="Key" title="What the colours and symbols mean"
-              className={'w-[34px] h-[34px] rounded-xl border text-[12px] font-bold inline-flex items-center justify-center ' + (keyOpen ? 'bg-app border-ink/30 text-ink' : 'bg-white border-line text-muted hover:text-ink')}>?</button>
           )}
         </span>
       </div>
@@ -1419,65 +1437,24 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
 
       {/* ── HEADER + ROWS ── */}
       <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
-        {/* ── THE KEY ─────────────────────────────────────────────────────────────────────────
-            The legend used to be thirteen swatches over two rows, rendered AFTER the entire table.
-            To decode a symbol in row three you scrolled past eighty rows, read the key, and scrolled
-            back — a legend you cannot see while decoding is not a legend, it is an apology. It also
-            cost ~66px of permanent height on the screen where height is the scarcest thing there is.
-            Now it opens where you are already looking, and costs nothing when closed. */}
-        <div className="relative">
-          {keyOpen && (
-            <>
-              <div className="fixed inset-0 z-20" onClick={() => setKeyOpen(false)} />
-              <div className="absolute right-0 top-1 z-30 w-[min(340px,calc(100vw-2rem))] rounded-xl border border-line bg-white shadow-xl p-3 text-left">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">Colour &mdash; how far along</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2.5">
-                  {(['done', 'running', 'open'] as TaskState[]).map(k => (
-                    <span key={k} className="inline-flex items-center gap-1.5 text-[11px] text-ink">
-                      <span className={'w-4 h-4 rounded-[4px] border-2 shrink-0 ' + STATE[k].swatch} />{STATE[k].label}
-                    </span>
-                  ))}
-                </div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">And two things that are not stages</p>
-                <div className="space-y-1 mb-2.5">
-                  <span className="flex items-center gap-1.5 text-[11px] text-ink">
-                    <span className="relative w-4 h-4 rounded-[4px] border-2 bg-white border-slate-300 shrink-0">
-                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 ring-1 ring-white" />
-                    </span>
-                    Dot = nobody has taken it
-                  </span>
-                  <span className="flex items-center gap-1.5 text-[11px] text-ink">
-                    <span className="w-4 h-4 rounded-[4px] border-2 bg-white border-slate-300 opacity-45 ring-2 ring-slate-400 ring-offset-1 shrink-0" />
-                    Faded = guest still in, do not clean
-                  </span>
-                </div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">Symbol &mdash; what the work is</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-1">
-                  {cats.list.map(c => {
-                    const G = c.Icon
-                    return (
-                      <span key={c.key} className="inline-flex items-center gap-1.5 text-[11px] text-ink">
-                        <span className="w-4 h-4 rounded-[4px] border border-slate-300 bg-white text-slate-500 inline-flex items-center justify-center shrink-0"><G size={9} strokeWidth={2.6} /></span>
-                        {c.label}
-                      </span>
-                    )
-                  })}
-                </div>
-                <p className="text-[10.5px] text-muted mt-2 pt-2 border-t border-line">Each symbol is one task. Hover or tap one for its detail; tap a row to work it.</p>
-              </div>
-            </>
-          )}
-        </div>
-        <div className="hidden lg:grid grid-cols-12 gap-3 px-3 py-2 bg-app border-b border-line text-[10px] font-bold uppercase tracking-wider text-muted">
+        {/* THE KEY lived here — thirteen swatches behind a "?" that a coordinator opened once and
+            never again. The colour scale is three states and reads itself; the two rules that are
+            not obvious (a corner dot means nobody has taken it, a faded chip means the guest is
+            still inside) ride on the chips' own tooltips, where the eye already is. */}
+        {/* COLUMN WIDTHS THAT MATCH THE CONTENT (2026-09-09 audit). The 3/2/3/3/1 grid gave the
+            reservation sentence ~235px, so "TURN · out 11:00 AM → in 4:00 PM · ma…" dropped the
+            guest's name, while the tasks column held ~235px for one or two 24px chips and Issues
+            sat empty on most rows. */}
+        <div className="hidden lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(150px,auto)_minmax(0,4fr)_minmax(0,2.4fr)_minmax(60px,auto)] gap-3 px-3 py-2 bg-app border-b border-line text-[11px] font-bold uppercase tracking-wider text-muted">
           {/* THE HEADER NOW MATCHES THE ROW. The cells render in DOM order on desktop — property,
               STATUS, reservation, tasks, issues — but this header claimed property, RESERVATION,
               STATUS, tasks, issues. Two of five labels sat over the wrong data, and nobody caught
               it because the header is hidden below lg. */}
-          <div className="col-span-3 pl-5">{mode === 'units' ? 'Property' : 'Person'}</div>
-          <div className="col-span-2">Status</div>
-          <div className="col-span-3">{mode === 'units' ? 'Reservation' : 'Load today'}</div>
-          <div className="col-span-3">Tasks today</div>
-          <div className="col-span-1 text-right">{mode === 'units' ? 'Issues' : ''}</div>
+          <div className="pl-5">{mode === 'units' ? 'Property' : 'Person'}</div>
+          <div>Status</div>
+          <div>{mode === 'units' ? 'Reservation' : 'Load today'}</div>
+          <div>Tasks today</div>
+          <div className="text-right">{mode === 'units' ? 'Issues' : ''}</div>
         </div>
         {shown.length === 0 ? (
           <div className="px-4 py-8 text-center text-[13px] text-muted">
