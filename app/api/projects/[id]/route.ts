@@ -238,25 +238,43 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (!(LINK_KINDS as readonly string[]).includes(kind)) return NextResponse.json({ error: 'bad kind' }, { status: 400 })
         const refs: string[] = Array.isArray(b.refIds) ? b.refIds.map(String) : (str(b.refId) ? [str(b.refId)] : [])
         if (!refs.length) return NextResponse.json({ error: 'nothing to link' }, { status: 400 })
-        const rows: any[] = refs.slice(0, 400).map(ref_id => ({ project_id: id, kind, ref_id, label: str(b.label) || null }))
+        // TASK-LEVEL ATTACHMENTS (Jon, 2026-09-09): with taskId the row belongs to that task — the
+        // reservation this task is about, the owner it needs a yes from. Without, it is the project's.
+        const taskId = str(b.taskId) || null
+        if (taskId && !(await taskRow(taskId))) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const rows: any[] = refs.slice(0, 400).map(ref_id => ({ project_id: id, kind, ref_id, label: str(b.label) || null, task_id: taskId }))
         // A BUILDING IS A COLLECTIVE OF UNITS (Jon, 2026-09-08). Attaching one attaches the building
         // row AND one listing row per unit, so "12 of 34 done" is computed from real links rather
         // than typed, and a unit that joins the building in Guesty later shows up as not-done.
         // An owner attaches the same way when asked — their units come along.
         const expand: string[] = Array.isArray(b.expandUnitIds) ? b.expandUnitIds.map(String).slice(0, 400) : []
-        if ((kind === 'building' || kind === 'owner') && expand.length) {
+        if ((kind === 'building' || kind === 'owner') && expand.length && !taskId) {
           const { data: ls } = await sb.from('guesty_listings').select('id,nickname,title').in('id', expand)
-          for (const l of ((ls || []) as any[])) rows.push({ project_id: id, kind: 'listing', ref_id: String(l.id), label: String(l.nickname || l.title || 'Unit') })
+          for (const l of ((ls || []) as any[])) rows.push({ project_id: id, kind: 'listing', ref_id: String(l.id), label: String(l.nickname || l.title || 'Unit'), task_id: null })
         }
-        const { error } = await sb.from('project_links').upsert(rows, { onConflict: 'project_id,kind,ref_id' })
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        // Uniqueness is (project, kind, ref, task) since 075; insert only what is not there yet.
+        let q = sb.from('project_links').select('kind,ref_id').eq('project_id', id)
+        q = taskId ? q.eq('task_id', taskId) : q.is('task_id', null)
+        const { data: have } = await q
+        const seen = new Set(((have || []) as any[]).map(h => h.kind + '|' + h.ref_id))
+        const fresh = rows.filter(r => !seen.has(r.kind + '|' + r.ref_id))
+        if (fresh.length) {
+          const { error } = await sb.from('project_links').insert(fresh)
+          if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        }
         const unitsAdded = rows.length - refs.length
-        await logEvent(id, me, 'link', `attached ${str(b.label) || refs.length + ' ' + kind + (refs.length === 1 ? '' : 's')}${unitsAdded ? ` and its ${unitsAdded} unit${unitsAdded === 1 ? '' : 's'}` : ''}`, { name: str(b.label) || kind, to: kind })
+        const t = taskId ? await taskRow(taskId) : null
+        await logEvent(id, me, 'link', `attached ${str(b.label) || refs.length + ' ' + kind + (refs.length === 1 ? '' : 's')}${unitsAdded ? ` and its ${unitsAdded} unit${unitsAdded === 1 ? '' : 's'}` : ''}${t ? '' : ''}`, { name: str(b.label) || kind, to: kind, task_id: t?.id, task_title: t?.title })
         break
       }
       case 'unlink': {
-        const { data: was } = await sb.from('project_links').select('label').eq('project_id', id).eq('kind', str(b.kind)).eq('ref_id', str(b.refId)).maybeSingle()
-        const { error } = await sb.from('project_links').delete().eq('project_id', id).eq('kind', str(b.kind)).eq('ref_id', str(b.refId))
+        const tid = str(b.taskId) || null
+        let wq = sb.from('project_links').select('label').eq('project_id', id).eq('kind', str(b.kind)).eq('ref_id', str(b.refId))
+        wq = tid ? wq.eq('task_id', tid) : wq.is('task_id', null)
+        const { data: was } = await wq.maybeSingle()
+        let dq = sb.from('project_links').delete().eq('project_id', id).eq('kind', str(b.kind)).eq('ref_id', str(b.refId))
+        dq = tid ? dq.eq('task_id', tid) : dq.is('task_id', null)
+        const { error } = await dq
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         await logEvent(id, me, 'unlink', `detached ${was?.label || str(b.kind)}`, { name: was?.label || str(b.kind), from: str(b.kind) })
         break
@@ -402,7 +420,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (!t) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
         const { data: cur } = await sb.from('project_steps').select('breezeway_task_id,description').eq('id', t.id).maybeSingle()
         if (cur?.breezeway_task_id) return NextResponse.json({ error: 'This task is already in Breezeway.' }, { status: 400 })
-        const listingId = str(b.listingId)
+        // The unit: what was picked, else the task's own attached unit, else the unit of its attached
+        // reservation — "push from the board" should not need a form when the task already knows.
+        let listingId = str(b.listingId)
+        if (!listingId) {
+          const { data: tl } = await sb.from('project_links').select('kind,ref_id').eq('task_id', t.id).in('kind', ['listing', 'reservation'])
+          const unit = ((tl || []) as any[]).find(l => l.kind === 'listing')
+          if (unit) listingId = String(unit.ref_id)
+          else {
+            const res = ((tl || []) as any[]).find(l => l.kind === 'reservation')
+            if (res) listingId = String((await sb.from('guesty_reservations').select('listing_id').eq('id', res.ref_id).maybeSingle()).data?.listing_id || '')
+          }
+        }
         if (!listingId) return NextResponse.json({ error: 'Pick the unit this happens at.' }, { status: 400 })
         const department = ['housekeeping', 'inspection', 'maintenance', 'safety'].includes(str(b.department)) ? str(b.department) : 'maintenance'
         const priority = ['urgent', 'high', 'normal', 'low'].includes(str(b.priority)) ? str(b.priority) : 'normal'
@@ -415,13 +444,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           description: [cur?.description, `From the “${await projectTitle()}” project in Lighthouse · sent by ${me}`].filter(Boolean).join('\n\n').slice(0, 1500),
         }
         if (Number.isFinite(homeId)) payload.home_id = homeId; else payload.reference_property_id = listingId
+        // A Breezeway template is the CHECKLIST the field task carries (Jon: "create checklists").
+        const templateId = Number(b.templateId)
+        if (Number.isFinite(templateId) && templateId > 0) payload.template_id = templateId
         const r = await createBreezewayTask(payload)
         if (!r.ok || !r.data?.id) return NextResponse.json({ error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
         const bzId = String(r.data.id)
         // Same people, matched by the shared name matcher; a name Breezeway does not know is skipped, not guessed.
-        const { data: asg } = await sb.from('project_task_assignees').select('display,email').eq('task_id', t.id)
-        const ids: number[] = []
-        for (const a of (asg || []) as any[]) { const pid = await matchBreezewayPerson(a.email || a.display).catch(() => null); if (pid) ids.push(pid) }
+        // Explicit people from the picker win; otherwise the task's assignees, matched by name.
+        let ids: number[] = (Array.isArray(b.assigneeIds) ? b.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)
+        if (!ids.length) {
+          const { data: asg } = await sb.from('project_task_assignees').select('display,email').eq('task_id', t.id)
+          for (const a of (asg || []) as any[]) { const pid = await matchBreezewayPerson(a.email || a.display).catch(() => null); if (pid) ids.push(pid) }
+        }
         let assigned = false
         if (ids.length) { try { assigned = !!(await updateBreezewayTask(bzId, { assignments: ids })).ok } catch { assigned = false } }
         await sb.from('project_steps').update({ breezeway_task_id: bzId, status: t.status === 'todo' ? 'doing' : t.status }).eq('id', t.id)
@@ -430,6 +465,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         } catch { /* the sync catches up */ }
         await logEvent(id, me, 'task_moved', `sent to Breezeway (${department}, ${date}${assigned ? ', assigned' : ''})`, { task_id: t.id, task_title: t.title, to: 'breezeway', name: bzId })
         return NextResponse.json({ ok: true, breezewayTaskId: bzId, reportUrl: r.data.report_url || null, assigned, project: await getProject(id) })
+      }
+
+      // Reassign or reschedule the field task from the board. Assignments REPLACE (Breezeway semantics).
+      case 'taskBreezewayUpdate': {
+        const t = await taskRow(str(b.taskId))
+        if (!t) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const { data: cur } = await sb.from('project_steps').select('breezeway_task_id').eq('id', t.id).maybeSingle()
+        if (!cur?.breezeway_task_id) return NextResponse.json({ error: 'This task is not in Breezeway yet.' }, { status: 400 })
+        const { updateBreezewayTask } = await import('@/lib/breezeway')
+        const patch: Record<string, any> = {}
+        if (Array.isArray(b.assigneeIds)) patch.assignments = b.assigneeIds.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(str(b.date))) patch.scheduled_date = str(b.date)
+        if (['urgent', 'high', 'normal', 'low'].includes(str(b.priority))) patch.type_priority = str(b.priority)
+        if (!Object.keys(patch).length) return NextResponse.json({ error: 'Nothing to change.' }, { status: 400 })
+        const r = await updateBreezewayTask(cur.breezeway_task_id, patch)
+        if (!r.ok) return NextResponse.json({ error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
+        if (patch.scheduled_date) await sb.from('breezeway_tasks_sync').update({ scheduled_date: patch.scheduled_date }).eq('id', cur.breezeway_task_id)
+        await logEvent(id, me, 'task_moved', `updated the Breezeway task${patch.assignments ? ' — reassigned' : ''}${patch.scheduled_date ? ' — ' + patch.scheduled_date : ''}`, { task_id: t.id, task_title: t.title, to: 'breezeway' })
+        break
       }
 
       // ---- ONE TASK, SEVERAL PROJECTS (Jon, 2026-09-09: "assign to multiple projects that I am in")
