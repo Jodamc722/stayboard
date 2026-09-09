@@ -35,7 +35,12 @@ export const TAB_SETS: TabSet[] = [
     key: 'money', label: 'Money',
     blurb: 'The business numbers, the revenue detail behind them, and the direct-booking tracker.',
     tabs: [
-      { to: '/kpi', label: 'KPI board' },
+      // KPI BOARD HIDDEN 2026-09-09 (Jon: "the kpi board, lets hide that for now"). The page and its
+      // permission key are untouched — /kpi still opens for anyone who has the URL — it just stops
+      // drawing a tab. The row's identity is '/money', not '/kpi', so hiding this one resolves the
+      // Money row to Revenue Center instead of making the whole row vanish. Put the line back to
+      // bring it home.
+      // { to: '/kpi', label: 'KPI board' },
       { to: '/revenue', label: 'Revenue Center' },
       { to: '/marketing', label: 'Direct bookings' },
     ],

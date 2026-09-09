@@ -38,6 +38,9 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getSlackRules } from '@/lib/slack-rules'
 import { nameMatchesRoster } from '@/lib/homebase'
+import { isDepartureCleanName } from '@/lib/breezeway'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorNameOf } from '@/lib/ops-presets'
 
 export type TagKey = 'long-in' | 'long-out' | 'big' | 'walk-in' | 'same-day' | 'vip'
 export type Tag = { key: TagKey; label: string; tone: 'amber' | 'violet' | 'emerald' | 'sky' }
@@ -55,6 +58,13 @@ export type Job = {
   dept: string
   status: 'done' | 'in progress' | 'scheduled'
   isClean: boolean
+  /** The vendor company's label when this unit is vendor-serviced, null when it is our own crew. */
+  vendor: string | null
+  /**
+   * The turnover itself, as opposed to a prep, strip or touch-up that also has "clean" in its name.
+   * Same predicate the billing and labor maths use, so a board and an invoice count the same jobs.
+   */
+  departure: boolean
   tags: Tag[]
 }
 
@@ -85,6 +95,25 @@ export type MarketBlock = {
 }
 
 export type Dept = 'cleaning' | 'maintenance' | 'all'
+
+/**
+ * WHOSE CREW (Jon, 2026-09-09: "PT, Capri, Lucerne, Amrit and Botanica are all vendor cleans… this
+ * should just be inhouse and vendor in another tab").
+ *
+ * Until now this planner only knew about vendor MARKETS (north), so five vendor-serviced buildings
+ * inside Miami and Broward were being drawn as our own crew's work — the board was overstating what
+ * our people are carrying, and the labor beside it was pricing cleans we do not pay for. The vendor
+ * buildings were already listed in ops presets and used by the labor P&L, the day sheet and the
+ * deadline board; this file simply was not reading that list.
+ *
+ *   inhouse  our crew only. The default, and what every existing caller wants.
+ *   vendor   the vendor-serviced buildings, on their own. Vendor crews rarely carry a Breezeway
+ *            assignee — and Botanica has no Breezeway tasks at all — so an unassigned clean at one
+ *            of these buildings is filed under the VENDOR'S name rather than dropped, which is the
+ *            only way the tab shows the work that is actually happening.
+ *   all      both, for anyone who wants the whole picture.
+ */
+export type Crew = 'inhouse' | 'vendor' | 'all'
 
 export type TeamSchedule = {
   from: string
@@ -174,12 +203,19 @@ export async function buildTeamSchedule(opts: {
    * maintenance lead should not be scrolling past forty cleans to find three repairs.
    */
   dept?: Dept
+  /** In-house crew, the vendor-serviced buildings, or both. Defaults to in-house. */
+  crew?: Crew
 } = {}): Promise<TeamSchedule> {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const from = opts.from || today
   const to = opts.to || addDays(from, 13)
   const dept: Dept = opts.dept === 'maintenance' || opts.dept === 'all' ? opts.dept : 'cleaning'
+  const crew: Crew = opts.crew === 'vendor' || opts.crew === 'all' ? opts.crew : 'inhouse'
+  // The same vendor registry the labor P&L, the day sheet and the 4pm deadline read, so "who cleans
+  // this building" has one answer across the app.
+  const presets = await getOpsPresets().catch(() => null)
+  const vendorList = presets?.vendorBuildings || []
   const rules = await getSlackRules().catch(() => ({ longStayNights: 14, bigBookingUsd: 3000 } as any))
   const LONG = num(rules.longStayNights) || 14
   const BIG = num(rules.bigBookingUsd) || 3000
@@ -187,14 +223,19 @@ export async function buildTeamSchedule(opts: {
   // ── units → name + market ───────────────────────────────────────────────────────────────────
   const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(2000)
   const want = opts.listingIds && opts.listingIds.length ? new Set(opts.listingIds.map(str)) : null
-  const unit: Record<string, { name: string; market: string }> = {}
+  const unit: Record<string, { name: string; market: string; vendor: string | null }> = {}
   const ids: string[] = []
   for (const l of (lRows || []) as any[]) {
     const id = str(l.id)
     if (!id || DEAD_LISTING.test(str(l.status))) continue
     if (want && !want.has(id)) continue
     const name = str(l.nickname || l.title) || 'Unit'
-    unit[id] = { name, market: marketOf(l.building, l.address_city, name) }
+    unit[id] = {
+      name, market: marketOf(l.building, l.address_city, name),
+      // Match the building first and the nickname second: a unit called "409" gives the matcher
+      // nothing, but its building does.
+      vendor: vendorNameOf(vendorList, str(l.building)) || vendorNameOf(vendorList, name),
+    }
     ids.push(id)
   }
   const wantMarkets = opts.markets && opts.markets.length ? new Set(opts.markets.map(m => m.toLowerCase())) : null
@@ -336,11 +377,20 @@ export async function buildTeamSchedule(opts: {
     // unit is still working. Vendor units pass through here and get placed on their home-market row;
     // the block filter at the end is what enforces the requested markets.
     if (wantMarkets && !wantMarkets.has(u.market.toLowerCase()) && !isVendorMarket(u.market)) continue
+    // WHOSE CREW IS THIS BUILDING'S. A vendor-serviced building is not our crew's day, so it leaves
+    // the in-house board entirely rather than inflating what our people appear to be carrying.
+    if (crew === 'inhouse' && u.vendor) { vendorDropped++; continue }
+    if (crew === 'vendor' && !u.vendor) continue
+
     const who = assigneesOf(t)
     const vendorUnit = isVendorMarket(u.market)
     // Nobody assigned means there is no row to put it on. The board at /schedule is where unassigned
-    // work gets picked up; a planner about people cannot show work that belongs to nobody.
-    if (!who.length) { if (vendorUnit) vendorDropped++; else unassignedDropped++; continue }
+    // work gets picked up; a planner about people cannot show work that belongs to nobody. The one
+    // exception is the vendor tab: the vendor company is the assignee, whatever Breezeway says.
+    if (!who.length) {
+      if (u.vendor && crew !== 'inhouse') who.push(u.vendor)
+      else { if (vendorUnit) vendorDropped++; else unassignedDropped++; continue }
+    }
 
     const date = str(t.scheduled_date).slice(0, 10)
     if (!date) continue
@@ -353,9 +403,10 @@ export async function buildTeamSchedule(opts: {
       id: str(t.id),
       url: 'https://app.breezeway.io/task/' + str(t.id),
       reportUrl: str(t.report_url) || null,
-      date, unit: u.name, listingId: li, market: u.market,
+      date, unit: u.name, listingId: li, market: u.market, vendor: u.vendor,
       task: name, dept: jobDept, status: statusOf(t),
       isClean: /clean|turnover|departure/i.test(name),
+      departure: isDepartureCleanName(name),
       tags: tagsFor(li, date),
     }
 
