@@ -7,8 +7,14 @@
 // straight to it. Everything further out is the runway: the manager sees weeks ahead which burned
 // units have guests coming, and can fix the thing the last guest wrote about before they land.
 //
-// Server component: a plain list with the review text behind a <details>, nothing to click that
-// needs state. Rules for entering and leaving recovery are at the top of lib/call-desk.ts.
+// THE REVIEW IS ON THE PAGE (Jon, same day: "remove the recovery tab and make sure the reviews are
+// populating in"). It was behind a show/hide toggle, which made a list of 57 units read as 57 empty
+// rows — and the whole point of the section is the sentence the guest wrote. So the quote is always
+// rendered, and the ~1 unit in 14 whose low review is a rating with no comment says so in words
+// rather than showing nothing.
+//
+// Server component: no state, nothing to click except the links. Rules for entering and leaving
+// recovery are at the top of lib/call-desk.ts.
 import { HeartHandshake, PhoneCall, Check, CalendarDays, AlertTriangle, Star } from 'lucide-react'
 import type { RecoveryBoard as Board } from '@/lib/call-desk'
 
@@ -24,11 +30,9 @@ export function RecoveryBoard({ board }: { board: Board }) {
 
   return (
     <section id="recovery" className="mb-5 scroll-mt-4">
-      <div className="flex items-end justify-between gap-3 flex-wrap mb-2">
-        <div>
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-rose-700 flex items-center gap-1.5"><HeartHandshake size={12} /> Recovery · {failed ? '—' : units.length} unit{units.length === 1 ? '' : 's'} waiting for a good review</h2>
-          <p className="text-[12px] text-muted mt-0.5 max-w-2xl">A unit is in recovery from its last review of 3 stars or under until a 4.5+ review lands after it. Every arrival at one of these units gets a mandatory welcome call; the ones inside the next 72 hours are on the <a href="/welcome-calls" className="font-semibold text-brand-700 hover:underline">Calls desk</a>{onDesk ? ` (${onDesk} open there now)` : ''}. The rest, out to {horizonDays} days, are here so the fix can happen before the guest does.</p>
-        </div>
+      <div className="mb-2">
+        <h2 className="text-[11px] font-bold uppercase tracking-wider text-rose-700 flex items-center gap-1.5"><HeartHandshake size={12} /> Recovery · {failed ? '—' : units.length} unit{units.length === 1 ? '' : 's'} waiting for a good review</h2>
+        <p className="text-[12px] text-muted mt-0.5 max-w-3xl">A unit is in recovery from its last review of 3 stars or under until a 4.5+ review lands after it. Every arrival at one of these units gets a mandatory welcome call; the ones inside the next 72 hours are on the <a href="/welcome-calls" className="font-semibold text-brand-700 hover:underline">Calls desk</a>{onDesk ? ` (${onDesk} open there now)` : ''}. The rest, out to {horizonDays} days, are here so the fix can happen before the guest does.</p>
       </div>
 
       {failed ? (
@@ -42,29 +46,34 @@ export function RecoveryBoard({ board }: { board: Board }) {
         <ul className="rounded-2xl border border-line bg-white divide-y divide-line overflow-hidden">
           {units.map(u => {
             const next = u.arrivals[0]
+            const first = u.guest ? u.guest.split(' ')[0] : ''
             return (
-              <li key={u.listingId} className="px-4 py-3">
+              <li key={u.listingId} className="px-4 py-3.5">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-ink">{u.listing}</span>
-                      {u.building && u.building !== u.listing && <span className="text-[11px] text-muted">{u.building}</span>}
-                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white inline-flex items-center gap-0.5"><Star size={10} /> {u.rating.toFixed(1)}★{u.channel ? ` · ${u.channel}` : ''}</span>
-                      <span className="text-[11px] text-muted">{u.openDays} {u.openDays === 1 ? 'day' : 'days'} without a good review{u.reviewsSince ? ` · ${u.reviewsSince} since, none 4.5+` : ''}</span>
-                    </div>
-                    {u.content && (
-                      <details className="mt-1 group">
-                        <summary className="text-[12px] text-muted cursor-pointer list-none inline-flex items-center gap-1 hover:text-ink">What {u.guest ? u.guest.split(' ')[0] : 'the guest'} wrote on {shortDay(u.at)} <span className="text-[11px] group-open:hidden">· show</span><span className="text-[11px] hidden group-open:inline">· hide</span></summary>
-                        <p className="text-[12px] text-ink/80 mt-1 max-w-2xl border-l-2 border-rose-200 pl-2.5">{u.content}</p>
-                      </details>
-                    )}
+                  <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-ink">{u.listing}</span>
+                    {u.building && u.building !== u.listing && <span className="text-[11px] text-muted">{u.building}</span>}
+                    <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white inline-flex items-center gap-0.5"><Star size={10} /> {u.rating.toFixed(1)}★</span>
+                    <span className="text-[11px] text-muted">{u.openDays} {u.openDays === 1 ? 'day' : 'days'} without a good review</span>
                   </div>
-                  <div className="text-right text-[12px] shrink-0">
+                  <div className="text-[12px] shrink-0">
                     {next
                       ? <span className={`inline-flex items-center gap-1 font-semibold ${next.onDesk ? 'text-rose-700' : 'text-ink'}`}><CalendarDays size={12} /> Next arrival {when(next.check_in)}</span>
-                      : <span className="text-muted">No arrival in the next {horizonDays} days</span>}
+                      : <span className="text-muted">Nobody booked in {horizonDays} days</span>}
                   </div>
                 </div>
+
+                {/* WHAT THE GUEST ACTUALLY WROTE — the reason this unit is on the list. */}
+                <blockquote className="mt-1.5 border-l-2 border-rose-300 pl-2.5 max-w-3xl">
+                  {u.content
+                    ? <p className="text-[12.5px] text-ink/80 leading-snug">{'“'}{u.content}{'”'}</p>
+                    : <p className="text-[12.5px] text-muted italic leading-snug">Rated {u.rating.toFixed(1)}★ with no comment — nothing written to go on, so ask on the call what went wrong.</p>}
+                  <footer className="text-[11px] text-muted mt-0.5">
+                    {first || 'Guest'}{u.channel ? ` · ${u.channel}` : ''} · {shortDay(u.at)}
+                    {u.reviewsSince ? ` · ${u.reviewsSince} review${u.reviewsSince === 1 ? '' : 's'} since, none 4.5+` : ' · no reviews since'}
+                  </footer>
+                </blockquote>
+
                 {u.arrivals.length > 0 && (
                   <ul className="mt-2 flex flex-wrap gap-1.5">
                     {u.arrivals.map(a => (
@@ -87,7 +96,9 @@ export function RecoveryBoard({ board }: { board: Board }) {
           })}
         </ul>
       )}
-      <p className="text-[11px] text-muted mt-1.5">{withArrivals} of {units.length} unit{units.length === 1 ? '' : 's'} {withArrivals === 1 ? 'has' : 'have'} a guest booked in the next {horizonDays} days. Soonest arrival first; units with nobody booked follow, longest-waiting first.</p>
+      {!failed && units.length > 0 && (
+        <p className="text-[11px] text-muted mt-1.5">{withArrivals} of {units.length} unit{units.length === 1 ? '' : 's'} {withArrivals === 1 ? 'has' : 'have'} a guest booked in the next {horizonDays} days. Soonest arrival first; units with nobody booked follow, longest-waiting first.</p>
+      )}
     </section>
   )
 }
