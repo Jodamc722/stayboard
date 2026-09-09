@@ -332,9 +332,54 @@ export type CatalogItem = {
   track_stock: boolean
   /** Restocking facts — never guest-facing. cost is what WE pay; the gap to price_usd is margin. */
   cost_usd: number | null; reorder_url: string | null; supplier: string | null; pack_note: string | null
+  /** We buy by the case, we sell by the unit: pack_cost_usd / pack_size = the real per-unit cost. */
+  pack_size: number | null; pack_cost_usd: number | null
+  /** Volume price breaks on THIS item — 3+ at $2.50 each. Highest qualifying min_qty wins. */
+  tiers: PriceTier[] | null
   /** Filled in when loaded for a scope: on_hand − reserved for that scope (null = not tracked). */
   available?: number | null
 }
+export type PriceTier = { min_qty: number; unit_price_usd: number }
+
+/** Clean a tier list from the builder or the DB: positive quantities, sorted, no duplicates. */
+export function sanitizeTiers(input: any): PriceTier[] {
+  const out: PriceTier[] = []
+  const seen: Record<number, boolean> = {}
+  for (const t of (Array.isArray(input) ? input : [])) {
+    const min = Math.floor(Number(t?.min_qty) || 0)
+    const price = Math.round((Number(t?.unit_price_usd) || 0) * 100) / 100
+    if (min < 2 || price < 0 || seen[min]) continue   // a "tier" at qty 1 is just the price
+    seen[min] = true
+    out.push({ min_qty: min, unit_price_usd: price })
+    if (out.length >= 6) break
+  }
+  return out.sort((a, b) => a.min_qty - b.min_qty)
+}
+
+/**
+ * What ONE unit costs us. A pack cost divided by its size beats a hand-typed per-unit cost,
+ * because the pack number is the one somebody actually reads off an invoice.
+ */
+export function unitCostOf(item: Pick<CatalogItem, 'cost_usd' | 'pack_size' | 'pack_cost_usd'>): number | null {
+  const size = Number(item.pack_size) || 0
+  const packCost = Number(item.pack_cost_usd) || 0
+  if (size > 0 && packCost > 0) return Math.round((packCost / size) * 10000) / 10000
+  return item.cost_usd === null || item.cost_usd === undefined ? null : Number(item.cost_usd)
+}
+
+/**
+ * The unit price for this quantity. With no tiers this is the headline price — today's behaviour
+ * exactly. With tiers, the highest break the guest has reached applies to the WHOLE line (not just
+ * the units above the break), which is how a shopper expects "3 for $2.50 each" to read.
+ */
+export function priceForQty(item: Pick<CatalogItem, 'price_usd' | 'tiers'>, qty: number): { unit: number; tier: PriceTier | null } {
+  const list = Number(item.price_usd) || 0
+  const tiers = sanitizeTiers(item.tiers)
+  let hit: PriceTier | null = null
+  for (const t of tiers) if (qty >= t.min_qty) hit = t
+  return { unit: hit ? hit.unit_price_usd : list, tier: hit }
+}
+
 export type StockRow = { item_id: string; scope: string; on_hand: number; reserved: number; low_at: number; updated_at: string; updated_by: string | null }
 
 /**
@@ -351,6 +396,9 @@ export async function loadCatalog(opts?: { building?: string | null; market?: st
   const { data } = await q.limit(500)
   let rows = (data || []).map((r: any) => ({ ...r, price_usd: Number(r.price_usd) || 0, max_qty: Number(r.max_qty) || 10, sort: Number(r.sort) || 100, track_stock: r.track_stock === true, hubs: r.hubs || null,
     cost_usd: r.cost_usd === null || r.cost_usd === undefined ? null : Number(r.cost_usd), reorder_url: r.reorder_url || null, supplier: r.supplier || null, pack_note: r.pack_note || null,
+    pack_size: r.pack_size === null || r.pack_size === undefined ? null : Number(r.pack_size),
+    pack_cost_usd: r.pack_cost_usd === null || r.pack_cost_usd === undefined ? null : Number(r.pack_cost_usd),
+    tiers: sanitizeTiers(r.tiers).length ? sanitizeTiers(r.tiers) : null,
     available: null })) as CatalogItem[]
   const b = String(opts?.building || '').toLowerCase()
   const m = String(opts?.market || '').toLowerCase()
@@ -459,7 +507,11 @@ export async function consumeStockFor(order: OrderRow, actor: string): Promise<v
   await moveStock(order, order.stock_scope, 'consume', actor)
 }
 
-export type OrderLine = { sku: string; name: string; qty: number; unit_price_usd: number; line_total_usd: number; fee_code: string; unit_label?: string | null }
+export type OrderLine = {
+  sku: string; name: string; qty: number; unit_price_usd: number; line_total_usd: number; fee_code: string; unit_label?: string | null
+  /** Set only when a volume break applied: the headline price and what the guest saved. */
+  list_price_usd?: number | null; saved_usd?: number | null
+}
 
 /** `taxPct` is the rate that APPLIES TO THIS STAY (timingFor().taxPct) — never the global default. */
 export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: number }[], taxPct: number): { lines: OrderLine[]; subtotal: number; tax: number; total: number; problems: string[] } {
@@ -472,8 +524,13 @@ export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: 
     if (qty <= 0) continue
     if (qty > item.max_qty) { problems.push(item.name + ': max ' + item.max_qty); continue }
     if (item.track_stock && item.available !== null && item.available !== undefined && qty > item.available) { problems.push(item.name + ': only ' + item.available + ' left'); continue }
-    const line = Math.round(item.price_usd * qty * 100) / 100
-    lines.push({ sku: item.sku, name: item.name, qty, unit_price_usd: item.price_usd, line_total_usd: line, fee_code: item.fee_code || 'GUEST_SERVICE', unit_label: item.unit_label })
+    // Volume break, if the quantity earned one. Priced HERE, server-side — the browser's number is
+    // never trusted for money.
+    const { unit, tier } = priceForQty(item, qty)
+    const line = Math.round(unit * qty * 100) / 100
+    const saved = tier ? Math.round((item.price_usd - unit) * qty * 100) / 100 : 0
+    lines.push({ sku: item.sku, name: item.name, qty, unit_price_usd: unit, line_total_usd: line, fee_code: item.fee_code || 'GUEST_SERVICE', unit_label: item.unit_label,
+      list_price_usd: tier ? item.price_usd : null, saved_usd: saved > 0 ? saved : null })
   }
   const subtotal = Math.round(lines.reduce((n, l) => n + l.line_total_usd, 0) * 100) / 100
   const tax = Math.round(subtotal * (Number(taxPct) || 0) / 100 * 100) / 100
