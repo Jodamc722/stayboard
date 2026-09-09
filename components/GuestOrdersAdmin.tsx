@@ -112,7 +112,16 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
       const r = await fetch('/api/settings/guest-orders/photo', { method: 'POST', body: fd })
       const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j?.error || 'Upload failed')
       setItem(i, { image_url: j.url })
-      setMsg({ tone: 'ok', text: 'Photo uploaded — press Save to keep it on the item.' })
+      // Attach NOW rather than on the next Save: this PUT is owner-only, so a non-owner used to
+      // upload a file successfully and then lose it to a 403 they never saw. An item with no id
+      // yet has nothing to attach to and legitimately waits for Save.
+      const id = catalog[i]?.id
+      if (!id) { setMsg({ tone: 'ok', text: 'Photo ready — press Save to create this item with it.' }); return }
+      const a = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [], items: [{ id, name: catalog[i]?.name || 'Item', imageUrl: j.url }] }) })
+      const ja = await a.json()
+      setMsg(a.ok && ja?.ok
+        ? { tone: 'ok', text: 'Photo saved to ' + (catalog[i]?.name || 'the item') + '.' }
+        : { tone: 'bad', text: (ja?.errors || []).join(' · ') || 'Uploaded, but could not attach it to the item.' })
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
   async function runProbe() {

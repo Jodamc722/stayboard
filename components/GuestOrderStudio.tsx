@@ -129,6 +129,19 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
     setDirtyStock(d => ({ ...d, [itemId + '|' + scope]: true }))
   }
 
+  /**
+   * A photo is SAVED THE MOMENT IT UPLOADS, not when you next press Save (Jon, 2026-09-09: photos
+   * would not stick on inventory items).
+   *
+   * Two things were wrong with waiting. The picture only lived in local state, so navigating away
+   * — or picking a different item — threw it away with no warning and nothing on screen said it
+   * was unsaved. And the Save it was waiting for is the OWNER-ONLY settings PUT, so for anybody
+   * below owner the file uploaded happily and then vanished on a 403 they never saw.
+   *
+   * So: existing items attach through /api/guest-orders/stock (edit-level, the same door the
+   * Inventory board uses) and are durable immediately. An item that has not been created yet has
+   * no id to attach to, so it holds the photo locally and says so out loud.
+   */
   async function uploadPhoto(file: File) {
     if (!cur) return
     setBusy('photo'); setMsg(null)
@@ -137,6 +150,11 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
       const r = await fetch('/api/settings/guest-orders/photo', { method: 'POST', body: fd })
       const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j?.error || 'Upload failed')
       setItem({ image_url: j.url })
+      if (!cur.id) { setMsg({ tone: 'ok', text: 'Photo ready — press Save to create this item with it.' }); return }
+      const a = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [], items: [{ id: cur.id, name: cur.name, imageUrl: j.url }] }) })
+      const ja = await a.json()
+      if (a.ok && ja?.ok) setMsg({ tone: 'ok', text: 'Photo saved to ' + cur.name + '.' })
+      else setMsg({ tone: 'bad', text: (ja?.errors || []).join(' · ') || 'Uploaded, but could not attach it to the item.' })
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
