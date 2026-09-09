@@ -173,7 +173,12 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       .then(r => r.json()).then(j => { if (j && j.ok) setRev(j) }).catch(() => {})
     fetch('/api/listing-health?slim=1', { cache: 'no-store' })
       .then(r => r.json()).then(j => { if (j && j.summary) setHealth(j) }).catch(() => {})
-    fetch('/api/labor/headline?days=' + days + (market !== 'all' ? '&market=' + encodeURIComponent(market) : ''), { cache: 'no-store' })
+    // THE SAME WINDOW AS THE BOARD IT SITS ON. Sending only `days` meant a custom date range left
+    // the tile showing a trailing 30 days beside a header describing three months, with nothing
+    // saying so — and `hk` was never cleared, so it showed the PREVIOUS filter's number while the
+    // sweep ran. Both fixed: the range travels, and the tile goes back to '…' first.
+    setHk(null)
+    fetch('/api/labor/headline?days=' + days + scope + range, { cache: 'no-store' })
       .then(r => r.json()).then(j => { setHk(j && j.ok ? j : { failed: true }) }).catch(() => setHk({ failed: true }))
   }, [days, market, building, from, to]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [load])
@@ -336,15 +341,22 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                 Breezeway's `rate_paid`, a column that is empty on every task, by housekeeping-
                 department cleans only. Now it is housekeeper wages over every departure clean in
                 the window, whoever performed it, and it says so when the sweep has not landed. */}
-            <Tile label="Cost per clean"
-              value={hk == null ? '…' : hk.failed ? '—' : (canSeeMoney && hk.costPerClean != null ? exact(hk.costPerClean) : '—')}
+            {/* A money-hidden reader still gets a working tile — minutes per turn, which is what
+                this one used to fall back to — rather than a permanent dash. */}
+            <Tile label={canSeeMoney ? 'Cost per clean' : 'Minutes per turn'}
+              value={!canSeeMoney ? (c.minutesPerTurn != null ? c.minutesPerTurn + ' min' : '—')
+                : hk == null ? '…' : hk.failed ? '—' : (hk.costPerClean != null ? exact(hk.costPerClean) : '—')}
               Icon={Brush} href="/labor"
-              sub={hk == null ? 'working out the labor numbers'
+              sub={!canSeeMoney ? (hk && !hk.failed ? count(hk.cleans) + ' cleans in the window' : 'benchmark: studio 90 · 2BR 120 · 3BR+ 180')
+                : hk == null ? 'working out the labor numbers'
                 : hk.failed ? 'the labor sweep did not finish — open Labor'
                 : count(hk.cleans) + ' cleans'
                   + (hk.coveredByOtherCrews && hk.coveredByOtherCrews.cleans
                     ? ' · ' + count(hk.coveredByOtherCrews.cleans) + ' covered by other crews' : '')
-                  + (canSeeMoney && hk.revPerClean != null ? ' · ' + exact(hk.revPerClean) + ' a clean in' : '')} />
+                  + (hk.revPerClean != null ? ' · ' + exact(hk.revPerClean) + ' a clean in' : '')
+                  // The labor engine has no per-building view, so a building filter does not reach
+                  // this number. Say so rather than letting it read as that building's cost.
+                  + (building !== 'all' ? ' · portfolio-wide' : '')} />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">

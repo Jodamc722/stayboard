@@ -42,7 +42,7 @@ import { vendorRegex, type VendorBuilding } from './ops-presets'
 import { nameMatches, nameMatchesRoster } from './homebase'
 import { getSalaried, weeklyCost, annualCost, windowCost, rateLabel, type SalaryRow } from './salary'
 import { getCrew, type Dept, type DeptSource, DEPTS, DEPT_LABEL } from './crew'
-import { isDepartureCleanName, isPrepTaskName } from './breezeway'
+import { isDepartureCleanName } from './breezeway'
 import { resolveStaff, getAgencies } from './staffing'
 import { laborAmount } from './billing'
 
@@ -90,10 +90,14 @@ async function pageAll(q: (a: number, b: number) => any, pages = 30): Promise<an
 // ONE TEST, SHARED (2026-09-09). Three different regexes decided what a departure clean was:
 // this one, lib/breezeway's (the board, the scheduler, the day sheets) and lib/kpi's, which also
 // swept in anything merely STARTING with "Clean". A Spanish-named turn counted on the board and
-// not in cost per clean. lib/breezeway is the canonical pair — it says the turn, and it is not a
-// strip, walkthrough or inspection — so everything reads from it now.
-export const isDepartureCleanTask = (name: any) =>
-  isDepartureCleanName(name) && !isPrepTaskName(name)
+// not in cost per clean. lib/breezeway now carries the only test and everything reads from it.
+//
+// NOT filtered through isPrepTaskName. Real turns arrive with notes appended — "Departure clean +
+// strip beds", "Departure clean / unit check" — and screening those out would drop the clean from
+// the denominator while its housekeeper's wages stayed in the numerator, pushing cost per clean UP
+// on exactly the messiest days. The name test requires the word "clean" after the turnover word,
+// which is what keeps "Departure inspection" out.
+export const isDepartureCleanTask = (name: any) => isDepartureCleanName(name)
 
 export type TaskKind = 'clean' | 'inspection' | 'maintenance' | 'other'
 
@@ -220,6 +224,10 @@ export type DeptEcon = {
   /** The salaried half — separate, so "separate but then combined" is literally both numbers. */
   salary: number
   cleans: number
+  /** Departure cleans this crew covered for housekeeping (0 for housekeeping itself). */
+  depCleans: number
+  /** …and what those turns billed, which housekeeping banks. Named here so it is not just missing. */
+  cleanFeesToHk: number
   cleaningRevenue: number
   billableRevenue: number
   materials: number
@@ -312,7 +320,7 @@ export type LaborEcon = {
 
 const EMPTY_DEPT = (key: Dept): DeptEcon => ({
   key, label: DEPT_LABEL[key], people: 0, names: [], hours: 0, payroll: 0, payrollHourly: 0, salary: 0, cleans: 0,
-  cleaningRevenue: 0, billableRevenue: 0, materials: 0, revenue: 0, margin: 0, marginPct: null,
+  depCleans: 0, cleanFeesToHk: 0, cleaningRevenue: 0, billableRevenue: 0, materials: 0, revenue: 0, margin: 0, marginPct: null,
   costPerClean: null, hoursPerClean: null, billableTasks: 0, tasksNoCharge: 0, basis: '',
 })
 
@@ -1102,8 +1110,12 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const wl = ledgerW[p.name] || {}
     const daySet = Array.from(new Set(Object.keys(tl).concat(Object.keys(wl)))).sort()
     if (!daySet.length) continue
+    // A non-housekeeper's covered turn shows its CLEAN on their day but not its FEE: the money is
+    // housekeeping's now, and printing it here put the same dollars on two screens.
+    const keepsFees = p.dept === 'housekeeping'
     personDays[p.name] = daySet.map(d => {
-      const a = tl[d] || { cleans: 0, fee: 0, billable: 0 }
+      const a0 = tl[d] || { cleans: 0, fee: 0, billable: 0 }
+      const a = keepsFees ? a0 : { ...a0, fee: 0 }
       const w = wl[d] || { hours: 0, wages: 0 }
       let hops = 0
       const seq = (tripsBy[p.name] && tripsBy[p.name][d] ? tripsBy[p.name][d] : []).slice().sort((x, y) => x.at.localeCompare(y.at))
@@ -1159,6 +1171,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     if (p.salaried) d.salary = round2(d.salary + p.payroll)
     else d.payrollHourly = round2(d.payrollHourly + p.payroll)
     d.cleans += p.cleans
+    if (p.dept !== 'housekeeping') {
+      d.depCleans += p.depCleans
+      d.cleanFeesToHk = round2(d.cleanFeesToHk + (p.cleanFeesToHk || 0))
+    }
     d.cleaningRevenue = round2(d.cleaningRevenue + p.cleaningRevenue)
     d.billableRevenue = round2(d.billableRevenue + p.billableRevenue)
     d.materials = round2(d.materials + p.materials)
@@ -1453,7 +1469,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // What the crews between them actually earned. The gap to `cleaningRevenue` is fees on
   // checkouts where no clean task could be matched to a person — a real hole in attribution,
   // so it gets its own line rather than being quietly absorbed into somebody's margin.
-  const attributedRev = round2(people.reduce((a, p) => a + p.cleaningRevenue, 0))
+  // A fee a supervisor earned and handed to housekeeping WAS attributed — a person was found and
+  // named. Dropping `cleanFeesToHk` here shrank `credited`, inflated `unattributed`, and pushed the
+  // labor-integrity cron's "fees that found no clean" ratio over its alarm threshold for nothing.
+  const attributedRev = round2(people.reduce((a, p) => a + p.cleaningRevenue + (p.cleanFeesToHk || 0), 0))
   const payroll = round2(people.reduce((a, p) => a + p.payroll, 0))
   const billableRevenue = round2(people.reduce((a, p) => a + p.billableRevenue, 0))
   const materials = round2(people.reduce((a, p) => a + p.materials, 0))
@@ -1700,12 +1719,23 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       const revOf: Partial<Record<Dept, number>> = {
         housekeeping: hkAllRevenue,                                  // every departure fee + charged cleans
         maintenance: round2(mt.billableRevenue + mt.cleaningRevenue),
-        inspection: round2(insp.billableRevenue + insp.cleaningRevenue),
+        // Inspection is deliberately absent: BASIS calls it quality control, cost only, and with
+        // covered fees now going to housekeeping its "revenue" would be a stray charge or two —
+        // a small real number that reads as a measure of the crew, which it is not.
       }
       const payOf: Partial<Record<Dept, number>> = { housekeeping: hkPayrollInHouse }
+      // HEADCOUNT AND PAYROLL FROM ONE POPULATION. Housekeeping's payroll is allocated by each
+      // housekeeper's share of cleans per market, so on a market tab it can include a housekeeper
+      // whose Staffing area is the other market. Counting heads by Staffing area against that
+      // payroll gave "0 people, $4,300" on a market where cleans happen but nobody is filed. The
+      // bucket already knows exactly whose wages it is carrying, so the count comes from there.
+      const hkHeads = new Set<string>()
+      for (const b of inHouseB) for (const n of Object.keys(bucketNames[b.key] || {})) hkHeads.add(n)
       const rows = DEPTS.map(d => {
         const x = byDept[d]
-        const head = people.filter(p => p.dept === d && p.onPayroll).length
+        const head = d === 'housekeeping'
+          ? hkHeads.size
+          : people.filter(p => p.dept === d && p.onPayroll).length
         const payroll = payOf[d] != null ? (payOf[d] as number) : x.payroll
         const attributable = revOf[d] != null
         const revenue = attributable ? (revOf[d] as number) : null
@@ -2029,6 +2059,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const mk = k === 'vendor' ? 'vendor-inhouse' : k
     const row = hkRows[mk] = hkRows[mk] || emptyRow(mk)
     row.cleans += depCleansByMk[k]
+    // …and so does the FEE on the turns other crews covered. The counts came here and the money
+    // did not, which left this table dividing housekeeper-only revenue by an all-crew clean count
+    // — the same mismatch the buckets above were fixed for, still live one card lower down.
+    row.revenue = round2(row.revenue + (feesByOthersMk[k] || 0))
   }
   // ---- maintenance, by market --------------------------------------------------------------
   const mtRows: Record<string, PnlRow> = {}
@@ -2037,8 +2071,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     spread(mtRows, p, mkTasksBy[p.name], (row, share) => {
       row.hours += p.hours * share
       row.payroll += netCost(p) * share
-      // Billable charges AND the fee of any departure clean the tech covered (Jon, 2026-09-07).
-      row.revenue += (p.billableRevenue + p.cleaningRevenue) * share
+      // Billable charges only. The fee on a turn a tech covered now belongs to housekeeping
+      // (Jon, 2026-09-09) — what he handed over is on his own row as `cleanFeesToHk`.
+      row.revenue += p.billableRevenue * share
       row.tasks += Math.round(p.tasks * share)
       row.tasksBilled += Math.round(p.billableTasks * share)
       row.tasksNoCharge += Math.round(p.tasksNoCharge * share)
@@ -2081,14 +2116,16 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // clean count also carries charged cleaning jobs (a mid-stay, a linen refresh), which are real
   // revenue but are not turnovers and must never sit in a cost-per-DEPARTURE-clean denominator.
   // Sourcing the total from the same rows the markets use is also what makes them reconcile.
+  // Summed from the same market rows, so the total and the columns beside it cannot disagree —
+  // re-summing the staff would drop every fee a covered turn moved into housekeeping.
   const hkTotal = totalOf(hkStaff, 'all', 'All housekeeping',
     hkMarkets.reduce((a, r) => a + r.cleans, 0),
-    round2(hkStaff.reduce((a, p) => a + p.cleaningRevenue, 0)))
+    round2(hkMarkets.reduce((a, r) => a + r.revenue, 0)))
   const mtTotal = totalOf(mtStaff, 'all', 'All maintenance', 0,
-    round2(mtStaff.reduce((a, p) => a + p.billableRevenue + p.cleaningRevenue, 0)))
+    round2(mtStaff.reduce((a, p) => a + p.billableRevenue, 0)))
   const supMarkets = rowList(supRows)
   const supTotal = totalOf(supStaff, 'all', 'All supervision', 0,
-    round2(supStaff.reduce((a, p) => a + p.billableRevenue + p.cleaningRevenue, 0)))
+    round2(supStaff.reduce((a, p) => a + p.billableRevenue, 0)))
 
   // ---- COST PER CLEAN, BY CREW AND BY MARKET (Jon, 2026-08-29) ------------------------------
   //

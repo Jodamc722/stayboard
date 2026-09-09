@@ -261,10 +261,14 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   // name on the task counted a two-person turn twice, and counted it a third time when somebody
   // else closed it, so a per-person cost per clean came out at half the real figure. Task HOURS
   // still go to everyone who touched it: they all really were there.
-  const cleanDoerOf = (t: any): string => {
-    const a = Array.isArray(t.assignees) ? t.assignees.map(nameOfAny).filter(Boolean) : []
-    return a[0] || nameOfAny(t.finishedBy) || ''
-  }
+  // The list, in order, of everyone who could own this clean. The caller walks it and credits the
+  // FIRST one who is on payroll — taking a[0] blindly handed the turn to whoever happened to be
+  // listed first, and dropped it entirely when that was an outside cleaner with no timecard, which
+  // is worse than the double-count it was meant to fix.
+  const cleanDoerCandidates = (t: any): string[] => ([] as any[])
+    .concat(Array.isArray(t.assignees) ? t.assignees : [])
+    .concat([t.assignee_name, t.finishedBy])
+    .map(nameOfAny).filter(Boolean)
 
   const byName: Record<string, PersonRow> = {}
   for (const t of timecards) {
@@ -280,8 +284,10 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     row.days += 1
     if (!row.role && t.role) { row.role = t.role as any; row.dept = deptOfRole(t.role) }
   }
-  // Credit BOTH the assignee and whoever actually closed it — Jon, 2026-08-08: "sometimes HK is not
-  // assigned to a clean in Breezeway but it's closed by another team member".
+  // TASKS and HOURS credit everyone who touched the job — Jon, 2026-08-08: "sometimes HK is not
+  // assigned to a clean in Breezeway but it's closed by another team member" — they really were all
+  // there. CLEANS credit exactly one person, or a two-name turn counted twice and every per-person
+  // cost per clean came out at half the real figure.
   for (const t of tasks as any[]) {
     const kind = kindOfTask(t)
     const mins = Number(t.actualMinutes) || 0
@@ -292,9 +298,15 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
       byName[hit].taskHours += mins / 60
     }
     if (kind === 'departure') {
-      const who = cleanDoerOf(t)
-      const hit = who ? Object.keys(byName).find(n => nameMatches(who, n)) : null
-      if (hit) byName[hit].cleans += 1
+      let credited = false
+      for (const who of cleanDoerCandidates(t)) {
+        const hit = Object.keys(byName).find(n => nameMatches(who, n))
+        if (!hit) continue
+        byName[hit].cleans += 1
+        credited = true
+        break                       // ONE credit per turn, whoever it lands on
+      }
+      void credited
     }
   }
   const people = Object.values(byName).map(p => ({

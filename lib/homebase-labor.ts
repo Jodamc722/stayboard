@@ -410,7 +410,9 @@ export function computeLaborKpis(opts: {
     totalLaborCost: totalCost,
     costDataCoverage: timecards.length ? round2(withCost.length / timecards.length) : 0,
     cleansCompleted,
-    hoursPerClean: cleansCompleted ? round2(cleaningHours / cleansCompleted) : null,
+    // Guard the NUMERATOR too. If Homebase sends no role on any card, cleaningHours is 0 and this
+    // returned a confident "0h a clean" instead of admitting it does not know.
+    hoursPerClean: (cleansCompleted || 0) > 0 && cleaningHours > 0 ? round2(cleaningHours / (cleansCompleted as number)) : null,
     laborCostPerOccupiedNight:
       totalCost != null && occupiedNights ? round2(totalCost / occupiedNights) : null,
     people,

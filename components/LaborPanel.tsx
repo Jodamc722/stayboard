@@ -357,8 +357,12 @@ export function LaborPanel() {
               {!hideMoney && <Stat label="Management fees" value={loading ? '…' : fmt$(d.departments.supervision?.managementFee)} sub="Guesty commission, window" />}
               <Stat label="% of mgmt fee" value={loading ? '…' : pct(d.departments.supervision?.coveragePct)}
                 tone={(d.departments.supervision?.coveragePct ?? 0) < 100 ? 'good' : 'bad'} sub="supervisor cost ÷ fees" />
-              {!hideMoney && (d.departments.supervision?.cleaningRevenue ?? 0) > 0 &&
-                <Stat label="Cleaning rev" value={loading ? '…' : fmt$(d.departments.supervision?.cleaningRevenue)} sub="cleans they did themselves" />}
+              {/* Turns they covered. The FEE is housekeeping's (Jon, 2026-09-09), so this is not
+                  their revenue — but a supervisor doing six turns a week is a staffing fact, and
+                  the tile disappearing entirely was how it would have been missed. */}
+              {(d.departments.supervision?.depCleans ?? 0) > 0 &&
+                <Stat label="Cleans covered" value={loading ? '…' : String(d.departments.supervision?.depCleans ?? 0)}
+                  sub={hideMoney ? 'turns they did themselves' : fmt$(d.departments.supervision?.cleanFeesToHk) + ' credited to housekeeping'} />}
               <Stat label="Team" value={loading ? '…' : String((d.departments.supervision?.names || []).length)} sub={(d.departments.supervision?.names || []).join(', ') || '—'} />
             </div>
           </div>
@@ -371,9 +375,10 @@ export function LaborPanel() {
                 value={loading ? '…' : (hideMoney ? pct(d.departments.maintenance.payrollSharePct) : fmt$(d.departments.maintenance.payroll))}
                 sub={(d.departments.maintenance.clockedHours ?? 0) + 'h clocked · ' + d.departments.maintenance.people + ' people'} />
               {!hideMoney && <Stat label="Billable" value={loading ? '…' : fmt$(d.departments.maintenance.billableRevenue)} sub={(d.departments.maintenance.billableTasks ?? 0) + ' tasks with a charge'} />}
-              {!hideMoney && (d.departments.maintenance.cleaningRevenue ?? 0) > 0 &&
-                <Stat label="Cleaning rev" value={loading ? '…' : fmt$(d.departments.maintenance.cleaningRevenue)} sub="departure cleans they turned" />}
-              {!hideMoney && <Stat label="Margin" value={loading ? '…' : fmt$(d.departments.maintenance.margin)} tone={(d.departments.maintenance.margin ?? 0) > 0 ? 'good' : 'bad'} sub="billable + cleans − wages" />}
+              {(d.departments.maintenance.depCleans ?? 0) > 0 &&
+                <Stat label="Cleans covered" value={loading ? '…' : String(d.departments.maintenance.depCleans ?? 0)}
+                  sub={hideMoney ? 'turns they did themselves' : fmt$(d.departments.maintenance.cleanFeesToHk) + ' credited to housekeeping'} />}
+              {!hideMoney && <Stat label="Margin" value={loading ? '…' : fmt$(d.departments.maintenance.margin)} tone={(d.departments.maintenance.margin ?? 0) > 0 ? 'good' : 'bad'} sub="billable charges − wages" />}
               <Stat label="Billable vs wages" value={loading ? '…' : pct(d.departments.maintenance.billableCoveragePct)}
                 tone={d.departments.maintenance.billableCoveragePct != null ? (d.departments.maintenance.billableCoveragePct >= 100 ? 'good' : 'bad') : undefined} />
               <Stat label="Hours on tasks" value={loading ? '…' : (d.departments.maintenance.hours ?? 0) + 'h'}
@@ -435,7 +440,7 @@ export function LaborPanel() {
             <Users size={11} /> Per person, by crew
           </p>
           <p className="text-[11px] text-muted px-2 mb-3">{(kpi as any).perHead.basis}.</p>
-          <div className="overflow-x-auto"><table className="w-full text-[12px]">
+          <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-[12px]">
             <thead className="text-[10px] uppercase tracking-wide text-muted">
               <tr className="border-b border-line">
                 <th className="text-left font-semibold py-1.5 pr-2">Crew</th>
@@ -809,7 +814,12 @@ export function LaborPanel() {
                       {econBy[p.name]?.agencyLoad > 0 ? fmt$(econBy[p.name].payroll) : (p.laborCost != null ? fmt$(p.laborCost) : '—')}
                       {econBy[p.name]?.agencyLoad > 0 && <span className="text-indigo-600">*</span>}
                     </td>
-                    <td className="px-2 py-2 text-right tabular-nums text-ink">{econBy[p.name]?.cleaningRevenue ? fmt$(econBy[p.name].cleaningRevenue) : ((d as any)?.personRevenue?.[p.name] != null ? fmt$((d as any).personRevenue[p.name]) : '—')}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-ink"
+                      title={econBy[p.name]?.cleanFeesToHk > 0 ? fmt$(econBy[p.name].cleanFeesToHk) + ' on ' + econBy[p.name].depCleans + ' turns they covered — credited to housekeeping, not to them' : undefined}>
+                      {econBy[p.name]?.cleaningRevenue ? fmt$(econBy[p.name].cleaningRevenue)
+                        : econBy[p.name]?.cleanFeesToHk > 0 ? <span className="text-muted">({fmt$(econBy[p.name].cleanFeesToHk)})</span>
+                        : ((d as any)?.personRevenue?.[p.name] != null ? fmt$((d as any).personRevenue[p.name]) : '—')}
+                    </td>
                     <td className="px-2 py-2 text-right tabular-nums text-ink">{econBy[p.name]?.billableRevenue ? fmt$(econBy[p.name].billableRevenue) : '—'}</td>
                     <td className={'px-2 py-2 text-right tabular-nums font-medium ' + (!econBy[p.name] ? 'text-muted' : econBy[p.name].margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{econBy[p.name] ? fmt$(econBy[p.name].margin) : '—'}</td>
                   </>}

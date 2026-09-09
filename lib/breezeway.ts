@@ -398,7 +398,12 @@ export async function listPropertyHousekeeping(refId: string, from: string, to: 
 // Checked against live data: every genuine departure clean in the portfolio is named "Departure
 // Clean Checklist" (sometimes with notes appended). So the rule is that the name must SAY it is the
 // turnover. Anything else a housekeeper does is real work, it just does not belong on this board.
-const SAYS_TURNOVER = /departur|turnover|check-?out clean|move-?out clean|limpieza de salida/i
+// IT HAS TO SAY IT IS A CLEAN, NOT JUST SAY "DEPARTURE" (2026-09-09). A bare /departur/ also
+// matched "Departure inspection", "Post-departure check", "Departure photos" and "Late departure" —
+// none of which are the turnover, and one of which then walked into cost per clean as a free clean.
+// Requiring the clean word after the turnover word keeps every real name ("Departure Clean
+// Checklist", "Departure clean + strip beds", "Limpieza de salida") and drops the rest.
+const SAYS_TURNOVER = /(departur\w*|turnover|move-?out|check-?out)[\s\-_/]*(clean|limpieza)|limpieza de salida/i
 const NOT_THE_TURNOVER = /strip|walk-?through|inspect|unit check/i
 
 export function isDepartureCleanName(name: any): boolean {

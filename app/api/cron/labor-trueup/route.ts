@@ -230,8 +230,10 @@ export async function GET(req: NextRequest) {
       const K: any = ec.kpi || {}
       const hk: any = K.housekeeping || {}
       const sup = deptOf(ec, 'supervision'), mt = deptOf(ec, 'maintenance'), ccs = deptOf(ec, 'ccs')
-      const mtRev = Number(mt.cleaningRevenue || 0) + Number(mt.billableRevenue || 0)
-      const supRev = Number(sup.cleaningRevenue || 0) + Number(sup.billableRevenue || 0)
+      // Fees on turns these crews covered belong to housekeeping now, so their revenue is
+      // their own billable work. What they handed over rides along as `handed`.
+      const mtRev = Number(mt.billableRevenue || 0)
+      const supRev = Number(sup.billableRevenue || 0)
       return {
         cleans: Number(hk.cleans) || 0,
         cleansHk: Number(hk.cleansByHousekeepers ?? hk.cleans) || 0,
@@ -241,9 +243,9 @@ export async function GET(req: NextRequest) {
         hkFees: Number(hk.revenue) || 0, hkCharged: Number(hk.chargedCleans) || 0,
         byMk: (ec.costPerCleanByMarket || {}) as Record<string, number | null>,
         sup: { n: Number(sup.people) || 0, names: sup.names || [], hours: Number(sup.hours) || 0, pay: Number(sup.payroll) || 0,
-               cleans: Number(sup.cleans) || 0, fees: Number(sup.cleaningRevenue) || 0, bill: Number(sup.billableRevenue) || 0, rev: supRev },
+               cleans: Number(sup.depCleans) || 0, fees: Number(sup.cleanFeesToHk) || 0, bill: Number(sup.billableRevenue) || 0, rev: supRev },
         mt: { n: Number(mt.people) || 0, names: mt.names || [], hours: Number(mt.hours) || 0, pay: Number(mt.payroll) || 0,
-              fees: Number(mt.cleaningRevenue) || 0, bill: Number(mt.billableRevenue) || 0, rev: mtRev,
+              fees: Number(mt.cleanFeesToHk) || 0, bill: Number(mt.billableRevenue) || 0, rev: mtRev,
               billed: Number(mt.billableTasks) || 0, noCharge: Number(mt.tasksNoCharge) || 0 },
         ccsPay: Number(ccs.payroll) || 0,
         allRev: Number(K.allIn?.revenue) || 0, allPay: Number(K.allIn?.payroll) || 0,
@@ -287,13 +289,18 @@ export async function GET(req: NextRequest) {
       band('2 &middot; Supervisors', 'overhead, offset by any clean or charged job they did') +
       tRow('Payroll', T30.sup.names.slice(0, 4).map((n: string) => esc(n)).join(', ') + (T30.sup.names.length > 4 ? '…' : ''), x => money(x.sup.pay) + (x.sup.hours ? '<br><span style="' + MUTED + ';font-size:11px">' + r1(x.sup.hours) + 'h punched</span>' : '')) +
       tRow('Revenue they produced', 'departure cleans they turned + charges they closed', x =>
-        (x.sup.rev > 0 ? money(x.sup.rev) + '<br><span style="' + MUTED + ';font-size:11px">' + [x.sup.cleans ? x.sup.cleans + ' clean' + (x.sup.cleans === 1 ? '' : 's') + ' ' + money(x.sup.fees) : '', x.sup.bill ? money(x.sup.bill) + ' billed' : ''].filter(Boolean).join(' &middot; ') + '</span>' : '<span style="' + MUTED + '">none</span>')) +
+        ((x.sup.rev > 0 || x.sup.cleans > 0)
+          ? money(x.sup.rev) + '<br><span style="' + MUTED + ';font-size:11px">'
+            + [x.sup.bill ? money(x.sup.bill) + ' billed' : '',
+               x.sup.cleans ? x.sup.cleans + ' turn' + (x.sup.cleans === 1 ? '' : 's') + ' covered, ' + money(x.sup.fees) + ' to housekeeping' : '']
+              .filter(Boolean).join(' &middot; ') + '</span>'
+          : '<span style="' + MUTED + '">none</span>')) +
       tRow('Supervision net cost', 'what the cleans carry', x => net(x.sup.rev - x.sup.pay)) +
       // ── tier 3
       band('3 &middot; Maintenance', 'Breezeway charges + any turn they covered, against their wages') +
       tRow('Payroll', T30.mt.names.slice(0, 4).map((n: string) => esc(n)).join(', ') + (T30.mt.names.length > 4 ? '…' : ''), x => money(x.mt.pay) + (x.mt.hours ? '<br><span style="' + MUTED + ';font-size:11px">' + r1(x.mt.hours) + 'h punched</span>' : '')) +
-      tRow('Revenue', 'charges entered on tasks + departure-clean fees', x => money(x.mt.rev) +
-        '<br><span style="' + MUTED + ';font-size:11px">' + [x.mt.billed ? x.mt.billed + ' billed ' + money(x.mt.bill) : '', x.mt.fees ? 'cleans ' + money(x.mt.fees) : ''].filter(Boolean).join(' &middot; ') + '</span>' +
+      tRow('Revenue', 'charges entered on their tasks', x => money(x.mt.rev) +
+        '<br><span style="' + MUTED + ';font-size:11px">' + [x.mt.billed ? x.mt.billed + ' billed ' + money(x.mt.bill) : '', x.mt.fees ? 'turns covered, ' + money(x.mt.fees) + ' to housekeeping' : ''].filter(Boolean).join(' &middot; ') + '</span>' +
         (x.mt.noCharge ? '<br><span style="' + AMBER + ';font-size:11px;font-weight:400">' + x.mt.noCharge + ' closed with no charge entered</span>' : '')) +
       tRow('Maintenance net', 'revenue minus maintenance payroll', x => net(x.mt.rev - x.mt.pay)) +
       // ── combined

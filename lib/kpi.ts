@@ -16,7 +16,7 @@
 // Lives in lib/ (not in the route file) so the route stays a three-line wrapper.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { isDepartureCleanName, isPrepTaskName } from './breezeway'
+import { isDepartureCleanName } from './breezeway'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { noBreezewayRegex, vendorRegex } from '@/lib/ops-presets'
@@ -50,7 +50,7 @@ function isDone(t: any): boolean { return /complete|finish|close|approv|done/i.t
 function isDead(t: any): boolean { return /delete|cancel/i.test(str(t && t.status)) }
 // The same test the board and the labor engine use. `^clean` used to be in here, which counted
 // "Clean common areas" as a turnover.
-function isTurn(name: any): boolean { return isDepartureCleanName(name) && !isPrepTaskName(name) }
+function isTurn(name: any): boolean { return isDepartureCleanName(name) }
 
 /** Percentage change, guarding a zero base (which would otherwise read as an infinite gain). */
 function pctChange(now: number, prev: number): number | null {

@@ -10,7 +10,7 @@
 // page should paint before it lands.
 //   GET /api/labor/headline?days=7&market=all
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, canSeeMoney } from '@/lib/access'
+import { canSeeMoney, requireLevel } from '@/lib/access'
 import { laborEconomics } from '@/lib/labor-econ'
 
 export const dynamic = 'force-dynamic'
@@ -20,16 +20,23 @@ const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/N
 const addDays = (s: string, n: number) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d) }
 
 export async function GET(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Payroll by crew is labor data, gated like the rest of the labor board — not merely "signed in".
+  const gate = await requireLevel('labor', 'view')
+  if (!gate.ok) return gate.res
+  const access = gate.access
   // Money is gated the same way it is everywhere else; the clean COUNT is not money.
   const money = canSeeMoney(access)
 
   const sp = req.nextUrl.searchParams
-  const days = Math.min(Math.max(Number(sp.get('days') || 7), 1), 90)
   const market = String(sp.get('market') || 'all').toLowerCase()
-  const to = ymd(new Date())
-  const from = addDays(to, -(days - 1))
+  const isRange = /^\d{4}-\d{2}-\d{2}$/.test(String(sp.get('from') || '')) && /^\d{4}-\d{2}-\d{2}$/.test(String(sp.get('to') || ''))
+  const today = ymd(new Date())
+  // A bad `days` used to reach addDays as NaN and throw a RangeError OUTSIDE the try, which the
+  // caller saw as a framework 500 instead of the { ok:false } it knows how to render.
+  const raw = Number(sp.get('days'))
+  const days = Math.min(Math.max(Number.isFinite(raw) && raw > 0 ? raw : 7, 1), 90)
+  const to = isRange ? String(sp.get('to')) : today
+  const from = isRange ? String(sp.get('from')) : addDays(to, -(days - 1))
 
   try {
     const eco = await laborEconomics({ from, to, market })
@@ -37,8 +44,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true, from, to, days, market,
       cleans: H.cleans,
-      // Named, not netted: turns the housekeepers did not do, and what they were worth.
-      coveredByOtherCrews: H.coveredByOtherCrews,
+      // Named, not netted: turns the housekeepers did not do, and what they were worth. The COUNT
+      // is not money; the fee is, and it is gated like every other dollar on this route — a number
+      // that must not be seen must not be sent.
+      coveredByOtherCrews: {
+        cleans: (H.coveredByOtherCrews && H.coveredByOtherCrews.cleans) || 0,
+        fees: money ? ((H.coveredByOtherCrews && H.coveredByOtherCrews.fees) || 0) : null,
+      },
       costPerClean: money ? H.costPerClean : null,
       revPerClean: money ? H.revPerClean : null,
       hoursPerClean: H.hoursPerClean,
