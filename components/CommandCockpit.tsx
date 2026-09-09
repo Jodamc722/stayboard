@@ -731,7 +731,7 @@ function TeamPanel({ d, roster, onChanged }: { d: CommandDay; roster: Roster[]; 
         </div>
       )}
       {tm.notes.length > 0 && <p className="px-4 py-2 text-[11px] text-muted">{tm.notes.join(' · ')}</p>}
-      <div className="px-4 py-2"><Link href="/plan?tab=people" className="text-[12px] font-semibold text-brand-700">Open Staffing on the board →</Link></div>
+      <div className="px-4 py-2"><Link href="/plan?tab=people" className="text-[12px] font-semibold text-brand-700">Open the People view on the board →</Link></div>
     </div>
   )
 }

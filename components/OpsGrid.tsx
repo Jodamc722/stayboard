@@ -56,6 +56,8 @@ export type GTask = {
   // 'moved' = the checkout was earlier and this clean was moved onto today (the BFC hold).
   /** The category the SERVER assigned, against the saved taxonomy. Authoritative. */
   cat?: string
+  /** The projected finish, from the capacity model's run order (lib/lands-at). */
+  landsAt?: { at: string; overMin: number; confidence: 'started' | 'ordered' | 'loose'; person: string; position: number; of: number } | null
   moveState?: 'normal' | 'extended' | 'moved'
   movedFrom?: string | null
   extendedTo?: string | null
@@ -83,6 +85,8 @@ export type GData = {
   // The whole job of this board is a 4pm deadline, and it had no clock. `atRisk` per task existed
   // only inside a sort expression; `deadline.minsLeft` and `lastSync` were never read at all.
   deadline?: GDeadline
+  /** Cleans whose guest has genuinely left (checkout + grace) that nobody has started. */
+  behind?: { notStarted: number; sameDay: number; earliestIn: string | null; unassigned: number; waiting: number; level: '' | 'warn' | 'urgent'; units: { taskId: string; unit: string; market?: string | null; checkOutTime: string | null; arrivingAt: string | null; assignee: string | null }[] }
   lastSync?: string | null
   /** Reads that came back partial. Never silent — see the banner above the deadline strip. */
   degraded?: string[]
@@ -212,6 +216,8 @@ const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURICompo
 
 
 const isReal = (t: GTask) => !t.guestyOnly && /^\d+$/.test(String(t.id))
+/** '7h 20m' from minutes. */
+function fmtHm(mins: number) { const m = Math.max(0, Math.round(mins)); const h = Math.floor(m / 60), r = m % 60; return h ? h + 'h' + (r ? ' ' + r + 'm' : '') : r + 'm' }
 function daysBetween(a: string, b: string) { const x = new Date(a + 'T12:00:00'), y = new Date(b + 'T12:00:00'); return Math.round((+y - +x) / 86400000) }
 function shortTime(iso: string | null): string {
   if (!iso) return ''
@@ -400,6 +406,12 @@ type Row = {
    */
   late?: boolean
   atRisk?: boolean
+  /** When this unit's clean is projected to finish, and by how much it misses the deadline. */
+  lands?: GTask['landsAt']
+  /** People rows only: what the capacity model says this person's day costs. */
+  priced?: { loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string } | null
+  /** True when a market filter is on, so the priced day covers more than the row's own counts. */
+  pricedIsWholeDay?: boolean
   building?: string | null
   market?: string
   /** The clock facts already in the payload: when the guest left, when the next one lands. */
@@ -502,6 +514,15 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
               one it is without opening anything. */}
           {row.late && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 whitespace-nowrap">LATE</span>}
           {!row.late && row.atRisk && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">AT RISK</span>}
+          {/* THE PROJECTION, not the hour. "lands 4:40 PM" says which clean is the problem and why
+              — where it sits in that person's run — instead of flagging every unstarted clean at
+              2:30. A loose guess (no shift on record) is shown with a ~ and never in red. */}
+          {row.lands && (
+            <span title={row.lands.person + ' — stop ' + row.lands.position + ' of ' + row.lands.of + (row.lands.confidence === 'started' ? ' (started, so this is measured from the real start)' : row.lands.confidence === 'loose' ? ' (no shift on record, so this assumes a 9am start)' : ' (from the priced run order)')}
+              className={'text-[10.5px] font-semibold tabular-nums whitespace-nowrap ' + (row.lands.confidence === 'loose' ? 'text-muted' : row.lands.overMin > 0 ? 'text-rose-700' : 'text-muted')}>
+              {row.lands.confidence === 'loose' ? '~' : ''}lands {row.lands.at}
+            </span>
+          )}
         </div>
         {/* reservation / shift context — full width on a phone, carrying the city with it */}
         <div className="order-3 w-full min-w-0 lg:order-none lg:col-span-3 lg:w-auto">
@@ -509,6 +530,19 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
             <span className="lg:hidden">{[metaSub, row.reservation].filter(Boolean).join(' \u00b7 ')}</span>
             <span className="hidden lg:inline">{row.reservation}</span>
           </span>
+          {/* What the day actually costs this person — the sentence the Staffing tab used to own. */}
+          {row.priced && row.priced.verdict !== 'implausible' && row.priced.capacityMinutes > 0 && (
+            <span className={'block text-[11px] font-semibold ' + (row.priced.utilisationPct > 100 ? 'text-rose-700' : row.priced.utilisationPct >= 85 ? 'text-amber-700' : 'text-emerald-700')}>
+              ≈ {fmtHm(row.priced.loadMinutes)} of {fmtHm(row.priced.capacityMinutes)} · {row.priced.utilisationPct}%
+              {row.priced.utilisationPct > 100 ? ' · over' : row.priced.headroomCleans > 0 ? ' · room for ' + row.priced.headroomCleans + ' more' : ' · full'}
+              {/* The model prices a WHOLE day; the row beside it counts one market. Say so, or the
+                  two numbers read as a contradiction. */}
+              {row.pricedIsWholeDay && <span className="font-normal text-muted"> (their whole day)</span>}
+            </span>
+          )}
+          {row.priced && row.priced.verdict === 'implausible' && (
+            <span className="block text-[11px] text-muted italic">not priced — more work than a day holds, likely closed out for the team</span>
+          )}
         </div>
         {/* the day's work */}
         <div className="order-4 w-full flex items-center gap-1 flex-wrap lg:order-none lg:col-span-3 lg:w-auto">
@@ -618,10 +652,32 @@ function TaskLine({ t, roster, mode, onRefresh, comment, units, staff, unitMeta 
   // THE VERBS THE BOARD NEVER HAD. complete / priority / vendor / reschedule have been working APIs
   // this whole time, wired into the OLD board — this one shipped as a viewer with a single write.
   const [acting, setActing] = useState('')
+  const [noting, setNoting] = useState(false)
+  const [note, setNote] = useState('')
+  const [noteSent, setNoteSent] = useState(false)
   const sug = useSuggestions()
   const { by } = useCats()
   const c = metaOf(by, catKeyOf(t))
   const mv = moveNote(t)
+  // The same 3-way comment route the Command Center uses: it reaches the Breezeway task and the
+  // in-app thread, so the person holding the job sees it wherever they are looking.
+  const sendNote = async () => {
+    const body = note.trim(); if (!body || acting) return
+    setActing('note'); setErr('')
+    try {
+      const r = await fetch('/api/comments', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // taskId + toBreezeway are what put it on the Breezeway task itself — without them it is an
+        // in-app comment only, and the placeholder promising otherwise would be a lie.
+        body: JSON.stringify({ type: 'task', id: t.id, taskId: t.id, toBreezeway: true, body, label: t.unit + ' — ' + t.name, link: '/plan' }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j?.error) throw new Error(j?.error || 'Could not send it')
+      setNote(''); setNoteSent(true); setTimeout(() => { setNoteSent(false); setNoting(false) }, 1800)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setActing('')
+  }
+
   const assign = async (id: number, alsoTaskIds: string[] = []) => {
     setBusy(id); setErr('')
     try {
@@ -707,10 +763,33 @@ function TaskLine({ t, roster, mode, onRefresh, comment, units, staff, unitMeta 
               {acting === 'vendor' ? <Loader2 size={10} className="animate-spin inline" /> : 'Vendor'}
             </button>
           )}
+          {/* NOTE. The Command Center's rows could send a message to whoever holds a task; the board
+              where the work actually is could only READ comments. Same 3-way route: it lands on the
+              Breezeway task and in the app thread, where the person doing the job will see it. */}
+          {isReal(t) && !t.done && (
+            <button onClick={() => setNoting(n => !n)} aria-expanded={noting}
+              title="Send a note to whoever holds this task"
+              className={'text-[11.5px] font-semibold disabled:opacity-50 ' + (noting ? 'text-ink' : 'text-muted hover:text-ink')}>
+              Note
+            </button>
+          )}
           {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-muted hover:underline" title="Read-only field report">Report</a>}
           {isReal(t) && <a href={bzTask(t.id)} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open in Breezeway"><ExternalLink size={12} /></a>}
         </span>
       </div>
+      {noting && (
+        <div className="mt-2 pt-2 border-t border-line flex items-center gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
+          <input value={note} onChange={e => setNote(e.target.value)} autoFocus
+            placeholder={'Note for ' + (t.assignees[0] || 'whoever takes this') + ' — lands on the Breezeway task'}
+            onKeyDown={e => { if (e.key === 'Enter') sendNote() }}
+            className="flex-1 min-w-[200px] rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] focus:outline-none focus:border-ink" />
+          <button onClick={sendNote} disabled={!note.trim() || acting === 'note'}
+            className="rounded-lg bg-ink text-white px-2.5 py-1.5 text-[11.5px] font-bold disabled:opacity-40">
+            {acting === 'note' ? <Loader2 size={11} className="animate-spin" /> : 'Send'}
+          </button>
+          {noteSent && <span className="text-[11.5px] font-semibold text-emerald-700 inline-flex items-center gap-1"><Check size={11} /> sent</span>}
+        </div>
+      )}
       {mv && <p className={'mt-1 text-[11.5px] ' + (t.moveState === 'extended' ? 'font-semibold text-rose-700' : 'text-muted')}>{mv.line}</p>}
       {comment && (
         <div className="mt-1 text-[11.5px] text-muted flex items-start gap-1.5">
@@ -740,7 +819,7 @@ function fmtAgo(iso: string): string {
   return `${h}h ${m % 60}m ago`
 }
 
-export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, openSheet, onSheet, boardDate, aside }: {
+export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, openSheet, onSheet, boardDate, cap, wantPeople, staffErr, aside }: {
   data: GData | undefined
   glitches: GGlitch[]
   roster: GRoster[]
@@ -752,6 +831,12 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   /** Which sheet the page has open — one at a time, owned by OpsV2. */
   openSheet: 'add' | 'plan' | null
   onSheet: (s: 'add' | 'plan' | null) => void
+  /** Homebase could not be read — "nobody is on today" and "we do not know" are different news. */
+  staffErr?: string | null
+  /** A deep link (?tab=people, or the crew chip) asking for the People axis. */
+  wantPeople?: boolean
+  /** The capacity model for this day — the planner's ceiling is minutes, not job counts. */
+  cap?: { people?: { person: string; loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string }[]; unassigned?: { stop: { id: string }; minutes: number }[] } | null
   /** The day the board is showing — Focus and the PM ledger answer for THAT day, not for today. */
   boardDate?: string
   /** The crew line (the capacity model, compact) — rides on the day line so the clock and the crew are one strip, not two banners. */
@@ -792,6 +877,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     } catch {}
     setPrefsReady(true)
   }, [])
+  // A deep link wins over the remembered choice, once.
+  useEffect(() => { if (wantPeople) setMode('people') }, [wantPeople])
   const pickMode = (m: 'units' | 'people' | 'review' | 'due') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
   const pickMkt = (m: string) => { setMkt(m); try { localStorage.setItem('opsgrid_market', m) } catch {} }
 
@@ -839,6 +926,13 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   }, [allUnits])
 
   const allTasks = useMemo(() => units.flatMap(u => u.tasks), [units])
+
+  // The capacity model, matched to a person by the same key rule the rest of the board uses.
+  const pricedOf = useMemo(() => {
+    const by: Record<string, { loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string }> = {}
+    for (const p of (cap?.people || [])) by[personKey(p.person)] = p as any
+    return (name: string) => by[personKey(name)] || null
+  }, [cap])
 
   // ── COUNTERS ────────────────────────────────────────────────────────────────────────────────
   // Today's Breezeway tasks by category, plus the open guest/glitch backlog merged in by id so a
@@ -926,6 +1020,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           late: !!u.late, atRisk: !!u.atRisk,
           building: u.building || null, market: u.market,
           outAt: u.checkOutTime || null, inAt: u.arrivingAt || null,
+          // The clean's own projection, if the model could price it.
+          lands: (u.tasks.find(t => t.type === 'departure_clean' && !t.done)?.landsAt) || null,
         } as Row
       })
       // A UNIT WITH A PROBLEM AND NO WORK ON IT IS THE WHOLE POINT OF A GLITCH.
@@ -1031,6 +1127,11 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       return {
         key: 'p:' + name, title: name,
         sub: (roles && roles.departments && roles.departments.length ? roles.departments.join(' · ') : ''),
+        // ── ONE PERSON AXIS (2026-09-09 audit) ────────────────────────────────────────────
+        // People and the Staffing tab answered the same question in two visual languages, and under
+        // a market filter they contradicted each other. The capacity sentence — minutes, load, room
+        // — moves here, and Staffing is retired.
+        priced: pricedOf(name), pricedIsWholeDay: mkt !== 'all',
         reservation: [dep ? dep + ' departure clean' + (dep === 1 ? '' : 's') : '', tasks.length - doneN + ' left of ' + tasks.length,
         Array.from(new Set(tasks.map(t => t.unit))).length + ' units'].filter(Boolean).join(' · '),
         status, tasks, issues: [], gapNights: null,
@@ -1044,6 +1145,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       out.push({
         key: 'p:free:' + nm, title: nm,
         sub: ((roster.find(p => personKey(p.name) === personKey(nm)) || roster.find(p => nameMatches(p.name, nm)))?.departments || []).join(' · '),
+        priced: pricedOf(nm), pricedIsWholeDay: mkt !== 'all',
         reservation: (sp?.clockedIn ? 'On the clock' : 'On shift') + ', nothing assigned'
           + (mkt !== 'all' ? ' anywhere today' : ''),
         status: { label: 'Free', cls: 'bg-brand-50 text-brand-700 border-brand-200' },
@@ -1088,6 +1190,13 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   // on every single request since it was written, and the board rendered none of it — so the one
   // number that decides the morning was the one number nobody could see.
   const dl = data?.deadline || null
+  // THE BAND IS ABOUT WHAT YOU ARE LOOKING AT. Counting the portfolio above a two-name list is how
+  // a market filter turns a true number into a confusing one — so the filtered list drives all of it.
+  const bh = data?.behind || null
+  const behindHere = useMemo(() => (bh?.units || []).filter(u => mkt === 'all' || u.market === mkt), [bh, mkt])
+  const behindSameDay = behindHere.filter(u => !!u.arrivingAt).length
+  const behindUnowned = behindHere.filter(u => !u.assignee).length
+  const behindEarliest = behindHere.filter(u => !!u.arrivingAt).map(u => u.arrivingAt).sort()[0] || null
   const hh = dl ? Math.floor(Math.abs(dl.minsLeft) / 60) : 0
   const mm = dl ? Math.abs(dl.minsLeft) % 60 : 0
   const clock = dl ? (dl.passed ? `${hh}h ${mm}m past` : `${hh}h ${mm}m left`) : ''
@@ -1120,6 +1229,49 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 flex items-start gap-2">
           <AlertTriangle size={13} className="text-amber-600 mt-0.5 shrink-0" />
           <p className="text-[12px] text-amber-900">Some of today&rsquo;s numbers are incomplete — could not fully read: {data!.degraded!.join(', ')}. Refresh in a moment.</p>
+        </div>
+      )}
+
+      {/* ── NOT STARTED, AND THE GUEST HAS ALREADY GONE ──────────────────────────────────────
+          Computed on every request since the board was written (lib/ops-behind, clock-aware so a
+          9am look at an 11am checkout stays quiet) and rendered nowhere. It is the one band that
+          says where a walk-in comes from. Past the deadline it gives way to the close-out below. */}
+      {!dl?.passed && behindHere.length > 0 && (
+        <div className={'mb-3 rounded-xl border px-3 py-2 ' + (behindSameDay > 0 ? 'border-rose-300 bg-rose-50' : 'border-amber-300 bg-amber-50')}>
+          <div className="flex items-start gap-2 flex-wrap">
+            <AlertTriangle size={14} className={'mt-0.5 shrink-0 ' + (behindSameDay > 0 ? 'text-rose-600' : 'text-amber-600')} />
+            <p className={'text-[12.5px] font-bold ' + (behindSameDay > 0 ? 'text-rose-900' : 'text-amber-900')}>
+              {behindHere.length} clean{behindHere.length === 1 ? '' : 's'} not started and the guest has already gone
+              {behindSameDay > 0 && <span className="font-semibold"> · {behindSameDay} with a check-in today{behindEarliest ? ', earliest ' + behindEarliest : ''}</span>}
+              {behindUnowned > 0 && <span className="font-semibold"> · {behindUnowned} with nobody on {behindUnowned === 1 ? 'it' : 'them'}</span>}
+            </p>
+          </div>
+          <p className="mt-1 text-[11.5px] text-ink/70 pl-6">
+            {behindHere.slice(0, 8).map(u => u.unit + (u.arrivingAt ? ' (in ' + u.arrivingAt + ')' : '')).join(' · ')}
+            {behindHere.length > 8 ? ' · +' + (behindHere.length - 8) + ' more' : ''}
+          </p>
+        </div>
+      )}
+
+      {/* ── PAST THE DEADLINE: THE CLOSE-OUT ─────────────────────────────────────────────────
+          At 4pm the question stops being "will it land" and becomes "did it". `missed` — cleans
+          finished after the hour — has been computed all along and shown nowhere, so nobody could
+          answer "who was late, and by how much" without opening Breezeway. */}
+      {dl?.passed && dl.cleans > 0 && mode === 'units' && (
+        <div className="mb-3 rounded-xl border border-line bg-white px-3 py-2.5">
+          <div className="flex items-center gap-x-4 gap-y-1 flex-wrap">
+            <span className="text-[12.5px] font-bold text-ink">Day closed out</span>
+            <span className="text-[12.5px]"><b className="text-emerald-700 tabular-nums">{dl.done - (dl.missed || 0)}</b> <span className="text-muted">landed on time</span></span>
+            {(dl.missed || 0) > 0 && <span className="text-[12.5px]"><b className="text-amber-800 tabular-nums">{dl.missed}</b> <span className="text-muted">finished after {dl.dueBy}</span></span>}
+            {dl.remaining > 0 && <span className="text-[12.5px]"><b className="text-rose-700 tabular-nums">{dl.remaining}</b> <span className="text-muted">still open</span></span>}
+            {dl.untracked > 0 && <span className="text-[11.5px] text-muted">{dl.untracked} vendor — no clock</span>}
+            <span className="ml-auto text-[11.5px] text-muted">{clock}</span>
+          </div>
+          {dl.remaining > 0 && (
+            <p className="mt-1 text-[11.5px] text-rose-800">
+              Still open past {dl.dueBy}: {units.filter(u => u.tasks.some(t => t.type === 'departure_clean' && !t.done && !t.untracked)).slice(0, 8).map(u => u.unit).join(' · ') || '—'}
+            </p>
+          )}
         </div>
       )}
 
@@ -1257,6 +1409,14 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         </div>
       ) : (
       <>
+      {/* A ROSTER WE COULD NOT READ IS NOT AN EMPTY ROSTER. */}
+      {mode === 'people' && staffErr && (
+        <div className="mt-2.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 flex items-start gap-2">
+          <AlertTriangle size={13} className="text-rose-600 mt-0.5 shrink-0" />
+          <p className="text-[12px] text-rose-900">Could not read the Homebase roster — {staffErr}. Anyone not shown here may still be working.</p>
+        </div>
+      )}
+
       {/* ── HEADER + ROWS ── */}
       <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
         {/* ── THE KEY ─────────────────────────────────────────────────────────────────────────
@@ -1352,7 +1512,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
 
       {planOpen && (
         <DayPlanPanel
-          units={units} roster={roster} staff={staff} today={today}
+          units={units} roster={roster} staff={staff} today={today} cap={cap}
           onClose={() => setPlanOpen(false)}
           onApplied={onRefresh}
         />

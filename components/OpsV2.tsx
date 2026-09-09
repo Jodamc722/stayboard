@@ -27,12 +27,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
-  AlertTriangle, Plus, ChevronDown, Users, Send, X, Loader2, Check, FileText, ChevronLeft, ChevronRight, CalendarDays,
+  Plus, ChevronDown, Users, Send, X, Loader2, Check, FileText, ChevronLeft, ChevronRight, CalendarDays,
 } from 'lucide-react'
 import { OpsGrid } from '@/components/OpsGrid'
 import { useModal } from '@/components/Modal'
 import { useCachedFetch } from '@/lib/swr'
-import { matchRoster, samePerson } from '@/lib/roster-match'
+import { matchRoster } from '@/lib/roster-match'
 
 
 // ── types (mirrors of what the APIs actually send) ──────────────────────────────────────────────
@@ -110,18 +110,22 @@ export function OpsV2() {
   // holds 'board' for everyone who used this page before today, and there is no way to tell "chose
   // Board" apart from "never chose". Bumping the key gives everybody the new landing once, and
   // whatever they pick after that is theirs and sticks.
-  // TWO TABS (2026-09-02). ?tab=people deep-links from the Command Center; otherwise the last
-  // choice on this device. Anyone whose stored choice was the retired Board or Push tab lands on
-  // the Grid.
-  const [tab, setTab] = useState<'grid' | 'people'>('grid')
+  // ONE VIEW (2026-09-09). The Staffing tab is retired; ?tab=people from the Command Center, and a
+  // stored choice from the old tab, both deep-link the Grid onto its People axis instead.
+  const [wantPeople, setWantPeople] = useState(false)
   useEffect(() => {
     try {
       const q = new URLSearchParams(window.location.search).get('tab')
-      if (q === 'people') { setTab('people'); return }
-      const t = localStorage.getItem('opsv2_tab_v2'); if (t === 'people') setTab(t)
+      // A LINK IS A VISIT, NOT A PREFERENCE. Writing the stored mode here meant one click on the
+      // Command Center's "lanes" link changed which axis the board opened on every morning after.
+      if (q === 'people') { setWantPeople(true); return }
+      // Anybody whose remembered choice was the old Staffing tab lands on the People axis once.
+      const t = localStorage.getItem('opsv2_tab_v2')
+      if (t === 'people') { setWantPeople(true); try { localStorage.setItem('opsgrid_mode', 'people'); localStorage.removeItem('opsv2_tab_v2') } catch {} }
     } catch {}
   }, [])
-  const pick = (t: 'grid' | 'people') => { setTab(t); try { localStorage.setItem('opsv2_tab_v2', t) } catch {} }
+  // "View lanes" from the crew chip now means: the Grid, on the People axis.
+  const pick = () => { setWantPeople(true); window.setTimeout(() => setWantPeople(false), 120) }
 
   // null = closed; '' = open blank; a unit name = open with that unit pre-searched (the "+ Task"
   // button on a Needs-a-human row lands you one keystroke from filing, not five).
@@ -132,7 +136,6 @@ export function OpsV2() {
   const setAddFor = (v: string | null) => { setAddForRaw(v); setSheet(v === null ? null : 'add') }
   const onSheet = (s: 'add' | 'plan' | null) => { setSheet(s); if (s !== 'add') setAddForRaw(null) }
 
-  const units: Unit[] = Array.isArray(data?.units) ? data!.units : []
   const glitches: Glitch[] = (gl && Array.isArray(gl.glitches)) ? gl.glitches : []
 
   return (
@@ -146,18 +149,12 @@ export function OpsV2() {
           WHOLE row in one scroller pushed Add task half off the right edge, which is worse — it is
           the primary action here. So: the tabs scroll, the button does not. It stays pinned to the
           right at every width, and from sm: up this is the same one-line row it always was. */}
-      <div className="flex items-end gap-2 border-b border-line mb-2 sm:mb-4">
-      <div className="flex items-center gap-4 sm:gap-6 flex-1 min-w-0 overflow-x-auto sm:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {([['grid', 'Grid', null, 'bg-app text-muted'],
-           ['people', 'Staffing', staff?.summary?.clockedIn || 0, 'bg-app text-muted']] as const).map(([k, label, n, cls]) => (
-          <button key={k} onClick={() => pick(k as any)}
-            className={'pb-2.5 pt-1 text-[14px] font-bold inline-flex shrink-0 items-center gap-2 border-b-2 -mb-px ' +
-              (tab === k ? 'text-ink border-ink' : 'text-muted border-transparent hover:text-ink')}>
-            {label}
-            {n != null && n > 0 && <span className={'text-[11px] font-bold rounded-full px-2 py-0.5 ' + cls}>{n}</span>}
-          </button>
-        ))}
-      </div>
+      {/* ── ONE ROW OF CHROME (2026-09-09 audit) ─────────────────────────────────────────────
+          The Staffing tab is gone: it and the Grid's People axis were the same crew twice, and
+          under a market filter they contradicted each other about who was free. `?tab=people` and
+          the old stored choice now deep-link the Grid onto its People axis, so nothing breaks. */}
+      <div className="flex items-end gap-2 mb-2 sm:mb-3">
+        <div className="flex-1" />
         {/* The day sheet lives in the page header on a desktop. On a phone that header is hidden
             (the app bar already says "Today in Ops"), so the link rides here instead of costing a
             whole row of screen to itself. */}
@@ -201,14 +198,11 @@ export function OpsV2() {
 
       {/* The crew line rides on the grid's day line (one strip: clock · cleans · crew). On the
           Staffing tab it stands alone, in full, because staffing IS the question there. */}
-      {tab === 'grid' && (
-        <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
+      <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
           loading={loading} error={error ? String(error) : null}
-          onRefresh={refresh} onAddTask={u => setAddFor(u)} openSheet={sheet} onSheet={onSheet} boardDate={date}
-          aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} compact />} />
-      )}
-      {tab === 'people' && <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />}
-      {tab === 'people' && <PeopleTab staff={staff || null} staffErr={staffErr ? String(staffErr) : null} units={units} roster={roster} onRefresh={refresh} cap={cap || null} />}
+          onRefresh={refresh} onAddTask={u => setAddFor(u)} openSheet={sheet} onSheet={onSheet} boardDate={date} cap={cap || null}
+          wantPeople={wantPeople} staffErr={staffErr ? String(staffErr) : null}
+          aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={pick} compact />} />
 
       {sheet === 'add' && addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} boardDate={date} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
     </div>
@@ -364,128 +358,10 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact }: { cap: Cap
   )
 }
 
-// ── PEOPLE: the missing axis ───────────────────────────────────────────────────────────────────
-// One lane per person on today: their queue from the board's own tasks, a done/total bar, and —
-// for anyone idle — the open unassigned work pushed to them in one tap. Load is measured in TASKS,
-// not invented minutes: we do not have predicted durations, and a bar built on made-up numbers
-// would be read as truth. (Optii earns its minutes with an ML model; until we have one, count.)
-function PeopleTab({ staff, staffErr, units, roster, onRefresh, cap }: { staff: Staffing | null; staffErr?: string | null; units: Unit[]; roster: Roster[]; onRefresh: () => void; cap: CapData | null }) {
-  const [busyKey, setBusyKey] = useState('')
-  const [err, setErr] = useState<Record<string, string>>({})
-  const allTasks = useMemo(() => units.flatMap(u => u.tasks.map(t => ({ ...t, unit: u.unit }))), [units])
-  const unassignedOpen = useMemo(() =>
-    allTasks.filter(t => !t.done && !t.guestyOnly && t.assignees.length === 0)
-      .sort((a, b) => (a.type === 'departure_clean' ? 0 : 1) - (b.type === 'departure_clean' ? 0 : 1)),
-    [allTasks])
-
-  const lanes = useMemo(() => {
-    const people = staff?.people || []
-    return people.map(p => {
-      const mine = allTasks.filter(t => t.assignees.some(a => samePerson(a, p.bzAlias || p.name) || samePerson(a, p.name)))
-      const done = mine.filter(t => t.done).length
-      return { p, mine, done }
-    }).sort((a, b) => (a.p.clockedIn ? 0 : 1) - (b.p.clockedIn ? 0 : 1) || (a.mine.length === 0 ? 0 : 1) - (b.mine.length === 0 ? 0 : 1))
-  }, [staff, allTasks])
-
-  const pushTo = async (person: StaffPerson, task: Task & { unit: string }) => {
-    const m = matchRoster(roster, person.bzAlias || person.name)
-    if (!m.ok) { setErr(e => ({ ...e, [person.name]: m.reason })); return }
-    const rid = m.id
-    setBusyKey(person.name + task.id); setErr(e => ({ ...e, [person.name]: '' }))
-    try {
-      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: task.id, assigneeIds: [rid] }) })
-      const j = await r.json()
-      if (!r.ok || j.error) throw new Error(j.error || 'failed')
-      onRefresh()
-    } catch (e: any) { setErr(x => ({ ...x, [person.name]: String(e?.message || e) })) }
-    setBusyKey('')
-  }
-
-  // "Nobody is on today" and "we could not read Homebase" are different news, and only one of them
-  // is safe to act on (2026-09-09 audit).
-  if (staffErr) return (
-    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-3 text-[13px] text-rose-900 flex items-start gap-2">
-      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-      <span>Could not read the roster — {staffErr}. This is not &ldquo;nobody is working&rdquo;; it is &ldquo;we do not know who is&rdquo;.</span>
-    </div>
-  )
-  if (!staff || !staff.people.length) return <div className="text-sm text-muted py-8 text-center">No one on the Homebase schedule today.</div>
-  return (
-    <div className="space-y-2.5">
-      <p className="text-[12.5px] text-muted px-1">
-        Everyone on today, their queue, and who has room. An amber lane is spare capacity — push the nearest open work onto it.
-      </p>
-      {lanes.map(({ p, mine, done }) => {
-        const idle = p.clockedIn && mine.length === 0
-        const pct = mine.length ? Math.round((done / mine.length) * 100) : 0
-        // The model's pricing of this person's day, when it knows them. Matched by name the same
-        // loose way lanes match tasks — both sides ultimately come from Homebase names.
-        const price = (cap?.people || []).find(c => samePerson(c.person, p.name) || samePerson(c.person, p.bzAlias)) || null
-        return (
-          <div key={p.name} className={'rounded-2xl border overflow-hidden ' + (idle ? 'border-amber-300' : 'border-line')}>
-            <div className="flex items-center gap-3 px-4 py-2.5 bg-white flex-wrap">
-              <span className="w-9 h-9 rounded-full bg-app grid place-items-center text-[12px] font-bold text-ink/60 shrink-0">
-                {p.name.split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[14px] font-bold text-ink leading-tight">{p.name}</span>
-                <span className="block text-[11px] text-muted">
-                  {p.role || 'Field'}{p.shift ? ' · ' + p.shift : ''} · {p.clockedIn ? 'clocked in' : 'not clocked in'}
-                  {p.bzAlias && p.bzAlias !== p.name ? ' · bz: ' + p.bzAlias : ''}
-                </span>
-                {/* The model excludes a person whose day is credited with more than a day can hold
-                    (tasks closed out on the team's behalf) — printing "0% · room for 3 more cleans"
-                    for someone holding 22 tasks was the strip's most-noticed lie (2026-09-02). */}
-                {price && price.verdict === 'implausible' && (
-                  <span className="block text-[11px] font-semibold text-muted">not priced — {mine.length} tasks is more than a day holds; likely closed out on the team&rsquo;s behalf</span>
-                )}
-                {price && price.verdict !== 'implausible' && price.capacityMinutes > 0 && (
-                  <span className={'block text-[11px] font-semibold ' + (price.utilisationPct > 100 ? 'text-rose-700' : price.utilisationPct >= 85 ? 'text-amber-700' : 'text-emerald-700')}>
-                    ≈ {fmtH(price.loadMinutes)} of {fmtH(price.capacityMinutes)} · {price.utilisationPct}%
-                    {price.travelMinutes > 0 ? ' · ' + fmtH(price.travelMinutes) + ' travel' : ''}
-                    {price.utilisationPct > 100 ? ' · over' : price.headroomCleans > 0 ? ' · room for ' + price.headroomCleans + ' more clean' + (price.headroomCleans === 1 ? '' : 's') : ' · full'}
-                  </span>
-                )}
-              </span>
-              <span className="ml-auto flex items-center gap-2 shrink-0">
-                <span className="text-[11.5px] font-semibold text-muted tabular-nums">{done}/{mine.length} done</span>
-                <span className="w-24 h-2 rounded-full bg-app overflow-hidden">
-                  <span className={'block h-full ' + (idle ? 'bg-neutral-200' : pct === 100 ? 'bg-emerald-500' : 'bg-sky-400')} style={{ width: (mine.length ? Math.max(6, pct) : 100) + '%' }} />
-                </span>
-              </span>
-            </div>
-            {idle ? (
-              <div className="px-4 py-2.5 bg-amber-50 border-t border-amber-200 flex items-center gap-2 flex-wrap">
-                <AlertTriangle size={13} className="text-amber-700 shrink-0" />
-                <span className="text-[12.5px] font-semibold text-amber-900 flex-1 min-w-[160px]">
-                  Idle — {unassignedOpen.length ? 'open unassigned work:' : 'no unassigned work open right now.'}
-                </span>
-                {err[p.name] && <span className="w-full text-[11.5px] text-rose-600 font-semibold">{err[p.name]}</span>}
-                {unassignedOpen.slice(0, 3).map(t => (
-                  <button key={t.id} onClick={() => pushTo(p, t)} disabled={busyKey === p.name + t.id}
-                    className="text-[12px] font-bold px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50 inline-flex items-center gap-1">
-                    {busyKey === p.name + t.id ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-                    {t.unit} · {t.name.length > 24 ? t.name.slice(0, 24) + '…' : t.name}
-                  </button>
-                ))}
-              </div>
-            ) : mine.length > 0 ? (
-              <div className="px-4 py-2 bg-app/40 border-t border-line flex items-center gap-1.5 flex-wrap">
-                {mine.slice(0, 8).map(t => (
-                  <span key={t.id} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1 text-[11.5px] font-semibold text-ink/80">
-                    <span className={'w-1.5 h-1.5 rounded-full ' + (t.done ? 'bg-emerald-500' : t.late ? 'bg-rose-500' : t.running ? 'bg-sky-500' : 'bg-neutral-300')} />
-                    {t.unit} · {t.type === 'departure_clean' ? 'clean' : t.name.length > 18 ? t.name.slice(0, 18) + '…' : t.name}
-                  </span>
-                ))}
-                {mine.length > 8 && <span className="text-[11px] text-muted">+{mine.length - 8}</span>}
-              </div>
-            ) : null}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
+// PeopleTab lived here until 2026-09-09. Retired with the Staffing tab: it and the Grid's People
+// axis were the same question answered twice, in two visual languages, and under a market filter
+// they disagreed about who was free. The capacity sentence it existed to show now rides on the
+// People rows themselves (components/OpsGrid).
 
 // ── ADD TASK, FROM ANYWHERE ────────────────────────────────────────────────────────────────────
 // The sheet Jon asked for: type-ahead over the WHOLE portfolio (not just vacant units), the smart

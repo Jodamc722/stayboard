@@ -108,6 +108,15 @@ export type DayPlan = {
 export type PlanOptions = {
   /** Hard ceiling on total open tasks per person after planning. */
   maxPerPerson?: number
+  /**
+   * THE REAL CEILING (2026-09-09 audit). A count says a studio and a four-bedroom cost the same,
+   * which they do not — the capacity model prices each unit in its own market against measured
+   * benchmarks. Pass `capacity` (person → minutes still free, from /api/capacity) and the planner
+   * spends minutes instead of jobs; `taskMinutes` prices the work it is handing out. The count
+   * remains as the fallback for a day the model could not price.
+   */
+  capacityLeft?: Record<string, number>
+  taskMinutes?: Record<string, number>
   /** Do not hand work to somebody who is not on the clock / on shift. */
   onlyScheduled?: boolean
 }
@@ -129,6 +138,25 @@ export function planDay(opts: {
 }): DayPlan {
   const maxPer = Math.max(1, opts.options?.maxPerPerson ?? 6)
   const onlyScheduled = opts.options?.onlyScheduled !== false
+  // Minutes when the capacity model could price the day, jobs when it could not.
+  const capLeft = opts.options?.capacityLeft || null
+  const taskMin = opts.options?.taskMinutes || {}
+  const minutesOf = (t: PlanTask) => Math.max(15, Number(taskMin[t.id]) || (t.isClean ? 90 : 45))
+  const spent: Record<string, number> = {}
+  const roomFor = (name: string, t: PlanTask) => {
+    // The job count stays a ceiling in every case: minutes are the better measure, but they are
+    // estimates, and a plan that hands somebody eleven jobs is wrong however the minutes add up.
+    if (loadOf(name) >= maxPer) return false
+    if (!capLeft) return true
+    const left = Number(capLeft[personKey(name)] ?? capLeft[name])
+    if (!Number.isFinite(left)) return true                       // unpriced person: the count decides
+    // Somebody already over their day gets nothing more, whatever it is. Otherwise: a person with
+    // nothing from this plan yet can take one job however long — the same rule the suggestion engine
+    // uses, so a ceiling never makes a long job impossible — and after that the minutes must fit.
+    if (left <= 0) return false
+    const used = spent[personKey(name)] || 0
+    return used === 0 ? true : used + minutesOf(t) <= left
+  }
 
   // Everyone's starting position: what they already carry, and where they already are.
   // Keyed on personKey, never the raw string, so "Gehron Regis" and "Gehron  Regis" are one person.
@@ -193,7 +221,7 @@ export function planDay(opts: {
     }
 
     const ranked = rankAssignees(eligible, ctx)
-      .filter(r => loadOf(r.person.name) < maxPer)
+      .filter(r => roomFor(r.person.name, task))
       // ROUTE BONUS. Among people who are otherwise close, prefer the one whose day this keeps in
       // one place. Small on purpose: it should break ties, never beat "already standing there".
       .map(r => {
@@ -227,6 +255,7 @@ export function planDay(opts: {
     }
 
     load[personKey(pick.person.name)] = loadOf(pick.person.name) + 1
+    spent[personKey(pick.person.name)] = (spent[personKey(pick.person.name)] || 0) + minutesOf(task)
     // The planner's own memory: without this, somebody who started the morning empty stayed at
     // openLoad 0 for every later round, so the load penalty never applied to them and the plan
     // stacked jobs on whoever won proximity (caught in review, 2026-09-09).

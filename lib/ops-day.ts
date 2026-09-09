@@ -14,6 +14,8 @@ import { summariseBehind, fmt12, type BehindRow } from '@/lib/ops-behind'
 import { TASK_CATS_KEY, resolveCats, catOfTaskWith, isTaskDone, isTaskRunning, isTaskGone } from '@/lib/task-categories'
 import { getSetting } from '@/lib/app-settings'
 import { pageRows } from '@/lib/db-page'
+import { buildDayPicture } from '@/lib/capacity-day'
+import { projectLandings, againstDeadline, clockOf as landingClock } from '@/lib/lands-at'
 
 // Botanica is cleaned by a vendor who does NOT close the task in Breezeway, so its cleans sit at
 // 'not started' forever. Tracking them against 4pm produced 11 false 'at risk' alerts out of 17.
@@ -349,6 +351,39 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     }
   }
   const ORDER: Record<string, number> = { departure_clean: 0, strip: 1, deep_clean: 2, inspection: 3, audit: 4, pm: 5, field: 6, pool_pest: 7, maintenance: 8, other: 9 }
+  // ── WILL IT LAND? (2026-09-09) ────────────────────────────────────────────────────────────
+  // The capacity model already orders each person's run and prices every stop; with a shift start
+  // those minutes become clock times. This turns "AT RISK" from a statement about the hour into a
+  // statement about THIS clean: reached at 12:40, finishes 14:25, her fifth stop of seven.
+  // Best-effort: a failure here must never take the board down, and a clean the model cannot price
+  // keeps the old clock-threshold flag rather than losing its warning.
+  const landings: Record<string, any> = {}
+  if (isToday) {
+    try {
+      const pic = await buildDayPicture(today)
+      const startedAt: Record<string, string | null> = {}
+      // Work that will not happen today costs the day nothing and must not push the rest of the run
+      // to the right: anything already finished, and any clean on a stay that ran past it.
+      const skip = new Set<string>()
+      for (const t of tasks) {
+        startedAt[t.id] = (t as any).startedAt || null
+        if (t.done || (t as any).moveState === 'extended' || (t as any).untracked) skip.add(t.id)
+      }
+      const proj = againstDeadline(projectLandings(pic.people as any, { startedAt, skip, nowMin }), DEADLINE_MIN)
+      for (const k of Object.keys(proj)) landings[k] = proj[k]
+    } catch { /* the board is more important than the projection */ }
+  }
+  for (const t of tasks) {
+    const L = landings[t.id]
+    if (!L || !t.clocked || t.done) continue
+    ;(t as any).landsAt = { at: landingClock(L.endMin), overMin: L.overMin, confidence: L.confidence, person: L.person, position: L.position, of: L.of }
+    // A projection that lands past the deadline IS at risk, whatever the hour says; one that lands
+    // comfortably before it is not, even at 3:30pm. Only 'started' and 'ordered' are trusted to
+    // clear a flag — a 'loose' guess may raise a concern but must not silence one.
+    if (L.overMin > 0) (t as any).atRisk = !t.late
+    else if (L.confidence !== 'loose') (t as any).atRisk = false
+  }
+
   const units = Object.keys(unitMap).map(k => {
     const u = unitMap[k]
     u.tasks.sort((a: any, b: any) => (ORDER[a.type] ?? 9) - (ORDER[b.type] ?? 9))

@@ -23,6 +23,7 @@ import { X, Wand2, Loader2, Check, AlertTriangle, MapPin, Users, ArrowRight } fr
 import { planDay, type PlanTask, type PlanUnitRow, type Assignment } from '@/lib/day-plan'
 import type { GUnit, GRoster, GStaff } from '@/components/OpsGrid'
 import { useModal } from '@/components/Modal'
+import { personKey } from '@/lib/person-name'
 
 const PROX: Record<Assignment['proximity'], { label: string; cls: string }> = {
   unit:     { label: 'in the unit',     cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
@@ -33,11 +34,13 @@ const PROX: Record<Assignment['proximity'], { label: string; cls: string }> = {
   none:     { label: 'not nearby',      cls: 'bg-white text-muted border-line' },
 }
 
-export function DayPlanPanel({ units, roster, staff, today, onClose, onApplied }: {
+export function DayPlanPanel({ units, roster, staff, today, cap, onClose, onApplied }: {
   units: GUnit[]
   roster: GRoster[]
   staff?: GStaff | null
   today: string
+  /** The capacity model for this day (/api/capacity) — minutes, not job counts. */
+  cap?: { people?: { person: string; loadMinutes: number; capacityMinutes: number; verdict?: string }[]; unassigned?: { stop: { id: string }; minutes: number }[] } | null
   onClose: () => void
   onApplied: () => void
 }) {
@@ -90,11 +93,38 @@ export function DayPlanPanel({ units, roster, staff, today, onClose, onApplied }
     tasks: u.tasks.map(t => ({ assignees: t.assignees || [], done: !!t.done })),
   })), [units])
 
+  // ── MINUTES, WHEN WE HAVE THEM (2026-09-09 audit) ─────────────────────────────────────────
+  // Two planners lived on this page: this one counted jobs, the crew chip beside it priced minutes,
+  // and they disagreed. The capacity model is the better answer — it knows a four-bedroom in Miami
+  // is not a studio in Broward — so it becomes this planner's ceiling, with the job count kept only
+  // for a person the model could not price.
+  const capacityLeft = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const p of (cap?.people || [])) {
+      if (p.verdict === 'implausible') continue
+      if (!(p.capacityMinutes > 0)) continue
+      // NOT clamped at zero: somebody 40% over and somebody exactly full are different answers, and
+      // collapsing them to 0 handed the over-full person one more job.
+      m[personKey(p.person)] = p.capacityMinutes - p.loadMinutes
+    }
+    return Object.keys(m).length ? m : undefined
+  }, [cap])
+  // What each unplaced job actually costs, priced by the same model — per market, per bedroom, with
+  // travel. Spending real minutes against a flat 90-minute guess overfills a day by half.
+  const taskMinutes = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const u of (cap?.unassigned || [])) {
+      const id = String((u as any)?.stop?.id || '')
+      const mins = Number((u as any)?.minutes)
+      if (id && Number.isFinite(mins) && mins > 0) m[id] = mins
+    }
+    return m
+  }, [cap])
   const plan = useMemo(() => planDay({
     unassigned: planTasks, units: planUnits,
     roster: roster.map(r => ({ id: r.id, name: r.name, departments: r.departments })),
-    clockedIn, onShift, options: { maxPerPerson: maxPer, onlyScheduled },
-  }), [planTasks, planUnits, roster, clockedIn, onShift, maxPer, onlyScheduled])
+    clockedIn, onShift, options: { maxPerPerson: maxPer, onlyScheduled, capacityLeft, taskMinutes },
+  }), [planTasks, planUnits, roster, clockedIn, onShift, maxPer, onlyScheduled, capacityLeft, taskMinutes])
 
   const chosen = plan.assignments.filter(a => !skip.has(a.taskId) && !doneIds.has(a.taskId))
   const toggle = (id: string) => setSkip(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })

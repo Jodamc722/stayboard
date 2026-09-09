@@ -28,8 +28,8 @@ const personName = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim()
 
 export type DayPicture = {
   date: string
-  /** Every person on shift, whether or not they have work. */
-  people: DayLoad[]
+  /** Every person on shift, whether or not they have work. `shiftStartMin` is ET minutes past midnight. */
+  people: (DayLoad & { shiftStartMin?: number | null })[]
   /** Work with nobody on it — the pool a supervisor is choosing from. */
   unassigned: Array<{ stop: Stop; minutes: number; market: string | null; bestFor: Suggestion[] }>
   /** Moves worth making, strongest first. */
@@ -74,6 +74,12 @@ export type DayKpi = {
 }
 
 /** Build the whole picture for one date. */
+/** ET minutes past midnight, for a timestamp. */
+function etMinutesOf(d: Date): number {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d)
+  return (Number(p.find(x => x.type === 'hour')?.value || 0) % 24) * 60 + Number(p.find(x => x.type === 'minute')?.value || 0)
+}
+
 export async function buildDayPicture(date: string, market?: string): Promise<DayPicture> {
   const db = supabaseAdmin()
   const notes: string[] = []
@@ -154,6 +160,10 @@ export async function buildDayPicture(date: string, market?: string): Promise<Da
   // is the single most important row here and the one the old planner could not render at all.
   const shiftMin: Record<string, number> = {}
   const roleOf: Record<string, string> = {}
+  // WHEN THEY START. The model priced how long a day takes and never asked when it begins, so it
+  // could say "9h 42m of work" and not "the last unit lands at 6:10pm" — which is the sentence a
+  // coordinator actually needs against a 4pm deadline.
+  const shiftStartMin: Record<string, number> = {}
   for (const s of (shifts as any[])) {
     if (!s?.name || s.open) continue
     s.name = personName(s.name)
@@ -161,6 +171,10 @@ export async function buildDayPicture(date: string, market?: string): Promise<Da
     const b = s.endAt ? new Date(s.endAt).getTime() : NaN
     const mins = Number.isFinite(a) && Number.isFinite(b) ? Math.round((b - a) / 60000) : 0
     if (mins > 0 && mins < 20 * 60) shiftMin[s.name] = (shiftMin[s.name] || 0) + mins
+    if (Number.isFinite(a)) {
+      const m = etMinutesOf(new Date(a))
+      if (shiftStartMin[s.name] == null || m < shiftStartMin[s.name]) shiftStartMin[s.name] = m
+    }
     if (s.role) roleOf[s.name] = str(s.role)
   }
 
@@ -173,7 +187,8 @@ export async function buildDayPicture(date: string, market?: string): Promise<Da
       alsoDepts: [],
       shiftMinutes: shiftMin[name] ?? null,
     }
-    return assessDay({ date, person, stops: stopsByPerson[name] || [] })
+    const load = assessDay({ date, person, stops: stopsByPerson[name] || [] })
+    return { ...load, shiftStartMin: shiftStartMin[name] ?? null }
   }).sort((a, b) => a.utilisationPct - b.utilisationPct)
 
   if (!Object.keys(shiftMin).length) {
