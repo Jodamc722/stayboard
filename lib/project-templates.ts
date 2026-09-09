@@ -25,7 +25,7 @@ const T = (title: string, extra: Partial<{ description: string; priority: string
 
 export const BUILT_IN: Template[] = [
   {
-    key: 'one_on_one', label: 'One-on-one', kind: 'one_on_one', category: 'internal', builtIn: true,
+    key: 'one_on_one', label: 'One-on-one', kind: 'one_on_one', category: 'internal', builtIn: true, icon: '🤝', accent: 'violet',
     blurb: 'Private. Wins, blockers, follow-ups, next week. Repeats weekly and carries open items forward.',
     summary: 'Weekly one-on-one. Notes here are between the two of us.',
     recurs: { every: 'week', weekday: 1, next_on: '', carry: true },
@@ -37,7 +37,7 @@ export const BUILT_IN: Template[] = [
     ],
   },
   {
-    key: 'building_onboarding', label: 'Building onboarding', kind: 'project', category: 'onboarding', builtIn: true,
+    key: 'building_onboarding', label: 'Building onboarding', kind: 'project', category: 'onboarding', builtIn: true, icon: '🏢', accent: 'sky',
     blurb: 'Access, listings, ops, owner, compliance — everything before the first guest.',
     summary: 'Bring a new building live: access sorted, listings built, crew and supplies in place, owner set up.',
     sections: [
@@ -49,7 +49,7 @@ export const BUILT_IN: Template[] = [
     ],
   },
   {
-    key: 'renovation', label: 'Renovation', kind: 'project', category: 'renovation', builtIn: true,
+    key: 'renovation', label: 'Renovation', kind: 'project', category: 'renovation', builtIn: true, icon: '🔨', accent: 'amber',
     blurb: 'Scope, owner approval, vendors, the work, closeout.',
     summary: 'A renovation from scope to the listing being updated.',
     sections: [
@@ -61,7 +61,7 @@ export const BUILT_IN: Template[] = [
     ],
   },
   {
-    key: 'unit_offboarding', label: 'Unit offboarding', kind: 'project', category: 'offboarding', builtIn: true,
+    key: 'unit_offboarding', label: 'Unit offboarding', kind: 'project', category: 'offboarding', builtIn: true, icon: '📦', accent: 'slate',
     blurb: 'Letting a unit go without a guest or an owner falling through the cracks.',
     summary: 'Wind a unit down cleanly: guests rebooked, access returned, owner squared.',
     sections: [
@@ -72,7 +72,7 @@ export const BUILT_IN: Template[] = [
     ],
   },
   {
-    key: 'rollout', label: 'Portfolio rollout', kind: 'project', category: 'rollout', builtIn: true,
+    key: 'rollout', label: 'Portfolio rollout', kind: 'project', category: 'rollout', builtIn: true, icon: '🔑', accent: 'indigo',
     blurb: 'One change across many units — attach the building and tick units off as you go.',
     summary: 'Roll one change across a set of units. Progress is counted in units, not steps.',
     sections: [
@@ -82,7 +82,7 @@ export const BUILT_IN: Template[] = [
     ],
   },
   {
-    key: 'personal', label: 'My board', kind: 'personal', category: 'internal', builtIn: true,
+    key: 'personal', label: 'My board', kind: 'personal', category: 'internal', builtIn: true, icon: '🔒', accent: 'emerald',
     blurb: 'A private board only you can see. Arrange it however you like.',
     summary: null as any,
     settings: { view: 'board' },
@@ -106,6 +106,7 @@ export async function listTemplates(): Promise<Template[]> {
         key: String(r.key), label: String(r.label), kind: (PROJECT_KINDS as readonly string[]).includes(r.kind) ? r.kind : 'project',
         category: String(r.category || 'other'), summary: r.summary || undefined, blurb: body.blurb || undefined,
         sections: Array.isArray(body.sections) ? body.sections : [], settings: body.settings || undefined, recurs: body.recurs || null, builtIn: false,
+        icon: body.icon || body.settings?.icon || undefined, accent: body.accent || body.settings?.accent || undefined,
       })
     }
   } catch { /* the table not existing yet must not hide the built-ins */ }
@@ -141,7 +142,7 @@ export async function applyTemplate(projectId: string, t: Template, opts: { star
   }
   // Sections with no tasks (a personal board's "Doing" / "Done") only exist as an order preference.
   const order = t.sections.map(s => s.name).filter(Boolean)
-  const settings = { ...(t.settings || {}), sectionOrder: order }
+  const settings = { ...(t.settings || {}), sectionOrder: order, ...(t.icon ? { icon: t.icon } : {}), ...(t.accent ? { accent: t.accent } : {}) }
   await sb.from('projects').update({ settings, template_key: t.key }).eq('id', projectId)
   return rows.length
 }
@@ -162,7 +163,8 @@ export async function snapshotTemplate(projectId: string, opts: { key: string; l
     if (!bySec.has(name)) bySec.set(name, { name, tasks: [] })
     bySec.get(name)!.tasks.push({ title: s.title, description: s.description || undefined, priority: s.priority !== 'normal' ? s.priority : undefined })
   }
-  const body = { sections: Array.from(bySec.values()), settings: (p as any).settings || {}, blurb: `Saved from a live project by ${opts.createdBy.split('@')[0]}.` }
+  const st = (p as any).settings || {}
+  const body = { sections: Array.from(bySec.values()), settings: st, icon: st.icon || undefined, accent: st.accent || undefined, blurb: `Saved from a live project by ${opts.createdBy.split('@')[0]}.` }
   const key = opts.key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 60) || 'template'
   const { error } = await sb.from('project_templates').upsert({
     key, label: opts.label.slice(0, 80), kind: (p as any).kind || 'project', category: (p as any).category || 'other',

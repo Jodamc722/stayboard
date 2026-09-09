@@ -19,7 +19,7 @@ export const STAGE_LABEL: Record<Stage, string> = {
 export const BOARD_STAGES: Stage[] = ['idea', 'planned', 'in_progress', 'blocked', 'review', 'done']
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
 export const APPROVALS = ['not_needed', 'needed', 'requested', 'approved', 'declined'] as const
-export const LINK_KINDS = ['listing', 'reservation', 'task', 'owner', 'building'] as const
+export const LINK_KINDS = ['listing', 'reservation', 'task', 'owner', 'building', 'claim', 'glitch'] as const
 export const PHOTO_PHASES = ['before', 'during', 'after'] as const
 
 const OPEN_STAGES: Stage[] = ['idea', 'planned', 'in_progress', 'blocked', 'review']
@@ -101,7 +101,12 @@ export type Task = {
   assignee: string | null
   assignees: Person[]
   subtasks: Task[]
+  /** Set when this task was sent to Breezeway; `breezeway` is the field task's live state (read-time). */
+  breezeway_task_id?: string | null
+  breezeway?: { status: string; tone: 'open' | 'done' | 'bad'; assignee?: string | null; date?: string | null; reportUrl?: string | null } | null
 }
+/** A linked thing's live state, stamped on at read time. */
+export type LinkState = { label: string; tone: 'open' | 'done' | 'bad' | 'wait'; detail: string | null; href: string | null; bz?: string | null }
 
 // ── COMMENTS, EVENTS AND FILES (Wave 2) ──────────────────────────────────────────────────────────
 // One stream holds both what people SAID (kind=comment) and what people DID (kind=event). An event
@@ -153,6 +158,8 @@ export type TemplateSection = { name: string; tasks: TemplateTask[] }
 export type Template = {
   key: string; label: string; kind: ProjectKind; category: string; summary?: string
   blurb?: string                       // one line for the picker
+  icon?: string                        // an emoji — the board's face in the rail, on tiles, in the header
+  accent?: Accent
   sections: TemplateSection[]
   settings?: Partial<BoardSettings>
   recurs?: Recurrence | null           // a suggested schedule (the 1:1 defaults to weekly)
@@ -195,20 +202,49 @@ export function describeRecurrence(r: Recurrence | null | undefined): string {
   return `${RECUR_LABEL[r.every]} ${when}`
 }
 
+// ── LOOK: one palette and one icon set, used by the rail, the tiles, the header and the picker ──
+// Static class strings so Tailwind ships them. `soft` is the tinted surface (a section bar, an icon
+// badge), `solid` the strong fill (a dot, a progress bar), `text` the readable ink on white.
+export const ACCENTS = ['indigo', 'emerald', 'amber', 'rose', 'sky', 'violet', 'slate', 'teal', 'orange', 'pink'] as const
+export type Accent = typeof ACCENTS[number]
+export const ACCENT_CLS: Record<Accent, { soft: string; solid: string; text: string; ring: string; border: string }> = {
+  indigo:  { soft: 'bg-indigo-50 border-indigo-100',  solid: 'bg-indigo-500',  text: 'text-indigo-700',  ring: 'ring-indigo-500',  border: 'border-l-indigo-500' },
+  emerald: { soft: 'bg-emerald-50 border-emerald-100', solid: 'bg-emerald-500', text: 'text-emerald-700', ring: 'ring-emerald-500', border: 'border-l-emerald-500' },
+  amber:   { soft: 'bg-amber-50 border-amber-100',    solid: 'bg-amber-500',   text: 'text-amber-800',   ring: 'ring-amber-500',   border: 'border-l-amber-500' },
+  rose:    { soft: 'bg-rose-50 border-rose-100',      solid: 'bg-rose-500',    text: 'text-rose-700',    ring: 'ring-rose-500',    border: 'border-l-rose-500' },
+  sky:     { soft: 'bg-sky-50 border-sky-100',        solid: 'bg-sky-500',     text: 'text-sky-700',     ring: 'ring-sky-500',     border: 'border-l-sky-500' },
+  violet:  { soft: 'bg-violet-50 border-violet-100',  solid: 'bg-violet-500',  text: 'text-violet-700',  ring: 'ring-violet-500',  border: 'border-l-violet-500' },
+  slate:   { soft: 'bg-slate-50 border-slate-200',    solid: 'bg-slate-500',   text: 'text-slate-700',   ring: 'ring-slate-500',   border: 'border-l-slate-400' },
+  teal:    { soft: 'bg-teal-50 border-teal-100',      solid: 'bg-teal-500',    text: 'text-teal-700',    ring: 'ring-teal-500',    border: 'border-l-teal-500' },
+  orange:  { soft: 'bg-orange-50 border-orange-100',  solid: 'bg-orange-500',  text: 'text-orange-700',  ring: 'ring-orange-500',  border: 'border-l-orange-500' },
+  pink:    { soft: 'bg-pink-50 border-pink-100',      solid: 'bg-pink-500',    text: 'text-pink-700',    ring: 'ring-pink-500',    border: 'border-l-pink-500' },
+}
+/** A short, ops-flavoured icon set for the picker. Any emoji is accepted; these are the offers. */
+export const ICONS = ['📋', '🏢', '🔨', '🔑', '📦', '🤝', '🔒', '🧹', '🛠️', '🛏️', '🧾', '💡', '📸', '🚿', '🔌', '🌴', '⭐', '🎯', '🧭', '🗓️', '💬', '🧺', '🪴', '🚪']
+
 /** How a board looks. Every field optional; the page supplies defaults. */
 export type BoardSettings = {
-  view: 'list' | 'board'              // sections stacked, or sections as columns
-  accent: 'indigo' | 'emerald' | 'amber' | 'rose' | 'sky' | 'violet' | 'slate'
+  view: 'list' | 'board' | 'calendar' // sections stacked, sections as columns, or tasks on a month
+  accent: Accent
+  icon: string                        // emoji
   hideDone: boolean
   sectionOrder: string[]              // explicit order; unknown sections follow in first-used order
 }
-export const DEFAULT_SETTINGS: BoardSettings = { view: 'list', accent: 'indigo', hideDone: false, sectionOrder: [] }
+export const DEFAULT_SETTINGS: BoardSettings = { view: 'list', accent: 'indigo', icon: '📋', hideDone: false, sectionOrder: [] }
 export const settingsOf = (raw: any): BoardSettings => ({
-  view: raw?.view === 'board' ? 'board' : 'list',
-  accent: ['indigo', 'emerald', 'amber', 'rose', 'sky', 'violet', 'slate'].includes(raw?.accent) ? raw.accent : 'indigo',
+  view: raw?.view === 'board' ? 'board' : raw?.view === 'calendar' ? 'calendar' : 'list',
+  accent: (ACCENTS as readonly string[]).includes(raw?.accent) ? raw.accent : 'indigo',
+  icon: typeof raw?.icon === 'string' && raw.icon.trim() ? String(raw.icon).trim().slice(0, 4) : '📋',
   hideDone: raw?.hideDone === true,
   sectionOrder: Array.isArray(raw?.sectionOrder) ? raw.sectionOrder.map(String).slice(0, 50) : [],
 })
+/** The face of a project: its icon, falling back by kind so an old row still has one. */
+export const iconOf = (p: { settings?: any; kind?: string | null }) => {
+  const s = p.settings?.icon
+  if (typeof s === 'string' && s.trim()) return s.trim()
+  return p.kind === 'personal' ? '🔒' : p.kind === 'one_on_one' ? '🤝' : '📋'
+}
+export const accentOf = (p: { settings?: any }): Accent => (ACCENTS as readonly string[]).includes(p.settings?.accent) ? p.settings.accent : 'indigo'
 
 // ── NOTIFICATIONS (Wave 3) ──────────────────────────────────────────────────────────────────────
 export type NotifyType = 'assigned' | 'mentioned' | 'comment' | 'added' | 'due_soon' | 'overdue'

@@ -77,6 +77,7 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
   const L = (links.data || []) as any[], S = (steps.data || []) as any[]
   const byTask: Record<string, Person[]> = {}
   for (const a of (asg.data || []) as any[]) (byTask[a.task_id] = byTask[a.task_id] || []).push({ person_key: a.person_key, display: a.display, email: a.email })
+  await Promise.all([enrichLinks(L), syncBreezeway(S)])
   return {
     ...(p as any),
     links: L, steps: S, photos: await signFiles(photos.data || []), notes: notes.data || [],
@@ -84,6 +85,55 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
     tasks: nestTasks(S, byTask),
     progress: progressOf(L, S), health: healthOf(p as any, S),
   }
+}
+
+// ---------------------------------------------------------------- integrations (read side)
+// "ALL SYNCED" (Jon, 2026-09-09) means the board never shows a stale copy of something another
+// system owns. A linked claim shows the claim's stage NOW; a linked glitch its status NOW; a linked
+// or sent Breezeway task its field status NOW — all read live at page load and stamped onto the
+// row as `state`, never stored. Every lookup is soft: a missing table blanks the state, not the page.
+const soft = async <T,>(pr: PromiseLike<{ data: T | null; error: any }>): Promise<T | null> => { try { const r = await pr; return r.error ? null : r.data } catch { return null } }
+const BZ_DONE = /finish|complet|closed|done/i
+const BZ_GONE = /cancel/i
+
+async function enrichLinks(L: any[]) {
+  const sb = supabaseAdmin()
+  const ids = (k: string) => L.filter(l => l.kind === k).map(l => String(l.ref_id))
+  const [claims, glitches, tasks, stays] = await Promise.all([
+    ids('claim').length ? soft(sb.from('claims').select('id,stage,outcome,amount_sought,amount_paid,guest_name,unit_no').in('id', ids('claim'))) : null,
+    ids('glitch').length ? soft(sb.from('glitches').select('id,status,category,unit,breezeway_task_id,guest_name').in('id', ids('glitch'))) : null,
+    ids('task').length ? soft(sb.from('breezeway_tasks_sync').select('id,status,name,scheduled_date,assignee_name,report_url,finished_at').in('id', ids('task'))) : null,
+    ids('reservation').length ? soft(sb.from('guesty_reservations').select('id,status,check_in,check_out,guest_name').in('id', ids('reservation'))) : null,
+  ])
+  const by = (rows: any[] | null) => Object.fromEntries(((rows || []) as any[]).map(r => [String(r.id), r]))
+  const C = by(claims), G = by(glitches), T = by(tasks), R = by(stays)
+  for (const l of L) {
+    const r = l.kind === 'claim' ? C[l.ref_id] : l.kind === 'glitch' ? G[l.ref_id] : l.kind === 'task' ? T[l.ref_id] : l.kind === 'reservation' ? R[l.ref_id] : null
+    if (!r) continue
+    if (l.kind === 'claim') l.state = { label: String(r.stage || ''), tone: r.stage === 'closed' ? 'done' : r.outcome === 'denied' ? 'bad' : r.stage === 'submitted' ? 'wait' : 'open', detail: r.amount_paid ? `$${Number(r.amount_paid).toLocaleString('en-US', { maximumFractionDigits: 0 })} paid` : r.amount_sought ? `$${Number(r.amount_sought).toLocaleString('en-US', { maximumFractionDigits: 0 })} sought` : null, href: `/claims?open=${l.ref_id}` }
+    if (l.kind === 'glitch') l.state = { label: String(r.status || 'open'), tone: /done|resolved|closed/i.test(String(r.status)) ? 'done' : 'open', detail: [r.category, r.guest_name].filter(Boolean).join(' · ') || null, href: `/glitches?open=${l.ref_id}`, bz: r.breezeway_task_id || null }
+    if (l.kind === 'task') l.state = { label: String(r.status || ''), tone: BZ_DONE.test(String(r.status)) ? 'done' : BZ_GONE.test(String(r.status)) ? 'bad' : 'open', detail: [r.assignee_name, r.scheduled_date ? String(r.scheduled_date).slice(0, 10) : null].filter(Boolean).join(' · ') || null, href: r.report_url || null }
+    if (l.kind === 'reservation') l.state = { label: String(r.status || ''), tone: /cancel/i.test(String(r.status)) ? 'bad' : 'open', detail: `${String(r.check_in).slice(0, 10)} → ${String(r.check_out).slice(0, 10)}`, href: `/reservations?open=${l.ref_id}` }
+  }
+}
+
+/** Tasks sent to Breezeway follow the field: status stamped on, and completed here when finished there. */
+async function syncBreezeway(S: any[]) {
+  const sent = S.filter(t => t.breezeway_task_id)
+  if (!sent.length) return
+  const sb = supabaseAdmin()
+  const rows = await soft(sb.from('breezeway_tasks_sync').select('id,status,scheduled_date,assignee_name,report_url,finished_at').in('id', sent.map(t => String(t.breezeway_task_id))))
+  const by = Object.fromEntries(((rows || []) as any[]).map(r => [String(r.id), r]))
+  const finish: string[] = []
+  for (const t of sent) {
+    const r = by[String(t.breezeway_task_id)]
+    if (!r) { t.breezeway = { status: 'unknown', tone: 'open' }; continue }
+    const done = BZ_DONE.test(String(r.status))
+    t.breezeway = { status: String(r.status || ''), tone: done ? 'done' : BZ_GONE.test(String(r.status)) ? 'bad' : 'open', assignee: r.assignee_name || null, date: r.scheduled_date ? String(r.scheduled_date).slice(0, 10) : null, reportUrl: r.report_url || null }
+    if (done && t.status !== 'done') { t.status = 'done'; t.done = true; t.done_by = 'breezeway'; finish.push(t.id) }
+  }
+  // The board follows the field. done_by 'breezeway' makes the feed honest about who did it.
+  if (finish.length) await sb.from('project_steps').update({ status: 'done', done_by: 'breezeway' }).in('id', finish)
 }
 
 /** Resolve a vendor share link. Returns null for unknown, revoked or expired tokens. */
