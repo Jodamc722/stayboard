@@ -46,20 +46,27 @@ export const LOW_STARS = 3        // <= this is a bad review (matches ops-brief,
 export const CLEAR_STARS = 4.5    // a review this good, AFTER the low one, clears the unit
 export const HIGH_VALUE = 2500    // a stay worth calling about on money alone
 
-// ── HOW LONG A MISSED CALL STAYS OPEN (Jon, 2026-09-08) ─────────────────────────────────────────
-// "If they are past due, allows you 24 hours to complete after arrival or departure, or closes them
-// out for welcome call; departure can give you 48 hours."
+// ── THE WELCOME-CALL WINDOW (Jon, 2026-09-09) ───────────────────────────────────────────────────
+// "Make welcome calls today focused and future focused. No 24 hours to complete. Need to complete
+// by the day of or 72 hours in advance."
 //
-// A welcome call to a guest who landed yesterday is still worth making — they are in the unit and
-// something can still be fixed. A welcome call to a guest three days in is not a welcome call, it is
-// an apology, and leaving it on the list forever just teaches people to ignore the list. So a call
-// stays workable for one day past arrival (two past departure) and is then CLOSED: off the work
-// list, still counted as a miss in coverage. Nothing is deleted and nothing is silently forgiven.
+// So a welcome call is workable from 72 hours before arrival through the ARRIVAL DAY ITSELF, and
+// not a minute longer: the day the guest lands is the last day the call counts, and the nightly
+// close-out marks anything still open that night as incomplete. There is no grace day any more —
+// the 24-hour "call them once they're in" allowance from 2026-09-08 is gone, because a welcome call
+// after the guest has slept in the unit is not a welcome call. The desk therefore never shows an
+// arrival in the past: today's arrivals are the deadline, the next three days are the runway.
+//
+// A missed call is still a fact, not a deletion: it lands on the scoreboard as `incomplete` with a
+// tier and a date. It just stops being a card someone could still act on.
+//
+// Post-checkout calls keep their 48 hours after departure ("departure can give you 48 hours").
 //
 // These are calendar days in Eastern time, not clock hours. Guesty's check-in times are a listing
 // default far more often than the guest's real arrival, so hour-level math here would be spurious
 // precision on a number we do not actually have.
-export const WELCOME_GRACE_DAYS = 1     // arrival day + 1
+export const WELCOME_GRACE_DAYS = 0     // the arrival day is the last day; nothing after it
+export const WELCOME_AHEAD_DAYS = 3     // due from 72 hours before arrival
 export const POST_GRACE_DAYS = 2        // checkout day + 1 (a 48-hour window)
 
 export type RecoveryUnit = {
@@ -262,19 +269,21 @@ export { ymdET }
 //
 // ── TIERS ───────────────────────────────────────────────────────────────────────────────────────
 // Every welcome call has a tier, and every tier but `standard` is MANDATORY: it must be completed
-// by the end of its grace period or it closes as incomplete, with a record.
+// by the end of the arrival day or it closes as incomplete, with a record. Every tier shares the
+// same window — 72 hours ahead through the arrival day (Jon, 2026-09-09) — the tier decides how
+// hard the miss counts, not when the call is due.
 //   lux      — Arya, Nomad, District 225. Jon's list, 2026-09-08. Deliberately NOT lib/segments'
 //              Lux tag (which also holds 17WEST, Elser, Amrit): that tag drives revenue segmenting,
 //              this one drives who gets a mandatory phone call, and Jon wants them different.
 //   recovery — the unit is waiting for a good review (see the top of this file)
 //   big      — $1,200+ or 10+ nights (Jon). Either trips it.
-//   standard — everyone else: due inside 48 hours of arrival, worth doing, not mandatory.
+//   standard — everyone else: worth doing, not mandatory.
 // Order of precedence when several apply: LUX > recovery > big — "lux calls get priority" (Jon).
 // A lux unit in recovery keeps the lux tier and carries the recovery FLAG on top (`recovery` is
 // set on the row either way), so the card says both and the call opens with both in mind.
 //
 // ── SAME-DAY CLOSE ──────────────────────────────────────────────────────────────────────────────
-// "If calls not completed same day, please close, incomplete." A welcome call is workable from 48h
+// "If calls not completed same day, please close, incomplete." A welcome call is workable from 72h
 // before arrival through the arrival day itself; a post-checkout call for 48h after departure. The
 // nightly close-out (app/api/cron/calls-closeout) then writes an `incomplete` row for anything left,
 // so the miss is a fact in guest_calls with a tier and a date — not a number that evaporates when
@@ -403,9 +412,10 @@ export type DeskData = {
  */
 export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
   const toDate = addDays(today, 14)
-  const graceFrom = addDays(today, -WELCOME_GRACE_DAYS)     // arrivals still inside their grace period
-  // Two days further back than the grace period, so a call that has just closed out is still on the
-  // page (badged Missed) instead of disappearing the moment it goes uncallable.
+  const graceFrom = addDays(today, -WELCOME_GRACE_DAYS)     // the first day a call is still workable (= today)
+  // Two days further back, so the nightly close-out — which runs after midnight with the NEW day as
+  // `today` — still sees yesterday's arrivals and can mark them incomplete, and the header can say
+  // how many closed. They are `closed` rows: the desk never lists them as work.
   const closedFrom = addDays(graceFrom, -2)
   const backDate = addDays(today, -POST_GRACE_DAYS)        // checkouts still inside theirs (48h)
   const postClosedFrom = addDays(backDate, -2)
@@ -440,7 +450,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
   const glitchRows = await glitchesDuringStays(sb, earliestStay)
   const unlinked = assignUnlinkedGlitches(glitchRows, (departures || []).map((r: any) => String(r.listing_name || '')))
 
-  const dueDate = addDays(today, 2)
+  const dueDate = addDays(today, WELCOME_AHEAD_DAYS)     // 72 hours ahead (Jon, 2026-09-09)
   const recOf = (listingId: any): RecoveryUnit | null => recovery.get(String(listingId || '')) || null
 
   // The listing's `building` for every unit on the page, so a lux tier never depends on the
@@ -480,12 +490,13 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
       claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
       claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
       sensitive: truthy(fieldVal(r.custom_fields, 'sensitive')),
-      // Standard calls are due inside 48h. MANDATORY calls are due the moment the booking exists:
-      // the point of a mandatory call is that it cannot be the thing that ran out of time.
-      due: (check_in <= dueDate || mandatory) && check_in >= graceFrom,
-      dueToday: check_in <= today && check_in >= graceFrom,
-      // Already arrived and closing tonight — strictly before today.
-      lastChance: check_in < today && check_in >= graceFrom,
+      // Due = inside the 72-hour window, every tier alike (Jon, 2026-09-09: "complete by the day of
+      // or 72 hours in advance"). Beyond the window a mandatory call is still on the 14-day list
+      // and still mandatory when its day comes; it is just not today's work yet.
+      due: check_in >= graceFrom && check_in <= dueDate,
+      dueToday: check_in === today,
+      // The arrival day is the last day: an arrival today closes tonight if nobody calls.
+      lastChance: check_in === today,
       closed, incomplete,
       prio: mandatory ? 0 : 1,
       recovery: recv,
@@ -560,6 +571,91 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
   }
 
   return { today, rows, outRows, recoveryFailed: rec.failed, kpis }
+}
+
+// ── THE RECOVERY BOARD (Reviews page) ───────────────────────────────────────────────────────────
+// Jon, 2026-09-09: "move review recovery to review section unless it falls into actual welcome
+// call". A unit waiting for a good review is a REPUTATION fact, so the list of them — and who is
+// booked there next — lives with the reviews. The Calls desk keeps only the recovery arrivals that
+// are inside the welcome-call window (today..72h), where they are just mandatory calls like any
+// other; this board shows the rest, so the next arrival at a burned unit is visible weeks out
+// without cluttering today's call sheet.
+export type RecoveryArrival = {
+  id: string; guest: string; check_in: string; nights: number; value: number; source: string
+  called: boolean            // welcome call already made (Guesty field or local log)
+  onDesk: boolean            // inside the welcome-call window → it is on the Calls desk right now
+}
+export type RecoveryBoardUnit = RecoveryUnit & {
+  listing: string; building: string
+  arrivals: RecoveryArrival[]   // next arrivals at this unit, soonest first
+}
+export type RecoveryBoard = { today: string; units: RecoveryBoardUnit[]; failed: boolean; horizonDays: number }
+
+export const RECOVERY_HORIZON_DAYS = 45
+
+export async function loadRecoveryBoard(sb: any, today: string): Promise<RecoveryBoard> {
+  const rec = await cachedRecovery().then(e => ({ map: new Map<string, RecoveryUnit>(e), failed: false }))
+    .catch(() => ({ map: new Map<string, RecoveryUnit>(), failed: true }))
+  const ids = Array.from(rec.map.keys())
+  if (!ids.length) return { today, units: [], failed: rec.failed, horizonDays: RECOVERY_HORIZON_DAYS }
+
+  const toDate = addDays(today, RECOVERY_HORIZON_DAYS)
+  const dueDate = addDays(today, WELCOME_AHEAD_DAYS)
+  const [listings, arrivals] = await Promise.all([
+    (async () => {
+      const out: any[] = []
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await sb.from('guesty_listings').select('id,nickname,title,building').in('id', ids.slice(i, i + 200))
+        out.push(...(data || []))
+      }
+      return out
+    })(),
+    (async () => {
+      const out: any[] = []
+      for (let i = 0; i < ids.length; i += 100) {
+        const { data } = await sb.from('guesty_reservations')
+          .select('id,listing_id,listing_name,guest_name,check_in,nights,status,money_total,source,custom_fields,nightsCount:raw->>nightsCount')
+          .in('listing_id', ids.slice(i, i + 100)).gte('check_in', today).lte('check_in', toDate).order('check_in').limit(400)
+        out.push(...(data || []))
+      }
+      return out.filter((r: any) => isLiveStay(r.status))
+    })(),
+  ])
+  const resIds = arrivals.map((r: any) => String(r.id))
+  const logs: any[] = resIds.length ? (await Promise.all(
+    Array.from({ length: Math.ceil(resIds.length / 200) }, (_, i) => resIds.slice(i * 200, i * 200 + 200))
+      .map(chunk => sb.from('guest_calls').select('reservation_id,outcome').eq('kind', 'welcome').in('reservation_id', chunk).then((r: any) => r.data || []))
+  )).flat() : []
+  const localCalled = new Set(logs.filter((l: any) => isCompleted(l.outcome)).map((l: any) => String(l.reservation_id)))
+
+  const nameOf = new Map<string, { listing: string; building: string }>()
+  for (const l of listings) nameOf.set(String(l.id), { listing: String(l.nickname || l.title || ''), building: String(l.building || '') })
+  const byListing = new Map<string, RecoveryArrival[]>()
+  for (const r of arrivals) {
+    const lid = String(r.listing_id || '')
+    if (!nameOf.get(lid)?.listing && r.listing_name) nameOf.set(lid, { listing: String(r.listing_name), building: nameOf.get(lid)?.building || '' })
+    const check_in = String(r.check_in).slice(0, 10)
+    if (!byListing.has(lid)) byListing.set(lid, [])
+    byListing.get(lid)!.push({
+      id: String(r.id), guest: String(r.guest_name || ''), check_in,
+      nights: Number(r.nights) || Number(r.nightsCount) || 0, value: Number(r.money_total) || 0, source: String(r.source || ''),
+      called: guestyCalled(r.custom_fields) || localCalled.has(String(r.id)),
+      onDesk: check_in <= dueDate,
+    })
+  }
+  const units: RecoveryBoardUnit[] = ids.map(id => {
+    const u = rec.map.get(id)!
+    const n = nameOf.get(id)
+    const building = rollupBuilding(n?.building || n?.listing || '')
+    return { ...u, listing: n?.listing || id, building: building === 'Unknown' ? '' : building, arrivals: byListing.get(id) || [] }
+  })
+  // Soonest next arrival first — that is the unit whose next review is being decided next — then
+  // the units nobody is booked into, longest-waiting first.
+  units.sort((a, b) => {
+    const an = a.arrivals[0]?.check_in || '9999', bn = b.arrivals[0]?.check_in || '9999'
+    return an.localeCompare(bn) || (b.openDays - a.openDays)
+  })
+  return { today, units, failed: rec.failed, horizonDays: RECOVERY_HORIZON_DAYS }
 }
 
 /**

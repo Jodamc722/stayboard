@@ -384,8 +384,9 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       }
       return { arrivals: rows.length, done, pct: rows.length ? round((done / rows.length) * 100, 1) : null }
     }
-    // Calls that are actually on the clock right now: arriving in the next 48 hours, no note yet.
-    const dueWindow = addDays(today, 2)
+    // Calls that are actually on the clock right now: arriving in the next 72 hours (Jon,
+    // 2026-09-09 — the same window as lib/call-desk WELCOME_AHEAD_DAYS), no note yet.
+    const dueWindow = addDays(today, 3)
     const welcomeDueNow = live.filter(r => {
       if (str(r.status).toLowerCase() !== 'confirmed') return false
       const ci = dOf(r.check_in)
