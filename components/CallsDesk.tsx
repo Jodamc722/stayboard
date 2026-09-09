@@ -1,12 +1,14 @@
 'use client'
 // THE CALLS DESK — a call center, not a list (Jon, 2026-09-08 evening).
 //
-// Five tabs. WELCOME is the daily sheet: MANDATORY calls first (luxury buildings, big bookings,
-// recovery units), then the standard 48-hour calls. RECOVERY is the mandatory subset at units
-// still waiting for a good review, grouped by arrival day. POST-CHECKOUT is the guest who just
-// left a recovery unit. SCOREBOARD is the durable record — who called, what got done, what the
-// nightly close-out marked incomplete. ALL ARRIVALS is the 14-day view with the closed-out rows
-// badged Missed so a miss is seen, not deleted.
+// Four tabs. WELCOME is the daily sheet — today and the next 72 hours, grouped by arrival day,
+// MANDATORY calls first inside each day (luxury buildings, big bookings, recovery units). It is
+// today- and future-focused (Jon, 2026-09-09): the arrival day is the last day a call counts, so no
+// past arrival is ever a card here. POST-CHECKOUT is the guest who just left a recovery unit.
+// SCOREBOARD is the durable record — who called, what got done, what the nightly close-out marked
+// incomplete. ALL ARRIVALS is the 14-day view. The old RECOVERY tab (every future arrival at a
+// unit waiting for a good review) moved to the Reviews page on 2026-09-09; recovery arrivals inside
+// the 72-hour window are simply mandatory calls on the WELCOME sheet.
 //
 // Every row can be CLAIMED ("Take it") so two people never dial the same guest, and every call
 // ends in an OUTCOME — Reached / Voicemail / No answer — so "called" means something specific.
@@ -114,7 +116,7 @@ function DayScore({ today, mandatoryDone, mandatoryOpen, otherDone, otherOpen, c
             <span className={`text-4xl font-bold tabular-nums leading-none ${oTot ? (oPct >= 90 ? 'text-emerald-600' : oPct >= 70 ? 'text-amber-700' : 'text-rose-600') : 'text-ink'}`}>{otherDone}<span className="text-2xl text-muted font-semibold"> / {oTot}</span></span>
             <span className={`text-sm font-bold ${oTot ? oTone(oPct) : 'text-muted'}`}>{oTot ? oPct + '%' : 'none due'}</span>
           </div>
-          <div className="text-[12px] text-muted mt-1.5">48-hour welcome calls · post-checkout{otherOpen ? ` · ${otherOpen} open` : ''}</div>
+          <div className="text-[12px] text-muted mt-1.5">welcome calls due in 72 hours · post-checkout{otherOpen ? ` · ${otherOpen} open` : ''}</div>
         </div>
       </div>
       {/* By day: same two scores for each of the last seven days, so a good week and a bad week look different. */}
@@ -311,7 +313,7 @@ function OutcomeRow({ busy, onReached, onVoicemail, onNoAnswer, attempts, compac
 export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, me }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; me: string }) {
   const [rows, setRows] = useState<Row[]>(initial)
   const [outRows, setOutRows] = useState<OutRow[]>(initialOut)
-  const [tab, setTab] = useState<'welcome' | 'recovery' | 'post' | 'board' | 'all'>('welcome')
+  const [tab, setTab] = useState<'welcome' | 'post' | 'board' | 'all'>('welcome')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
@@ -404,13 +406,8 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
     closedOut: rows.filter(r => !r.done && r.closed).length + outRows.filter(r => !r.done && r.closed).length,
   }
   const duePending = open.filter(r => r.due)
-  // Already in the unit with no call made: the missed-arrival list. Everyone else groups by day.
-  const missedArrival = duePending.filter(r => r.check_in < today)
-  const recoveryPending = open.filter(r => r.recovery)
-  const sortRows = (xs: Row[]) => [...xs].sort((a, b) =>
-    (Number(b.lastChance) - Number(a.lastChance)) || (Number(b.dueToday) - Number(a.dueToday)) ||
-    (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (Number(!!b.recovery) - Number(!!a.recovery)) || (b.value - a.value) || a.check_in.localeCompare(b.check_in))
-  const allSorted = [...rows].sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (b.value - a.value))
+  // Today forward only (Jon: "today focused and future focused"). Yesterday's misses are on the scoreboard.
+  const allSorted = rows.filter(r => r.check_in >= today).sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (b.value - a.value))
   const shownOut = [...outRows].sort((a, b) => (Number(a.done) - Number(b.done)) || b.check_out.localeCompare(a.check_out))
 
   // Grouped by arrival day (Jon: "organized by the day of arrival"), mandatory first inside a day.
@@ -421,12 +418,10 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
     return m
   }
   const welcomeByDay = groupByDay(duePending.filter(r => r.check_in >= today))
-  const byDay = groupByDay(recoveryPending)
-  const dayLabel = (d: string) => d === today ? 'Today' : d < today ? `Arrived ${shortDay(d)} — last chance` : d === nextDay(today) ? 'Tomorrow' : shortDay(d)
+  const dayLabel = (d: string) => d === today ? 'Today — closes tonight' : d === nextDay(today) ? 'Tomorrow' : shortDay(d)
 
   const TABS = [
     { key: 'welcome' as const, label: 'Welcome calls', n: duePending.length },
-    { key: 'recovery' as const, label: 'Recovery', n: recoveryPending.length },
     { key: 'post' as const, label: 'Post-checkout', n: kpis.postDue },
     { key: 'board' as const, label: 'Scoreboard', n: null as number | null },
     { key: 'all' as const, label: 'All arrivals', n: rows.length },
@@ -437,7 +432,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       <header>
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><PhoneCall size={13} /> Guest calls</p>
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Calls desk</h1>
-        <p className="text-sm text-muted mt-1">Mandatory calls are called — every one, every day. Other calls get completed. Anything not done by end of day closes out as a miss.</p>
+        <p className="text-sm text-muted mt-1">Mandatory calls are called — every one, every day. Other calls get completed. A welcome call is due from 72 hours before arrival and must be done by the arrival day; anything still open that night closes out as a miss.</p>
       </header>
 
       {/* THE SCORE, TODAY — the two numbers the desk is judged on (Jon, 2026-09-09: "mandatory units
@@ -448,7 +443,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
           kpis.recoveryFailed ? 'recovery could not be worked out' : `${kpis.recoveryUnits} unit${kpis.recoveryUnits === 1 ? '' : 's'} awaiting a good review`,
           `${kpis.postDue} post-checkout due`,
           kpis.coverage == null ? null : `${kpis.coverage}% of arrivals called, last 7 days`,
-          kpis.lastChance ? `${kpis.lastChance} close tonight` : null,
+          kpis.lastChance ? `${kpis.lastChance} arriving today close tonight` : null,
         ].filter(Boolean) as string[]} />
 
       <div className="lh-actions flex items-center gap-2 flex-wrap">
@@ -461,6 +456,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
           ))}
         </div>
         <span className="text-[12px] text-muted">{kpis.pending} open in the next 14 days{kpis.closedOut ? ` · ${kpis.closedOut} closed incomplete` : ''}{myName ? ` · you are ${myName}` : ''}</span>
+        <a href="/reviews#recovery" className="text-[12px] font-semibold text-rose-700 inline-flex items-center gap-1 hover:underline"><HeartHandshake size={12} /> {kpis.recoveryFailed ? 'Recovery units' : `${kpis.recoveryUnits} unit${kpis.recoveryUnits === 1 ? '' : 's'} in recovery`} → Reviews</a>
       </div>
 
       {kpis.recoveryFailed && (
@@ -480,20 +476,11 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 
       {tab === 'welcome' && (
         duePending.length === 0 ? (
-          <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">Nothing due. Every mandatory call is made and nobody arrives in the next 48 hours without a call. Nice.</div>
+          <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">Nothing due. Everyone arriving today and in the next 72 hours has had their call. Nice.</div>
         ) : (
           <div className="space-y-4">
-            {/* MISSED ARRIVAL CALLS (Jon): the guest is already in the unit and nobody called ahead.
-                Still callable — and still counts — until the end of the day after arrival, then it
-                closes as incomplete. Its own section, on top, in red, because it is the one list
-                that gets shorter only by someone picking up the phone right now. */}
-            {missedArrival.length > 0 && (
-              <section>
-                <h2 className="text-[11px] font-bold uppercase tracking-wider text-rose-700 mb-1.5 flex items-center gap-1.5"><PhoneOff size={12} /> Missed arrival calls — {missedArrival.length} · already arrived, call within 24 hours to keep the score</h2>
-                <WelcomeList rows={sortRows(missedArrival)} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName }} />
-              </section>
-            )}
-            {/* Then by day of arrival (Jon), mandatory calls first inside each day. */}
+            {/* By day of arrival (Jon), today first, mandatory calls first inside each day. Today's
+                arrivals are the deadline — no call by tonight and the row closes as incomplete. */}
             {Array.from(welcomeByDay.entries()).map(([d, xs]) => {
               const m = xs.filter(r => r.mandatory).length
               return (
@@ -509,33 +496,13 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
         )
       )}
 
-      {tab === 'recovery' && (
-        byDay.size === 0 ? (
-          <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">
-            {kpis.recoveryFailed ? 'Recovery could not be worked out on this load — see the note above.'
-              : kpis.recoveryUnits ? `No arrivals booked at the ${kpis.recoveryUnits} unit${kpis.recoveryUnits === 1 ? '' : 's'} still waiting for a good review — nothing to call ahead of yet.`
-              : 'No units are in recovery — every unit with a bad review has earned a good one since.'}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <p className="text-[12px] text-muted">Mandatory welcome calls at units whose last low review has not been answered by a good one. Grouped by arrival day, luxury first. Open the script on a card to see what the last guest wrote and what to check before this one lands — the goal is a good review on the next arrival.</p>
-            {Array.from(byDay.entries()).map(([d, xs]) => (
-              <section key={d}>
-                <h2 className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${d <= today ? 'text-rose-700' : 'text-muted'}`}>{dayLabel(d)} — {xs.length}</h2>
-                <WelcomeList rows={xs} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName }} />
-              </section>
-            ))}
-          </div>
-        )
-      )}
-
       {tab === 'all' && (
         allSorted.length === 0
           ? <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No upcoming reservations.</div>
           : <WelcomeList rows={allSorted} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName }} />
       )}
 
-      <p className="text-[11px] text-muted"><StickyNote size={11} className="inline" /> Reached and Voicemail write the <b>Welcome Call</b> field on the reservation in Guesty and append your note to the reservation notes. No answer, Take it and post-checkout outcomes are logged in Lighthouse (the post-checkout note goes to Guesty too). At midnight, anything still open past its day closes as incomplete.</p>
+      <p className="text-[11px] text-muted"><StickyNote size={11} className="inline" /> Reached and Voicemail write the <b>Welcome Call</b> field on the reservation in Guesty and append your note to the reservation notes. No answer, Take it and post-checkout outcomes are logged in Lighthouse (the post-checkout note goes to Guesty too). After midnight, any welcome call whose guest arrived today and any post-checkout call past its 48 hours closes as incomplete.</p>
     </div>
   )
 }
@@ -568,9 +535,9 @@ function WelcomeList({ rows, openId, setOpenId, draft, setDraft, busy, copied, c
                   <Badge cls="bg-slate-100 text-slate-600">{ch}</Badge>
                   {r.mandatory && !r.done && <Badge cls={T.cls} Icon={T.Icon}>{T.label} · mandatory</Badge>}
                   {r.recovery && r.tier !== 'recovery' && !r.done && <Badge cls="bg-rose-600 text-white" Icon={HeartHandshake}>Bad review</Badge>}
-                  {r.lastChance && !r.done && !r.closed && <Badge cls="bg-rose-700 text-white" Icon={Clock}>Last chance · closes tonight</Badge>}
+                  {r.lastChance && !r.done && !r.closed && <Badge cls="bg-rose-700 text-white" Icon={Clock}>Today · closes tonight</Badge>}
                   {r.dueToday && !r.lastChance && !r.done && !r.closed && <Badge cls="bg-rose-600 text-white" Icon={Clock}>Today</Badge>}
-                  {r.due && !r.dueToday && !r.done && !r.mandatory && !r.closed && <Badge cls="bg-rose-100 text-rose-700" Icon={Clock}>Due</Badge>}
+                  {r.due && !r.dueToday && !r.done && !r.closed && <Badge cls="bg-rose-100 text-rose-700" Icon={Clock}>Due · 72h</Badge>}
                   {r.done && <Badge cls="bg-emerald-100 text-emerald-700" Icon={r.outcome === 'voicemail' ? Voicemail : Check}>{r.outcome === 'voicemail' ? 'Voicemail' : 'Reached'}</Badge>}
                   {!r.done && r.outcome === 'no_answer' && <Badge cls="bg-slate-200 text-slate-700" Icon={PhoneOff}>No answer ×{r.attempts}</Badge>}
                   {!r.done && r.claimedBy && <Badge cls={mine ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-800'} Icon={Hand}>{mine ? 'You have it' : `On it: ${r.claimedBy}`}</Badge>}

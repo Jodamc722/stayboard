@@ -260,7 +260,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
           <Big label="In house" value={count(t.inHouse)} Icon={Users} href="/reservations" sub={t.occupancy != null ? pct(t.occupancy, 0) + ' of units' : undefined} />
           <Big label="Cleans today" value={t.cleansScheduled != null ? t.cleansDone + '/' + t.cleansScheduled : '—'} Icon={Brush} href="/schedule"
             sub={t.cleansScheduled ? Math.round((t.cleansDone / t.cleansScheduled) * 100) + '% done' : 'none scheduled'} />
-          <Big label="Welcome calls due" value={count(t.welcomeDueNow)} Icon={PhoneCall} href="/welcome-calls" sub="next 48 hours"
+          <Big label="Welcome calls due" value={count(t.welcomeDueNow)} Icon={PhoneCall} href="/welcome-calls" sub="next 72 hours"
             tone={t.welcomeDueNow > 0 ? 'alert' : undefined} />
           <Big label="Open work" value={count(t.openWork)} Icon={AlertTriangle} href="/glitches"
             sub={t.openGlitches != null ? t.openGlitches + ' glitches · ' + count(t.openTasks) + ' unfinished tasks' : 'nothing open'}
