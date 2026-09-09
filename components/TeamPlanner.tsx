@@ -43,6 +43,8 @@ export function TeamPlanner() {
   const [group, setGroup] = useState<PGroup>('team')
   // In-house is the board. Vendor-serviced buildings are somebody else's crew and get their own tab.
   const [crew, setCrew] = useState<'inhouse' | 'vendor'>('inhouse')
+  // The cleans are the page; the calendar is a second view of the same day, not a second half of it.
+  const [view, setView] = useState<'cleans' | 'calendar'>('cleans')
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
@@ -105,14 +107,20 @@ export function TeamPlanner() {
         </div>
       </div>
 
-      {/* how it is grouped, then which market */}
+      {/* which view, then which market — and, on the calendar, how it is grouped */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white mr-1">
-          {GROUPS.map(g => (
-            <button key={g.key} onClick={() => setGroup(g.key)}
-              className={'text-[12.5px] font-semibold px-3 h-9 border-l border-line first:border-l-0 ' + (group === g.key ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{g.label}</button>
-          ))}
+          <button onClick={() => setView('cleans')} className={'text-[12.5px] font-semibold px-3 h-9 ' + (view === 'cleans' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Cleans</button>
+          <button onClick={() => setView('calendar')} className={'text-[12.5px] font-semibold px-3 h-9 border-l border-line ' + (view === 'calendar' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Calendar</button>
         </div>
+        {view === 'calendar' ? (
+          <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white mr-1">
+            {GROUPS.map(g => (
+              <button key={g.key} onClick={() => setGroup(g.key)}
+                className={'text-[12.5px] font-semibold px-3 h-9 border-l border-line first:border-l-0 ' + (group === g.key ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{g.label}</button>
+            ))}
+          </div>
+        ) : null}
         <button onClick={() => setMarket('all')} className={chip(market === 'all')}>All markets</button>
         {data.markets.map(m => (
           <button key={m.market} onClick={() => setMarket(m.market.toLowerCase())} className={chip(market === m.market.toLowerCase())}>{m.market}</button>
@@ -133,9 +141,10 @@ export function TeamPlanner() {
 
       {data.labor && dept === 'cleaning' ? <ScheduleLaborStrip data={data.labor} /> : null}
 
-      {/* THE DAY FIRST (Jon, 2026-09-09): the actual cleans and who has them. The calendar is the
-          shape of the fortnight and belongs underneath, where it is context rather than the answer. */}
-      <DayCleans days={data.days} blocks={data.markets} dept={dept} marketFilter={market} />
+      {/* THE DAY (Jon, 2026-09-09): the actual cleans and who has them. */}
+      {view === 'cleans'
+        ? <DayCleans days={data.days} blocks={data.markets} dept={dept} marketFilter={market} canManage onChanged={load} />
+        : null}
 
       {crew === 'vendor' ? (
         <p className="text-[12px] text-muted">
@@ -145,12 +154,12 @@ export function TeamPlanner() {
         </p>
       ) : null}
 
-      <div>
-        <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-2">Calendar</p>
-        <PlannerView days={data.days} blocks={data.markets} dept={dept} marketFilter={market} group={group} showLinks />
-      </div>
-
-      <PlannerLegend dept={dept} />
+      {view === 'calendar' ? (
+        <>
+          <PlannerView days={data.days} blocks={data.markets} dept={dept} marketFilter={market} group={group} showLinks />
+          <PlannerLegend dept={dept} />
+        </>
+      ) : null}
 
       <p className="text-[11.5px] text-muted leading-relaxed max-w-3xl">
         Who is on and off comes from the roster on the Turnover Schedule; the numbers are the work actually

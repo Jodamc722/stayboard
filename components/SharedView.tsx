@@ -31,6 +31,7 @@ export function SharedView({ code }: { code: string }) {
   const [to, setTo] = useState(addDays(todayET(), 13))
   const [group, setGroup] = useState<PGroup>('team')
   const [crew, setCrew] = useState<'inhouse' | 'vendor'>('inhouse')
+  const [view, setView] = useState<'cleans' | 'calendar'>('cleans')
   // The passcode that worked and the span on screen live in refs, not in the loader's dependency
   // list: as state they re-created `load`, the mount effect re-fired, and every date change fetched
   // twice — once explicitly and once again for the new identity.
@@ -207,11 +208,19 @@ export function SharedView({ code }: { code: string }) {
                 ))}
               </div>
               <div className="inline-flex rounded-lg border border-neutral-300 overflow-hidden bg-white ml-auto">
-                {GROUPS.map(g => (
-                  <button key={g.key} onClick={() => setGroup(g.key)}
-                    className={'text-[12px] font-semibold px-2.5 h-8 border-l border-neutral-200 first:border-l-0 ' + (group === g.key ? 'bg-neutral-900 text-white' : 'text-neutral-500')}>{g.label}</button>
-                ))}
+                <button onClick={() => setView('cleans')}
+                  className={'text-[12px] font-semibold px-2.5 h-8 ' + (view === 'cleans' ? 'bg-neutral-900 text-white' : 'text-neutral-500')}>Cleans</button>
+                <button onClick={() => setView('calendar')}
+                  className={'text-[12px] font-semibold px-2.5 h-8 border-l border-neutral-200 ' + (view === 'calendar' ? 'bg-neutral-900 text-white' : 'text-neutral-500')}>Calendar</button>
               </div>
+              {view === 'calendar' ? (
+                <div className="inline-flex rounded-lg border border-neutral-300 overflow-hidden bg-white">
+                  {GROUPS.map(g => (
+                    <button key={g.key} onClick={() => setGroup(g.key)}
+                      className={'text-[12px] font-semibold px-2.5 h-8 border-l border-neutral-200 first:border-l-0 ' + (group === g.key ? 'bg-neutral-900 text-white' : 'text-neutral-500')}>{g.label}</button>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {/* What those cleans earn and what the crew costs — only when this link shows money. */}
@@ -219,12 +228,14 @@ export function SharedView({ code }: { code: string }) {
             {/* Same drawing as the staff tab — one component, so what the crew opens and what the
                 office plans on can never drift. Breezeway links only on the maintenance link. */}
             <div className="p-3 bg-neutral-50 space-y-3">
-              {/* THE CLEANS THEMSELVES FIRST (Jon): what is being cleaned today and who has it. */}
-              <DayCleans
-                days={s.team.days || []}
-                blocks={s.team.markets || []}
-                dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
-              />
+              {/* THE CLEANS THEMSELVES (Jon): what is being cleaned today and who has it. */}
+              {view === 'cleans' ? (
+                <DayCleans
+                  days={s.team.days || []}
+                  blocks={s.team.markets || []}
+                  dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
+                />
+              ) : null}
               {crew === 'vendor' ? (
                 <p className="text-[11.5px] text-neutral-500 px-1">
                   Vendor-serviced buildings — Botanica, Park Towers, Amrit, Capri, Lucerne. Their crews rarely carry a
@@ -232,19 +243,20 @@ export function SharedView({ code }: { code: string }) {
                   this is not our payroll.
                 </p>
               ) : null}
-              <div>
-                <p className="text-[10.5px] uppercase tracking-wider font-bold text-neutral-400 mb-1.5 px-1">Calendar</p>
-                <PlannerView
-                  days={s.team.days || []}
-                  blocks={s.team.markets || []}
-                  dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
-                  showLinks={s.team.dept === 'maintenance'}
-                  group={group}
-                />
-              </div>
-              <div className="px-1">
-                <PlannerLegend dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'} />
-              </div>
+              {view === 'calendar' ? (
+                <>
+                  <PlannerView
+                    days={s.team.days || []}
+                    blocks={s.team.markets || []}
+                    dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
+                    showLinks={s.team.dept === 'maintenance'}
+                    group={group}
+                  />
+                  <div className="px-1">
+                    <PlannerLegend dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'} />
+                  </div>
+                </>
+              ) : null}
             </div>
             <p className="px-4 py-2.5 text-[10.5px] text-neutral-400 border-t border-neutral-100">
               A long stay is {s.team.rules?.longStayNights}+ nights. Tap any day to see the work on it.

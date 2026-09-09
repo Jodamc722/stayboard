@@ -20,6 +20,8 @@ import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink } from 'lucide-rea
 
 export type PTag = { key: string; label: string; tone: 'amber' | 'violet' | 'emerald' | 'sky' }
 export type PJob = {
+  /** Breezeway task id. Present in-app, deliberately absent on share links — nothing to act on there. */
+  id?: string
   unit: string; task: string; status: string; isClean?: boolean; departure?: boolean; vendor?: string | null
   market?: string; url?: string | null; tags?: PTag[]
 }
