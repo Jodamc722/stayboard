@@ -18,6 +18,7 @@ import { getOpsPresets, getSetting, setSetting } from './app-settings'
 import { untrackedRegex } from './ops-presets'
 import { isLiveStay } from './stay-status'
 import { notify } from './notify'
+import { isTaskDone } from './task-categories'
 // postSlack is gone from this file — Slack now goes through the approval outbox (lib/slack-queue).
 
 export const GRACE_MIN = 30          // minutes after checkout before "not started" means anything
@@ -150,7 +151,7 @@ export async function loadBehind(): Promise<Behind & { date: string; nowMin: num
     // the departure clean only — a strip or a walkthrough is a different job with no 4pm deadline
     if (/strip|walk-?through|inspect|unit check/.test(name)) continue
     if (!/departure clean|turnover clean/.test(name)) continue
-    if (/complete|finish|close|approv/.test(status) || t.finished_at) continue
+    if (isTaskDone(status, t.finished_at)) continue   // the shared rule (lib/task-categories)
     if (/progress|started/.test(status) || t.started_at) continue
     const li = lmap[String(t.reference_property_id)]
     const unit = li ? li.name : 'Unknown unit'

@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
+import { createBreezewayTask, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
 import { buildIntel, intelKindFor } from '@/lib/listingIntel'
 import { requireLevel } from '@/lib/access'
 
@@ -94,10 +94,22 @@ export async function POST(req: NextRequest) {
     if (!r.ok || !r.data || !r.data.id) return NextResponse.json({ ok: false, error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
     // Optional: assign it in the same click (the board sends the person picked in the panel).
     let assigned: boolean | undefined = undefined
+    // The names Breezeway confirms, in the shape the board reads ({id,name}) — see the write-through
+    // below and /api/breezeway/assign, which has done it this way since it was written.
+    let people: { id: any; name: string | null }[] = []
     const ids = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
     if (ids.length) {
       assigned = false
-      try { const a = await updateBreezewayTask(String(r.data.id), { assignments: ids }); assigned = !!a.ok } catch { assigned = false }
+      try {
+        const a = await updateBreezewayTask(String(r.data.id), { assignments: ids })
+        assigned = !!a.ok
+        if (a.ok) {
+          const back = await retrieveBreezewayTask(String(r.data.id))
+          const t: any = back.ok && back.data ? (back.data.task || back.data) : null
+          const asg = Array.isArray(t?.assignments) ? t.assignments : []
+          people = asg.map((x: any) => ({ id: x?.assignee_id ?? x?.id ?? null, name: x?.name ?? null })).filter((x: any) => x.id || x.name)
+        }
+      } catch { assigned = false }
     }
     // WRITE THROUGH to the mirror: the board reads breezeway_tasks_sync, which refreshes every
     // 15 minutes — without this a task you just created was invisible until the next sync.
@@ -105,7 +117,10 @@ export async function POST(req: NextRequest) {
       await db.from('breezeway_tasks_sync').upsert({
         id: String(r.data.id), reference_property_id: listingId, name: title,
         status: 'created', scheduled_date: date, type_department: department,
-        assignees: [], report_url: r.data.report_url || null,
+        // NOT `[]` (2026-09-09 audit). Writing an empty array after a successful assign put a rose
+        // "nobody has this" dot on the task the coordinator had just given to someone, for fifteen
+        // minutes — indistinguishable from the assign having failed.
+        assignees: people, report_url: r.data.report_url || null,
         raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
       }, { onConflict: 'id' })
     } catch { /* the sync catches up */ }

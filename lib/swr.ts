@@ -39,7 +39,11 @@ export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: numbe
     mounted.current = true
     if (!key) return () => { mounted.current = false }
     const ent = CACHE.get(key)
+    // A NEW KEY MUST NOT SHOW THE OLD KEY'S DATA (2026-09-09 audit). Pressing › on the date pager
+    // left yesterday's rows on screen, with loading:false, under a banner reading "You are looking
+    // at Thursday" — the board asserting a day it had not read yet.
     if (ent?.data) { setData(ent.data); setLoading(false) }   // instant from cache
+    else { setData(undefined); setError(null); setLoading(true) }
     if (!ent || Date.now() - ent.at > ttl) revalidate()        // refresh in background if stale
     return () => { mounted.current = false }
   }, [key, ttl, revalidate])

@@ -17,6 +17,7 @@
 // vacant only when NO live stay covers that night, so a same-day turn is correctly excluded.
 import { supabaseAdmin } from './supabase-admin'
 import { staySpans } from './stay-status'
+import { pageRows } from './db-page'
 
 const str = (v: any) => String(v ?? '').trim()
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
@@ -46,28 +47,35 @@ export async function workableDays(
 
   try {
     const db = supabaseAdmin()
+    // PAGED, NOT .limit(4000) (2026-09-09 audit). PostgREST caps a page at 1,000 rows whatever the
+    // limit asks for, so across 400 units × 21 days both of these stopped a quarter of the way in —
+    // silently, which here means a unit's later free days simply do not exist and its backlog reads
+    // "no empty day in three weeks".
     const [resRes, taskRes] = await Promise.all([
       // Any stay that could overlap the window. `check_out > today` and `check_in <= last` is the
       // cheapest overlap test that cannot miss a stay straddling the edges.
-      db.from('guesty_reservations').select('listing_id,check_in,check_out,status')
-        .in('listing_id', ids).gt('check_out', today).lte('check_in', last).limit(4000),
+      pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status')
+        .in('listing_id', ids).gt('check_out', today).lte('check_in', last).order('id').range(a, b), 8),
       // Maintenance already scheduled in the window, so we know which days come with a body.
-      db.from('breezeway_tasks_sync')
-        .select('reference_property_id,scheduled_date,status,finished_at,assignees,type_department')
+      pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
+        .select('id,reference_property_id,scheduled_date,status,finished_at,assignees,type_department')
         .in('reference_property_id', ids)
         .gte('scheduled_date', today).lte('scheduled_date', last)
-        .order('scheduled_date', { ascending: true }).order('id', { ascending: true })
-        .limit(4000),
+        .order('scheduled_date', { ascending: true }).order('id', { ascending: true }).range(a, b), 8),
     ])
 
+    // A SHORT READ INVENTS VACANCY. With `staysOf[lid]` empty every day in the horizon reads
+    // `vacant: true`, which becomes "unit empty, nobody booked" in the review queue and in the
+    // model's brief — the one error this file must never make (2026-09-09 review).
+    if (resRes.truncated) return out
     const staysOf: Record<string, any[]> = {}
-    for (const r of ((resRes.data || []) as any[])) {
+    for (const r of (resRes.rows as any[])) {
       ;(staysOf[str(r.listing_id)] = staysOf[str(r.listing_id)] || []).push(r)
     }
 
     // day -> the people with maintenance booked there
     const tradeOf: Record<string, Record<string, Set<string>>> = {}
-    for (const t of ((taskRes.data || []) as any[])) {
+    for (const t of (taskRes.rows as any[])) {
       const dep = str(t.type_department).toLowerCase()
       if (!/maint/.test(dep)) continue
       if (t.finished_at) continue

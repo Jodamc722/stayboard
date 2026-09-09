@@ -33,6 +33,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { updateBreezewayTask, breezewayConfigured, matchBreezewayPerson } from './breezeway'
+import { pageRows } from './db-page'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const dOf = (v: any) => str(v).slice(0, 10)
@@ -131,17 +132,20 @@ export async function pendingForUnits(
   const to = dOf(new Date(Date.parse(today + 'T12:00:00Z') + ahead * 86400000).toISOString())
 
   const db = supabaseAdmin()
-  const { data, error } = await db.from('breezeway_tasks_sync')
+  // PAGED (2026-09-09 audit): .limit(4000) is 1,000 in practice, and 400 units of backlog passes
+  // that easily — the tail was dropped without a word.
+  const paged = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
     .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,report_url,description:raw->>description')
     .in('reference_property_id', listingIds.slice(0, 400))
     .gte('scheduled_date', from).lte('scheduled_date', to)
     .not('name', 'ilike', '%departure clean%')
     .not('name', 'ilike', '%strip%')
-    .order('scheduled_date', { ascending: true }).order('id', { ascending: true })
-    .limit(4000)
-  if (error) return out
+    .order('scheduled_date', { ascending: true }).order('id', { ascending: true }).range(a, b), 6)
+  // ANY truncation, not just an empty first page: a failure on page 2 returned 1,000 rows of a
+  // larger set, which is the same silent short read the paging replaced.
+  if (paged.truncated) return out
 
-  for (const t of (data || []) as any[]) {
+  for (const t of paged.rows as any[]) {
     const st = str(t.status).toLowerCase()
     if (GONE.test(st)) continue
     if (DONE.test(st) || t.finished_at) continue

@@ -22,6 +22,7 @@ import { useMemo, useState } from 'react'
 import { X, Wand2, Loader2, Check, AlertTriangle, MapPin, Users, ArrowRight } from 'lucide-react'
 import { planDay, type PlanTask, type PlanUnitRow, type Assignment } from '@/lib/day-plan'
 import type { GUnit, GRoster, GStaff } from '@/components/OpsGrid'
+import { useModal } from '@/components/Modal'
 
 const PROX: Record<Assignment['proximity'], { label: string; cls: string }> = {
   unit:     { label: 'in the unit',     cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
@@ -44,6 +45,10 @@ export function DayPlanPanel({ units, roster, staff, today, onClose, onApplied }
   const [onlyScheduled, setOnlyScheduled] = useState(true)
   const [skip, setSkip] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
+  // Escape closes it, Tab stays inside, the board does not scroll — but NOT while a bulk apply is
+  // running: leaving mid-loop unmounts the panel while assigns keep firing and loses the per-row
+  // receipt, which is the one thing that tells you which half landed.
+  const { panelProps } = useModal(onClose, { closeOnEscape: !busy })
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set())
   const [failed, setFailed] = useState<Record<string, string>>({})
   const [progress, setProgress] = useState<{ n: number; of: number } | null>(null)
@@ -121,9 +126,10 @@ export function DayPlanPanel({ units, roster, staff, today, onClose, onApplied }
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-ink/30 backdrop-blur-[1px]" onClick={busy ? undefined : onClose} />
-      <div className="fixed z-50 inset-x-0 bottom-0 sm:inset-0 sm:m-auto w-full sm:max-w-[760px] sm:h-fit sm:max-h-[86vh] max-h-[92vh]
-                      rounded-t-2xl sm:rounded-2xl border border-line bg-white shadow-2xl flex flex-col overflow-hidden">
+      <div className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-[1px]" onClick={busy ? undefined : onClose} />
+      <div {...panelProps} aria-label="Plan the day"
+        className="fixed z-50 inset-x-0 bottom-0 sm:inset-0 sm:m-auto w-full sm:max-w-[760px] sm:h-fit sm:max-h-[86vh] max-h-[92vh]
+                      rounded-t-2xl sm:rounded-2xl border border-line bg-white shadow-2xl flex flex-col overflow-hidden outline-none">
 
         {/* ── HEADER ── */}
         <div className="px-4 py-3 border-b border-line flex items-start gap-3">

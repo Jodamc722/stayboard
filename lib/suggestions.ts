@@ -36,6 +36,7 @@
 // 'auto' — and even 'auto' obeys the same caps, because the cap is the promise.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { marketOf, buildingOf } from './segments'
@@ -356,10 +357,13 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status,amenities,rawAmen:raw->amenities').limit(2000),
     db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,assignees,type_department,finished_at')
       .eq('scheduled_date', date).limit(2000),
-    db.from('guesty_reservations').select('listing_id,check_in,check_out,status')
-      .lte('check_in', date).gt('check_out', date).limit(4000),
-    db.from('guesty_reservations').select('listing_id,check_in,status')
-      .gt('check_in', date).lte('check_in', horizon).order('check_in', { ascending: true }).limit(4000),
+    // PAGED (2026-09-09 audit): .limit(4000) stops at 1,000, and occupancy across 233 units is the
+    // read that decides whether a unit is empty enough to work in. A truncated scan here invents
+    // vacancy — the one error this engine must never make.
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status')
+      .lte('check_in', date).gt('check_out', date).order('id').range(a, b), 6).then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'occupancy scan stopped early' } : null })),
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,status')
+      .gt('check_in', date).lte('check_in', horizon).order('check_in', { ascending: true }).order('id').range(a, b), 6).then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'arrival scan stopped early' } : null })),
     readHistory(since),
     getSuggestionLog(),
   ])
@@ -861,7 +865,10 @@ export async function createFromSuggestion(s: Suggestion, by: string | null, opt
       await db.from('breezeway_tasks_sync').upsert({
         id: taskId, reference_property_id: s.listingId, name, status: 'created',
         scheduled_date: scheduled, type_department: s.dept,
-        assignees: assigneeId != null && who ? [who] : [],
+        // {id,name} OBJECTS, not bare strings (2026-09-09 audit): the board reads
+        // `assignees.map(p => p.name)`, so a string here rendered the task as unowned — a rose dot
+        // on the job you just handed to somebody — until the next sync overwrote it.
+        assignees: assigneeId != null && who ? [{ id: assigneeId, name: who }] : [],
         raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
       }, { onConflict: 'id' })
     } catch { /* sync catches up */ }

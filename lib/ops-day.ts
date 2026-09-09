@@ -11,7 +11,7 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, untrackedRegex, noBreezewayRegex } from '@/lib/ops-presets'
 import { isLiveStay } from '@/lib/stay-status'
 import { summariseBehind, fmt12, type BehindRow } from '@/lib/ops-behind'
-import { TASK_CATS_KEY, resolveCats, catOfTaskWith } from '@/lib/task-categories'
+import { TASK_CATS_KEY, resolveCats, catOfTaskWith, isTaskDone, isTaskRunning, isTaskGone } from '@/lib/task-categories'
 import { getSetting } from '@/lib/app-settings'
 import { pageRows } from '@/lib/db-page'
 
@@ -29,6 +29,12 @@ function etMinutes(d: Date) {
   return (Number(p[0]) % 24) * 60 + Number(p[1])
 }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
+/** Minutes-since-midnight as a clock face. The deadline is an operator setting, so it is never typed out. */
+function clockOf(min: number): string {
+  const m = Math.max(0, Math.round(min)) % (24 * 60)
+  const h = Math.floor(m / 60), mi = m % 60
+  return (h % 12 === 0 ? 12 : h % 12) + ':' + String(mi).padStart(2, '0') + ' ' + (h >= 12 ? 'PM' : 'AM')
+}
 function deptOf(v: any): string { const s = str(v).toLowerCase(); if (/housekeep|clean/.test(s)) return 'housekeeping'; if (/maint/.test(s)) return 'maintenance'; if (/inspect/.test(s)) return 'inspection'; return s || 'other' }
 // Task TYPE comes from the Breezeway task name — 'Departure Clean Checklist' and
 // 'Strip & Walkthrough' are both housekeeping but are completely different jobs.
@@ -49,9 +55,11 @@ function typeOf(name: any, dept: string): string {
 // Breezeway statuses seen in the wild: created, in_progress/started, completed/finished,
 // closed, approved, deleted, cancelled. "Closed"/"approved" ARE done; deleted/cancelled tasks
 // must not appear on the board at all (they linger in the mirror and used to show as Not started).
-const isDone = (s: string) => /complete|finish|close|approv/.test(s)
-const isRunning = (s: string) => /progress|started/.test(s)
-const isGone = (s: string) => /delete|cancel/.test(s)
+// The shared rules (lib/task-categories). The board's own copies were the loose dialect, so a task
+// whose Breezeway status reads "incomplete" counted as finished here and as open to every engine.
+const isDone = (s: string) => isTaskDone(s)
+const isRunning = (s: string) => isTaskRunning(s)
+const isGone = (s: string) => isTaskGone(s)
 
 export type OpsDay = Awaited<ReturnType<typeof buildOpsDay>>
 
@@ -78,6 +86,17 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   // For a future (or past) date the 4pm countdown is meaningless — treat as a full day left
   // so nothing gets falsely flagged late/at-risk.
   const minsLeft = isToday ? DEADLINE_MIN - nowMin : DEADLINE_MIN
+  // A BROKEN READ MUST NOT LOOK LIKE A FINISHED DAY (2026-09-09 audit).
+  // supabase-js does not throw on a query error: a statement timeout, a 5xx under load or a renamed
+  // column all resolve as { data: null, error }. Every read below used `res.data || []`, so a failed
+  // tasks scan rendered "Nothing scheduled today. Check again." — the board saying all-clear at the
+  // exact moment it knows least. Now the failure travels: the route 500s and the page shows its own
+  // red "Could not load the board" banner, which is the truth.
+  const degradedReads: string[] = []
+  const need = <T,>(label: string, r: { data: T | null; error: any }): T[] => {
+    if (r.error) throw new Error('could not read ' + label + ' — ' + String(r.error.message || r.error).slice(0, 120))
+    return (r.data || []) as any
+  }
   const [lRes, tRes, qRes, rRes] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,bedrooms,status,lat:raw->address->>lat,lng:raw->address->>lng,city2:raw->address->>city,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime'),
     db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department').eq('scheduled_date', today).limit(2000),
@@ -99,13 +118,17 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   // itself with no edit here.
   const geoOf = (l: any, nm: string) => marketOf(l.building, l.address_city, nm)
   const geoHasOwnUnits = new Set<string>()
-  for (const l of (lRes.data || []) as any[]) {
+  const listingRows = need('listings', lRes as any)
+  const taskRows = need('tasks', tRes as any)
+  const qcRows = need('quality checks', qRes as any)
+  const resRows = need("today's reservations", rRes as any)
+  for (const l of listingRows as any[]) {
     const nm = l.nickname || l.title || 'Unit'
     if (VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(nm)) continue
     if (str(l.status).trim().toLowerCase() !== 'active') continue
     geoHasOwnUnits.add(geoOf(l, nm))
   }
-  for (const l of (lRes.data || []) as any[]) {
+  for (const l of listingRows as any[]) {
     const name = l.nickname || l.title || 'Unit'
     const isVendor = VENDOR_RE.test(str(l.building)) || VENDOR_RE.test(name)
     const lat = Number(l.lat), lng = Number(l.lng)
@@ -121,7 +144,7 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   const outNights: Record<string, number> = {}
   const inNights: Record<string, number> = {}
   const inGuest: Record<string, string> = {}
-  for (const r of (rRes.data || []) as any[]) {
+  for (const r of resRows as any[]) {
     if (!isLiveStay(r.status)) continue
     const id = String(r.listing_id)
     const n = Number(r.nights)
@@ -129,7 +152,7 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     if (str(r.check_in).slice(0, 10) === today) { inToday[id] = true; if (Number.isFinite(n) && n > 0) inNights[id] = n; inGuest[id] = str(r.guest_name) || 'Guest' }
   }
   const qcByListing: Record<string, any[]> = {}
-  for (const q of (qRes.data || []) as any[]) {
+  for (const q of qcRows as any[]) {
     const id = String(q.listing_id)
     if (!qcByListing[id]) qcByListing[id] = []
     qcByListing[id].push({ issue: q.issue_type || 'Issue', status: str(q.status), reportUrl: q.report_url || null })
@@ -140,14 +163,22 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   // reservation spans today (check_in <= today < check_out), guests arriving today included —
   // they'd be in the unit by 4pm, so it is not free to work in.
   const backFrom = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(new Date(today + 'T12:00:00Z').getTime() - 21 * 86400000))
+  const ahead90 = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(new Date(today + 'T12:00:00Z').getTime() + 90 * 86400000))
   const [occRes, nextRes, pastRes] = await Promise.all([
     // PAGED (2026-09-03): .limit(4000) is 1,000 in practice. Future arrivals alone pass that in
     // season, and the board's "next arrival" for a vacant unit was the first 1,000 by date.
     pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name').lte('check_in', today).gt('check_out', today).order('id').range(a, b), 6),
-    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,status').gt('check_in', today).order('check_in', { ascending: true }).order('id').range(a, b), 8),
+    // BOUNDED (2026-09-09): this read only feeds "next arrival" for a vacant unit, and it was
+    // paging every future reservation on the books — up to 8,000 rows, per viewer, every 30s.
+    // Ninety days is far past any gap a coordinator acts on.
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,status').gt('check_in', today).lte('check_in', ahead90).order('check_in', { ascending: true }).order('id').range(a, b), 4),
     // Recent past checkouts — the other half of "why is a departure clean sitting on today?".
     pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_out,status').gte('check_out', backFrom).lt('check_out', today).order('check_out', { ascending: false }).order('id').range(a, b), 6),
   ])
+  // A TRUNCATED OCCUPANCY SCAN IS NOT AN EMPTY ONE. pageRows returns truncated:true on a PostgREST
+  // error; unread occupancy makes every departure clean look 'moved' and every unit vacant.
+  if (occRes.truncated) throw new Error('could not read occupancy — the scan stopped early')
+  if (nextRes.truncated || pastRes.truncated) degradedReads.push('arrival history')
   const occupied: Record<string, string> = {}
   const occupiedUntil: Record<string, string> = {}
   // IN THE UNIT vs ARRIVING TODAY — two different guests (Jon, 2026-09-01: "why is this saying
@@ -187,7 +218,7 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     const d = str(r.check_out).slice(0, 10)
     if (d && (!lastOut[id] || d > lastOut[id])) lastOut[id] = d
   }
-  const tasks = ((tRes.data || []) as any[]).filter(t => !isGone(str(t.status).toLowerCase())).map(t => {
+  const tasks = (taskRows as any[]).filter(t => !isGone(str(t.status).toLowerCase())).map(t => {
     const lid = String(t.reference_property_id)
     const li = lmap[lid]
     const dept = deptOf(t.type_department)
@@ -332,7 +363,7 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   const behind = summariseBehind(isToday ? behindRows : [], nowMin)
   const cleans = tasks.filter(t => t.clocked)
   const deadline = {
-    dueBy: '4:00 PM', minsLeft, passed: minsLeft < 0,
+    dueBy: clockOf(DEADLINE_MIN), minsLeft, passed: minsLeft < 0,
     cleans: cleans.length,
     done: cleans.filter(t => t.done).length,
     running: cleans.filter(t => t.running && !t.done).length,
@@ -365,7 +396,7 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     running: tasks.filter(t => t.running && !t.done).length,
     notStarted: tasks.filter(t => !t.done && !t.running).length,
     done: tasks.filter(t => t.done).length,
-    openQc: (qRes.data || []).length,
+    openQc: qcRows.length,
     vacant: vacants.length,
   }
   // THE DAY PULSE — one source of truth for "how does the day look" (Command Center used to
@@ -388,5 +419,5 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
   const listingMeta = opts.includeMeta
     ? Object.fromEntries(Object.entries(lmap).map(([id, l]) => [id, { name: l.name, market: l.market, building: l.building, active: l.active }]))
     : undefined
-  return { ok: true as const, today, isToday, nowMin, lastSync, categories: taskCats, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm, pulse, listingMeta }
+  return { ok: true as const, today, isToday, nowMin, lastSync, degraded: degradedReads, categories: taskCats, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm, pulse, listingMeta }
 }

@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getShifts, nameMatches, nameMatchesRoster } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
+import { isTaskGone } from '@/lib/task-categories'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -26,14 +27,19 @@ export async function GET(req: NextRequest) {
 
     const db = supabaseAdmin()
     const [shifts, timecards, tRes] = await Promise.all([
-      getShifts(today, TZ).catch(() => []),
-      getTimecards(today, today).catch(() => []),
+      // A HOMEBASE OUTAGE IS NOT AN EMPTY CREW (2026-09-09 audit). These swallowed every failure
+      // into [], so the board rendered "No one on the Homebase schedule today" — the answer to the
+      // first question of the morning, invented. Let them throw; the catch below returns a 500 and
+      // the page says it could not read the roster.
+      getShifts(today, TZ),
+      getTimecards(today, today),
       db.from('breezeway_tasks_sync')
         .select('id,name,status,assignees,type_department')
         .eq('scheduled_date', today)
         .limit(2000),
     ])
-    const tasks = (tRes.data || []).filter(t => !/delete|cancel/.test(String(t.status || '').toLowerCase()))
+    if (tRes.error) throw new Error('could not read today\'s tasks — ' + String(tRes.error.message || tRes.error).slice(0, 120))
+    const tasks = (tRes.data || []).filter(t => !isTaskGone(t.status))
 
     // Breezeway assignee spellings -> how many tasks / cleans each carries today.
     const bzCount: Record<string, { tasks: number; cleans: number }> = {}
@@ -114,6 +120,9 @@ export async function GET(req: NextRequest) {
       },
     })
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) })
+    // 500, NOT 200 (2026-09-09 audit). A 200 with ok:false left the client's `data` undefined and
+    // every surface degraded to "No one on the Homebase schedule today" — a failed read reading as
+    // an empty crew, on the screen where "who is free" is the first question of the morning.
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
 }

@@ -90,14 +90,18 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
   const [note, setNote] = useState('')
 
   const load = useCallback(async () => {
+    // WAIT FOR THE BOARD'S DATE (2026-09-09 audit). `date` arrives as '' until /api/ops-today
+    // answers, so every mount ran the cadence engine twice — once for "today" implicitly, once for
+    // the date the board actually settled on. The engine pages 12,000 history rows per run.
+    if (!date) return
     setLoading(true)
     try {
-      const r = await fetch('/api/suggestions' + (date ? `?date=${date}` : ''), { cache: 'no-store' })
+      const r = await fetch(`/api/suggestions?date=${date}`, { cache: 'no-store' })
       const j = await r.json()
       setRun(j && typeof j === 'object' ? j : null)
     } catch { setRun(null) } finally { setLoading(false) }
   }, [date])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { if (date) load() }, [load, date])
   // THE WHOLE PREMISE IS "SOMEBODY IS STANDING THERE RIGHT NOW".
   // The board polls every five minutes; this list used to be fetched once and then sat there, so by
   // 11am it was still showing the 7am verdict and the 7am picks — after cleans had closed and people

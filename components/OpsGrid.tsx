@@ -81,6 +81,8 @@ export type GData = {
   // only inside a sort expression; `deadline.minsLeft` and `lastSync` were never read at all.
   deadline?: GDeadline
   lastSync?: string | null
+  /** Reads that came back partial. Never silent — see the banner above the deadline strip. */
+  degraded?: string[]
 }
 export type GStaff = {
   people?: { name: string; role?: string | null; clockedIn?: boolean; shift?: string | null; bzAlias?: string | null }[]
@@ -735,7 +737,7 @@ function fmtAgo(iso: string): string {
   return `${h}h ${m % 60}m ago`
 }
 
-export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, aside }: {
+export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, openSheet, onSheet, aside }: {
   data: GData | undefined
   glitches: GGlitch[]
   roster: GRoster[]
@@ -744,6 +746,9 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   error?: string | null
   onRefresh: () => void
   onAddTask: (unit: string) => void
+  /** Which sheet the page has open — one at a time, owned by OpsV2. */
+  openSheet: 'add' | 'plan' | null
+  onSheet: (s: 'add' | 'plan' | null) => void
   /** The crew line (the capacity model, compact) — rides on the day line so the clock and the crew are one strip, not two banners. */
   aside?: React.ReactNode
 }) {
@@ -764,7 +769,11 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   // PLAN THE DAY (Jon, 2026-08-27: "need the AI systems to help assign or build tasks to ensure we
   // give the team a full and directional day"). Opens over the board it is planning, so the numbers
   // in the header and the plan behind it are the same numbers.
-  const [planOpen, setPlanOpen] = useState(false)
+  // PLAN DAY IS OWNED UPSTAIRS (2026-09-09 audit). It used to hold its own boolean here while the
+  // Add sheet held one in OpsV2, so both could be open at once, stacked at the same z-index. One
+  // owner, one modal at a time.
+  const planOpen = openSheet === 'plan'
+  const setPlanOpen = (v: boolean) => onSheet(v ? 'plan' : null)
   // MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). Remembered per
   // device, because whoever runs Broward runs Broward every morning and should not re-pick it.
   const [mkt, setMkt] = useState<string>('all')
@@ -943,6 +952,19 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     const byPerson: Record<string, GTask[]> = {}
     const displayOf: Record<string, string> = {}
     const unassigned: GTask[] = []
+    // ── "FREE" IS A PORTFOLIO FACT, NOT A FILTER FACT (2026-09-09 audit) ──────────────────────
+    // The idle check below ran against `units` AFTER the market filter, so with Miami selected a
+    // supervisor carrying nine Broward jobs rendered as "On the clock, nothing assigned" — the
+    // precise case the comment further down warns about, caused by the filter itself. Ownership is
+    // computed across the WHOLE day; the filter decides which rows you see, never who is busy.
+    const busyKeys = new Set<string>()
+    for (const u of allUnits) for (const t of u.tasks) for (const n of (t.assignees || [])) {
+      const k = personKey(n); if (k) busyKeys.add(k)
+    }
+    const busyNames = new Set<string>()
+    for (const u of allUnits) for (const t of u.tasks) for (const n of (t.assignees || [])) {
+      const nm = String(n).replace(/\s+/g, ' ').trim(); if (nm) busyNames.add(nm)
+    }
     for (const u of units) for (const t of u.tasks) {
       if (!catMatch(t)) continue
       if (!t.assignees.length) { if (!t.done) unassigned.push(t); continue }
@@ -971,10 +993,10 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       // after BOTH have failed, because the cost of being wrong is a coordinator handing work to
       // somebody already carrying nineteen jobs.
       const keys = [personKey(nm), personKey(sp.bzAlias)].filter(Boolean)
-      let known = keys.some(k => !!byPerson[k])
+      let known = keys.some(k => busyKeys.has(k))
       if (!known) {
         const cands = [nm, String(sp.bzAlias || '')].filter(Boolean)
-        known = Object.keys(byPerson).some(k => cands.some(c => nameMatches(c, displayOf[k] || k)))
+        known = Array.from(busyNames).some(bn => cands.some(c => nameMatches(c, bn)))
       }
       if (!known) idleNames.push(nm)
     }
@@ -1008,7 +1030,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       out.push({
         key: 'p:free:' + nm, title: nm,
         sub: ((roster.find(p => personKey(p.name) === personKey(nm)) || roster.find(p => nameMatches(p.name, nm)))?.departments || []).join(' · '),
-        reservation: sp?.clockedIn ? 'On the clock, nothing assigned' : 'On shift, nothing assigned',
+        reservation: (sp?.clockedIn ? 'On the clock' : 'On shift') + ', nothing assigned'
+          + (mkt !== 'all' ? ' anywhere today' : ''),
         status: { label: 'Free', cls: 'bg-brand-50 text-brand-700 border-brand-200' },
         tasks: [], issues: [], gapNights: null,
         // Above ordinary working people, below the unassigned pile: an idle person is not urgent in
@@ -1024,7 +1047,9 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       tasks: unassigned, issues: [], gapNights: null, urgent: 1e6,
     })
     return out
-  }, [mode, units, cat, issuesByUnit, gapByListing, roster, glitchesInMkt])
+    // `staff` and `allUnits` belong here: staffing is a slower, separate fetch, and without it in
+    // the deps the Free rows it produces never appeared until the next board refresh.
+  }, [mode, units, allUnits, staff, cat, issuesByUnit, gapByListing, roster, glitchesInMkt, mkt])
 
   const shown = useMemo(() => {
     const n = q.trim().toLowerCase()
@@ -1072,6 +1097,15 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             <p className="text-[11.5px] text-rose-900/80 mt-0.5">{error} — what you see below may be old, or nothing at all.</p>
           </div>
           <button onClick={onRefresh} className="text-[11.5px] font-bold text-rose-700 hover:text-rose-900 shrink-0">Retry</button>
+        </div>
+      )}
+
+      {/* A PARTIAL READ IS NOT A COMPLETE ONE. buildOpsDay throws when a read fails outright; this
+          is the softer case — a scan that stopped early, so some numbers are lower than the truth. */}
+      {Array.isArray(data?.degraded) && data!.degraded!.length > 0 && (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 flex items-start gap-2">
+          <AlertTriangle size={13} className="text-amber-600 mt-0.5 shrink-0" />
+          <p className="text-[12px] text-amber-900">Some of today&rsquo;s numbers are incomplete — could not fully read: {data!.degraded!.join(', ')}. Refresh in a moment.</p>
         </div>
       )}
 

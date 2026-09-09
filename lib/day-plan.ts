@@ -31,6 +31,12 @@
 // It also refuses to overfill. `maxPerPerson` is a real ceiling: a plan that hands somebody eleven
 // jobs is not a plan, it is a way of making the unassigned column look empty.
 import { rankAssignees, buildAssignContext, type RankPerson } from './assign-rank'
+// ONE ANSWER TO "IS THIS THE SAME PERSON?" (2026-09-09 audit). This file joined Homebase shift
+// names, Breezeway roster names and Breezeway assignee strings with lowercase equality — the exact
+// comparison the rest of the app forbids, because those three systems disagree about spacing,
+// accents and married names. The cost here is the worst kind: a working person reads as "not on
+// shift", becomes ineligible, shows a load of 0, and the idle bonus then sends them MORE work.
+import { personKey, nameMatches } from './person-name'
 
 export type PlanTask = {
   id: string
@@ -106,7 +112,6 @@ export type PlanOptions = {
   onlyScheduled?: boolean
 }
 
-const norm = (s: any) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase()
 
 /**
  * Propose a full day.
@@ -126,26 +131,34 @@ export function planDay(opts: {
   const onlyScheduled = opts.options?.onlyScheduled !== false
 
   // Everyone's starting position: what they already carry, and where they already are.
+  // Keyed on personKey, never the raw string, so "Gehron Regis" and "Gehron  Regis" are one person.
   const load: Record<string, number> = {}
   const anchors: Record<string, Set<string>> = {}
+  const seenNames: string[] = []
   for (const u of opts.units) {
     for (const t of u.tasks) {
       for (const raw of (t.assignees || [])) {
         const n = String(raw || '').trim()
         if (!n) continue
-        if (!t.done) load[n] = (load[n] || 0) + 1
+        const k = personKey(n); if (!k) continue
+        if (!seenNames.includes(n)) seenNames.push(n)
+        if (!t.done) load[k] = (load[k] || 0) + 1
         const b = String(u.building || u.listingId)
-        ;(anchors[n] = anchors[n] || new Set()).add(b)
+        ;(anchors[k] = anchors[k] || new Set()).add(b)
       }
     }
   }
+  const loadOf = (name: any) => load[personKey(name)] || 0
 
-  const scheduled = new Set([...(opts.clockedIn || []), ...(opts.onShift || [])].map(norm))
+  const shiftNames = [...(opts.clockedIn || []), ...(opts.onShift || [])].map(x => String(x || '')).filter(Boolean)
+  const scheduled = new Set(shiftNames.map(personKey).filter(Boolean))
+  /** Key first (cheap, catches spacing/accents), then the full comparison (typos, swapped names). */
+  const isScheduled = (name: string) => scheduled.has(personKey(name)) || shiftNames.some(sn => nameMatches(sn, name))
   const eligible = onlyScheduled
     // Somebody already carrying work today is obviously working, whatever the clock says — the
     // Homebase/Breezeway name join is fuzzy and must never be the reason a working person is
     // treated as unavailable.
-    ? opts.roster.filter(p => scheduled.has(norm(p.name)) || (load[p.name] || 0) > 0)
+    ? opts.roster.filter(p => isScheduled(p.name) || loadOf(p.name) > 0)
     : opts.roster
 
   // ── ORDER OF SERVICE ──────────────────────────────────────────────────────────────────────────
@@ -159,6 +172,8 @@ export function planDay(opts: {
     || String(a.building || '').localeCompare(String(b.building || ''))
     || a.unit.localeCompare(b.unit))
 
+  // Everybody's load BEFORE the planner touches anything — the loop below mutates `load`.
+  const load0: Record<string, number> = { ...load }
   const assignments: Assignment[] = []
   const unplaced: DayPlan['unplaced'] = []
 
@@ -168,15 +183,22 @@ export function planDay(opts: {
       units: opts.units, clockedIn: opts.clockedIn, onShift: opts.onShift,
     })
     // Fold in what THIS plan has already handed out — the memory that makes it a plan.
-    for (const k of Object.keys(load)) ctx.openLoad[k] = load[k]
+    // ONE spelling per person carries the total; the rest are zeroed, because rankAssignees sums
+    // every key whose normalised name matches and would otherwise count one person's load twice.
+    const wrote = new Set<string>()
+    for (const n of seenNames) {
+      const k = personKey(n)
+      if (wrote.has(k)) { ctx.openLoad[n] = 0; continue }
+      wrote.add(k); ctx.openLoad[n] = loadOf(n)
+    }
 
     const ranked = rankAssignees(eligible, ctx)
-      .filter(r => (load[r.person.name] || 0) < maxPer)
+      .filter(r => loadOf(r.person.name) < maxPer)
       // ROUTE BONUS. Among people who are otherwise close, prefer the one whose day this keeps in
       // one place. Small on purpose: it should break ties, never beat "already standing there".
       .map(r => {
         const b = String(task.building || task.listingId)
-        const keepsRoute = (anchors[r.person.name] || new Set()).has(b)
+        const keepsRoute = (anchors[personKey(r.person.name)] || new Set()).has(b)
         // ── THE IDLE SEED ─────────────────────────────────────────────────────────────────────
         // The first draft of this planner sent a cleaner who already had two jobs across town to a
         // third building while a colleague sat with nothing all morning — because "already working
@@ -188,7 +210,7 @@ export function planDay(opts: {
         //
         // It evaporates the moment they take their first job, so it seeds idle people one each and
         // then normal ranking resumes — which is what "full" means.
-        const idle = (load[r.person.name] || 0) === 0
+        const idle = loadOf(r.person.name) === 0
         return { ...r, score: r.score + (keepsRoute ? 8 : 0) + (idle ? 26 : 0), keepsRoute, idle }
       })
       .sort((a, b) => (b.rightTrade ? 1 : 0) - (a.rightTrade ? 1 : 0) || b.score - a.score)
@@ -204,8 +226,12 @@ export function planDay(opts: {
       continue
     }
 
-    load[pick.person.name] = (load[pick.person.name] || 0) + 1
-    ;(anchors[pick.person.name] = anchors[pick.person.name] || new Set()).add(String(task.building || task.listingId))
+    load[personKey(pick.person.name)] = loadOf(pick.person.name) + 1
+    // The planner's own memory: without this, somebody who started the morning empty stayed at
+    // openLoad 0 for every later round, so the load penalty never applied to them and the plan
+    // stacked jobs on whoever won proximity (caught in review, 2026-09-09).
+    if (!seenNames.includes(pick.person.name)) seenNames.push(pick.person.name)
+    ;(anchors[personKey(pick.person.name)] = anchors[personKey(pick.person.name)] || new Set()).add(String(task.building || task.listingId))
 
     assignments.push({
       taskId: task.id, task: task.name, unit: task.unit, listingId: task.listingId,
@@ -239,10 +265,9 @@ export function planDay(opts: {
   const perPerson: PersonPlan[] = personOrder.map(name => {
     const added = byPerson[name]
     const person = eligible.find(p => p.name === name)
-    const existingHere = Array.from(anchors[name] || [])
     const bs = Array.from(new Set(added.map(a => String(a.building || a.unit))))
     const spread = new Set(bs).size
-    const total = load[name] || added.length
+    const total = loadOf(name) || added.length
     return {
       name, id: person?.id ?? 0,
       buildings: bs,
@@ -254,7 +279,9 @@ export function planDay(opts: {
     }
   })
 
-  const freeBefore = eligible.filter(p => (opts.units.every(u => u.tasks.every(t => !(t.assignees || []).some(a => norm(a) === norm(p.name)))))).map(p => p.name)
+  // BEFORE, not after: `load` has been mutated by the loop above, so this must read the snapshot
+  // taken before planning or it reports "free after planning" and stillFree becomes a no-op.
+  const freeBefore = eligible.filter(p => (load0[personKey(p.name)] || 0) === 0).map(p => p.name)
   const stillFree = freeBefore.filter(n => !byPerson[n])
 
   return {

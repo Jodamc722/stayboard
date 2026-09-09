@@ -8,6 +8,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bzApi, updateBreezewayTask, retrieveBreezewayTask, completeBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { requireLevel } from '@/lib/access'
+import { isTaskDone } from '@/lib/task-categories'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -149,7 +150,7 @@ export async function POST(req: NextRequest) {
         const st: any = t && (t.type_task_status || t.status)
         liveStatus = str(typeof st === 'object' ? (st.code || st.name) : st).toLowerCase()
       } catch { /* verified below as best effort */ }
-      const done = /complete|finish|close|approv/.test(liveStatus)
+      const done = isTaskDone(liveStatus)   // the shared rule (lib/task-categories)
       if (done) { try { await db.from('breezeway_tasks_sync').update({ status: liveStatus || 'completed', finished_at: new Date().toISOString() }).eq('id', taskId) } catch {} }
       return NextResponse.json({ ok: done, status: liveStatus || null, error: done ? undefined : 'Breezeway accepted the call but the task still reads "' + (liveStatus || 'unknown') + '" — close it in Breezeway.' }, { status: done ? 200 : 502 })
     }

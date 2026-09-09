@@ -209,7 +209,10 @@ export async function buildCommandDay(): Promise<CommandDay> {
 
   // ── WAVE 1: everything that does not depend on anything else ──────────────────────────────────
   const [day, cap, automation, presets, dismissRow, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, convosRes, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes] = await Promise.all([
-    buildOpsDay(null, { includeMeta: true }),
+    // .catch, because buildOpsDay now THROWS on a failed read (2026-09-09) — right for the board's
+    // own route, wrong here: a listings blip must not take claims, reviews, messages and the calls
+    // desk down with it. A null day degrades; every `day.*` read below is guarded.
+    buildOpsDay(null, { includeMeta: true }).catch((e: any) => { degraded.push('the day board — ' + String(e?.message || e).slice(0, 80)); return null }),
     buildDayPicture(today).catch((e: any) => { degraded.push('capacity model — ' + String(e?.message || e).slice(0, 80)); return null as DayPicture | null }),
     getTaskAutomation(),
     getOpsPresets(),
@@ -253,7 +256,16 @@ export async function buildCommandDay(): Promise<CommandDay> {
   ])
 
   // ── listing meta comes from the board's own map (vendor-aware market, no second read) ─────────
-  const meta: Record<string, Meta> = (day.listingMeta || {}) as any
+  // A null `day` means the board read failed and was caught above: the page still renders claims,
+  // reviews, messages and the calls desk, with the day's own numbers zeroed and named in `degraded`.
+  const EMPTY_DEADLINE = { dueBy: '', minsLeft: 0, passed: false, cleans: 0, done: 0, running: 0, remaining: 0, late: 0, atRisk: 0, missed: 0, untracked: 0 }
+  const EMPTY_PULSE = { active: 0, occupiedTonight: 0, arrivals: 0, departures: 0, sameDayTurns: 0, vacant: 0 }
+  const dayDeadline = day ? day.deadline : EMPTY_DEADLINE
+  const dayPulse: any = day ? day.pulse : EMPTY_PULSE
+  // The board reports its own partial reads (a truncated arrival scan); fold them into ours so one
+  // list on the cockpit names everything that is incomplete.
+  if (day && Array.isArray((day as any).degraded)) for (const d of (day as any).degraded) degraded.push(d)
+  const meta: Record<string, Meta> = ((day && day.listingMeta) || {}) as any
   if (!Object.keys(meta).length) degraded.push('listings')
   const nameOf = (id: any) => (meta[str(id)] || {}).name || ''
   const marketOfId = (id: any) => (meta[str(id)] || {}).market || null
@@ -316,12 +328,12 @@ export async function buildCommandDay(): Promise<CommandDay> {
   const push = (i: Omit<NextItem, 'dismissed'>) => next.push({ ...i, dismissed: dismissed[i.key] || null })
   const bz = (id: string) => 'https://app.breezeway.io/task/' + id
   const FOUR = '4:00 PM'
-  const past4Now = day.deadline.minsLeft < 0
+  const past4Now = dayDeadline.minsLeft < 0
   /** The due phrase for work tied to today's 4pm arrivals — honest after the hour has passed. */
   const dueArrival = (isToday: boolean, at?: string | null) => isToday ? (past4Now ? 'arrival window open — now' : 'before ' + (at || FOUR) + ' arrival') : 'tomorrow, before ' + FOUR
 
   // ── 1. THE BOARD: turns, late/at-risk cleans, unowned work (from lib/ops-day) ────────────────
-  const units = Array.isArray(day.units) ? day.units : []
+  const units = day && Array.isArray(day.units) ? day.units : []
   const cleanRows: CleanRow[] = []
   const taskRows: TaskRow[] = []
   const byDept: Record<string, number> = {}
@@ -645,8 +657,8 @@ export async function buildCommandDay(): Promise<CommandDay> {
   const callsDone = (callsDoneRes as any)?.error ? (degraded.push('calls done'), 0) : (Number((callsDoneRes as any)?.count) || 0)
 
   // ── THE VERDICT ─────────────────────────────────────────────────────────────────────────────
-  const dl = day.deadline
-  const pulse = day.pulse
+  const dl = dayDeadline
+  const pulse = dayPulse
   const live = next.filter(n => !n.dismissed)
   const nowRows = live.filter(n => n.severity === 'now')
   const turnsOpen = live.filter(n => n.kind === 'turn').length
@@ -681,7 +693,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
   return {
     ok: true, today, generatedAt: nowIso, degraded,
     verdict: { state, headline, detail, tomorrow: tomorrowStr },
-    pulse: { ...pulse, cleansDone: dl.done, cleansTotal: dl.cleans, minsLeft: dl.minsLeft, lastSync: day.lastSync },
+    pulse: { ...pulse, cleansDone: dl.done, cleansTotal: dl.cleans, minsLeft: dl.minsLeft, lastSync: day ? day.lastSync : null },
     tiles: {
       // ONE denominator: cleans on the 4pm clock + vendor cleans. Extended stays are listed but not counted.
       cleans: { total: dl.cleans + dl.untracked, done: dl.done, running: dl.running, late: dl.late, atRisk: dl.atRisk, vendor: dl.untracked, extended: extendedN, rows: cleanRows.sort((a, b) => cleanOrder(a) - cleanOrder(b) || a.unit.localeCompare(b.unit)) },

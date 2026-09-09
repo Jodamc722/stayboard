@@ -29,6 +29,8 @@ import { createHash } from 'crypto'
 
 export const OPS_FOCUS_KEY = 'ops_focus'
 const TTL_MS = 2 * 60 * 60 * 1000
+/** Under this age the stored verdict is served without reading the engines at all. */
+const FRESH_MS = 20 * 60 * 1000
 const MAX_FOCUS = 6
 
 export type FocusPick = { id: string; reason: string; do: 'add' | 'move' | 'cancel' }
@@ -73,6 +75,20 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean } = {}
   const today = ymd(new Date())
   const db = supabaseAdmin()
 
+  // ── CHEAP CACHE CHECK FIRST (2026-09-09 audit) ───────────────────────────────────────────────
+  // The hash below needs the candidate set, so the original code ran all three engines — the
+  // cadence scan, the review queue and the duplicate audit — BEFORE discovering it already had an
+  // answer. The Focus badge mounts on every board view, so every page load paid that. A verdict
+  // less than FRESH_MS old is served as-is; between FRESH_MS and the TTL we still rebuild the
+  // candidates to check the hash, because a board that changed deserves a new answer.
+  const cacheKeyEarly = today + '|' + market
+  const cached = (await getSetting<Record<string, Cached>>(OPS_FOCUS_KEY, {})) || {}
+  const early = cached[cacheKeyEarly]
+  const age = early ? Date.now() - Date.parse(early.at) : Infinity
+  if (!opts.refresh && early && age < FRESH_MS) {
+    return { ok: true, today, market, verdict: early.verdict, candidates: early.candidates, model: early.model, at: early.at, cached: true }
+  }
+
   // ── the same scope the Review tab reads ──
   const { data: lRes } = await db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(2000)
   const nameOf: Record<string, string> = {}
@@ -105,7 +121,7 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean } = {}
     d: groups.map(dupId),
   })).digest('hex').slice(0, 16)
   const cacheKey = today + '|' + market
-  const all = (await getSetting<Record<string, Cached>>(OPS_FOCUS_KEY, {})) || {}
+  const all = cached
   const hit = all[cacheKey]
   if (!opts.refresh && hit && hit.hash === hash && Date.now() - Date.parse(hit.at) < TTL_MS) {
     return { ok: true, today, market, verdict: hit.verdict, candidates: hit.candidates, model: hit.model, at: hit.at, cached: true }
@@ -171,8 +187,11 @@ Pick what is REAL and DOABLE today: a technician already in the building or unit
   const clean: FocusVerdict = { headline: cut(str(verdict.headline), 260) || (focus.length + ' to focus on today.'), focus, review, parked: cut(str(verdict.parked), 480) }
 
   const at = new Date().toISOString()
+  // RE-READ BEFORE WRITING. The map above was read before the engines ran and the model answered —
+  // a window of many seconds now — so two markets building at once would clobber each other's entry.
+  const fresh = (await getSetting<Record<string, Cached>>(OPS_FOCUS_KEY, {}).catch(() => all)) || all
   const next: Record<string, Cached> = {}
-  for (const k of Object.keys(all)) if (k.startsWith(today + '|')) next[k] = all[k]
+  for (const k of Object.keys(fresh)) if (k.startsWith(today + '|')) next[k] = fresh[k]
   next[cacheKey] = { hash, at, model: answeredBy, verdict: clean, candidates }
   await setSetting(OPS_FOCUS_KEY, next, null).catch(() => {})
   return { ok: true, today, market, verdict: clean, candidates, model: answeredBy, at, cached: false }

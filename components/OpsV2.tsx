@@ -30,6 +30,7 @@ import {
   AlertTriangle, Plus, ChevronDown, Users, Send, X, Loader2, Check, FileText, ChevronLeft, ChevronRight, CalendarDays,
 } from 'lucide-react'
 import { OpsGrid } from '@/components/OpsGrid'
+import { useModal } from '@/components/Modal'
 import { useCachedFetch } from '@/lib/swr'
 import { matchRoster, samePerson } from '@/lib/roster-match'
 
@@ -45,7 +46,7 @@ type Glitch = { id: string; unit: string; issue: string; ageDays?: number; runni
 type StaffPerson = { name: string; role: string | null; clockedIn: boolean; shift: string | null; bzAlias: string | null; tasks: number; cleans: number }
 type Staffing = { ok: boolean; people: StaffPerson[]; summary: { clockedIn: number; nothingAssigned: number; idleNames: string[] } }
 type Roster = { id: number; name: string; departments: string[] }
-type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null }
+type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null; status?: string | null }
 
 // ── The efficiency model (/api/capacity — lib/capacity-day). Built 2026-08-27, measured from
 // 1,372 timed cleans; this page is its first surface. Shapes mirror DayLoad / Suggestion / DayKpi.
@@ -83,7 +84,7 @@ export function OpsV2() {
   const { data, loading, error, refresh } = useCachedFetch<OpsData>(
     isToday ? '/api/ops-today' : `/api/ops-today?date=${date}`)
   const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches')
-  const { data: staff } = useCachedFetch<Staffing>('/api/ops-today/staffing')
+  const { data: staff, error: staffErr } = useCachedFetch<Staffing>('/api/ops-today/staffing')
   // The capacity model prices the same day the board is showing — today or a planned date.
   const { data: cap } = useCachedFetch<CapData>(
     isToday ? '/api/capacity' : `/api/capacity?date=${date}`, { ttl: 5 * 60_000 })
@@ -121,7 +122,12 @@ export function OpsV2() {
 
   // null = closed; '' = open blank; a unit name = open with that unit pre-searched (the "+ Task"
   // button on a Needs-a-human row lands you one keystroke from filing, not five).
-  const [addFor, setAddFor] = useState<string | null>(null)
+  const [addFor, setAddForRaw] = useState<string | null>(null)
+  // ONE SHEET AT A TIME. `sheet` is the single owner of what is open over the board; opening one
+  // closes the other rather than stacking on it.
+  const [sheet, setSheet] = useState<'add' | 'plan' | null>(null)
+  const setAddFor = (v: string | null) => { setAddForRaw(v); setSheet(v === null ? null : 'add') }
+  const onSheet = (s: 'add' | 'plan' | null) => { setSheet(s); if (s !== 'add') setAddForRaw(null) }
 
   const units: Unit[] = Array.isArray(data?.units) ? data!.units : []
   const glitches: Glitch[] = (gl && Array.isArray(gl.glitches)) ? gl.glitches : []
@@ -195,13 +201,13 @@ export function OpsV2() {
       {tab === 'grid' && (
         <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
           loading={loading} error={error ? String(error) : null}
-          onRefresh={refresh} onAddTask={u => setAddFor(u)}
+          onRefresh={refresh} onAddTask={u => setAddFor(u)} openSheet={sheet} onSheet={onSheet}
           aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} compact />} />
       )}
       {tab === 'people' && <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />}
-      {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} cap={cap || null} />}
+      {tab === 'people' && <PeopleTab staff={staff || null} staffErr={staffErr ? String(staffErr) : null} units={units} roster={roster} onRefresh={refresh} cap={cap || null} />}
 
-      {addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
+      {sheet === 'add' && addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
     </div>
   )
 }
@@ -360,7 +366,7 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact }: { cap: Cap
 // for anyone idle — the open unassigned work pushed to them in one tap. Load is measured in TASKS,
 // not invented minutes: we do not have predicted durations, and a bar built on made-up numbers
 // would be read as truth. (Optii earns its minutes with an ML model; until we have one, count.)
-function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing | null; units: Unit[]; roster: Roster[]; onRefresh: () => void; cap: CapData | null }) {
+function PeopleTab({ staff, staffErr, units, roster, onRefresh, cap }: { staff: Staffing | null; staffErr?: string | null; units: Unit[]; roster: Roster[]; onRefresh: () => void; cap: CapData | null }) {
   const [busyKey, setBusyKey] = useState('')
   const [err, setErr] = useState<Record<string, string>>({})
   const allTasks = useMemo(() => units.flatMap(u => u.tasks.map(t => ({ ...t, unit: u.unit }))), [units])
@@ -392,6 +398,14 @@ function PeopleTab({ staff, units, roster, onRefresh, cap }: { staff: Staffing |
     setBusyKey('')
   }
 
+  // "Nobody is on today" and "we could not read Homebase" are different news, and only one of them
+  // is safe to act on (2026-09-09 audit).
+  if (staffErr) return (
+    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-3 text-[13px] text-rose-900 flex items-start gap-2">
+      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+      <span>Could not read the roster — {staffErr}. This is not &ldquo;nobody is working&rdquo;; it is &ldquo;we do not know who is&rdquo;.</span>
+    </div>
+  )
   if (!staff || !staff.people.length) return <div className="text-sm text-muted py-8 text-center">No one on the Homebase schedule today.</div>
   return (
     <div className="space-y-2.5">
@@ -488,6 +502,8 @@ type BzTpl = { id: number; name: string; department: string; description: string
 
 function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roster[]; onClose: () => void; onDone: () => void; initialQuery?: string }) {
   const [listings, setListings] = useState<Listing[]>([])
+  const [unitsReady, setUnitsReady] = useState(false)
+  const [unitsErr, setUnitsErr] = useState(false)
   const [uq, setUq] = useState(initialQuery || '')
   const [unit, setUnit] = useState<Listing | null>(null)
   const [tpl, setTpl] = useState('custom')
@@ -509,10 +525,20 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const boxRef = useRef<HTMLInputElement>(null)
+  // Escape closes it, Tab stays inside it, the page behind it does not scroll — see components/Modal.
+  const { panelProps, onScrim } = useModal(onClose)
 
   useEffect(() => {
-    fetch('/api/listings', { cache: 'no-store' }).then(r => r.json())
-      .then(j => setListings(Array.isArray(j.results) ? j.results : [])).catch(() => {})
+    // ?slim=1 (2026-09-09 audit): the unfiltered route is `select('*')` — the whole Guesty raw blob
+    // for 233 listings, tens of megabytes — to populate a name picker. While it downloaded, the
+    // picker looked broken; see `unitsReady` below, which now says so out loud.
+    fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json())
+      .then(j => {
+        // A failed read must not read as "no such unit" — three states, not two.
+        if (!Array.isArray(j.results)) { setUnitsErr(true); setUnitsReady(true); return }
+        setListings(j.results); setUnitsReady(true)
+      })
+      .catch(() => { setUnitsErr(true); setUnitsReady(true) })
     fetch('/api/breezeway/templates', { cache: 'no-store' }).then(r => r.json())
       .then(j => setBzTpls(Array.isArray(j.templates) ? j.templates : [])).catch(() => {})
     setTimeout(() => boxRef.current?.focus(), 60)
@@ -523,10 +549,24 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
       .then(r => r.json()).then(j => setIntel(j || null)).catch(() => {})
   }, [unit])
 
+  // ── TYPING "17WEST 403" MUST FIND 17WEST - 403 - 2BR (2026-09-09 audit) ──────────────────────
+  // This was a substring test against the raw nickname, and every nickname carries separators:
+  // "17WEST - 403 - 2BR". So the single most natural query a coordinator types — the building and
+  // the unit number, one space between them — matched nothing, and the sheet gave no hint why.
+  // Normalise both sides to words and require every word typed to appear.
   const hits = useMemo(() => {
-    const n = uq.trim().toLowerCase()
-    if (!n) return []
-    return listings.filter(l => ((l.nickname || l.title || '') + ' ' + (l.building || '')).toLowerCase().includes(n)).slice(0, 7)
+    const words = uq.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
+    if (!words.length) return []
+    const scored = listings
+      .filter(l => String(l.status || 'active').trim().toLowerCase() === 'active')
+      .map(l => {
+        const hay = ((l.nickname || l.title || '') + ' ' + (l.building || '')).toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+        if (!words.every(w => hay.includes(w))) return null
+        // A name that STARTS with what you typed beats one that merely contains it.
+        return { l, rank: hay.startsWith(words.join(' ')) ? 0 : hay.indexOf(words[0]) }
+      })
+      .filter(Boolean) as { l: Listing; rank: number }[]
+    return scored.sort((a, b) => a.rank - b.rank).slice(0, 7).map(x => x.l)
   }, [uq, listings])
 
   const useTpl = (k: string) => {
@@ -581,8 +621,8 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
        a narrow box with the template grid and the roster chips fighting for width, and its last
        control (Create in Breezeway) sat under the home indicator. Full-bleed and full-height
        below 640px; the floating dialog is unchanged from sm: up. */
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-0 sm:p-4 sm:pt-[6vh] overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-none sm:rounded-2xl w-full max-w-xl min-h-dvh sm:min-h-0 p-4 pb-10 sm:p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-[1px] flex items-start justify-center p-0 sm:p-4 sm:pt-[6vh] overflow-y-auto" onClick={onScrim}>
+      <div {...panelProps} aria-label="Add a task" className="bg-white rounded-none sm:rounded-2xl w-full max-w-xl min-h-dvh sm:min-h-0 p-4 pb-10 sm:p-5 shadow-2xl outline-none" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <h2 className="text-[16px] font-bold text-ink flex-1">Add a task</h2>
           <button onClick={onClose} className="text-muted hover:text-ink p-1"><X size={16} /></button>
@@ -593,6 +633,10 @@ function AddTaskSheet({ roster, onClose, onDone, initialQuery }: { roster: Roste
           <div>
             <input ref={boxRef} value={uq} onChange={e => setUq(e.target.value)} placeholder="Which unit? Start typing…"
               className="w-full rounded-xl border-2 border-line px-3.5 py-2.5 text-[14px] focus:outline-none focus:border-ink" />
+            {/* SAY WHY THE LIST IS EMPTY. Silence reads as a broken box. */}
+            {uq.trim() && !unitsReady && <p className="mt-2 text-[12px] text-muted inline-flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> Loading units…</p>}
+            {unitsErr && <p className="mt-2 text-[12px] text-rose-700">Could not load the unit list — this is not &ldquo;no match&rdquo;. Try again in a moment.</p>}
+            {uq.trim() && unitsReady && !unitsErr && hits.length === 0 && <p className="mt-2 text-[12px] text-muted">No active unit matches “{uq.trim()}”.</p>}
             {hits.length > 0 && (
               <div className="mt-1.5 rounded-xl border border-line overflow-hidden">
                 {hits.map(l => (

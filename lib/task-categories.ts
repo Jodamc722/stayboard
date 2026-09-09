@@ -166,10 +166,31 @@ export function catOfTask(t: { name?: string | null; dept?: string | null; type?
 export const CAT_ORDER: string[] = DEFAULT_CATS.map(c => c.key)
 export const CAT_LABEL: Record<string, string> = DEFAULT_CATS.reduce((m, c) => { m[c.key] = c.label; return m }, {} as Record<string, string>)
 
+// ── ONE ANSWER TO "WHAT STATE IS THIS TASK IN" (2026-09-09 audit) ──────────────────────────────
+// Seven copies of these regexes had grown across the app, in two different dialects:
+//   /complete|finish|close|approv/     — the board's, which also matches "INCOMPLETE" and "unfinished"
+//   /\b(complete|finish|close|approv)/ — the engines', where the word boundary is load-bearing:
+//                                        a false "done" writes a completion date into the cadence
+//                                        ledger and suppresses real work for a full interval.
+// The strict one is correct in both places; a task whose status is literally "incomplete" is not
+// finished on the board either. Everything imports these now.
+// The boundary is a HYPHEN-OR-START, not \b, for running and gone: Breezeway's own canonical
+// running status is `in_progress` and `_` is a word character, so /\b(progress)/ does not match it
+// (caught in review, 2026-09-09 — it would have made every started-but-untimed task read as open).
+// DONE keeps \b, which is exactly what stops "incomplete" and "unfinished" counting as finished.
+const DONE_RE = /\b(complete|finish|close|approv)/i
+const RUNNING_RE = /(^|[^a-z0-9])(progress|started)/i
+const GONE_RE = /(^|[^a-z0-9])(delete|cancel|void)/i
+/** Finished — including a Breezeway `finished_at`, which is the fact the status is meant to describe. */
+export const isTaskDone = (status: any, finishedAt?: any) => !!finishedAt || DONE_RE.test(String(status ?? ''))
+/** Somebody has started it. */
+export const isTaskRunning = (status: any, startedAt?: any) => !!startedAt || RUNNING_RE.test(String(status ?? ''))
+/** Deleted or cancelled — must not appear anywhere at all. */
+export const isTaskGone = (status: any) => GONE_RE.test(String(status ?? ''))
+
 /** Finished / in progress / not started, from whatever a Breezeway row happens to carry. */
 export function stateOfTask(t: { status?: any; started_at?: any; finished_at?: any }): 'done' | 'running' | 'open' {
-  const s = String(t.status == null ? '' : t.status).toLowerCase()
-  if (/complete|finish|close|approv/.test(s) || t.finished_at) return 'done'
-  if (/progress|started/.test(s) || t.started_at) return 'running'
+  if (isTaskDone(t.status, t.finished_at)) return 'done'
+  if (isTaskRunning(t.status, t.started_at)) return 'running'
   return 'open'
 }
