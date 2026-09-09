@@ -1,6 +1,9 @@
 // AI product options for an order line - suggests 2-3 concrete products for a Replace/Add need
 // and returns retailer SEARCH links (Amazon / Wayfair). No key or AI failure -> plain search links.
+// MODEL (2026-09-09): Sonnet 5, was Opus. Naming three products and building search links needs
+// no deep reasoning; the bigger model produced the same list at 2.5x the price.
 import { NextRequest, NextResponse } from 'next/server'
+import { anthropicMessages } from '@/lib/anthropic-call'
 import { createClient } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
@@ -27,8 +30,8 @@ export async function POST(req: NextRequest) {
   if (!key) return NextResponse.json({ ok: true, options: fallback })
   try {
     const SYS = 'You suggest products for a short-term rental property manager restocking units. Given a need, return 2-3 concrete product suggestions a manager could buy today - durable, mid-range, guest-proof picks (not luxury, not bottom-tier). Each option: name (specific product or product type incl. brand when it matters, max 8 words), why (max 8 words - the reason this pick), searchTerm (the exact retailer search phrase), store (amazon or wayfair - wayfair only for furniture). STRICT JSON ONLY, no markdown: {"options":[{"name":"","why":"","searchTerm":"","store":""}]}'
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 700, system: SYS, messages: [{ role: 'user', content: 'Need: ' + title + (note ? '. Detail: ' + note : '') + '. Quantity: ' + qty }] }) })
-    const j = await r.json()
+    const r = await anthropicMessages(key, { model: 'claude-sonnet-5', max_tokens: 700, system: SYS, messages: [{ role: 'user', content: 'Need: ' + title + (note ? '. Detail: ' + note : '') + '. Quantity: ' + qty }] })
+    const j = r.data
     const text = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
     const m = text.match(/\{[\s\S]*\}/)
     const parsed = m ? JSON.parse(m[0]) : null

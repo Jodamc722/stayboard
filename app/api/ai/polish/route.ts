@@ -12,13 +12,16 @@
 // plausible cause, a room number or a promise nobody made. So every prompt below forbids adding
 // information, and the response carries the original alongside the rewrite so a person can see
 // exactly what changed before accepting it. Nothing here saves anything — the caller decides.
+// MODEL (2026-09-09): Sonnet 5, was Opus. Rewording a sentence is not a reasoning task; the bigger
+// model produced the same sentence at 2.5x the price.
 import { NextRequest, NextResponse } from 'next/server'
+import { anthropicMessages } from '@/lib/anthropic-call'
 import { getAccess } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const MODEL = 'claude-opus-4-8'
+const MODEL = 'claude-sonnet-5'
 const MAX_IN = 4000
 
 /** The house voice, applied to everything. */
@@ -103,21 +106,16 @@ export async function POST(req: NextRequest) {
   ].join('\n')
 
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        temperature: 0.2,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+    const r = await anthropicMessages(key, {
+      model: MODEL,
+      max_tokens: 1024,
+      temperature: 0.2,
+      messages: [{ role: 'user', content: prompt }],
     })
     if (!r.ok) {
-      const t = await r.text()
-      return NextResponse.json({ error: `Model said ${r.status}: ${t.slice(0, 200)}` }, { status: 502 })
+      return NextResponse.json({ error: `Model said ${r.status}: ${JSON.stringify(r.data?.error || r.data).slice(0, 200)}` }, { status: 502 })
     }
-    const j = await r.json()
+    const j = r.data
     const out = (j?.content || [])
       .filter((c: any) => c?.type === 'text')
       .map((c: any) => String(c.text || ''))

@@ -3,7 +3,10 @@
 // an owner statement. POST { name, description, department, unit } returns { title, description }
 // rewritten as a clean, owner-facing service line. NOTHING is saved here — the UI fills the
 // inputs and the operator reviews before pushing to Breezeway.
+// MODEL (2026-09-09): Sonnet 5, was Opus. Tidying a task title for an owner statement is a
+// wording job; the bigger model produced the same title at 2.5x the price.
 import { NextRequest, NextResponse } from 'next/server'
+import { anthropicMessages } from '@/lib/anthropic-call'
 import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
@@ -29,12 +32,8 @@ export async function POST(req: NextRequest) {
     department: String(body?.department || ''),
   }
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 400, system: SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] }),
-    })
-    const j: any = await r.json().catch(() => null)
+    const r = await anthropicMessages(key, { model: 'claude-sonnet-5', max_tokens: 400, system: SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] })
+    const j: any = r.data
     const text = j && Array.isArray(j.content) && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
     if (!r.ok || !text) return NextResponse.json({ ok: false, error: 'AI request failed.' }, { status: 502 })
     const m = text.match(/\{[\s\S]*\}/)

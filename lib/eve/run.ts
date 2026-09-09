@@ -22,7 +22,7 @@ import { buildCtx, todayET, daysAgoISO, safe, count as cnt, lc } from './ctx'
 import { wireTools, runTool, DOMAIN_KEYS } from './registry'
 import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory } from './memory'
 import { appAtlas } from './atlas'
-import { buildSystem, getVoiceProfile } from './prompt'
+import { buildSystemBlocks, getVoiceProfile } from './prompt'
 
 const MODEL = 'claude-opus-4-8'
 
@@ -40,6 +40,31 @@ const WEB_SEARCH_TOOL = {
   user_location: { type: 'approximate', city: 'Miami', region: 'Florida', country: 'US', timezone: 'America/New_York' },
 }
 const MAX_TURNS = 16
+/**
+ * A copy of the conversation with a cache breakpoint on its newest block. The API caches the
+ * prefix up to a breakpoint, so marking the LAST block means the entire conversation so far is
+ * served from cache on the next turn. Strings become single text blocks; tool_result arrays get
+ * the marker on their final entry. The original array is never mutated — it is the loop's state.
+ */
+function withCacheBreakpoint(convo: any[]): any[] {
+  if (!convo.length) return convo
+  const out = convo.slice()
+  const last = out[out.length - 1]
+  if (typeof last.content === 'string') {
+    out[out.length - 1] = { ...last, content: [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }] }
+  } else if (Array.isArray(last.content) && last.content.length) {
+    const blocks = last.content.slice()
+    const tail = blocks[blocks.length - 1]
+    // Only block types that accept cache_control: text and tool_result. Assistant content that
+    // ends in a tool_use block (the previous model turn) is left alone.
+    if (tail && (tail.type === 'text' || tail.type === 'tool_result')) {
+      blocks[blocks.length - 1] = { ...tail, cache_control: { type: 'ephemeral' } }
+      out[out.length - 1] = { ...last, content: blocks }
+    }
+  }
+  return out
+}
+
 const TOOL_RESULT_CHARS = 9000
 
 /**
@@ -133,6 +158,9 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const surface = [source === 'telegram' ? TELEGRAM_NOTE : '', input.surfaceNote || ''].filter(Boolean).join('\n')
   const voicePlus = [voice, surface].filter(Boolean).join('\n\n')
 
+  // Token accounting per question, so the improvement loop can see what an answer COST as well as
+  // whether it was right. cacheRead is the number that says whether caching is working.
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const convo: any[] = messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 8000) }))
   const toolsUsed: string[] = []
   const limit = Math.min(Math.max(Number(input.maxTurns) || MAX_TURNS, 4), MAX_TURNS)
@@ -148,16 +176,32 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // The atlas rides with the memories: what every page of the app is for, and a live census of
       // her own tool domains — so "where do I…" questions get a real answer, and a tool added in
       // code is in her head on the next deploy without anyone re-teaching her.
-      const system = buildSystem({ headline, memories: appAtlas() + '\n\n' + renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney })
+      // PROMPT CACHING (2026-09-09). Two breakpoints, the API allows four:
+      //   1. the end of the STABLE system block — identity, rules, the full tool map. Identical on
+      //      every call until the next deploy, so every turn after the first reads it from cache
+      //      at a tenth of the input price. The dynamic block (name, open domains, memories, the
+      //      snapshot) sits after it, uncached, and is small.
+      //   2. the last block of the conversation so far. Inside a tool loop the messages array only
+      //      ever grows, so each turn's prefix is the previous turn's whole conversation — tool
+      //      results included, at up to 9k chars each. Moving the breakpoint to the newest block
+      //      means turn N pays full price only for what turn N-1 added.
+      // Opening a new domain changes the tool list, which invalidates the cache for that one turn.
+      // That is fine: a write costs 25% over list once, and every turn after it reads again.
+      const blocks = buildSystemBlocks({ headline, memories: appAtlas() + '\n\n' + renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney })
+      const system: any[] = [
+        { type: 'text', text: blocks.stable, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: blocks.dynamic },
+      ]
       // Keep the SAME tools array across the whole conversation. If a resume request drops a server
       // tool the API is still waiting on, it 400s with "but no web_search tool was provided".
       const toolset: any[] = wireTools(open)
       if (webOk) toolset.push(WEB_SEARCH_TOOL as any)
+      const messages = withCacheBreakpoint(convo)
 
       let r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: toolset, messages: convo }),
+        body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: toolset, messages }),
       })
       let d: any = await r.json()
 
@@ -167,9 +211,15 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
         r = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: wireTools(open), messages: convo }),
+          body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: wireTools(open), messages }),
         })
         d = await r.json()
+      }
+      if (d?.usage) {
+        usage.input += Number(d.usage.input_tokens) || 0
+        usage.output += Number(d.usage.output_tokens) || 0
+        usage.cacheRead += Number(d.usage.cache_read_input_tokens) || 0
+        usage.cacheWrite += Number(d.usage.cache_creation_input_tokens) || 0
       }
 
       if (!r.ok) {
@@ -215,16 +265,22 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       ms: Date.now() - startedAt,
     }
     try {
-      const { data, error } = await db.from('eve_chats').insert({ ...row, source }).select('id').maybeSingle()
+      const { data, error } = await db.from('eve_chats').insert({ ...row, source, usage }).select('id').maybeSingle()
       if (error) throw error
       chatId = (data as any)?.id || null
     } catch {
-      // `source` arrived with migration 055. Before it runs, log the exchange without it rather
-      // than losing every Telegram conversation from the learning loop.
+      // `usage` arrived with migration 075 and `source` with 055. Before either runs, log the
+      // exchange with what the table has rather than losing it from the learning loop.
       try {
-        const { data } = await db.from('eve_chats').insert(row).select('id').maybeSingle()
+        const { data, error } = await db.from('eve_chats').insert({ ...row, source }).select('id').maybeSingle()
+        if (error) throw error
         chatId = (data as any)?.id || null
-      } catch { /* migration 045 may not be run yet */ }
+      } catch {
+        try {
+          const { data } = await db.from('eve_chats').insert(row).select('id').maybeSingle()
+          chatId = (data as any)?.id || null
+        } catch { /* migration 045 may not be run yet */ }
+      }
     }
 
     touchMemories(memories.map(m => m.id)).catch(() => {})

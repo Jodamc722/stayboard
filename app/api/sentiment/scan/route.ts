@@ -78,19 +78,80 @@ export async function POST(req: NextRequest) {
   // 2) Which already have an up-to-date sentiment row?
   const { data: existing } = await sb
     .from('guesty_conversation_sentiment')
-    .select('conversation_id, last_message_at, status, marked_sensitive_at')
+    .select('conversation_id, last_message_at, status, marked_sensitive_at, triggers')
   if (existing === null) {
     return NextResponse.json({ error: 'Sentiment table not found - run guest_sentiment_migration.sql in Supabase first.' }, { status: 503 })
   }
   const seen = new Map<string, string>()
   const markedSet = new Set<string>()
-  ;(existing ?? []).forEach((r: any) => { seen.set(r.conversation_id, str(r.last_message_at)); if (r.marked_sensitive_at) markedSet.add(r.conversation_id) })
+  const prevTriggers = new Map<string, string[]>()
+  ;(existing ?? []).forEach((r: any) => {
+    seen.set(r.conversation_id, str(r.last_message_at))
+    if (r.marked_sensitive_at) markedSet.add(r.conversation_id)
+    prevTriggers.set(r.conversation_id, Array.isArray(r.triggers) ? r.triggers.map(String) : [])
+  })
 
   // Need a (re)scan when there's no row, or the conversation has newer activity.
-  const todo = all.filter(c => {
+  const candidates = all.filter(c => {
     const prev = seen.get(c.id)
     return prev === undefined || (c.last_message_at && new Date(c.last_message_at).getTime() > new Date(prev).getTime())
   })
+  // ONLY IF THE GUEST SAID SOMETHING NEW (2026-09-09). Sentiment is the GUEST's; a host reply moves
+  // last_message_at and used to trigger a full rescan of the whole transcript, so every answer the
+  // front desk sent bought another model call that could not change the verdict.
+  //
+  // One query for every candidate (not one per conversation): the newest message since each
+  // conversation's watermark, guest or host. Three outcomes per conversation:
+  //   · no row yet, or a GUEST message since the watermark  -> rescan (model call)
+  //   · only HOST messages since the watermark               -> no model call; move the watermark
+  //     AND clear awaiting_reply / the unanswered_negative trigger, because the reply happened —
+  //     the rescan used to be what cleared those, and skipping it must not leave them latched
+  //   · nothing at all since the watermark                   -> leave it alone. last_message_at moved
+  //     before the messages sync landed the post (guest-comms starts two minutes before this job);
+  //     the message is still coming, so the watermark must not jump past it.
+  const todo: typeof candidates = []
+  const withRow = candidates.filter(c => seen.get(c.id) !== undefined)
+  const oldestPrev = withRow.reduce((m, c) => { const p = str(seen.get(c.id)); return !m || p < m ? p : m }, '')
+  const newerBy = new Map<string, { guest: boolean; host: boolean; lastAt: string }>()
+  if (withRow.length && oldestPrev) {
+    const ids = withRow.map(c => c.id)
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: newer } = await sb.from('guesty_messages')
+        .select('conversation_id, sender, sent_at')
+        .in('conversation_id', ids.slice(i, i + 200))
+        .gt('sent_at', oldestPrev)
+        .order('sent_at', { ascending: true })
+        .limit(1000)
+      for (const m of (newer ?? [])) {
+        const cid = str((m as any).conversation_id)
+        const prev = seen.get(cid)
+        if (prev === undefined || str((m as any).sent_at) <= prev) continue   // not newer for THIS conversation
+        const e = newerBy.get(cid) || { guest: false, host: false, lastAt: '' }
+        if (isGuest(str((m as any).sender))) e.guest = true; else e.host = true
+        if (str((m as any).sent_at) > e.lastAt) e.lastAt = str((m as any).sent_at)
+        newerBy.set(cid, e)
+      }
+    }
+  }
+  const hostOnly: { conversation_id: string; last_message_at: string }[] = []
+  for (const c of candidates) {
+    if (seen.get(c.id) === undefined) { todo.push(c); continue }
+    const e = newerBy.get(c.id)
+    if (!e) continue                       // sync has not landed the message yet — look again next run
+    if (e.guest) todo.push(c)
+    else hostOnly.push({ conversation_id: c.id, last_message_at: e.lastAt })
+  }
+  if (hostOnly.length) {
+    // upsert merges only the columns sent: score, band, reason and the rest stay as they were.
+    // Only the unanswered_negative trigger is cleared — the guest's dissatisfaction, keyword and
+    // low-score triggers are about what the guest said, and a reply does not unsay it.
+    await sb.from('guesty_conversation_sentiment').upsert(
+      hostOnly.map(h => ({
+        ...h, awaiting_reply: false,
+        triggers: (prevTriggers.get(h.conversation_id) || []).filter(t => t !== 'unanswered_negative'),
+      })),
+      { onConflict: 'conversation_id' })
+  }
   const batch = todo.slice(0, limit)
 
   let scanned = 0, flagged = 0
@@ -123,11 +184,26 @@ Return STRICT minified JSON only, no markdown:
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+        // Sonnet 5 (2026-09-09), not Haiku. This is the one background job where a miss has a cost
+        // — a frustrated guest nobody flagged becomes a review — so it stays on a full-size model
+        // (Jon: "make sure we do not lose performance where it matters"). Sonnet 5 is the newer
+        // generation of the model that ran here yesterday and a third cheaper; the real saving is
+        // above, in not rescanning a thread every time the front desk replies.
+        body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
       })
       if (r.status === 429) break // hit the rate limit - stop; the rest stays in `remaining` for the next run
-      const d: any = await r.json().catch(() => ({}))
-      if (!r.ok) continue
+      let d: any = await r.json().catch(() => ({}))
+      // If the account cannot see the Sonnet 5 alias, fall back to yesterday's model rather than
+      // skip the scan — the cost is the smaller problem.
+      if (r.status === 404 || (r.status === 400 && /model/i.test(str(d?.error?.message)))) {
+        const r2 = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+        })
+        d = await r2.json().catch(() => ({}))
+        if (!r2.ok) continue
+      } else if (!r.ok) continue
       const text = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('').trim() : ''
       const parsed = parseJson(text)
       if (!parsed) continue
