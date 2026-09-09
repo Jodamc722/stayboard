@@ -138,8 +138,10 @@ Pick what is REAL and DOABLE today: a technician already in the building or unit
   let verdict: FocusVerdict | null = null
   let answeredBy = model
   try {
+    // No `temperature`: the Fable tier rejects it as deprecated (seen live 2026-09-09), and the
+    // system prompt already asks for a stingy, literal answer.
     const r = await anthropicMessages(key, {
-      model, max_tokens: 4000, temperature: 0.2, system,
+      model, max_tokens: 4000, system,
       messages: [{ role: 'user', content: lines.join('\n') }],
     }, fallback)
     answeredBy = r.model
