@@ -10,6 +10,11 @@ import 'server-only'
 //
 // THREE NUMBERS, AND THEY ARE NOT THE SAME KIND OF NUMBER:
 //
+//   BILLABLE    what the OWNER is invoiced for the task (Jon, 2026-09-09: "owner billable rev, rev
+//               we get for tasks in breezeway"). The task's rate plus its owner-billable cost
+//               lines, with any adjustment overlaid — the same helper the invoice and the labor
+//               P&L use, so this board and a statement can never disagree. Guest-billed lines are
+//               somebody else's money and are excluded.
 //   REVENUE     the guest's cleaning fee on the checkout each departure clean belongs to
 //               (Guesty fareCleaning) — the same field lib/labor-econ prices cleans with, so the
 //               planner and the labor P&L agree. Known for past and future alike: it is booked.
@@ -28,6 +33,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { getShifts } from '@/lib/homebase'
 import { isDepartureCleanName } from '@/lib/breezeway'
+import { laborAmount } from '@/lib/billing'
+import { ownerTotal } from '@/lib/labor-econ'
 import { nameMatches } from '@/lib/person-name'
 import type { TeamSchedule } from '@/lib/team-schedule'
 
@@ -51,15 +58,33 @@ export type LaborPerson = {
   cleans: number; other: number; days: number
   hours: number | null      // punched hours inside the window (past days only)
   cost: number | null
+  billable: number          // owner-billable on the tasks they hold
+}
+
+/** One person on one day: what they worked, what it cost, what it bills. */
+export type DayPerson = {
+  name: string
+  hours: number | null
+  cost: number | null
+  billable: number
+  /** 'actual' = punched. 'scheduled' = rostered, not yet worked. 'none' = neither, work only. */
+  basis: 'actual' | 'scheduled' | 'none'
+  /** True when they punched or were rostered but hold nothing on this board. */
+  offBoard: boolean
 }
 export type ScheduleLabor = {
   from: string; to: string; today: string
   days: LaborDay[]
   people: LaborPerson[]
+  /** Everyone working each day — punched for days gone, rostered for days ahead. */
+  byDay: Record<string, DayPerson[]>
+  /** Owner-billable per Breezeway task, so a card can price the jobs it is showing. */
+  billableByTask: Record<string, number>
   totals: {
     cleans: number; other: number; revenue: number
     actualHours: number; actualCost: number; actualDays: number
     scheduledHours: number; scheduledCost: number; scheduledDays: number
+    billable: number
     /** revenue − actual − scheduled, only meaningful when the window is all one or all the other. */
     perClean: number | null
     revenuePerClean: number | null
@@ -71,12 +96,12 @@ export type ScheduleLabor = {
 
 /** Every job on the planner, flattened, with the person it belongs to. */
 function jobsOf(plan: TeamSchedule) {
-  const out: { name: string; market: string; date: string; listingId: string; task: string; isClean: boolean }[] = []
+  const out: { id: string; name: string; market: string; date: string; listingId: string; task: string; isClean: boolean }[] = []
   for (const b of plan.markets) {
     for (const p of b.people) {
       for (const date of Object.keys(p.byDay)) {
         for (const j of p.byDay[date]) {
-          out.push({ name: p.name, market: j.market || b.market, date, listingId: str(j.listingId), task: str(j.task), isClean: !!j.isClean })
+          out.push({ id: str(j.id), name: p.name, market: j.market || b.market, date, listingId: str(j.listingId), task: str(j.task), isClean: !!j.isClean })
         }
       }
     }
@@ -147,6 +172,42 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
     if (filled) notes.push(`${filled} Expedia checkout${filled === 1 ? '' : 's'} had the cleaning fee bundled into the fare — rebuilt from that unit's usual fee.`)
   }
 
+  // ── BILLABLE: WHAT THE OWNER IS INVOICED FOR EACH TASK ──────────────────────────────────────
+  // Rate + owner-billable cost lines, adjustments overlaid, guest-billed lines excluded — the same
+  // three rules the invoice applies, reached through the same helpers, so a number here and a
+  // number on a statement cannot drift. A task with neither a rate nor a cost line bills nothing,
+  // which is a real answer ("no charge entered") and not a gap to paper over.
+  const billableByTask: Record<string, number> = {}
+  const taskIds = Array.from(new Set(jobs.map(j => j.id).filter(Boolean)))
+  if (taskIds.length) {
+    const rows: any[] = [], det: any[] = [], adj: any[] = []
+    for (let i = 0; i < taskIds.length; i += 200) {
+      const chunk = taskIds.slice(i, i + 200)
+      const [a, b, c] = await Promise.all([
+        db.from('breezeway_tasks_sync').select('id,rate_paid,total_minutes').in('id', chunk),
+        db.from('breezeway_billing_details').select('task_id,costs,rate_type').in('task_id', chunk),
+        db.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk),
+      ])
+      rows.push(...(a.data || [])); det.push(...(b.data || [])); adj.push(...(c.data || []))
+    }
+    const dOf: Record<string, any> = {}; for (const d of det) dOf[str(d.task_id)] = d
+    const aOf: Record<string, any> = {}; for (const a of adj) aOf[str(a.task_id)] = a
+    for (const t of rows) {
+      const id = str(t.id)
+      const a = aOf[id], d = dOf[id]
+      if (a && a.excluded) { billableByTask[id] = 0; continue }
+      if (a && a.override_amount != null) { billableByTask[id] = Number(a.override_amount) || 0; continue }
+      const rate = laborAmount(
+        num(t.rate_paid),
+        d && d.rate_type ? str(d.rate_type) : null,
+        num(t.total_minutes),
+        a && a.billed_hours != null ? Number(a.billed_hours) : null,
+      )
+      billableByTask[id] = Math.round((rate + (d ? ownerTotal(d.costs, 'cost') : 0)) * 100) / 100
+    }
+  }
+  const billableOf = (id: string) => billableByTask[id] || 0
+
   // ── THE BOARD, BY DAY ───────────────────────────────────────────────────────────────────────
   const byDate = new Map<string, LaborDay>()
   for (const d of plan.days) {
@@ -173,6 +234,10 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
     const row = byDate.get(date); if (row) row.people = set.size
   }
 
+  // Every person on every day, filled by the punch pass below for days gone and the shift pass for
+  // days ahead. Declared here because both passes write into it.
+  const byDay: Record<string, DayPerson[]> = {}
+
   // ── LABOR, PAST: punches ────────────────────────────────────────────────────────────────────
   let payrollComplete = true
   const punchedBy = new Map<string, { hours: number; cost: number }>()
@@ -198,6 +263,11 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
         const pk = str(c.name).toLowerCase()
         const pp = punchedBy.get(pk) || { hours: 0, cost: 0 }
         pp.hours += h; pp.cost += cost; punchedBy.set(pk, pp)
+        // and the same punch, filed under its day so a card can show that person's hours
+        const list = byDay[d] = byDay[d] || []
+        const at = list.find(x => x.name.toLowerCase() === pk)
+        if (at) { at.hours = Math.round(((at.hours || 0) + h) * 10) / 10; at.cost = Math.round((at.cost || 0) + cost) }
+        else list.push({ name: str(c.name), hours: Math.round(h * 10) / 10, cost: Math.round(cost), billable: 0, basis: 'actual', offBoard: false })
       }
       for (const [d, v] of Array.from(perDay.entries())) {
         const row = byDate.get(d); if (!row) continue
@@ -253,6 +323,17 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
       row.hours = Math.round(hours * 10) / 10
       row.cost = priced ? Math.round(cost) : null
       row.basis = 'scheduled'
+      const list = byDay[d] = byDay[d] || []
+      for (const sh of shifts) {
+        const nm = str(sh.name).trim()
+        if (!nm || sh.open) continue
+        const a2 = new Date(str(sh.startAt)).getTime(), b2 = new Date(str(sh.endAt)).getTime()
+        const h = Number.isFinite(a2) && Number.isFinite(b2) && b2 > a2 ? (b2 - a2) / 3600000 : 0
+        const c2 = sh.scheduledCost != null ? num(sh.scheduledCost) : (sh.wageRate != null ? num(sh.wageRate) * h : null)
+        const at = list.find(x => x.name.toLowerCase() === nm.toLowerCase())
+        if (at) { at.hours = Math.round(((at.hours || 0) + h) * 10) / 10; if (c2 != null) at.cost = Math.round((at.cost || 0) + c2) }
+        else list.push({ name: nm, hours: Math.round(h * 10) / 10, cost: c2 == null ? null : Math.round(c2), billable: 0, basis: 'scheduled', offBoard: false })
+      }
       if (!anyCleaning && !notes.some(n => n.startsWith('No shift on this roster'))) {
         notes.push('No shift on this roster is labelled as cleaning, so scheduled labor counts everybody rostered — maintenance and office included.')
       }
@@ -261,11 +342,38 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
   if (shiftsSkipped) notes.push(`Scheduled labor counts ${shiftsCounted} cleaning shift${shiftsCounted === 1 ? '' : 's'}; ${shiftsSkipped} non-cleaning shift${shiftsSkipped === 1 ? '' : 's'} left out${noRoleKept ? `, and ${noRoleKept} with no role kept in` : ''}.`)
   if (ahead.length > AHEAD_CAP) notes.push(`Scheduled labor is shown for the first ${AHEAD_CAP} days ahead; beyond that the shifts are rarely set.`)
 
+  // ── WHO WORKED EACH DAY, AND WHAT IT COST ───────────────────────────────────────────────────
+  // Jon, 2026-09-09: "it should show all people scheduled and hours worked, so we can determine".
+  // For a day gone by, the punches are the record of who worked — a roster says what was planned,
+  // a timecard says what happened. For a day ahead there are no punches, so the roster is all
+  // there is, and it is labelled scheduled. Somebody who shows up here but holds nothing on the
+  // board is marked offBoard: that is the supervisor working, or a cleaner with time and no work.
+  const onBoard: Record<string, Set<string>> = {}
+  for (const j of jobs) {
+    if (!onBoard[j.date]) onBoard[j.date] = new Set()
+    onBoard[j.date].add(j.name.toLowerCase())
+  }
+  const billablePerPersonDay: Record<string, number> = {}   // date|person -> billable
+  for (const j of jobs) {
+    const k = j.date + '|' + j.name.toLowerCase()
+    billablePerPersonDay[k] = (billablePerPersonDay[k] || 0) + billableOf(j.id)
+  }
+  const heldBy = (date: string, name: string) => (onBoard[date] || new Set()).has(name.toLowerCase())
+  const billableFor = (date: string, name: string) => {
+    // Board names are roster spellings, punch names are Homebase spellings.
+    let sum = 0
+    for (const k in billablePerPersonDay) {
+      const [d, n] = k.split('|')
+      if (d === date && nameMatches(n, name)) sum += billablePerPersonDay[k]
+    }
+    return Math.round(sum * 100) / 100
+  }
+
   // ── PER PERSON ──────────────────────────────────────────────────────────────────────────────
   const pMap = new Map<string, LaborPerson>()
   for (const j of jobs) {
     const k = j.name.toLowerCase()
-    const p = pMap.get(k) || { name: j.name, market: j.market, cleans: 0, other: 0, days: 0, hours: null, cost: null }
+    const p = pMap.get(k) || { name: j.name, market: j.market, cleans: 0, other: 0, days: 0, hours: null, cost: null, billable: 0 }
     if (j.isClean && isDepartureCleanName(j.task)) p.cleans++; else p.other++
     pMap.set(k, p)
   }
@@ -287,6 +395,26 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
     }
   }
 
+  // Everyone on the board who has no punch and no shift still belongs on the day's people list —
+  // they are demonstrably working, we just have no hours for them.
+  for (const j of jobs) {
+    const list = byDay[j.date] = byDay[j.date] || []
+    if (!list.some(x => nameMatches(x.name, j.name))) {
+      list.push({ name: j.name, hours: null, cost: null, billable: 0, basis: 'none', offBoard: false })
+    }
+  }
+  for (const date of Object.keys(byDay)) {
+    for (const person of byDay[date]) {
+      person.billable = billableFor(date, person.name)
+      person.offBoard = !heldBy(date, person.name) && !Array.from(onBoard[date] || []).some(n => nameMatches(n, person.name))
+    }
+    byDay[date].sort((a, b) => Number(a.offBoard) - Number(b.offBoard) || (b.hours || 0) - (a.hours || 0) || a.name.localeCompare(b.name))
+  }
+  for (const [k, p] of Array.from(pMap.entries())) {
+    void k
+    p.billable = Math.round(jobs.filter(j => j.name.toLowerCase() === p.name.toLowerCase()).reduce((a, j) => a + billableOf(j.id), 0) * 100) / 100
+  }
+
   const days = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
   const t = {
     cleans: days.reduce((a, d) => a + d.cleans, 0),
@@ -298,6 +426,7 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
     scheduledHours: Math.round(days.filter(d => d.basis === 'scheduled').reduce((a, d) => a + (d.hours || 0), 0) * 10) / 10,
     scheduledCost: Math.round(days.filter(d => d.basis === 'scheduled').reduce((a, d) => a + (d.cost || 0), 0)),
     scheduledDays: days.filter(d => d.basis === 'scheduled').length,
+    billable: Math.round(Object.values(billableByTask).reduce((a, v) => a + v, 0)),
     perClean: null as number | null,
     revenuePerClean: null as number | null,
   }
@@ -309,6 +438,7 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
   return {
     from: plan.from, to: plan.to, today,
     days, people: Array.from(pMap.values()).sort((a, b) => b.cleans - a.cleans || a.name.localeCompare(b.name)),
+    byDay, billableByTask,
     totals: t, payrollComplete, notes,
   }
 }

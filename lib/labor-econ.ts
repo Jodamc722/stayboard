@@ -149,7 +149,7 @@ export function seventeenWestCoverage(combinedWages: number, windowDays: number)
 }
 
 /** Owner-billable total of a Breezeway line-item array. Guest-billed lines are not our revenue. */
-function ownerTotal(arr: any, kind: 'cost' | 'supply'): number {
+export function ownerTotal(arr: any, kind: 'cost' | 'supply'): number {
   return (Array.isArray(arr) ? arr : []).reduce((a: number, x: any) => {
     if (x && x.bill_to && String(x.bill_to) === 'guest') return a
     if (kind === 'supply' && x && x.billable === false) return a
