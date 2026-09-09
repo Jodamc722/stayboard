@@ -135,7 +135,7 @@ export function CommandCockpit() {
 
         {/* ── 2. THE NUMBERS — one strip; tap to open the rows underneath ────────────────────── */}
         <section>
-          <div className="flex gap-1.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-1 px-1 pb-0.5">
+          <div className="flex gap-1.5 flex-wrap">
             {stats.map(({ key, ...s }) => <Stat key={key} {...s} active={open === key} onClick={() => setOpen(open === key ? null : key)} />)}
           </div>
           {open && (
@@ -516,12 +516,10 @@ function CompletedCard({ d, onChanged, tick }: { d: CommandDay; onChanged: () =>
 // ── EVE — one line; the floating bubble is on every page ──────────────────────────────────────
 function EveLine() {
   return (
-    <div className="flex items-center gap-2 flex-wrap px-1 text-[12px]">
-      <button onClick={() => openEve()} className="inline-flex items-center gap-1.5 font-bold text-brand-700 min-h-[32px]"><Sparkles size={13} /> Ask Eve</button>
-      <span className="text-muted">·</span>
-      <button onClick={() => openEve('What needs my attention today?')} className="text-muted hover:text-ink min-h-[32px]">what needs me today</button>
-      <span className="text-muted">·</span>
-      <button onClick={() => openEve("Summarize today's arrivals")} className="text-muted hover:text-ink min-h-[32px]">today&rsquo;s arrivals</button>
+    <div className="flex items-center gap-1.5 flex-wrap px-1 text-[12px]">
+      <button onClick={() => openEve()} className="inline-flex items-center gap-1.5 font-bold text-brand-700 min-h-[32px] mr-1"><Sparkles size={13} /> Ask Eve</button>
+      <button onClick={() => openEve('What needs my attention today?')} className="rounded-full border border-line bg-white px-2.5 py-1 text-muted hover:text-ink whitespace-nowrap">What needs me?</button>
+      <button onClick={() => openEve("Summarize today's arrivals")} className="rounded-full border border-line bg-white px-2.5 py-1 text-muted hover:text-ink whitespace-nowrap">Today&rsquo;s arrivals</button>
     </div>
   )
 }

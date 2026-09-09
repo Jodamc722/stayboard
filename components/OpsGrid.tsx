@@ -238,7 +238,7 @@ function Tile({ cat, c, active, onClick }: { cat: CatMeta | null; c: Counts; act
   return (
     <button onClick={onClick} title={cat ? cat.label + ' — ' + c.done + ' done · ' + c.running + ' in progress · ' + c.open + ' to go' : 'Everything open'}
       aria-pressed={active}
-      className={'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 bg-white transition-colors min-h-[34px] ' +
+      className={'inline-flex items-center gap-1.5 rounded-xl border px-2 py-1.5 bg-white transition-colors min-h-[34px] ' +
         (active ? 'border-ink shadow-sm' : 'border-line hover:border-ink/25')}>
       {G && <G size={12} strokeWidth={2.5} className="text-slate-500 shrink-0" />}
       <span className="text-[12px] font-bold text-ink whitespace-nowrap">{cat ? cat.label : 'Everything'}</span>
@@ -250,7 +250,7 @@ function Tile({ cat, c, active, onClick }: { cat: CatMeta | null; c: Counts; act
             {c.done > 0 && <span className="bg-emerald-500 h-full" style={{ width: pct(c.done) + '%' }} />}
             {c.running > 0 && <span className="bg-amber-400 h-full" style={{ width: pct(c.running) + '%' }} />}
           </span>
-          <span className="text-[10.5px] text-muted tabular-nums whitespace-nowrap">{left === 0 ? 'all done' : left + ' left'}</span>
+          {left === 0 && <span className="text-[10.5px] text-emerald-700 font-semibold whitespace-nowrap">done</span>}
         </>
       )}
     </button>
@@ -1171,7 +1171,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             <Search size={14} />
           </button>
         )}
-        <div className={'relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[180px] '
+        <div className={'relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[140px] sm:max-w-[240px] '
           + ((searchOpen || q) ? '' : 'hidden sm:block')}>
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)}
