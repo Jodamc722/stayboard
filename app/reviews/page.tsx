@@ -5,6 +5,10 @@ import { Shell } from '@/components/Shell'
 import { ReviewsPanel } from '@/app/command/ReviewsPanel'
 import { ReviewKpis } from '@/components/ReviewKpis'
 import { ReviewBreakdown } from '@/components/ReviewBreakdown'
+import { RecoveryBoard } from '@/components/RecoveryBoard'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { ymdET } from '@/lib/team-schedule'
+import { loadRecoveryBoard } from '@/lib/call-desk'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +16,10 @@ export default async function ReviewsPage() {
   const supabase = createClient()
   const { data } = await supabase.auth.getUser()
   if (!data.user) redirect('/login')
+
+  // Units waiting for a good review + who is booked there next. Lives here since 2026-09-09
+  // (Jon: "move review recovery to review section unless it falls into actual welcome call").
+  const recovery = await loadRecoveryBoard(supabaseAdmin(), ymdET(new Date()))
 
   return (
     <Shell>
@@ -32,6 +40,8 @@ export default async function ReviewsPage() {
       {/* WHERE the score comes from: property → unit, worst first. Sits under the headline strip
           because "how are we doing" is read first and "which building is dragging" second. */}
       <ReviewBreakdown />
+
+      <RecoveryBoard board={recovery} />
 
       {/* The action board lives on its own page: it is a work queue, not a metric, and reading the
           reputation numbers is a different job from working the list. */}
