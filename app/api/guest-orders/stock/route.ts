@@ -45,6 +45,8 @@ export async function GET() {
       hubs: c.hubs, buildings: c.buildings, per, tracked: c.track_stock,
       description: c.description, unit: c.unit_label, maxQty: c.max_qty,
       price: c.price_usd, cost: c.cost_usd, reorderUrl: c.reorder_url, supplier: c.supplier, packNote: c.pack_note,
+      // Pack economics + the price ladder, so Inventory can price an item without a second screen.
+      packSize: c.pack_size, packCost: c.pack_cost_usd, tiers: c.tiers || [],
     }
   })
   const alerts = items.filter(i => i.tracked).flatMap(i => i.per.filter(p => p.state === 'out' || p.state === 'low').map(p => ({ item: i.name, scope: p.label, state: p.state, available: p.available })))
