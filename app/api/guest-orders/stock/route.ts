@@ -7,7 +7,7 @@
 //        } — all four in one trip, all at 'edit' access
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock, sanitizeTiers } from '@/lib/guest-orders'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
 
@@ -92,6 +92,11 @@ export async function PUT(req: NextRequest) {
     if (f.maxQty !== undefined) patch.max_qty = Math.min(99, Math.max(1, Math.round(Number(f.maxQty) || 10)))
     if (f.price !== undefined) patch.price_usd = Math.max(0, Math.round((Number(f.price) || 0) * 100) / 100)
     if (f.cost !== undefined) patch.cost_usd = f.cost === null || f.cost === '' ? null : Math.max(0, Math.round((Number(f.cost) || 0) * 100) / 100)
+    // PACK COST + PRICE BREAKS from the Inventory board too — "what we pay" is an inventory fact,
+    // so it must be editable where the counts are, not only in the form builder.
+    if (f.packSize !== undefined) patch.pack_size = f.packSize === null || f.packSize === '' ? null : (Math.min(Math.max(Math.floor(Number(f.packSize) || 0), 0), 9999) || null)
+    if (f.packCost !== undefined) patch.pack_cost_usd = f.packCost === null || f.packCost === '' ? null : Math.max(0, Math.round((Number(f.packCost) || 0) * 100) / 100)
+    if (f.tiers !== undefined) patch.tiers = sanitizeTiers(f.tiers).length ? sanitizeTiers(f.tiers) : null
     if (f.reorderUrl !== undefined) {
       const u = String(f.reorderUrl || '').trim().slice(0, 600)
       // http(s) only — a javascript: or data: URL here would be a one-click trap for whoever is
