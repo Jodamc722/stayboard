@@ -91,7 +91,17 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
   }, [building, inHouse])
 
   const market = useMemo(() => srv ? (srv.buildings.find(b => b.label === building)?.market || srv.market) : '', [srv, building])
-  const hub = useMemo(() => cfg ? cfg.hubs.find(h => h.buildings.some(x => x.toLowerCase() === building.toLowerCase())) || null : null, [cfg, building])
+  // A hub can be keyed by LISTING ids instead of buildings, and the browser only knows a building
+  // name — so match on buildings first, then fall back to the hub the SERVER resolved for this same
+  // building (it can see the listings). Without the fallback every tracked item read as out of
+  // stock, no cards rendered, and there was nothing to tap to add a photo.
+  const hub = useMemo(() => {
+    if (!cfg) return null
+    const byBuilding = cfg.hubs.find(h => h.buildings.some(x => x.toLowerCase() === building.toLowerCase()))
+    if (byBuilding) return byBuilding
+    if (srv && srv.hub && srv.building.toLowerCase() === building.toLowerCase()) return cfg.hubs.find(h => h.id === srv.hub) || null
+    return null
+  }, [cfg, building, srv])
   const preview: FormData | null = useMemo(() => {
     if (!srv || !cfg) return null
     return {
