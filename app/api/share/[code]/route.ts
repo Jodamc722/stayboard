@@ -182,19 +182,23 @@ async function handle(code: string, pw: string, body?: any) {
     // A market-scoped link passes the market through as well as the units, so the planner groups and
     // filters exactly the way the in-app tab does.
     const range = pickRange(body, today, windowDays)
+    const crewRaw = str(body?.crew)
+    const crew = crewRaw === 'vendor' || crewRaw === 'all' ? crewRaw : 'inhouse'
     const plan = await buildTeamSchedule({
       from: range.from, to: range.to,
       listingIds: idList, markets: scopeMarkets,
       dept: sections.team_maint ? 'maintenance' : 'cleaning',
+      crew,
     })
     // WHAT THE CLEANS COST AND EARNED. Only on the cleaning planner (maintenance is a different
     // trade and a different rate), and only when this link was switched to show money — the same
     // one switch that governs every dollar on a share link.
-    if (showMoney && !sections.team_maint) {
+    // Labor is our crew's; a vendor building's cleans are not on our payroll (see the API twin).
+    if (showMoney && !sections.team_maint && crew === 'inhouse') {
       out.sections.teamLabor = await scheduleLabor(plan, today).catch(() => null)
     }
     out.sections.team = {
-      from: plan.from, to: plan.to, dept: plan.dept, days: plan.days, rules: plan.rules,
+      from: plan.from, to: plan.to, dept: plan.dept, crew, days: plan.days, rules: plan.rules,
       markets: plan.markets.map(m => ({
         market: m.market,
         jobs: m.jobs, cleans: m.cleans,
@@ -203,7 +207,7 @@ async function handle(code: string, pw: string, body?: any) {
           name: p.name, dept: p.dept, daysWorked: p.daysWorked, jobs: p.jobs, cleans: p.cleans,
           byDay: Object.keys(p.byDay).reduce((acc: Record<string, any[]>, d) => {
             acc[d] = p.byDay[d].slice(0, 14).map(j => ({
-              unit: j.unit, task: j.task, status: j.status, isClean: j.isClean, tags: j.tags,
+              unit: j.unit, task: j.task, status: j.status, isClean: j.isClean, departure: j.departure, vendor: j.vendor, tags: j.tags,
               market: j.market,
               // Only the maintenance planner carries the Breezeway link: a cleaner has no login.
               url: plan.dept === 'maintenance' ? j.url : null,
