@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -22,7 +23,8 @@ async function visionOne(key: string, content: any[], room: string): Promise<{ i
     const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 35000)
     const doCall = (model: string) => fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, signal: ac.signal, body: JSON.stringify({ model, max_tokens: 2000, system: SYS, messages: [{ role: 'user', content }] }) })
     let r: any = null
-    for (const model of ['claude-sonnet-5', 'claude-opus-4-8', 'claude-sonnet-4-6']) {
+    // The chosen model first (Users & admin → AI models), then the older fallbacks if it is refused.
+    for (const model of Array.from(new Set([await modelFor('audit'), 'claude-opus-4-8', 'claude-sonnet-4-6']))) {
       try { r = await doCall(model) } catch (e) { r = null; continue }
       if (r && r.ok) break
     }
@@ -43,7 +45,7 @@ async function consolidate(key: string, room: string, items: any[], questions: s
   const SYS = 'You are merging ONE room inventory built from several BATCHES of photos of the same ' + room + '. The same physical object may appear in more than one batch (a wide shot in one, a brand close-up or a REMOTE in another). MERGE duplicates into ONE entry - there is only ONE of each big appliance (one TV, one thermostat); combine their details, fill in brand, model and size from the close-ups, keep the best count, keep any howTo and the photo field. PRESERVE brand and howTo, never drop them. Return QUESTIONS only for details still genuinely unknown after merging; if any batch revealed the brand, model or size do NOT ask about it. Max 2 questions or none. STRICT JSON ONLY, no markdown: {"items":[{"item":"","itemType":"","count":1,"size":"","brand":"","tier":"","condition":"","severity":"","amenity":true,"highlight":true,"howTo":"","photo":""}],"questions":["..."]}'
   try {
     const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 11000)
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, signal: ac.signal, body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, system: SYS, messages: [{ role: 'user', content: 'Merge this inventory. INPUT JSON: ' + JSON.stringify({ items, questions }).slice(0, 14000) }] }) })
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, signal: ac.signal, body: JSON.stringify({ model: await modelFor('audit'), max_tokens: 2000, system: SYS, messages: [{ role: 'user', content: 'Merge this inventory. INPUT JSON: ' + JSON.stringify({ items, questions }).slice(0, 14000) }] }) })
     clearTimeout(timer)
     if (!r.ok) return null
     const j = await r.json()

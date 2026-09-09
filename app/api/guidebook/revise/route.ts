@@ -4,11 +4,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const MODEL = 'claude-opus-4-8'
+// MODEL is resolved per request via modelFor('guidebook') — see lib/ai-models (editable on Users & admin).
 
 function parseJson(raw: string): any | null {
   if (!raw) return null
@@ -55,7 +56,7 @@ RULES:
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: MODEL, max_tokens: 8000, system: SYSTEM,
+        model: await modelFor('guidebook'), max_tokens: 8000, system: SYSTEM,
         messages: [{ role: 'user', content: `CURRENT GUIDEBOOK CONTENT:\n${JSON.stringify(visible)}\n\nREVISION REQUEST:\n${prompt}` }],
       }),
     })

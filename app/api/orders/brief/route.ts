@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest) {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 8000, system: SYS, messages: [{ role: 'user', content: 'Items: ' + JSON.stringify(payload) }] }),
+      body: JSON.stringify({ model: await modelFor('orders'), max_tokens: 8000, system: SYS, messages: [{ role: 'user', content: 'Items: ' + JSON.stringify(payload) }] }),
     })
     const j = await r.json()
     const text = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''

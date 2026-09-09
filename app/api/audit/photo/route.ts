@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyUploadToken } from '@/lib/upload-token'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -31,7 +32,7 @@ async function analyze(b64: string): Promise<any | null> {
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       signal: ac.signal,
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6', max_tokens: 500,
+        model: await modelFor('audit'), max_tokens: 500,
         system: SYS,
         messages: [{ role: 'user', content: [
           { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },

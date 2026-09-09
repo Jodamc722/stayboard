@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { photoForPlace } from '@/lib/place-photo'
 import { requireLevel } from '@/lib/access'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -91,7 +92,7 @@ export async function DELETE(req: NextRequest) {
   return NextResponse.json({ ok: true })
 }
 
-const MODEL = 'claude-sonnet-4-6'
+// MODEL is resolved per request via modelFor('guidebook') — see lib/ai-models (editable on Users & admin).
 
 async function anthropic(key: string, payload: any): Promise<string | null> {
   try {
@@ -167,7 +168,7 @@ export async function POST(req: NextRequest) {
     const content: any[] = pool.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
     content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image has ANY overlaid text, tags, logos, badges, watermarks, promotional banners, graphic overlays, framed borders with text, captions, labels, map text, signage, menus, instruction sheets, documents, or screenshots. When in ANY doubt set hasText TRUE - a clean text-free cover matters more than one extra usable photo (we overlay type, so text-bearing images are unusable as page art). A photo that is PRIMARILY a document, flyer, service menu, or info sheet is category "other" with hasText true, even if artfully shot. category "appliance" = a close-up of a specific appliance or control (cooktop, oven, thermostat, washer, smart panel) - never coverWorthy; for appliance photos ONLY, set "label" to the appliance with BRAND and MODEL when visible - READ any text printed on the appliance or its badge (e.g. "Keurig K-Elite coffee maker", "Wolf E-series wall oven"). A logo/graphic is category "logo" and never coverWorthy. quality judges EDITORIAL usability: sharp, well-lit, well-framed = 4-5; casual phone snapshots, harsh flash, crooked framing, plain control panels or labels = 3 or lower. STRICT minified JSON array only.` })
     for (let attempt = 0; attempt < 2; attempt++) {
-      const text = await anthropic(key, { model: MODEL, max_tokens: 2500, messages: [{ role: 'user', content }] })
+      const text = await anthropic(key, { model: await modelFor('guidebook'), max_tokens: 2500, messages: [{ role: 'user', content }] })
       const parsed = parseJson(text || '')
       if (Array.isArray(parsed) && parsed.length) {
         parsed.forEach((p: any) => {
@@ -255,7 +256,7 @@ ${JSON.stringify(answers).slice(0, 4000)}
 EXAMPLE OBJECT (schema contract):
 ${JSON.stringify(fallback)}`
     const content: any[] = [...docBlocks, { type: 'text', text: USER_TEXT }]
-    const text = await anthropic(key, { model: MODEL, max_tokens: 4500, system: SYSTEM, messages: [{ role: 'user', content }] })
+    const text = await anthropic(key, { model: await modelFor('guidebook'), max_tokens: 4500, system: SYSTEM, messages: [{ role: 'user', content }] })
     const parsed = parseJson(text || '')
     if (parsed && parsed.cover && parsed.wifi) sections = { ...fallback, ...parsed, wifi: fallback.wifi }
   }

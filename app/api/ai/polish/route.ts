@@ -17,11 +17,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { anthropicMessages } from '@/lib/anthropic-call'
 import { getAccess } from '@/lib/access'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const MODEL = 'claude-sonnet-5'
+// MODEL is resolved per request via modelFor('polish') — see lib/ai-models (editable on Users & admin).
 const MAX_IN = 4000
 
 /** The house voice, applied to everything. */
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const r = await anthropicMessages(key, {
-      model: MODEL,
+      model: await modelFor('polish'),
       max_tokens: 1024,
       temperature: 0.2,
       messages: [{ role: 'user', content: prompt }],

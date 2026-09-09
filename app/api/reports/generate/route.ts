@@ -22,11 +22,12 @@ import { paceStatus, paceGuidance } from '@/lib/pacing'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
 import { projectionSectionFor } from '@/lib/projections'
 import { requireLevel } from '@/lib/access'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-const MODEL = 'claude-opus-4-8'
+// MODEL is resolved per request via modelFor('reports') — see lib/ai-models (editable on Users & admin).
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function addDaysIso(iso: string, n: number): string {
@@ -434,7 +435,7 @@ export async function POST(req: NextRequest) {
     + '"planNotes": {optional, one entry PER BUDGET MONTH keyed by the month name in UPPERCASE (e.g. "MAY", "JUNE", "JULY"), value = one short sentence about THAT month only}}'
 
   const aiText = await anthropic({
-    model: MODEL, max_tokens: 3000,
+    model: await modelFor('reports'), max_tokens: 3000,
     system: sys,
     messages: [{ role: 'user', content: prompt }],
   })

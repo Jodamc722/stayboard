@@ -24,6 +24,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
 import { SECTION_KEYS, TITLE_MAX, sectionRules, type SectionKey, type ListingAi, bannedRule, examplesRule } from '@/lib/listing-ai'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 // Was 45. Opus with ~10 vision images does comparable work to the photo analyst, which needs 120
@@ -309,7 +310,7 @@ ${JSON.stringify(currentDraft || (current as any)[sk] || '')}`
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }] }),
+        body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }] }),
       })
       const d: any = await r.json()
       if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
@@ -368,7 +369,7 @@ ${JSON.stringify(current)}`
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       signal: ac.signal,
-      body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 3200, system: SYSTEM, messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
+      body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 3200, system: SYSTEM, messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
     })
     const d: any = await r.json()
     if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })

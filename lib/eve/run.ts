@@ -23,8 +23,9 @@ import { wireTools, runTool, DOMAIN_KEYS } from './registry'
 import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory } from './memory'
 import { appAtlas } from './atlas'
 import { buildSystemBlocks, getVoiceProfile } from './prompt'
+import { modelFor } from '@/lib/ai-models'
 
-const MODEL = 'claude-opus-4-8'
+// MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
 
 // Anthropic's SERVER-SIDE web search. Jon asked Eve to "connect to internet and study trends in
 // south florida" — this is the supported way. Verified against the tool reference (Aug 2026):
@@ -201,7 +202,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       let r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: toolset, messages }),
+        body: JSON.stringify({ model: await modelFor('eve'), max_tokens: 4096, system, tools: toolset, messages }),
       })
       let d: any = await r.json()
 
@@ -211,7 +212,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
         r = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: MODEL, max_tokens: 4096, system, tools: wireTools(open), messages }),
+          body: JSON.stringify({ model: await modelFor('eve'), max_tokens: 4096, system, tools: wireTools(open), messages }),
         })
         d = await r.json()
       }

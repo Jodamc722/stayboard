@@ -28,11 +28,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeMultiple, REQUIRED_FIELDS, type RefundInput } from '@/lib/refund-policy'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const MODEL = 'claude-opus-4-8'
+// MODEL is resolved per request via modelFor('glitch-advise') — see lib/ai-models (editable on Users & admin).
 
 const CLASSIFY_TOOL = {
   name: 'classify_case',
@@ -185,7 +186,7 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: MODEL, max_tokens: 2000, system: SYSTEM,
+        model: await modelFor('glitch-advise'), max_tokens: 2000, system: SYSTEM,
         tools: [CLASSIFY_TOOL], tool_choice: { type: 'tool', name: 'classify_case' },
         messages: [{ role: 'user', content: record }],
       }),

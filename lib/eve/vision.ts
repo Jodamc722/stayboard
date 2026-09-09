@@ -46,7 +46,9 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { lc, DEAD_LISTING } from './ctx'
 
-const DEFAULT_MODEL = 'claude-sonnet-4-6'
+// The default now comes from the AI-models registry (task 'eve-vision'); the older per-key
+// VISION_MODEL_KEY setting still wins when it is set, so nothing already configured changes.
+import { modelFor } from '@/lib/ai-models'
 const VISION_MODEL_KEY = 'eve_vision_model'
 const QUOTA_KEY = 'eve_vision_nightly_quota'
 
@@ -155,7 +157,7 @@ export async function lookAtUnit(listingId: string, opts?: { lookNow?: boolean; 
   if (opts?.lookNow && unseen.length) {
     const key = process.env.ANTHROPIC_API_KEY || ''
     if (!key) return { seen, total: urls.length, unseen: unseen.length, lookedNow: 0, error: 'No ANTHROPIC_API_KEY set, so I cannot look at anything.' }
-    const model = await getSetting<string>(VISION_MODEL_KEY, DEFAULT_MODEL)
+    const model = await getSetting<string>(VISION_MODEL_KEY, await modelFor('eve-vision'))
     const batch = unseen.slice(0, Math.min(opts?.max || 8, 12))
     const rows = await callVision(key, model, batch)
     if (rows?.length) {
@@ -186,7 +188,7 @@ export async function nightlyVision(quotaOverride?: number): Promise<{
   if (!quota) return { ok: true, looked: 0, units: 0, quota: 0, skipped: 'nightly quota is 0 — background photo scanning is off by default', errors }
 
   const db = supabaseAdmin()
-  const model = await getSetting<string>(VISION_MODEL_KEY, DEFAULT_MODEL)
+  const model = await getSetting<string>(VISION_MODEL_KEY, await modelFor('eve-vision'))
 
   const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,status,pictures,raw').order('id').limit(400)
   const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))

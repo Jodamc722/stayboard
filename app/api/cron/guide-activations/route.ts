@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase-server'
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { verifyEditToken } from '@/lib/edit-access'
 import { guideKey, normSlug, seedFor, todayIso, DOW_NAMES, type Guide, type Activation } from '@/lib/guide'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -110,7 +111,7 @@ async function scrape(sourceUrl: string): Promise<{ events: Activation[]; error?
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+      body: JSON.stringify({ model: await modelFor('guide-activations'), max_tokens: 2000, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
       signal: AbortSignal.timeout(45000),
     })
     const d: any = await r.json().catch(() => ({}))

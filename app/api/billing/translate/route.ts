@@ -9,6 +9,7 @@ import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { updateBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { monthTasks } from '@/lib/billing'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 3000, system: SYS, messages: [{ role: 'user', content: JSON.stringify(batch) }] }),
+        body: JSON.stringify({ model: await modelFor('billing'), max_tokens: 3000, system: SYS, messages: [{ role: 'user', content: JSON.stringify(batch) }] }),
       })
       const j: any = await r.json().catch(() => null)
       const text = j && Array.isArray(j.content) && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''

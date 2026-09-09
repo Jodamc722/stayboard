@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -79,7 +80,7 @@ Maximum ${cfg.photos.captionMaxWords} words and ${cfg.photos.captionMaxChars} ch
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6', max_tokens: 200,
+        model: await modelFor('photos'), max_tokens: 200,
         system: SYS,
         messages: [{ role: 'user', content: [{ type: 'text', text: ctx }, { type: 'image', source: { type: 'base64', media_type: media, data: b64 } }] }],
       }),

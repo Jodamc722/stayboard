@@ -21,11 +21,12 @@ import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BEDROOM_NO } from '@/lib/ffe-checklist'
 import { categoryForItem } from '@/lib/ffe-catalog'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const MODEL = 'claude-sonnet-4-6'
+// MODEL is resolved per request via modelFor('audit') — see lib/ai-models (editable on Users & admin).
 const str = (v: any) => (v == null ? '' : String(v))
 
 async function anthropicJson(system: string, user: string, maxTokens = 4000): Promise<any | null> {
@@ -35,7 +36,7 @@ async function anthropicJson(system: string, user: string, maxTokens = 4000): Pr
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+      body: JSON.stringify({ model: await modelFor('audit'), max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
     })
     const d: any = await r.json().catch(() => ({}))
     if (!r.ok) return null

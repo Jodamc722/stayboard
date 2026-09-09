@@ -31,7 +31,7 @@ import dynamic from 'next/dynamic'
 import {
   Users, ShieldCheck, Sliders, ChevronRight, Search, X, ArrowLeft, Loader2, Lock,
   Activity, ListChecks, Mail, Bot, ShoppingBag, HardHat, Package, MessageSquare,
-  DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2, CalendarClock, Plug, Timer, Tags,
+  DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2, CalendarClock, Plug, Timer, Tags, Cpu,
 } from 'lucide-react'
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { RolesAdmin } from '@/components/RolesAdmin'
@@ -69,6 +69,7 @@ const L = {
   integrations: dynamic(() => import('@/components/IntegrationsAdmin').then(m => m.IntegrationsAdmin), { loading: spin, ssr: false }),
   laborSettings: dynamic(() => import('@/components/LaborSettings').then(m => m.LaborSettings), { loading: spin, ssr: false }),
   customFields: dynamic(() => import('@/components/CustomFieldsAdmin').then(m => m.CustomFieldsAdmin), { loading: spin, ssr: false }),
+  aiModels: dynamic(() => import('@/components/AiModelsAdmin').then(m => m.AiModelsAdmin), { loading: spin, ssr: false }),
 }
 
 // ── THE DIRECTORY ───────────────────────────────────────────────────────────────────────────────
@@ -195,6 +196,12 @@ const ENTRIES: Entry[] = [
     render: p => <L.orders isOwner={p.isOwner} />,
   },
 
+  {
+    key: 'ai-models', title: 'AI models — which model runs which task', group: 'AI', Icon: Cpu, ownerOnly: true,
+    blurb: 'Every job the app hands to Claude, what it is asked to do, who reads the answer, and which model does it. Change a row to trade cost for depth — live within a minute, no deploy.',
+    find: 'ai model models opus sonnet haiku cost price cheaper expensive api bill anthropic tokens eve sentiment polish which model',
+    render: p => <L.aiModels isOwner={p.isOwner} />,
+  },
   {
     key: 'eve', title: 'Eve — memory, voice & direction', group: 'AI', Icon: Sparkles, ownerOnly: true,
     blurb: 'What Eve knows, how she sounds, what she is told to push on, and where her approvals land.',

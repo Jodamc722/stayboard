@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { CATEGORIES, CONDITIONS } from '@/lib/onboarding'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest) {
     try {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: ITEM_SYSTEM, messages: [{ role: 'user', content: [
+        body: JSON.stringify({ model: await modelFor('onboard'), max_tokens: 400, system: ITEM_SYSTEM, messages: [{ role: 'user', content: [
           { type: 'text', text: `The checklist calls this item "${item.name}"${item.brand && !['size', 'model'].includes(item.brand) ? ' (' + item.brand + ')' : ''}.` },
           { type: 'image', source: { type: 'url', url: item.photo_url } },
         ] }] }),
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2500, system: SYSTEM, messages: [{ role: 'user', content }] }),
+      body: JSON.stringify({ model: await modelFor('onboard'), max_tokens: 2500, system: SYSTEM, messages: [{ role: 'user', content }] }),
     })
     const j = await r.json().catch(() => ({}))
     if (!r.ok) return NextResponse.json({ ok: false, error: 'AI: ' + (j?.error?.message || r.status) }, { status: 502 })

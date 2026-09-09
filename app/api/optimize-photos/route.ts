@@ -25,12 +25,13 @@ import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
 import { buildOrder, normalizeRooms, marketingChecks, titleHooks, isJunkCaption, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType } from '@/lib/photo-order'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 const BATCH = 18
-const MODEL = 'claude-sonnet-4-6'
+// MODEL is resolved per request via modelFor('photos') — see lib/ai-models (editable on Users & admin).
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 const CAT_CAPTION: Record<string, string> = { living: 'Living area', kitchen: 'Kitchen', dining: 'Dining area', bedroom: 'Bedroom', bathroom: 'Bathroom', outdoor: 'Outdoor space', view: 'View from the property', amenity: 'Building amenity', exterior: 'Building exterior', detail: 'Property detail', other: 'Property photo' }
 const CATS = new Set(Object.keys(CAT_CAPTION))
@@ -102,7 +103,7 @@ async function callModel(key: string, system: string, content: any[], maxTokens:
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', signal,
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages: [{ role: 'user', content }] }),
+      body: JSON.stringify({ model: await modelFor('photos'), max_tokens: maxTokens, system, messages: [{ role: 'user', content }] }),
     })
     const j = await r.json().catch(() => null)
     if (!r.ok) return { json: null, err: `AI ${r.status}: ${str(j?.error?.message).slice(0, 180)}` }

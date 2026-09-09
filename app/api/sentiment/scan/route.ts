@@ -9,6 +9,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { markReservationSensitive } from '@/lib/sensitive'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -189,7 +190,7 @@ Return STRICT minified JSON only, no markdown:
         // (Jon: "make sure we do not lose performance where it matters"). Sonnet 5 is the newer
         // generation of the model that ran here yesterday and a third cheaper; the real saving is
         // above, in not rescanning a thread every time the front desk replies.
-        body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+        body: JSON.stringify({ model: await modelFor('sentiment'), max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
       })
       if (r.status === 429) break // hit the rate limit - stop; the rest stays in `remaining` for the next run
       let d: any = await r.json().catch(() => ({}))

@@ -5,11 +5,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { hasEditCookie } from '@/lib/edit-access'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const MODEL = 'claude-opus-4-8'
+// MODEL is resolved per request via modelFor('reports') — see lib/ai-models (editable on Users & admin).
 const DOC_MODEL = 'claude-sonnet-4-6'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
     + (blocks.length ? '\n\nAttached document(s) are provided - fold their relevant content into the section per the instruction, keeping the same JSON shape.' : '')
     + '\n\nReturn the full updated section JSON only.'
   const out = await anthropic({
-    model: blocks.length ? DOC_MODEL : MODEL,
+    model: blocks.length ? DOC_MODEL : await modelFor('reports'),
     max_tokens: 4000,
     system: sys,
     messages: [{ role: 'user', content: [...blocks, { type: 'text', text }] }],

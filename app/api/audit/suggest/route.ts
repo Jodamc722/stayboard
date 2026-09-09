@@ -2,6 +2,7 @@
 // the inspector taps to add one as an item (Jon's rule). Cached in-memory per room type.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6', max_tokens: 500,
+        model: await modelFor('audit'), max_tokens: 500,
         system: SYS,
         messages: [{ role: 'user', content: 'Room: ' + roomType }],
       }),

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 
-const MODEL = 'claude-sonnet-4-6'
+// MODEL is resolved per request via modelFor('guidebook') — see lib/ai-models (editable on Users & admin).
 
 async function anthropic(key: string, payload: any): Promise<string | null> {
   try {
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
 
   const prompt = 'You are a sharp local concierge for a short-term rental. List 12 genuinely popular, REAL, currently-operating places guests would want near this address. Location: ' + where + '. Give a spread: standout restaurants, a great coffee spot, a beach or park, a landmark or attraction, nightlife, and a grocery or pharmacy. Only real, well-known establishments — never invent names. Return ONLY a JSON array, no prose: [{"name":"","type":"restaurant|coffee|beach|attraction|nightlife|grocery|other","blurb":"under 12 words, why guests love it","area":"neighborhood"}]'
 
-  const text = await anthropic(key, { model: MODEL, max_tokens: 1400, messages: [{ role: 'user', content: prompt }] })
+  const text = await anthropic(key, { model: await modelFor('guidebook'), max_tokens: 1400, messages: [{ role: 'user', content: prompt }] })
   let recs: any[] = []
   try {
     const m = text ? text.match(/\[[\s\S]*\]/) : null

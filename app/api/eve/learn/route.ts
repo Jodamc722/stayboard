@@ -11,6 +11,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { recordRun } from '@/lib/automation-runs'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -128,7 +129,7 @@ Generalize (don't repeat one guest's wording). Max 12 faqs, max 10 complaints. B
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1500, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+      body: JSON.stringify({ model: await modelFor('learn'), max_tokens: 1500, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
     })
     const d: any = await r.json().catch(() => ({}))
     if (r.ok) parsed = parseJson(Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('') : '')

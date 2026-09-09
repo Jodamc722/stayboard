@@ -8,6 +8,7 @@ import { ratingDisplay, isBookingChannel } from '@/lib/review-scale'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -189,7 +190,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const reqBody = JSON.stringify({
-      model: 'claude-opus-4-8',
+      model: await modelFor('review-reply'),
       max_tokens: 500,
       system,
       messages: [{ role: 'user', content: userMsg }],

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { anthropicMessages } from '@/lib/anthropic-call'
 import { requireLevel } from '@/lib/access'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
     department: String(body?.department || ''),
   }
   try {
-    const r = await anthropicMessages(key, { model: 'claude-sonnet-5', max_tokens: 400, system: SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] })
+    const r = await anthropicMessages(key, { model: await modelFor('billing'), max_tokens: 400, system: SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] })
     const j: any = r.data
     const text = j && Array.isArray(j.content) && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
     if (!r.ok || !text) return NextResponse.json({ ok: false, error: 'AI request failed.' }, { status: 502 })

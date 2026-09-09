@@ -4,11 +4,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-const MODEL = 'claude-opus-4-8'
+// MODEL is resolved per request via modelFor('guidebook') — see lib/ai-models (editable on Users & admin).
 const VISION_MODEL = 'claude-sonnet-4-6'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
 4. Return the COMPLETE revised JSON - same top-level keys and shapes. STRICT minified JSON only, no markdown.`
   const USER: any[] = [...docBlocks, { type: 'text', text: `CURRENT GUIDEBOOK CONTENT:\n${JSON.stringify(visible)}\n\nNEW APPLIANCE PHOTOS (write/refresh a How-To item for each): ${labels.length ? labels.join(', ') : '(none)'}\n${docBlocks.length ? 'Documents attached above - read them and fold the relevant facts in.' : ''}` }]
 
-  const text = await anthropic(key, { model: MODEL, max_tokens: 6000, system: SYSTEM, messages: [{ role: 'user', content: USER }] })
+  const text = await anthropic(key, { model: await modelFor('guidebook'), max_tokens: 6000, system: SYSTEM, messages: [{ role: 'user', content: USER }] })
   const revised = parseJson(text || '')
   if (!revised || !revised.cover) return NextResponse.json({ error: 'AI could not fold the materials in — try again.' }, { status: 502 })
 

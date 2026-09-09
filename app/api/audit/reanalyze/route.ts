@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       signal: ac.signal,
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 600, system: SYS, messages: [{ role: 'user', content: [...imgs, { type: 'text', text: userText }] }] }),
+      body: JSON.stringify({ model: await modelFor('audit'), max_tokens: 600, system: SYS, messages: [{ role: 'user', content: [...imgs, { type: 'text', text: userText }] }] }),
     })
     clearTimeout(timer)
     const j = await r.json().catch(() => null)
