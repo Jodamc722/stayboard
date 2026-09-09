@@ -403,8 +403,13 @@ export function Reputation({ f, setF, onFocusUnit }: {
 
   const h = (d && d.headline) || {}
   const units: any[] = d?.units || []
+  // WHAT COUNTS AS NEEDING SOMEONE. Below par, or waiting for a good review since a low one. It
+  // also used to include any unit carrying a single low review, which put 49 units on the list —
+  // including 4.6 units whose one bad night has already been answered by good reviews since. A unit
+  // whose low review has not been answered IS in recovery, so that case is already covered, and
+  // dropping the clause takes the list back to units somebody should actually be sent to.
   const failing = useMemo(
-    () => units.filter(u => (u.vsPar != null && u.vsPar <= -(d?.belowPar ?? 0.15)) || u.recoveryDays != null || (u.lowCount || 0) > 0),
+    () => units.filter(u => (u.vsPar != null && u.vsPar <= -(d?.belowPar ?? 0.15)) || u.recoveryDays != null),
     [units, d],
   )
   const shown = showAll ? units : failing

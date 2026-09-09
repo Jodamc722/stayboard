@@ -498,7 +498,10 @@ async function build(req: NextRequest) {
     push(cu2[chKey] = cu2[chKey] || emptyAgg(), rating, chKey, p)
     const canReply = replyable(lid, r)
     if (canReply) replyableN++
-    if (r.has_reply) { replied++; const m = replyMinutes(r.raw); if (m != null) replyTimes.push(m) }
+    // NUMERATOR AND DENOMINATOR FROM THE SAME POPULATION. Counting every answered review against
+    // only the answerable ones printed 100.4% answered on the live board — an impossible number,
+    // and the exact class of thing that teaches a team to stop reading the page.
+    if (r.has_reply) { if (canReply) replied++; const m = replyMinutes(r.raw); if (m != null) replyTimes.push(m) }
     else if (!r.dismissed && canReply) {
       awaitByUnit[lid] = (awaitByUnit[lid] || 0) + 1
       awaitByBuilding[li.building] = (awaitByBuilding[li.building] || 0) + 1
