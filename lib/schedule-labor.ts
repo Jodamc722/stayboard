@@ -182,9 +182,16 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
       payrollComplete = audit.complete !== false
       if (!payrollComplete) notes.push('Homebase came back short for part of this window — actual hours and cost are understated.')
       const perDay = new Map<string, { hours: number; cost: number }>()
+      const CLEANING_CARD = /clean|housekeep|turn|hk\b/i
+      const anyRole = audit.cards.some(c => str(c.role))
+      let cardsSkipped = 0
       for (const c of audit.cards) {
         const d = str(c.date).slice(0, 10)
         if (!d || d < past[0] || d > past[past.length - 1]) continue
+        // Punches carry a role on this account; when they do, price the cleaning crew only, for the
+        // same reason the shifts are filtered above. When they do not, everybody counts and the
+        // note below says so.
+        if (anyRole && str(c.role) && !CLEANING_CARD.test(str(c.role))) { cardsSkipped++; continue }
         const h = num(c.hours), cost = num(c.laborCost)
         const dd = perDay.get(d) || { hours: 0, cost: 0 }
         dd.hours += h; dd.cost += cost; perDay.set(d, dd)
@@ -196,6 +203,8 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
         const row = byDate.get(d); if (!row) continue
         row.hours = Math.round(v.hours * 10) / 10; row.cost = Math.round(v.cost); row.basis = 'actual'
       }
+      if (cardsSkipped) notes.push(`${cardsSkipped} punch${cardsSkipped === 1 ? '' : 'es'} outside housekeeping left out of actual labor.`)
+      else if (!anyRole) notes.push('Homebase punches carry no role here, so actual labor is the whole crew, not housekeeping alone.')
     } catch {
       payrollComplete = false
       notes.push('Homebase did not answer for the past days in this window — no actual labor to show.')
@@ -205,11 +214,34 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
   // ── LABOR, AHEAD: scheduled shifts ──────────────────────────────────────────────────────────
   // Capped at seven days out: Homebase is one call per day and a month-long board would be thirty
   // round trips for a number nobody has finalised yet.
+  //
+  // ONLY THE CLEANING SHIFTS. A location's roster is everybody — maintenance, office, the lot — and
+  // counting all of it against cleaning revenue prices the turnovers with other people's wages and
+  // makes the cleaning margin look far worse than it is. Same predicate the staffing cross-check
+  // uses (lib/homebase crossCheck), so "who is a cleaner today" has one definition. A shift with no
+  // role at all is kept — dropping unlabelled people would understate the crew — and the count of
+  // what was left out travels with the number.
+  const CLEANING_ROLE = /clean|housekeep|turn|hk\b/i
   const AHEAD_CAP = 7
+  let shiftsCounted = 0, shiftsSkipped = 0, noRoleKept = 0
   for (const d of ahead.slice(0, AHEAD_CAP)) {
     try {
-      const shifts = await getShifts(d)
-      if (!shifts.length) continue
+      const all = await getShifts(d)
+      if (!all.length) continue
+      const labelled = all.filter(s => str(s.role) || str(s.department))
+      const anyCleaning = labelled.some(s => CLEANING_ROLE.test(`${str(s.role)} ${str(s.department)}`))
+      // If nothing on the roster is labelled as cleaning, the roles are not filled in on this
+      // account's shifts — filtering would return zero and read as "nobody works tomorrow". Fall
+      // back to the whole roster and say so, rather than printing a confident nothing.
+      const shifts = anyCleaning
+        ? all.filter(s => {
+            const tag = `${str(s.role)} ${str(s.department)}`.trim()
+            if (!tag) { noRoleKept++; return true }
+            return CLEANING_ROLE.test(tag)
+          })
+        : all
+      shiftsCounted += shifts.length
+      shiftsSkipped += all.length - shifts.length
       let hours = 0, cost = 0, priced = 0
       for (const s of shifts) {
         const a = new Date(str(s.startAt)).getTime(), b = new Date(str(s.endAt)).getTime()
@@ -221,8 +253,12 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
       row.hours = Math.round(hours * 10) / 10
       row.cost = priced ? Math.round(cost) : null
       row.basis = 'scheduled'
+      if (!anyCleaning && !notes.some(n => n.startsWith('No shift on this roster'))) {
+        notes.push('No shift on this roster is labelled as cleaning, so scheduled labor counts everybody rostered — maintenance and office included.')
+      }
     } catch { /* a day Homebase will not answer for stays 'none' rather than a zero */ }
   }
+  if (shiftsSkipped) notes.push(`Scheduled labor counts ${shiftsCounted} cleaning shift${shiftsCounted === 1 ? '' : 's'}; ${shiftsSkipped} non-cleaning shift${shiftsSkipped === 1 ? '' : 's'} left out${noRoleKept ? `, and ${noRoleKept} with no role kept in` : ''}.`)
   if (ahead.length > AHEAD_CAP) notes.push(`Scheduled labor is shown for the first ${AHEAD_CAP} days ahead; beyond that the shifts are rarely set.`)
 
   // ── PER PERSON ──────────────────────────────────────────────────────────────────────────────
