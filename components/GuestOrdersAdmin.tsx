@@ -8,7 +8,7 @@ import { ShoppingBag, Loader2, Save, Plus, Trash2, Check, AlertTriangle, ImagePl
 type Scope = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number; taxPct?: number }
 type Cfg = {
   enabled: boolean; createDaysBefore: number; customFieldName: string; orderByHoursBefore: number; leadHours: number; sameDayCutoffHour: number
-  checkInHour: number; taxPct: number; chargeMode: 'auto' | 'manual'; emailRecipients: string[]; publicBase: string; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; skipSourcesRe: string
+  checkInHour: number; taxPct: number; chargeMode: 'auto' | 'manual'; emailRecipients: string[]; publicBase: string; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; confirmTitle: string; confirmBody: string; confirmNext: string; skipSourcesRe: string
   marketRules: Record<string, Scope>; buildingRules: Record<string, Scope>
   hubs: Hub[]; hubRules: Record<string, Scope>
 }
@@ -194,6 +194,13 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
         <input value={cfg.formTitle} onChange={e => set({ formTitle: e.target.value })} className={box + ' font-semibold'} placeholder="Headline (guest's first name is added)" disabled={ro} />
         <textarea value={cfg.formIntro} onChange={e => set({ formIntro: e.target.value })} rows={2} className={box} placeholder="Intro paragraph" disabled={ro} />
         <input value={cfg.footerNote} onChange={e => set({ footerNote: e.target.value })} className={box} placeholder="Footer note (payment / contact line)" disabled={ro} />
+        {/* What the guest reads the moment they submit. The total and the lines are always shown. */}
+        <div className="pt-2.5 mt-1 border-t border-line">
+          <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">The confirmation screen <span className="normal-case font-normal">— after they place the order. See it live in the <a href="/guest-orders/design" className="underline">Design studio</a>.</span></div>
+          <input value={cfg.confirmTitle ?? ''} onChange={e => set({ confirmTitle: e.target.value })} className={box + ' font-semibold mt-1.5'} placeholder="Headline — e.g. Order received (guest's first name is added)" disabled={ro} />
+          <textarea value={cfg.confirmBody ?? ''} onChange={e => set({ confirmBody: e.target.value })} rows={2} className={box + ' mt-2'} placeholder="Thank-you line" disabled={ro} />
+          <textarea value={cfg.confirmNext ?? ''} onChange={e => set({ confirmNext: e.target.value })} rows={3} className={box + ' mt-2'} placeholder="What happens next — when they get confirmation of purchase, and anything else you may need from them" disabled={ro} />
+        </div>
       </div>
 
       <div>

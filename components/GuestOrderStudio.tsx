@@ -8,11 +8,11 @@
 // Nothing reaches the database until Save.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, Save, Eye, Trash2, ImagePlus, X, Plus, AlertTriangle, Check, RefreshCw } from 'lucide-react'
-import { GuestOrderForm, type FormData, type FormItem } from '@/components/GuestOrderForm'
+import { GuestOrderForm, type FormData, type FormItem, type CopyField } from '@/components/GuestOrderForm'
 
 type Scope = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number }
 type Hub = { id: string; label: string; buildings: string[]; listings?: string[] }
-type Cfg = { enabled: boolean; taxPct: number; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; hubs: Hub[]; hubRules: Record<string, Scope>; [k: string]: any }
+type Cfg = { enabled: boolean; taxPct: number; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; confirmTitle: string; confirmBody: string; confirmNext: string; hubs: Hub[]; hubRules: Record<string, Scope>; [k: string]: any }
 type Item = { id?: string; sku: string; name: string; description: string | null; price_usd: number; unit_label: string | null; category: string | null; fee_code: string; max_qty: number; sort: number; active: boolean; buildings: string[] | null; markets: string[] | null; hubs: string[] | null; image_url: string | null; track_stock: boolean; _new?: boolean }
 type StockRow = { item_id: string; scope: string; on_hand: number; reserved: number; low_at: number }
 type Bldg = { label: string; market: string; vendor: boolean }
@@ -53,8 +53,11 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
   const [dirtyStock, setDirtyStock] = useState<Record<string, boolean>>({})
   const [saved, setSaved] = useState('')
   const [sel, setSel] = useState<string | null>(null)   // sku being edited
-  const [copyField, setCopyField] = useState<'title' | 'intro' | 'brand' | 'footer' | null>(null)
+  const [copyField, setCopyField] = useState<CopyField | null>(null)
   const [review, setReview] = useState(false)
+  // Which screen the phone shows. The confirmation screen only ever appeared AFTER a real submit,
+  // so its words could not be edited or even seen from here (Jon, 2026-09-09: "fully customizable").
+  const [screen, setScreen] = useState<'form' | 'confirm'>('form')
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
@@ -108,7 +111,7 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
       ...srv.data,
       stay: { ...srv.data.stay, unit: building + ' 406', building, inHouse },
       // the rate for THIS building's area, not the global default
-      copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: srv.data.deadline?.taxPct ?? cfg.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote },
+      copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: srv.data.deadline?.taxPct ?? cfg.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote, confirmTitle: cfg.confirmTitle, confirmBody: cfg.confirmBody, confirmNext: cfg.confirmNext },
       catalog: previewCatalog(items, stock, building, market, hub ? hub.id : null),
     }
   }, [srv, cfg, items, stock, building, market, hub, inHouse])
@@ -221,6 +224,19 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
           <input value={cfg.formTitle} onChange={e => setC({ formTitle: e.target.value })} className={box + ' font-semibold' + (copyField === 'title' ? ' ring-2 ring-ink' : '')} placeholder="Headline (guest's name is added)" disabled={ro} />
           <textarea value={cfg.formIntro} onChange={e => setC({ formIntro: e.target.value })} rows={3} className={box + (copyField === 'intro' ? ' ring-2 ring-ink' : '')} placeholder="Intro" disabled={ro} />
           <input value={cfg.footerNote} onChange={e => setC({ footerNote: e.target.value })} className={box + (copyField === 'footer' ? ' ring-2 ring-ink' : '')} placeholder="Footer note" disabled={ro} />
+
+          {/* THE CONFIRMATION SCREEN. Editing it means being able to SEE it, so the phone switches. */}
+          <div className="pt-1.5 mt-1 border-t border-line">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">After they submit</div>
+              <button type="button" onClick={() => setScreen(x => x === 'confirm' ? 'form' : 'confirm')} className={'text-[11.5px] font-semibold px-2 py-1 rounded-lg border ' + (screen === 'confirm' ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:border-brand-300')}>{screen === 'confirm' ? 'showing it' : 'show me'}</button>
+            </div>
+            <p className="text-[11px] text-muted mt-1 mb-1.5">The total and the items are always shown. These are the words around them.</p>
+            <input value={cfg.confirmTitle ?? ''} onChange={e => { setC({ confirmTitle: e.target.value }); setScreen('confirm') }} className={box + ' font-semibold' + (copyField === 'confirmTitle' ? ' ring-2 ring-ink' : '')} placeholder="Headline (guest's name is added)" disabled={ro} />
+            <textarea value={cfg.confirmBody ?? ''} onChange={e => { setC({ confirmBody: e.target.value }); setScreen('confirm') }} rows={2} className={box + ' mt-2' + (copyField === 'confirmBody' ? ' ring-2 ring-ink' : '')} placeholder="Thank-you line" disabled={ro} />
+            <textarea value={cfg.confirmNext ?? ''} onChange={e => { setC({ confirmNext: e.target.value }); setScreen('confirm') }} rows={3} className={box + ' mt-2' + (copyField === 'confirmNext' ? ' ring-2 ring-ink' : '')} placeholder="What happens next — confirmation of purchase, anything else you need from them" disabled={ro} />
+          </div>
+
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 text-[12.5px] text-muted"><input type="color" value={cfg.accentColor} onChange={e => setC({ accentColor: e.target.value })} className="h-8 w-10 rounded border border-line p-0.5" disabled={ro} /> Button colour</label>
             <label className="flex items-center gap-1.5 text-[12.5px] text-muted">Tax <input type="number" min={0} max={30} step={0.5} value={cfg.taxPct} onChange={e => setC({ taxPct: Number(e.target.value) })} className={box + ' max-w-[70px]'} disabled={ro} />%</label>
@@ -239,8 +255,8 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
         <div className="relative w-[390px] max-w-full h-[780px] rounded-[40px] border-[10px] border-neutral-900 bg-neutral-900 shadow-[0_30px_60px_-20px_rgba(0,0,0,.5)] overflow-hidden">
           <div className="absolute top-0 inset-x-0 h-6 flex justify-center z-50 pointer-events-none"><div className="w-28 h-5 bg-neutral-900 rounded-b-2xl" /></div>
           <div className="absolute inset-0 overflow-y-auto overscroll-contain bg-[#FBF7F0] rounded-[30px]">
-            <GuestOrderForm data={preview} frame reviewOpen={review} onReviewChange={setReview}
-              edit={ro ? undefined : { selectedSku: sel, onItem: it => { setSel(it.sku); setCopyField(null) }, onAdd: addItem, onCopy: f => { setCopyField(f); setSel(null) } }} />
+            <GuestOrderForm data={preview} frame reviewOpen={review} onReviewChange={setReview} showConfirm={screen === 'confirm'}
+              edit={ro ? undefined : { selectedSku: sel, onItem: it => { setSel(it.sku); setCopyField(null); setScreen('form') }, onAdd: addItem, onCopy: f => { setCopyField(f); setSel(null); if (String(f).slice(0, 7) === 'confirm') setScreen('confirm') } }} />
           </div>
         </div>
       </div>

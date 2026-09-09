@@ -27,18 +27,23 @@ export function nextTier(c: FormItem, qty: number): PriceTier | null {
 export type PastOrder = { id: string; status: string; items: { name: string; qty: number; line_total_usd: number }[]; total: number; submittedAt: string; deliveryDate: string | null; deliveryNote: string | null; paid: boolean; requested?: string; requestedDate?: string | null }
 export type FormData = {
   stay: { guestFirst: string; unit: string; building: string | null; checkIn: string; checkOut: string | null; checkInLabel: string; checkOutLabel: string; inHouse: boolean; departed: boolean }
-  copy: { title: string; intro: string; taxPct: number; brand?: string; accent?: string; footer?: string }
+  copy: { title: string; intro: string; taxPct: number; brand?: string; accent?: string; footer?: string
+    /** The confirmation screen, word for word — see GuestOrdersCfg.confirmTitle. */
+    confirmTitle?: string; confirmBody?: string; confirmNext?: string }
   deadline: { orderBy: string; orderByLabel: string; arrivalDayStillPossible: boolean; nextDelivery: string; hoursBefore: number; leadHours: number; offered?: boolean; taxPct?: number; taxSource?: string; source?: string }
   catalog: FormItem[]
   orders: PastOrder[]
 }
 export type Delivery = { mode: 'asap' | 'arrival' | 'date'; date: string | null }
+export type CopyField = 'title' | 'intro' | 'brand' | 'footer' | 'confirmTitle' | 'confirmBody' | 'confirmNext'
 export type EditHooks = {
   onItem: (item: FormItem) => void
   onAdd: (category: string) => void
-  onCopy: (field: 'title' | 'intro' | 'brand' | 'footer') => void
+  onCopy: (field: CopyField) => void
   selectedSku?: string | null
 }
+/** A stand-in order so the studio can show the confirmation screen before anyone has ordered. */
+export const SAMPLE_PLACED: PastOrder = { id: 'sample', status: 'submitted', items: [{ name: 'Bottled water', qty: 3, line_total_usd: 36 }, { name: 'Coffee pods', qty: 1, line_total_usd: 12 }], total: 48, submittedAt: new Date().toISOString(), deliveryDate: null, deliveryNote: null, paid: false }
 
 const ICON: Record<string, string> = { Drinks: '💧', Snacks: '🥐', Comfort: '🛁', Baby: '🍼', Services: '✨', Extras: '🧺' }
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -55,7 +60,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 const money = (n: number) => '$' + (Math.round(n * 100) / 100).toFixed(n % 1 ? 2 : 0)
 const serif: React.CSSProperties = { fontFamily: "'Iowan Old Style','Palatino Linotype',Palatino,'New York',Georgia,ui-serif,serif", letterSpacing: '-0.01em' }
 
-export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onReviewChange }: {
+export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onReviewChange, showConfirm }: {
   data: FormData
   onSubmit?: (basket: { sku: string; qty: number }[], note: string, delivery: Delivery) => Promise<{ ok: boolean; order?: PastOrder; error?: string }>
   /** Rendered inside the studio's phone frame: bars pin to the frame, not the window. */
@@ -63,6 +68,8 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
   edit?: EditHooks
   reviewOpen?: boolean
   onReviewChange?: (open: boolean) => void
+  /** Studio only: force the confirmation screen with a sample order, so its words can be edited. */
+  showConfirm?: boolean
 }) {
   const [qty, setQty] = useState<Record<string, number>>({})
   const [note, setNote] = useState('')
@@ -104,7 +111,7 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
   const brand = data.copy.brand || 'Stay Hospitality'
   const fixed = frame ? 'absolute' : 'fixed'
   const editable = !!edit
-  const EditTag = ({ field, children }: { field: 'title' | 'intro' | 'brand' | 'footer'; children: React.ReactNode }) => editable
+  const EditTag = ({ field, children }: { field: CopyField; children: React.ReactNode }) => editable
     ? <span onClick={() => edit!.onCopy(field)} className="cursor-text rounded-md outline-dashed outline-1 outline-transparent hover:outline-neutral-400 hover:bg-white/60 transition" title="Edit">{children}</span>
     : <>{children}</>
 
@@ -114,17 +121,35 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
     </div>
   )
 
-  if (placed) return shell(
+  // THE CONFIRMATION SCREEN. Jon, 2026-09-09: "as they add to their cart and they submit, it'll
+  // tell them their total and to expect confirmation of purchase and/or gathering additional
+  // information." So the TOTAL leads — it is the number the guest wants to see repeated back — and
+  // every word around it comes from settings, including the "what happens next" line, because what
+  // happens next differs by whether we charge on approval or ring the guest first.
+  const shown = placed || (showConfirm ? SAMPLE_PLACED : null)
+  if (shown) return shell(
     <div className="pt-10 animate-slide-up">
       <div className="text-[11px] uppercase tracking-[0.22em] font-semibold text-neutral-500">{brand} · {stay.unit}</div>
       <div className="mt-6 rounded-3xl bg-white shadow-[0_20px_50px_-24px_rgba(27,26,23,.35)] p-7 text-center">
         <div className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl" style={{ background: '#E9F4EE' }}>🎉</div>
-        <h1 className="text-[28px] leading-tight mt-4" style={serif}>Order received, {stay.guestFirst}.</h1>
-        <p className="text-[15px] text-neutral-600 mt-3 leading-relaxed">We will confirm it shortly and charge the card on your reservation. {when === 'date' && whenDate ? <>You asked for <b className="text-neutral-900">{whenDate}</b> — we confirm once the order is approved.</> : <>Your items arrive <b className="text-neutral-900">{deadline.nextDelivery}</b>.</>}</p>
-        <div className="mt-5 text-left rounded-2xl border border-neutral-200/80 divide-y divide-neutral-100">
-          {placed.items.map((l, i) => <div key={i} className="flex justify-between px-4 py-2.5 text-[14px]"><span><b>{l.qty}×</b> {l.name}</span><span className="tabular-nums">{money(l.line_total_usd)}</span></div>)}
-          <div className="flex justify-between px-4 py-3 text-[15px] font-semibold"><span>Total</span><span className="tabular-nums">{money(placed.total)}</span></div>
+        <h1 className="text-[28px] leading-tight mt-4" style={serif}><EditTag field="confirmTitle">{data.copy.confirmTitle || 'Order received'}</EditTag>, {stay.guestFirst}.</h1>
+        <p className="text-[15px] text-neutral-600 mt-3 leading-relaxed"><EditTag field="confirmBody">{data.copy.confirmBody || 'Thank you — your order is with our team now.'}</EditTag></p>
+
+        <div className="mt-6 rounded-2xl px-5 py-4" style={{ background: accent + '12' }}>
+          <div className="text-[11px] uppercase tracking-[0.18em] font-semibold" style={{ color: accent }}>Your total</div>
+          <div className="text-[34px] font-semibold tabular-nums leading-none mt-1.5" style={{ color: accent }}>{money(shown.total)}</div>
         </div>
+
+        <div className="mt-4 text-left rounded-2xl border border-neutral-200/80 divide-y divide-neutral-100">
+          {shown.items.map((l, i) => <div key={i} className="flex justify-between px-4 py-2.5 text-[14px]"><span><b>{l.qty}×</b> {l.name}</span><span className="tabular-nums">{money(l.line_total_usd)}</span></div>)}
+        </div>
+
+        <div className="mt-4 text-left rounded-2xl bg-neutral-50 border border-neutral-200/70 px-4 py-3.5">
+          <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-neutral-500">What happens next</div>
+          <p className="text-[13.5px] text-neutral-700 mt-1.5 leading-relaxed"><EditTag field="confirmNext">{data.copy.confirmNext || 'You will get a confirmation of purchase shortly.'}</EditTag></p>
+          <p className="text-[13px] text-neutral-500 mt-2 leading-relaxed">{when === 'date' && whenDate ? <>You asked for <b className="text-neutral-700">{whenDate}</b> — we confirm the day once the order is approved.</> : <>Delivery: <b className="text-neutral-700">{deadline.nextDelivery}</b>.</>}</p>
+        </div>
+
         <button onClick={() => setPlaced(null)} className="mt-6 text-[14px] font-semibold underline underline-offset-4 text-neutral-700">Order something else</button>
       </div>
     </div>)
