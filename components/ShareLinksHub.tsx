@@ -6,10 +6,7 @@
 // builder is a sentence, not a form maze: WHO is it scoped to, WHAT sections does it show, and
 // two honest switches — dollars on/off and full guest names on/off — that govern the whole link.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  Loader2, Plus, Copy, Check, Trash2, Pencil, Link2, Lock, Building2, User, Home, Globe, X,
-  AlertTriangle, ChevronDown, ChevronRight, FileText, BookOpen, Sparkles, ExternalLink, MapPin,
-} from 'lucide-react'
+import { Loader2, Plus, Copy, Check, Trash2, Pencil, Link2, Lock, Building2, User, Home, Globe, X, AlertTriangle, ChevronDown, ChevronRight, FileText, BookOpen, Sparkles, ExternalLink, MapPin, Eye } from 'lucide-react'
 
 type LinkRow = {
   id: string; code: string; label: string | null; scope_type: string; scope_ids: string[]
@@ -92,6 +89,7 @@ export function ShareLinksHub() {
   const [guestNames, setGuestNames] = useState(false)
   const [windowDays, setWindowDays] = useState(30)
   const [passcode, setPasscode] = useState('')
+  const [shownCodes, setShownCodes] = useState<Record<string, boolean>>({})
 
   useEffect(() => { setOrigin(window.location.origin) }, [])
   const load = useCallback(async () => {
@@ -145,6 +143,18 @@ export function ShareLinksHub() {
   const copy = async (code: string, board = false) => { copyPath((board ? '/board/' : '/share/') + code, code) }
   const copyPath = async (path: string, key: string) => {
     try { await navigator.clipboard.writeText(origin + path); setCopied(key); setTimeout(() => setCopied(''), 1800) } catch { /* blocked */ }
+  }
+  /**
+   * THE PASSCODE, WHERE THE LINK IS (Jon, 2026-09-09: "need to be able to see passwords as admin").
+   * It was only ever visible by opening Edit, so handing someone a link meant a detour to go and
+   * read the code that makes it work. It is masked until clicked — this page is often on a shared
+   * screen and showing every passcode at once is a different mistake — and "Link + passcode" puts
+   * both on the clipboard in the shape you would type them into a message anyway.
+   */
+  const copyBoth = async (l: LinkRow, board: boolean) => {
+    const url = origin + (board ? '/board/' : '/share/') + l.code
+    const text = l.passcode ? `${url}\nPasscode: ${l.passcode}` : url
+    try { await navigator.clipboard.writeText(text); setCopied(l.code + ':both'); setTimeout(() => setCopied(''), 1800) } catch { /* blocked */ }
   }
 
   // Scope pick-list for the current scope type, filtered by the search box.
@@ -307,11 +317,25 @@ export function ShareLinksHub() {
                       {l.scope_type === 'portfolio' ? 'Portfolio' : l.scope_type}
                     </span>
                     {board ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-50 text-brand-700">Live board</span> : null}
-                    {l.passcode ? <Lock size={11} className="text-muted" /> : null}
+                    {l.passcode ? (
+                      shownCodes[l.id] ? (
+                        <button onClick={async () => { try { await navigator.clipboard.writeText(l.passcode || ''); setCopied(l.code + ':pw'); setTimeout(() => setCopied(''), 1500) } catch { /* blocked */ } }}
+                          title="Click to copy just the passcode"
+                          className="inline-flex items-center gap-1 rounded bg-app px-1.5 py-0.5 font-mono text-[11.5px] text-ink hover:bg-line/40">
+                          <Lock size={10} className="text-muted" />{copied === l.code + ':pw' ? 'copied' : l.passcode}
+                        </button>
+                      ) : (
+                        <button onClick={() => setShownCodes(x => ({ ...x, [l.id]: true }))}
+                          title="Show the passcode"
+                          className="inline-flex items-center gap-1 rounded bg-app px-1.5 py-0.5 text-[11px] text-muted hover:text-ink">
+                          <Lock size={10} /> ••••••  <Eye size={10} />
+                        </button>
+                      )
+                    ) : <span className="text-[10.5px] text-muted">no passcode</span>}
                     {l.show_money ? <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 rounded px-1.5 py-0.5">$ on</span> : null}
                     <div className="flex-1" />
-                    <button onClick={() => copy(l.code, board)} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1">
-                      {copied === l.code ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy link</>}
+                    <button onClick={() => copyBoth(l, board)} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1">
+                      {copied === l.code + ':both' ? <><Check size={12} /> Copied</> : <><Copy size={12} /> {l.passcode ? 'Link + passcode' : 'Copy link'}</>}
                     </button>
                     <a href={(board ? '/board/' : '/share/') + l.code} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-ink">Open</a>
                     <button onClick={() => startEdit(l)} className="p-1 text-muted hover:text-ink" title="Edit"><Pencil size={13} /></button>
