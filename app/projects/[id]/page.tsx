@@ -10,7 +10,6 @@ import { redirect } from 'next/navigation'
 import { Suspense } from 'react'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { atLeast } from '@/lib/features'
-import { Shell } from '@/components/Shell'
 import { getProject, canSee, canEdit } from '@/lib/projects'
 import { ProjectPage } from '@/components/ProjectPage'
 
@@ -28,7 +27,7 @@ export default async function OneProject({ params }: { params: { id: string } })
   if (!p || !canSee(p.members, viewer, p.kind)) redirect('/projects')
 
   return (
-    <Shell>
+    <>
       {/* useSearchParams (the ?task= deep link) wants a Suspense boundary above it. */}
       <Suspense fallback={null}>
       <ProjectPage
@@ -39,6 +38,6 @@ export default async function OneProject({ params }: { params: { id: string } })
         superadmin={viewer.superadmin}
       />
       </Suspense>
-    </Shell>
+    </>
   )
 }
