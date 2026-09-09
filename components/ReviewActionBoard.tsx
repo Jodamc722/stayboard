@@ -177,7 +177,11 @@ function Dispatch({ unit, rows, onDone }: { unit: any; rows: Action[]; onDone: (
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           listingId: unit.listing_id,
-          title: 'Guest-feedback inspection — ' + (unit.unit || 'Unit'),
+          // An inspection has to be NAMED like one lib/task-audit recognises ("Quality inspection —
+          // ", its REVIEW_RULE) or the stray sweep cancels it in Breezeway a week later. Anything
+          // dispatched to another department must NOT carry the word "inspection" at all, because
+          // that sweep scans on the name and would pull a cleaning job into the same net.
+          title: (dept === 'inspection' ? 'Quality inspection — ' : 'Guest feedback — ') + (unit.unit || 'Unit'),
           department: dept, priority: urgent ? 'high' : 'normal',
           date, description, auditLink: false,
         }),

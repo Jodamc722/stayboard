@@ -2,7 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban, RefreshCw } from 'lucide-react'
 
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string }
+
+// THE FEED OBEYS THE BOARD ABOVE IT (Jon, 2026-09-09: "the main page should be KPI and where we can
+// review or respond to reviews"). One filter bar on /reviews drives the numbers AND this list, so a
+// page filtered to one owner's building shows that owner's reviews rather than the whole portfolio
+// next to numbers for a slice of it. Both props are optional — a caller that renders this panel on
+// its own gets the old unfiltered behaviour.
+export type ReviewFeedFilter = { market: string; building: string; owner: string; channel: string; days: number }
 
 const SIGN = '— Stay Hospitality'
 
@@ -60,8 +67,8 @@ const ratingFrac = (n: number | null) => n == null ? -1 : (n <= 5 ? n / 5 : n / 
 const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
 const fmtDate = (s?: string) => { if (!s) return ""; const d = new Date(s); return isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) }
 
-export function ReviewsPanel() {
-  const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string }>({ loading: true })
+export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: ReviewFeedFilter; focusUnit?: string; focusNonce?: number }) {
+  const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string; segments?: boolean }>({ loading: true })
   const [tab, setTab] = useState<'needs' | 'replied' | 'unmapped' | 'dismissed'>('needs')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -77,6 +84,10 @@ export function ReviewsPanel() {
   const [dismissedLocal, setDismissedLocal] = useState<Record<string, boolean>>({})
   const [loadedAt, setLoadedAt] = useState<number | null>(null)
 
+  // "Answer N reviews" on a failing unit upstairs types that unit into this box, rather than
+  // re-scoping the whole page behind the manager's back.
+  useEffect(() => { if (focusUnit) { setQuery(focusUnit); setTab('needs') } }, [focusUnit, focusNonce])
+
   // LOADS EVERY TIME THE PAGE IS OPENED, and again whenever the tab comes back into view.
   // `cache: 'no-store'` matters: without it the browser can serve its own cached copy of
   // /api/reviews, so a review replied to on another screen keeps showing as unanswered.
@@ -90,15 +101,18 @@ export function ReviewsPanel() {
   // are; the default work-queue tab was just empty because the team is caught up, which reads as a
   // broken page. Never overrides a tab the user picked themselves.
   const didInitialTab = useRef(false)
+  // Only the WINDOW is a server round-trip; market/building/owner/channel are applied below to the
+  // rows already in hand, so moving the filter bar re-renders instantly instead of re-fetching.
+  const feedDays = filter?.days
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts || !opts.quiet) setS(prev => ({ ...prev, loading: true }))
     setErr(null)
     const startedAt = Date.now()
     try {
-      const d = await (await fetch('/api/reviews', { cache: 'no-store' })).json()
+      const d = await (await fetch('/api/reviews' + (feedDays ? '?days=' + feedDays : ''), { cache: 'no-store' })).json()
       if (startedAt < mutatedAtRef.current) return   // stale: a click happened mid-flight — drop it
       const reviews: Review[] = d.reviews || []
-      setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error })
+      setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error, segments: d.segments !== false })
       setLoadedAt(Date.now())
       if (!didInitialTab.current) {
         didInitialTab.current = true
@@ -109,7 +123,7 @@ export function ReviewsPanel() {
     } catch (e: any) {
       setS({ loading: false, error: String((e && e.message) || e) })
     }
-  }, [])
+  }, [feedDays])
 
   useEffect(() => { load() }, [load])
 
@@ -143,9 +157,23 @@ export function ReviewsPanel() {
     return { overdueH: over, label: 'due in ' + (-over >= 48 ? Math.round(-over / 24) + 'd' : Math.max(1, Math.round(-over)) + 'h'), cls: -over <= 8 ? 'bg-amber-100 text-amber-700' : 'bg-app text-muted' }
   }
 
-  // Filter by building / unit / channel via the search box (matches the listing name + channel).
+  // Filter by building / unit / channel via the search box (matches the listing name + channel),
+  // then by whatever the board above the feed is set to. Both must pass.
   const q = query.trim().toLowerCase()
-  const matchQ = (r: Review) => !q || `${r.listing_name || ''} ${r.channel || ''}`.toLowerCase().includes(q)
+  const matchBar = (r: Review) => {
+    if (!filter) return true
+    // The live-Guesty fallback path carries no building/market/owner on its rows. Filtering on
+    // fields that are not there would empty the list and blame the filter for a sync problem.
+    if (s.segments === false) return true
+    if (filter.market !== 'all' && (r.market || '') !== filter.market) return false
+    if (filter.building !== 'all' && (r.building || '') !== filter.building) return false
+    if (filter.owner !== 'all' && (r.ownerId || '') !== filter.owner) return false
+    if (filter.channel !== 'all' && (r.channel || '') !== filter.channel) return false
+    return true
+  }
+  const matchQ = (r: Review) =>
+    matchBar(r) && (!q || `${r.listing_name || ''} ${r.building || ''} ${r.ownerName || ''} ${r.channel || ''}`.toLowerCase().includes(q))
+  const barOn = !!filter && (filter.market !== 'all' || filter.building !== 'all' || filter.owner !== 'all' || filter.channel !== 'all')
   const isDismissed = (r: Review) => !!r.dismissed || !!dismissedLocal[r.id]
   const needs = (s.reviews || [])
     .filter(r => !r.hasReply && !posted[r.id] && !isDismissed(r) && matchQ(r))
@@ -324,8 +352,22 @@ export function ReviewsPanel() {
             </div>
           )}
         </div>
-        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by building, unit, or channel… (e.g. Capri, 214, airbnb)"
+        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by building, unit, owner or channel… (e.g. Capri, 214, airbnb)"
           className="mt-2 w-full text-xs text-ink bg-app border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        {/* Say so when the board above is narrowing this list, or an empty tab reads as a broken
+            feed rather than as a filter doing its job. */}
+        {barOn && (
+          <p className="text-[11px] text-muted mt-1.5">
+            Narrowed by the filters at the top of the page
+            {filter && filter.building !== 'all' ? ' · ' + filter.building : ''}
+            {filter && filter.market !== 'all' ? ' · ' + filter.market : ''}
+            {filter && filter.channel !== 'all' ? ' · ' + filter.channel : ''}
+            {filter && filter.owner !== 'all' ? ' · one owner' : ''}.
+          </p>
+        )}
+        {barOn && s.segments === false && (
+          <p className="text-[11px] text-amber-800 mt-1">Reading live from Guesty right now, which does not carry building or owner on a review — so the filters above are not being applied to this list.</p>
+        )}
         {err && <p className="text-[11px] text-red-600 mt-1.5">{err}</p>}
       </div>
 
@@ -578,13 +620,18 @@ function ReviewFollowUp({ r }: { r: Review }) {
     setBusy(true); setErr('')
     try {
       const match = people.find((p: any) => String(p.name).toLowerCase() === who.trim().toLowerCase())
-      const description = 'Raised from a ' + (r.rating != null ? r.rating + '-star ' : '') + 'review'
+      const description = 'Raised in Lighthouse from a ' + (r.rating != null ? r.rating + '-star ' : '') + 'review'
         + (r.guest ? ' by ' + r.guest : '') + (r.channel ? ' on ' + r.channel : '')
         + (r.created_at ? ' (' + String(r.created_at).slice(0, 10) + ')' : '') + '.\n\nWhat the guest said:\n' + (r.content || '')
+      // "Quality inspection — " is the naming convention lib/task-audit's REVIEW_RULE matches on.
+      // Titled anything else, a review inspection is classified STRAY and the stray sweep cancels
+      // it in Breezeway about a week later — which is what happened to every inspection this button
+      // has ever created (fixed 2026-09-09).
       const res = await fetch('/api/ops-today/add-task', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          listingId: r.listingId, title: 'Guest-feedback inspection — ' + (r.listing_name || 'unit'),
+          listingId: r.listingId,
+          title: 'Quality inspection — ' + (r.listing_name || 'unit') + (r.rating != null ? ' (' + r.rating + '★ review)' : ''),
           department: 'inspection', priority: 'normal', description, date, assigneeIds: match ? [match.id] : [],
         }),
       })
@@ -628,7 +675,7 @@ function ReviewFollowUp({ r }: { r: Review }) {
             <input list="rev-people" value={who} onChange={e => setWho(e.target.value)} placeholder="leave blank to assign later" className="text-xs border border-line rounded-md px-2 py-1 bg-white w-56" />
             <datalist id="rev-people">{people.map((p: any) => <option key={p.id} value={p.name} />)}</datalist>
           </div>
-          <span className="text-[10px] text-muted pb-1">Guest-feedback inspection {'\u00b7'} inspection</span>
+          <span className="text-[10px] text-muted pb-1">Quality inspection {'\u00b7'} inspection</span>
           <button onClick={createTask} disabled={busy} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">{busy ? 'Creating…' : 'Create in Breezeway'}</button>
         </div>
       )}

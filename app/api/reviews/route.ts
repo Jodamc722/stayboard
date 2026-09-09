@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
+import { buildingOf, marketOf } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -67,17 +68,36 @@ export async function GET(req: Request) {
     if (rows && rows.length) {
       // Join guesty_listings for status/building filtering + listing_name.
       const ids = Array.from(new Set(rows.map((r: any) => r.listing_id).filter(Boolean)))
-      const meta: Record<string, { name: string; status: string; building: string | null }> = {}
+      const meta: Record<string, { name: string; status: string; building: string | null; group: string; market: string; ownerId: string; ownerName: string }> = {}
       if (ids.length) {
-        const { data: ls } = await sb
-          .from('guesty_listings')
-          .select('id, nickname, title, status, building')
-          .in('id', ids as string[])
+        // SEGMENTS TRAVEL WITH THE REVIEW (Jon, 2026-09-09: "I should be able to select by owner,
+        // building etc to see reviews"). The dashboard above this feed filters on market, building
+        // and owner; without those on the row the feed could only ever show everything, and the two
+        // halves of the page would disagree about what you were looking at.
+        const [{ data: ls }, { data: own }] = await Promise.all([
+          sb.from('guesty_listings').select('id, nickname, title, status, building, address_city').in('id', ids as string[]),
+          sb.from('guesty_owners').select('id, full_name, listing_ids').limit(2000),
+        ])
+        const ownerOf: Record<string, { id: string; name: string }> = {}
+        for (const o of ((own || []) as any[])) {
+          const nm = String(o.full_name || ('Owner ' + o.id))
+          for (const lid of (Array.isArray(o.listing_ids) ? o.listing_ids : [])) {
+            const k = String(lid || '')
+            if (k && !ownerOf[k]) ownerOf[k] = { id: String(o.id), name: nm }
+          }
+        }
         ;(ls || []).forEach((l: any) => {
+          const name = l.nickname || l.title || l.id
+          const o = ownerOf[String(l.id)]
           meta[l.id] = {
-            name: l.nickname || l.title || l.id,
+            name,
             status: String(l.status || '').toLowerCase(),
-            building: l.building || null
+            building: l.building || null,
+            // buildingOf/marketOf are the same canonical registry the KPI board groups on, so a
+            // unit cannot sit in one building up there and another one down here.
+            group: buildingOf(String(l.building || ''), name) || 'Other',
+            market: marketOf(l.building, l.address_city, name) || '',
+            ownerId: o ? o.id : '', ownerName: o ? o.name : 'Unassigned',
           }
         })
       }
@@ -93,6 +113,10 @@ export async function GET(req: Request) {
         hasReply: !!r.has_reply,
         reply: r.reply || null,
         listing_name: m?.name || r.listing_id || 'Unknown listing',
+        building: m?.group || null,
+        market: m?.market || null,
+        ownerId: m?.ownerId || '',
+        ownerName: m?.ownerName || 'Unassigned',
       })
 
       // Active (mapped, synced) reviews are draftable + count toward scores. Unmapped reviews
@@ -111,7 +135,11 @@ export async function GET(req: Request) {
       const unmapped: any[] = []
       for (const r of rows as any[]) {
         const m = r.listing_id ? meta[r.listing_id] : null
-        if (m && m.building && String(m.building).toLowerCase() === 'waves') continue  // Waves excluded entirely
+        // Waves excluded entirely — on the CANONICAL building, the same test the reputation board
+        // uses. Matching the raw Guesty text instead let a Waves unit whose building field is blank
+        // through here while the board above dropped it, so the "waiting on a reply" count and the
+        // list under it disagreed.
+        if (m && String(m.group || '').toLowerCase() === 'waves') continue
         let reason: string | null = null
         if (!m) reason = 'Listing not synced'
         else if (DEAD_STATUSES.has(m.status)) reason = 'Listing inactive'
@@ -120,7 +148,7 @@ export async function GET(req: Request) {
         else reviews.push({ ...shape(r, m), dismissed: dismissedIds.has(r.id) })
       }
 
-      return NextResponse.json({ reviews, unmapped })
+      return NextResponse.json({ reviews, unmapped, segments: true })
     }
   } catch {
     // fall through to live pull
@@ -136,7 +164,7 @@ export async function GET(req: Request) {
 
     const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now())
     if (!valid) {
-      return NextResponse.json({ reviews: [], warming: true, error: 'Guesty token is refreshing — reload in a moment.' })
+      return NextResponse.json({ reviews: [], segments: false, warming: true, error: 'Guesty token is refreshing — reload in a moment.' })
     }
 
     // Paginate the full backlog (skip-pagination) so all channels are pulled, not just the newest page.
@@ -225,7 +253,9 @@ export async function GET(req: Request) {
     })
     visible.forEach((x: any) => { (x as any).listing_name = (x.listingId && meta[x.listingId]?.name) || x.listingId || 'Unknown listing' })
 
-    return NextResponse.json({ reviews: visible })
+    // NO SEGMENTS ON THIS PATH. The live pull has no listing join for building/market/owner, so the
+    // caller is told not to apply its filter bar rather than silently filtering every row away.
+    return NextResponse.json({ reviews: visible, segments: false })
   } catch (e: any) {
     return NextResponse.json({ reviews: [], error: e?.message || String(e) })
   }
