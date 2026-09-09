@@ -623,7 +623,13 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, s
         {t.assignees.length > 0 && (
           <span className="hidden sm:inline text-[11px] text-muted truncate max-w-[140px]">{t.assignees.map(a => first(a.display)).join(', ')}</span>
         )}
-        {t.due_on && <span className={'text-[11px] tabular-nums shrink-0 ' + (late ? 'text-rose-600 font-bold' : 'text-muted')}>{nice(t.due_on)}</span>}
+        {t.homed && <span className="text-[9.5px] font-semibold text-muted truncate max-w-[110px] shrink-0" title={`Also in ${t.home_project_title}`}>↗ {t.home_project_title}</span>}
+        {canEdit ? (
+          <label onClick={e => e.stopPropagation()} className={'relative inline-flex items-center gap-1 text-[11px] tabular-nums shrink-0 cursor-pointer ' + (late ? 'text-rose-600 font-bold' : t.due_on ? 'text-muted' : 'text-muted/40 hover:text-muted')} title="Due date">
+            <CalendarDays size={11} />{t.due_on ? nice(t.due_on) : ''}
+            <input type="date" value={t.due_on || ''} disabled={busy} onChange={e => act({ action: 'taskSet', taskId: t.id, due_on: e.target.value || null })} className="absolute inset-0 opacity-0 cursor-pointer w-full" />
+          </label>
+        ) : (t.due_on && <span className={'text-[11px] tabular-nums shrink-0 ' + (late ? 'text-rose-600 font-bold' : 'text-muted')}>{nice(t.due_on)}</span>)}
         {t.priority === 'urgent' && <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-rose-100 text-rose-700 shrink-0">Urgent</span>}
         {t.priority === 'high' && <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">High</span>}
         {t.subtasks.length > 0 && <span className="text-[11px] text-muted tabular-nums shrink-0">{t.subtasks.filter(s => s.status === 'done').length}/{t.subtasks.length}</span>}
@@ -705,10 +711,10 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
             className={'rounded-lg border px-2 py-1 text-[12px] font-bold ' + STATUS_CLS[task.status]}>
             {Object.entries(TASK_STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
-          <span className="text-[11px] text-muted truncate flex-1">{task.section || 'No section'}{task.parent_id ? ' · subtask' : ''}</span>
+          <span className="text-[11px] text-muted truncate flex-1">{task.section || 'No section'}{task.parent_id ? ' · subtask' : ''}{task.homed ? ` · from ${task.home_project_title}` : ''}</span>
           {canEdit && (
-            <button onClick={async () => { if (confirm('Delete this task' + (task.subtasks.length ? ' and its subtasks' : '') + '?')) { await act({ action: 'taskDelete', taskId: task.id }); onClose() } }}
-              disabled={busy} className="text-muted hover:text-rose-600" title="Delete task"><Trash2 size={14} /></button>
+            <button onClick={async () => { if (confirm(task.homed ? `Remove this task from this project? It stays in ${task.home_project_title}.` : 'Delete this task' + (task.subtasks.length ? ' and its subtasks' : '') + '?')) { await act({ action: 'taskDelete', taskId: task.id }); onClose() } }}
+              disabled={busy} className="text-muted hover:text-rose-600" title={task.homed ? 'Remove from this project' : 'Delete task'}><Trash2 size={14} /></button>
           )}
           <button onClick={onClose} className="text-muted hover:text-ink"><X size={16} /></button>
         </div>
@@ -767,6 +773,9 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
             <input value={task.section || ''} disabled={!canEdit} placeholder="None"
               onBlur={e => { if ((e.target.value || null) !== (task.section || null)) set({ section: e.target.value }) }}
               onChange={() => {}} className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
+
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Projects</span>
+            <TaskProjects task={task} p={p} canEdit={canEdit} busy={busy} act={act} />
           </div>
 
           <div>
@@ -828,6 +837,40 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
         </div>
       </div>
     </>
+  )
+}
+
+// ── ONE TASK, SEVERAL PROJECTS ─────────────────────────────────────────────────────────────────
+// The chips are every project this task appears in; the picker offers the projects you are on.
+function TaskProjects({ task, p, canEdit, busy, act }: { task: Task; p: ProjectFull; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any> }) {
+  const [homes, setHomes] = useState<{ id: string; title: string; home: boolean }[] | null>(null)
+  const [mine, setMine] = useState<{ id: string; title: string; kind?: string }[]>([])
+  const [open, setOpen] = useState(false)
+  const load = useCallback(() => { act({ action: 'taskProjects', taskId: task.id }).then(j => { if (j?.projects) setHomes(j.projects) }) }, [task.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setHomes(null); fetch('/api/projects/' + p.id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'taskProjects', taskId: task.id }) }).then(r => r.json()).then(j => setHomes(j?.projects || [])).catch(() => setHomes([])) }, [task.id, p.id, p.tasks.length])
+  useEffect(() => { if (open && !mine.length) fetch('/api/projects?archived=0', { cache: 'no-store' }).then(r => r.json()).then(j => setMine((j?.projects || []).map((x: any) => ({ id: x.id, title: x.title, kind: x.kind })))).catch(() => {}) }, [open, mine.length])
+  const own = task.home_project_id || task.project_id
+  const inIds = new Set((homes || []).map(h => h.id))
+  const options = mine.filter(m => !inIds.has(m.id) && m.id !== own)
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {homes === null && <span className="text-[11px] text-muted">…</span>}
+      {(homes || []).map(h => (
+        <span key={h.id} className={'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] ' + (h.id === p.id ? 'bg-app border-line text-ink font-semibold' : 'bg-white border-line text-muted')}>
+          <Link href={'/projects/' + h.id} className="hover:underline">{h.title}</Link>
+          {!h.home && <span className="text-[9px] uppercase font-bold text-muted/70" title="The project that made this task">home</span>}
+          {canEdit && h.home && <button onClick={async () => { await act({ action: 'taskRemoveFromProject', taskId: task.id, projectId: h.id }); load() }} disabled={busy} className="text-muted hover:text-rose-600" title="Remove from this project"><X size={10} /></button>}
+        </span>
+      ))}
+      {canEdit && !open && <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink"><Plus size={11} /> Add to project</button>}
+      {canEdit && open && (
+        <select autoFocus onChange={async e => { if (e.target.value) { await act({ action: 'taskAddToProject', taskId: task.id, projectId: e.target.value }); setOpen(false); load() } }} onBlur={() => setOpen(false)} disabled={busy}
+          className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]">
+          <option value="">Add to…</option>
+          {options.map(o => <option key={o.id} value={o.id}>{o.kind === 'personal' ? '🔒 ' : ''}{o.title}</option>)}
+        </select>
+      )}
+    </div>
   )
 }
 
