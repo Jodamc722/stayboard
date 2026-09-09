@@ -74,6 +74,12 @@ export const SECTIONS: NavSection[] = [
       // doors are gone, so the two sets collapsed into the one page each that people use.
       { to: '/audits',   label: 'Quality',    Icon: ClipboardCheck },
       { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
+      // PROJECTS IS BACK (Jon, 2026-09-09: "I dont see the projects tab"). The "0 projects ever"
+      // that retired it on 09-03 was true because migration 031 had never been applied — the table
+      // did not exist, so nothing could be created. It exists now, four waves of work sit behind
+      // it (tasks, comments, files, notifications, templates, personal boards), and the row opens
+      // an Asana-style rail + project view rather than the old kanban.
+      { to: '/projects', label: 'Projects',   Icon: KanbanSquare },
     ],
   },
   {

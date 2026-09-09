@@ -47,7 +47,7 @@ const CAT_DOT: Record<string, string> = {
   emerald: 'bg-emerald-400', cyan: 'bg-cyan-400', slate: 'bg-slate-400',
 }
 
-export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFull: boolean; me: string }) {
+export function ProjectBoard({ canEdit, canFull, me, autoNew }: { canEdit: boolean; canFull: boolean; me: string; autoNew?: string | null }) {
   const [projects, setProjects] = useState<P[]>([])
   const [cats, setCats] = useState<any[]>([])
   const [listings, setListings] = useState<any[]>([])
@@ -59,8 +59,8 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
   const [cat, setCat] = useState('all')
   const [showArchived, setShowArchived] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
-  const [createKind, setCreateKind] = useState<'project' | 'personal'>('project')
+  const [creating, setCreating] = useState(!!autoNew && canEdit)
+  const [createKind, setCreateKind] = useState<'project' | 'personal'>(autoNew === 'personal' ? 'personal' : 'project')
   const [drag, setDrag] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -225,6 +225,7 @@ export function ProjectBoard({ canEdit, canFull, me }: { canEdit: boolean; canFu
       )}
 
       {creating && <NewProject cats={cats} listings={listings} people={people} me={me} templates={templates} startKind={createKind}
+        startTemplate={autoNew && autoNew !== '1' && autoNew !== 'personal' ? autoNew : ''}
         onClose={() => { setCreating(false); setCreateKind('project') }} onDone={() => { setCreating(false); setCreateKind('project'); load() }} />}
       {openProject && <Drawer id={openProject.id} canEdit={canEdit} canFull={canFull} listings={listings} people={people} cats={cats}
         onClose={() => setOpenId(null)} onChanged={load} />}
@@ -300,9 +301,9 @@ function Card({ p, cat, canEdit, onOpen, onQuick, onDragStart, onDragEnd }: {
 // THREE THINGS TO DECIDE FIRST: what shape it starts in (a template), who it is for (a project,
 // a one-on-one, or my own board), and whether it repeats. Everything else is the old form.
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-function NewProject({ cats, listings, people, me, templates, startKind, onClose, onDone }: any) {
+function NewProject({ cats, listings, people, me, templates, startKind, startTemplate, onClose, onDone }: any) {
   const personalOnly = startKind === 'personal'
-  const [template, setTemplate] = useState<string>(personalOnly ? 'personal' : '')
+  const [template, setTemplate] = useState<string>(personalOnly ? 'personal' : (startTemplate || ''))
   const [kind, setKind] = useState<'project' | 'one_on_one' | 'personal'>(personalOnly ? 'personal' : 'project')
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
@@ -320,6 +321,8 @@ function NewProject({ cats, listings, people, me, templates, startKind, onClose,
   const [err, setErr] = useState<string | null>(null)
 
   const tpl: any = templates.find((t: any) => t.key === template) || null
+  const [seeded, setSeeded] = useState(false)
+  useEffect(() => { if (!seeded && startTemplate && tpl) { pick(tpl); setSeeded(true) } }, [tpl, seeded, startTemplate]) // eslint-disable-line react-hooks/exhaustive-deps
   const pick = (t: any) => {
     setTemplate(t?.key || '')
     if (t) {
