@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getGuestOrdersCfg, loadCatalog, orderByFor, submitOrder, ordersForLink, fmtDay, fmtTimeET, todayET, timingFor, hubOf, type LinkRow } from '@/lib/guest-orders'
+import { isLiveStay } from '@/lib/stay-status'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
       checkIn, checkOut: link.check_out, checkInLabel: fmtDay(checkIn), checkOutLabel: fmtDay(link.check_out),
       inHouse, departed,
     },
-    copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: timing.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote },
+    copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: timing.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote, confirmTitle: cfg.confirmTitle, confirmBody: cfg.confirmBody, confirmNext: cfg.confirmNext },
     deadline: { orderBy: orderBy.toISOString(), orderByLabel: fmtTimeET(orderBy) + ' ET', arrivalDayStillPossible, nextDelivery, hoursBefore: timing.orderByHoursBefore, leadHours: timing.leadHours, offered: timing.enabled },
     catalog: catalog.map(c => ({ sku: c.sku, name: c.name, description: c.description, price: c.price_usd, unit: c.unit_label, category: c.category || 'Extras', maxQty: c.track_stock && c.available !== null && c.available !== undefined ? Math.min(c.max_qty, c.available) : c.max_qty, tiers: c.tiers || null, image: c.image_url, fewLeft: c.track_stock && c.available !== null && c.available !== undefined && c.available <= 3 ? c.available : null })),
     orders: orders.map(publicOrder),
@@ -72,8 +73,12 @@ export async function POST(req: NextRequest) {
   if (link.check_out && todayET() >= link.check_out) return NextResponse.json({ ok: false, error: 'This stay has ended — thank you for staying with us!' }, { status: 400 })
   // a cancelled booking keeps its link but must not produce a chargeable order
   const { data: rs } = await supabaseAdmin().from('guesty_reservations').select('status').eq('id', link.reservation_id).limit(1)
-  const rstatus = String(((rs || [])[0] || {}).status || '').toLowerCase()
-  if (rstatus && ['confirmed', 'checked_in'].indexOf(rstatus) < 0) return NextResponse.json({ ok: false, error: 'This reservation is no longer active. If that is a surprise, reply to your booking message and we will help.' }, { status: 400 })
+  // The recurring status trap, fourth sighting: an allow-list of ['confirmed','checked_in'] turns
+  // every `reserved`, `closed` or owner-guest booking into "no longer active" AT THE MOMENT THE
+  // GUEST PRESSES PLACE ORDER — a dead end nobody sees from the ops side. One shared rule decides
+  // what a live stay is; here we only need to know the booking has not been cancelled.
+  const rstatus = String(((rs || [])[0] || {}).status || '')
+  if (rstatus && !isLiveStay(rstatus)) return NextResponse.json({ ok: false, error: 'This reservation is no longer active. If that is a surprise, reply to your booking message and we will help.' }, { status: 400 })
   const basket = (Array.isArray(body?.basket) ? body.basket : []).map((b: any) => ({ sku: String(b?.sku || '').slice(0, 60), qty: Math.floor(Number(b?.qty) || 0) })).filter((b: any) => b.sku && b.qty > 0).slice(0, 40)
   if (!basket.length) return NextResponse.json({ ok: false, error: 'Pick at least one item.' }, { status: 400 })
   // one open basket at a time — a second submit while the first waits is almost always a double tap
