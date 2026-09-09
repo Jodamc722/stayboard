@@ -168,7 +168,7 @@ Pick what is REAL and DOABLE today: a technician already in the building or unit
   const noted: Record<string, string> = {}
   for (const r of verdict.review) { const id = str(r.id); if (known.has(id) && !seen.has(id)) noted[id] = str(r.note).slice(0, 120) }
   const review = Array.from(known.keys()).filter(id => !seen.has(id)).map(id => ({ id, note: noted[id] || '' }))
-  const clean: FocusVerdict = { headline: str(verdict.headline).slice(0, 200) || (focus.length + ' to focus on today.'), focus, review, parked: str(verdict.parked).slice(0, 240) }
+  const clean: FocusVerdict = { headline: cut(str(verdict.headline), 260) || (focus.length + ' to focus on today.'), focus, review, parked: cut(str(verdict.parked), 480) }
 
   const at = new Date().toISOString()
   const next: Record<string, Cached> = {}
@@ -177,6 +177,9 @@ Pick what is REAL and DOABLE today: a technician already in the building or unit
   await setSetting(OPS_FOCUS_KEY, next, null).catch(() => {})
   return { ok: true, today, market, verdict: clean, candidates, model: answeredBy, at, cached: false }
 }
+
+/** Cap on a word boundary — a sentence cut mid-word reads as a bug, not a limit. */
+function cut(v: string, n: number) { if (v.length <= n) return v; const i = v.lastIndexOf(' ', n); return v.slice(0, i > n * 0.6 ? i : n).replace(/[,;:–—-]$/, '') + '…' }
 
 function parseVerdict(text: string): FocusVerdict | null {
   const m = text.match(/\{[\s\S]*\}/)
