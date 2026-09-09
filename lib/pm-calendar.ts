@@ -58,8 +58,8 @@ export type DueItem = {
   daysOver: number
   /** Already on the board or scheduled ahead — listed, never proposed twice. */
   scheduled: { taskId: string; date: string } | null
-  /** How this lands on a week: 'late' | 'this week' | 'later'. */
-  band: 'late' | 'week' | 'later'
+  /** Where it lands: late · due this week · later · or 'unknown' — we have no record at all. */
+  band: 'late' | 'week' | 'later' | 'unknown'
 }
 
 export type DueBuilding = {
@@ -71,6 +71,8 @@ export type DueBuilding = {
   late: number
   week: number
   later: number
+  /** Never recorded. Counted apart from the schedule, because it is a different kind of problem. */
+  unknown: number
   minutes: number
   items: DueItem[]
 }
@@ -82,7 +84,7 @@ export type DueCalendar = {
   /** Cadences that are switched off, or scoped to nothing yet — named, so a silent zero is impossible. */
   inert: { key: string; label: string; why: string }[]
   enabled: boolean
-  totals: { late: number; week: number; later: number; scheduled: number; minutes: number }
+  totals: { late: number; week: number; later: number; unknown: number; scheduled: number; minutes: number }
   buildings: DueBuilding[]
   /** A read that stopped early — the numbers below are floors, not truths. */
   degraded: string[]
@@ -142,7 +144,7 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
     ids.push(String(l.id))
   }
   if (!ids.length) {
-    return { ok: true, today, horizonDays: horizon, inert, enabled: cfg.enabled, totals: { late: 0, week: 0, later: 0, scheduled: 0, minutes: 0 }, buildings: [], degraded }
+    return { ok: true, today, horizonDays: horizon, inert, enabled: cfg.enabled, totals: { late: 0, week: 0, later: 0, unknown: 0, scheduled: 0, minutes: 0 }, buildings: [], degraded }
   }
 
   // ── history: when was each cadence last done, per unit ───────────────────────────────────────
@@ -258,11 +260,18 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       if (!ld && !c.seedIfNever) continue
       // A never-recorded job is due today by definition — but it is stated as "no record", never as
       // "365 days overdue", because a missing record is far more often a data gap than neglect.
+      // ── "NO RECORD" IS NOT "DUE TODAY" ──────────────────────────────────────────────────────
+      // The first live run of this ledger reported 486 jobs due this week and 1,035 hours of work,
+      // because almost no unit has an A/C deep clean or a deep clean in the task history and every
+      // one of them was being dated today. That is not a schedule, it is the absence of one — and
+      // mixing it into "due this week" buries the four jobs that genuinely are. A never-recorded
+      // job gets its own band: counted, visible, addable one building at a time, and never swept
+      // into a schedule number or into "Add all".
       const dueOn = ld ? shift(ld, c.everyDays) : today
-      const daysOver = daysBetween(dueOn, today)
-      if (daysOver < -horizon) continue                     // beyond the horizon: not this view's business
+      const daysOver = ld ? daysBetween(dueOn, today) : 0
+      if (ld && daysOver < -horizon) continue               // beyond the horizon: not this view's business
       const sched = scheduledAhead[lid]?.[c.key] || null
-      const band: DueItem['band'] = daysOver > 0 ? 'late' : (dueOn <= weekEnd ? 'week' : 'later')
+      const band: DueItem['band'] = !ld ? 'unknown' : daysOver > 0 ? 'late' : (dueOn <= weekEnd ? 'week' : 'later')
       items.push({
         id: `${today}|${lid}|${c.key}`,
         cadenceKey: c.key, label: c.label, dept: c.dept, minutes: c.minutes,
@@ -278,22 +287,25 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
     const key = (it.building || buildingOf(it.unit) || it.unit)
     const b = (byBuilding[key] = byBuilding[key] || {
       key, building: key, market: it.market, vendor: it.vendor,
-      units: 0, late: 0, week: 0, later: 0, minutes: 0, items: [],
+      units: 0, late: 0, week: 0, later: 0, unknown: 0, minutes: 0, items: [],
     })
     b.items.push(it)
     if (!it.scheduled) {
       b[it.band]++
-      b.minutes += it.minutes
+      // Minutes describe the SCHEDULE, so a job we have never recorded does not inflate it.
+      if (it.band !== 'unknown') b.minutes += it.minutes
     }
   }
   for (const b of Object.values(byBuilding)) {
     b.units = new Set(b.items.map(i => i.listingId)).size
     // Late first, then soonest due, then the unit — the order somebody works a building in.
-    b.items.sort((x, y) => (x.scheduled ? 1 : 0) - (y.scheduled ? 1 : 0) || y.daysOver - x.daysOver || x.unit.localeCompare(y.unit))
+    // Booked last, no-record after the real schedule, then most overdue first.
+    const rank = (i: DueItem) => (i.scheduled ? 2 : i.band === 'unknown' ? 1 : 0)
+    b.items.sort((x, y) => rank(x) - rank(y) || y.daysOver - x.daysOver || x.unit.localeCompare(y.unit))
   }
   const buildings = Object.values(byBuilding)
     .filter(b => b.items.length)
-    .sort((a, b) => (b.late - a.late) || (b.week - a.week) || a.building.localeCompare(b.building))
+    .sort((a, b) => (b.late - a.late) || (b.week - a.week) || (b.unknown - a.unknown) || a.building.localeCompare(b.building))
 
   const unscheduled = items.filter(i => !i.scheduled)
   return {
@@ -302,8 +314,9 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       late: unscheduled.filter(i => i.band === 'late').length,
       week: unscheduled.filter(i => i.band === 'week').length,
       later: unscheduled.filter(i => i.band === 'later').length,
+      unknown: unscheduled.filter(i => i.band === 'unknown').length,
       scheduled: items.filter(i => !!i.scheduled).length,
-      minutes: unscheduled.reduce((n, i) => n + i.minutes, 0),
+      minutes: unscheduled.filter(i => i.band !== 'unknown').reduce((n, i) => n + i.minutes, 0),
     },
     buildings, degraded,
   }

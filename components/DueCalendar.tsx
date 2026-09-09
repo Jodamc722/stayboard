@@ -20,13 +20,13 @@ type DueItem = {
   listingId: string; unit: string; building: string | null; market: string; vendor: boolean
   lastDone: string | null; dueOn: string; daysOver: number
   scheduled: { taskId: string; date: string } | null
-  band: 'late' | 'week' | 'later'
+  band: 'late' | 'week' | 'later' | 'unknown'
 }
-type DueBuilding = { key: string; building: string; market: string; vendor: boolean; units: number; late: number; week: number; later: number; minutes: number; items: DueItem[] }
+type DueBuilding = { key: string; building: string; market: string; vendor: boolean; units: number; late: number; week: number; later: number; unknown: number; minutes: number; items: DueItem[] }
 type Due = {
   ok: boolean; today: string; horizonDays: number; enabled: boolean
   inert: { key: string; label: string; why: string }[]
-  totals: { late: number; week: number; later: number; scheduled: number; minutes: number }
+  totals: { late: number; week: number; later: number; unknown: number; scheduled: number; minutes: number }
   buildings: DueBuilding[]; degraded: string[]; error?: string
 }
 
@@ -49,7 +49,9 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
   const [filed, setFiled] = useState<Record<string, string>>({})   // item id -> taskId
   const [err, setErr] = useState('')
   const [note, setNote] = useState('')
-  const [band, setBand] = useState<'late' | 'week' | 'all'>('all')
+  // Defaults to the SCHEDULE — what is late or due — because that is the plan. The no-record
+  // pile is a separate, larger job and it is one tap away.
+  const [band, setBand] = useState<'due' | 'late' | 'unknown' | 'all'>('due')
 
   const reload = useCallback(() => { invalidateCache(dueUrl(market, days, date)); refresh() }, [market, days, date, refresh])
   useEffect(() => { setOpen({}) }, [market])
@@ -64,8 +66,10 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
         department: it.dept, priority: it.daysOver > 60 ? 'high' : 'normal',
         date: it.dueOn > (data?.today || '') ? it.dueOn : (data?.today || undefined),
         description: 'Preventative maintenance, on the cadence.\n'
-          + (it.lastDone ? 'Last done ' + niceDate(it.lastDone) + ' — ' : 'No record of this being done in our task history — ')
-          + lateWord(it.daysOver) + '.\nAbout ' + it.minutes + ' minutes.\n\nProposed by Lighthouse (PM calendar).',
+          + (it.lastDone
+              ? 'Last done ' + niceDate(it.lastDone) + ' — ' + lateWord(it.daysOver) + '.'
+              : 'No task in our history matches this job for this unit, so it may never have been done here — or it was done before we kept records.')
+          + '\nAbout ' + it.minutes + ' minutes.\n\nProposed by Lighthouse (PM calendar).',
       }),
     })
     const j = await r.json().catch(() => ({}))
@@ -104,7 +108,11 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
     onRefresh()
   }
 
-  const shownItems = (b: DueBuilding) => band === 'all' ? b.items : b.items.filter(i => i.band === band)
+  const shownItems = (b: DueBuilding) => {
+    if (band === 'all') return b.items
+    if (band === 'due') return b.items.filter(i => i.band === 'late' || i.band === 'week' || i.band === 'later')
+    return b.items.filter(i => i.band === band)
+  }
   const buildings = useMemo(() => (data?.buildings || []).filter(b => shownItems(b).length), [data, band, filed])
   const t = data?.totals
 
@@ -128,7 +136,8 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
                 </>}
           </p>
           <p className="text-[11.5px] text-muted mt-0.5">
-            Every active unit against the cadences in Settings &rarr; Preventative. This is what is owed, not what fits today — Focus decides that.
+            Every active unit against the cadences in Settings &rarr; Preventative. What is owed, not what fits today — Focus decides that.
+            {(t?.unknown || 0) > 0 && <> Separately, <button onClick={() => setBand('unknown')} className="font-semibold text-brand-700 underline">{t!.unknown} jobs have no record at all</button> — never logged, so there is no cadence to be late against. Worth working through a building at a time.</>}
           </p>
         </div>
         <span className="shrink-0 inline-flex items-center gap-1.5">
@@ -157,7 +166,7 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
       )}
 
       <div className="flex items-center gap-1.5 flex-wrap">
-        {([['all', 'Everything'], ['late', 'Late only'], ['week', 'This week']] as const).map(([k, label]) => (
+        {([['due', 'On the schedule'], ['late', 'Late only'], ['unknown', 'No record'], ['all', 'Everything']] as const).map(([k, label]) => (
           <button key={k} onClick={() => setBand(k as any)}
             className={'px-2.5 py-1.5 rounded-full border text-[12px] font-bold min-h-[32px] ' + (band === k ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
             {label}
@@ -188,6 +197,7 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
                 {b.late > 0 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 tabular-nums">{b.late} late</span>}
                 {b.week > 0 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 tabular-nums">{b.week} this week</span>}
                 {b.later > 0 && <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted tabular-nums">{b.later} later</span>}
+                {b.unknown > 0 && band !== 'due' && <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted tabular-nums">{b.unknown} no record</span>}
                 <span className="text-[11px] text-muted tabular-nums hidden sm:inline">≈ {fmtH(b.minutes)}</span>
                 {addable.length > 0 && (
                   <button onClick={() => addBuilding(b)} disabled={!!busy}
@@ -208,11 +218,11 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
                       <span className="text-[12.5px] text-ink min-w-0 flex-1">
                         <b>{it.unit}</b> <span className="text-ink/75">· {it.label}</span>
                         <span className="block text-[11px] text-muted">
-                          {it.lastDone ? 'last done ' + niceDate(it.lastDone) : 'no record of it being done'} · {it.minutes} min
+                          {it.lastDone ? 'last done ' + niceDate(it.lastDone) : 'nothing like it in our task history'} · {it.minutes} min
                         </span>
                       </span>
-                      <span className={'text-[11px] font-semibold tabular-nums shrink-0 ' + (it.daysOver > 0 ? 'text-rose-700' : it.daysOver === 0 ? 'text-amber-700' : 'text-muted')}>
-                        {lateWord(it.daysOver)}
+                      <span className={'text-[11px] font-semibold tabular-nums shrink-0 ' + (it.band === 'unknown' ? 'text-muted' : it.daysOver > 0 ? 'text-rose-700' : it.daysOver === 0 ? 'text-amber-700' : 'text-muted')}>
+                        {it.band === 'unknown' ? 'never logged' : lateWord(it.daysOver)}
                       </span>
                       {it.scheduled ? (
                         <a href={'https://app.breezeway.io/task/' + it.scheduled.taskId} target="_blank" rel="noreferrer"
