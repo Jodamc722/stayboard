@@ -39,8 +39,8 @@ const SECTIONS: { key: string; label: string; sub: string }[] = [
   { key: 'cleaning', label: 'Cleaning & tasks', sub: 'the next 14 days of scheduled work' },
   { key: 'verification', label: 'Guest verification', sub: 'verified / pending per arrival' },
   { key: 'notes', label: 'Reservation notes', sub: 'notes on current + upcoming stays' },
-  { key: 'team', label: 'Weekly planner — cleaning', sub: 'who works which days, and the cleans on them' },
-  { key: 'team_maint', label: 'Weekly planner — maintenance', sub: 'the work orders, with a link into Breezeway' },
+  { key: 'team', label: 'Weekly planner — cleaning', sub: 'departure cleans and who has them, any dates · adds revenue and labor when money is on' },
+  { key: 'team_maint', label: 'Weekly planner — maintenance', sub: 'the work orders, with a link into Breezeway — kept apart from the cleaning board' },
 ]
 // FIELD BOARD SECTIONS (Jon, 2026-08-25). Tick any of these and the link stops being a report and
 // becomes a LIVE BOARD at /board/<code> — the morning brief, alive, scoped to whatever units this

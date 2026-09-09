@@ -3,9 +3,18 @@
 // reads: who's coming, what it's earning, how the bookings arrived, what's being cleaned, who's
 // verified, what the notes say. Only sections the link enables ever arrive from the API — this
 // component cannot leak what it was never sent.
-import { useCallback, useEffect, useState } from 'react'
-import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users } from 'lucide-react'
-import { PlannerView, PlannerLegend } from './PlannerView'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users, RefreshCw } from 'lucide-react'
+import { PlannerView, PlannerLegend, type PGroup } from './PlannerView'
+import { ScheduleLaborStrip } from './ScheduleLaborStrip'
+
+const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+const addDays = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
+const GROUPS: { key: PGroup; label: string }[] = [
+  { key: 'team', label: 'All team' },
+  { key: 'market', label: 'By market' },
+  { key: 'cleaner', label: 'By cleaner' },
+]
 
 const usd = (n: any) => n == null ? null : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
@@ -15,18 +24,30 @@ export function SharedView({ code }: { code: string }) {
   const [pw, setPw] = useState('')
   const [locked, setLocked] = useState(false)
   const [busy, setBusy] = useState(false)
+  // THE DATES THE READER PICKS. They travel in the POST body, never the query string — a share URL
+  // gets forwarded and screenshotted, and this one already carries a passcode.
+  const [from, setFrom] = useState(todayET())
+  const [to, setTo] = useState(addDays(todayET(), 13))
+  const [group, setGroup] = useState<PGroup>('team')
+  // The passcode that worked and the span on screen live in refs, not in the loader's dependency
+  // list: as state they re-created `load`, the mount effect re-fired, and every date change fetched
+  // twice — once explicitly and once again for the new identity.
+  const okRef = useRef('')
+  const rangeRef = useRef({ from: todayET(), to: addDays(todayET(), 13) })
 
-  const load = useCallback(async (passcode?: string) => {
+  const load = useCallback(async (passcode?: string, range?: { from: string; to: string }) => {
     setBusy(true); setErr('')
+    const pass = passcode != null ? passcode : okRef.current
+    if (range) rangeRef.current = range
     try {
-      const r = passcode
-        ? await fetch('/api/share/' + encodeURIComponent(code), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pw: passcode }), cache: 'no-store' })
+      const r = (pass || range)
+        ? await fetch('/api/share/' + encodeURIComponent(code), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pw: pass, from: rangeRef.current.from, to: rangeRef.current.to }), cache: 'no-store' })
         : await fetch('/api/share/' + encodeURIComponent(code), { cache: 'no-store' })
       const j = await r.json()
       if (r.status === 404) throw new Error('This link is not valid or has been turned off.')
       if (j.locked) { setLocked(true); setData(j); if (j.error) setErr(j.error); setBusy(false); return }
       if (!j.ok) throw new Error(j.error || 'Could not load.')
-      setLocked(false); setData(j)
+      setLocked(false); setData(j); okRef.current = pass || ''
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }, [code])
@@ -156,6 +177,33 @@ export function SharedView({ code }: { code: string }) {
               </p>
               <p className="text-[11px] text-neutral-400 ml-auto tabular-nums">{s.team.from} → {s.team.to}</p>
             </div>
+
+            {/* PICK THE DATES (Jon, 2026-09-09). Reloading re-asks the server, so the labor figures
+                below always belong to the span on screen rather than to whatever it opened with. */}
+            <div className="px-4 py-2.5 border-b border-neutral-100 flex items-center gap-1.5 flex-wrap">
+              <input type="date" value={from} max={to} aria-label="From"
+                onChange={e => { const v = e.target.value; if (!v) return; const t = v > to ? addDays(v, 6) : to; setFrom(v); setTo(t); load(undefined, { from: v, to: t }) }}
+                className="h-8 rounded-lg border border-neutral-300 bg-white px-2 text-[12px] text-neutral-900" />
+              <span className="text-[11.5px] text-neutral-400">to</span>
+              <input type="date" value={to} min={from} aria-label="To"
+                onChange={e => { const v = e.target.value; if (!v) return; setTo(v); load(undefined, { from, to: v }) }}
+                className="h-8 rounded-lg border border-neutral-300 bg-white px-2 text-[12px] text-neutral-900" />
+              <button onClick={() => { const f = todayET(), t = addDays(f, 13); setFrom(f); setTo(t); load(undefined, { from: f, to: t }) }}
+                className="h-8 px-2.5 rounded-lg border border-neutral-300 bg-white text-[12px] font-semibold text-neutral-700">Next 2 weeks</button>
+              <button onClick={() => load(undefined, { from, to })} disabled={busy} aria-label="Refresh"
+                className="h-8 w-8 grid place-items-center rounded-lg border border-neutral-300 bg-white text-neutral-500 disabled:opacity-40">
+                <RefreshCw className={'w-3.5 h-3.5 ' + (busy ? 'animate-spin' : '')} />
+              </button>
+              <div className="inline-flex rounded-lg border border-neutral-300 overflow-hidden bg-white ml-auto">
+                {GROUPS.map(g => (
+                  <button key={g.key} onClick={() => setGroup(g.key)}
+                    className={'text-[12px] font-semibold px-2.5 h-8 border-l border-neutral-200 first:border-l-0 ' + (group === g.key ? 'bg-neutral-900 text-white' : 'text-neutral-500')}>{g.label}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* What those cleans earn and what the crew costs — only when this link shows money. */}
+            {s.teamLabor ? <div className="p-3 bg-neutral-50 border-b border-neutral-100"><ScheduleLaborStrip data={s.teamLabor} /></div> : null}
             {/* Same drawing as the staff tab — one component, so what the crew opens and what the
                 office plans on can never drift. Breezeway links only on the maintenance link. */}
             <div className="p-3 bg-neutral-50">
@@ -164,6 +212,7 @@ export function SharedView({ code }: { code: string }) {
                 blocks={s.team.markets || []}
                 dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'}
                 showLinks={s.team.dept === 'maintenance'}
+                group={group}
               />
               <div className="px-1 pt-3">
                 <PlannerLegend dept={s.team.dept === 'maintenance' ? 'maintenance' : 'cleaning'} />

@@ -10,13 +10,21 @@
 // opens in place, so there is nothing to switch to.
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from 'lucide-react'
-import { PlannerView, PlannerLegend, type PDay, type PBlock } from './PlannerView'
+import { PlannerView, PlannerLegend, type PDay, type PBlock, type PGroup } from './PlannerView'
+import { ScheduleLaborStrip, type ScheduleLaborData } from './ScheduleLaborStrip'
 
 type Data = {
   from: string; to: string; days: PDay[]; markets: PBlock[]
   rules: { longStayNights: number; bigBookingUsd: number }
   counts: { tasksRead: number; vendorDropped: number; unassignedDropped: number; rosterWeeks: number; clashes: number }
+  labor?: ScheduleLaborData | null
 }
+
+const GROUPS: { key: PGroup; label: string }[] = [
+  { key: 'team', label: 'All team' },
+  { key: 'market', label: 'By market' },
+  { key: 'cleaner', label: 'By cleaner' },
+]
 
 function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
 function addDays(iso: string, n: number): string { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
@@ -26,19 +34,23 @@ export function TeamPlanner() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(true)
   const [from, setFrom] = useState(todayET())
+  const [to, setTo] = useState(addDays(todayET(), 13))
   const [market, setMarket] = useState('all')
   const [dept, setDept] = useState<'cleaning' | 'maintenance'>('cleaning')
+  // ALL TEAM FIRST (Jon, 2026-09-09): the review question is "how does the week look across both
+  // markets", and splitting by market was answering a question nobody opened this page to ask.
+  const [group, setGroup] = useState<PGroup>('team')
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
     try {
-      const r = await fetch('/api/team-schedule?days=14&dept=' + dept + '&from=' + from, { cache: 'no-store' })
+      const r = await fetch('/api/team-schedule?dept=' + dept + '&from=' + from + '&to=' + to + '&money=1', { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || j?.message || 'Could not load the planner.')
       setData(j)
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
-  }, [from, dept])
+  }, [from, to, dept])
   useEffect(() => { load() }, [load])
 
   if (!data && busy) return (
@@ -64,21 +76,34 @@ export function TeamPlanner() {
 
         <div className="flex-1" />
 
-        <div className="inline-flex items-center gap-1.5">
-          <button onClick={() => setFrom(addDays(from, -7))} aria-label="Earlier"
+        <div className="inline-flex items-center gap-1.5 flex-wrap">
+          {/* WHATEVER DATES YOU SELECT (Jon). The arrows still shift a week at a time because that
+              is how the week is usually read; the two date fields are there for anything else. */}
+          <input type="date" value={from} max={to} onChange={e => { const v = e.target.value; if (v) { setFrom(v); if (v > to) setTo(addDays(v, 6)) } }}
+            aria-label="From" className="h-9 rounded-xl border border-line bg-white px-2.5 text-[12.5px] text-ink" />
+          <span className="text-[12px] text-muted">to</span>
+          <input type="date" value={to} min={from} onChange={e => e.target.value && setTo(e.target.value)}
+            aria-label="To" className="h-9 rounded-xl border border-line bg-white px-2.5 text-[12.5px] text-ink" />
+          <button onClick={() => { setFrom(addDays(from, -7)); setTo(addDays(to, -7)) }} aria-label="Earlier"
             className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink"><ChevronLeft size={15} /></button>
           {from !== todayET()
-            ? <button onClick={() => setFrom(todayET())} className="text-[12.5px] font-semibold px-3 h-9 rounded-xl border border-line bg-white text-ink">Back to today</button>
+            ? <button onClick={() => { setFrom(todayET()); setTo(addDays(todayET(), 13)) }} className="text-[12.5px] font-semibold px-3 h-9 rounded-xl border border-line bg-white text-ink">Back to today</button>
             : null}
-          <button onClick={() => setFrom(addDays(from, 7))} aria-label="Later"
+          <button onClick={() => { setFrom(addDays(from, 7)); setTo(addDays(to, 7)) }} aria-label="Later"
             className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink"><ChevronRight size={15} /></button>
           <button onClick={load} disabled={busy} aria-label="Refresh"
             className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink disabled:opacity-40"><RefreshCw size={14} className={busy ? 'animate-spin' : ''} /></button>
         </div>
       </div>
 
-      {/* which market */}
+      {/* how it is grouped, then which market */}
       <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white mr-1">
+          {GROUPS.map(g => (
+            <button key={g.key} onClick={() => setGroup(g.key)}
+              className={'text-[12.5px] font-semibold px-3 h-9 border-l border-line first:border-l-0 ' + (group === g.key ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{g.label}</button>
+          ))}
+        </div>
         <button onClick={() => setMarket('all')} className={chip(market === 'all')}>All markets</button>
         {data.markets.map(m => (
           <button key={m.market} onClick={() => setMarket(m.market.toLowerCase())} className={chip(market === m.market.toLowerCase())}>{m.market}</button>
@@ -97,7 +122,9 @@ export function TeamPlanner() {
         </div>
       ) : null}
 
-      <PlannerView days={data.days} blocks={data.markets} dept={dept} marketFilter={market} showLinks />
+      {data.labor && dept === 'cleaning' ? <ScheduleLaborStrip data={data.labor} /> : null}
+
+      <PlannerView days={data.days} blocks={data.markets} dept={dept} marketFilter={market} group={group} showLinks />
 
       <PlannerLegend dept={dept} />
 

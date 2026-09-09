@@ -25,6 +25,8 @@ export type PJob = {
 }
 export type PPerson = {
   name: string; dept?: string
+  /** Set when several markets are merged into one block, so a name still says where it works. */
+  market?: string
   byDay: Record<string, PJob[]>
   roster?: Record<string, string>
   clashes?: Record<string, string>
@@ -76,22 +78,76 @@ function cellOf(jobs: PJob[], status: string, dept: string) {
   return null
 }
 
-export function PlannerView({ days, blocks, dept, showLinks, marketFilter }: {
+/**
+ * HOW THE SAME WEEK IS GROUPED (Jon, 2026-09-09: "organize it by cleaner, by market, and all team").
+ *
+ *   market   a block per market — the original, and how a market lead reads their own crew.
+ *   team     one block, everybody in it, ordered by how much work they are carrying. This is the
+ *            review lens: who is loaded and who is light, across both markets at once.
+ *   cleaner  the same single block ordered A→Z, for looking a specific person up.
+ *
+ * Merging is by name, because a person who covers in the other market appears in both blocks and
+ * would otherwise show up twice, each time with half their week.
+ */
+export type PGroup = 'market' | 'team' | 'cleaner'
+export function regroup(blocks: PBlock[], group: PGroup): PBlock[] {
+  if (group === 'market') return blocks
+  const by = new Map<string, PPerson>()
+  for (const b of blocks) {
+    for (const p of b.people) {
+      const k = p.name.trim().toLowerCase()
+      const prev = by.get(k)
+      if (!prev) { by.set(k, { ...p, byDay: { ...p.byDay }, roster: { ...(p.roster || {}) }, clashes: { ...(p.clashes || {}) }, market: b.market }); continue }
+      for (const d of Object.keys(p.byDay)) prev.byDay[d] = (prev.byDay[d] || []).concat(p.byDay[d])
+      for (const d of Object.keys(p.roster || {})) if (!prev.roster![d]) prev.roster![d] = p.roster![d]
+      for (const d of Object.keys(p.clashes || {})) if (!prev.clashes![d]) prev.clashes![d] = p.clashes![d]
+      prev.jobs = (prev.jobs || 0) + (p.jobs || 0)
+      prev.cleans = (prev.cleans || 0) + (p.cleans || 0)
+      prev.daysWorked = Math.max(prev.daysWorked || 0, p.daysWorked || 0)
+      prev.daysOn = Math.max(prev.daysOn || 0, p.daysOn || 0)
+      if (prev.market && b.market && prev.market !== b.market) prev.market = prev.market + ' · ' + b.market
+    }
+  }
+  const people = Array.from(by.values())
+  people.sort(group === 'cleaner'
+    ? (x, y) => x.name.localeCompare(y.name)
+    : (x, y) => (y.cleans || 0) - (x.cleans || 0) || (y.jobs || 0) - (x.jobs || 0) || x.name.localeCompare(y.name))
+  const perDay: Record<string, { jobs: number; cleans: number; people: number }> = {}
+  for (const b of blocks) {
+    for (const d of Object.keys(b.perDay || {})) {
+      const v = b.perDay![d]
+      const acc = perDay[d] || { jobs: 0, cleans: 0, people: 0 }
+      acc.jobs += v.jobs; acc.cleans += v.cleans; acc.people += v.people
+      perDay[d] = acc
+    }
+  }
+  return [{
+    market: group === 'cleaner' ? 'By cleaner' : 'All team',
+    people,
+    perDay,
+    jobs: blocks.reduce((a, b) => a + (b.jobs || 0), 0),
+    cleans: blocks.reduce((a, b) => a + (b.cleans || 0), 0),
+  }]
+}
+
+export function PlannerView({ days, blocks, dept, showLinks, marketFilter, group = 'market' }: {
   days: PDay[]
   blocks: PBlock[]
   dept: 'cleaning' | 'maintenance' | 'all'
   /** Breezeway links only belong on the maintenance planner — a cleaner has no login. */
   showLinks?: boolean
   marketFilter?: string
+  group?: PGroup
 }) {
   const [week, setWeek] = useState(0)
   const [openDay, setOpenDay] = useState<string>(() => (days.find(d => d.today) || days[0] || { date: '' }).date)
 
   const weeks = Math.max(1, Math.ceil(days.length / 7))
   const shown = useMemo(() => days.slice(week * 7, week * 7 + 7), [days, week])
-  const list = useMemo(
-    () => (!marketFilter || marketFilter === 'all' ? blocks : blocks.filter(b => b.market.toLowerCase() === marketFilter)),
-    [blocks, marketFilter])
+  const list = useMemo(() => {
+    const scoped = (!marketFilter || marketFilter === 'all') ? blocks : blocks.filter(b => b.market.toLowerCase() === marketFilter)
+    return regroup(scoped, group)
+  }, [blocks, marketFilter, group])
 
   if (!shown.length) return null
   const from = shown[0], to = shown[shown.length - 1]
@@ -163,6 +219,7 @@ export function PlannerView({ days, blocks, dept, showLinks, marketFilter }: {
                             <span className="block text-[11px] text-muted truncate">
                               {(p.daysOn || p.daysWorked || 0) + 'd'}
                               {dept === 'maintenance' ? ' · ' + (p.jobs || 0) + ' orders' : ' · ' + (p.cleans || 0) + ' cleans'}
+                              {p.market && b.market !== p.market ? ' · ' + p.market : ''}
                               {p.unrostered ? ' · off roster' : ''}
                             </span>
                           </span>
