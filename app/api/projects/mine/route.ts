@@ -12,6 +12,7 @@ import { requireLevel, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { personKey } from '@/lib/person-name'
 import { todayISO } from '@/lib/projects-shared'
+import { ensureMyBoard } from '@/lib/projects'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,11 +39,17 @@ export async function GET(req: NextRequest) {
     const myName = String((meRow as any)?.profile?.name || (meRow as any)?.profile?.full_name || '')
     const keys = Array.from(new Set([email, myName ? personKey(myName) : ''].filter(Boolean)))
 
+    // MY BOARD (Jon, 2026-09-09): every user has one. Its tasks are mine by definition, assigned or not.
+    const board = await ensureMyBoard(email, myName).catch(() => null)
     const { data: asg, error: aErr } = await sb.from('project_task_assignees')
       .select('task_id,project_id').or(`email.eq.${email},person_key.in.(${keys.map(k => JSON.stringify(k)).join(',')})`).limit(2000)
     if (aErr) throw new Error(aErr.message)
-    let taskIds = Array.from(new Set(((asg || []) as any[]).filter(a => !visible || visible.has(String(a.project_id))).map(a => String(a.task_id))))
-    if (!taskIds.length) return NextResponse.json({ ok: true, today, groups: empty(), total: 0 })
+    const own = board ? await sb.from('project_steps').select('id').eq('project_id', board.id).neq('status', 'done').limit(1000) : { data: [] as any[] }
+    let taskIds = Array.from(new Set([
+      ...((asg || []) as any[]).filter(a => !visible || visible.has(String(a.project_id))).map(a => String(a.task_id)),
+      ...((own.data || []) as any[]).map(t => String(t.id)),
+    ]))
+    if (!taskIds.length) return NextResponse.json({ ok: true, today, groups: empty(), total: 0, board })
 
     const { data: tasks, error: tErr } = await sb.from('project_steps')
       .select('id,project_id,title,status,due_on,priority,section,parent_id,updated_at')
@@ -50,7 +57,7 @@ export async function GET(req: NextRequest) {
       .order('due_on', { ascending: true, nullsFirst: false }).order('id')
     if (tErr) throw new Error(tErr.message)
     const rows = (tasks || []) as any[]
-    if (!rows.length) return NextResponse.json({ ok: true, today, groups: empty(), total: 0 })
+    if (!rows.length) return NextResponse.json({ ok: true, today, groups: empty(), total: 0, board })
 
     const pids = Array.from(new Set(rows.map(r => String(r.project_id))))
     const [{ data: projs }, { data: links }] = await Promise.all([
@@ -76,6 +83,7 @@ export async function GET(req: NextRequest) {
         priority: String(r.priority || 'normal'), section: r.section || null, subtask: !!r.parent_id,
         project: pmap[String(r.project_id)]?.title || 'Project',
         oneOnOne: pmap[String(r.project_id)]?.kind === 'one_on_one',
+        mine: !!board && String(r.project_id) === board.id,
         where: where[String(r.project_id)] || null,
       }
       if (!item.due) groups.someday.push(item)
@@ -84,9 +92,32 @@ export async function GET(req: NextRequest) {
       else if (item.due <= week) groups.week.push(item)
       else groups.later.push(item)
     }
-    return NextResponse.json({ ok: true, today, groups, total: rows.length })
+    return NextResponse.json({ ok: true, today, groups, total: rows.length, board })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+  }
+}
+
+// Quick add straight from My Tasks: the task lands on my board, assigned to me, dated if asked.
+export async function POST(req: NextRequest) {
+  const g = await requireLevel('projects', 'edit')
+  if (!g.ok) return g.res
+  const email = String(g.access.email || '').toLowerCase()
+  const b = await req.json().catch(() => ({}))
+  const title = String(b.title || '').trim().slice(0, 300)
+  if (!title) return NextResponse.json({ error: 'Give it a title.' }, { status: 400 })
+  try {
+    const sb = supabaseAdmin()
+    const { data: meRow } = await sb.from('app_users').select('profile').eq('email', email).maybeSingle()
+    const myName = String((meRow as any)?.profile?.name || (meRow as any)?.profile?.full_name || '')
+    const board = await ensureMyBoard(email, myName)
+    const due = /^\d{4}-\d{2}-\d{2}$/.test(String(b.due_on || '')) ? String(b.due_on) : null
+    const { data: t, error } = await sb.from('project_steps').insert({ project_id: board.id, title, status: 'todo', section: 'To do', priority: 'normal', due_on: due, created_by: email }).select('id').single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    await sb.from('project_task_assignees').upsert({ task_id: t.id, project_id: board.id, person_key: email, display: myName || email.split('@')[0], email }, { onConflict: 'task_id,person_key' })
+    return NextResponse.json({ ok: true, taskId: t.id, board })
+  } catch (e: any) {
+    return NextResponse.json({ error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
 }
 
