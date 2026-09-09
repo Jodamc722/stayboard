@@ -1,10 +1,22 @@
-// THE MAINTENANCE BRIEF — one email per market, 7:46am ET (Jon, 2026-08-25: "we should have
-// maintenance brief for broward and Miami").
+// THE MAINTENANCE BRIEF — RETIRED 2026-09-09. It no longer sends.
 //
-// This route was a 410 stub between 2026-08-22 and 2026-08-25, when the two standalone emails
-// were folded into Ops Command. Jon has asked for them back for the crews and their supervisors;
-// Ops Command KEEPS its two-market summary card (his call), because that card is the ops
-// manager's altitude and this email is the market's worklist.
+// Jon: "duplicate info, not clean and to the point", then, asked how hard to cut: fold maintenance
+// in. Maintenance was being told three times before 8am — on the market day sheet by technician, in
+// Ops Command as a two-market table, and again here 45 minutes later — and this email's own
+// worklist, vacant units and recurring-unit lines all had a copy in one of the other two.
+//
+// Everything it carried now renders inside the day sheets: the maintenance table is on each market
+// sheet for its own market, the carryover worklist is the Review card (which also says the next day
+// each unit is empty), and vacant units come from the same vacantWork engine either way.
+//
+// THE ROUTE STAYS, ANSWERING HONESTLY. A Vercel cron still points at it, and the ?preview= and
+// ?test= paths are how anyone checks what this used to look like — but the morning send is gone.
+//
+// WORTH KNOWING: the recipient list saved in the UI never reached this route. Settings wrote it to
+// app_settings['maint_brief'] and read it back from there, so the card looked right, while the send
+// read cfg.maint on 'ops_brief' — a key nothing ever wrote. So `to` was always empty, both emails
+// went to the owner alone, CC Roberto, and `maint.enabled === false` could never be true either:
+// the off switch did not work. Nobody on that saved list has been receiving these.
 //
 //   GET                          → send both markets to their recipient lists
 //   GET ?preview=Miami|Broward   → signed-in only: the HTML, no send, nothing stored
@@ -27,8 +39,6 @@ export const maxDuration = 300
 
 const OPS_BRIEF_KEY = 'ops_brief'
 const OWNER = 'jon@stay-hospitality.com'
-// Standing CC (Jon, 2026-08-09): the operations manager sees every brief that reaches a crew.
-const STANDING_CC = ['roberto@stay-hospitality.com']
 type Cfg = { fromEmail?: string; maint?: { enabled?: boolean; miamiTo?: string[]; browardTo?: string[]; miamiLang?: string; browardLang?: string } }
 
 const clean = (list: any): string[] => {
@@ -38,10 +48,6 @@ const clean = (list: any): string[] => {
     if (e && /@/.test(e) && !seen.has(e)) { seen.add(e); out.push(e) }
   }
   return out
-}
-const ccFor = (to: string[]) => {
-  const already = new Set(to.map(t => t.toLowerCase()))
-  return STANDING_CC.filter(c => !already.has(c.toLowerCase()))
 }
 
 export async function GET(req: NextRequest) {
@@ -85,32 +91,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: out.every(o => o.sent), test: true, to: me, results: out })
   }
 
-  // ---- the real morning send. OFF MEANS OFF, but off is a deliberate setting, not an empty list.
-  if (cfg.maint?.enabled === false) {
-    return NextResponse.json({ ok: true, sent: false, reason: 'maintenance briefs switched off in settings' })
-  }
-  const out: any[] = []
-  // EACH MARKET ON ITS OWN — one market failing must never take the other's email down.
-  for (const { market, to, lang } of MARKETS) {
-    const list = to.length ? to : [OWNER]
-    try {
-      const b = await buildMaintBrief(market, lang)
-      const r = await sendGmail({ fromEmail, to: list, cc: ccFor(list), subject: b.subject, html: b.html })
-      out.push({ market, to: list.length, defaulted: !to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
-    } catch (e: any) {
-      out.push({ market, to: list.length, sent: false, error: 'build failed: ' + String(e?.message || e) })
-    }
-  }
-  // A brief that did not arrive looks exactly like a quiet morning — so say so.
-  const failed = out.filter(o => !o.sent)
-  if (failed.length) {
-    await sendGmail({
-      fromEmail, to: [OWNER],
-      subject: `⚠️ Maintenance briefs: ${failed.length} of ${out.length} did not send`,
-      html: '<p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.7">' +
-        failed.map(f => `<b>${f.market}</b> — ${String(f.error || 'unknown error').replace(/</g, '&lt;')}`).join('<br>') +
-        '</p><p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;color:#6b7280">They run again tomorrow morning.</p>',
-    }).catch(() => null)
-  }
-  return NextResponse.json({ ok: out.every(o => o.sent), from: fromEmail, results: out })
+  // ---- the morning send is retired. The cron still fires; it just has nothing to send.
+  return NextResponse.json({
+    ok: true, sent: false,
+    reason: 'retired 2026-09-09 — maintenance is now inside the market day sheets and Ops Command',
+    where: 'Miami / Broward day sheets carry their own maintenance table; carryover is named in the Review card with the day each unit is next empty',
+  })
 }

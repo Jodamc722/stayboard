@@ -31,7 +31,7 @@
 //     email and Ops Command, both management-only.
 import 'server-only'
 import { maintData, type MaintMarket } from './maint-brief'
-import { quoteBanner, accessNotice } from './ops-brief'
+import { accessNotice } from './ops-brief'
 import { buildDaySheet } from './daysheet'
 import { vacantWork, type VacantWork } from './vacant-work'
 import { supabaseAdmin } from './supabase-admin'
@@ -418,7 +418,6 @@ export async function buildMaintBrief(market: MaintMarket, lang: BriefLang = 'en
     <p style="${S.bandTitle}">${market} — ${t('Maintenance')}</p>
     <p style="${S.bandSub}">${dateNice} · ${t("today by area, empty units, what carried over")}</p>
   </div>
-  ${quoteBanner(today, lang)}
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #7c2d12;border-radius:12px;padding:12px 18px;margin-bottom:10px">
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>

@@ -297,7 +297,9 @@ async function gather(variant: BriefVariant) {
         big: total >= BIG_USD,
       }
     })
-    .filter(x => x.when >= today && x.when <= inN)
+    // STRICTLY AHEAD. Today's owner arrival printed on the Arrivals row, in Owner stays, and again
+    // here under a red TODAY pill — three copies of one booking in one email.
+    .filter(x => x.when > today && x.when <= inN)
     .filter(x => x.owner || x.long || x.big)
     .sort((a, b) => a.when.localeCompare(b.when) || b.total - a.total)
 
@@ -513,35 +515,6 @@ function boardAtAGlance(rows: any[], inScope: (lid: string) => boolean, cats: Ca
   return cats.map(c => by[c.key]).filter(r => r && r.total > 0)
 }
 
-function boardCard(rows: BoardRow[], when: string, href: string): string {
-  if (!rows.length) return ''
-  const total = rows.reduce((n, r) => n + r.total, 0)
-  const done = rows.reduce((n, r) => n + r.done, 0)
-  const open = rows.reduce((n, r) => n + r.open, 0)
-  const bar = (r: BoardRow) => {
-    const pct = (n: number) => r.total ? Math.round((n / r.total) * 100) : 0
-    return `<table width="100%" cellspacing="0" cellpadding="0" style="border-radius:3px;overflow:hidden"><tr style="height:6px">
-      ${r.done ? `<td style="width:${pct(r.done)}%;background:#10b981"></td>` : ''}
-      ${r.running ? `<td style="width:${pct(r.running)}%;background:#f59e0b"></td>` : ''}
-      ${r.open ? `<td style="width:${pct(r.open)}%;background:#e5e7eb"></td>` : ''}
-    </tr></table>`
-  }
-  const body = rows.map(r => `
-    <tr><td style="${S.td};width:42%">
-      <b style="font-size:13px">${esc(r.label)}</b>
-      <div style="margin-top:4px">${bar(r)}</div>
-    </td>
-    <td style="${S.td};text-align:right;white-space:nowrap;font-size:12px">
-      <span style="${S.green}">${r.done} done</span>
-      ${r.running ? ` &middot; <span style="${S.amber}">${r.running} doing</span>` : ''}
-      ${r.open ? ` &middot; <span style="${r.open && !r.done ? S.red : S.muted}">${r.open} not started</span>` : ''}
-    </td></tr>`).join('')
-  const table = `<table width="100%" cellspacing="0" cellpadding="0">${body}</table>`
-  return card('The board today — every kind of work', total, table +
-    `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${done} of ${total} finished${open ? ` &middot; ${open} not started yet` : ''}. ` +
-    `<a href="${href}" style="color:#4338ca;text-decoration:none;font-weight:600">Open the Grid &rarr;</a></p>`,
-    '#0f766e', when)
-}
 
 // ── BAD-REVIEW INSPECTIONS ON THE BRIEF (Jon, 2026-08-24) ───────────────────────────────────────
 // The engine is `runLowReviewInspections` in lib/auto-inspections: a review at or below the bar
@@ -597,74 +570,6 @@ export const accessNotice = (lang: BriefLang = 'en'): string => {
     <p style="margin:0;font-size:12.5px;line-height:1.6;color:#92400e">
       <b>${t('Confirm access before entering any unit.')}</b> ${body}
     </p>
-  </div>`
-}
-
-// ── A HOSPITALITY THOUGHT, ONE PER DAY ──────────────────────────────────────────────────────────
-// Picked by the DATE, not at random, so everyone who opens the brief on the same morning reads the
-// same line and it changes exactly once a day. The list is long enough not to repeat inside a
-// season; add to it freely — the rotation adjusts itself.
-const HOSPITALITY_QUOTES: { text: string; who: string }[] = [
-  { text: 'People will forget what you said, people will forget what you did, but people will never forget how you made them feel.', who: 'Maya Angelou' },
-  { text: 'Service is the rent we pay for the privilege of living on this earth.', who: 'Shirley Chisholm' },
-  { text: 'We are ladies and gentlemen serving ladies and gentlemen.', who: 'The Ritz-Carlton credo' },
-  { text: 'Hospitality is almost impossible to teach. It is all about hiring the right people.', who: 'Danny Meyer' },
-  { text: 'The little things are the big things.', who: 'Conrad Hilton' },
-  { text: 'Take care of your employees and they will take care of your customers.', who: 'Richard Branson' },
-  { text: 'Excellence is not a skill, it is an attitude.', who: 'Ralph Marston' },
-  { text: 'Quality is never an accident; it is always the result of intelligent effort.', who: 'John Ruskin' },
-  { text: 'A guest never forgets a clean room; they only remember a dirty one.', who: 'Hotelier proverb' },
-  { text: 'Being on par in terms of price and quality only gets you into the game. Service wins it.', who: 'Tony Alessandra' },
-  { text: 'You do not build a business. You build people, and then people build the business.', who: 'Zig Ziglar' },
-  { text: 'Hospitality is when someone knows they are welcome before you say a word.', who: 'Unknown' },
-  { text: 'Details create the big picture.', who: 'Sanford I. Weill' },
-  { text: 'Make the guest the hero of their own trip.', who: 'Chip Conley' },
-  { text: 'How you do anything is how you do everything.', who: 'Unknown' },
-  { text: 'The first duty of a host is to make the guest feel at ease.', who: 'Escoffier' },
-  { text: 'Consistency is the true foundation of trust.', who: 'Roy T. Bennett' },
-  { text: 'Do the common things uncommonly well.', who: 'John D. Rockefeller Jr.' },
-  { text: 'It is not the hotel that welcomes the guest, it is the person at the door.', who: 'Unknown' },
-  { text: 'Great service is not what you do when someone is watching.', who: 'Unknown' },
-  { text: 'Every guest arrives carrying a day you know nothing about. Be the easy part of it.', who: 'Unknown' },
-  { text: 'Perfection is a lot of little things done well.', who: 'Fernand Point' },
-  { text: 'Teamwork makes the dream work, but a vision becomes a nightmare when the leader has a big dream and a bad team.', who: 'John C. Maxwell' },
-  { text: 'Courtesy is the one coin you can never have too much of, nor be stingy with.', who: 'John Wanamaker' },
-  { text: 'Clean is not a task. It is a promise you keep to the next guest.', who: 'Unknown' },
-  { text: 'Nobody notices what we do until we do not do it.', who: 'Housekeeping proverb' },
-  { text: 'The standard you walk past is the standard you accept.', who: 'David Morrison' },
-  { text: 'Hospitality is making your guests feel at home, even when you wish they were.', who: 'Unknown' },
-  { text: 'Small acts, done consistently, become a reputation.', who: 'Unknown' },
-  { text: 'Pride in your work shows up in the corners no one checks.', who: 'Unknown' },
-  { text: 'A team that communicates finishes the day together.', who: 'Unknown' },
-]
-// Day-of-year so it advances once per day and lands on the same quote for everyone that morning.
-function quoteOfDay(ymd: string): { text: string; who: string } {
-  const d = new Date(ymd + 'T12:00:00')
-  const start = new Date(d.getFullYear(), 0, 0)
-  const day = Math.floor((d.getTime() - start.getTime()) / 86400000)
-  const idx = ((day % HOSPITALITY_QUOTES.length) + HOSPITALITY_QUOTES.length) % HOSPITALITY_QUOTES.length
-  return HOSPITALITY_QUOTES[idx] || HOSPITALITY_QUOTES[0]
-}
-// THE QUOTE LEADS THE EMAIL (Jon, 2026-08-10: "put the quote at the top and highlight it a bit
-// better"). It sits directly under the masthead, before a single number — the first thing anyone
-// reads is why the work matters, not how much of it there is. Built as a bordered table cell with
-// a heavy left rule: Outlook drops background-image and CSS borders on divs, but honours these.
-export const quoteBanner = (ymd: string, lang: BriefLang = 'en'): string => {
-  const q = quoteOfDay(ymd)
-  const eyebrowText = lang === 'es' ? 'Pensamiento de hoy' : 'Today&rsquo;s thought'
-  return `<table width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 4px">
-    <tr><td style="background:#fffbeb;border-left:4px solid #d97706;border-top:1px solid #fde68a;border-right:1px solid #fde68a;border-bottom:1px solid #fde68a;border-radius:0 10px 10px 0;padding:14px 18px">
-      <p style="margin:0 0 6px;font-size:9.5px;font-weight:700;letter-spacing:.18em;color:#b45309;text-transform:uppercase">${eyebrowText}</p>
-      <p style="margin:0 0 7px;font-size:16px;line-height:1.55;color:#0b1220;font-style:italic;font-weight:500">${'“'}${esc(q.text)}${'”'}</p>
-      <p style="margin:0;font-size:11.5px;color:#92400e;letter-spacing:.03em">${'—'} ${esc(q.who)}</p>
-    </td></tr>
-  </table>`
-}
-// The close keeps the thank-you only; the quote has already been read at the top.
-const closingNote = (_ymd: string, lang: BriefLang = 'en'): string => {
-  const { t } = translator(lang)
-  return `<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:14px;text-align:center">
-    <p style="margin:0;font-size:12.5px;color:#374151"><b>${t('Thank you for everything you do.')}</b></p>
   </div>`
 }
 
@@ -843,10 +748,17 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       }
     } catch { /* tags degrade to the amber default */ }
     try { const rep = await blockedUnits(30); fullBlocked = rep.runs } catch { /* brief still sends */ }
-    // SEQUENTIAL — the two markets share every upstream and the second ride's the first's caches.
-    try { maintMi = await maintData('Miami') } catch { maintMi = null }
-    try { maintBr = await maintData('Broward') } catch { maintBr = null }
     try { comp = await weekCompliance() } catch { comp = null }
+  }
+  // MAINTENANCE FOR WHOEVER NEEDS IT. Ops Command needs both markets side by side; a field day
+  // sheet needs only its own, and loading the other would be a minute of upstream calls for a
+  // column nobody on that crew reads. Sequential on Ops Command — the two markets share every
+  // upstream and the second ride's the first's caches.
+  if (variant === 'full' || variant === 'Miami') {
+    try { maintMi = await maintData('Miami') } catch { maintMi = null }
+  }
+  if (variant === 'full' || variant === 'Broward') {
+    try { maintBr = await maintData('Broward') } catch { maintBr = null }
   }
   const sheet: any = d.sheet || {}
   const label = variant === 'full' ? 'Full Portfolio' : variant
@@ -904,7 +816,15 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       `${t('guest lands the same day — these doors first:')} ${sameDay.slice(0, 8).map(c => esc(c.unit)).join(', ')}${sameDay.length > 8 ? ` +${sameDay.length - 8}` : ''}`))
   for (const c of unassigned) priorities.push(prio('red', c.unit, t('clean has <b>no one assigned</b>')))
   for (const a of walkIns.slice(0, 4)) priorities.push(prio('amber', str(a.unit), `${t('walk-in arriving today')} (${esc(str(a.guest).split(' ')[0])})`, t('Booked last minute — confirm the unit is guest-ready.')))
-  for (const e of highExceptions) priorities.push(prio('amber', str(e.unit), esc(str(e.detail)), str(e.action)))
+  // THE DAY SHEET RAISES ITS OWN EXCEPTION FOR THINGS THIS LIST HAS ALREADY SAID. An unassigned
+  // clean is a 'Nobody assigned' exception; a walk-in is a 'Booked today' one; a same-day turn is
+  // two more. Merging both sources put the same unit on two consecutive red bullets in different
+  // words, which reads as two problems. The lines above are the survivors; these kinds are dropped.
+  const ALREADY_SAID = /nobody assigned|booked today|walk-?in|same-?day turn|clean not started/i
+  for (const e of highExceptions) {
+    if (ALREADY_SAID.test(str((e as any).kind) + ' ' + str(e.detail))) continue
+    priorities.push(prio('amber', str(e.unit), esc(str(e.detail)), str(e.action)))
+  }
   for (const g of glitches.slice(0, 3)) priorities.push(prio('amber', str(g.unit), t('open guest issue'), str(g.overview)))
   // AUTO-CREATED ARRIVAL INSPECTIONS (Jon, 2026-08-18: "shared in the brief as todo / priorities").
   // The ones not yet done for arrivals today/tomorrow go straight into the priority list with who
@@ -966,9 +886,11 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   const yesterdayRows = `
     <tr><td style="${S.td}">${t('Cleans completed')}</td><td style="${S.td};text-align:right"><b>${y.cleans}</b>${yMinsPerClean ? ` <span style="${S.muted}">· ${yMinsPerClean} min average</span>` : ''}</td></tr>
     <tr><td style="${S.td}">${t('Inspections completed')}</td><td style="${S.td};text-align:right"><b style="${y.inspections ? S.green : S.amber}">${y.inspections}</b>${!y.inspections ? ` <span style="${S.muted}">· none logged</span>` : ''}</td></tr>
-    <tr><td style="${S.td}">${t('Maintenance closed')}</td><td style="${S.td};text-align:right"><b>${y.maintenance}</b></td></tr>
     ${(y as any).other ? `<tr><td style="${S.td}">Other work closed <span style="${S.muted}">strips, common areas, deliveries</span></td><td style="${S.td};text-align:right"><b>${(y as any).other}</b></td></tr>` : ''}
-    <tr><td style="${S.td}">Hours on the clock <span style="${S.muted}">recorded in Breezeway</span></td><td style="${S.td};text-align:right"><b>${yHours || '—'}</b>${yHours ? ' <span style="' + S.muted + '">hrs</span>' : ''}</td></tr>`
+`
+  // Maintenance closed and Breezeway hours used to sit here too. Each had a second, better home in
+  // the same email — maintenance with a denominator in its own card, hours as real payroll in the
+  // Labor card — and the two numbers for each did not agree, which is worse than repeating them.
 
   // ── CLEANS, IN ORDER BY PERSON (Jon, 2026-08-22: "overview of departure, arrivals, assignment
   // in order by person"). Unassigned doors lead in red — they are nobody's list. Then each
@@ -1126,12 +1048,11 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     const cleansN = names.reduce((a, n) => a + (byPerson[n] || []).length, 0)
     const jobsN = names.reduce((a, n) => a + (otherByPerson[n] || []).length, 0)
     const idle = names.filter(n => !(byPerson[n] || []).length && !(otherByPerson[n] || []).length).length
-    const meta = [
-      shiftsLoaded ? `${sched} ${sched === 1 ? 'scheduled' : 'scheduled'}` : `${names.length} on the board`,
-      cleansN ? `${cleansN} ${cleansN === 1 ? 'clean' : 'cleans'}` : '',
-      jobsN ? `${jobsN} ${jobsN === 1 ? 'job' : 'jobs'}` : '',
-      idle ? `<span style="${S.amber}">${idle} with nothing assigned</span>` : '',
-    ].filter(Boolean).join(' · ')
+    // THE EXCEPTION, NOT THE TOTALS. Scheduled / cleans / jobs are the sum of the person rows
+    // printed immediately underneath, and the card head above prints them a third time. The only
+    // thing this band can say that its own rows cannot is who is holding nothing.
+    void sched; void cleansN; void jobsN
+    const meta = idle ? `<span style="${S.amber}">${idle} with nothing assigned</span>` : ''
     return `
     <tr><td colspan="3" style="padding:10px 10px 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#4338ca;font-weight:700;border-top:2px solid #e0e7ff">${esc(CREW_LABEL[key] || key)} <span style="font-weight:500;letter-spacing:0;text-transform:none;color:#6b7280">· ${meta}</span></td></tr>`
   }
@@ -1173,16 +1094,6 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   }
   const tbl0 = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
   const cleansInOrder = [...unassigned, ...d.cleans.filter(c => !/UNASSIGNED/.test(c.assignee))]
-  const cleansCard = card(t('Departure cleans — in order'), d.cleans.length,
-    d.cleans.length
-      ? `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${d.cleans.length}</b> ${t('cleans')}` +
-        (sameDay.length ? ` · <span style="${S.red}">${sameDay.length} ${t('same-day')}</span>` : '') +
-        (unassigned.length ? ` · <span style="${S.red}">${unassigned.length} ${t('unassigned')}</span>` : '') +
-        ` · ${d.cleans.filter(c => c.state === 'done').length} ${t('done')}</p>` +
-        tbl0(cleansInOrder.map((c, i) => cleanLine(c, i + 1)).join('')) +
-        `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${t('Same-day turns first, then by unit. The name in bold is who the clean is on; anyone else on the task is listed with them. A crew tag means another crew is covering the turn.')}</p>`
-      : emptyLine(t('No departure cleans today.')),
-    unassigned.length ? '#dc2626' : '#4338ca', niceDay(d.today))
 
   // ── MAINTENANCE TODAY — every tech's run, plus the maintenance jobs nobody holds.
   const maintUnassigned = otherUnassigned.filter((x: any) => x.dept === 'maintenance')
@@ -1227,61 +1138,22 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     const unschedN = rosterNames.filter(n => shiftsLoaded && !shiftOf(n) && !offSchedule.some(o => nameMatches(o.name, n))
       && ((byPerson[n] || []).length || (otherByPerson[n] || []).length)).length
     const head = shiftsLoaded
-      ? `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${scheduledN}</b> on the Homebase schedule` +
+      // The scheduled count is in the verdict at the top of the email. What is worth a second line
+      // here is only what is WRONG with the roster.
+      ? `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${scheduledN}</b> on shift` +
         (todayOpenShifts ? ` · <span style="${S.red}">${todayOpenShifts} open shift${todayOpenShifts === 1 ? '' : 's'} unfilled</span>` : '') +
-        (idleN ? ` · <span style="${S.amber}">${idleN} scheduled with nothing assigned</span>` : '') +
+        (idleN ? ` · <span style="${S.amber}">${idleN} with nothing assigned</span>` : '') +
         (unschedN ? ` · <span style="${S.amber}">${unschedN} holding work but not scheduled</span>` : '') +
         `</p>`
       : `<p style="margin:0 0 6px;font-size:12.5px;color:#b45309">Homebase did not answer this morning — shifts are missing from this card; the assignments below are still the Breezeway board.</p>`
     teamCard = card("Who's cleaning — the field team, and what each person is on", rosterNames.filter(n => !isTech(n)).length,
       head + `<table width="100%" cellspacing="0" cellpadding="0">${unassignedTop + rosterRows + officeStrip}</table>` +
-      `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">Shift times are Homebase; assignments are the Breezeway board at 7am. Numbered rows are each person's departure-clean run, in order; bulleted rows are everything else on them. A shared job sits on the first field person assigned, with the others named beside it. Technicians are in the Maintenance card below; office staff at the bottom, for reference.</p>`,
+      // The 57-word key to reading this card was printed every morning for months. Numbered means
+      // the clean run, bulleted means everything else; that is the whole of it.
+      `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">Shifts from Homebase, assignments from the Breezeway board at 7am. Numbered rows are the clean run, in order; bulleted rows are everything else.</p>`,
       '#0891b2', `Homebase · Breezeway · ${niceDay(d.today)}`)
   }
 
-  let onTodayCard = ''
-  if (false) {
-    if (!shiftsLoaded) {
-      onTodayCard = card('On the schedule today', null,
-        `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Homebase did not answer this morning — today's roster is on the <a href="${APP_URL}/labor" style="color:#2563eb">Labor board</a>.</p>`, '#0891b2')
-    } else if (todayShifts.length || todayOpenShifts) {
-      const holds = (assignee: string, who: string): boolean =>
-        String(assignee).split(',').map((x: string) => x.trim()).some((n: string) => n && nameMatches(n, who))
-      const cleansFor = (who: string): number => d.cleans.filter(c => holds(c.assignee, who)).length
-      // EVERY JOB ON THEM, NOT JUST CLEANS (Jon, 2026-08-27). A tech carrying eight repairs used
-      // to print an em-dash here and read as an idle body on the payroll.
-      const otherFor = (who: string): number => hkAll.filter((o: any) => holds(o.assignee, who)).length
-      const isHK = (s: any) => /housekeep|cleaner|hk/i.test(str(s.role))
-      const shiftRows = todayShifts.slice()
-        .sort((a: any, b: any) => String(a.startAt).localeCompare(String(b.startAt)) || String(a.name).localeCompare(String(b.name)))
-        .map((s: any) => {
-          const n = cleansFor(str(s.name))
-          const o = otherFor(str(s.name))
-          const parts = [
-            n ? `<b>${n}</b> clean${n === 1 ? '' : 's'}` : '',
-            o ? `<b>${o}</b> job${o === 1 ? '' : 's'}` : '',
-          ].filter(Boolean)
-          const work = parts.length ? parts.join(' · ')
-            : isHK(s) ? `<span style="${S.amber}">no cleans assigned</span>` : `<span style="${S.amber}">nothing on the board</span>`
-          return `
-    <tr><td style="${S.td}"><b>${esc(str(s.name))}</b>${s.role ? ` <span style="${S.muted};font-size:11.5px">${esc(str(s.role))}</span>` : ''}</td>
-    <td style="${S.td};white-space:nowrap">${esc(str(s.label || ''))}</td>
-    <td style="${S.td};text-align:right;white-space:nowrap">${work}</td></tr>`
-        }).join('')
-      const idleHK = todayShifts.filter((s: any) => isHK(s) && cleansFor(str(s.name)) === 0 && otherFor(str(s.name)) === 0).length
-      const idleAny = todayShifts.filter((s: any) => !isHK(s) && cleansFor(str(s.name)) === 0 && otherFor(str(s.name)) === 0).length
-      onTodayCard = card('On the schedule today', todayShifts.length,
-        `<p style="margin:0 0 6px;font-size:12.5px;color:#374151"><b>${todayShifts.length}</b> on shift` +
-        (todayOpenShifts ? ` · <span style="${S.red}">${todayOpenShifts} open shift${todayOpenShifts === 1 ? '' : 's'} unfilled</span>` : '') +
-        (idleHK ? ` · <span style="${S.amber}">${idleHK} housekeeper${idleHK === 1 ? '' : 's'} with no doors yet</span>` : '') +
-        (idleAny ? ` · <span style="${S.amber}">${idleAny} other${idleAny === 1 ? '' : 's'} with nothing assigned</span>` : '') +
-        `</p><table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${S.th}">Person</th><th style="${S.th}">Shift</th><th style="${S.th};text-align:right">On the board</th></tr>${shiftRows}</table>`,
-        '#0891b2', `Homebase · ${niceDay(d.today)} · assignments from the Breezeway board`)
-    } else {
-      onTodayCard = card('On the schedule today', null,
-        `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Nobody is on the Homebase schedule for today.</p>`, '#0891b2')
-    }
-  }
 
   // ── DEPARTURES — who leaves today, earliest first, same-day turns flagged.
   const arrivingToday2 = new Set(arrivals.map((a: any) => String(a.listingId)))
@@ -1365,11 +1237,15 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <td style="${S.td}"><span style="${S.muted}">${esc(str(g.overview))}</span></td></tr>`).join('')
 
   const vacSoon = vacants.filter((v: any) => v.arrivingSoon)
+  // Kept for the count in vacantWorkSummary; the line that used to print it here said it twice.
   const vacIdle = vacants.filter((v: any) => !v.nextArrival)
+  void vacIdle
   const vacantLine =
     `<b>${vacants.length}</b> vacant tonight` +
     (vacSoon.length ? ` — <span style="${S.amber}">${vacSoon.length} with a guest arriving within 3 days</span> (${vacSoon.slice(0, 8).map((v: any) => esc(str(v.unit))).join(', ')}${vacSoon.length > 8 ? ` +${vacSoon.length - 8} more` : ''}) — make sure these are guest-ready first` : '') +
-    (vacIdle.length ? ` · ${vacIdle.length} with <b>no future booking</b> — inspection & photo opportunities` : '')
+    // vacantWorkSummary, three lines below in the same card, already says how many have no future
+    // booking — and every row that is one carries the words on it as well.
+    ''
 
   // ── VACANT UNITS: THE WORKLIST ────────────────────────────────────────────────────────────────
   // A count of empty units is a fact nobody can act on. This is the same list with the highest-value
@@ -1403,13 +1279,17 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
 
   const rep = d.rep
   const repLine = rep.n
-    ? `<b>${rep.avg!.toFixed(2)}</b> avg over ${rep.n} reviews (30d) · ${(rep.five! * 100).toFixed(0)}% five-star` +
-      (rep.owed ? ` · <span style="${S.red}">${rep.owed} awaiting a reply</span>` : ' · all replied')
+    // `rep.owed` is the same number as `w30.unanswered`, which prints two lines down.
+    ? `<b>${rep.avg!.toFixed(2)}</b> avg over ${rep.n} reviews (30d) · ${(rep.five! * 100).toFixed(0)}% five-star`
     : 'No reviews in the last 30 days.'
 
   // ---- Last 30 days of feedback: the watch-list, not the news ----------------
   const w30 = d.watch30
-  const low30Rows = w30.low.map(r =>
+  // ANYTHING NEW IS IN THE "NEW REVIEWS" CARD ALREADY, with the same unit, channel, stars and the
+  // same 110-character snippet, two cards up. This one is the 30-day watch-list, so it starts
+  // where that card stops.
+  const since = String(d.reviewsSince || '').slice(0, 10)
+  const low30Rows = w30.low.filter((r: any) => !since || String(r.at).slice(0, 10) <= since).map(r =>
     '<tr style="background:#fef2f2"><td style="' + S.td + '"><b>' + esc(r.unit) + '</b>' +
     (r.replied ? '' : ' ' + pillRed('NO REPLY')) +
     '<br><span style="color:#6b7280">' + esc(r.channel) + ' · ' + esc(niceDay(r.at)) + '</span></td>' +
@@ -1583,12 +1463,17 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // ── MAINTENANCE — Miami | Broward side by side (merged from the standalone emails) ──────────
   let maintCard = ''
   let carryRows = ''
-  if (variant === 'full' && (maintMi || maintBr)) {
+  // THE STANDALONE MAINTENANCE EMAILS ARE GONE (Jon, 2026-09-09). Maintenance was told three
+  // times before 8am: on the market day sheet by technician, in Ops Command as a two-market table,
+  // and again in its own email 45 minutes later. This card now renders on the FIELD day sheets too,
+  // for their own market, so folding those emails in loses nothing.
+  const wantMaintCard = (variant === 'full' || isField) && (maintMi || maintBr)
+  if (wantMaintCard) {
     const money = (n: number | null | undefined) => n == null ? '&mdash;' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
     const mRow = (label: string, f: (m: NonNullable<typeof maintMi>) => string) =>
-      `<tr><td style="${S.td}">${label}</td>
-      <td style="${S.td};text-align:right;white-space:nowrap">${maintMi ? f(maintMi) : '—'}</td>
-      <td style="${S.td};text-align:right;white-space:nowrap">${maintBr ? f(maintBr) : '—'}</td></tr>`
+      `<tr><td style="${S.td}">${label}</td>` +
+      (isField ? '' : `<td style="${S.td};text-align:right;white-space:nowrap">${maintMi ? f(maintMi) : '—'}</td>`) +
+      `<td style="${S.td};text-align:right;white-space:nowrap">${(isField ? (variant === 'Broward' ? maintBr : maintMi) : maintBr) ? f((isField ? (variant === 'Broward' ? maintBr : maintMi) : maintBr)!) : '—'}</td></tr>`
     const doneTxt = (m: NonNullable<typeof maintMi>) => m.yd.scheduled
       ? `<b style="${(m.yd.schedDone / m.yd.scheduled) < 0.8 ? S.red : S.green}">${m.yd.schedDone}/${m.yd.scheduled}</b>`
       : `<b>${m.yd.finished}</b>`
@@ -1596,7 +1481,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       ? `<span style="${S.amber}"><b>${m.carryover.length}</b> · oldest ${m.carryover[0].ageDays}d</span>`
       : `<span style="${S.green}">0</span>`
     const mTable = `<table width="100%" cellspacing="0" cellpadding="0">
-      <tr><th style="${S.th}"></th><th style="${S.th};text-align:right">Miami</th><th style="${S.th};text-align:right">Broward</th></tr>` +
+      <tr><th style="${S.th}"></th>${isField ? '' : `<th style="${S.th};text-align:right">Miami</th>`}<th style="${S.th};text-align:right">${isField ? esc(variant) : 'Broward'}</th></tr>` +
       mRow('Done yesterday', doneTxt) +
       mRow('Carried over · 7d', carryTxt) +
       mRow('Billed yesterday', m => `<b>${money(m.yd.billable)}</b>${m.yd.noCharge ? ` <span style="${S.amber};font-size:11px">· ${m.yd.noCharge} no charge</span>` : ''}`) +
@@ -1616,10 +1501,15 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     const recurringAll = ([] as { unit: string; n: number }[])
       .concat(maintMi ? maintMi.recurring : []).concat(maintBr ? maintBr.recurring : [])
       .sort((a, b) => b.n - a.n).slice(0, 6)
-    maintCard = card('Maintenance — Miami | Broward', null,
+    maintCard = card(isField ? `Maintenance — ${variant}` : 'Maintenance — Miami | Broward', null,
       mTable +
       (wages30 != null ? `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Maintenance wages (portfolio-wide, 30d, Stay's share after 17WEST): <b>${money(wages30)}</b>. A finished task with no charge entered bills $0 until someone types the cost in Breezeway.</p>` : '') +
-      (carryRows ? `<p style="margin:10px 0 4px;font-size:12.5px;color:#374151"><b>Carried over — oldest first</b></p><table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${S.th}">Unit · task</th><th style="${S.th};text-align:right">Age</th><th style="${S.th}">With</th></tr>${carryRows}</table>${carryAll.length > 10 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${carryAll.length - 10} more on the board</p>` : ''}` : `<p style="margin:8px 0 0;font-size:12.5px"><span style="${S.green}">Nothing carried over</span> <span style="${S.muted}">— every scheduled task from the last week is closed.</span></p>`) +
+      // The carryover WORKLIST used to print here as well. It is the same set of tasks the Review
+      // card above already lists, with the difference that Review also says the next day the unit
+      // is empty — so that one is the survivor and this keeps the count.
+      (carryAll.length
+        ? `<p style="margin:8px 0 0;font-size:12.5px"><span style="${S.amber}"><b>${carryAll.length} carried over</b></span> <span style="${S.muted}">— oldest ${carryAll[0].ageDays}d. Named in Review above, with the day each unit is next empty.</span></p>`
+        : `<p style="margin:8px 0 0;font-size:12.5px"><span style="${S.green}">Nothing carried over</span> <span style="${S.muted}">— every scheduled task from the last week is closed.</span></p>`) +
       (recurringAll.length ? `<p style="margin:10px 0 0;font-size:12.5px"><b>Recurring</b> <span style="${S.muted}">3+ tasks in 30d — worth a root-cause visit:</span> ${recurringAll.map(r => esc(r.unit) + ' <span style="' + S.red + '">×' + r.n + '</span>').join(' · ')}</p>` : ''),
       '#7c2d12', '17WEST and vendor buildings excluded')
   } else if (variant === 'full') {
@@ -1632,7 +1522,6 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   }
 
   // ── PAPERWORK & COVERAGE — why every other number can be trusted ────────────────────────────
-  const theBoardCard = boardCard(d.board || [], dateNice, `${APP_URL}/plan`)
 
   let paperCard = ''
   if (variant === 'full' && comp) {
@@ -1655,11 +1544,14 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     ? `<b>${d.cleans.length} ${t('cleans')}${sameDay.length ? ` (${sameDay.length} ${t('same-day')})` : ''} · ${arrivals.length} ${pick('in', 'entran')} · ${departures.length} ${pick('out', 'salen')}.</b> ` +
       (unassigned.length
         ? `<span style="${S.red}">${unassigned.length} ${unassigned.length === 1 ? t('needs a name — assign first.') : t('need a name — assign first.')}</span>`
-        : sameDay.length
-          ? `${t('Same-day doors first:')} ${sameDay.slice(0, 5).map(c => esc(c.unit)).join(', ')}${sameDay.length > 5 ? ` +${sameDay.length - 5}` : ''}.`
-          : t('No same-day turns — work each run in order.'))
-    : `<b>${priorities.length} exception${priorities.length === 1 ? '' : 's'} · ${carryTot2} maintenance carryover${carryTot2 === 1 ? '' : 's'} · ${fullBlocked.length} blocked${bzPct2 != null ? ` · ${bzPct2}% of cleans closed in Breezeway` : ''}.</b> ` +
-      `${todayShifts.length ? `${todayShifts.length} on shift · ` : ''}${d.cleans.length} cleans (${unassigned.length} unassigned) · ${arrivals.length} in / ${departures.length} out.`
+        : t('Everything has a name — work each run in order.'))
+    : `<b>${priorities.length} exception${priorities.length === 1 ? '' : 's'} · ${carryTot2} maintenance carryover${carryTot2 === 1 ? '' : 's'}${bzPct2 != null ? ` · ${bzPct2}% of cleans closed in Breezeway` : ''}.</b> ` +
+      `${todayShifts.length ? `${todayShifts.length} on shift · ` : ''}${d.cleans.length} cleans (${unassigned.length} unassigned) · ${arrivals.length} in / ${departures.length} out.` +
+      // A BLOCKED COUNT WITH NO DOOR ON IT IS NOT A FACT ANYONE CAN USE. It was printed three
+      // times — tile, verdict, subject — and never once said which units. Named here, once.
+      (fullBlocked.length
+        ? `<br><span style="${S.red}">${fullBlocked.length} blocked:</span> <span style="color:#374151">${fullBlocked.slice(0, 8).map((b: any) => esc(str(b.unit))).join(', ')}${fullBlocked.length > 8 ? ` +${fullBlocked.length - 8}` : ''}</span>`
+        : '')
 
   const title = isField ? `${variant} — ${t('Day Sheet')}` : 'Ops Command'
   const subTitle = isField
@@ -1675,21 +1567,19 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <p style="${S.bandTitle}">${title}</p>
     <p style="${S.bandSub}">${subTitle}</p>
   </div>
-  ${quoteBanner(d.today, lang)}
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #4338ca;border-radius:12px;padding:12px 18px;margin-bottom:10px">
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
-  <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
   ${isField ? btn(`${APP_URL}/day?market=${encodeURIComponent(variant)}`,
       pick('Open the live board →', 'Abrir el tablero en vivo →'),
       pick(
-        'Who is clocked in, what each person is on right now, and every job — tap one to open it in Breezeway. This email is the 7am snapshot; that board is live all day.',
-        'Quién marcó entrada, en qué está cada persona ahora mismo y todos los trabajos — toque uno para abrirlo en Breezeway. Este correo es la foto de las 7am; ese tablero está en vivo todo el día.')) : ''}
+        'This email is the 7am snapshot. That board is live all day.',
+        'Este correo es la foto de las 7am. Ese tablero está en vivo todo el día.')) : ''}
   ${isField && schedLink ? btn(schedLink.url,
       pick('Team schedule →', 'Horario del equipo →'),
       (schedLink.passcode ? `${pick('Passcode', 'Clave')}: <b style="color:#111827">${esc(schedLink.passcode)}</b> · ` : '') +
       pick('Pick your cleans for the week and press Submit — Jon reviews it and sends notes back.', 'Elija sus limpiezas de la semana y presione Enviar — Jon lo revisa y devuelve notas.')) : ''}
-  ${accessNotice(lang)}
+  ${isField ? accessNotice(lang) : ''}
 
   ${eyebrow(t('Act now'))}
   ${priorities.length
@@ -1697,10 +1587,9 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     : card(t('Top priorities'), null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">${t('Nothing on fire.')}</span> <span style="${S.muted}">${t('Work the list below and keep the 4pm deadline in sight.')}</span></p>`, '#059669')}
 
   ${eyebrow(t('Departure cleans'))}
-  ${cleansCard}
   ${variant === 'full' ? teamCard : card(t("Who's cleaning — the field team, in order"), everyone.filter(n => !isTech(n)).length,
     (d.cleans.length || hkAll.length)
-      ? bare(cleansRows) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${lang === 'es' ? t('HK_FOOTNOTE') : 'Numbered rows are each person\'s departure-clean run; work them in that order. Bulleted rows are everything else on that person: strips, linen, restocks, mid-stays, inspections. A shared job sits on the first field person assigned, with the others named beside it. Technicians are in the Maintenance card; office staff at the bottom, for reference.'}</p>`
+      ? bare(cleansRows) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${lang === 'es' ? t('HK_FOOTNOTE') : 'Numbered rows are the departure-clean run, in order. Bulleted rows are everything else on that person.'}</p>`
       : emptyLine(t('Nothing on the board today.')))}
 
   ${eyebrow(t('Ops today'))}
@@ -1715,7 +1604,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <span style="font-size:12px;color:#6b7280">${esc(i.reason)}${i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ' · unassigned'}</span></td>
     <td style="${S.td};text-align:right;white-space:nowrap">${isDoneStatus(i.status) ? `<span style="${S.green}">done</span>` : /progress|start/i.test(str(i.status)) ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">open</span>`}</td></tr>`).join('')
     ) +
-    (reviewInsp.length ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">A review at or below the bar books an inspection on that unit's next checkout — the task carries what the guest wrote, and it rolls forward until it is done.</p>` : ''),
+    '',
     '#7c3aed') : ''}
 
   ${review && review.items.length ? (() => {
@@ -1741,7 +1630,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     return card(t('Review — pending work, and when it can be done'), r.summary.total,
       head + bare(rows) +
       (r.summary.total > 14 ? `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">+${r.summary.total - 14} more on the board.</p>` : '') +
-      `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">Maintenance and Lighthouse inspections only — housekeeping runs to a 4pm deadline, not a backlog. The date beside each job is the next day that unit is empty; a green tag means a technician is already booked there, so clearing it costs no extra trip.</p>`,
+      `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">The date is the next day that unit is empty. A green tag means somebody is already going there.</p>`,
       '#0891b2')
   })() : ''}
 
@@ -1752,7 +1641,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
 
   ${eyebrow(t('Maintenance'))}
   ${maintTodayCard}
-  ${!isField && maintCard ? maintCard : ''}
+  ${maintCard}
 
   ${isField && fwdCard ? eyebrow(t('Looking ahead')) + fwdCard : ''}
   ${!isField && fwdCard ? eyebrow('Looking ahead') + fwdCard : ''}
@@ -1760,7 +1649,6 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   ${!isField && (paperCard || laborCard) ? eyebrow('The shop — paperwork, labor') + paperCard + laborCard : ''}
 
   ${eyebrow(isField ? t('Yesterday') : 'Good to know')}
-  ${theBoardCard}
   ${card(t('Yesterday — what the team got done'), null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
   ${!isField && d.newReviews.length ? card(d.newSinceYesterday ? 'New reviews' : 'Reviews — nothing new', d.newSinceYesterday || null,
       (lowNew.length ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${S.red}">${lowNew.length} at 3&#9733; or below</span> — answer these first.</p>` : '') +
@@ -1784,7 +1672,6 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       w30.lowTotal ? '#dc2626' : '#059669',
       `Last 30 days · since ${niceDay(w30.since)}`) : ''}
 
-  ${closingNote(d.today, lang)}
   <p style="${S.foot}">${isField ? t('Sent automatically every morning · your supervisor has the live board.') : 'Ops Command · sent automatically every morning · labor deep-dive in the Daily Labor email · the boards have the live picture.'}</p>
   </div></body></html>`
 
@@ -2093,9 +1980,11 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const guestsCard = card('Guests & risk', null, tbl(guestRows), '#0891b2')
 
   // ── verdict + subject ───────────────────────────────────────────────────────────────────────
+  // ONE LINE, AND NOT THE TILES AGAIN. Margin and the review score are two of the six tiles that
+  // render three centimetres below this; repeating them here was the whole verdict for most days.
+  // What belongs here is the thing no tile carries: what needs a decision, and today's shape.
   const verdict = `<b>${decide.length ? `${decide.length} item${decide.length === 1 ? '' : 's'} on the decision table${blockedAtStake ? ` — the big one is ≈${money0(blockedAtStake)} of blocked inventory` : ''}.` : 'Nothing needs a decision today.'}</b> ` +
-    `${occToday != null ? pct1(occToday) + ' occupied tonight · ' : ''}${tod.arrivals || 0} in / ${tod.departures || 0} out${tod.sameDayTurns ? ` · <span style="${S.red}">${tod.sameDayTurns} same-day turns</span>` : ''}` +
-    `${H7t && H7t.marginPct != null ? ` · HK margin ${pct1(H7t.marginPct)} (7d)` : ''}${d.rep.avg != null ? ` · ${d.rep.avg.toFixed(2)}★` : ''}.`
+    `${occToday != null ? pct1(occToday) + ' occupied tonight · ' : ''}${tod.arrivals || 0} in / ${tod.departures || 0} out${tod.sameDayTurns ? ` · <span style="${S.red}">${tod.sameDayTurns} same-day turns</span>` : ''}.`
 
   const subject = `GM Brief ${dateNice}: ${decide.length ? decide.length + ' to decide' : 'nothing to decide'}`
     + (H7t && H7t.costPerClean != null ? ` · ${money0(H7t.costPerClean)}/clean` : '')
@@ -2108,7 +1997,6 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     <p style="${S.bandTitle}">GM Brief</p>
     <p style="${S.bandSub}">${dateNice} · whole portfolio · ${d.activeCount} active units</p>
   </div>
-  ${quoteBanner(today)}
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #4338ca;border-radius:12px;padding:12px 18px;margin-bottom:12px">
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
@@ -2127,7 +2015,6 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     </p>
   </div>
   ${accessNotice()}
-  ${closingNote(today)}
   <p style="${S.foot}">GM Brief · sent each morning by Stay Hospitality · every figure is the shared engine’s.</p>
   </div></body></html>`
 
@@ -2285,7 +2172,6 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
     <p style="${S.bandTitle}">${def.label} — Housekeeping</p>
     <p style="${S.bandSub}">${dateNice}</p>
   </div>
-  ${quoteBanner(today)}
   <div style="${S.tilesOuter}">${tileRow([
     { label: 'Checkouts to clean', value: String(checkouts.length), tone: checkouts.length ? 'amber' : 'green' },
     { label: 'Same-day turns', value: String(sameDayCount), tone: sameDayCount ? 'red' : undefined,
@@ -2307,7 +2193,6 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   ${topThemes.length ? card(`Things to look for — what guests flagged in the last ${REVIEW_DAYS} days`, topThemes.length, tbl(themeRows), '#7c3aed') : ''}
   ${lowlights.length ? card('In their words — recent low scores', lowlights.length, tbl(lowRows), '#0891b2') : ''}
   ${scored.length && !topThemes.length ? card('Guest feedback', null, emptyLine(`${scored.length} review${scored.length === 1 ? '' : 's'} in the last ${REVIEW_DAYS} days, averaging ${revAvg != null ? revAvg.toFixed(2) : '—'}★, with no cleaning issues raised. Nice work.`), '#047857') : ''}
-  ${closingNote(today)}
   <p style="${S.foot}">
     Sent automatically each morning by Stay Hospitality · questions: reply to this email.<br>
     Your live board: <a href="${boardUrl}" style="color:#4338ca">${boardUrl.replace(/^https:\/\//, '')}</a>
