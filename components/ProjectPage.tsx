@@ -25,7 +25,6 @@ import {
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
 import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, type BoardSettings, type Recurrence } from '@/lib/projects-shared'
-import { NotifyBell } from './NotifyBell'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -183,7 +182,6 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
           <div className="flex items-center gap-1.5">
             <Customize settings={settings} sections={sections.map(x => x.name)} canEdit={canEdit} act={act} busy={busy} />
             <MoreMenu p={p} canEdit={canEdit} act={act} busy={busy} />
-            <NotifyBell />
           </div>
         </div>
         {p.summary && <p className="text-[13.5px] text-ink/85 mt-2 max-w-3xl">{p.summary}</p>}

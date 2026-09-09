@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from '@/lib/nav'
@@ -169,7 +169,14 @@ function writeLocal(key: string, value: any) {
   try { window.localStorage.setItem(key, JSON.stringify(value)) } catch { /* private mode */ }
 }
 
-export function Shell({ children }: { children: React.ReactNode }) {
+// FULL-PAGE MODE (Jon, 2026-09-09: Projects "should have a open view full page with a sidebar that
+// we can open for the main app if needed"). `full` hides the app sidebar, the phone header and the
+// bottom bar at every width and hands the whole viewport to the page; the app's navigation is still
+// one tap away as the drawer, opened through useShellMenu() from anywhere inside.
+const ShellMenu = createContext<{ open: () => void; full: boolean }>({ open: () => {}, full: false })
+export const useShellMenu = () => useContext(ShellMenu)
+
+export function Shell({ children, full = false }: { children: React.ReactNode; full?: boolean }) {
   const path = usePathname()
   // ACTIVITY BEACON (Jon, 2026-08-22: "record all activity in the app"): one metadata row per
   // screen opened, straight from the shell so every page is covered. keepalive survives quick
@@ -515,9 +522,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
     // every position:sticky inside it silently did nothing (sticky binds to the nearest scrolling
     // ancestor, and that ancestor was not scrolling). h-screen makes main the real scroller, so the
     // sidebar stays put and sticky headers work on every page.
+    <ShellMenu.Provider value={{ open: () => setDrawerOpen(true), full }}>
     <div className="h-screen overflow-hidden flex bg-app">
       {/* Sidebar — desktop only. Below lg the header + drawer + bottom bar take over. */}
-      <aside className="hidden lg:flex w-60 bg-white border-r border-line flex-col">
+      <aside className={full ? 'hidden' : 'hidden lg:flex w-60 bg-white border-r border-line flex-col'}>
         <div className="px-4 pt-5 pb-4 flex items-center gap-2.5">
           <img src="/icon-192.png" alt="Lighthouse" className="w-8 h-8 rounded-lg shadow-sm" />
           <span className="font-bold text-[15px] tracking-tight text-ink">LIGHTHOUSE</span>
@@ -547,7 +555,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {/* Main column */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile header */}
-        <header className="lg:hidden flex items-center gap-2 px-3 py-2 pt-safe-keep px-safe-keep bg-white border-b border-line flex-shrink-0">
+        <header className={(full ? 'hidden' : 'lg:hidden flex') + ' items-center gap-2 px-3 py-2 pt-safe-keep px-safe-keep bg-white border-b border-line flex-shrink-0'}>
           <button type="button" onClick={() => setDrawerOpen(true)} aria-label="Open menu"
             className="w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app">
             <Menu size={18} />
@@ -563,8 +571,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <main className="flex-1 overflow-auto overscroll-contain px-safe">
           {/* pb-24 on a phone: Eve's bubble floats above the bottom bar, and without room to scroll
               past it the last row of every board sits permanently under a 56px circle. */}
-          <div className="max-w-[1600px] mx-auto px-3 pt-4 pb-24 sm:p-6 lg:p-8 animate-fade-in">
-            {setHere ? (
+          <div className={full ? 'h-full min-h-full' : 'max-w-[1600px] mx-auto px-3 pt-4 pb-24 sm:p-6 lg:p-8 animate-fade-in'}>
+            {setHere && !full ? (
               // THE TAB STRIP — every member page gets it for free, so the audit pages and
               // the four order pages read as one thing with tabs instead of eight scattered entries.
               <div className="mb-4 -mt-1 flex items-center gap-2 flex-wrap">
@@ -593,7 +601,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             got a phone with no navigation at all except the hamburger. "More" alone is still
             navigation. pb-safe keeps the labels off the iPhone home indicator, which viewport-fit
             cover otherwise draws straight through. */}
-        <nav className="lg:hidden flex-shrink-0 border-t border-line bg-white flex items-stretch pb-safe px-safe">
+        <nav className={(full ? 'hidden' : 'lg:hidden flex') + ' flex-shrink-0 border-t border-line bg-white items-stretch pb-safe px-safe'}>
           {pinned.slice(0, 4).map(({ to, label, Icon }) => {
             const active = isActive(to)
             return (
@@ -614,7 +622,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile drawer */}
       {drawerOpen && (
-        <div className="lg:hidden fixed inset-0 z-50" role="dialog" aria-modal="true">
+        <div className={(full ? '' : 'lg:hidden ') + 'fixed inset-0 z-50'} role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-ink/40" onClick={() => setDrawerOpen(false)} />
           <div className="absolute left-0 top-0 bottom-0 w-[86%] max-w-[320px] bg-white shadow-lifted flex flex-col pt-safe pb-safe">
             <div className="px-4 pt-4 pb-3 flex items-center gap-2.5 border-b border-line">
@@ -645,6 +653,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       {paletteOpen && <JumpPalette sections={sections.map(sc => ({ title: sc.title, items: sc.items.flatMap(it => it.set ? setTabs(it.set).filter(t => canSee(t.to)).map(t => ({ to: t.to, label: it.label + ' · ' + t.label, Icon: it.Icon })) : [it]) }))} onClose={() => setPaletteOpen(false)} />}
     </div>
+    </ShellMenu.Provider>
   )
 }
 

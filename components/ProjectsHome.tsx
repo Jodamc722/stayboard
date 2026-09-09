@@ -8,7 +8,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Plus, Lock, Repeat, Clock, AlertTriangle, ListChecks, KanbanSquare, Loader2, LayoutTemplate } from 'lucide-react'
-import { NotifyBell } from './NotifyBell'
 
 type P = {
   id: string; title: string; summary: string | null; kind?: string; stage: string; due_on: string | null; recurs?: any
@@ -54,7 +53,6 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
           <p className="text-[11px] uppercase tracking-wider font-semibold text-muted inline-flex items-center gap-1.5"><KanbanSquare size={12} /> Projects</p>
           <h1 className="text-2xl font-bold text-ink tracking-tight">{hello()}{me ? `, ${first(me)[0]?.toUpperCase()}${first(me).slice(1)}` : ''}.</h1>
         </div>
-        <div className="hidden lg:block"><NotifyBell /></div>
       </header>
 
       {/* what is on me */}
