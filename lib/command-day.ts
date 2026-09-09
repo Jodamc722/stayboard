@@ -49,6 +49,7 @@ import { auditKey } from './task-audit'
 import { isLiveStay } from './stay-status'
 import { STAGE_LABEL as CLAIM_STAGE_LABEL } from './claims'
 import { ratingDisplay } from './review-scale'
+import { COMPLETED } from './call-desk'
 
 const str = (v: any) => String(v ?? '').trim()
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -63,6 +64,15 @@ const norm5 = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n :
 const starsText = (v: any, ch: any) => ratingDisplay(norm5(v), ch) + (/booking/i.test(str(ch)) ? '' : '★')
 const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 const names = (a: any): string[] => Array.isArray(a) ? a.map((p: any) => str(p && typeof p === 'object' ? p.name : p)).filter(Boolean) : []
+/** Midnight of an ET calendar day as a UTC instant — right through the DST switch, because the offset is read from the day itself. */
+const etMidnightIso = (d: string) => {
+  // Probe at 05:00Z — before the 06:00Z/07:00Z moment the clocks change — so the switch days get the
+  // offset that was in force at THEIR midnight, not the one that took over later that morning.
+  const probe = new Date(d + 'T05:00:00Z')
+  const etHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(probe)) % 24
+  const offset = (5 - etHour + 24) % 24 // 4 in summer, 5 in winter
+  return new Date(Date.parse(d + 'T00:00:00Z') + offset * 3600000).toISOString()
+}
 /** Whole calendar days between two ET dates or timestamps, never off by the hour. */
 const daysBetween = (fromIso: string, toYmd: string) => Math.round((Date.parse(toYmd + 'T12:00:00Z') - Date.parse(ymd(new Date(fromIso)) + 'T12:00:00Z')) / 86400000)
 
@@ -99,8 +109,16 @@ export type NextItem = {
   /** A Breezeway task this row is about — enables Note-to-assignee and the open link. */
   bzTaskId?: string | null
   href?: string | null
-  dismissed?: { by: string; at: string } | null
+  dismissed?: Handled | null
 }
+
+/**
+ * A row somebody cleared from the list today. `outcome` is what they said about it: done = the
+ * work happened (it counts as completed), skipped = not relevant today. Rows the engine no longer
+ * generates (the inspection got created, so the "no inspection" row is gone) still appear in
+ * `handled`, because the title and unit were stored at the moment of the click.
+ */
+export type Handled = { key: string; by: string; at: string; outcome: 'done' | 'skipped'; title?: string; unit?: string }
 
 export type Verdict = {
   state: 'on_track' | 'at_risk' | 'behind' | 'closing'
@@ -142,6 +160,17 @@ export type CommandDay = {
   hiddenSoon: Partial<Record<NextKind, number>>
   dismissedCount: number
   byOwner: Record<Owner, number>
+  /** Everything cleared from the list today, newest first — whether or not the engine still generates the row. */
+  handled: Handled[]
+  /** What landed today: the day's work, done. */
+  completed: {
+    cleansDone: number; cleansTotal: number
+    tasksDone: number; tasksTotal: number
+    /** Guest calls completed today (welcome + post-checkout), from the Calls desk. */
+    callsDone: number
+    /** Rows on this page marked done today. */
+    handledDone: number
+  }
 }
 
 type Meta = { name: string; market: string; building: string | null; active: boolean }
@@ -179,7 +208,7 @@ export async function buildCommandDay(): Promise<CommandDay> {
     .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
 
   // ── WAVE 1: everything that does not depend on anything else ──────────────────────────────────
-  const [day, cap, automation, presets, dismissRow, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, convosRes, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes] = await Promise.all([
+  const [day, cap, automation, presets, dismissRow, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, convosRes, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes] = await Promise.all([
     buildOpsDay(null, { includeMeta: true }),
     buildDayPicture(today).catch((e: any) => { degraded.push('capacity model — ' + String(e?.message || e).slice(0, 80)); return null as DayPicture | null }),
     getTaskAutomation(),
@@ -217,6 +246,10 @@ export async function buildCommandDay(): Promise<CommandDay> {
     // The overdue backlog is a NUMBER — ask for a count, not 8,000 rows.
     OPEN(db.from('breezeway_tasks_sync').select('id', { count: 'exact', head: true }))
       .gte('scheduled_date', back45).lt('scheduled_date', today),
+    // Calls completed today — the Calls desk's own definition of "happened" (lib/call-desk
+    // COMPLETED), counted on the ET day the call was logged. A count, not rows.
+    db.from('guest_calls').select('reservation_id', { count: 'exact', head: true })
+      .in('outcome', COMPLETED as any).gte('called_at', etMidnightIso(today)).lt('called_at', etMidnightIso(shift(today, 1))),
   ])
 
   // ── listing meta comes from the board's own map (vendor-aware market, no second read) ─────────
@@ -228,7 +261,13 @@ export async function buildCommandDay(): Promise<CommandDay> {
   const canFile = (lid: string) => { const m = meta[lid]; return !!m && !noBzRe.test((m.building || '') + ' ' + m.name) }
 
   const dismissedAll = (() => { try { const v = (dismissRow as any)?.data?.value; const o = typeof v === 'string' ? JSON.parse(v) : v; return o && typeof o === 'object' ? o : {} } catch { return {} } })()
-  const dismissed: Record<string, { by: string; at: string }> = (dismissedAll[today] && typeof dismissedAll[today] === 'object') ? dismissedAll[today] : {}
+  const dismissedRaw: Record<string, any> = (dismissedAll[today] && typeof dismissedAll[today] === 'object') ? dismissedAll[today] : {}
+  // Entries written before outcomes existed carry only by/at — they were plain dismissals.
+  const dismissed: Record<string, Handled> = {}
+  for (const k of Object.keys(dismissedRaw)) {
+    const v = dismissedRaw[k] || {}
+    dismissed[k] = { key: k, by: str(v.by) || 'someone', at: str(v.at), outcome: v.outcome === 'done' ? 'done' : 'skipped', title: v.title ? str(v.title).slice(0, 160) : undefined, unit: v.unit ? str(v.unit).slice(0, 80) : undefined }
+  }
 
   const openTasks = guard<any[]>('open tasks', openTasksP as any, [])
   const openByListing: Record<string, any[]> = {}
@@ -596,6 +635,15 @@ export async function buildCommandDay(): Promise<CommandDay> {
   const byOwner: Record<Owner, number> = { housekeeping: 0, maintenance: 0, desk: 0, gm: 0 }
   for (const n of next) if (!n.dismissed) byOwner[n.owner]++
 
+  // ── HANDLED TODAY: every row cleared from the list, with the live row's words when the engine
+  // still generates it and the stored words when it no longer does (the recommendation was acted on).
+  const liveByKey: Record<string, NextItem> = {}
+  for (const n of next) liveByKey[n.key] = n
+  const handled: Handled[] = Object.values(dismissed)
+    .map(h => { const n = liveByKey[h.key]; return n ? { ...h, title: n.title, unit: n.unit } : h })
+    .sort((a, b) => b.at.localeCompare(a.at))
+  const callsDone = (callsDoneRes as any)?.error ? (degraded.push('calls done'), 0) : (Number((callsDoneRes as any)?.count) || 0)
+
   // ── THE VERDICT ─────────────────────────────────────────────────────────────────────────────
   const dl = day.deadline
   const pulse = day.pulse
@@ -649,6 +697,13 @@ export async function buildCommandDay(): Promise<CommandDay> {
     hiddenSoon,
     dismissedCount,
     byOwner,
+    handled,
+    completed: {
+      cleansDone: dl.done, cleansTotal: dl.cleans,
+      tasksDone: tDone, tasksTotal: taskRows.length,
+      callsDone,
+      handledDone: handled.filter(h => h.outcome === 'done').length,
+    },
   }
 }
 

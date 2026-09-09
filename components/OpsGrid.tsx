@@ -234,32 +234,25 @@ const zero = (): Counts => ({ total: 0, done: 0, running: 0, open: 0 })
 function Tile({ cat, c, active, onClick }: { cat: CatMeta | null; c: Counts; active: boolean; onClick: () => void }) {
   const pct = (n: number) => c.total > 0 ? (n / c.total) * 100 : 0
   const G = cat ? cat.Icon : null
+  const left = c.total - c.done
   return (
-    <button onClick={onClick} title={cat ? cat.label : 'Everything open'}
-      className={'text-left rounded-xl border-2 px-2 py-1.5 bg-white transition-colors ' +
+    <button onClick={onClick} title={cat ? cat.label + ' — ' + c.done + ' done · ' + c.running + ' in progress · ' + c.open + ' to go' : 'Everything open'}
+      aria-pressed={active}
+      className={'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 bg-white transition-colors min-h-[34px] ' +
         (active ? 'border-ink shadow-sm' : 'border-line hover:border-ink/25')}>
-      <div className="flex items-baseline gap-1.5">
-        {G && <G size={11} strokeWidth={2.5} className="text-slate-500 shrink-0 self-center" />}
-        <span className="text-[11px] font-bold text-ink truncate flex-1 min-w-0">{cat ? cat.label : 'Everything'}</span>
-        <span className="text-[15px] font-bold text-ink tabular-nums leading-none">{c.total}</span>
-      </div>
-
-      {/* The ring was 52px to say one fraction. A 4px bar says the same fraction and leaves the
-          row short enough that every category fits on screen at once. */}
-      <div className="mt-1.5 h-1 rounded-full bg-slate-200 overflow-hidden flex">
-        {c.done > 0 && <span className="bg-emerald-500 h-full" style={{ width: pct(c.done) + '%' }} />}
-        {c.running > 0 && <span className="bg-amber-400 h-full" style={{ width: pct(c.running) + '%' }} />}
-      </div>
-
-      {/* Only the states that exist. A tile with nothing on it says so once, instead of three times. */}
-      <div className="mt-1 text-[10px] text-muted leading-tight truncate">
-        {c.total === 0 ? 'nothing today'
-          : [
-            c.done ? c.done + ' done' : '',
-            c.running ? c.running + ' going' : '',
-            c.open ? c.open + ' to go' : '',
-          ].filter(Boolean).join(' · ')}
-      </div>
+      {G && <G size={12} strokeWidth={2.5} className="text-slate-500 shrink-0" />}
+      <span className="text-[12px] font-bold text-ink whitespace-nowrap">{cat ? cat.label : 'Everything'}</span>
+      <span className="text-[12px] font-bold text-ink tabular-nums">{c.total}</span>
+      {c.total > 0 && (
+        <>
+          {/* The 4px bar keeps the completion palette the task chips use — green done, amber running, grey untouched. */}
+          <span className="w-8 h-1 rounded-full bg-slate-200 overflow-hidden flex shrink-0" aria-hidden>
+            {c.done > 0 && <span className="bg-emerald-500 h-full" style={{ width: pct(c.done) + '%' }} />}
+            {c.running > 0 && <span className="bg-amber-400 h-full" style={{ width: pct(c.running) + '%' }} />}
+          </span>
+          <span className="text-[10.5px] text-muted tabular-nums whitespace-nowrap">{left === 0 ? 'all done' : left + ' left'}</span>
+        </>
+      )}
     </button>
   )
 }
@@ -742,7 +735,7 @@ function fmtAgo(iso: string): string {
   return `${h}h ${m % 60}m ago`
 }
 
-export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask }: {
+export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, aside }: {
   data: GData | undefined
   glitches: GGlitch[]
   roster: GRoster[]
@@ -751,6 +744,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   error?: string | null
   onRefresh: () => void
   onAddTask: (unit: string) => void
+  /** The crew line (the capacity model, compact) — rides on the day line so the clock and the crew are one strip, not two banners. */
+  aside?: React.ReactNode
 }) {
   // A THIRD TAB (Jon, 2026-08-31: "create a review / recommended tab"). Units and People both
   // answer "what is happening today". Review answers "what is hanging over us, and when could we
@@ -1077,9 +1072,13 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       )}
 
       {/* ── THE DEADLINE STRIP ─────────────────────────────────────────────────────────────── */}
+      {/* ONE DAY LINE (Jon, 2026-09-09: "this does not feel clean"): the clock, the cleans and the
+          crew on one strip. The capacity sentence used to be its own coloured banner above this one —
+          two bands saying "the day" before a single unit was visible. */}
+      {(!dl || dl.cleans === 0) && aside && <div className="mb-3 flex items-center">{aside}</div>}
       {dl && dl.cleans > 0 && (
-        <div className={'mb-3 rounded-xl border overflow-hidden ' + (dl.late > 0 ? 'border-rose-300' : dl.atRisk > 0 ? 'border-amber-300' : 'border-line')}>
-          <div className={'px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap ' + (dl.late > 0 ? 'bg-rose-50' : dl.atRisk > 0 ? 'bg-amber-50' : 'bg-app')}>
+        <div className={'mb-3 rounded-xl border ' + (dl.late > 0 ? 'border-rose-300' : dl.atRisk > 0 ? 'border-amber-300' : 'border-line')}>
+          <div className={'rounded-xl px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap ' + (dl.late > 0 ? 'bg-rose-50' : dl.atRisk > 0 ? 'bg-amber-50' : 'bg-app')}>
             <span className="inline-flex items-baseline gap-1.5 shrink-0">
               <Clock size={13} className={dl.late > 0 ? 'text-rose-600' : dl.atRisk > 0 ? 'text-amber-600' : 'text-muted'} />
               <span className="text-[13px] font-black text-ink tabular-nums">{dl.dueBy}</span>
@@ -1102,6 +1101,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
               </span>
             )}
             <span className="flex-1" />
+            {aside}
             {/* HOW OLD IS THIS. The route computes lastSync precisely so a coordinator can tell —
                 its own comment says "a stale list is how walk-ins happen" — and nothing showed it. */}
             <span className="text-[10.5px] text-muted shrink-0 inline-flex items-center gap-1.5">
@@ -1117,33 +1117,15 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       {/* A GRID, NOT A SCROLLER. Eight categories on one screen at every width — four across on a
           phone, all eight on a laptop — so no counter is hidden behind a sideways swipe and no
           label has to truncate. */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-8 gap-1.5">
+      {/* ONE ROW OF CHIPS (2026-09-09). The five tiles were ~70px tall with a three-line legend
+          each; a chip says the same two things — how many, how far along — in one line. */}
+      <div className="flex items-center gap-1.5 flex-wrap">
         {tiles.map(t => (
           <Tile key={t.key} cat={t.cat} c={counts[t.key] || zero()}
             active={t.key === 'all' ? cat === null : cat === t.key}
             onClick={() => setCat(t.key === 'all' ? null : (cat === t.key ? null : (t.key as Cat)))} />
         ))}
       </div>
-
-      {/* ── MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). Above the
-          other controls because it scopes everything below it, counters included — a filter that
-          silently changes the numbers has to be the most visible thing on the screen. ── */}
-      {markets.length > 1 && (
-        <div className="lh-actions mt-3 flex items-center gap-1.5 flex-wrap">
-          <MapPin size={13} className="text-muted shrink-0" />
-          <button onClick={() => pickMkt('all')}
-            className={'px-2.5 py-1 rounded-full border text-[12px] font-bold ' + (mkt === 'all' ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
-            All areas
-          </button>
-          {markets.map(m => (
-            <button key={m.key} onClick={() => pickMkt(m.key)}
-              className={'px-2.5 py-1 rounded-full border text-[12px] font-bold inline-flex items-center gap-1.5 ' + (mkt === m.key ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
-              {m.key}
-              {m.open > 0 && <span className={'text-[10px] font-bold ' + (mkt === m.key ? 'text-white/70' : 'text-muted')}>{m.open}</span>}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* ── SUGGESTIONS MOVED (Jon, 2026-09-01: "can review and suggestion be the same thing") ──
           They were a band above the board AND a section inside the Review tab — two places showing
@@ -1153,6 +1135,26 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
 
       {/* ── CONTROLS ── */}
       <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+        {/* ── MARKET (Jon, 2026-08-25: "I should also be able to select by market area"). It scopes
+            everything — counters included — so it sits first on the control row, not on a row of
+            its own (2026-09-09: one row of controls, not two). ── */}
+        {markets.length > 1 && (
+          <div className="lh-actions inline-flex items-center gap-1 flex-wrap">
+            <MapPin size={13} className="text-muted shrink-0" />
+            <button onClick={() => pickMkt('all')}
+              className={'px-2.5 py-1.5 rounded-full border text-[12px] font-bold ' + (mkt === 'all' ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
+              All
+            </button>
+            {markets.map(m => (
+              <button key={m.key} onClick={() => pickMkt(m.key)}
+                className={'px-2.5 py-1.5 rounded-full border text-[12px] font-bold inline-flex items-center gap-1.5 ' + (mkt === m.key ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted hover:text-ink')}>
+                {m.key}
+                {m.open > 0 && <span className={'text-[10px] font-bold ' + (mkt === m.key ? 'text-white/70' : 'text-muted')}>{m.open}</span>}
+              </button>
+            ))}
+            <span className="w-px h-5 bg-line mx-1 hidden sm:block" aria-hidden />
+          </div>
+        )}
         <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
           {([['units', 'Units', LayoutGrid], ['people', 'People', Users], ['review', 'Review', ListChecks]] as const).map(([k, label, Icon]) => (
             <button key={k} onClick={() => pickMode(k as any)}
@@ -1205,10 +1207,6 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             {metaOf(cats.by, cat).label} <X size={11} />
           </button>
         )}
-        <button onClick={() => onAddTask('')}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-1.5 text-[12.5px] font-bold hover:opacity-90">
-          <Plus size={13} /> Add
-        </button>
       </div>
 
       {/* ── REVIEW ── The third tab replaces the grid entirely rather than sitting under it: it

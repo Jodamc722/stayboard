@@ -190,13 +190,15 @@ export function OpsV2() {
         </div>
       )}
 
-      <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />
-
+      {/* The crew line rides on the grid's day line (one strip: clock · cleans · crew). On the
+          Staffing tab it stands alone, in full, because staffing IS the question there. */}
       {tab === 'grid' && (
         <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
           loading={loading} error={error ? String(error) : null}
-          onRefresh={refresh} onAddTask={u => setAddFor(u)} />
+          onRefresh={refresh} onAddTask={u => setAddFor(u)}
+          aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} compact />} />
       )}
+      {tab === 'people' && <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => pick('people')} />}
       {tab === 'people' && <PeopleTab staff={staff || null} units={units} roster={roster} onRefresh={refresh} cap={cap || null} />}
 
       {addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
@@ -238,8 +240,9 @@ export function CapacityPanel({ pager }: { pager?: boolean }) {
   )
 }
 
-function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | null; roster: Roster[]; onRefresh: () => void; onPeople: () => void }) {
+function CapacityStrip({ cap, roster, onRefresh, onPeople, compact }: { cap: CapData | null; roster: Roster[]; onRefresh: () => void; onPeople: () => void; compact?: boolean }) {
   const [open, setOpen] = useState(false)
+  const [alignRight, setAlignRight] = useState(true)
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, boolean>>({})
   const [err, setErr] = useState('')
@@ -269,6 +272,67 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | nu
     setBusy('')
   }
 
+  const moves = (
+    <div className={compact ? 'px-3 py-2 space-y-1.5' : 'border-t border-line/60 bg-white/60 rounded-b-xl px-3 py-2 space-y-1.5'}>
+      {compact && <p className={'text-[12px] font-bold ' + toneText}>{fmtH(load)} of work on {k.peopleOnShift} {k.peopleOnShift === 1 ? 'person' : 'people'} ≈ {fmtH(k.capacityMinutes)} capacity</p>}
+      {sugs.length === 0 && <p className="text-[12px] text-muted py-1">Nothing worth moving — the day is spread as well as the model can see.</p>}
+      {sugs.map(s => (
+        <div key={s.stopId + s.toPerson} className="flex items-center gap-2 flex-wrap text-[12px]">
+          <span className="font-bold text-ink">{s.unit}</span>
+          <span className="text-muted">→ {s.toPerson}</span>
+          <span className="text-muted tabular-nums">{s.toBeforePct}%→{s.toAfterPct}%</span>
+          <span className="text-muted flex-1 min-w-[140px]">{s.why}</span>
+          {s.kind === 'assign' ? (
+            filed[s.stopId] ? (
+              <span className="inline-flex items-center gap-1 text-[11.5px] font-bold text-emerald-700"><Check size={12} /> assigned</span>
+            ) : (
+              <button onClick={() => file(s)} disabled={busy === s.stopId + s.toPerson}
+                className="text-[11.5px] font-bold px-2.5 py-1 rounded-lg bg-ink text-white disabled:opacity-50 inline-flex items-center gap-1">
+                {busy === s.stopId + s.toPerson ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                Assign · {s.toPerson.split(' ')[0]}
+              </button>
+            )
+          ) : (
+            <button onClick={onPeople} className="text-[11.5px] font-semibold text-muted border border-line rounded-lg px-2 py-1 hover:text-ink">
+              from {s.fromPerson ? s.fromPerson.split(' ')[0] : '—'} · view lanes
+            </button>
+          )}
+        </div>
+      ))}
+      {err && <p className="text-[11.5px] text-rose-600 font-semibold">{err}</p>}
+      {Array.isArray(cap.notes) && cap.notes.length > 0 && (
+        <p className="text-[11px] text-muted pt-1">{cap.notes.join(' · ')}</p>
+      )}
+    </div>
+  )
+
+  // COMPACT (2026-09-09): one chip on the day line — "crew 88% · 5 over · 3 moves" — with the
+  // moves in a popover, so the capacity model costs no band of its own above the board.
+  if (compact) {
+    // The panel opens toward whichever side has room — the chip can sit at the far left (no cleans
+    // on the board) or wrap onto a new line on a phone, and a right-anchored 480px panel would then
+    // hang off the left edge of the page.
+    const chipTone = over ? 'border-rose-300 bg-rose-100 text-rose-800' : warm ? 'border-amber-300 bg-amber-100 text-amber-900' : 'border-emerald-300 bg-emerald-100 text-emerald-900'
+    return (
+      <span className="relative inline-flex">
+        <button onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setAlignRight(r.left + 480 > window.innerWidth); setOpen(o => !o) }} aria-expanded={open} title={fmtH(load) + ' of work on ' + k.peopleOnShift + ' people ≈ ' + fmtH(k.capacityMinutes) + ' capacity'}
+          className={'inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap ' + chipTone}>
+          <Users size={11} /> crew {k.utilisationPct}%
+          {k.overloaded > 0 && <span className="opacity-80">· {k.overloaded} over</span>}
+          {k.unassignedCount > 0 && <span className="opacity-80">· {k.unassignedCount} unowned</span>}
+          <span className="opacity-80">· {sugs.length ? sugs.length + (sugs.length === 1 ? ' move' : ' moves') : 'balanced'}</span>
+          <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+        </button>
+        {open && (
+          <>
+            <span className="fixed inset-0 z-20" onClick={() => setOpen(false)} aria-hidden />
+            <span className={'absolute top-full mt-1 z-30 w-[min(480px,calc(100vw-2rem))] rounded-xl border border-line bg-white shadow-xl text-left ' + (alignRight ? 'right-0' : 'left-0')}>{moves}</span>
+          </>
+        )}
+      </span>
+    )
+  }
+
   return (
     <div className={'mb-3 rounded-xl border ' + tone}>
       <button onClick={() => setOpen(o => !o)} className="w-full px-3 py-2 flex items-center gap-2 flex-wrap text-left">
@@ -286,38 +350,7 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople }: { cap: CapData | nu
           <ChevronDown size={13} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
         </span>
       </button>
-      {open && (
-        <div className="border-t border-line/60 bg-white/60 rounded-b-xl px-3 py-2 space-y-1.5">
-          {sugs.length === 0 && <p className="text-[12px] text-muted py-1">Nothing worth moving — the day is spread as well as the model can see.</p>}
-          {sugs.map(s => (
-            <div key={s.stopId + s.toPerson} className="flex items-center gap-2 flex-wrap text-[12px]">
-              <span className="font-bold text-ink">{s.unit}</span>
-              <span className="text-muted">→ {s.toPerson}</span>
-              <span className="text-muted tabular-nums">{s.toBeforePct}%→{s.toAfterPct}%</span>
-              <span className="text-muted flex-1 min-w-[140px]">{s.why}</span>
-              {s.kind === 'assign' ? (
-                filed[s.stopId] ? (
-                  <span className="inline-flex items-center gap-1 text-[11.5px] font-bold text-emerald-700"><Check size={12} /> assigned</span>
-                ) : (
-                  <button onClick={() => file(s)} disabled={busy === s.stopId + s.toPerson}
-                    className="text-[11.5px] font-bold px-2.5 py-1 rounded-lg bg-ink text-white disabled:opacity-50 inline-flex items-center gap-1">
-                    {busy === s.stopId + s.toPerson ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-                    Assign · {s.toPerson.split(' ')[0]}
-                  </button>
-                )
-              ) : (
-                <button onClick={onPeople} className="text-[11.5px] font-semibold text-muted border border-line rounded-lg px-2 py-1 hover:text-ink">
-                  from {s.fromPerson ? s.fromPerson.split(' ')[0] : '—'} · view lanes
-                </button>
-              )}
-            </div>
-          ))}
-          {err && <p className="text-[11.5px] text-rose-600 font-semibold">{err}</p>}
-          {Array.isArray(cap.notes) && cap.notes.length > 0 && (
-            <p className="text-[11px] text-muted pt-1">{cap.notes.join(' · ')}</p>
-          )}
-        </div>
-      )}
+      {open && moves}
     </div>
   )
 }
