@@ -32,7 +32,7 @@ import { upcomingAutoInspections } from './auto-inspections'
 import { vacantWork, vacantWorkSummary, type VacantWork } from './vacant-work'
 import { maintData } from './maint-brief'
 import { translator, type BriefLang } from './brief-lang'
-import { catOfTaskWith, stateOfTask, resolveCats, TASK_CATS_KEY, type CatDef } from './task-categories'
+import { stateOfTask } from './task-categories'
 import { buildReviewQueue, dayWord, niceDate } from './review-queue'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -65,7 +65,6 @@ async function gather(variant: BriefVariant) {
   const presets = await getOpsPresets()
   // The taxonomy is editable (Users & admin -> Task categories); the brief reads the same saved
   // rules the board does, so the email and the screen can never disagree about what a task is.
-  const taskCats = resolveCats(await getSetting<any>(TASK_CATS_KEY, null).catch(() => null))
   const VENDOR = vendorRegex(presets.vendorBuildings)
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString()
   const dayAgo = new Date(Date.now() - 26 * 3600000).toISOString()   // "new since yesterday's brief"
@@ -417,7 +416,6 @@ async function gather(variant: BriefVariant) {
   return {
     // THE BOARD, IN THE BRIEF (Jon, 2026-08-25). Computed here because this is where today's
     // Breezeway rows and the variant's market scope already are — no second query.
-    board: boardAtAGlance((tRes.data || []) as any[], inVariant, taskCats),
     today, sheet, cleans, hkOther, deptOfPerson, officeNames, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
     forward, lookaheadDays: LOOK_D,
     rep: { n: allRevs.length, avg, five, owed }, watch30,
@@ -495,25 +493,6 @@ function card(title: string, count: number | null, inner: string, accent = '#636
 // It is scoped by whatever the brief is already scoped to: the Broward day sheet counts Broward's
 // board, the full brief counts the portfolio. Rows with nothing on them are dropped — a table of
 // zeroes teaches nobody anything.
-type BoardRow = { cat: string; label: string; total: number; done: number; running: number; open: number }
-function boardAtAGlance(rows: any[], inScope: (lid: string) => boolean, cats: CatDef[]): BoardRow[] {
-  const by: Record<string, BoardRow> = {}
-  for (const c of cats) by[c.key] = { cat: c.key, label: c.label, total: 0, done: 0, running: 0, open: 0 }
-  for (const t of rows) {
-    const status = str(t.status).toLowerCase()
-    if (/delete|cancel/.test(status)) continue
-    if (!inScope(String(t.reference_property_id))) continue
-    const cat = catOfTaskWith(cats, { name: str(t.name), dept: str(t.type_department) })
-    const st = stateOfTask({ status, started_at: t.started_at, finished_at: t.finished_at })
-    const r = by[cat]
-    if (!r) continue
-    r.total++
-    if (st === 'done') r.done++
-    else if (st === 'running') r.running++
-    else r.open++
-  }
-  return cats.map(c => by[c.key]).filter(r => r && r.total > 0)
-}
 
 
 // ── BAD-REVIEW INSPECTIONS ON THE BRIEF (Jon, 2026-08-24) ───────────────────────────────────────
@@ -887,10 +866,13 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <tr><td style="${S.td}">${t('Cleans completed')}</td><td style="${S.td};text-align:right"><b>${y.cleans}</b>${yMinsPerClean ? ` <span style="${S.muted}">· ${yMinsPerClean} min average</span>` : ''}</td></tr>
     <tr><td style="${S.td}">${t('Inspections completed')}</td><td style="${S.td};text-align:right"><b style="${y.inspections ? S.green : S.amber}">${y.inspections}</b>${!y.inspections ? ` <span style="${S.muted}">· none logged</span>` : ''}</td></tr>
     ${(y as any).other ? `<tr><td style="${S.td}">Other work closed <span style="${S.muted}">strips, common areas, deliveries</span></td><td style="${S.td};text-align:right"><b>${(y as any).other}</b></td></tr>` : ''}
-`
-  // Maintenance closed and Breezeway hours used to sit here too. Each had a second, better home in
-  // the same email — maintenance with a denominator in its own card, hours as real payroll in the
-  // Labor card — and the two numbers for each did not agree, which is worse than repeating them.
+` +
+    // Maintenance closed came off this table: the maintenance card carries it WITH a denominator,
+    // and the two were scoped differently and did not agree. Hours stay on the day sheets only —
+    // Ops Command has real Homebase payroll in its Labor card, which is the better number, but
+    // that card is not on a crew's email and this was their only one.
+    (isField ? `
+    <tr><td style="${S.td}">${t('Hours on the clock')} <span style="${S.muted}">${t('recorded in Breezeway')}</span></td><td style="${S.td};text-align:right"><b>${yHours || '—'}</b>${yHours ? ' <span style="' + S.muted + '">hrs</span>' : ''}</td></tr>` : '')
 
   // ── CLEANS, IN ORDER BY PERSON (Jon, 2026-08-22: "overview of departure, arrivals, assignment
   // in order by person"). Unassigned doors lead in red — they are nobody's list. Then each
@@ -1054,7 +1036,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     void sched; void cleansN; void jobsN
     const meta = idle ? `<span style="${S.amber}">${idle} with nothing assigned</span>` : ''
     return `
-    <tr><td colspan="3" style="padding:10px 10px 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#4338ca;font-weight:700;border-top:2px solid #e0e7ff">${esc(CREW_LABEL[key] || key)} <span style="font-weight:500;letter-spacing:0;text-transform:none;color:#6b7280">· ${meta}</span></td></tr>`
+    <tr><td colspan="3" style="padding:10px 10px 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#4338ca;font-weight:700;border-top:2px solid #e0e7ff">${esc(CREW_LABEL[key] || key)}${meta ? ` <span style="font-weight:500;letter-spacing:0;text-transform:none;color:#6b7280">· ${meta}</span>` : ''}</td></tr>`
   }
   // Maintenance has its own card (Jon, 2026-09-07: cleans and who's cleaning first, then
   // maintenance tasks) — the techs are not repeated here.
@@ -1093,7 +1075,14 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <td style="${S.td};text-align:right;white-space:nowrap">${c.state === 'done' ? `<span style="${S.green}">${t('done')}</span>` : c.state === 'running' ? `<span style="${S.amber}">${t('in progress')}</span>` : `<span style="${S.muted}">${t('scheduled')}</span>`}</td></tr>`
   }
   const tbl0 = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
-  const cleansInOrder = [...unassigned, ...d.cleans.filter(c => !/UNASSIGNED/.test(c.assignee))]
+  // NOBODY'S RUN, SO NOBODY'S BLOCK. An unassigned clean has no owner, so it appears in no
+  // person's numbered run — it only ever had a home in the flat card, which is gone. It leads the
+  // roster card instead, in red, with the arrival time that makes it urgent. (The priority bullets
+  // name them too, but that list is capped at 8 and a busy morning pushes doors off the end.)
+  const unassignedCleanRows = unassigned.length
+    ? `<tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${unassigned.length} ${unassigned.length === 1 ? t('clean') : t('cleans')}</span></td></tr>`
+      + unassigned.map((c: any) => cleanLine(c, null)).join('')
+    : ''
 
   // ── MAINTENANCE TODAY — every tech's run, plus the maintenance jobs nobody holds.
   const maintUnassigned = otherUnassigned.filter((x: any) => x.dept === 'maintenance')
@@ -1113,7 +1102,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // Unassigned CLEANS lead the Departure cleans card and unassigned MAINTENANCE leads the
   // Maintenance card — here only the housekeeping-side jobs with nobody on them.
   const hkUnassigned = otherUnassigned.filter((x: any) => x.dept !== 'maintenance')
-  const cleansRows =
+  const cleansRows = unassignedCleanRows +
     (hkUnassigned.length ? `
     <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${hkUnassigned.length} ${hkUnassigned.length === 1 ? t('other job') : t('other jobs')} ${t('with nobody on them')}</span></td></tr>` +
       hkUnassigned.map((o: any) => otherRow(o)).join('') : '') +
@@ -1127,7 +1116,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // "On the schedule today" table — its counts live in the header line now.
   let teamCard = ''
   if (variant === 'full') {
-    const unassignedTop =
+    const unassignedTop = unassignedCleanRows +
       (hkUnassigned.length ? `
     <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>NO ONE ASSIGNED</b> <span style="color:#b91c1c;opacity:.75">· ${hkUnassigned.length} ${hkUnassigned.length === 1 ? 'other job' : 'other jobs'} with nobody on them</span></td></tr>` +
         hkUnassigned.map((o: any) => otherRow(o)).join('') : '')
@@ -1146,7 +1135,8 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
         (unschedN ? ` · <span style="${S.amber}">${unschedN} holding work but not scheduled</span>` : '') +
         `</p>`
       : `<p style="margin:0 0 6px;font-size:12.5px;color:#b45309">Homebase did not answer this morning — shifts are missing from this card; the assignments below are still the Breezeway board.</p>`
-    teamCard = card("Who's cleaning — the field team, and what each person is on", rosterNames.filter(n => !isTech(n)).length,
+    teamCard = card("Who's cleaning — the field team, and what each person is on",
+      rosterNames.filter(n => !isTech(n)).length + (unassigned.length ? unassigned.length : 0),
       head + `<table width="100%" cellspacing="0" cellpadding="0">${unassignedTop + rosterRows + officeStrip}</table>` +
       // The 57-word key to reading this card was printed every morning for months. Numbered means
       // the clean run, bulleted means everything else; that is the whole of it.
@@ -1242,10 +1232,9 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   void vacIdle
   const vacantLine =
     `<b>${vacants.length}</b> vacant tonight` +
-    (vacSoon.length ? ` — <span style="${S.amber}">${vacSoon.length} with a guest arriving within 3 days</span> (${vacSoon.slice(0, 8).map((v: any) => esc(str(v.unit))).join(', ')}${vacSoon.length > 8 ? ` +${vacSoon.length - 8} more` : ''}) — make sure these are guest-ready first` : '') +
-    // vacantWorkSummary, three lines below in the same card, already says how many have no future
-    // booking — and every row that is one carries the words on it as well.
-    ''
+    // The "N with no future booking" clause came off: vacantWorkSummary says it three lines below
+    // in the same card, and every row that is one carries the words on it as well.
+    (vacSoon.length ? ` — <span style="${S.amber}">${vacSoon.length} with a guest arriving within 3 days</span> (${vacSoon.slice(0, 8).map((v: any) => esc(str(v.unit))).join(', ')}${vacSoon.length > 8 ? ` +${vacSoon.length - 8} more` : ''}) — make sure these are guest-ready first` : '')
 
   // ── VACANT UNITS: THE WORKLIST ────────────────────────────────────────────────────────────────
   // A count of empty units is a fact nobody can act on. This is the same list with the highest-value
@@ -1289,7 +1278,13 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // same 110-character snippet, two cards up. This one is the 30-day watch-list, so it starts
   // where that card stops.
   const since = String(d.reviewsSince || '').slice(0, 10)
-  const low30Rows = w30.low.filter((r: any) => !since || String(r.at).slice(0, 10) <= since).map(r =>
+  const low30Shown = w30.low.filter((r: any) => !since || String(r.at).slice(0, 10) <= since)
+  // EVERYTHING ON THIS CARD COUNTS THE SAME SET. Filtering the rows and leaving the count, the
+  // headline and the "+N more" reading the unfiltered total is how a card ends up claiming 8 and
+  // listing 6.
+  const low30Hidden = w30.low.length - low30Shown.length
+  const low30Total = Math.max(0, w30.lowTotal - low30Hidden)
+  const low30Rows = low30Shown.map(r =>
     '<tr style="background:#fef2f2"><td style="' + S.td + '"><b>' + esc(r.unit) + '</b>' +
     (r.replied ? '' : ' ' + pillRed('NO REPLY')) +
     '<br><span style="color:#6b7280">' + esc(r.channel) + ' · ' + esc(niceDay(r.at)) + '</span></td>' +
@@ -1304,12 +1299,12 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     ? '<p style="margin:6px 0 0;font-size:12.5px"><b>What guests keep naming:</b> ' +
       w30.themes.map((t: any) => esc(t.theme) + ' <span style="color:#6b7280">\u00d7' + t.n + '</span>').join(' \u00b7 ') + '</p>'
     : ''
-  const moreLow = w30.lowTotal > w30.low.length
-    ? '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">+' + (w30.lowTotal - w30.low.length) + ' more low score' + (w30.lowTotal - w30.low.length === 1 ? '' : 's') + ' in the window \u2014 full list on the Reviews board.</p>'
+  const moreLow = low30Total > low30Shown.length
+    ? '<p style="margin:6px 0 0;font-size:11px;color:#9ca3af">+' + (low30Total - low30Shown.length) + ' more low score' + (low30Total - low30Shown.length === 1 ? '' : 's') + ' in the window \u2014 full list on the Reviews board.</p>'
     : ''
   const repHeadline = '<p style="font-size:13px;margin:8px 0 2px">' + repLine + '</p>' +
-    (w30.lowTotal
-      ? '<p style="margin:8px 0 6px;font-size:12.5px"><span style="' + S.red + '"><b>' + w30.lowTotal + ' at 3\u2605 or below</b></span> in the last 30 days' +
+    (low30Total
+      ? '<p style="margin:8px 0 6px;font-size:12.5px"><span style="' + S.red + '"><b>' + low30Total + ' at 3\u2605 or below</b></span> in the last 30 days' +
         (w30.unanswered ? ' \u00b7 <span style="' + S.amber + '">' + w30.unanswered + ' still awaiting a reply</span>' : '') + ' \u2014 these are the ones to check on.</p>'
       : '<p style="margin:8px 0 0;font-size:12.5px"><span style="' + S.green + '">No review at 3\u2605 or below in the last 30 days.</span></p>')
 
@@ -1441,26 +1436,13 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       <td width="100%" style="border-top:2px solid #e5e7eb;line-height:1px;font-size:1px">&nbsp;</td>
     </tr></table>`
   const bare = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
-  const tiles: Tile[] = isField ? [
-    { label: t('Cleans'), value: String(d.cleans.length), note: sameDay.length ? `${sameDay.length} ${t('same-day')}` : t('today'), tone: sameDay.length ? 'amber' : undefined },
-    { label: t('Unassigned'), value: String(unassigned.length), tone: unassigned.length ? 'red' : 'green' },
-    { label: t('Arrivals'), value: String(arrivals.length) },
-    { label: t('Departures'), value: String(departures.length), note: t('check-outs') },
-  ] : (() => {
-    const carryTot = (maintMi ? maintMi.carryover.length : 0) + (maintBr ? maintBr.carryover.length : 0)
-    const bzPct = comp && comp.winCheckouts ? Math.round((comp.winBzClosed / comp.winCheckouts) * 1000) / 10 : null
-    return [
-      { label: 'Cleans', value: String(d.cleans.length), note: sameDay.length ? `${sameDay.length} same-day` : 'today', tone: sameDay.length ? 'amber' : undefined },
-      { label: 'Unassigned', value: String(unassigned.length), tone: unassigned.length ? 'red' : 'green' },
-      { label: 'Carryover', value: String(carryTot), note: 'maint · 7d', tone: carryTot ? 'amber' : 'green' },
-      { label: 'Blocked', value: String(fullBlocked.length), note: 'units', tone: fullBlocked.length ? 'red' : 'green' },
-      { label: 'BZ closed', value: bzPct != null ? bzPct + '%' : '—', note: comp ? `${comp.winBzClosed}/${comp.winCheckouts} · 7d` : undefined,
-        tone: bzPct == null ? undefined : bzPct < 80 ? 'red' : bzPct < 95 ? 'amber' : 'green' },
-      { label: 'Guest issues', value: String(glitches.length), tone: glitches.length ? 'amber' : 'green' },
-    ] as Tile[]
-  })()
+  // The tile row is gone from this brief — every number on it was in the verdict one line above
+  // (Jon, 2026-09-09: "duplicate info"). The GM and vendor briefs still build their own.
 
   // ── MAINTENANCE — Miami | Broward side by side (merged from the standalone emails) ──────────
+  // Whether the Review card is actually on the page decides whether the maintenance card can point
+  // at it for the carryover worklist or has to print one itself.
+  const reviewShowing = !!(review && review.items.length)
   let maintCard = ''
   let carryRows = ''
   // THE STANDALONE MAINTENANCE EMAILS ARE GONE (Jon, 2026-09-09). Maintenance was told three
@@ -1482,11 +1464,14 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       : `<span style="${S.green}">0</span>`
     const mTable = `<table width="100%" cellspacing="0" cellpadding="0">
       <tr><th style="${S.th}"></th>${isField ? '' : `<th style="${S.th};text-align:right">Miami</th>`}<th style="${S.th};text-align:right">${isField ? esc(variant) : 'Broward'}</th></tr>` +
-      mRow('Done yesterday', doneTxt) +
-      mRow('Carried over · 7d', carryTxt) +
-      mRow('Billed yesterday', m => `<b>${money(m.yd.billable)}</b>${m.yd.noCharge ? ` <span style="${S.amber};font-size:11px">· ${m.yd.noCharge} no charge</span>` : ''}`) +
-      mRow('Billed · 7 days', m => `${money(m.d7.billable)}${m.d7.noCharge ? ` <span style="${S.amber};font-size:11px">· ${m.d7.noCharge} no charge</span>` : ''}`) +
-      mRow('Billed · 30 days', m => `${money(m.d30.billable)}${m.d30.noCharge ? ` <span style="${S.amber};font-size:11px">· ${m.d30.noCharge} no charge</span>` : ''}`) +
+      mRow(t('Done yesterday'), doneTxt) +
+      mRow(t('Carried over · 7d'), carryTxt) +
+      // NO DOLLARS ON A DAY SHEET. Folding this card onto the market sheets would otherwise have
+      // put billed revenue — and a portfolio-wide wages line — on a housekeeper's phone.
+      (isField ? '' :
+        mRow('Billed yesterday', m => `<b>${money(m.yd.billable)}</b>${m.yd.noCharge ? ` <span style="${S.amber};font-size:11px">· ${m.yd.noCharge} no charge</span>` : ''}`) +
+        mRow('Billed · 7 days', m => `${money(m.d7.billable)}${m.d7.noCharge ? ` <span style="${S.amber};font-size:11px">· ${m.d7.noCharge} no charge</span>` : ''}`) +
+        mRow('Billed · 30 days', m => `${money(m.d30.billable)}${m.d30.noCharge ? ` <span style="${S.amber};font-size:11px">· ${m.d30.noCharge} no charge</span>` : ''}`)) +
       `</table>`
     const wages30 = maintMi && maintMi.wages.d30 != null ? maintMi.wages.d30 : (maintBr && maintBr.wages.d30 != null ? maintBr.wages.d30 : null)
     // Carryover worklist, both markets merged, oldest first — this is what Roberto assigns at 8am.
@@ -1501,23 +1486,30 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     const recurringAll = ([] as { unit: string; n: number }[])
       .concat(maintMi ? maintMi.recurring : []).concat(maintBr ? maintBr.recurring : [])
       .sort((a, b) => b.n - a.n).slice(0, 6)
-    maintCard = card(isField ? `Maintenance — ${variant}` : 'Maintenance — Miami | Broward', null,
+    maintCard = card(isField ? `${t('Maintenance')} — ${variant}` : 'Maintenance — Miami | Broward', null,
       mTable +
-      (wages30 != null ? `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Maintenance wages (portfolio-wide, 30d, Stay's share after 17WEST): <b>${money(wages30)}</b>. A finished task with no charge entered bills $0 until someone types the cost in Breezeway.</p>` : '') +
+      (!isField && wages30 != null ? `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Maintenance wages (portfolio-wide, 30d, Stay's share after 17WEST): <b>${money(wages30)}</b>. A finished task with no charge entered bills $0 until someone types the cost in Breezeway.</p>` : '') +
       // The carryover WORKLIST used to print here as well. It is the same set of tasks the Review
       // card above already lists, with the difference that Review also says the next day the unit
       // is empty — so that one is the survivor and this keeps the count.
+      // The Review card lists these WITH the next day each unit is empty, so when it renders this
+      // keeps the count and points at it. But Review only covers units the board touched today, and
+      // it does not render at all when it is empty — so on those mornings the worklist prints here
+      // rather than being pointed at a card that is not on the page.
       (carryAll.length
-        ? `<p style="margin:8px 0 0;font-size:12.5px"><span style="${S.amber}"><b>${carryAll.length} carried over</b></span> <span style="${S.muted}">— oldest ${carryAll[0].ageDays}d. Named in Review above, with the day each unit is next empty.</span></p>`
-        : `<p style="margin:8px 0 0;font-size:12.5px"><span style="${S.green}">Nothing carried over</span> <span style="${S.muted}">— every scheduled task from the last week is closed.</span></p>`) +
-      (recurringAll.length ? `<p style="margin:10px 0 0;font-size:12.5px"><b>Recurring</b> <span style="${S.muted}">3+ tasks in 30d — worth a root-cause visit:</span> ${recurringAll.map(r => esc(r.unit) + ' <span style="' + S.red + '">×' + r.n + '</span>').join(' · ')}</p>` : ''),
+        ? (reviewShowing
+          ? `<p style="margin:8px 0 0;font-size:12.5px"><span style="${S.amber}"><b>${carryAll.length} ${t('carried over')}</b></span> <span style="${S.muted}">— ${t('oldest')} ${carryAll[0].ageDays}d. ${t('Named in Review above, with the day each unit is next empty.')}</span></p>`
+          : `<p style="margin:10px 0 4px;font-size:12.5px;color:#374151"><b>${t('Carried over — oldest first')}</b></p><table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${S.th}">${t('Unit')} · ${t('task')}</th><th style="${S.th};text-align:right">${t('Age')}</th><th style="${S.th}">${t('With')}</th></tr>${carryRows}</table>${carryAll.length > 10 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${carryAll.length - 10} ${t('more on the board')}</p>` : ''}`)
+        : `<p style="margin:8px 0 0;font-size:12.5px"><span style="${S.green}">${t('Nothing carried over')}</span> <span style="${S.muted}">— ${t('every scheduled task from the last week is closed.')}</span></p>`) +
+      (recurringAll.length ? `<p style="margin:10px 0 0;font-size:12.5px"><b>${t('Recurring')}</b> <span style="${S.muted}">3+ tasks in 30d — worth a root-cause visit:</span> ${recurringAll.map(r => esc(r.unit) + ' <span style="' + S.red + '">×' + r.n + '</span>').join(' · ')}</p>` : ''),
       '#7c2d12', '17WEST and vendor buildings excluded')
-  } else if (variant === 'full') {
-    // BOTH MARKETS FAILED TO LOAD — say so. The maintenance story was merged into this email; a
-    // morning where the card silently vanishes reads as "no maintenance news", which is exactly
-    // wrong when the truth is "the data did not come back".
-    maintCard = card('Maintenance — Miami | Broward', null,
-      `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">Maintenance data could not be loaded this morning, so this card is withheld rather than shown empty. Breezeway and the <a href="${APP_URL}/labor" style="color:#2563eb">Labor board</a> have the live picture.</p>`,
+  } else if (variant === 'full' || isField) {
+    // THE READ FAILED — say so. A morning where this card silently vanishes reads as "no
+    // maintenance news", which is exactly wrong when the truth is "the data did not come back" —
+    // and since the standalone maintenance email was retired there is no second copy to fall back
+    // on. Field sheets need this branch as much as Ops Command does.
+    maintCard = card(isField ? `Maintenance — ${variant}` : 'Maintenance — Miami | Broward', null,
+      `<p style="font-size:13px;margin:8px 0 2px;color:#6b7280">${t('Maintenance data could not be loaded this morning, so this card is withheld rather than shown empty. Breezeway has the live picture.')}</p>`,
       '#7c2d12')
   }
 
@@ -1587,7 +1579,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     : card(t('Top priorities'), null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">${t('Nothing on fire.')}</span> <span style="${S.muted}">${t('Work the list below and keep the 4pm deadline in sight.')}</span></p>`, '#059669')}
 
   ${eyebrow(t('Departure cleans'))}
-  ${variant === 'full' ? teamCard : card(t("Who's cleaning — the field team, in order"), everyone.filter(n => !isTech(n)).length,
+  ${variant === 'full' ? teamCard : card(t("Who's cleaning — the field team, in order"), everyone.filter(n => !isTech(n)).length + unassigned.length,
     (d.cleans.length || hkAll.length)
       ? bare(cleansRows) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${lang === 'es' ? t('HK_FOOTNOTE') : 'Numbered rows are the departure-clean run, in order. Bulleted rows are everything else on that person.'}</p>`
       : emptyLine(t('Nothing on the board today.')))}
@@ -1603,8 +1595,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     <tr><td style="${S.td}">${pillRed('BAD REVIEW')} <b>${esc(i.unit_name)}</b> <span style="${S.muted}">· ${i.check_in <= d.today ? 'unit is empty now' : 'on the checkout ' + esc(niceDay(i.check_in))}</span><br>
     <span style="font-size:12px;color:#6b7280">${esc(i.reason)}${i.assignees.length ? ' · ' + esc(i.assignees.join(', ')) : ' · unassigned'}</span></td>
     <td style="${S.td};text-align:right;white-space:nowrap">${isDoneStatus(i.status) ? `<span style="${S.green}">done</span>` : /progress|start/i.test(str(i.status)) ? `<span style="${S.amber}">in progress</span>` : `<span style="${S.red}">open</span>`}</td></tr>`).join('')
-    ) +
-    '',
+    ),
     '#7c3aed') : ''}
 
   ${review && review.items.length ? (() => {
@@ -1667,9 +1658,9 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
         : (vacants.length ? `<p style="font-size:12px;margin:10px 0 2px;color:#059669">Nothing outstanding on any of them — audits, inspections and open work are all current.</p>` : '')),
       vacUrgent ? '#d97706' : '#6366f1')}
   ${!isField && d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
-  ${!isField ? card('Reputation — last 30 days', w30.lowTotal || null,
+  ${!isField ? card('Reputation — last 30 days', low30Total || null,
       repHeadline + (low30Rows ? table(['Unit', 'What they said'], low30Rows) : '') + moreLow + repeatLine + themeLine,
-      w30.lowTotal ? '#dc2626' : '#059669',
+      low30Total ? '#dc2626' : '#059669',
       `Last 30 days · since ${niceDay(w30.since)}`) : ''}
 
   <p style="${S.foot}">${isField ? t('Sent automatically every morning · your supervisor has the live board.') : 'Ops Command · sent automatically every morning · labor deep-dive in the Daily Labor email · the boards have the live picture.'}</p>
@@ -2014,7 +2005,6 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       <b>Everything live</b> → <a href="${APP_URL}/command" style="color:#4338ca">Command Center</a>
     </p>
   </div>
-  ${accessNotice()}
   <p style="${S.foot}">GM Brief · sent each morning by Stay Hospitality · every figure is the shared engine’s.</p>
   </div></body></html>`
 

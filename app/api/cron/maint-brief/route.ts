@@ -18,14 +18,9 @@
 // went to the owner alone, CC Roberto, and `maint.enabled === false` could never be true either:
 // the off switch did not work. Nobody on that saved list has been receiving these.
 //
-//   GET                          → send both markets to their recipient lists
-//   GET ?preview=Miami|Broward   → signed-in only: the HTML, no send, nothing stored
-//   GET ?test=1                  → signed-in only: send both markets to YOU alone
-//
-// Recipients live under the SAME app_settings key as every other brief ('ops_brief'), in its
-// `maint` sub-object — so /users → App settings → Morning briefs stays the one place recipients
-// are edited. NEVER QUIET-SKIP: with no list saved the brief goes to the owner rather than
-// nowhere, which is exactly the bug that hid these emails for weeks the first time round.
+//   GET                          → answers, sends nothing
+//   GET ?preview=Miami|Broward   → signed-in only: the HTML as it was, no send, nothing stored
+//   GET ?test=1                  → signed-in only: send a copy to YOU alone, to see what it was
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { getSetting } from '@/lib/app-settings'

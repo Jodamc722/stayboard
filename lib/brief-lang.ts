@@ -169,6 +169,23 @@ const ES: Record<string, string> = {
   'check-outs': 'salidas',
   'in': 'entran',
   'No same-day turns — work each run in order.': 'No hay salidas con llegada el mismo día — trabaje cada recorrido en orden.',
+  // The verdict's "nothing unassigned" branch (2026-09-09). The same-day door list moved to Top
+  // priorities, which named them anyway, so the verdict says the one thing that is left to say.
+  'Everything has a name — work each run in order.': 'Todo tiene nombre — trabaje cada recorrido en orden.',
+  // The maintenance card folded onto the market day sheets when the standalone email was retired.
+  'Done yesterday': 'Hecho ayer',
+  'Carried over · 7d': 'Pendientes · 7d',
+  'Nothing carried over': 'Nada pendiente',
+  'every scheduled task from the last week is closed.': 'todas las tareas programadas de la última semana están cerradas.',
+  'Named in Review above, with the day each unit is next empty.': 'Están en Revisión arriba, con el día en que cada unidad queda vacía.',
+  'oldest': 'la más antigua',
+  'Recurring': 'Recurrente',
+  'Age': 'Antigüedad',
+  'Maintenance data could not be loaded this morning, so this card is withheld rather than shown empty. Breezeway has the live picture.':
+    'Los datos de mantenimiento no se pudieron cargar esta mañana, así que esta tarjeta se omite en vez de mostrarse vacía. Breezeway tiene la información en vivo.',
+  // Hours stayed on the day sheets when they came off Ops Command's Yesterday table.
+  'Hours on the clock': 'Horas registradas',
+  'recorded in Breezeway': 'registradas en Breezeway',
   'Same-day doors first:': 'Primero las unidades con llegada hoy:',
   'need a name — assign first.': 'necesitan a alguien — asígnelas primero.',
   'needs a name — assign first.': 'necesita a alguien — asígnela primero.',
