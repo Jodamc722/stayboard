@@ -155,7 +155,7 @@ export const ago = (iso: string, now = Date.now()) => {
 export const PROJECT_KINDS = ['project', 'one_on_one', 'personal'] as const
 export type ProjectKind = typeof PROJECT_KINDS[number]
 
-export type TemplateTask = { title: string; description?: string; priority?: string; dueOffsetDays?: number }
+export type TemplateTask = { title: string; description?: string; priority?: string; dueOffsetDays?: number; checklist?: string[] }
 export type TemplateSection = { name: string; tasks: TemplateTask[] }
 export type Template = {
   key: string; label: string; kind: ProjectKind; category: string; summary?: string

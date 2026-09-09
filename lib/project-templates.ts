@@ -21,7 +21,7 @@ import {
 } from './projects-shared'
 
 // ---------------------------------------------------------------- built-ins
-const T = (title: string, extra: Partial<{ description: string; priority: string; dueOffsetDays: number }> = {}) => ({ title, ...extra })
+const T = (title: string, extra: Partial<{ description: string; priority: string; dueOffsetDays: number; checklist: string[] }> = {}) => ({ title, ...extra })
 
 export const BUILT_IN: Template[] = [
   {
@@ -41,7 +41,7 @@ export const BUILT_IN: Template[] = [
     blurb: 'Access, listings, ops, owner, compliance — everything before the first guest.',
     summary: 'Bring a new building live: access sorted, listings built, crew and supplies in place, owner set up.',
     sections: [
-      { name: 'Access', tasks: [T('Collect keys, fobs and garage remotes', { dueOffsetDays: 3 }), T('Door codes set and tested per unit', { dueOffsetDays: 5 }), T('Lockbox placed for cleaners', { dueOffsetDays: 5 }), T('Wi-Fi names and passwords recorded per unit', { dueOffsetDays: 5 })] },
+      { name: 'Access', tasks: [T('Collect keys, fobs and garage remotes', { dueOffsetDays: 3 }), T('Door codes set and tested per unit', { dueOffsetDays: 5, checklist: ['Codes generated in Guesty', 'Tested from outside', 'Cleaner code works', 'Backup key location noted'] }), T('Lockbox placed for cleaners', { dueOffsetDays: 5 }), T('Wi-Fi names and passwords recorded per unit', { dueOffsetDays: 5 })] },
       { name: 'Listings', tasks: [T('Guesty listings created', { dueOffsetDays: 7 }), T('Photos shot and ordered', { dueOffsetDays: 10 }), T('Pricing and minimum stay set', { dueOffsetDays: 10 }), T('House rules and check-in guide written', { dueOffsetDays: 10 })] },
       { name: 'Operations', tasks: [T('Breezeway property created with checklists', { dueOffsetDays: 7 }), T('Cleaner and inspector assigned', { dueOffsetDays: 7 }), T('Inventory count and starter supplies delivered', { dueOffsetDays: 12 }), T('Linen par levels set', { dueOffsetDays: 12 })] },
       { name: 'Owner', tasks: [T('Management agreement signed', { priority: 'high', dueOffsetDays: 1 }), T('Owner portal access sent', { dueOffsetDays: 7 }), T('Statement and payout details confirmed', { dueOffsetDays: 14 })] },
@@ -53,10 +53,10 @@ export const BUILT_IN: Template[] = [
     blurb: 'Scope, owner approval, vendors, the work, closeout.',
     summary: 'A renovation from scope to the listing being updated.',
     sections: [
-      { name: 'Scope', tasks: [T('Walk the unit and write the scope'), T('Before photos')] },
+      { name: 'Scope', tasks: [T('Walk the unit and write the scope', { checklist: ['Photos of every room', 'Measurements', 'Owner wishes noted', 'Rough budget'] }), T('Before photos')] },
       { name: 'Approval', tasks: [T('Budget drafted', { priority: 'high' }), T('Owner approval requested', { priority: 'high' }), T('Approval received')] },
       { name: 'Vendors', tasks: [T('Quotes in (at least two)'), T('Vendor booked and dates set'), T('Calendar blocked in Guesty')] },
-      { name: 'Work', tasks: [T('Demo / prep'), T('Install'), T('Punch list walk')] },
+      { name: 'Work', tasks: [T('Demo / prep'), T('Install'), T('Punch list walk', { checklist: ['Paint touch-ups', 'Caulk and grout', 'Hardware tight', 'Outlets and lights', 'Final clean'] })] },
       { name: 'Closeout', tasks: [T('After photos'), T('Listing photos and description updated'), T('Owner billed / statement line added'), T('Inventory updated')] },
     ],
   },
@@ -136,9 +136,18 @@ export async function applyTemplate(projectId: string, t: Template, opts: { star
       })
     }
   }
+  // Parents first (need ids), then each task's checklist as its subtasks.
+  const checklists: string[][] = []
+  for (const sec of t.sections) for (const task of sec.tasks) checklists.push(Array.isArray(task.checklist) ? task.checklist : [])
   if (rows.length) {
-    const { error } = await sb.from('project_steps').insert(rows)
+    const { data: ins, error } = await sb.from('project_steps').insert(rows).select('id,title,section,sort')
     if (error) throw new Error('template tasks: ' + error.message)
+    const byIdx = ((ins || []) as any[]).slice().sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+    const kids: any[] = []
+    byIdx.forEach((parent, i) => {
+      ;(checklists[i] || []).forEach((item, j) => kids.push({ project_id: projectId, parent_id: parent.id, title: String(item).slice(0, 300), section: parent.section, status: 'todo', priority: 'normal', created_by: opts.createdBy, sort: (j + 1) * 10 }))
+    })
+    if (kids.length) { const { error: e2 } = await sb.from('project_steps').insert(kids); if (e2) throw new Error('template checklist: ' + e2.message) }
   }
   // Sections with no tasks (a personal board's "Doing" / "Done") only exist as an order preference.
   const order = t.sections.map(s => s.name).filter(Boolean)
@@ -150,10 +159,13 @@ export async function applyTemplate(projectId: string, t: Template, opts: { star
 /** A template from a live project: its sections and open-or-done task titles, nothing personal. */
 export async function snapshotTemplate(projectId: string, opts: { key: string; label: string; createdBy: string }) {
   const sb = supabaseAdmin()
-  const [{ data: p }, { data: steps }] = await Promise.all([
+  const [{ data: p }, { data: steps }, { data: kids }] = await Promise.all([
     sb.from('projects').select('kind,category,summary,settings').eq('id', projectId).maybeSingle(),
-    sb.from('project_steps').select('title,description,section,priority,parent_id,sort,created_at').eq('project_id', projectId).is('parent_id', null).order('sort', { nullsFirst: false }).order('created_at'),
+    sb.from('project_steps').select('id,title,description,section,priority,parent_id,sort,created_at').eq('project_id', projectId).is('parent_id', null).order('sort', { nullsFirst: false }).order('created_at'),
+    sb.from('project_steps').select('title,parent_id,sort,created_at').eq('project_id', projectId).not('parent_id', 'is', null).order('sort', { nullsFirst: false }).order('created_at'),
   ])
+  const kidsOf: Record<string, string[]> = {}
+  for (const k of (kids || []) as any[]) (kidsOf[k.parent_id] = kidsOf[k.parent_id] || []).push(String(k.title))
   if (!p) throw new Error('No such project.')
   const bySec = new Map<string, TemplateSection>()
   const order: string[] = Array.isArray((p as any).settings?.sectionOrder) ? (p as any).settings.sectionOrder : []
@@ -161,7 +173,7 @@ export async function snapshotTemplate(projectId: string, opts: { key: string; l
   for (const s of (steps || []) as any[]) {
     const name = s.section || ''
     if (!bySec.has(name)) bySec.set(name, { name, tasks: [] })
-    bySec.get(name)!.tasks.push({ title: s.title, description: s.description || undefined, priority: s.priority !== 'normal' ? s.priority : undefined })
+    bySec.get(name)!.tasks.push({ title: s.title, description: s.description || undefined, priority: s.priority !== 'normal' ? s.priority : undefined, checklist: kidsOf[s.id]?.length ? kidsOf[s.id] : undefined })
   }
   const st = (p as any).settings || {}
   const body = { sections: Array.from(bySec.values()), settings: st, icon: st.icon || undefined, accent: st.accent || undefined, blurb: `Saved from a live project by ${opts.createdBy.split('@')[0]}.` }

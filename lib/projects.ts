@@ -85,7 +85,7 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
     links: L, steps: S, photos: await signFiles(photos.data || []), notes: notes.data || [],
     members: (members.data || []) as Member[],
     tasks: nestTasks(S, byTask),
-    progress: progressOf(L, S), health: healthOf(p as any, S),
+    progress: progressOf(L.filter(l => !l.task_id), S), health: healthOf(p as any, S),
   }
 }
 
