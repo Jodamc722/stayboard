@@ -358,6 +358,112 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         break
       }
 
+      // ---- INTEGRATIONS (Jon, 2026-09-09) --------------------------------------------
+      // A linked reservation / claim / glitch becomes a task so it can be assigned to a person
+      // and dated — "Reservations: assign it to people". The task remembers what it came from.
+      case 'linkToTask': {
+        const kind = str(b.kind), refId = str(b.refId)
+        const link = (await sb.from('project_links').select('*').eq('project_id', id).eq('kind', kind).eq('ref_id', refId).maybeSingle()).data
+        if (!link) return NextResponse.json({ error: 'That is not attached to this project.' }, { status: 404 })
+        const title = str(b.title) || (kind === 'reservation' ? `Look after ${link.label || 'the stay'}` : kind === 'claim' ? `Work the ${link.label || 'claim'}` : kind === 'glitch' ? `Fix: ${link.label || 'glitch'}` : String(link.label || kind))
+        const people = (Array.isArray(b.assignees) ? b.assignees : []).map((x: any) => toPerson(String(x))).filter((x: any) => x.display)
+        const { data, error } = await sb.from('project_steps').insert({
+          project_id: id, title: title.slice(0, 300), description: `From ${kind} · ${link.label || refId}`, status: 'todo',
+          section: str(b.section) || null, priority: 'normal', due_on: str(b.due_on) || null, created_by: me,
+        }).select('id').single()
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        if (people.length) {
+          await sb.from('project_task_assignees').upsert(people.map((who: any) => ({ task_id: data.id, project_id: id, ...who })), { onConflict: 'task_id,person_key' })
+          await syncLegacyAssignee(data.id)
+          await tell(onAssigned(id, { id: data.id, title }, people, me, members))
+        }
+        await logEvent(id, me, 'task_added', `made a task from the ${kind}`, { task_id: data.id, task_title: title, who: people.map((x: any) => x.display) })
+        return NextResponse.json({ ok: true, taskId: data.id, project: await getProject(id) })
+      }
+      // Send a project task to Breezeway: a real field task on a unit, assigned to the same people.
+      case 'taskToBreezeway': {
+        const t = await taskRow(str(b.taskId))
+        if (!t) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const { data: cur } = await sb.from('project_steps').select('breezeway_task_id,description').eq('id', t.id).maybeSingle()
+        if (cur?.breezeway_task_id) return NextResponse.json({ error: 'This task is already in Breezeway.' }, { status: 400 })
+        const listingId = str(b.listingId)
+        if (!listingId) return NextResponse.json({ error: 'Pick the unit this happens at.' }, { status: 400 })
+        const department = ['housekeeping', 'inspection', 'maintenance', 'safety'].includes(str(b.department)) ? str(b.department) : 'maintenance'
+        const priority = ['urgent', 'high', 'normal', 'low'].includes(str(b.priority)) ? str(b.priority) : 'normal'
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(str(b.date)) ? str(b.date) : (t.due_on || new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }))
+        const { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson } = await import('@/lib/breezeway')
+        const { data: props } = await sb.from('breezeway_properties').select('home_id').eq('reference_property_id', listingId).limit(1)
+        const homeId = Number(((props || [])[0] || {}).home_id)
+        const payload: Record<string, any> = {
+          name: t.title.slice(0, 120), type_department: department, type_priority: priority, scheduled_date: date,
+          description: [cur?.description, `From the “${await projectTitle()}” project in Lighthouse · sent by ${me}`].filter(Boolean).join('\n\n').slice(0, 1500),
+        }
+        if (Number.isFinite(homeId)) payload.home_id = homeId; else payload.reference_property_id = listingId
+        const r = await createBreezewayTask(payload)
+        if (!r.ok || !r.data?.id) return NextResponse.json({ error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
+        const bzId = String(r.data.id)
+        // Same people, matched by the shared name matcher; a name Breezeway does not know is skipped, not guessed.
+        const { data: asg } = await sb.from('project_task_assignees').select('display,email').eq('task_id', t.id)
+        const ids: number[] = []
+        for (const a of (asg || []) as any[]) { const pid = await matchBreezewayPerson(a.email || a.display).catch(() => null); if (pid) ids.push(pid) }
+        let assigned = false
+        if (ids.length) { try { assigned = !!(await updateBreezewayTask(bzId, { assignments: ids })).ok } catch { assigned = false } }
+        await sb.from('project_steps').update({ breezeway_task_id: bzId, status: t.status === 'todo' ? 'doing' : t.status }).eq('id', t.id)
+        try {
+          await sb.from('breezeway_tasks_sync').upsert({ id: bzId, reference_property_id: listingId, name: t.title, status: 'created', scheduled_date: date, type_department: department, assignees: [], report_url: r.data.report_url || null, raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString() }, { onConflict: 'id' })
+        } catch { /* the sync catches up */ }
+        await logEvent(id, me, 'task_moved', `sent to Breezeway (${department}, ${date}${assigned ? ', assigned' : ''})`, { task_id: t.id, task_title: t.title, to: 'breezeway', name: bzId })
+        return NextResponse.json({ ok: true, breezewayTaskId: bzId, reportUrl: r.data.report_url || null, assigned, project: await getProject(id) })
+      }
+
+      // ---- CUSTOM BOARDS (Jon, 2026-09-09: "build like Asana") ----------------------
+      // Drag a task to a section and a position; the server renumbers that section so sort is
+      // always dense and the client never computes midpoints.
+      case 'taskMove': {
+        const taskId = str(b.taskId)
+        const moving = await taskRow(taskId)
+        if (!moving) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const section = b.section === null || b.section === undefined ? (moving.section || null) : (str(b.section) || null)
+        const beforeId = str(b.beforeId) || null
+        let q = sb.from('project_steps').select('id,sort,created_at').eq('project_id', id).is('parent_id', null)
+        q = section === null ? q.is('section', null) : q.eq('section', section)
+        const { data: rows } = await q.order('sort', { nullsFirst: false }).order('created_at')
+        const order = ((rows || []) as any[]).map(r => String(r.id)).filter(x => x !== taskId)
+        const at = beforeId ? order.indexOf(beforeId) : -1
+        if (at >= 0) order.splice(at, 0, taskId); else order.push(taskId)
+        // One update per row in the section — sections are tens of tasks, not thousands.
+        await Promise.all(order.map((tid, i) => sb.from('project_steps').update(tid === taskId ? { sort: (i + 1) * 10, section } : { sort: (i + 1) * 10 }).eq('id', tid)))
+        if ((moving.section || null) !== section) await logEvent(id, me, 'task_moved', `moved to ${section || 'no section'}`, { task_id: taskId, task_title: moving.title, from: moving.section, to: section })
+        break
+      }
+      case 'sectionRename': {
+        const from = str(b.from), to = str(b.to).slice(0, 80)
+        if (!from || !to) return NextResponse.json({ error: 'Both names are required.' }, { status: 400 })
+        if (from !== to) {
+          const { error } = await sb.from('project_steps').update({ section: to }).eq('project_id', id).eq('section', from)
+          if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+          const { data: cur } = await sb.from('projects').select('settings').eq('id', id).maybeSingle()
+          const st = settingsOf(cur?.settings)
+          const order = st.sectionOrder.map(x => (x === from ? to : x))
+          if (!order.includes(to)) order.push(to)
+          await sb.from('projects').update({ settings: { ...(cur?.settings || {}), sectionOrder: order } }).eq('id', id)
+          await logEvent(id, me, 'task_moved', `renamed the “${from}” section to “${to}”`, { from, to })
+        }
+        break
+      }
+      // Deleting a section never deletes work: its tasks drop to "no section".
+      case 'sectionDelete': {
+        const name = str(b.name)
+        if (!name) return NextResponse.json({ error: 'Which section?' }, { status: 400 })
+        const { error } = await sb.from('project_steps').update({ section: null }).eq('project_id', id).eq('section', name)
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        const { data: cur } = await sb.from('projects').select('settings').eq('id', id).maybeSingle()
+        const st = settingsOf(cur?.settings)
+        await sb.from('projects').update({ settings: { ...(cur?.settings || {}), sectionOrder: st.sectionOrder.filter(x => x !== name) } }).eq('id', id)
+        await logEvent(id, me, 'task_moved', `removed the “${name}” section (its tasks kept)`, { from: name })
+        break
+      }
+
       // ---- WAVE 4: how the board looks, whether it repeats, saving its shape --------
       case 'setSettings': {
         // Merge, so a page that only knows about `view` cannot wipe `sectionOrder`.
