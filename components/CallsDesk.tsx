@@ -75,6 +75,71 @@ const Badge = ({ cls, Icon, children }: { cls: string; Icon?: any; children: any
   <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 ${cls}`}>{Icon ? <Icon size={10} /> : null}{children}</span>
 )
 
+type DayStat = { day: string; mandatory: { completed: number; incomplete: number; open: number; rate: number | null }; other: { completed: number; incomplete: number; open: number; rate: number | null } }
+/**
+ * Today's two scores, big, then the last seven days in a strip. MANDATORY reads against 100% —
+ * anything less is red, because a mandatory call not made is the whole point of the list. OTHER
+ * reads as completed-of-due. Past days come from guest_calls (the durable log); today comes from
+ * the live rows so the numbers move as buttons are pressed.
+ */
+function DayScore({ today, mandatoryDone, mandatoryOpen, otherDone, otherOpen, chips }: { today: string; mandatoryDone: number; mandatoryOpen: number; otherDone: number; otherOpen: number; chips: string[] }) {
+  const [days, setDays] = useState<DayStat[]>([])
+  useEffect(() => {
+    let live = true
+    fetch('/api/calls/stats?days=8', { cache: 'no-store' }).then(r => r.json()).then(j => { if (live && Array.isArray(j?.byDay)) setDays(j.byDay) }).catch(() => {})
+    return () => { live = false }
+  }, [today])
+  const mTot = mandatoryDone + mandatoryOpen, oTot = otherDone + otherOpen
+  const mPct = mTot ? Math.round((mandatoryDone / mTot) * 100) : 100
+  const oPct = oTot ? Math.round((otherDone / oTot) * 100) : 100
+  const past = days.filter(d => d.day < today).slice(-7)
+  const pct = (a: { completed: number; incomplete: number; open: number }) => { const t = a.completed + a.incomplete + a.open; return t ? Math.round((a.completed / t) * 100) : null }
+  const mTone = (p: number | null) => p == null ? 'text-muted' : p === 100 ? 'text-emerald-700' : 'text-rose-600'
+  const oTone = (p: number | null) => p == null ? 'text-muted' : p >= 90 ? 'text-emerald-700' : p >= 70 ? 'text-amber-700' : 'text-rose-600'
+  const wd = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })
+  return (
+    <section className="rounded-2xl border border-line bg-white overflow-hidden">
+      <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-line">
+        <div className="px-5 py-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted font-semibold inline-flex items-center gap-1.5"><Crown size={12} className="text-brand-600" /> Mandatory calls today <span className="normal-case tracking-normal font-medium">· must be 100%</span></div>
+          <div className="flex items-baseline gap-3 mt-1.5">
+            <span className={`text-4xl font-bold tabular-nums leading-none ${mTot ? (mPct === 100 ? 'text-emerald-600' : 'text-rose-600') : 'text-ink'}`}>{mandatoryDone}<span className="text-2xl text-muted font-semibold"> / {mTot}</span></span>
+            <span className={`text-sm font-bold ${mTot ? (mPct === 100 ? 'text-emerald-700' : 'text-rose-600') : 'text-muted'}`}>{mTot ? mPct + '%' : 'none due'}{mTot && mPct === 100 ? ' ✓' : ''}</span>
+          </div>
+          <div className="text-[12px] text-muted mt-1.5">luxury · big booking · recovery unit{mandatoryOpen ? <span className="text-rose-600 font-semibold"> · {mandatoryOpen} still to call</span> : ''}</div>
+        </div>
+        <div className="px-5 py-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted font-semibold inline-flex items-center gap-1.5"><PhoneCall size={12} className="text-brand-600" /> Other calls today <span className="normal-case tracking-normal font-medium">· completed</span></div>
+          <div className="flex items-baseline gap-3 mt-1.5">
+            <span className={`text-4xl font-bold tabular-nums leading-none ${oTot ? (oPct >= 90 ? 'text-emerald-600' : oPct >= 70 ? 'text-amber-700' : 'text-rose-600') : 'text-ink'}`}>{otherDone}<span className="text-2xl text-muted font-semibold"> / {oTot}</span></span>
+            <span className={`text-sm font-bold ${oTot ? oTone(oPct) : 'text-muted'}`}>{oTot ? oPct + '%' : 'none due'}</span>
+          </div>
+          <div className="text-[12px] text-muted mt-1.5">48-hour welcome calls · post-checkout{otherOpen ? ` · ${otherOpen} open` : ''}</div>
+        </div>
+      </div>
+      {/* By day: same two scores for each of the last seven days, so a good week and a bad week look different. */}
+      <div className="border-t border-line px-3 py-2.5 overflow-x-auto">
+        <div className="flex items-stretch gap-1.5 min-w-max">
+          <div className="flex flex-col justify-center pr-2 text-[10px] uppercase tracking-wide text-muted font-semibold leading-tight"><span>Mand.</span><span className="mt-2">Other</span></div>
+          {past.map(d => { const mp = pct(d.mandatory), op = pct(d.other); const mt = d.mandatory.completed + d.mandatory.incomplete + d.mandatory.open; const ot = d.other.completed + d.other.incomplete + d.other.open; return (
+            <div key={d.day} className="w-[62px] rounded-lg border border-line px-1.5 py-1 text-center">
+              <div className="text-[10px] font-semibold text-muted">{wd(d.day)} <span className="font-normal">{d.day.slice(8)}</span></div>
+              <div className={`text-[12px] font-bold tabular-nums ${mTone(mp)}`}>{mt ? `${d.mandatory.completed}/${mt}` : '—'}</div>
+              <div className={`text-[12px] font-bold tabular-nums ${oTone(op)}`}>{ot ? `${d.other.completed}/${ot}` : '—'}</div>
+            </div>
+          )})}
+          <div className="w-[62px] rounded-lg border-2 border-brand-500 bg-brand-50 px-1.5 py-1 text-center">
+            <div className="text-[10px] font-bold text-brand-800">Today</div>
+            <div className={`text-[12px] font-bold tabular-nums ${mTot ? mTone(mPct) : 'text-muted'}`}>{mTot ? `${mandatoryDone}/${mTot}` : '—'}</div>
+            <div className={`text-[12px] font-bold tabular-nums ${oTot ? oTone(oPct) : 'text-muted'}`}>{oTot ? `${otherDone}/${oTot}` : '—'}</div>
+          </div>
+        </div>
+      </div>
+      {chips.length > 0 && <div className="border-t border-line px-4 py-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted">{chips.map((c, i) => <span key={i}>{c}</span>)}</div>}
+    </section>
+  )
+}
+
 function Kpi({ label, value, sub, tone }: { label: string; value: any; sub?: string; tone?: 'rose' | 'emerald' | 'amber' | 'brand' }) {
   const v = tone === 'rose' ? 'text-rose-600' : tone === 'emerald' ? 'text-emerald-600' : tone === 'amber' ? 'text-amber-700' : tone === 'brand' ? 'text-brand-700' : 'text-ink'
   return (
@@ -372,21 +437,19 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       <header>
         <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><PhoneCall size={13} /> Guest calls</p>
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Calls desk</h1>
-        <p className="text-sm text-muted mt-1">Mandatory calls first — luxury buildings, big bookings, recovery units — then everyone arriving inside 48 hours. Calls not completed by end of day close out as incomplete, and the scoreboard keeps the record.</p>
+        <p className="text-sm text-muted mt-1">Mandatory calls are called — every one, every day. Other calls get completed. Anything not done by end of day closes out as a miss.</p>
       </header>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-        <Kpi label="Mandatory open" value={kpis.mandatoryOpen} sub={kpis.mandatoryDoneToday ? `${kpis.mandatoryDoneToday} done today` : 'lux · big · recovery'} tone={kpis.mandatoryOpen ? 'rose' : 'emerald'} />
-        <Kpi label="Due now" value={kpis.dueNow} sub={kpis.lastChance ? `${kpis.lastChance} close tonight` : kpis.dueToday ? `${kpis.dueToday} arriving today` : 'next 48 hours'} tone={kpis.lastChance ? 'rose' : kpis.dueNow ? 'amber' : undefined} />
-        <Kpi label="Called today" value={kpis.calledToday} sub="welcome + post-checkout" tone={kpis.calledToday ? 'emerald' : undefined} />
-        <Kpi label="Coverage" value={kpis.coverage == null ? '—' : kpis.coverage + '%'}
-          sub={kpis.coverageShort ? 'arrivals read came back short' : kpis.coverageOf ? `${kpis.coverageMissed} missed of ${kpis.coverageOf}, last 7 days` : 'no arrivals yet'}
-          tone={kpis.coverage != null && kpis.coverage >= 90 ? 'emerald' : kpis.coverage != null && kpis.coverage < 70 ? 'rose' : 'amber'} />
-        <Kpi label="Recovery calls" value={kpis.recoveryFailed ? '—' : kpis.recoveryCalls}
-          sub={kpis.recoveryFailed ? 'could not be worked out' : `${kpis.recoveryUnits} unit${kpis.recoveryUnits === 1 ? '' : 's'} awaiting a good review`}
-          tone={kpis.recoveryFailed ? 'rose' : kpis.recoveryCalls ? 'amber' : undefined} />
-        <Kpi label="Post-checkout" value={kpis.postDue} sub="leaving a recovery unit" tone={kpis.postDue ? 'brand' : undefined} />
-      </div>
+      {/* THE SCORE, TODAY — the two numbers the desk is judged on (Jon, 2026-09-09: "mandatory units
+          need to be called 100%, and other calls should be completed"), then the same two by day. */}
+      <DayScore today={today} mandatoryDone={kpis.mandatoryDoneToday} mandatoryOpen={kpis.mandatoryOpen}
+        otherDone={Math.max(0, kpis.calledToday - kpis.mandatoryDoneToday)} otherOpen={Math.max(0, kpis.dueNow - kpis.mandatoryOpen) + kpis.postDue}
+        chips={[
+          kpis.recoveryFailed ? 'recovery could not be worked out' : `${kpis.recoveryUnits} unit${kpis.recoveryUnits === 1 ? '' : 's'} awaiting a good review`,
+          `${kpis.postDue} post-checkout due`,
+          kpis.coverage == null ? null : `${kpis.coverage}% of arrivals called, last 7 days`,
+          kpis.lastChance ? `${kpis.lastChance} close tonight` : null,
+        ].filter(Boolean) as string[]} />
 
       <div className="lh-actions flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-xl border border-line overflow-hidden text-[13px]">
