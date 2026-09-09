@@ -18,6 +18,8 @@
 // day of arrival. Once payment is approved, it takes at least 24 hours to receive. Could be same
 // day depending on the time." → deliveryDateFor() below; every number is a setting.
 import 'server-only'
+import { isLiveStay } from './stay-status'
+import { pageRows } from './db-page'
 import { randomBytes } from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting } from './app-settings'
@@ -88,7 +90,7 @@ export type Timing = { enabled: boolean; orderByHoursBefore: number; leadHours: 
 
 export const GUEST_ORDERS_DEFAULTS: GuestOrdersCfg = {
   enabled: false,
-  createDaysBefore: 7,
+  createDaysBefore: 30,
   customFieldName: 'Order form',
   orderByHoursBefore: 48,
   leadHours: 24,
@@ -592,17 +594,25 @@ export async function writeLinkToGuesty(link: LinkRow, cfg: GuestOrdersCfg): Pro
 }
 
 /** Cron hop 1: mint + write links for every confirmed arrival inside the window. */
-export async function createDueLinks(cfg: GuestOrdersCfg, budgetMs = 40_000): Promise<{ scanned: number; created: number; written: number; errors: string[] }> {
+export async function createDueLinks(cfg: GuestOrdersCfg, budgetMs = 40_000): Promise<{ scanned: number; created: number; written: number; errors: string[]; window: { from: string; to: string; days: number }; arrivals: number; skippedSource: number; skippedScope: number }> {
   const started = Date.now()
   const db = supabaseAdmin()
   const today = todayET()
   const until = addDays(today, cfg.createDaysBefore)
-  const { data } = await db.from('guesty_reservations')
+  // STATUS: the SHARED live-stay rule, not a hand-written list. This used to be
+  // `.in('status', ['confirmed','checked_in'])`, which silently denied an order link to every
+  // reservation Guesty calls `reserved`, `closed` or anything else it invents — the exact drift
+  // lib/stay-status was written to retire (same bug the vacant list and the calls desk had).
+  //
+  // PAGING: a 30-day window across the portfolio is several hundred arrivals and the old
+  // `.limit(600)` would have truncated it in silence, so the tail of the month simply never got a
+  // link. pageRows walks the whole window and reports honestly when it cannot.
+  const { rows: raw, truncated } = await pageRows<any>((a, b) => db.from('guesty_reservations')
     .select('id,source,status,check_in,listing_id')
     .gte('check_in', today).lte('check_in', until)
-    .in('status', ['confirmed', 'checked_in'])
-    .order('check_in', { ascending: true }).limit(600)
-  const rows = (data || []) as any[]
+    .order('check_in', { ascending: true }).order('id')
+    .range(a, b), 6)
+  const rows = raw.filter(r => isLiveStay(r.status))
   const skip = new RegExp(cfg.skipSourcesRe || '^$', 'i')
   // Buildings / markets switched off in settings never get a link.
   const lids = Array.from(new Set(rows.map(r => String(r.listing_id || '')).filter(Boolean)))
@@ -613,7 +623,20 @@ export async function createDueLinks(cfg: GuestOrdersCfg, budgetMs = 40_000): Pr
     const building = buildingOf(l.building, name)
     scopeOk[String(l.id)] = timingFor(cfg, building, marketOf(building, l.address_city, name), String(l.id)).enabled
   }
-  const ids = rows.filter(r => r.listing_id && !skip.test(String(r.source || '')) && scopeOk[String(r.listing_id)] !== false).map(r => String(r.id))
+  // `=== true`, not `!== false`: a listing missing from the mirror has NO resolved scope, and an
+  // unresolved scope must not hand a guest an order link for a building that is not offering
+  // orders. Fail closed — the whole point of the building/market rules is that they are opt-in.
+  //
+  // The counts are kept so the board can say WHY a window came back empty. "scanned: 0" on its own
+  // sent me hunting for a broken pipeline when the truth was simply that the one building switched
+  // on had no arrivals — that is a reporting failure, not a scheduling one.
+  let skippedSource = 0, skippedScope = 0
+  const ids = rows.filter(r => {
+    if (!r.listing_id) return false
+    if (skip.test(String(r.source || ''))) { skippedSource++; return false }
+    if (scopeOk[String(r.listing_id)] !== true) { skippedScope++; return false }
+    return true
+  }).map(r => String(r.id))
   const { data: have } = ids.length ? await db.from('guest_order_links').select('code,reservation_id,sent_at,send_error').in('reservation_id', ids) : { data: [] as any[] }
   const byRes: Record<string, any> = {}
   for (const h of (have || [])) byRes[String(h.reservation_id)] = h
@@ -632,7 +655,8 @@ export async function createDueLinks(cfg: GuestOrdersCfg, budgetMs = 40_000): Pr
     // the field-missing case is the same for every reservation — say it once and stop
     if (!w.ok && /custom field .* not found/.test(w.note)) break
   }
-  return { scanned: ids.length, created, written, errors }
+  if (truncated) errors.push('reservation read came back short — some arrivals in the window were not scanned')
+  return { scanned: ids.length, created, written, errors, window: { from: today, to: until, days: cfg.createDaysBefore }, arrivals: rows.length, skippedSource, skippedScope }
 }
 
 // ── Orders ────────────────────────────────────────────────────────────────────────────────────
