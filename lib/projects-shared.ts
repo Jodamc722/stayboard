@@ -101,6 +101,8 @@ export type Task = {
   assignee: string | null
   assignees: Person[]
   subtasks: Task[]
+  /** Set on a task shown here from another project (multi-homed). */
+  homed?: boolean; home_project_id?: string; home_project_title?: string
   /** Set when this task was sent to Breezeway; `breezeway` is the field task's live state (read-time). */
   breezeway_task_id?: string | null
   breezeway?: { status: string; tone: 'open' | 'done' | 'bad'; assignee?: string | null; date?: string | null; reportUrl?: string | null } | null

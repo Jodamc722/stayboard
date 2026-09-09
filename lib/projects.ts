@@ -9,7 +9,7 @@ import { supabaseAdmin } from './supabase-admin'
 export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
-  progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO, canSee, canEdit,
+  progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO, canSee, canEdit, toPerson,
 } from './projects-shared'
 
 export async function getCategories(): Promise<{ key: string; label: string; color: string; sort: number }[]> {
@@ -74,9 +74,11 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
     sb.from('project_task_assignees').select('task_id,person_key,display,email').eq('project_id', id),
   ])
   for (const r of [links, steps, photos, notes, members, asg]) if (r.error) throw new Error('project read failed: ' + r.error.message)
-  const L = (links.data || []) as any[], S = (steps.data || []) as any[]
+  const L = (links.data || []) as any[]
+  const homed = await homedTasks(id)
+  const S = [...((steps.data || []) as any[]), ...homed.rows]
   const byTask: Record<string, Person[]> = {}
-  for (const a of (asg.data || []) as any[]) (byTask[a.task_id] = byTask[a.task_id] || []).push({ person_key: a.person_key, display: a.display, email: a.email })
+  for (const a of [...((asg.data || []) as any[]), ...homed.asg]) (byTask[a.task_id] = byTask[a.task_id] || []).push({ person_key: a.person_key, display: a.display, email: a.email })
   await Promise.all([enrichLinks(L), syncBreezeway(S)])
   return {
     ...(p as any),
@@ -85,6 +87,66 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
     tasks: nestTasks(S, byTask),
     progress: progressOf(L, S), health: healthOf(p as any, S),
   }
+}
+
+// ---------------------------------------------------------------- my board
+// EVERY USER HAS ONE (Jon, 2026-09-09: "Every user has a default my board — where all tasks
+// assigned to you live — call it My Tasks"). It is a personal project, made the first time it is
+// needed, and it is where a task typed straight into My Tasks goes. Tasks assigned to you from
+// other projects are shown on My Tasks alongside, not copied here.
+export const MY_BOARD_KEY = 'my_tasks'
+export async function ensureMyBoard(email: string, displayName?: string | null): Promise<{ id: string; title: string }> {
+  const sb = supabaseAdmin()
+  const e = String(email || '').trim().toLowerCase()
+  if (!e) throw new Error('no email')
+  const { data: mine } = await sb.from('project_members').select('project_id').eq('email', e).limit(2000)
+  const ids = ((mine || []) as any[]).map(m => String(m.project_id))
+  if (ids.length) {
+    const { data: found } = await sb.from('projects').select('id,title').in('id', ids).eq('kind', 'personal').eq('template_key', MY_BOARD_KEY).eq('archived', false).limit(1)
+    if (found && found[0]) return { id: String(found[0].id), title: String(found[0].title) }
+  }
+  const { data: p, error } = await sb.from('projects').insert({
+    title: 'My Tasks', summary: null, category: 'internal', stage: 'in_progress', kind: 'personal', private: true,
+    template_key: MY_BOARD_KEY, created_by: e, settings: { icon: '✅', accent: 'emerald', view: 'list', sectionOrder: ['To do', 'Doing', 'Done'] },
+  }).select('id,title').single()
+  if (error) throw new Error('my board: ' + error.message)
+  const who = toPerson(displayName && !/@/.test(displayName) ? displayName : e)
+  await sb.from('project_members').insert({ project_id: p.id, person_key: e, display: who.display, email: e, role: 'owner', added_by: 'system' })
+  return { id: String(p.id), title: String(p.title) }
+}
+
+// ---------------------------------------------------------------- homed tasks (read side)
+// A task that lives in another project but appears here too (project_task_homes). It is loaded as
+// a top-level row with THIS project's section and sort, and marked with where it came from.
+async function homedTasks(projectId: string): Promise<{ rows: any[]; asg: any[] }> {
+  const sb = supabaseAdmin()
+  const homes = await soft(sb.from('project_task_homes').select('task_id,section,sort').eq('project_id', projectId).limit(500))
+  if (!homes?.length) return { rows: [], asg: [] }
+  const ids = homes.map((h: any) => String(h.task_id))
+  const [tasks, asg] = await Promise.all([
+    soft(sb.from('project_steps').select('*').in('id', ids)),
+    soft(sb.from('project_task_assignees').select('task_id,person_key,display,email').in('task_id', ids)),
+  ])
+  const by = Object.fromEntries(homes.map((h: any) => [String(h.task_id), h]))
+  const rows = ((tasks || []) as any[]).map(t => ({ ...t, section: by[t.id]?.section ?? null, sort: by[t.id]?.sort ?? null, parent_id: null, home_project_id: t.project_id, homed: true }))
+  const pids = Array.from(new Set(rows.map(r => String(r.project_id))))
+  if (pids.length) {
+    const ps = await soft(sb.from('projects').select('id,title').in('id', pids))
+    const title = Object.fromEntries(((ps || []) as any[]).map(p => [String(p.id), p.title]))
+    for (const r of rows) r.home_project_title = title[String(r.project_id)] || 'another project'
+  }
+  return { rows, asg: (asg || []) as any[] }
+}
+
+/** Every project a task appears in: its own, plus each home. */
+export async function taskProjects(taskId: string): Promise<{ id: string; title: string; home: boolean }[]> {
+  const sb = supabaseAdmin()
+  const t = (await soft(sb.from('project_steps').select('project_id').eq('id', taskId).maybeSingle())) as any
+  const homes = await soft(sb.from('project_task_homes').select('project_id').eq('task_id', taskId))
+  const ids = Array.from(new Set([t?.project_id, ...((homes || []) as any[]).map(h => h.project_id)].filter(Boolean).map(String)))
+  if (!ids.length) return []
+  const ps = await soft(sb.from('projects').select('id,title').in('id', ids))
+  return ((ps || []) as any[]).map(p => ({ id: String(p.id), title: String(p.title), home: String(p.id) !== String(t?.project_id) }))
 }
 
 // ---------------------------------------------------------------- integrations (read side)
