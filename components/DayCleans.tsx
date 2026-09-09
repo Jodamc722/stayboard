@@ -55,6 +55,7 @@ export type DayPerson = {
 export type DayLabor = {
   byDay: Record<string, DayPerson[]>
   billableByTask: Record<string, number>
+  days?: { date: string; revenue: number; cleans: number }[]
   payrollComplete: boolean
 }
 const money = (n: number | null | undefined) => n == null ? '—' : '$' + Math.round(n).toLocaleString()
@@ -208,6 +209,7 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
   const dayHours = dayPeople.reduce((a, p) => a + (p.hours || 0), 0)
   const dayCost = dayPeople.some(p => p.cost != null) ? dayPeople.reduce((a, p) => a + (p.cost || 0), 0) : null
   const dayBillable = dayPeople.reduce((a, p) => a + (p.billable || 0), 0)
+  const dayRevenue = (labor?.days || []).find(x => x.date === day.date)?.revenue || 0
   const offBoard = dayPeople.filter(p => p.offBoard && (p.hours || 0) > 0)
 
   return (
@@ -282,9 +284,20 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
               <p className="text-[10px] uppercase tracking-wider font-bold text-muted">Labor {ahead ? 'planned' : 'cost'}</p>
               <p className="text-[17px] font-bold text-ink tabular-nums leading-tight">{money(dayCost)}</p>
             </div>
+            {/* OWNER-BILLABLE OR THE GUEST'S FEE, whichever this work actually earns. Measured
+                2026-09-09: of 975 housekeeping tasks in a fortnight, NONE carried an owner cost
+                line — a departure clean is paid for by the guest's cleaning fee, and owner-billable
+                is a maintenance idea. Printing a permanent $0 next to real hours would read as
+                money going missing, so the tile shows the fee the cleans actually bill and only
+                switches to owner-billable when there is some. */}
             <div className="px-5 py-2.5">
-              <p className="text-[10px] uppercase tracking-wider font-bold text-muted">Owner billable</p>
-              <p className="text-[17px] font-bold text-ink tabular-nums leading-tight">{money(dayBillable)}</p>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-muted">
+                {dayBillable > 0 ? 'Owner billable' : 'Cleaning revenue'}
+              </p>
+              <p className="text-[17px] font-bold text-ink tabular-nums leading-tight">
+                {dayBillable > 0 ? money(dayBillable) : (dayRevenue ? money(dayRevenue) : '—')}
+              </p>
+              {dayBillable > 0 && dayRevenue ? <p className="text-[10.5px] text-muted">+ {money(dayRevenue)} guest fees</p> : null}
             </div>
             <div className="px-5 py-2.5">
               <p className="text-[10px] uppercase tracking-wider font-bold text-muted">{ahead ? 'Per clean, planned' : 'Cost per clean'}</p>
