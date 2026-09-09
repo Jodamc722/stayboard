@@ -67,6 +67,15 @@ export type GuestOrdersCfg = {
   brandLine: string
   accentColor: string
   footerNote: string
+  /**
+   * THE CONFIRMATION SCREEN — what the guest reads the moment they submit (Jon, 2026-09-09: "as
+   * they add to their cart and they submit, it'll tell them their total and to expect confirmation
+   * of purchase and/or gathering additional information. This should be fully customizable").
+   * The total and the itemised lines are always shown; these three are the words around them.
+   */
+  confirmTitle: string
+  confirmBody: string
+  confirmNext: string
   /** Sources we never create links for (owner stays, blocks). Regex, case-insensitive. */
   skipSourcesRe: string
   /** Per-market overrides (Miami | Broward | North): switch a whole location off or change its timing. */
@@ -105,6 +114,9 @@ export const GUEST_ORDERS_DEFAULTS: GuestOrdersCfg = {
   brandLine: 'Stay Hospitality',
   accentColor: '#1F5C46',
   footerNote: 'Once confirmed, the total is charged to the card on your reservation. Questions? Just reply to your booking message.',
+  confirmTitle: 'Order received',
+  confirmBody: 'Thank you — your order is with our team now.',
+  confirmNext: 'You will get a confirmation of purchase shortly. If we need anything else from you — a brand preference, an allergy, where to leave it — we will reply to your booking message before we charge the card on your reservation.',
   skipSourcesRe: '^(owner|manual|block|blocked)',
   marketRules: {},
   buildingRules: {},
@@ -177,6 +189,9 @@ export function normalizeCfg(s: any): GuestOrdersCfg {
     brandLine: str(s.brandLine, d.brandLine, 60),
     accentColor: /^#[0-9a-fA-F]{6}$/.test(String(s.accentColor || '')) ? String(s.accentColor) : d.accentColor,
     footerNote: str(s.footerNote, d.footerNote, 400),
+    confirmTitle: str(s.confirmTitle, d.confirmTitle, 80),
+    confirmBody: str(s.confirmBody, d.confirmBody, 600),
+    confirmNext: str(s.confirmNext, d.confirmNext, 600),
     skipSourcesRe: safeRe(str(s.skipSourcesRe, d.skipSourcesRe, 200), d.skipSourcesRe),
     marketRules: normScopes(s.marketRules, MARKETS as string[]),
     buildingRules: normScopes(s.buildingRules, KNOWN_BUILDINGS.map(b => b.label)),
@@ -378,6 +393,26 @@ export function priceForQty(item: Pick<CatalogItem, 'price_usd' | 'tiers'>, qty:
   let hit: PriceTier | null = null
   for (const t of tiers) if (qty >= t.min_qty) hit = t
   return { unit: hit ? hit.unit_price_usd : list, tier: hit }
+}
+
+/**
+ * Sanity checks on a price ladder, written for the person editing it rather than for a log.
+ * The one that actually bites: a break above "max per order" can never be reached, so it reads as
+ * a promise on the card and then never applies.
+ */
+export function tierProblems(item: Pick<CatalogItem, 'price_usd' | 'tiers' | 'max_qty'>): string[] {
+  const out: string[] = []
+  const list = Number(item.price_usd) || 0
+  const tiers = sanitizeTiers(item.tiers)
+  const max = Math.max(1, Math.floor(Number(item.max_qty) || 10))
+  let prev = list
+  for (const t of tiers) {
+    if (t.min_qty > max) out.push(t.min_qty + '+ can never be reached — max per order is ' + max)
+    if (list > 0 && t.unit_price_usd >= list) out.push(t.min_qty + '+ is not a discount at ' + t.unit_price_usd.toFixed(2) + ' each')
+    else if (t.unit_price_usd > prev) out.push(t.min_qty + '+ costs more each than the break below it')
+    prev = t.unit_price_usd
+  }
+  return out
 }
 
 export type StockRow = { item_id: string; scope: string; on_hand: number; reserved: number; low_at: number; updated_at: string; updated_by: string | null }
