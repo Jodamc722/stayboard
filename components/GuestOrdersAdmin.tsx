@@ -261,6 +261,63 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
         <p className="text-[11px] text-muted mt-1.5">Guesty fee = the predefined fee type on the folio line (drives Guesty’s tax math). “Offered in” scopes an item to locations or buildings; a scoped item replaces the general one with the same name, which is how prices differ per building.</p>
       </div>
 
+      {/* ── SWITCH A SHELF ON ──────────────────────────────────────────────────────────────────
+          Jon, 2026-09-09: "Based on the shelf and location available, should have an ON button and
+          any reservations for those listings."
+
+          The shelf IS the unit of go-live. A hub already knows which listings it fills and what is
+          on it, so it is the only thing that can answer "can we actually serve a guest here?" —
+          and that is exactly the question a market or building toggle could not answer. Switching a
+          shelf on turns orders on for every listing it covers, whatever its market says (hub beats
+          market in timingFor), and every reservation at those listings picks up a link on the next
+          hourly run.
+
+          The count is the guard rail: a shelf with nothing on it would hand guests an empty form,
+          so ON is refused until something is in stock. */}
+      <div>
+        <div className="text-[11px] uppercase tracking-wide text-muted font-semibold mb-1">Switch a shelf on</div>
+        <p className="text-[12px] text-muted mb-2">Orders go live per <b>shelf</b>. A shelf that has stock can be switched on, and every reservation at the listings it fills starts getting an order link — whatever that market is set to.</p>
+        {cfg.hubs.length === 0 ? <div className="text-[12px] text-muted rounded-xl border border-dashed border-line px-3 py-3">No shelves yet — add one below, put counts on it, then switch it on here.</div> : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {cfg.hubs.map(h => {
+              const rows = stock['hub:' + h.id] || []
+              const inStock = rows.filter(r => r.available > 0)
+              const on = cfg.hubRules[h.id]?.enabled === true
+              const off = cfg.hubRules[h.id]?.enabled === false
+              const covers = [...h.buildings, ...(h.listings || []).map(id => listings.find((u: Listing) => u.id === id)?.name || id.slice(0, 8))]
+              const canTurnOn = inStock.length > 0
+              return (
+                <div key={h.id} className={'rounded-xl border p-3 ' + (on ? 'border-emerald-300 bg-emerald-50/40' : 'border-line bg-white')}>
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-semibold text-ink flex items-center gap-1.5">⌂ {h.label}
+                        {on ? <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-600 text-white">On</span>
+                          : off ? <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">Off</span>
+                          : <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-muted">Follows market</span>}
+                      </div>
+                      <div className="text-[11.5px] text-muted mt-0.5 truncate" title={covers.join(', ')}>{covers.length ? covers.join(' · ') : 'nothing assigned yet'}</div>
+                      <div className={'text-[11.5px] mt-1 font-semibold ' + (canTurnOn ? 'text-ink' : 'text-rose-700')}>
+                        {canTurnOn ? inStock.length + ' item' + (inStock.length === 1 ? '' : 's') + ' in stock' : 'nothing in stock — guests would see an empty form'}
+                      </div>
+                    </div>
+                    {!ro ? (
+                      <button
+                        onClick={() => setScope('hubRules', h.id, { enabled: !on })}
+                        disabled={!on && !canTurnOn}
+                        title={!on && !canTurnOn ? 'Put a count on this shelf first' : on ? 'Stop offering orders at these listings' : 'Offer orders at every listing this shelf fills'}
+                        className={'shrink-0 rounded-xl px-3.5 py-2 text-[12.5px] font-bold disabled:opacity-40 ' + (on ? 'border border-line bg-white text-ink' : 'bg-emerald-600 text-white hover:bg-emerald-700')}>
+                        {on ? 'Turn off' : 'Turn on'}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <p className="text-[11px] text-muted mt-1.5">Changes take effect on the next hourly run, or press <b>Run now</b> on the Guest Orders board to issue links immediately.</p>
+      </div>
+
       <div>
         <div className="flex items-center justify-between mb-1">
           <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">Location hubs · {cfg.hubs.length}</div>
@@ -374,7 +431,7 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
                 return (
                   <tr key={'h:' + h.id} className="border-t border-line/60 bg-emerald-50/30">
                     <td className="px-2 py-1 font-semibold text-ink">⌂ {h.label} <span className="text-[10.5px] text-muted font-normal">hub · {h.buildings.length} bldg</span></td>
-                    <td className="px-2 py-1"><input type="checkbox" checked={r.enabled !== false} onChange={e => setScope('hubRules', h.id, { enabled: e.target.checked ? undefined : false })} disabled={ro} /></td>
+                    <td className="px-2 py-1"><input type="checkbox" checked={r.enabled !== false} onChange={e => setScope('hubRules', h.id, { enabled: e.target.checked })} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={240} value={r.orderByHoursBefore ?? ''} placeholder={String(cfg.orderByHoursBefore)} onChange={e => setScope('hubRules', h.id, { orderByHoursBefore: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={168} value={r.leadHours ?? ''} placeholder={String(cfg.leadHours)} onChange={e => setScope('hubRules', h.id, { leadHours: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
                     <td className="px-2 py-1"><input type="number" min={0} max={23} value={r.sameDayCutoffHour ?? ''} placeholder={String(cfg.sameDayCutoffHour)} onChange={e => setScope('hubRules', h.id, { sameDayCutoffHour: e.target.value === '' ? undefined : Number(e.target.value) })} className={box} disabled={ro} /></td>
