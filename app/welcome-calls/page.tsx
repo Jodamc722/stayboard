@@ -1,12 +1,12 @@
 // THE CALLS DESK — every guest call the team owes today, in one place.
 //
-// Was "Welcome calls" (pre-arrival only) until 2026-09-08. Now three lists and a scoreboard:
+// Was "Welcome calls" (pre-arrival only) until 2026-09-08. Now two lists and a scoreboard:
 //
-//   WELCOME       arrivals in the next 14 days. Standard calls are due inside 48 hours; LUXURY
-//                 (Arya, Nomad, District 225), BIG ($1,200+ or 10+ nights) and RECOVERY calls are
-//                 mandatory from the moment the booking exists.
-//   RECOVERY      the mandatory welcome calls at units still waiting for a good review, grouped by
-//                 arrival day. A section of its own because it is the one that decides the next review.
+//   WELCOME       today and the next 72 hours, by arrival day (Jon, 2026-09-09: "complete by the day
+//                 of or 72 hours in advance"; "no 24 hours to complete"). LUXURY (Arya, Nomad,
+//                 District 225), BIG ($1,200+ or 10+ nights) and RECOVERY calls are mandatory. The
+//                 arrival day is the last day — the night's close-out marks the rest incomplete.
+//                 (Recovery units and their further-out arrivals moved to /reviews the same day.)
 //   POST-CHECKOUT the guest who just left a recovery unit — hear it on the phone before it's a review.
 //   SCOREBOARD    who called, what got done, what closed incomplete — from guest_calls, the durable log.
 //
