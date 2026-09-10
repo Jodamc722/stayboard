@@ -370,6 +370,8 @@ export type CatalogItem = {
   /** Sold in multiples of N (coffee pods in 5s): the basket steps by N and any other quantity rounds
    *  UP to the next multiple. null/1 = any quantity. Not pack_size — that is what WE buy by. */
   sold_in: number | null
+  /** What ONE item contains, in the guest's words: 1 = 5 pods. pieces + piece_name; null = not said. */
+  pieces: number | null; piece_name: string | null
   /** Filled in when loaded for a scope: on_hand − reserved for that scope (null = not tracked). */
   available?: number | null
 }
@@ -393,6 +395,13 @@ export function sizeLabel(item: Pick<CatalogItem, 'size_value' | 'size_unit'>): 
 export function soldInOf(v: any): number | null {
   const n = Math.floor(Number(v) || 0)
   return n >= 2 && n <= 999 ? n : null
+}
+/** How many pieces one item holds — 1..9999, else "not said". */
+export function piecesOf(v: any): number | null { const n = Math.floor(Number(v) || 0); return n >= 1 && n <= 9999 ? n : null }
+export function pieceNameOf(v: any): string | null { const t = String(v || '').trim().replace(/\s+/g, ' ').slice(0, 24); return t || null }
+/** "1 = 5 pods" — what the guest reads under the name. Null when either half is missing. */
+export function pieceLabel(item: Pick<CatalogItem, 'pieces' | 'piece_name'>): string | null {
+  return item.pieces && item.piece_name ? '1 = ' + item.pieces + ' ' + item.piece_name : null
 }
 /** The quantity the guest actually gets: rounded UP to the item's multiple (7 pods → 10 in 5s). */
 export function snapToSoldIn(qty: number, soldIn: number | null | undefined): number {
@@ -583,6 +592,7 @@ export async function loadCatalog(opts?: { building?: string | null; market?: st
     sale_price_usd: r.sale_price_usd === null || r.sale_price_usd === undefined ? null : Number(r.sale_price_usd),
     badge: (r.badge ? String(r.badge).trim().slice(0, 16) : null) || null,
     sold_in: soldInOf(r.sold_in),
+    pieces: piecesOf(r.pieces), piece_name: pieceNameOf(r.piece_name),
     available: null })) as CatalogItem[]
   const b = String(opts?.building || '').toLowerCase()
   const m = String(opts?.market || '').toLowerCase()
