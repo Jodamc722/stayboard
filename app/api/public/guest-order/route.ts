@@ -6,7 +6,7 @@
 //   POST { code, basket, note }   submit a basket (priced server-side, never from the client)
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getGuestOrdersCfg, loadCatalog, orderByFor, submitOrder, ordersForLink, fmtDay, fmtTimeET, todayET, timingFor, hubOf, type LinkRow } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, loadCatalog, orderByFor, submitOrder, ordersForLink, fmtDay, fmtTimeET, todayET, timingFor, hubOf, sizeLabel, type LinkRow } from '@/lib/guest-orders'
 import { isLiveStay } from '@/lib/stay-status'
 
 export const dynamic = 'force-dynamic'
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
     },
     copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: timing.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote, confirmTitle: cfg.confirmTitle, confirmBody: cfg.confirmBody, confirmNext: cfg.confirmNext },
     deadline: { orderBy: orderBy.toISOString(), orderByLabel: fmtTimeET(orderBy) + ' ET', arrivalDayStillPossible, nextDelivery, hoursBefore: timing.orderByHoursBefore, leadHours: timing.leadHours, offered: timing.enabled },
-    catalog: catalog.map(c => ({ sku: c.sku, name: c.name, description: c.description, price: c.price_usd, unit: c.unit_label, category: c.category || 'Extras', maxQty: c.track_stock && c.available !== null && c.available !== undefined ? Math.min(c.max_qty, c.available) : c.max_qty, tiers: c.tiers || null, image: c.image_url, fewLeft: c.track_stock && c.available !== null && c.available !== undefined && c.available <= 3 ? c.available : null })),
+    catalog: catalog.map(c => ({ sku: c.sku, name: c.name, description: c.description, price: c.price_usd, unit: c.unit_label, size: sizeLabel(c), category: c.category || 'Extras', maxQty: c.track_stock && c.available !== null && c.available !== undefined ? Math.min(c.max_qty, c.available) : c.max_qty, tiers: c.tiers || null, image: c.image_url, fewLeft: c.track_stock && c.available !== null && c.available !== undefined && c.available <= 3 ? c.available : null })),
     orders: orders.map(publicOrder),
   })
 }
