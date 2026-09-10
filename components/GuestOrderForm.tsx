@@ -16,6 +16,8 @@ export type FormItem = { id?: string; sku: string; name: string; description: st
   salePrice?: number | null
   /** A short promo word on the card — New, Limited, Last few. */
   badge?: string | null
+  /** Sold in multiples of N — the basket steps by N and starts at N. Coffee pods in 5s. */
+  soldIn?: number | null
   /** Volume breaks on this item — "3+ $2.50 each". Best qualifying break wins, priced server-side. */
   tiers?: PriceTier[] | null }
 
@@ -119,7 +121,17 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
   const afterDiscount = Math.round((subtotal - discount) * 100) / 100
   const tax = Math.round(afterDiscount * data.copy.taxPct) / 100
   const total = afterDiscount + tax
-  const bump = (sku: string, d: number, max: number) => setQty(q => { const n = Math.min(Math.max((q[sku] || 0) + d, 0), max); const next = { ...q }; if (n) next[sku] = n; else delete next[sku]; return next })
+  // `d` is in STEPS: +1 adds one multiple (5 pods), −1 removes one. An item sold in 5s can
+  // never hold 3 — the count only ever lands on a multiple, and never above the max.
+  const stepOf = (c: FormItem) => (c.soldIn && c.soldIn > 1 ? c.soldIn : 1)
+  const bump = (c: FormItem, d: number) => setQty(q => {
+    const step = stepOf(c)
+    const cur = q[c.sku] || 0
+    let n = d === -Infinity ? 0 : cur + d * step
+    if (n > c.maxQty) n = Math.floor(c.maxQty / step) * step
+    n = Math.max(0, n)
+    const next = { ...q }; if (n) next[c.sku] = n; else delete next[c.sku]; return next
+  })
 
   async function place() {
     if (busy || !lines.length || !onSubmit) return
@@ -260,7 +272,7 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
                     </div>
                     {c.description ? <div className="text-[13px] text-neutral-600 mt-1 leading-snug">{c.description}</div> : null}
                     <div className="flex items-center gap-2 mt-1">
-                      {c.size || c.unit ? <div className="text-[12px] text-neutral-400">{[c.size, c.unit].filter(Boolean).join(' · ')}</div> : null}
+                      {c.size || c.unit || (c.soldIn && c.soldIn > 1) ? <div className="text-[12px] text-neutral-400">{[c.size, c.unit, c.soldIn && c.soldIn > 1 ? 'sold in ' + c.soldIn + 's' : null].filter(Boolean).join(' · ')}</div> : null}
                       {c.fewLeft !== null && c.fewLeft !== undefined ? <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">Only {c.fewLeft} left</span> : null}
                       {/* The multi-buy nudge: what the next break costs, and what it saves. */}
                       {(() => { const nx = nextTier(c, n); if (!nx || c.price <= 0) return null
@@ -273,12 +285,12 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
                 </div>
                 <div className="mt-3 flex items-center justify-end" onClick={e => { if (editable) e.stopPropagation() }}>
                   {n === 0 ? (
-                    <button onClick={() => bump(c.sku, 1, c.maxQty)} className="h-10 px-5 rounded-full text-[14px] font-semibold text-white active:scale-[.98] transition" style={{ background: accent }}>Add</button>
+                    <button onClick={() => bump(c, 1)} disabled={stepOf(c) > c.maxQty} className="h-10 px-5 rounded-full text-[14px] font-semibold text-white active:scale-[.98] transition disabled:opacity-40" style={{ background: accent }}>{stepOf(c) > 1 ? 'Add ' + stepOf(c) : 'Add'}</button>
                   ) : (
                     <div className="inline-flex items-center rounded-full overflow-hidden" style={{ background: accent }}>
-                      <button onClick={() => bump(c.sku, -1, c.maxQty)} aria-label="Less" className="h-10 w-11 text-white text-xl leading-none active:bg-black/10">−</button>
+                      <button onClick={() => bump(c, -1)} aria-label="Less" className="h-10 w-11 text-white text-xl leading-none active:bg-black/10">−</button>
                       <span className="text-white text-[15px] font-semibold tabular-nums w-8 text-center">{n}</span>
-                      <button onClick={() => bump(c.sku, 1, c.maxQty)} aria-label="More" disabled={n >= c.maxQty} className="h-10 w-11 text-white text-xl leading-none active:bg-black/10 disabled:opacity-40">+</button>
+                      <button onClick={() => bump(c, 1)} aria-label="More" disabled={n + stepOf(c) > c.maxQty} className="h-10 w-11 text-white text-xl leading-none active:bg-black/10 disabled:opacity-40">+</button>
                     </div>
                   )}
                 </div>
@@ -320,7 +332,7 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="tabular-nums">{money(l.total)}</span>
-                  <button onClick={() => bump(l.sku, -l.qty, l.maxQty)} className="text-neutral-400 hover:text-rose-600 text-lg leading-none" aria-label="Remove">×</button>
+                  <button onClick={() => bump(l, -Infinity)} className="text-neutral-400 hover:text-rose-600 text-lg leading-none" aria-label="Remove">×</button>
                 </div>
               </div>
             ))}

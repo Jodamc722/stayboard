@@ -27,6 +27,8 @@ type Item = {
   packSize: number | null; packCost: number | null; tiers: Tier[]
   imageOriginal: string | null
   salePrice: number | null; badge: string | null
+  /** Sold in multiples of N on the guest form (coffee pods in 5s). Blank = any quantity. */
+  soldIn: number | null
   /** How much is in ONE — 500 mL, 12 oz. Not the pack size. */
   sizeValue: number | null; sizeUnit: string | null
 }
@@ -585,6 +587,19 @@ function PriceLadder({ item, val, setItem, canEdit }: { item: Item; val: (i: Ite
           {price > 0 ? <> · sells at {perMeasure(price, Number(sizeValue), sizeUnit)}</> : null}
         </div>
       ) : null}
+
+      {/* SOLD IN MULTIPLES (Jon, 2026-09-10: "coffee pods — can't order one… customizable per item
+          at the stock or inventory"). The guest form steps by this and the server rounds up to it.
+          Nothing to do with the case we buy, below. */}
+      <div className="mt-2.5 pt-2.5 border-t border-line/70 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Guests order in multiples of
+          <input type="number" min={0} max={999} value={(val(item, 'soldIn') as number | null) ?? ''} placeholder="any" disabled={!canEdit}
+            onChange={e => setItem(item.id, { soldIn: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) } as any)} className={box + ' w-24 mt-0.5'} />
+        </label>
+        {(() => { const si = Number(val(item, 'soldIn')); if (!(si > 1)) return <div className="text-[11.5px] text-muted pb-1.5">Blank = any quantity. Type 5 and a guest can only add 5, 10, 15…</div>
+          const cap = Math.floor(maxQty / si) * si
+          return <div className="text-[11.5px] text-muted pb-1.5 max-w-[420px] leading-snug">The Add button puts <b>{si}</b> in the basket and +/− step by {si}.{cap < si ? <> <b className="text-rose-700">Max per order ({maxQty}) is below {si}, so nobody can order this.</b></> : cap < maxQty ? <> Max per order ({maxQty}) rounds down to <b>{cap}</b>.</> : null}</div> })()}
+      </div>
 
       {/* BUY BY THE CASE. Optional, and it only ever feeds "cost per item" above — two ways to say
           what one costs, never two competing answers. */}
