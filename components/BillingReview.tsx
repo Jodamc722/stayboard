@@ -32,7 +32,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Undo2, ExternalLink, Loader2, ChevronDown, Search, Download } from 'lucide-react'
 
-type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate' | 'long_hours' | 'no_owner'
+type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate' | 'long_hours' | 'no_owner' | 'ai_bill' | 'ai_pending'
 type State = 'open' | 'ops_approved' | 'gm_approved'
 type Item = { key: string; description: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: string }
 type Task = {
@@ -45,14 +45,17 @@ type Task = {
   laborAmount: number; billedAmount: number; reportUrl: string | null
   reviewState: State; opsBy: string | null; opsAt: string | null; gmBy: string | null; gmAt: string | null
   flags: Flag[]
+  routine: 'unit_check' | 'strip' | null
+  aiVerdict: 'no_charge' | 'bill' | null; aiReason: string | null; aiAmount: number | null
 }
 type Owner = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; open: number; opsApproved: number; gmApproved: number; flagged: number }
-type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number }
+type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number }
 type Stage = 'ops' | 'gm' | 'done' | 'all'
 
 const FLAG_LABEL: Record<Flag, string> = {
   over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
   no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
+  ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
 }
 const STAGE_OF: Record<Stage, (t: Task) => boolean> = {
   ops: t => t.reviewState === 'open',
@@ -72,7 +75,7 @@ function recompute(t: Task): Task {
   const itemsTotal = t.items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
   const computed = Math.round((t.laborAmount + itemsTotal) * 100) / 100
   const billed = t.excluded ? 0 : (t.overrideAmount != null ? t.overrideAmount : computed)
-  const flags: Flag[] = t.flags.filter(f => f !== 'over_150' && f !== 'override_far' && f !== 'no_price')
+  const flags: Flag[] = t.flags.filter(f => f !== 'over_150' && f !== 'override_far' && f !== 'no_price' && !((f === 'ai_bill' || f === 'ai_pending') && (t.overrideAmount != null || t.excluded)))
   if (billed > 150) flags.push('over_150')
   if (t.overrideAmount != null) {
     const gap = Math.abs(t.overrideAmount - computed)
@@ -115,9 +118,12 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
           {t.flags.length ? (
             <span className="flex flex-wrap gap-1 mt-1">
               {t.flags.map(f => (
-                <span key={f} className={'text-[10px] font-semibold px-1.5 py-0.5 rounded ring-1 ' + (f === 'over_150' ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-rose-50 text-rose-700 ring-rose-200')}>{FLAG_LABEL[f]}</span>
+                <span key={f} className={'text-[10px] font-semibold px-1.5 py-0.5 rounded ring-1 ' + (f === 'over_150' ? 'bg-amber-50 text-amber-800 ring-amber-200' : f === 'ai_bill' ? 'bg-brand-50 text-brand-700 ring-brand-200' : f === 'ai_pending' ? 'bg-app text-muted ring-line' : 'bg-rose-50 text-rose-700 ring-rose-200')}>{FLAG_LABEL[f]}</span>
               ))}
             </span>
+          ) : null}
+          {t.aiVerdict === 'bill' && t.aiReason && t.overrideAmount == null && !done ? (
+            <span className="block text-[11px] text-brand-800 mt-1">{t.aiReason}{t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : ''}</span>
           ) : null}
         </button>
 
@@ -142,17 +148,22 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
         <div className="flex items-center gap-1.5">
           {done ? (
             <>
-              <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-emerald-700"><Check size={13} /> GM {who(t.gmBy)}</span>
-              {isGm && t.gmBy !== 'auto' ? <button disabled={busy} onClick={() => onState(t.id, 'ops_approved')} title="Back to GM review" className={btn + ' text-muted hover:text-ink'}><Undo2 size={12} /></button> : null}
+              <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-emerald-700"><Check size={13} /> Final {who(t.gmBy)}</span>
+              {isGm && t.gmBy !== 'auto' ? <button disabled={busy} onClick={() => onState(t.id, 'ops_approved')} title="Back to final review" className={btn + ' text-muted hover:text-ink'}><Undo2 size={12} /></button> : null}
             </>
           ) : inGmQueue ? (
             <>
               <span className="text-[11px] text-muted mr-1">ops {who(t.opsBy)}</span>
-              {isGm ? <button disabled={busy} onClick={() => onState(t.id, 'gm_approved')} className={btn + ' bg-ink text-white hover:bg-ink/90'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />} GM approve</button> : null}
+              {isGm ? <button disabled={busy} onClick={() => onState(t.id, 'gm_approved')} className={btn + ' bg-ink text-white hover:bg-ink/90'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />} Final approve</button> : null}
               <button disabled={busy} onClick={() => onState(t.id, 'open')} title="Send back to ops" className={btn + ' text-muted hover:text-rose-700'}><Undo2 size={12} /></button>
             </>
           ) : (
-            <button disabled={busy} onClick={() => onState(t.id, 'ops_approved')} className={btn + ' bg-brand-600 text-white hover:bg-brand-700'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />} Approve</button>
+            <>
+              {t.aiVerdict === 'bill' && t.aiAmount != null && t.overrideAmount == null && !t.excluded ? (
+                <button disabled={busy} onClick={() => { setAmt(String(t.aiAmount)); onEdit(t.id, { override_amount: t.aiAmount }) }} title="Take the AI's suggested price" className={btn + ' border border-brand-200 text-brand-700 hover:bg-brand-50'}>Use {money(t.aiAmount)}</button>
+              ) : null}
+              <button disabled={busy} onClick={() => onState(t.id, 'ops_approved')} className={btn + ' bg-brand-600 text-white hover:bg-brand-700'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />} Approve</button>
+            </>
           )}
           <button onClick={() => onToggle(t.id)} className="p-1 text-muted hover:text-ink" aria-label="Details"><ChevronDown size={14} className={'transition ' + (open ? 'rotate-180' : '')} /></button>
         </div>
@@ -196,7 +207,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
             {(t.opsBy || t.gmBy) ? (
               <p className="text-[11px] text-muted">
                 {t.opsBy ? 'Ops: ' + who(t.opsBy) + (t.opsAt ? ' · ' + short(t.opsAt) : '') : ''}
-                {t.gmBy ? (t.opsBy ? ' · ' : '') + 'GM: ' + who(t.gmBy) + (t.gmAt ? ' · ' + short(t.gmAt) : '') : ''}
+                {t.gmBy ? (t.opsBy ? ' · ' : '') + 'Final: ' + who(t.gmBy) + (t.gmAt ? ' · ' + short(t.gmAt) : '') : ''}
               </p>
             ) : null}
           </div>
@@ -221,7 +232,10 @@ export function BillingReview() {
   // The snapshot that keeps rows from vanishing mid-session (rule 2).
   const [viewIds, setViewIds] = useState<Set<string> | null>(null)
   const seq = useRef(0)
+  const aiRan = useRef<Set<string>>(new Set())
+  const [aiBusy, setAiBusy] = useState(0)
 
+  const loadRef = useRef<(m: string) => Promise<void>>(async () => {})
   const load = useCallback(async (m: string) => {
     const my = ++seq.current
     setLoading(true); setErr('')
@@ -232,9 +246,18 @@ export function BillingReview() {
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not load the month.')
       setData(j); setViewIds(null)
       setStage(s => s || (j.me?.isGm ? 'gm' : 'ops'))
+      // Routine tasks with a real description that the model has not read yet: send them now,
+      // once, then pull the month again so the verdicts land. Nothing else waits on this.
+      if (Number(j.aiPending) > 0 && !aiRan.current.has(m)) {
+        aiRan.current.add(m); setAiBusy(Number(j.aiPending))
+        fetch('/api/billing/ai-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month: m }) })
+          .then(r => r.json()).catch(() => null)
+          .then(res => { setAiBusy(0); if (res && res.ok && res.judged > 0 && my === seq.current) loadRef.current(m) })
+      }
     } catch (e: any) { if (my === seq.current) setErr(String(e?.message || e)) }
     if (my === seq.current) setLoading(false)
   }, [])
+  loadRef.current = load
   useEffect(() => { load(month) }, [month, load])
 
   const tasks = data?.tasks || []
@@ -331,7 +354,7 @@ export function BillingReview() {
       {label}<span className={'text-[11px] tabular-nums px-1.5 rounded ' + (st === k ? 'bg-white/20' : 'bg-app')}>{n}</span>
     </button>
   )
-  const approveAllLabel = st === 'gm' ? 'GM approve all shown' : 'Approve all shown'
+  const approveAllLabel = st === 'gm' ? 'Final approve all shown' : 'Approve all shown'
   const approveAllTo: State = st === 'gm' ? 'gm_approved' : 'ops_approved'
   const canApproveAll = st === 'ops' || (st === 'gm' && isGm)
 
@@ -345,14 +368,14 @@ export function BillingReview() {
           <button onClick={() => setMonth(shiftMonth(month, 1))} className="h-9 w-9 grid place-items-center rounded-xl border border-line text-muted hover:text-ink" aria-label="Later"><ChevronRight size={15} /></button>
           <button onClick={() => load(month)} disabled={loading} className="h-9 w-9 grid place-items-center rounded-xl border border-line text-muted hover:text-ink disabled:opacity-40" aria-label="Refresh"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
           <div className="flex-1" />
-          <a href={'/api/billing/export?month=' + month + '&format=zip&reviewed=1'} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-line text-[12.5px] font-semibold text-ink hover:bg-app"><Download size={13} /> GM-approved statements</a>
+          <a href={'/api/billing/export?month=' + month + '&format=zip&reviewed=1'} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-line text-[12.5px] font-semibold text-ink hover:bg-app"><Download size={13} /> Final-approved statements</a>
           <a href="/billing?view=labor" className="text-[12px] font-semibold text-muted hover:text-ink">Labor &amp; rates</a>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-line">
           {([
             ['Open · ops to review', kpi.open, 'text-ink'],
-            ['Ops approved · GM to review', kpi.gm, 'text-brand-700'],
-            ['GM approved · statement-ready', kpi.done, 'text-emerald-700'],
+            ['Ops approved · final review', kpi.gm, 'text-brand-700'],
+            ['Final approved · statement-ready', kpi.done, 'text-emerald-700'],
             ['Flagged, still open', kpi.flagged, kpi.flagged.n ? 'text-amber-700' : 'text-muted'],
           ] as [string, { n: number; $: number }, string][]).map(([l, v, cls]) => (
             <div key={l} className="px-4 py-3">
@@ -368,12 +391,13 @@ export function BillingReview() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white">
           {tab('ops', 'Ops review', kpi.open.n)}
-          {tab('gm', 'GM review', kpi.gm.n)}
+          {tab('gm', 'Final review', kpi.gm.n)}
           {tab('done', 'Approved', kpi.done.n)}
           {tab('all', 'All', tasks.length)}
         </div>
         <button onClick={() => setFlaggedOnly(v => !v)} className={'h-9 px-3 rounded-xl border text-[12.5px] font-semibold inline-flex items-center gap-1.5 ' + (flaggedOnly ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-muted hover:text-ink')}><AlertTriangle size={13} /> Flagged only</button>
         <label className="h-9 inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 text-[12.5px]"><Search size={13} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit, task, person, owner" className="w-44 bg-transparent outline-none text-ink" /></label>
+        {aiBusy ? <span className="inline-flex items-center gap-1.5 text-[12px] text-muted"><Loader2 size={12} className="animate-spin" /> AI is reading {aiBusy} unit check{aiBusy === 1 ? '' : 's'}/strip{aiBusy === 1 ? '' : 's'}…</span> : null}
         <div className="flex-1" />
         {canApproveAll && visible.some(inStage) ? (
           <button onClick={() => setState(visible.filter(inStage).map(t => t.id), approveAllTo)} className="h-9 px-3 rounded-xl bg-ink text-white text-[12.5px] font-semibold inline-flex items-center gap-1.5"><Check size={13} /> {approveAllLabel} ({visible.filter(inStage).length})</button>
@@ -386,7 +410,7 @@ export function BillingReview() {
       {/* ── by owner, in an order that never changes ───────────────────────────────────────── */}
       {!visible.length ? (
         <div className="rounded-2xl bg-white ring-1 ring-line px-4 py-10 text-center text-[13px] text-muted">
-          {st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on the GM.' : st === 'done' ? 'Nothing GM-approved yet this month.' : 'No tasks in this month.'}
+          {st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on final review.' : st === 'done' ? 'Nothing final-approved yet this month.' : 'No tasks in this month.'}
           {flaggedOnly || q ? ' (with the current filter)' : ''}
         </div>
       ) : groups.filter(g => g.rows.length).map(({ owner: o, rows }) => {
@@ -407,12 +431,12 @@ export function BillingReview() {
               <span className="inline-flex items-center gap-1 text-[11px] tabular-nums">
                 <span className="px-1.5 py-0.5 rounded bg-white ring-1 ring-line text-muted">{o.open} open</span>
                 <span className="px-1.5 py-0.5 rounded bg-brand-50 text-brand-700">{o.opsApproved} ops</span>
-                <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{o.gmApproved} GM</span>
+                <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{o.gmApproved} final</span>
                 {o.flagged ? <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">{o.flagged} flagged</span> : null}
               </span>
               <div className="flex-1" />
               {canApproveAll && actionable.length ? (
-                <button onClick={() => setState(actionable.map(t => t.id), approveAllTo)} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Check size={12} /> {st === 'gm' ? 'GM approve' : 'Approve'} {actionable.length}</button>
+                <button onClick={() => setState(actionable.map(t => t.id), approveAllTo)} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Check size={12} /> {st === 'gm' ? 'Final approve' : 'Approve'} {actionable.length}</button>
               ) : null}
               {o.ownerId ? <a href={'/api/billing/export?month=' + month + '&format=xls&done=1&owner=' + encodeURIComponent(o.ownerId)} className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><Download size={12} /> Export</a> : null}
             </header>
@@ -427,7 +451,8 @@ export function BillingReview() {
 
       <p className="text-[11px] text-muted">
         Approving never reloads the page and never reorders the owners — a row you have signed stays where it is, marked, until you switch queue or refresh.
-        Click a price to change it in place (Enter saves, Esc cancels). Amber edge: over $150. GM approval is what goes on the statement; only an admin can give it.
+        Click a price to change it in place (Enter saves, Esc cancels). Amber edge: over $150. Final approval (admin only) is what goes on the statement.
+        Unit checks and strips close themselves at $0; the ones with a real description are read by AI once and stay open only if it saw chargeable work.
       </p>
     </div>
   )
