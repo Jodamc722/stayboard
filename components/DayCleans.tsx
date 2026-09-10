@@ -8,6 +8,21 @@
 // it wants aligned columns: who, their hours, their units, their count. Fifteen rows of that scan
 // in a second; fifteen ragged cards do not.
 //
+// WHICH SOURCE IS THE SPINE (decided 2026-09-10, on the numbers). Three systems claim to know who
+// is working, and they do not agree in coverage:
+//
+//   Homebase punches   12-17 housekeepers a day, every day. Kept accurate because people are paid
+//                      from it. The truth for a day that has happened.
+//   Homebase shifts    9 a day, out about a week. The plan, payroll-grade, maintained by necessity.
+//   Turnover Schedule  6 of 22 members marked on a typical day. Hand-kept, and mostly blank.
+//
+// So HOMEBASE IS THE SPINE and the roster is an OVERLAY. The board never requires the roster to be
+// filled in to work — asking a manager to maintain a second rota so a screen can render is the kind
+// of busywork that gets abandoned in a fortnight and leaves the screen lying. What the roster adds
+// is the two things Homebase cannot say: somebody deliberately OFF who has cleans on them, and
+// somebody marked on who has no shift at all. Both are exceptions, and exceptions are exactly what
+// an overlay is for.
+//
 // EVERYONE ROSTERED APPEARS, WITH OR WITHOUT WORK. A board that only lists people holding cleans
 // cannot answer the question a supervisor actually has at 8am — who is on and still free — and it
 // hides the expensive case: somebody clocked in with nothing assigned. So the row list is the union
@@ -71,6 +86,8 @@ type Row = {
   cost: number | null
   basis: 'actual' | 'scheduled' | 'none'
   rostered: boolean
+  /** The raw roster mark, so the board can flag someone OFF who is carrying work. */
+  rosterState: string
 }
 type MarketDay = { market: string; rows: Row[]; turnovers: number; otherJobs: number; crewOn: Record<string, number> }
 
@@ -125,11 +142,12 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
         const mk: MarketDay = { market: b.market, rows: [], turnovers: 0, otherJobs: 0, crewOn: {} }
         for (const p of b.people) {
           const jobs = p.byDay[d.date] || []
-          const rostered = /work|on.?call/i.test(String((p.roster || {})[d.date] || ''))
+          const rosterState = String((p.roster || {})[d.date] || '')
+          const rostered = /work|on.?call/i.test(rosterState)
           if (!jobs.length && !rostered) continue
           const turnovers = jobs.filter(j => j.departure)
           const otherWork = jobs.filter(j => !j.departure)
-          mk.rows.push({ person: p.name, turnovers, otherWork, hours: null, cost: null, basis: 'none', rostered })
+          mk.rows.push({ person: p.name, turnovers, otherWork, hours: null, cost: null, basis: 'none', rostered, rosterState })
           for (const j of turnovers) {
             const k = keyOf(j)
             mk.crewOn[k] = (mk.crewOn[k] || 0) + 1
@@ -146,7 +164,7 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
         const home = markets[0]
         for (const c of clocked) {
           const found = markets.some(m => m.rows.some(r => sameName(r.person, c.name)))
-          if (!found) home.rows.push({ person: c.name, turnovers: [], otherWork: [], hours: c.hours, cost: c.cost, basis: c.basis, rostered: false })
+          if (!found) home.rows.push({ person: c.name, turnovers: [], otherWork: [], hours: c.hours, cost: c.cost, basis: c.basis, rostered: false, rosterState: '' })
         }
       }
       // Stamp hours onto whoever we can match.
@@ -274,6 +292,14 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
         ) : null}
       </section>
 
+      {/* Beyond about a week Homebase shifts are not set yet, so the crew list thins out. Say that
+          rather than letting a short list read as a light day. */}
+      {labor && !clocked.length && day.date > (days.find(d => d.today)?.date || '') ? (
+        <p className="rounded-xl bg-app px-4 py-2 text-[11.5px] text-muted ring-1 ring-line">
+          No Homebase shifts set this far ahead — the crew below is who has work assigned or is marked on the Turnover Schedule.
+        </p>
+      ) : null}
+
       {/* ── THE CREW, ONE ROW EACH ─────────────────────────────────────────────────────────── */}
       {!c.markets.length ? (
         <div className="rounded-2xl bg-white ring-1 ring-line px-4 py-10 text-center">
@@ -294,8 +320,10 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
             {mk.rows.map(r => {
               const nothing = !r.turnovers.length && !r.otherWork.length
               const done = r.turnovers.filter(j => j.status === 'done').length
+              // The roster's whole value as an overlay: somebody deliberately off, carrying cleans.
+              const offButWorking = /off|req/i.test(r.rosterState) && !nothing
               return (
-                <li key={r.person + mk.market} className={'grid gap-3 px-4 py-2.5 items-start ' + (nothing ? 'bg-app/30' : '')}
+                <li key={r.person + mk.market} className={'grid gap-3 px-4 py-2.5 items-start ' + (offButWorking ? 'bg-amber-50/60' : nothing ? 'bg-app/30' : '')}
                   style={{ gridTemplateColumns: 'minmax(150px,190px) 1fr auto' }}>
                   {/* who + their clock */}
                   <div className="flex items-center gap-2.5 min-w-0">
