@@ -97,6 +97,102 @@ function doorCodeOf(raw: any): string | null {
   return null
 }
 
+// ---- TWO DIFFERENT CODE SYSTEMS ------------------------------------------------------------------
+//
+// Jon, 2026-09-10: "Salato and Botanica are found in the reservation not the building, also if
+// botanica is empty no codes will work as they get wiped. Different systems."
+//
+// Most of the portfolio keeps a STANDING code on the listing, changed at turnover. Salato and
+// Botanica do not: the working code lives on the RESERVATION and changes with every stay. Before
+// this, `door_code` only ever read the listing field, so for those two it either handed back the
+// building's standing code — which is not what the keypad holds — or said there was no code when
+// there was one. Both are wrong at a door, and the first is the dangerous one: a confident wrong
+// code sends somebody across the county to a lock that will not open.
+//
+// AND THE PART THAT DECIDES THE FALLBACK RULE. On Botanica an empty field is not "we forgot to fill
+// it in", it is "the codes have been wiped and nothing works right now". So for these two there is
+// NO falling back to the listing code, ever. Empty means missing, and missing is said out loud —
+// which is the rule this file already held for every other kind of missing code.
+const RES_CODE_FIELD = '693adec2ab73940025856e56'
+const RESERVATION_CODE_SYSTEM = /salato|botanica/i
+
+function onReservationSystem(unit: any, building: any, address?: any): boolean {
+  return RESERVATION_CODE_SYSTEM.test(`${unit || ''} ${building || ''} ${address || ''}`)
+}
+
+function cfById(raw: any, fieldId: string): string | null {
+  const arr = Array.isArray(raw?.customFields) ? raw.customFields : []
+  for (const c of arr) {
+    const fid = typeof c?.fieldId === 'object' ? (c?.fieldId?._id || c?.fieldId?.id) : c?.fieldId
+    if (String(fid) === fieldId) {
+      const v = c?.value == null ? '' : String(c.value).trim()
+      if (v) return v
+    }
+  }
+  return null
+}
+
+export type ResolvedCode = {
+  code: string | null
+  /** Which system answered. 'reservation' units never fall through to 'listing'. */
+  source: 'listing' | 'reservation'
+  /** The stay whose code this is, so a human can sanity-check WHOSE code they were handed. */
+  stay?: { id: string; guest: string | null; checkIn: string; checkOut: string } | null
+  /** Set when a reservation-system unit has no code — the reason matters more than the absence. */
+  missingReason?: string
+}
+
+/**
+ * The one place that answers "what code does this door take today".
+ *
+ * All three release paths call this rather than reading the field themselves, because the code is
+ * deliberately never stored on a request — it is re-read at check time, at approval time and at
+ * reveal time, so a code changed in Guesty in between is picked up rather than a stale one sent.
+ * Three copies of that logic would be three chances to drift; there is one.
+ */
+async function resolveCode(db: ReturnType<typeof supabaseAdmin>, l: any, today: string): Promise<ResolvedCode> {
+  const unit = l?.nickname || l?.title || ''
+  const building = l?.building || ''
+  if (!onReservationSystem(unit, building, l?.address_full)) {
+    return { code: doorCodeOf(l?.raw), source: 'listing' }
+  }
+
+  // The stay whose code is live right now: whoever is in the unit, else the next arrival — on a
+  // turnover day the code that matters is the one the arriving guest was given.
+  const { data: rv } = await db.from('guesty_reservations')
+    .select('id,guest_name,check_in,check_out,status,custom_fields')
+    .eq('listing_id', String(l.id)).order('check_in', { ascending: false }).limit(12)
+  const liveRes = ((rv as any[]) || []).filter(r => !/cancel|declin|inquir|expire/i.test(lc(r.status)))
+  const inHouse = liveRes.find(r => String(r.check_in).slice(0, 10) <= today && today < String(r.check_out).slice(0, 10)) || null
+  const next = liveRes.filter(r => String(r.check_in).slice(0, 10) >= today)
+    .sort((a, b) => String(a.check_in).localeCompare(String(b.check_in)))[0] || null
+  const stay: any = inHouse || next
+
+  if (!stay) {
+    return {
+      code: null, source: 'reservation', stay: null,
+      missingReason: `${unit} takes its code from the reservation, and there is no current or upcoming stay to take one from.`,
+    }
+  }
+
+  // custom_fields is the mirrored column; fall back to the raw payload for this ONE row only —
+  // never select raw across a set of reservations (statement timeout, and it is never needed).
+  let code = cfById({ customFields: stay.custom_fields }, RES_CODE_FIELD)
+  if (!code) {
+    const { data: one } = await db.from('guesty_reservations').select('raw').eq('id', String(stay.id)).maybeSingle()
+    code = cfById((one as any)?.raw, RES_CODE_FIELD)
+  }
+
+  const who = stay.guest_name ? ` (${stay.guest_name})` : ''
+  return {
+    code: code || null,
+    source: 'reservation',
+    stay: { id: String(stay.id), guest: stay.guest_name || null, checkIn: String(stay.check_in).slice(0, 10), checkOut: String(stay.check_out).slice(0, 10) },
+    missingReason: code ? undefined
+      : `${unit} takes its code from the reservation and this stay${who} has none on it. On Botanica an empty field means the codes have been WIPED — nothing will work at that door until a new one is set. Do not send anyone with the building's standing code; it is not what the keypad holds.`,
+  }
+}
+
 /** A hint a human can sanity-check against ("is that the 4-digit one?") without exposing the code. */
 function hintFor(code: string): string {
   const digits = (code.match(/\d/g) || []).length
@@ -257,7 +353,8 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
   const l: any = live[0] || matches[0]
   const unit = l.nickname || l.title || 'Unknown unit'
   const building = rollupBuilding(l.building, unit)
-  const code = doorCodeOf(l.raw)
+  const resolved = await resolveCode(db, l, today)
+  const code = resolved.code
 
   const address = l.address_full || l.raw?.address?.full || l.address_city || null
 
@@ -265,8 +362,15 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
   // Refresh THIS unit first: the first observer of a change is the only one that can record what
   // the code used to be, and the old code is what the keypad still holds until housekeeping has
   // been in. Getting that wrong sends somebody to a door with a number that stopped working.
-  if (code) await refreshOne(String(l.id), code, inspectCode(code).digits)
-  const confidence = code ? await codeConfidence(String(l.id), code, l.raw) : null
+  //
+  // NOT for the reservation-code units. That whole machinery models a standing code that changes
+  // occasionally, so it reads every ordinary turnover on Salato and Botanica as "the code moved"
+  // and would offer the PREVIOUS guest's code as the one the keypad still holds. On those units it
+  // is not stale, it is revoked — so they are left out of the state table entirely rather than
+  // being fed per-stay codes that would poison it.
+  const tracked = resolved.source === 'listing'
+  if (code && tracked) await refreshOne(String(l.id), code, inspectCode(code).digits)
+  const confidence = code && tracked ? await codeConfidence(String(l.id), code, l.raw) : null
   if (confidence) confidence.transition = await transitionFor(String(l.id), today)
 
   const base: DoorCheck = {
@@ -275,7 +379,12 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
     canRelease: false, note: '',
   }
   if (!code) {
-    return { ...base, verdict: 'no_code', headline: `No door code on file for ${unit}.`, note: 'Nothing to send. Add it to the door-code custom field in Guesty first.' }
+    return {
+      ...base, verdict: 'no_code',
+      headline: `No door code on file for ${unit}.`,
+      note: resolved.missingReason
+        || 'Nothing to send. Add it to the door-code custom field in Guesty first.',
+    }
   }
 
   // ---- Gate 2: is anyone in it? ----
@@ -558,9 +667,13 @@ export async function releaseByToken(token: string, approvedBy: string, opts?: {
   }
 
   // Re-read the code NOW, server-side. It was never stored on the request and never shown to Eve.
-  const { data: ls } = await db.from('guesty_listings').select('raw,nickname,title').eq('id', row.payload.listingId).limit(1)
-  const code = doorCodeOf(((ls || [])[0] as any)?.raw)
-  if (!code) return { ok: false, error: 'The door code has disappeared from Guesty since this was checked.' }
+  const { data: ls } = await db.from('guesty_listings').select('id,raw,nickname,title,building,address_full').eq('id', row.payload.listingId).limit(1)
+  const listing: any = (ls || [])[0]
+  const resolved = await resolveCode(db, listing, todayET())
+  const code = resolved.code
+  if (!code) {
+    return { ok: false, error: resolved.missingReason || 'The door code has disappeared from Guesty since this was checked.' }
+  }
 
   await db.from('eve_actions').update({
     status: 'executed', decided_by: approvedBy, decided_at: new Date().toISOString(),
@@ -649,11 +762,19 @@ export async function revealByConfirmToken(confirmToken: string): Promise<{
   if (!at || Date.now() - at > REVEAL_WINDOW_MS) {
     return { ok: false, error: 'This page only shows a code for a few minutes after it is released. Ask again and it will re-run the checks.' }
   }
-  const { data: ls } = await db.from('guesty_listings').select('raw').eq('id', row.payload.listingId).limit(1)
-  const code = doorCodeOf(((ls || [])[0] as any)?.raw)
-  if (!code) return { ok: false, error: 'The code is no longer on file for this unit.' }
-  const pair = await bothCodes(String(row.payload.listingId), code)
-  const tr = await transitionFor(String(row.payload.listingId), todayET())
+  const { data: ls } = await db.from('guesty_listings').select('id,raw,nickname,title,building,address_full').eq('id', row.payload.listingId).limit(1)
+  const listing: any = (ls || [])[0]
+  const resolved = await resolveCode(db, listing, todayET())
+  const code = resolved.code
+  if (!code) return { ok: false, error: resolved.missingReason || 'The code is no longer on file for this unit.' }
+  // A per-stay code has no meaningful "previous": the last guest's code is revoked, not lagging.
+  // Offering it here is exactly the mistake this whole change exists to stop.
+  const pair = resolved.source === 'reservation'
+    ? { current: code, previous: null as string | null }
+    : await bothCodes(String(row.payload.listingId), code)
+  const tr = resolved.source === 'reservation'
+    ? { expect: 'per_stay' as any, reason: 'This unit takes a new code every stay; there is no older code still on the keypad.' }
+    : await transitionFor(String(row.payload.listingId), todayET())
   return {
     ok: true, unit: row.payload.unit, code,
     previousCode: pair.previous ?? null, expect: tr.expect, transitionNote: tr.reason ?? null,
