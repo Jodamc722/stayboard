@@ -15,6 +15,7 @@
 // WHO MAY DO WHAT: anyone with billing:edit can ops-approve or send back. gm_approved is the GM's
 // signature — admin role only — because it is what lands on an owner's statement.
 import { NextRequest, NextResponse } from 'next/server'
+import { pendingRoutine } from '@/lib/billing-ai'
 import { requireLevel } from '@/lib/access'
 import { billingRange, monthRange, type BillingTask, type ReviewState } from '@/lib/billing'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -38,6 +39,7 @@ function slim(t: BillingTask) {
     laborAmount: t.laborAmount, billedAmount: t.billedAmount, reportUrl: t.reportUrl,
     reviewState: t.reviewState, opsBy: t.opsBy, opsAt: t.opsAt, gmBy: t.gmBy, gmAt: t.gmAt,
     flags: t.flags,
+    routine: t.routine, aiVerdict: t.aiVerdict, aiReason: t.aiReason, aiAmount: t.aiAmount,
   }
 }
 export type ReviewTask = ReturnType<typeof slim>
@@ -65,6 +67,9 @@ export async function GET(req: NextRequest) {
       tasks: data.tasks.map(slim),
       owners,
       missingDetail: data.missingDetail,
+      // Routine tasks (unit check / strip) with a real description the model has not judged yet.
+      // The desk kicks off POST /api/billing/ai-check when this is > 0.
+      aiPending: pendingRoutine(data.tasks).length,
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
