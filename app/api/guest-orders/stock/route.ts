@@ -7,7 +7,7 @@
 //        } — all four in one trip, all at 'edit' access
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock, sanitizeTiers, sizeUnitOf } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock, sanitizeTiers, sizeUnitOf, soldInOf } from '@/lib/guest-orders'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
 
@@ -47,7 +47,7 @@ export async function GET() {
       price: c.price_usd, cost: c.cost_usd, reorderUrl: c.reorder_url, supplier: c.supplier, packNote: c.pack_note,
       // Pack economics + the price ladder, so Inventory can price an item without a second screen.
       packSize: c.pack_size, packCost: c.pack_cost_usd, tiers: c.tiers || [],
-      sizeValue: c.size_value, sizeUnit: c.size_unit, salePrice: c.sale_price_usd, badge: c.badge, imageOriginal: (c as any).image_original || null,
+      sizeValue: c.size_value, sizeUnit: c.size_unit, salePrice: c.sale_price_usd, badge: c.badge, soldIn: c.sold_in, imageOriginal: (c as any).image_original || null,
     }
   })
   const alerts = items.filter(i => i.tracked).flatMap(i => i.per.filter(p => p.state === 'out' || p.state === 'low').map(p => ({ item: i.name, scope: p.label, state: p.state, available: p.available })))
@@ -104,6 +104,8 @@ export async function PUT(req: NextRequest) {
     // AN OFFER ON ONE ITEM. Blank clears it — an item is not "on sale at its own price".
     if (f.salePrice !== undefined) patch.sale_price_usd = f.salePrice === null || f.salePrice === '' ? null : Math.max(0, Math.round((Number(f.salePrice) || 0) * 100) / 100)
     if (f.badge !== undefined) patch.badge = txt(f.badge, 16)
+    // SOLD IN MULTIPLES (Jon, 2026-09-10: coffee pods in 5s, "can't order one"). Blank or 1 = any.
+    if (f.soldIn !== undefined) patch.sold_in = soldInOf(f.soldIn)
     // HOW BIG ONE IS. Both halves clear together — a bare "500" with no unit is not a size, and a
     // unit with no number would divide by zero in every cost-per-measure sum on the board.
     if (f.sizeValue !== undefined) patch.size_value = f.sizeValue === null || f.sizeValue === '' ? null : (Math.max(0, Math.round(Number(f.sizeValue) * 100) / 100) || null)
