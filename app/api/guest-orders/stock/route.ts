@@ -7,7 +7,7 @@
 //        } — all four in one trip, all at 'edit' access
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock, sanitizeTiers } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock, sanitizeTiers, sizeUnitOf } from '@/lib/guest-orders'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
 
@@ -47,6 +47,7 @@ export async function GET() {
       price: c.price_usd, cost: c.cost_usd, reorderUrl: c.reorder_url, supplier: c.supplier, packNote: c.pack_note,
       // Pack economics + the price ladder, so Inventory can price an item without a second screen.
       packSize: c.pack_size, packCost: c.pack_cost_usd, tiers: c.tiers || [],
+      sizeValue: c.size_value, sizeUnit: c.size_unit,
     }
   })
   const alerts = items.filter(i => i.tracked).flatMap(i => i.per.filter(p => p.state === 'out' || p.state === 'low').map(p => ({ item: i.name, scope: p.label, state: p.state, available: p.available })))
@@ -99,6 +100,10 @@ export async function PUT(req: NextRequest) {
     if (f.packSize !== undefined) patch.pack_size = f.packSize === null || f.packSize === '' ? null : (Math.min(Math.max(Math.floor(Number(f.packSize) || 0), 0), 9999) || null)
     if (f.packCost !== undefined) patch.pack_cost_usd = f.packCost === null || f.packCost === '' ? null : Math.max(0, Math.round((Number(f.packCost) || 0) * 100) / 100)
     if (f.tiers !== undefined) patch.tiers = sanitizeTiers(f.tiers).length ? sanitizeTiers(f.tiers) : null
+    // HOW BIG ONE IS. Both halves clear together — a bare "500" with no unit is not a size, and a
+    // unit with no number would divide by zero in every cost-per-measure sum on the board.
+    if (f.sizeValue !== undefined) patch.size_value = f.sizeValue === null || f.sizeValue === '' ? null : (Math.max(0, Math.round(Number(f.sizeValue) * 100) / 100) || null)
+    if (f.sizeUnit !== undefined) patch.size_unit = sizeUnitOf(f.sizeUnit)
     if (f.reorderUrl !== undefined) {
       const u = String(f.reorderUrl || '').trim().slice(0, 600)
       // http(s) only — a javascript: or data: URL here would be a one-click trap for whoever is
