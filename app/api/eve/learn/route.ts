@@ -8,6 +8,7 @@ import { pruneStaleMemories } from '@/lib/eve/memory'
 import { nightlyVision } from '@/lib/eve/vision'
 import { generateQuestions } from '@/lib/eve/questions'
 import { studyPending } from '@/lib/eve/study'
+import { learnLingo } from '@/lib/eve/voice'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { recordRun } from '@/lib/automation-runs'
@@ -97,8 +98,16 @@ export async function POST(req: NextRequest) {
   try { vision = await nightlyVision() }
   catch (e: any) { vision = { ok: false, error: String(e?.message || e).slice(0, 200) } }
 
+  // HOW THE TEAM TALKS (Jon, 2026-09-10: "It can start to learn tone and the way we communicate our
+  // lingo"). Reads a fortnight of our own channels — never the vendor rooms — and distils the
+  // vocabulary and register into one settings row that Eve's prompt reads. Cheap, and a failure
+  // costs nothing: no lingo row means she sounds the way she did yesterday.
+  let lingo: any = null
+  try { lingo = await learnLingo() }
+  catch (e: any) { lingo = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return NextResponse.json({ ok: true, sweep, studied, vision, questions, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
+  if (!key) return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
 
   const cutoff = new Date(Date.now() - days * 86400000).toISOString()
   const sb = supabaseAdmin()
@@ -128,7 +137,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (guestMsgs.length === 0 && reviewText.length === 0) {
-    return NextResponse.json({ ok: true, sweep, studied, vision, questions, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
+    return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
   }
 
   const SYSTEM = `You analyze a short-term-rental manager's recent GUEST MESSAGES and REVIEWS to extract reusable operational knowledge. Return STRICT minified JSON only:
@@ -171,6 +180,6 @@ Generalize (don't repeat one guest's wording). Max 12 faqs, max 10 complaints. B
     learned = rows.length
   }
   recordRun({ name: 'eve-learn', ok: true, itemCount: learned, detail: { sweep, studied, vision, questions, learned } })
-  return NextResponse.json({ ok: true, sweep, studied, vision, questions, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
+  return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
 }
 export const GET = POST
