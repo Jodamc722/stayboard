@@ -10,6 +10,8 @@ import { useEffect, useMemo, useState } from 'react'
 
 export type PriceTier = { min_qty: number; unit_price_usd: number }
 export type FormItem = { id?: string; sku: string; name: string; description: string | null; price: number; unit: string | null; category: string; maxQty: number; image: string | null; fewLeft?: number | null
+  /** How much is in one — "500 mL". Sits with the pack label under the name. */
+  size?: string | null
   /** Volume breaks on this item — "3+ $2.50 each". Best qualifying break wins, priced server-side. */
   tiers?: PriceTier[] | null }
 
@@ -229,7 +231,7 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
                     </div>
                     {c.description ? <div className="text-[13px] text-neutral-600 mt-1 leading-snug">{c.description}</div> : null}
                     <div className="flex items-center gap-2 mt-1">
-                      {c.unit ? <div className="text-[12px] text-neutral-400">{c.unit}</div> : null}
+                      {c.size || c.unit ? <div className="text-[12px] text-neutral-400">{[c.size, c.unit].filter(Boolean).join(' · ')}</div> : null}
                       {c.fewLeft !== null && c.fewLeft !== undefined ? <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">Only {c.fewLeft} left</span> : null}
                       {/* The multi-buy nudge: what the next break costs, and what it saves. */}
                       {(() => { const nx = nextTier(c, n); if (!nx || c.price <= 0) return null

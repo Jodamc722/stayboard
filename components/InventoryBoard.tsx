@@ -24,8 +24,19 @@ type Item = {
   price: number; cost: number | null; reorderUrl: string | null; supplier: string | null; packNote: string | null
   /** Pack economics and the price ladder — see PricePanel below. */
   packSize: number | null; packCost: number | null; tiers: Tier[]
+  /** How much is in ONE — 500 mL, 12 oz. Not the pack size. */
+  sizeValue: number | null; sizeUnit: string | null
 }
 export type Tier = { min_qty: number; unit_price_usd: number }
+const SIZE_UNITS = ['mL', 'L', 'fl oz', 'oz', 'g', 'kg', 'ct']
+/** Per 100 for the small measures, per 1 for the rest — nobody quotes a price per millilitre. */
+function perMeasure(price: number, size: number, unit: string): string | null {
+  if (!(price > 0) || !(size > 0) || !unit) return null
+  const per100 = unit === 'mL' || unit === 'g'
+  const amount = per100 ? 100 : 1
+  const v = price / size * amount
+  return '$' + (v < 0.1 ? v.toFixed(3) : v.toFixed(2)) + ' per ' + (per100 ? '100 ' : '') + unit
+}
 type Scope = { id: string; label: string; buildings: string[]; listings: string[] }
 type Listing = { id: string; name: string; building: string }
 type Data = { scopes: Scope[]; items: Item[]; untracked: number; listings: Listing[]; buildings: string[] }
@@ -325,7 +336,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
                         {!active ? <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-app text-muted border border-line">hidden from the form</span> : null}
                       </div>
                       <div className="text-[11.5px] text-muted mt-0.5 truncate">
-                        {String(val(i, 'category') ?? '') || 'Extras'}{val(i, 'unit') ? ' · ' + val(i, 'unit') : ''}
+                        {String(val(i, 'category') ?? '') || 'Extras'}{val(i, 'sizeValue') && val(i, 'sizeUnit') ? ' · ' + (Math.round(Number(val(i, 'sizeValue')) * 100) / 100) + ' ' + val(i, 'sizeUnit') : ''}{val(i, 'unit') ? ' · ' + val(i, 'unit') : ''}
                         {p.reserved ? ' · ' + p.reserved + ' held for paid orders' : ''}
                         {tracked ? (p.updatedAt ? ' · counted ' + new Date(p.updatedAt).toLocaleDateString() : ' · never counted') : ''}
                       </div>
@@ -348,11 +359,11 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
                       </label>
                       {/* The ladder at a glance. Editing it — and the pack cost behind the margin —
                           is one click away under Edit, so this dense row stays readable. */}
-                      <div className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Breaks
+                      <div className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Bulk
                         <div className="flex items-center gap-1 mt-1 h-[22px]">
                           {ladder.length
-                            ? ladder.slice(0, 3).map(t => <span key={t.min_qty} className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 tabular-nums normal-case tracking-normal">{t.min_qty}+ {money(t.unit_price_usd)}</span>)
-                            : <button type="button" disabled={!canEdit} onClick={() => setOpen(o => ({ ...o, [i.id]: true }))} className="text-[11px] text-muted hover:text-brand-700 normal-case tracking-normal disabled:opacity-50">one price — add one</button>}
+                            ? ladder.slice(0, 3).map(t => <span key={t.min_qty} className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 tabular-nums normal-case tracking-normal">{t.min_qty}+ {price > 0 ? Math.round((1 - t.unit_price_usd / price) * 100) + '% off' : money(t.unit_price_usd)}</span>)
+                            : <button type="button" disabled={!canEdit} onClick={() => setOpen(o => ({ ...o, [i.id]: true }))} className="text-[11px] text-muted hover:text-brand-700 normal-case tracking-normal disabled:opacity-50">one price for any qty</button>}
                           {ladder.length > 3 ? <span className="text-[11px] text-muted">+{ladder.length - 3}</span> : null}
                         </div>
                       </div>
@@ -381,8 +392,19 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
                         <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Category
                           <input value={String(val(i, 'category') ?? '')} disabled={!canEdit} list="inv-cats" onChange={e => setItem(i.id, { category: e.target.value } as any)} className={box + ' w-36 mt-0.5'} />
                         </label>
-                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Unit
+                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">How it is packaged
                           <input value={String(val(i, 'unit') ?? '')} disabled={!canEdit} placeholder="case of 12" onChange={e => setItem(i.id, { unit: e.target.value } as any)} className={box + ' w-36 mt-0.5'} />
+                        </label>
+                        {/* SIZE OF ONE — a different fact from how it is packaged, and the one a
+                            guest compares on: 500 mL against 330 mL. */}
+                        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Size of one
+                          <span className="inline-flex items-center gap-1 mt-0.5">
+                            <input type="number" min={0} step="0.01" value={(val(i, 'sizeValue') as number | null) ?? ''} placeholder="500" disabled={!canEdit} onChange={e => setItem(i.id, { sizeValue: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={box + ' w-[78px]'} />
+                            <select value={(val(i, 'sizeUnit') as string | null) ?? ''} disabled={!canEdit} onChange={e => setItem(i.id, { sizeUnit: e.target.value || null } as any)} className={box + ' w-[86px]'}>
+                              <option value="">unit…</option>
+                              {SIZE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                          </span>
                         </label>
                         <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Max per order
                           <input type="number" min={1} max={99} value={Number(val(i, 'maxQty') ?? 10)} disabled={!canEdit} onChange={e => setItem(i.id, { maxQty: Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
@@ -438,132 +460,191 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
   )
 }
 
-// ── PRICE LADDER ──────────────────────────────────────────────────────────────────────────────
-// Jon, 2026-09-09: "be able to have prices for the full pack, for 1, for 3, for 6. We can
-// customize it with a default price… this should be fully customizable."
+// ── PRICING ───────────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-10, on the first version: "this does not make sense to me, can we make this easier
+// to calculate… This should be a very simple process. It should ask cost per item, our team can
+// calculate this independently. From there, we can figure out the cost savings for more purchases.
+// Just need a simple way to calculate and allow guests to benefit from bulk orders."
 //
-// So: ONE default price (what a single unit costs), then as many quantity breaks as you like. The
-// quantities are not fixed at 3 and 6 — those are just the two buttons, next to a Full pack button
-// that reads the pack size. Every row can be typed either way round: "$10 each" or "$60 for six",
-// because a case price is the number that comes off the invoice and per-unit is the number the
-// guest sees. Typing one fills in the other.
+// So the whole panel is now three ideas in a straight line:
 //
-// The highest break the guest reaches applies to the WHOLE line — priceForQty() on the server is
-// the authority, this is only the editor for it.
+//   COST PER ITEM  →  PRICE FOR ONE  →  A DISCOUNT FOR BUYING MORE
+//
+// One cost field, typed by whoever worked it out — no pack-size arithmetic here, because that is a
+// calculation the team already does and a second way to enter it only invites the two numbers to
+// disagree. (Pack size and pack cost still live in the form builder for anyone who wants them.)
+//
+// A bulk break is now ONE number: the percent off. Everything else on the row — what a guest pays
+// each, what they pay in total, what we keep — is printed, not typed. The old row had two number
+// boxes that recomputed each other on every keystroke, which is what "does not make sense" meant.
+//
+// Percentages also hold their meaning when the price changes: raise the price for one and every
+// break moves with it, so "6+ is 30% off" stays 30% off instead of quietly becoming 12%.
 function PriceLadder({ item, val, setItem, canEdit }: { item: Item; val: (i: Item, k: keyof Item) => any; setItem: (id: string, patch: Partial<Item>) => void; canEdit: boolean }) {
   const price = Number(val(item, 'price') ?? 0)
   const maxQty = Number(val(item, 'maxQty') ?? 10)
   const packSize = val(item, 'packSize') as number | null
   const packCost = val(item, 'packCost') as number | null
-  const cost = val(item, 'cost') as number | null
+  const rawCost = val(item, 'cost') as number | null
+  const sizeValue = val(item, 'sizeValue') as number | null
+  const sizeUnit = val(item, 'sizeUnit') as string | null
   const tiers: Tier[] = (val(item, 'tiers') as Tier[]) || []
-
   const sorted = tiers.slice().sort((a, b) => a.min_qty - b.min_qty)
-  const put = (next: Tier[]) => setItem(item.id, { tiers: next.filter(t => t.min_qty >= 2).sort((a, b) => a.min_qty - b.min_qty).slice(0, 6) } as any)
-  const setRow = (idx: number, patch: Partial<Tier>) => put(sorted.map((t, i) => i === idx ? { ...t, ...patch } : t))
-  const add = (qty: number) => { if (sorted.some(t => t.min_qty === qty)) return; put([...sorted, { min_qty: qty, unit_price_usd: price ? Math.round(price * 0.85 * 100) / 100 : 0 }]) }
 
-  // What one unit costs us. A pack cost divided by its size beats a hand-typed per-unit number,
-  // because the pack number is the one somebody actually reads off an invoice.
-  const unitCost = packSize && packCost ? Math.round((Number(packCost) / Number(packSize)) * 10000) / 10000 : (cost === null || cost === undefined || cost === '' as any ? null : Number(cost))
-  const marginAt = (p: number) => unitCost === null ? null : Math.round((p - unitCost) * 100) / 100
+  // Cost per item. A pack cost set earlier in the form builder still wins, because it is derived
+  // from an invoice — but this panel only ever asks for the one number.
+  const unitCost = packSize && packCost ? Math.round((Number(packCost) / Number(packSize)) * 100) / 100 : (rawCost === null || rawCost === undefined || (rawCost as any) === '' ? null : Number(rawCost))
+  const keepAt = (p: number) => unitCost === null ? null : Math.round((p - unitCost) * 100) / 100
+  const pctOf = (unit: number) => price > 0 ? Math.round((1 - unit / price) * 100) : 0
+  const priceAt = (pct: number) => Math.round(price * (1 - pct / 100) * 100) / 100
+
+  const put = (next: Tier[]) => setItem(item.id, { tiers: next.filter(t => t.min_qty >= 2).sort((a, b) => a.min_qty - b.min_qty).slice(0, 6) } as any)
+  const setPct = (idx: number, pct: number) => put(sorted.map((t, i) => i === idx ? { ...t, unit_price_usd: priceAt(Math.min(90, Math.max(0, Math.round(pct)))) } : t))
+  const setQty = (idx: number, q: number) => put(sorted.map((t, i) => i === idx ? { ...t, min_qty: Math.max(2, Math.floor(q || 2)) } : t))
+  const add = (qty: number) => {
+    if (sorted.some(t => t.min_qty === qty)) return
+    const below = sorted.filter(t => t.min_qty < qty).pop()
+    put([...sorted, { min_qty: qty, unit_price_usd: priceAt(Math.min(50, (below ? pctOf(below.unit_price_usd) : 0) + 10)) }])
+  }
+  // Changing the price for one keeps every discount at the percentage it was set to.
+  const setBasePrice = (next: number) => {
+    const pcts = sorted.map(t => pctOf(t.unit_price_usd))
+    const rescaled = sorted.map((t, i) => ({ ...t, unit_price_usd: Math.round(next * (1 - pcts[i] / 100) * 100) / 100 }))
+    setItem(item.id, { price: next, ...(sorted.length ? { tiers: rescaled } : {}) } as any)
+  }
 
   const nextQty = () => { for (const q of [3, 6, 12, 24]) if (!sorted.some(t => t.min_qty === q)) return q; return (sorted.length ? sorted[sorted.length - 1].min_qty : 2) + 1 }
   const unreachable = sorted.filter(t => t.min_qty > maxQty)
+  const below = (idx: number) => idx > 0 ? sorted[idx - 1].unit_price_usd : price
+  const goesUpAt = (idx: number) => { const p = below(idx); return p > 0 && sorted[idx].unit_price_usd >= p }
 
   return (
     <div className="rounded-xl border border-line bg-app/40 p-3">
-      <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold flex items-center gap-1.5"><Tag size={12} /> What the guest pays</div>
-
-      <div className="flex flex-wrap items-end gap-2 mt-2">
-        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Default price · for 1
-          <input type="number" min={0} step="0.01" value={price} disabled={!canEdit} onChange={e => setItem(item.id, { price: Number(e.target.value) } as any)} className={box + ' w-28 mt-0.5 font-semibold'} />
+      {/* 1 — the two numbers everything else is worked out from. */}
+      <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold flex items-center gap-1.5"><Tag size={12} /> Pricing</div>
+      <div className="flex flex-wrap items-end gap-3 mt-2">
+        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Cost per item
+          <input type="number" min={0} step="0.01" value={packSize && packCost ? (unitCost ?? '') : (rawCost ?? '')} placeholder="what one costs us"
+            disabled={!canEdit || !!(packSize && packCost)} onChange={e => setItem(item.id, { cost: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={box + ' w-32 mt-0.5'} />
         </label>
-        <div className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Costs us
-          <div className="text-[13px] font-bold tabular-nums mt-1 text-ink">{unitCost === null ? '—' : money(unitCost)}<span className="font-normal text-muted"> /unit</span></div>
-        </div>
-        <div className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Margin
-          <div className={'text-[13px] font-bold tabular-nums mt-1 ' + (marginAt(price) === null ? 'text-muted' : marginAt(price)! < 0 ? 'text-rose-700' : 'text-emerald-700')}>
-            {marginAt(price) === null ? '—' : money(marginAt(price)!) + (price > 0 ? ' · ' + Math.round(marginAt(price)! / price * 100) + '%' : '')}
+        <span className="text-muted text-[13px] pb-1.5">→</span>
+        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Guest pays for one
+          <input type="number" min={0} step="0.01" value={price} disabled={!canEdit} onChange={e => setBasePrice(Math.max(0, Number(e.target.value)))} className={box + ' w-32 mt-0.5 font-semibold'} />
+        </label>
+        <div className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold pb-0.5">We keep
+          <div className={'text-[15px] font-bold tabular-nums mt-0.5 ' + (keepAt(price) === null ? 'text-muted' : keepAt(price)! < 0 ? 'text-rose-700' : 'text-emerald-700')}>
+            {keepAt(price) === null ? '—' : money(keepAt(price)!) + (price > 0 ? '  ·  ' + Math.round(keepAt(price)! / price * 100) + '%' : '')}
           </div>
+        </div>
+        {packSize && packCost ? <div className="text-[11px] text-muted pb-1.5 max-w-[260px]">Worked out from the case below: {money(Number(packCost))} ÷ {packSize}.</div> : null}
+      </div>
+      {/* Cost and price per measure — the only fair way to compare two suppliers, or two sizes. */}
+      {sizeValue && sizeUnit ? (
+        <div className="text-[11.5px] text-muted mt-1.5">
+          Each one is <b className="text-ink">{Math.round(Number(sizeValue) * 100) / 100} {sizeUnit}</b>
+          {unitCost !== null ? <> · costs us {perMeasure(unitCost, Number(sizeValue), sizeUnit)}</> : null}
+          {price > 0 ? <> · sells at {perMeasure(price, Number(sizeValue), sizeUnit)}</> : null}
+        </div>
+      ) : null}
+
+      {/* BUY BY THE CASE. Optional, and it only ever feeds "cost per item" above — two ways to say
+          what one costs, never two competing answers. */}
+      <div className="mt-2.5 pt-2.5 border-t border-line/70">
+        <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Or buy by the case <span className="normal-case tracking-normal font-normal">— we work out the cost per item</span></div>
+        <div className="flex flex-wrap items-end gap-2 mt-1.5">
+          <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Units per case
+            <input type="number" min={0} value={packSize ?? ''} placeholder="24" disabled={!canEdit} onChange={e => setItem(item.id, { packSize: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) } as any)} className={box + ' w-24 mt-0.5'} />
+          </label>
+          <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">The case costs us
+            <input type="number" min={0} step="0.01" value={packCost ?? ''} placeholder="11.88" disabled={!canEdit} onChange={e => setItem(item.id, { packCost: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={box + ' w-28 mt-0.5'} />
+          </label>
+          {packSize && packCost && price > 0 ? (() => {
+            // WHAT A CASE ACTUALLY BRINGS IN. The first version multiplied the single-unit price by
+            // the case size, which quietly ignored every bulk discount — a guest buying a whole
+            // case is exactly the guest who earns the biggest one. This prices the case the way
+            // the server does: highest qualifying break, applied to the whole line.
+            const size = Number(packSize)
+            const sellQty = Math.min(size, maxQty)
+            let unit = price; for (const t of sorted) if (sellQty >= t.min_qty) unit = t.unit_price_usd
+            const revenue = Math.round(unit * sellQty * 100) / 100
+            const outlay = Math.round(Number(packCost) * (sellQty / size) * 100) / 100
+            const profit = Math.round((revenue - outlay) * 100) / 100
+            const discounted = unit < price
+            return (
+              <div className="text-[11.5px] text-muted pb-1 max-w-[420px] leading-snug">
+                {money(Number(packCost) / size)} a unit.{' '}
+                {sellQty < size ? <>A guest can only order <b>{sellQty}</b> at once (max per order), and </> : <>Sold as a whole case of {size}, </>}
+                {discounted ? <>the {Math.round((1 - unit / price) * 100)}% bulk price applies — </> : null}
+                that is {money(revenue)} in, {money(outlay)} out, <b className={profit < 0 ? 'text-rose-700' : 'text-emerald-700'}>{money(profit)} to us</b>.
+              </div>
+            )
+          })() : <div className="text-[11.5px] text-muted pb-1.5">Leave these blank and just type the cost per item above.</div>}
         </div>
       </div>
 
+      {/* 2 — the bulk discount. One number per row; the rest is printed. */}
       <div className="mt-3 pt-2.5 border-t border-line/70">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Buy more, pay less</div>
+          <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Bulk discount <span className="normal-case tracking-normal font-normal">— set the % off, we work out the rest</span></div>
           {canEdit ? (
             <div className="flex items-center gap-1">
-              {[3, 6].map(q => sorted.some(t => t.min_qty === q) ? null : (
+              {[3, 6, 12].map(q => sorted.some(t => t.min_qty === q) ? null : (
                 <button key={q} type="button" onClick={() => add(q)} className="text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line bg-white text-ink hover:border-brand-300">{q}+</button>
               ))}
               {packSize && packSize > 1 && !sorted.some(t => t.min_qty === Number(packSize)) ? (
                 <button type="button" onClick={() => add(Number(packSize))} className="text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line bg-white text-ink hover:border-brand-300">Full pack ({packSize})</button>
               ) : null}
-              <button type="button" onClick={() => add(nextQty())} disabled={sorted.length >= 6} className="text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-dashed border-line bg-white text-ink hover:border-brand-300 disabled:opacity-40"><Plus size={11} className="inline" /> break</button>
+              <button type="button" onClick={() => add(nextQty())} disabled={sorted.length >= 6} className="text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-dashed border-line bg-white text-ink hover:border-brand-300 disabled:opacity-40"><Plus size={11} className="inline" /> another</button>
             </div>
           ) : null}
         </div>
 
         {sorted.length === 0 ? (
-          <div className="text-[11.5px] text-muted mt-1.5">One price for any quantity. Add a break to sell three or a full pack cheaper per unit.</div>
+          <div className="text-[11.5px] text-muted mt-1.5">Everyone pays {money(price)} whatever they order. Add a discount to reward a bigger order.</div>
         ) : (
-          <div className="mt-1.5 space-y-1.5">
+          <div className="mt-2 space-y-1">
             {sorted.map((t, idx) => {
               const each = Number(t.unit_price_usd) || 0
-              const lineTotal = Math.round(each * t.min_qty * 100) / 100
-              const off = price > 0 ? Math.round((price - each) / price * 100) : 0
-              const isPack = !!packSize && Number(packSize) === t.min_qty
-              const m = marginAt(each)
+              const pct = pctOf(each)
+              const total = Math.round(each * t.min_qty * 100) / 100
+              const keep = keepAt(each)
+              const up = goesUpAt(idx)
               return (
-                <div key={idx} className="flex flex-wrap items-center gap-2 text-[12.5px]">
-                  <span className="inline-flex items-center gap-1 w-[104px] flex-shrink-0">
-                    <input type="number" min={2} max={99} value={t.min_qty} disabled={!canEdit} onChange={e => setRow(idx, { min_qty: Math.max(2, Math.floor(Number(e.target.value) || 2)) })} className={box + ' w-16'} />
-                    <span className="text-muted">+</span>
-                  </span>
-                  <span className="text-muted">at</span>
-                  <input type="number" min={0} step="0.01" value={each} disabled={!canEdit} onChange={e => setRow(idx, { unit_price_usd: Math.max(0, Math.round((Number(e.target.value) || 0) * 100) / 100) })} className={box + ' w-24'} />
-                  <span className="text-muted">each</span>
-                  <span className="text-muted">·</span>
-                  <input type="number" min={0} step="0.01" value={lineTotal} disabled={!canEdit} onChange={e => setRow(idx, { unit_price_usd: Math.max(0, Math.round((Number(e.target.value) || 0) / t.min_qty * 100) / 100) })} className={box + ' w-24'} />
-                  <span className="text-muted">for {t.min_qty}{isPack ? ' — the full pack' : ''}</span>
-                  {off > 0 ? <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">save {off}%</span> : null}
-                  {m !== null ? <span className={'text-[11px] font-semibold ' + (m < 0 ? 'text-rose-700' : 'text-muted')}>{m < 0 ? 'below cost' : money(m) + ' margin each'}</span> : null}
-                  {canEdit ? <button type="button" onClick={() => put(sorted.filter((_, i) => i !== idx))} className="text-muted hover:text-rose-600 ml-auto" title="Remove this break"><X size={13} /></button> : null}
+                <div key={idx} className={'rounded-lg px-2 py-1.5 -mx-1 ' + (up ? 'bg-rose-50 border border-rose-200' : '')}>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
+                    <span className="text-muted">Buy</span>
+                    <input type="number" min={2} max={99} value={t.min_qty} disabled={!canEdit} onChange={e => setQty(idx, Number(e.target.value))} className={box + ' w-[58px]'} />
+                    <span className="text-muted">or more →</span>
+                    <span className="inline-flex items-center gap-1">
+                      <input type="number" min={0} max={90} step={5} value={pct} disabled={!canEdit} onChange={e => setPct(idx, Number(e.target.value))} className={box + ' w-[68px] font-semibold'} />
+                      <span className="text-muted">% off</span>
+                    </span>
+                    <span className="text-ink">= <b className="tabular-nums">{money(each)}</b> each</span>
+                    <span className="text-muted tabular-nums">·  {money(total)} for {t.min_qty}</span>
+                    {keep !== null ? <span className={'text-[11.5px] ' + (keep < 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>{keep < 0 ? 'below cost' : 'we keep ' + money(keep) + ' each'}</span> : null}
+                    {canEdit ? <button type="button" onClick={() => put(sorted.filter((_, i) => i !== idx))} className="text-muted hover:text-rose-600 ml-auto" title="Remove"><X size={13} /></button> : null}
+                  </div>
+                  {/* A discount that shrinks as the order grows — the one mistake here that costs money. */}
+                  {up ? (
+                    <div className="text-[11.5px] text-rose-800 mt-1 leading-snug">
+                      Buying {t.min_qty} would cost <b>more</b> each ({money(each)}) than buying {idx > 0 ? sorted[idx - 1].min_qty : 1} ({money(below(idx))}). Give this row a bigger discount than the one above it.
+                    </div>
+                  ) : null}
                 </div>
               )
             })}
           </div>
         )}
 
-        {/* A break above "max per order" reads as a promise on the card and then never applies. */}
         {unreachable.length ? (
           <div className="mt-2 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
             <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
             <div>
-              {unreachable.map(t => t.min_qty + '+').join(', ')} can never be reached — <b>max per order</b> is {maxQty}.
+              No one can reach {unreachable.map(t => t.min_qty).join(', ')} — <b>max per order</b> is {maxQty}.
               {canEdit ? <button type="button" onClick={() => setItem(item.id, { maxQty: Math.min(99, Math.max(...unreachable.map(t => t.min_qty))) } as any)} className="ml-1 font-semibold underline">raise it to {Math.min(99, Math.max(...unreachable.map(t => t.min_qty)))}</button> : null}
             </div>
           </div>
         ) : null}
-      </div>
-
-      <div className="mt-3 pt-2.5 border-t border-line/70">
-        <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">What we pay — buy by the case, sell by the unit</div>
-        <div className="flex flex-wrap items-end gap-2 mt-1.5">
-          <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Units per pack
-            <input type="number" min={0} value={packSize ?? ''} placeholder="24" disabled={!canEdit} onChange={e => setItem(item.id, { packSize: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) } as any)} className={box + ' w-24 mt-0.5'} />
-          </label>
-          <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Pack cost
-            <input type="number" min={0} step="0.01" value={packCost ?? ''} placeholder="11.88" disabled={!canEdit} onChange={e => setItem(item.id, { packCost: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={box + ' w-28 mt-0.5'} />
-          </label>
-          <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">or per unit
-            <input type="number" min={0} step="0.01" value={cost ?? ''} placeholder="—" disabled={!canEdit || !!(packSize && packCost)} onChange={e => setItem(item.id, { cost: e.target.value === '' ? null : Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />
-          </label>
-          {packSize && packCost && price > 0 ? (
-            <div className="text-[11.5px] text-muted pb-1.5">A full pack costs {money(Number(packCost))} and sells for {money(price * Number(packSize))} at the default price — <b className="text-emerald-700">{money(price * Number(packSize) - Number(packCost))} profit per pack</b>.</div>
-          ) : <div className="text-[11.5px] text-muted pb-1.5">Pack cost ÷ units gives the real per-unit cost, so margin is right on every break.</div>}
-        </div>
       </div>
     </div>
   )
