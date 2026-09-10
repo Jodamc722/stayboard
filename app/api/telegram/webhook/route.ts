@@ -18,14 +18,21 @@
 // reasons: nobody wants a bot narrating their group, and a bot that answers everything in a room
 // full of bots is one loop away from an unbounded conversation with itself.
 //
-// A NOTE ON "GROUP CHAT WITH OTHER REV BOTS" — Telegram does not deliver one bot's messages to
-// another bot. Ever. It is a platform rule, not a setting. Several bots can live in one room and
-// answer the PEOPLE in it, and that works today. If Eve is ever to react to what another bot says,
-// that bot has to call her server-side; there is no Telegram-only version of it.
+// A NOTE ON "GROUP CHAT WITH OTHER REV BOTS" — this used to say Telegram never delivers one bot's
+// messages to another. That WAS true and is no longer: Bot-to-Bot Communication Mode, switched on in
+// @BotFather for BOTH bots, makes it work (in a group it needs a /command@Bot mention or a reply).
+// Telegram's own docs warn in the same breath that this is how you get infinite reply loops, and
+// require dedupe, rate limiting and a depth cap from anyone who uses it.
+//
+// See step 2b below and lib/eve/ralph.ts for how that is handled here, and note the shape of it:
+// she can RECEIVE from exactly one known bot and never replies to one, so the loop is closed by
+// there being no outbound path at all rather than by a limit that would only slow one down.
 import { NextRequest, NextResponse } from 'next/server'
 import { getMe, sendMessage, sendTyping, displayName, type TgUpdate, type TgMessage } from '@/lib/telegram'
 import { webhookSecret, botConfigured } from '@/lib/telegram'
 import { claimUpdate, pruneUpdates, decide, seeRoom, recordMessage, threadFor, resetThread, overRate } from '@/lib/eve/telegram'
+import { findAsk, resolveAsk, runMorningAsk } from '@/lib/eve/ask'
+import { acceptsFrom, recordReply } from '@/lib/eve/ralph'
 import { canSeeMoney, doorCodePolicy } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
 import { runCheck, requestDoorCode, attachSlackPost } from '@/lib/eve/door-code'
@@ -66,9 +73,14 @@ Commands
 /doorcode <unit> — run the door-code checks and, if they pass, get a one-tap release link
 /new — start a fresh conversation (I forget the last few messages, not what I've learned)
 /whoami — who I think you are and what you're allowed to see
+/ask — I'll bring you the next thing I'd most like answered
 /help — this
 
+Each morning I'll send you the few things most worth your answer — anything that looks broken first, then whatever I can't work out for myself. Reply to one of those messages and I'll file what you say as a rule.
+
 In a group, @mention me or reply to one of my messages. I don't read anything else in there.`
+
+const chatIdOf = (m: TgMessage) => String(m?.chat?.id || '')
 
 export async function POST(req: NextRequest) {
   // ---- 1. Is this actually Telegram? --------------------------------------------------------
@@ -101,8 +113,26 @@ export async function POST(req: NextRequest) {
   const msg: TgMessage | undefined = update.message
   if (!msg || !msg.chat) return ok()
   const from = msg.from
-  // Telegram does not deliver bot messages to bots, but if that ever changes, do not start a loop.
-  if (!from || from.is_bot) return ok()
+  if (!from) return ok()
+
+  // ---- 2b. A message from another BOT. -------------------------------------------------------
+  // Telegram now delivers these when Bot-to-Bot Communication Mode is on for both bots, and its own
+  // documentation warns that this is how you get infinite reply loops. So there is exactly one bot
+  // whose messages are accepted (Ralphbot, by user id, in the one agreed chat, and only when we
+  // have an unanswered question outstanding), and accepting one does NOT produce an answer — his
+  // reply is recorded against the question that asked for it and that is the end of the turn.
+  //
+  // That absence is the loop protection. Not a rate limit, which only makes a loop slow: there is
+  // no code path from an inbound bot message to an outbound one, so two bots cannot talk each other
+  // into a corner however either of them behaves.
+  if (from.is_bot) {
+    const text = String(msg.text || msg.caption || '').trim()
+    if (!text) return ok()
+    if (!(await acceptsFrom(from.id, chatIdOf(msg)))) return ok()
+    if (!(await claimUpdate(update.update_id, msg.chat.id))) return ok()
+    await recordReply(text, msg.reply_to_message?.message_id || null)
+    return ok()                                   // deliberately silent. She never replies to a bot.
+  }
 
   const text = String(msg.text || msg.caption || '').trim()
   if (!text) return ok()
@@ -152,6 +182,21 @@ export async function POST(req: NextRequest) {
   const command = cmd ? cmd[1].toLowerCase() : ''
   const arg = cmd ? cmd[2].trim() : ''
 
+  // ---- 5b. Is this the answer to something SHE asked? ----------------------------------------
+  // This has to come before the Eve loop, because it is not a question for her to think about — it
+  // is the reply half of a conversation she started, and it belongs to the question it answers.
+  // Only for a real person's plain text: a slash command is always a command.
+  if (!command && !isGroup) {
+    const binding = await findAsk(chat.id, msg.reply_to_message?.message_id || null, question)
+    if (binding) {
+      await recordMessage(chat.id, String(from.id), 'user', question)
+      const said = await resolveAsk(binding, question, contact.email || String(from.id))
+      await recordMessage(chat.id, null, 'assistant', said)
+      await sendMessage(chat.id, said, { replyTo: msg.message_id })
+      return ok()
+    }
+  }
+
   // ---- 6. Commands ---------------------------------------------------------------------------
   if (command === 'start' || command === 'help') {
     await sendMessage(chat.id, `${command === 'start' ? `You're approved, ${displayName(from)} — speaking as ${contact.email}.\n\n` : ''}${HELP}`)
@@ -171,6 +216,19 @@ export async function POST(req: NextRequest) {
     ]
     if (verdict.room) lines.push(`This room: ${verdict.room.title || chat.id} (approved).`)
     await sendMessage(chat.id, lines.join('\n'))
+    return ok()
+  }
+
+  // /ask — she normally waits for the morning. This is asking her to go early, so it deliberately
+  // ignores the daily budget: a person who typed /ask is not being interrupted.
+  if (command === 'ask') {
+    await sendTyping(chat.id)
+    const run = await runMorningAsk({ force: true, max: 1 })
+    if (!run.sent) {
+      await sendMessage(chat.id, run.skipped === 'nothing worth asking'
+        ? `Nothing worth asking right now — nothing looks broken and I can work out everything else myself. I'll come back when that changes.`
+        : `I couldn't ask anything: ${run.skipped}.`)
+    }
     return ok()
   }
 
