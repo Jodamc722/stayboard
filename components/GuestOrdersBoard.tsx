@@ -47,9 +47,9 @@ const LANES: { key: string; label: string; statuses: string[] }[] = [
 // ORDERS · LINKS · STOCK · PRICING — everything about guest orders on one page. Stock is per
 // shelf and belongs to whoever is restocking; Pricing is per item and belongs at a desk; keeping
 // them as separate tabs rather than one board is what stops either becoming a wall of numbers.
-const TABS = ['orders', 'links', 'stock', 'pricing', 'coupons'] as const
+const TABS = ['orders', 'links', 'catalog', 'stock', 'coupons'] as const
 type Tab = typeof TABS[number]
-const TAB_LABEL: Record<Tab, string> = { orders: 'Orders', links: 'Links · upcoming arrivals', stock: 'Stock count', pricing: 'Costs & pricing', coupons: 'Coupon codes' }
+const TAB_LABEL: Record<Tab, string> = { orders: 'Orders', links: 'Links · upcoming arrivals', catalog: 'Catalog · items & pricing', stock: 'Stock · per shelf', coupons: 'Coupon codes' }
 
 export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canMoney: boolean }) {
   const [data, setData] = useState<Data | null>(null)
@@ -84,7 +84,8 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
   useEffect(() => {
     if (typeof window === 'undefined') return
     const t = new URLSearchParams(window.location.search).get('tab')
-    if (t && (TABS as readonly string[]).indexOf(t) >= 0) setTab(t as Tab)
+    if (t === 'pricing') setTab('catalog')
+    else if (t && (TABS as readonly string[]).indexOf(t) >= 0) setTab(t as Tab)
   }, [])
 
   async function act(action: string, id: string, extra: Record<string, any> = {}) {
@@ -136,7 +137,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
         </div>
       ) : null}
 
-      <div className={'grid grid-cols-2 sm:grid-cols-5 gap-2 ' + (tab === 'stock' || tab === 'pricing' || tab === 'coupons' ? 'hidden' : '')}>
+      <div className={'grid grid-cols-2 sm:grid-cols-5 gap-2 ' + (tab === 'stock' || tab === 'catalog' || tab === 'coupons' ? 'hidden' : '')}>
         {LANES.map(l => (
           <button key={l.key} onClick={() => { setTab('orders'); setLane(lane === l.key ? 'all' : l.key) }} className={'rounded-2xl border px-3.5 py-3 text-left transition ' + (lane === l.key ? 'border-brand-400 bg-brand-50' : 'border-line bg-white hover:border-brand-200')}>
             <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">{l.label}</div>
@@ -159,7 +160,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
 
       {flash ? <div className={'rounded-xl px-3.5 py-2.5 text-[13px] ' + (flash.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200')}>{flash.text}</div> : null}
 
-      {tab === 'stock' || tab === 'pricing' ? <InventoryBoard canEdit={canEdit} view={tab === 'pricing' ? 'pricing' : 'stock'} /> : null}
+      {tab === 'stock' || tab === 'catalog' ? <InventoryBoard canEdit={canEdit} view={tab} onSwitchView={v => setTab(v)} /> : null}
       {tab === 'coupons' ? <CouponsPanel canEdit={canEdit} canMoney={canMoney} buildings={KNOWN_BUILDINGS.map(b => b.label)} /> : null}
 
       {tab === 'orders' ? (
