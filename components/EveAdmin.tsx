@@ -404,6 +404,9 @@ type Pending = {
 function EveApprovalsAdmin({ canEdit }: { canEdit: boolean }) {
   const [pending, setPending] = useState<Pending[]>([])
   const [channels, setChannels] = useState<{ id: string; name: string; isPrivate: boolean }[]>([])
+  // Whatever the bot is actually called in Slack right now. It was renamed from Lighthouse to Eve
+  // and this hint was the only place still telling people to type the old name.
+  const [handle, setHandle] = useState('Eve')
   const [current, setCurrent] = useState<{ id: string; name: string } | null>(null)
   const [connected, setConnected] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -419,6 +422,7 @@ function EveApprovalsAdmin({ canEdit }: { canEdit: boolean }) {
       ])
       setPending(a?.pending || [])
       setChannels(b?.channels || [])
+      if (b?.handle) setHandle(String(b.handle))
       setCurrent(b?.current || null)
       setConnected(b?.connected !== false)
     } finally { setLoading(false) }
@@ -483,7 +487,7 @@ function EveApprovalsAdmin({ canEdit }: { canEdit: boolean }) {
           </div>
         )}
         <p className="text-[12px] text-muted mt-2">
-          Private channel missing from the list? Run <code className="font-mono">/invite @Lighthouse</code> in it, then refresh.
+          Private channel missing from the list? Run <code className="font-mono">/invite @{handle}</code> in it, then refresh.
         </p>
         {note && <p className="text-[13px] text-ink mt-2">{note}</p>}
       </div>
