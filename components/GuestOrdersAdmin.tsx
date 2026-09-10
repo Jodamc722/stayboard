@@ -86,7 +86,9 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
     if (!c) return c
     const cur = { ...(c[kind][key] || {}), ...patch }
     for (const k of Object.keys(cur) as (keyof Scope)[]) if (cur[k] === undefined || (cur[k] as any) === '') delete cur[k]
-    if (cur.enabled !== false) delete cur.enabled
+    // Keep an explicit true or false; only an unset flag falls back to the parent scope. The old
+    // line dropped `true`, so "Switch a shelf on" and a building override could never turn ON.
+    if (cur.enabled !== false && cur.enabled !== true) delete cur.enabled
     const next = { ...c[kind] }
     if (Object.keys(cur).length) next[key] = cur; else delete next[key]
     return { ...c, [kind]: next }

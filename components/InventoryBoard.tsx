@@ -387,7 +387,7 @@ export function InventoryBoard({ canEdit, view: fixedView }: { canEdit: boolean;
                           <input type="number" min={0} value={lowAt} disabled={!canEdit} onChange={e => setStockEdits(x => ({ ...x, [scope + '|' + i.id]: { ...x[scope + '|' + i.id], lowAt: Number(e.target.value) } }))} className={box + ' w-16 mt-0.5'} />
                         </label>
                       </>) : (
-                        canEdit ? <button onClick={() => setItem(i.id, { tracked: true } as any)} className="text-[11.5px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300">Start counting</button> : null
+                        canEdit ? <button onClick={() => setItem(i.id, { tracked: true, trackStock: true } as any)} className="text-[11.5px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300">Start counting</button> : null
                       )}
                       <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Guest pays
                         <input type="number" min={0} step="0.01" value={price} disabled={!canEdit} onChange={e => setItem(i.id, { price: Number(e.target.value) } as any)} className={box + ' w-24 mt-0.5'} />

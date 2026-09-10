@@ -5,8 +5,15 @@
 // gets — there is no second copy to drift (Jon, 2026-08-24: "from the form add and edit design,
 // update feature, add photos, review the sheet").
 //
+// 2026-09-10 (Jon: "make it great, visually… allow user to add 3 or 6 bulk buy for the discounted
+// price, 1 for etc… coupon code enter area"): the card leads with the picture and the price, then
+// offers the ways to buy as one row of choices — "1 · $4", "3 · $10.50 save 12%", "6 · $18 save
+// 25%" — built from the item's volume breaks and its sold-in multiple. One tap sets the quantity;
+// the stepper is there for fine tuning. A sticky category bar, a basket bar that stays put, and a
+// review sheet with a "Have a code?" field whose verdict comes from the server, never the browser.
+//
 // Not the app's indigo ops skin on purpose: the guest sees Stay Hospitality, not Lighthouse.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 export type PriceTier = { min_qty: number; unit_price_usd: number }
 export type FormItem = { id?: string; sku: string; name: string; description: string | null; price: number; unit: string | null; category: string; maxQty: number; image: string | null; fewLeft?: number | null
@@ -44,7 +51,31 @@ export function nextTier(c: FormItem, qty: number): PriceTier | null {
   const up = (c.tiers || []).filter(t => qty < t.min_qty && t.unit_price_usd < nowPaying).sort((a, b) => a.min_qty - b.min_qty)
   return up.length ? up[0] : null
 }
-export type PastOrder = { id: string; status: string; items: { name: string; qty: number; line_total_usd: number }[]; total: number; submittedAt: string; deliveryDate: string | null; deliveryNote: string | null; paid: boolean; requested?: string; requestedDate?: string | null }
+/** The multiple an item is sold in — 1 unless the catalog says otherwise. */
+export function stepOf(c: FormItem): number { return c.soldIn && c.soldIn > 1 ? Math.floor(c.soldIn) : 1 }
+/**
+ * THE WAYS TO BUY. One pill per quantity worth offering: the single (or the sold-in multiple), then
+ * every volume break, each snapped up to the multiple and capped by the max per order. "1 · $4",
+ * "3 · $10.50 · save 12%", "6 · $18 · save 25%". At most four; a bundle that would cost more per
+ * unit than a smaller one is dropped, because nobody should be offered a worse deal as an upgrade.
+ */
+export function bundlesFor(c: FormItem): { qty: number; total: number; unit: number; savePct: number }[] {
+  const step = stepOf(c)
+  const snap = (n: number) => Math.ceil(n / step) * step
+  const cand = new Set<number>([step])
+  for (const t of (c.tiers || [])) if (t.min_qty > 0) cand.add(snap(t.min_qty))
+  const base = unitPriceFor(c, step).unit
+  const out: { qty: number; total: number; unit: number; savePct: number }[] = []
+  for (const q of Array.from(cand).sort((a, b) => a - b)) {
+    if (q > c.maxQty) continue
+    const unit = unitPriceFor(c, q).unit
+    if (out.length && unit > out[out.length - 1].unit) continue
+    out.push({ qty: q, total: Math.round(unit * q * 100) / 100, unit, savePct: base > 0 && unit < base ? Math.round((1 - unit / base) * 100) : 0 })
+    if (out.length >= 4) break
+  }
+  return out
+}
+export type PastOrder = { id: string; status: string; items: { name: string; qty: number; line_total_usd: number }[]; total: number; submittedAt: string; deliveryDate: string | null; deliveryNote: string | null; paid: boolean; requested?: string; requestedDate?: string | null; discount?: number; discountNote?: string | null; coupon?: string | null }
 export type FormData = {
   stay: { guestFirst: string; unit: string; building: string | null; checkIn: string; checkOut: string | null; checkInLabel: string; checkOutLabel: string; inHouse: boolean; departed: boolean }
   copy: { title: string; intro: string; taxPct: number; brand?: string; accent?: string; footer?: string
@@ -64,10 +95,12 @@ export type EditHooks = {
   onCopy: (field: CopyField) => void
   selectedSku?: string | null
 }
+/** What the server says a basket costs — the form's totals once a code is in play. */
+export type Quote = { subtotal: number; discount: number; spendDiscount: number; spendNote: string | null; coupon: { code: string; label: string | null; amount: number } | null; couponProblem: string | null; tax: number; total: number; problems: string[] }
 /** A stand-in order so the studio can show the confirmation screen before anyone has ordered. */
 export const SAMPLE_PLACED: PastOrder = { id: 'sample', status: 'submitted', items: [{ name: 'Bottled water', qty: 3, line_total_usd: 36 }, { name: 'Coffee pods', qty: 1, line_total_usd: 12 }], total: 48, submittedAt: new Date().toISOString(), deliveryDate: null, deliveryNote: null, paid: false }
 
-const ICON: Record<string, string> = { Drinks: '💧', Snacks: '🥐', Comfort: '🛁', Baby: '🍼', Services: '✨', Extras: '🧺' }
+const ICON: Record<string, string> = { Drinks: '💧', Snacks: '🥐', Comfort: '🛁', Baby: '🍼', Services: '✨', Extras: '🧺', Breakfast: '🥐', Wine: '🍷', Beer: '🍺', Coffee: '☕' }
 const STATUS: Record<string, { label: string; cls: string }> = {
   submitted: { label: 'Being reviewed', cls: 'bg-amber-100 text-amber-900' },
   approved: { label: 'Processing payment', cls: 'bg-amber-100 text-amber-900' },
@@ -79,12 +112,17 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   declined: { label: 'Not available', cls: 'bg-neutral-200 text-neutral-700' },
   cancelled: { label: 'Cancelled', cls: 'bg-neutral-200 text-neutral-700' },
 }
-const money = (n: number) => '$' + (Math.round(n * 100) / 100).toFixed(n % 1 ? 2 : 0)
+const money = (n: number) => '$' + (Math.round(n * 100) / 100).toFixed(Math.abs(n) % 1 ? 2 : 0)
 const serif: React.CSSProperties = { fontFamily: "'Iowan Old Style','Palatino Linotype',Palatino,'New York',Georgia,ui-serif,serif", letterSpacing: '-0.01em' }
+const PAPER = 'linear-gradient(180deg,#FBF7F0 0%,#F6F1E8 100%)'
+const INK = '#1B1A17'
+const slug = (s: string) => 'cat-' + s.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 
-export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onReviewChange, showConfirm }: {
+export function GuestOrderForm({ data, onSubmit, onQuote, frame, edit, reviewOpen, onReviewChange, showConfirm }: {
   data: FormData
-  onSubmit?: (basket: { sku: string; qty: number }[], note: string, delivery: Delivery) => Promise<{ ok: boolean; order?: PastOrder; error?: string }>
+  onSubmit?: (basket: { sku: string; qty: number }[], note: string, delivery: Delivery, coupon: string | null) => Promise<{ ok: boolean; order?: PastOrder; error?: string }>
+  /** Prices the basket on the server (with the code, if any). Without it the form does its own arithmetic and codes are off. */
+  onQuote?: (basket: { sku: string; qty: number }[], coupon: string | null) => Promise<Quote | null>
   /** Rendered inside the studio's phone frame: bars pin to the frame, not the window. */
   frame?: boolean
   edit?: EditHooks
@@ -103,7 +141,23 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
   const [when, setWhen] = useState<'asap' | 'arrival' | 'date'>(data.stay.inHouse ? 'asap' : 'arrival')
   const [whenDate, setWhenDate] = useState('')
   const [submitErr, setSubmitErr] = useState('')
+  const [couponInput, setCouponInput] = useState('')
+  const [coupon, setCoupon] = useState<string | null>(null)        // the code being applied
+  const [quote, setQuote] = useState<Quote | null>(null)
+  const [quoting, setQuoting] = useState(false)
+  const [activeCat, setActiveCat] = useState<string>('')
+  const quoteSeq = useRef(0)
   useEffect(() => { setWhen(data.stay.inHouse ? 'asap' : 'arrival') }, [data.stay.inHouse])
+
+  // The page behind the form is ours too: without this the gradient stops where the content stops
+  // and the phone shows a white strip under a cream page.
+  useEffect(() => {
+    if (frame) return
+    const html = document.documentElement, body = document.body
+    const prev = { h: html.style.background, b: body.style.background }
+    html.style.background = '#F6F1E8'; body.style.background = PAPER
+    return () => { html.style.background = prev.h; body.style.background = prev.b }
+  }, [frame])
 
   const lines = useMemo(() => data.catalog.filter(c => (qty[c.sku] || 0) > 0).map(c => {
     const n = qty[c.sku]
@@ -111,35 +165,53 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
     return { ...c, qty: n, unitPrice: unit, tier, total: Math.round(unit * n * 100) / 100, saved: tier ? Math.round((c.price - unit) * n * 100) / 100 : 0 }
   }), [data, qty])
   const count = lines.reduce((n, l) => n + l.qty, 0)
-  const subtotal = lines.reduce((n, l) => n + l.total, 0)
-  // SPEND AND SAVE. Mirrors spendDiscountFor on the server: highest rung reached wins, comes off the
-  // subtotal, tax is then charged on what they actually pay.
+  const subtotalLocal = lines.reduce((n, l) => n + l.total, 0)
+  // SPEND AND SAVE, locally — mirrors spendDiscountFor on the server. When a server quote exists
+  // (a code is in play) its numbers win; the local ones keep the basket bar honest in between.
   const rungs = (data.copy.spendRules || []).slice().sort((a, b) => a.min_subtotal_usd - b.min_subtotal_usd)
-  const hitRung = rungs.filter(r => subtotal >= r.min_subtotal_usd).pop() || null
-  const discount = hitRung ? Math.round(subtotal * hitRung.percent_off) / 100 : 0
-  const nextRung = rungs.filter(r => subtotal < r.min_subtotal_usd)[0] || null
+  const hitRung = rungs.filter(r => subtotalLocal >= r.min_subtotal_usd).pop() || null
+  const spendLocal = hitRung ? Math.round(subtotalLocal * hitRung.percent_off) / 100 : 0
+  const nextRung = rungs.filter(r => subtotalLocal < r.min_subtotal_usd)[0] || null
+  // The server's numbers are used only when they describe THIS basket; the coupon verdict (applied
+  // or why not) is shown from the latest answer either way, so the guest is never left guessing.
+  const q = quote && quote.subtotal === Math.round(subtotalLocal * 100) / 100 ? quote : null
+  const subtotal = subtotalLocal
+  const discount = q ? q.discount : spendLocal
+  const couponLine = q && q.coupon ? q.coupon : null
+  const couponVerdict = quote ? (quote.coupon ? 'ok' : quote.couponProblem || 'We don\u2019t recognise that code.') : null
   const afterDiscount = Math.round((subtotal - discount) * 100) / 100
-  const tax = Math.round(afterDiscount * data.copy.taxPct) / 100
-  const total = afterDiscount + tax
-  // `d` is in STEPS: +1 adds one multiple (5 pods), −1 removes one. An item sold in 5s can
-  // never hold 3 — the count only ever lands on a multiple, and never above the max.
-  const stepOf = (c: FormItem) => (c.soldIn && c.soldIn > 1 ? c.soldIn : 1)
-  const bump = (c: FormItem, d: number) => setQty(q => {
+  const tax = q ? q.tax : Math.round(afterDiscount * data.copy.taxPct) / 100
+  const total = q ? q.total : Math.round((afterDiscount + tax) * 100) / 100
+
+  // Re-quote whenever the basket or the code changes and a code is in play (or was). Sequenced so a
+  // slow answer never lands on top of a newer basket.
+  useEffect(() => {
+    if (!onQuote || !coupon) { setQuote(null); return }
+    const basket = lines.map(l => ({ sku: l.sku, qty: l.qty }))
+    if (!basket.length) { setQuote(null); return }
+    const my = ++quoteSeq.current
+    setQuoting(true)
+    onQuote(basket, coupon).then(r => { if (my === quoteSeq.current) { setQuote(r); setQuoting(false) } }).catch(() => { if (my === quoteSeq.current) setQuoting(false) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coupon, subtotalLocal, count])
+
+  // `d` is in STEPS: +1 adds one multiple (5 pods), −1 removes one; `set` lands on an exact bundle.
+  // An item sold in 5s can never hold 3, and nothing ever goes above the max.
+  const setExact = (c: FormItem, n: number) => setQty(qs => {
     const step = stepOf(c)
-    const cur = q[c.sku] || 0
-    let n = d === -Infinity ? 0 : cur + d * step
-    if (n > c.maxQty) n = Math.floor(c.maxQty / step) * step
-    n = Math.max(0, n)
-    const next = { ...q }; if (n) next[c.sku] = n; else delete next[c.sku]; return next
+    let v = Math.ceil(Math.max(0, n) / step) * step
+    if (v > c.maxQty) v = Math.floor(c.maxQty / step) * step
+    const next = { ...qs }; if (v > 0) next[c.sku] = v; else delete next[c.sku]; return next
   })
+  const bump = (c: FormItem, d: number) => setExact(c, d === -Infinity ? 0 : (qty[c.sku] || 0) + d * stepOf(c))
 
   async function place() {
     if (busy || !lines.length || !onSubmit) return
     setBusy(true); setSubmitErr('')
     try {
-      const r = await onSubmit(lines.map(l => ({ sku: l.sku, qty: l.qty })), note, { mode: when, date: when === 'date' ? whenDate : null })
+      const r = await onSubmit(lines.map(l => ({ sku: l.sku, qty: l.qty })), note, { mode: when, date: when === 'date' ? whenDate : null }, couponLine ? couponLine.code : null)
       if (!r.ok) { setSubmitErr(r.error || 'Could not place the order.'); setBusy(false); return }
-      setPlaced(r.order || null); setQty({}); setNote(''); setReview(false)
+      setPlaced(r.order || null); setQty({}); setNote(''); setReview(false); setCoupon(null); setCouponInput(''); setQuote(null)
     } catch { setSubmitErr('Network hiccup — please try again.') }
     setBusy(false)
   }
@@ -150,13 +222,32 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
   const brand = data.copy.brand || 'Stay Hospitality'
   const fixed = frame ? 'absolute' : 'fixed'
   const editable = !!edit
+  const canOrder = !stay.departed && deadline.offered !== false
   const EditTag = ({ field, children }: { field: CopyField; children: React.ReactNode }) => editable
     ? <span onClick={() => edit!.onCopy(field)} className="cursor-text rounded-md outline-dashed outline-1 outline-transparent hover:outline-neutral-400 hover:bg-white/60 transition" title="Edit">{children}</span>
     : <>{children}</>
 
+  // Which category is on screen — for the sticky bar. Cheap: one observer over the section heads.
+  const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined' || cats.length < 2) return
+    const heads = Array.from((rootRef.current || document).querySelectorAll<HTMLElement>('[data-cat]'))
+    if (!heads.length) return
+    const io = new IntersectionObserver(entries => {
+      const vis = entries.filter(e => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
+      if (vis[0]) setActiveCat(vis[0].target.getAttribute('data-cat') || '')
+    }, { rootMargin: '-96px 0px -70% 0px', threshold: 0 })
+    heads.forEach(h => io.observe(h))
+    return () => io.disconnect()
+  }, [cats.join('|'), placed])
+  const jump = (cat: string) => {
+    const el = (rootRef.current || document).querySelector<HTMLElement>('#' + slug(cat))
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   const shell = (children: React.ReactNode) => (
-    <div className={(frame ? 'min-h-full relative' : 'min-h-screen') + ''} style={{ background: 'linear-gradient(180deg,#FBF7F0 0%,#F6F1E8 100%)', color: '#1B1A17', fontFamily: 'var(--font-inter), system-ui, sans-serif' }}>
-      <div className="max-w-lg mx-auto px-5 pb-40 pt-8">{children}</div>
+    <div ref={rootRef} className={(frame ? 'min-h-full relative' : 'min-h-screen')} style={{ background: PAPER, color: INK, fontFamily: 'var(--font-inter), system-ui, sans-serif' }}>
+      <div className="max-w-lg mx-auto px-5 pb-40 pt-7">{children}</div>
     </div>
   )
 
@@ -167,16 +258,17 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
   // happens next differs by whether we charge on approval or ring the guest first.
   const shown = placed || (showConfirm ? SAMPLE_PLACED : null)
   if (shown) return shell(
-    <div className="pt-10 animate-slide-up">
+    <div className="pt-8 animate-slide-up">
       <div className="text-[11px] uppercase tracking-[0.22em] font-semibold text-neutral-500">{brand} · {stay.unit}</div>
-      <div className="mt-6 rounded-3xl bg-white shadow-[0_20px_50px_-24px_rgba(27,26,23,.35)] p-7 text-center">
-        <div className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl" style={{ background: '#E9F4EE' }}>🎉</div>
+      <div className="mt-6 rounded-3xl bg-white shadow-[0_24px_60px_-28px_rgba(27,26,23,.4)] p-7 text-center">
+        <div className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl" style={{ background: accent + '18' }}>🎉</div>
         <h1 className="text-[28px] leading-tight mt-4" style={serif}><EditTag field="confirmTitle">{data.copy.confirmTitle || 'Order received'}</EditTag>, {stay.guestFirst}.</h1>
         <p className="text-[15px] text-neutral-600 mt-3 leading-relaxed"><EditTag field="confirmBody">{data.copy.confirmBody || 'Thank you — your order is with our team now.'}</EditTag></p>
 
         <div className="mt-6 rounded-2xl px-5 py-4" style={{ background: accent + '12' }}>
           <div className="text-[11px] uppercase tracking-[0.18em] font-semibold" style={{ color: accent }}>Your total</div>
-          <div className="text-[34px] font-semibold tabular-nums leading-none mt-1.5" style={{ color: accent }}>{money(shown.total)}</div>
+          <div className="text-[36px] font-semibold tabular-nums leading-none mt-1.5" style={{ color: accent }}>{money(shown.total)}</div>
+          {shown.discount ? <div className="text-[12.5px] mt-1.5 font-semibold" style={{ color: accent }}>You saved {money(shown.discount)}{shown.coupon ? ' with code ' + shown.coupon : ''}</div> : null}
         </div>
 
         <div className="mt-4 text-left rounded-2xl border border-neutral-200/80 divide-y divide-neutral-100">
@@ -208,7 +300,7 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
     ) : deadline.offered === false ? (
       <div className="mt-6 rounded-2xl bg-white p-5 text-[14px] text-neutral-700">Pre-arrival extras are not available at this property yet. If you need anything, reply to your booking message and we will do our best.</div>
     ) : (
-      <div className={'mt-6 rounded-2xl px-4 py-3.5 text-[13.5px] leading-snug flex gap-3 items-start ' + (deadline.arrivalDayStillPossible ? 'bg-[#E9F4EE] text-[#154734]' : 'bg-[#FFF3DF] text-[#7A4A00]')}>
+      <div className={'mt-5 rounded-2xl px-4 py-3.5 text-[13.5px] leading-snug flex gap-3 items-start ' + (deadline.arrivalDayStillPossible ? 'bg-[#E9F4EE] text-[#154734]' : 'bg-[#FFF3DF] text-[#7A4A00]')}>
         <span className="text-lg leading-none mt-0.5">{deadline.arrivalDayStillPossible ? '🕓' : '⏱️'}</span>
         <div>
           {deadline.arrivalDayStillPossible
@@ -219,6 +311,12 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
         </div>
       </div>
     )}
+
+    {rungs.length && canOrder ? (
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {rungs.map(r => <span key={r.min_subtotal_usd} className={'text-[11.5px] font-semibold px-2.5 py-1 rounded-full border ' + (hitRung && hitRung.min_subtotal_usd === r.min_subtotal_usd ? 'text-white' : 'bg-white/70 text-neutral-600 border-neutral-200/80')} style={hitRung && hitRung.min_subtotal_usd === r.min_subtotal_usd ? { background: accent, borderColor: accent } : undefined}>Spend {money(r.min_subtotal_usd)}, save {r.percent_off}%</span>)}
+      </div>
+    ) : null}
 
     {data.orders.length ? (
       <section className="mt-7">
@@ -241,57 +339,103 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
       </section>
     ) : null}
 
-    {!stay.departed && deadline.offered !== false ? cats.map(cat => (
-      <section key={cat} className="mt-8">
-        <div className="flex items-center gap-2 mb-3">
+    {/* STICKY CATEGORY BAR — only when there is something to jump between. */}
+    {canOrder && cats.length > 1 ? (
+      <nav className="sticky top-0 z-20 -mx-5 px-5 pt-3 pb-2 mt-6" style={{ background: 'linear-gradient(180deg,#FBF7F0 70%,rgba(251,247,240,0))' }}>
+        <div className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' } as React.CSSProperties}>
+          {cats.map(cat => { const on = activeCat === cat; return (
+            <button key={cat} onClick={() => jump(cat)} className={'flex-shrink-0 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full text-[13px] font-semibold border transition ' + (on ? 'text-white' : 'bg-white text-neutral-700 border-neutral-200/80')} style={on ? { background: INK, borderColor: INK } : undefined}>
+              <span className="text-[14px] leading-none">{ICON[cat] || '🧺'}</span>{cat}
+            </button>) })}
+        </div>
+      </nav>
+    ) : null}
+
+    {canOrder ? cats.map(cat => (
+      <section key={cat} id={slug(cat)} className="mt-6 scroll-mt-16">
+        <div className="flex items-center gap-2 mb-3" data-cat={cat}>
           <span className="text-xl">{ICON[cat] || '🧺'}</span>
-          <h2 className="text-[20px]" style={serif}>{cat}</h2>
+          <h2 className="text-[22px]" style={serif}>{cat}</h2>
           {editable ? <button onClick={() => edit!.onAdd(cat)} className="ml-auto text-[12px] font-semibold px-2.5 py-1 rounded-full bg-white border border-neutral-300 text-neutral-700 hover:border-neutral-900">+ Add item</button> : null}
         </div>
         <div className="space-y-3">
           {data.catalog.filter(c => c.category === cat).map(c => {
             const n = qty[c.sku] || 0
             const sel = editable && edit!.selectedSku === c.sku
+            const bundles = bundlesFor(c)
+            const step = stepOf(c)
+            const { unit, tier } = unitPriceFor(c, Math.max(step, n))
+            const off = unit < c.price
+            const onSale = off && !tier            // an offer price, not a bulk break
+            const soldOut = step > c.maxQty
+            const single = bundles.length === 1 && step === 1
             return (
-              <div key={c.sku} onClick={editable ? () => edit!.onItem(c) : undefined} className={'relative rounded-2xl bg-white p-4 transition-shadow ' + (sel ? 'ring-2 ring-neutral-900' : n ? 'shadow-[0_12px_30px_-16px_rgba(15,76,58,.45)] ring-1 ring-black/10' : 'shadow-[0_8px_24px_-18px_rgba(27,26,23,.35)] border border-neutral-200/60') + (editable ? ' cursor-pointer hover:ring-2 hover:ring-neutral-400' : '')}>
+              <div key={c.sku} onClick={editable ? () => edit!.onItem(c) : undefined}
+                className={'relative rounded-3xl bg-white transition-shadow ' + (sel ? 'ring-2 ring-neutral-900' : n ? 'ring-2 shadow-[0_18px_40px_-22px_rgba(15,76,58,.5)]' : 'shadow-[0_10px_30px_-22px_rgba(27,26,23,.45)] ring-1 ring-black/[.06]') + (editable ? ' cursor-pointer hover:ring-2 hover:ring-neutral-400' : '')}
+                style={n && !sel ? { ['--tw-ring-color' as any]: accent } : undefined}>
                 {editable ? <span className="absolute -top-2 right-3 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-neutral-900 text-white">Edit</span> : null}
-                <div className="flex gap-3">
-                  {c.image ? <img src={c.image} alt="" className="w-[84px] h-[84px] rounded-2xl object-contain flex-shrink-0 bg-[#F2EEE7]" /> : editable ? <div className="w-[84px] h-[84px] rounded-2xl bg-neutral-100 border border-dashed border-neutral-300 flex items-center justify-center text-[11px] text-neutral-400 flex-shrink-0">photo</div> : null}
+                {n ? <span className="absolute -top-2 left-4 text-[11px] font-bold px-2 py-0.5 rounded-full text-white shadow-sm" style={{ background: accent }}>{n} in your order</span> : null}
+                <div className="p-4 flex gap-3.5">
+                  {c.image
+                    ? <img src={c.image} alt="" className="w-[92px] h-[92px] rounded-2xl object-contain flex-shrink-0 bg-[#F2EEE7]" loading="lazy" />
+                    : editable ? <div className="w-[92px] h-[92px] rounded-2xl bg-neutral-100 border border-dashed border-neutral-300 flex items-center justify-center text-[11px] text-neutral-400 flex-shrink-0">photo</div>
+                    : <div className="w-[92px] h-[92px] rounded-2xl bg-[#F2EEE7] flex items-center justify-center text-3xl flex-shrink-0">{ICON[cat] || '🧺'}</div>}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <div className="text-[16px] font-semibold leading-tight flex items-center gap-1.5 flex-wrap">
-                        {c.name}
-                        {c.badge ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white" style={{ background: accent }}>{c.badge}</span> : null}
-                        {c.salePrice !== null && c.salePrice !== undefined && c.salePrice < c.price ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-[#B0342C] text-white">{Math.round((1 - c.salePrice / c.price) * 100)}% off</span> : null}
-                      </div>
-                      {(() => { const { unit } = unitPriceFor(c, Math.max(1, n)); const off = unit < c.price; return (
-                        <div className="text-right whitespace-nowrap">
-                          <div className={'text-[15px] font-semibold tabular-nums ' + (off ? 'text-[#B0342C]' : '')}>{money(unit)}{off ? <span className="text-[12px] font-normal text-neutral-400 line-through ml-1.5">{money(c.price)}</span> : null}</div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[16.5px] font-semibold leading-tight">{c.name}</div>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                          {c.badge ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white" style={{ background: accent }}>{c.badge}</span> : null}
+                          {c.salePrice !== null && c.salePrice !== undefined && c.salePrice < c.price ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-[#B0342C] text-white">{Math.round((1 - c.salePrice / c.price) * 100)}% off</span> : null}
+                          {c.fewLeft !== null && c.fewLeft !== undefined ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">Only {c.fewLeft} left</span> : null}
                         </div>
-                      )})()}
+                      </div>
+                      <div className="text-right whitespace-nowrap">
+                        <div className={'text-[17px] font-semibold tabular-nums leading-none ' + (onSale ? 'text-[#B0342C]' : '')} style={off && !onSale ? { color: accent } : undefined}>{money(unit)}</div>
+                        <div className="text-[11px] text-neutral-400 mt-1">{off ? <span className="line-through mr-1">{money(c.price)}</span> : null}{step > 1 ? 'each · in ' + step + 's' : c.unit ? c.unit : 'each'}</div>
+                      </div>
                     </div>
-                    {c.description ? <div className="text-[13px] text-neutral-600 mt-1 leading-snug">{c.description}</div> : null}
-                    <div className="flex items-center gap-2 mt-1">
-                      {c.size || c.unit || (c.soldIn && c.soldIn > 1) ? <div className="text-[12px] text-neutral-400">{[c.size, c.unit, c.soldIn && c.soldIn > 1 ? 'sold in ' + c.soldIn + 's' : null].filter(Boolean).join(' · ')}</div> : null}
-                      {c.fewLeft !== null && c.fewLeft !== undefined ? <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">Only {c.fewLeft} left</span> : null}
-                      {/* The multi-buy nudge: what the next break costs, and what it saves. */}
-                      {(() => { const nx = nextTier(c, n); if (!nx || c.price <= 0) return null
-                        const nowPaying = unitPriceFor(c, Math.max(1, n)).unit
-                        const off = nowPaying > 0 ? Math.round(((nowPaying - nx.unit_price_usd) / nowPaying) * 100) : 0
-                        return <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: accent + '1a', color: accent }}>{nx.min_qty}+ {money(nx.unit_price_usd)} each{off > 0 ? ' · save ' + off + '%' : ''}</span>
-                      })()}
-                    </div>
+                    {c.description ? <div className="text-[13px] text-neutral-600 mt-1.5 leading-snug">{c.description}</div> : null}
+                    {c.size || (c.unit && step > 1) ? <div className="text-[12px] text-neutral-400 mt-1">{[c.size, step > 1 ? c.unit : null].filter(Boolean).join(' · ')}</div> : null}
                   </div>
                 </div>
-                <div className="mt-3 flex items-center justify-end" onClick={e => { if (editable) e.stopPropagation() }}>
-                  {n === 0 ? (
-                    <button onClick={() => bump(c, 1)} disabled={stepOf(c) > c.maxQty} className="h-10 px-5 rounded-full text-[14px] font-semibold text-white active:scale-[.98] transition disabled:opacity-40" style={{ background: accent }}>{stepOf(c) > 1 ? 'Add ' + stepOf(c) : 'Add'}</button>
-                  ) : (
-                    <div className="inline-flex items-center rounded-full overflow-hidden" style={{ background: accent }}>
-                      <button onClick={() => bump(c, -1)} aria-label="Less" className="h-10 w-11 text-white text-xl leading-none active:bg-black/10">−</button>
-                      <span className="text-white text-[15px] font-semibold tabular-nums w-8 text-center">{n}</span>
-                      <button onClick={() => bump(c, 1)} aria-label="More" disabled={n + stepOf(c) > c.maxQty} className="h-10 w-11 text-white text-xl leading-none active:bg-black/10 disabled:opacity-40">+</button>
+
+                {/* WAYS TO BUY + the stepper. One row; a tap on a bundle sets that exact quantity. */}
+                <div className="px-4 pb-4" onClick={e => { if (editable) e.stopPropagation() }}>
+                  {soldOut ? <span className="text-[13px] text-neutral-500">Not available right now</span> : single ? (
+                    <div className="flex items-center justify-end gap-2">
+                      {n > 0 ? (
+                        <div className="inline-flex items-center rounded-full overflow-hidden" style={{ background: INK }}>
+                          <button onClick={() => bump(c, -1)} aria-label="Less" className="h-11 w-11 text-white text-xl leading-none active:bg-white/10">−</button>
+                          <span className="text-white text-[15px] font-semibold tabular-nums w-8 text-center">{n}</span>
+                          <button onClick={() => bump(c, 1)} aria-label="More" disabled={n + step > c.maxQty} className="h-11 w-11 text-white text-xl leading-none active:bg-white/10 disabled:opacity-40">+</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setExact(c, 1)} className="h-11 px-5 rounded-full text-[14px] font-semibold text-white active:scale-[.98] transition" style={{ background: accent }}>Add · {money(unit)}</button>
+                      )}
                     </div>
+                  ) : (
+                    <>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {bundles.map(b => { const on = n === b.qty; return (
+                          <button key={b.qty} onClick={() => setExact(c, on ? 0 : b.qty)}
+                            className={'inline-flex flex-col items-start justify-center h-11 px-3 rounded-2xl border text-left transition active:scale-[.98] ' + (on ? 'text-white' : 'bg-[#FBF8F3] text-neutral-800 border-neutral-200/80')}
+                            style={on ? { background: accent, borderColor: accent } : undefined}>
+                            <span className="text-[13px] font-semibold leading-none tabular-nums">{b.qty} for {money(b.total)}</span>
+                            {b.savePct > 0 ? <span className={'text-[10.5px] font-semibold leading-none mt-1 ' + (on ? 'text-white/85' : 'text-[#1F5C46]')}>save {b.savePct}%</span> : bundles.length > 1 ? <span className={'text-[10.5px] leading-none mt-1 ' + (on ? 'text-white/75' : 'text-neutral-400')}>{money(b.unit)} each</span> : null}
+                          </button>) })}
+                      </div>
+                      {n > 0 ? (
+                        <div className="mt-2.5 flex items-center justify-between gap-3">
+                          <span className="text-[12.5px] text-neutral-500">{n} × {money(unit)} = <b className="text-neutral-800 tabular-nums">{money(Math.round(unit * n * 100) / 100)}</b></span>
+                          <div className="inline-flex items-center rounded-full overflow-hidden flex-shrink-0" style={{ background: INK }}>
+                            <button onClick={() => bump(c, -1)} aria-label="Less" className="h-10 w-11 text-white text-xl leading-none active:bg-white/10">−</button>
+                            <span className="text-white text-[15px] font-semibold tabular-nums w-8 text-center">{n}</span>
+                            <button onClick={() => bump(c, 1)} aria-label="More" disabled={n + step > c.maxQty} className="h-10 w-11 text-white text-xl leading-none active:bg-white/10 disabled:opacity-40">+</button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
                   )}
                 </div>
               </div>
@@ -305,11 +449,14 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
 
     <p className="mt-10 text-[12px] text-neutral-500 leading-relaxed">Prices in USD{data.copy.taxPct ? ', plus ' + data.copy.taxPct + '% sales tax' : ', tax included'}. <EditTag field="footer">{data.copy.footer || 'Once confirmed, the total is charged to the card on your reservation. Questions? Just reply to your booking message.'}</EditTag></p>
 
-    {count > 0 && !stay.departed && deadline.offered !== false ? (
+    {count > 0 && canOrder ? (
       <div className={fixed + ' inset-x-0 bottom-0 z-30 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 pointer-events-none'}>
         <div className="max-w-lg mx-auto pointer-events-auto">
-          <button onClick={() => setReview(true)} className="w-full h-14 rounded-2xl text-white text-[16px] font-semibold flex items-center justify-between px-5 shadow-[0_18px_40px_-14px_rgba(15,76,58,.6)] active:scale-[.99] transition" style={{ background: '#1B1A17' }}>
-            <span className="inline-flex items-center gap-2"><span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white/15 text-[13px] tabular-nums">{count}</span> Review order</span>
+          {nextRung && subtotal > 0 && nextRung.min_subtotal_usd - subtotal <= Math.max(25, subtotal) ? (
+            <div className="mb-2 mx-auto w-fit max-w-full text-[12px] font-semibold px-3 py-1.5 rounded-full bg-white/95 border border-neutral-200/80 shadow-sm text-neutral-700">Add <b>{money(nextRung.min_subtotal_usd - subtotal)}</b> more for <b>{nextRung.percent_off}% off</b> everything</div>
+          ) : null}
+          <button onClick={() => setReview(true)} className="w-full h-14 rounded-2xl text-white text-[16px] font-semibold flex items-center justify-between px-5 shadow-[0_18px_40px_-14px_rgba(27,26,23,.6)] active:scale-[.99] transition" style={{ background: INK }}>
+            <span className="inline-flex items-center gap-2.5"><span className="inline-flex items-center justify-center min-w-7 h-7 px-2 rounded-full bg-white/15 text-[13px] tabular-nums">{count}</span> Review order</span>
             <span className="tabular-nums">{money(total)}</span>
           </button>
         </div>
@@ -325,30 +472,51 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
           <div className="mt-4 divide-y divide-neutral-100 rounded-2xl border border-neutral-200/80">
             {lines.length === 0 ? <div className="px-4 py-3 text-[13px] text-neutral-500">Nothing in the basket yet.</div> : null}
             {lines.map(l => (
-              <div key={l.sku} className="flex items-center justify-between px-4 py-2.5 text-[14px]">
+              <div key={l.sku} className="flex items-center justify-between px-4 py-2.5 text-[14px] gap-3">
                 <div className="min-w-0"><b>{l.qty}×</b> {l.name}
                   {/* Show the break they earned — a discount nobody notices is a discount wasted. */}
                   {l.tier ? <span className="block text-[11.5px] font-semibold text-emerald-700">{l.tier.min_qty}+ price · {money(l.unitPrice)} each, saving {money(l.saved)}</span> : null}
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="tabular-nums">{money(l.total)}</span>
-                  <button onClick={() => bump(l, -Infinity)} className="text-neutral-400 hover:text-rose-600 text-lg leading-none" aria-label="Remove">×</button>
+                <div className="flex items-center gap-2.5 flex-shrink-0">
+                  <div className="inline-flex items-center rounded-full border border-neutral-200 overflow-hidden">
+                    <button onClick={() => bump(l, -1)} aria-label="Less" className="h-8 w-8 text-neutral-700 text-lg leading-none">−</button>
+                    <span className="text-[13px] font-semibold tabular-nums w-6 text-center">{l.qty}</span>
+                    <button onClick={() => bump(l, 1)} aria-label="More" disabled={l.qty + stepOf(l) > l.maxQty} className="h-8 w-8 text-neutral-700 text-lg leading-none disabled:opacity-40">+</button>
+                  </div>
+                  <span className="tabular-nums w-14 text-right">{money(l.total)}</span>
                 </div>
               </div>
             ))}
             {(() => { const saved = lines.reduce((n, l) => n + (l.saved || 0), 0); return saved > 0
               ? <div className="flex justify-between px-4 py-2 text-[13px] font-semibold text-emerald-700"><span>Multi-buy saving</span><span className="tabular-nums">−{money(saved)}</span></div> : null })()}
-            {hitRung ? <div className="flex justify-between px-4 py-2 text-[13px] font-semibold text-emerald-700"><span>{hitRung.percent_off}% off orders over {money(hitRung.min_subtotal_usd)}</span><span className="tabular-nums">−{money(discount)}</span></div> : null}
+            {(q ? q.spendDiscount > 0 : !!hitRung) ? <div className="flex justify-between gap-3 px-4 py-2 text-[13px] font-semibold text-emerald-700"><span>{q && q.spendNote ? q.spendNote : hitRung ? hitRung.percent_off + '% off orders over ' + money(hitRung.min_subtotal_usd) : 'Spend & save'}</span><span className="tabular-nums">−{money(q ? q.spendDiscount : spendLocal)}</span></div> : null}
+            {couponLine ? <div className="flex justify-between gap-3 px-4 py-2 text-[13px] font-semibold text-emerald-700"><span className="min-w-0">Code {couponLine.code}{couponLine.label ? <span className="block text-[11.5px] font-normal text-emerald-700/80">{couponLine.label}</span> : null}</span><span className="tabular-nums whitespace-nowrap">−{money(couponLine.amount)}</span></div> : null}
             {tax ? <div className="flex justify-between px-4 py-2 text-[13px] text-neutral-600"><span>Sales tax ({data.copy.taxPct}%)</span><span className="tabular-nums">{money(tax)}</span></div> : null}
             <div className="flex justify-between px-4 py-3 text-[16px] font-semibold"><span>Total</span><span className="tabular-nums">{money(total)}</span></div>
           </div>
-          {/* The nudge, only when it is actually within reach — a "spend $60 more" line on a $12
-              basket is not an offer, it is a reminder that you are not the target customer. */}
-          {nextRung && subtotal > 0 && nextRung.min_subtotal_usd - subtotal <= Math.max(25, subtotal) ? (
-            <div className="mt-3 rounded-2xl px-4 py-2.5 text-[13px]" style={{ background: accent + '14', color: accent }}>
-              Add <b>{money(nextRung.min_subtotal_usd - subtotal)}</b> more and take <b>{nextRung.percent_off}% off</b> the whole order.
+
+          {/* HAVE A CODE? The verdict comes from the server; the browser only shows it. */}
+          {onQuote || editable ? (
+            <div className="mt-3">
+              {couponLine || (coupon && quote && quote.coupon) ? (
+                <div className="flex items-center justify-between rounded-2xl px-4 py-2.5 text-[13px]" style={{ background: accent + '14', color: accent }}>
+                  <span className="min-w-0"><b>{(couponLine || quote!.coupon)!.code}</b> applied{quoting ? ' · updating…' : ''}{(couponLine || quote!.coupon)!.label ? <span className="block text-[12px] opacity-80">{(couponLine || quote!.coupon)!.label}</span> : null}</span>
+                  <button onClick={() => { setCoupon(null); setCouponInput(''); setQuote(null) }} className="text-[12px] font-semibold underline underline-offset-2">Remove</button>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex gap-2">
+                    <input value={couponInput} onChange={e => setCouponInput(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32))} onKeyDown={e => { if (e.key === 'Enter' && couponInput.length >= 3) setCoupon(couponInput) }}
+                      placeholder="Have a code?" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+                      className="flex-1 h-11 rounded-2xl border border-neutral-200 px-4 text-[14px] font-mono tracking-wide uppercase focus:outline-none focus:ring-2 focus:ring-black/10" />
+                    <button onClick={() => setCoupon(couponInput)} disabled={couponInput.length < 3 || quoting || !onQuote} className="h-11 px-4 rounded-2xl text-[14px] font-semibold border border-neutral-900 text-neutral-900 disabled:opacity-40">{quoting ? '…' : 'Apply'}</button>
+                  </div>
+                  {coupon && quoting ? <div className="mt-1.5 text-[12.5px] text-neutral-500">Checking your code…</div> : coupon && couponVerdict && couponVerdict !== 'ok' ? <div className="mt-1.5 text-[12.5px] text-rose-700">{couponVerdict}</div> : null}
+                </div>
+              )}
             </div>
           ) : null}
+
           <div className="mt-4">
             <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-neutral-500 mb-2">When would you like it?</div>
             <div className="grid gap-2">
@@ -374,7 +542,7 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
           <textarea value={note} onChange={e => setNote(e.target.value.slice(0, 600))} placeholder="Anything we should know? Allergies, brand preferences, where to leave it…" rows={3} className="mt-3 w-full rounded-2xl border border-neutral-200 px-4 py-3 text-[14px] focus:outline-none focus:ring-2 focus:ring-black/10" />
           <div className="mt-3 text-[12.5px] text-neutral-500 leading-snug">We confirm the exact day once the order is approved (at least {deadline.leadHours}h after payment). The card on your reservation is charged only when we confirm — nothing is charged now.</div>
           {submitErr ? <div className="mt-3 text-[13px] text-rose-700 bg-rose-50 rounded-xl px-3 py-2">{submitErr}</div> : null}
-          <button onClick={place} disabled={busy || !lines.length || (when === 'date' && !whenDate) || !onSubmit} className="mt-4 w-full h-14 rounded-2xl text-white text-[16px] font-semibold disabled:opacity-60 active:scale-[.99] transition" style={{ background: accent }}>{busy ? 'Placing your order…' : !onSubmit ? 'Place order (preview)' : 'Place order · ' + money(total)}</button>
+          <button onClick={place} disabled={busy || quoting || !lines.length || (when === 'date' && !whenDate) || !onSubmit} className="mt-4 w-full h-14 rounded-2xl text-white text-[16px] font-semibold disabled:opacity-60 active:scale-[.99] transition" style={{ background: accent }}>{busy ? 'Placing your order…' : !onSubmit ? 'Place order (preview)' : 'Place order · ' + money(total)}</button>
           <button onClick={() => setReview(false)} disabled={busy} className="mt-2 w-full h-11 rounded-2xl text-[14px] font-semibold text-neutral-600">Keep browsing</button>
         </div>
       </div>

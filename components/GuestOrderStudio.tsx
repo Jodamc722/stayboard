@@ -37,7 +37,11 @@ function previewCatalog(items: Item[], stock: StockRow[], building: string, mark
       available = row ? Math.max(0, row.on_hand - row.reserved) : 0
       if (available <= 0) return []
     }
-    return [{ id: r.id, sku: r.sku, name: r.name, description: r.description, price: r.price_usd, unit: r.unit_label, category: r.category || 'Extras', maxQty: available !== null ? Math.min(r.max_qty, available) : r.max_qty, image: r.image_url, fewLeft: available !== null && available <= 3 ? available : null }]
+    return [{ id: r.id, sku: r.sku, name: r.name, description: r.description, price: r.price_usd, unit: r.unit_label, category: r.category || 'Extras', maxQty: available !== null ? Math.min(r.max_qty, available) : r.max_qty, image: r.image_url, fewLeft: available !== null && available <= 3 ? available : null,
+      // Everything the real guest payload carries — the studio must not hide an offer, a badge, a
+      // "sold in 5s" or a size that the guest will see.
+      salePrice: (r as any).sale_price_usd ?? null, badge: (r as any).badge ?? null, soldIn: (r as any).sold_in ?? null, tiers: (r as any).tiers || null,
+      size: (r as any).size_value && (r as any).size_unit ? String(Math.round(Number((r as any).size_value) * 100) / 100) + ((r as any).size_unit === 'ct' ? ' ct' : ' ' + (r as any).size_unit) : null }]
   })
 }
 

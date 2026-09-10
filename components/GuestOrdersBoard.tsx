@@ -5,11 +5,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ShoppingBag, Check, X, RefreshCw, Copy, Send, Loader2, AlertTriangle, ExternalLink, Truck, Link2, Zap, Palette, Package } from 'lucide-react'
 import { InventoryBoard } from '@/components/InventoryBoard'
+import { CouponsPanel } from '@/components/CouponsPanel'
+import { KNOWN_BUILDINGS } from '@/lib/segments'
 
 type Line = { sku: string; name: string; qty: number; unit_price_usd: number; line_total_usd: number; unit_label?: string | null }
 type Order = {
   id: string; link_code: string; reservation_id: string; unit: string | null; building: string | null; market: string | null; guest_name: string | null
   check_in: string | null; check_out: string | null; status: string; items: Line[]; subtotal_usd: number; tax_usd: number; total_usd: number; guest_note: string | null
+  discount_usd?: number; discount_note?: string | null; coupon_code?: string | null
   submitted_at: string; approved_at: string | null; approved_by: string | null; paid_at: string | null; payment_note: string | null; charge_error: string | null; folio_note: string | null
   delivery_date: string | null; delivery_note: string | null; requested_delivery?: string; requested_date?: string | null; pushed_at: string | null; breezeway_task_id: string | null; assignee_names: string[]; assign_note: string | null
   stock_note?: string | null; push_error: string | null; delivered_at: string | null; delivered_by: string | null; decline_reason: string | null; approve_token: string | null
@@ -44,9 +47,9 @@ const LANES: { key: string; label: string; statuses: string[] }[] = [
 // ORDERS · LINKS · STOCK · PRICING — everything about guest orders on one page. Stock is per
 // shelf and belongs to whoever is restocking; Pricing is per item and belongs at a desk; keeping
 // them as separate tabs rather than one board is what stops either becoming a wall of numbers.
-const TABS = ['orders', 'links', 'stock', 'pricing'] as const
+const TABS = ['orders', 'links', 'stock', 'pricing', 'coupons'] as const
 type Tab = typeof TABS[number]
-const TAB_LABEL: Record<Tab, string> = { orders: 'Orders', links: 'Links · upcoming arrivals', stock: 'Stock count', pricing: 'Costs & pricing' }
+const TAB_LABEL: Record<Tab, string> = { orders: 'Orders', links: 'Links · upcoming arrivals', stock: 'Stock count', pricing: 'Costs & pricing', coupons: 'Coupon codes' }
 
 export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canMoney: boolean }) {
   const [data, setData] = useState<Data | null>(null)
@@ -133,7 +136,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
         </div>
       ) : null}
 
-      <div className={'grid grid-cols-2 sm:grid-cols-5 gap-2 ' + (tab === 'stock' || tab === 'pricing' ? 'hidden' : '')}>
+      <div className={'grid grid-cols-2 sm:grid-cols-5 gap-2 ' + (tab === 'stock' || tab === 'pricing' || tab === 'coupons' ? 'hidden' : '')}>
         {LANES.map(l => (
           <button key={l.key} onClick={() => { setTab('orders'); setLane(lane === l.key ? 'all' : l.key) }} className={'rounded-2xl border px-3.5 py-3 text-left transition ' + (lane === l.key ? 'border-brand-400 bg-brand-50' : 'border-line bg-white hover:border-brand-200')}>
             <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">{l.label}</div>
@@ -157,6 +160,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
       {flash ? <div className={'rounded-xl px-3.5 py-2.5 text-[13px] ' + (flash.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200')}>{flash.text}</div> : null}
 
       {tab === 'stock' || tab === 'pricing' ? <InventoryBoard canEdit={canEdit} view={tab === 'pricing' ? 'pricing' : 'stock'} /> : null}
+      {tab === 'coupons' ? <CouponsPanel canEdit={canEdit} canMoney={canMoney} buildings={KNOWN_BUILDINGS.map(b => b.label)} /> : null}
 
       {tab === 'orders' ? (
         shown.length === 0 ? (
@@ -184,6 +188,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
                     </div>
                     <div className="text-right">
                       <div className="text-[17px] font-bold text-ink tabular-nums">{money(o.total_usd)}</div>
+                      {o.discount_usd ? <div className="text-[11.5px] text-emerald-700 font-semibold">−{money(o.discount_usd)}{o.coupon_code ? ' · code ' + o.coupon_code : o.discount_note ? ' · ' + o.discount_note : ''}</div> : null}
                       {o.delivery_date ? <div className={'text-[11.5px] ' + (o.delivery_date <= data.today && o.status !== 'delivered' ? 'text-indigo-700 font-semibold' : 'text-muted')}>Deliver {o.delivery_date === data.today ? 'today' : day(o.delivery_date)}{o.delivery_note ? ' · ' + o.delivery_note : ''}</div>
                         : o.delivery_note ? <div className="text-[11.5px] text-amber-700 font-semibold">{o.delivery_note}</div> : null}
                     </div>
@@ -276,7 +281,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
             })}
           </div>
         )
-      ) : (
+      ) : tab === 'links' ? (
         <div className="space-y-3">
           {canEdit ? (
             <div className="rounded-2xl border border-line bg-white px-4 py-3 flex flex-wrap items-center gap-2">
@@ -308,7 +313,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
             </table>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
