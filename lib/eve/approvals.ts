@@ -16,6 +16,7 @@
 import 'server-only'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { postToChannel, postThreadReply, getDirectory } from '@/lib/slack'
+import { EVE_CHANNELS } from '@/lib/slack-rules'
 import { lc } from './ctx'
 
 export const APPROVALS_CHANNEL_KEY = 'eve_approvals_channel'
@@ -25,13 +26,22 @@ export type ApprovalsChannel = { id: string; name: string }
 export async function getApprovalsChannel(): Promise<ApprovalsChannel | null> {
   const v = await getSetting<any>(APPROVALS_CHANNEL_KEY, null)
   if (v && typeof v === 'object' && v.id) return { id: String(v.id), name: String(v.name || '') }
-  // If nobody has configured one, fall back ONLY to a channel that is unmistakably for this and
-  // that the bot is already in. These posts carry a unit, an address and a guest's own words, so
-  // guessing at "probably the leadership channel" is not a kindness — it is a leak. Anything less
-  // obvious than a channel named for approvals stays unset until a human picks it.
+  // Nobody has set one. Two fallbacks, in order, and both require the bot to already be in the room.
+  //
+  // FIRST, the channel Jon made for exactly this (2026-09-10: "I created a new chat called
+  // Vr-Eveapprovals. All code approvals, vacant units etc can live there"). Matched by id, not by
+  // name — and that earned itself within the hour, because he renamed it to #vr-eve the same day.
+  // A rename keeps the id, so approvals kept working; a name match would have silently fallen
+  // through to the regex below, which "vr-eve" does not satisfy.
+  //
+  // THEN, and only then, any member channel whose name says approvals. These posts carry a unit, an
+  // address and a guest's own words, so guessing at "probably the leadership channel" is not a
+  // kindness — it is a leak. Anything less obvious than a channel named for approvals stays unset.
   try {
     const dir: any = await getDirectory()
     const chans: any[] = dir?.channels || []
+    const named = chans.find(c => c?.isMember && String(c.id) === EVE_CHANNELS.approvals)
+    if (named) return { id: String(named.id), name: String(named.name) }
     const guess = chans.find(c => c?.isMember && /door.?code|approval/i.test(String(c.name)))
     if (guess) return { id: String(guess.id), name: String(guess.name) }
   } catch { /* not configured yet */ }

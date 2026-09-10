@@ -92,6 +92,15 @@ export type RunEveInput = {
   source?: 'web' | 'telegram' | 'slack' | 'api'
   /** Extra situational line for the system prompt (e.g. "you are in a Telegram group"). */
   surfaceNote?: string
+  /**
+   * Tools removed before the model is even told they exist, and refused if a name slips through.
+   * Used by the Slack surface, where the room decides what an answer may contain — see
+   * lib/eve/slack-tier.ts. Taking a tool away is the only reliable way to stop it being used; an
+   * instruction not to use one is a suggestion.
+   */
+  denyTools?: string[]
+  /** Force money redaction regardless of the person's own permission — a shared room, not a private one. */
+  forceNoMoney?: boolean
   maxTurns?: number
 }
 
@@ -130,7 +139,11 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
 
   const startedAt = Date.now()
   const source = input.source || 'web'
-  const canMoney = canSeeMoney(access)
+  // A ROOM CAN ONLY NARROW THIS, NEVER WIDEN IT. Someone cleared for money in Lighthouse still does
+  // not get dollar amounts read out in a channel with eleven other people in it.
+  const canMoney = input.forceNoMoney ? false : canSeeMoney(access)
+  const deny = (input.denyTools || []).map(t => String(t).trim()).filter(Boolean)
+  const allowed = (list: any[]) => (deny.length ? list.filter((t: any) => deny.indexOf(String(t?.name)) < 0) : list)
   const ctx = await buildCtx(access, canMoney)
   const db = supabaseAdmin()
   const today = todayET()
@@ -208,7 +221,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       ]
       // Keep the SAME tools array across the whole conversation. If a resume request drops a server
       // tool the API is still waiting on, it 400s with "but no web_search tool was provided".
-      const toolset: any[] = wireTools(open)
+      const toolset: any[] = allowed(wireTools(open))
       if (webOk) toolset.push(WEB_SEARCH_TOOL as any)
       const messages = withCacheBreakpoint(convo)
 
@@ -225,7 +238,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
         r = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: await modelFor('eve'), max_tokens: 4096, system, tools: wireTools(open), messages }),
+          body: JSON.stringify({ model: await modelFor('eve'), max_tokens: 4096, system, tools: allowed(wireTools(open)), messages }),
         })
         d = await r.json()
       }
@@ -253,6 +266,12 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
         for (const block of (d.content || [])) {
           if (block?.type !== 'tool_use') continue
           toolsUsed.push(block.name)
+          // Belt and braces: she cannot see a denied tool, but a name that arrives anyway is
+          // refused here rather than executed.
+          if (deny.indexOf(String(block.name)) >= 0) {
+            results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ error: 'That is not something you can do from here. An admin can.' }) })
+            continue
+          }
           const { output, opened } = await runTool(block.name, block.input || {}, ctx, open)
           if (opened && open.indexOf(opened) < 0) open.push(opened)
           results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output).slice(0, TOOL_RESULT_CHARS) })
