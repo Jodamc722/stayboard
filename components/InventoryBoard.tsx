@@ -29,6 +29,8 @@ type Item = {
   salePrice: number | null; badge: string | null
   /** Sold in multiples of N on the guest form (coffee pods in 5s). Blank = any quantity. */
   soldIn: number | null
+  /** What one item holds, in the guest's words — 1 = 5 pods. */
+  pieces: number | null; pieceName: string | null
   /** How much is in ONE — 500 mL, 12 oz. Not the pack size. */
   sizeValue: number | null; sizeUnit: string | null
 }
@@ -591,6 +593,22 @@ function PriceLadder({ item, val, setItem, canEdit }: { item: Item; val: (i: Ite
       {/* SOLD IN MULTIPLES (Jon, 2026-09-10: "coffee pods — can't order one… customizable per item
           at the stock or inventory"). The guest form steps by this and the server rounds up to it.
           Nothing to do with the case we buy, below. */}
+      {/* WHAT ONE ITEM HOLDS (Jon, 2026-09-10: "1 = 5 pods"). The guest sees "1 = 5 pods" under the
+          name and "10 pods" on a bundle of 2. Quantity is still in items. */}
+      <div className="mt-2.5 pt-2.5 border-t border-line/70 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">One item is
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <input type="number" min={0} max={9999} value={(val(item, 'pieces') as number | null) ?? ''} placeholder="5" disabled={!canEdit}
+              onChange={e => setItem(item.id, { pieces: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) } as any)} className={box + ' w-20'} />
+            <input value={String(val(item, 'pieceName') ?? '')} placeholder="pods" disabled={!canEdit} maxLength={24}
+              onChange={e => setItem(item.id, { pieceName: e.target.value } as any)} className={box + ' w-28 normal-case tracking-normal'} />
+          </div>
+        </label>
+        {(() => { const n = Number(val(item, 'pieces')), nm = String(val(item, 'pieceName') || '').trim(); return n > 0 && nm
+          ? <div className="text-[11.5px] text-muted pb-1.5">Guest reads <b className="text-ink">1 = {n} {nm}</b>; 3 items show as {n * 3} {nm}.</div>
+          : <div className="text-[11.5px] text-muted pb-1.5">Optional — say what one item contains, e.g. 5 pods, 12 bottles.</div> })()}
+      </div>
+
       <div className="mt-2.5 pt-2.5 border-t border-line/70 flex flex-wrap items-end gap-2">
         <label className="flex flex-col text-[10.5px] uppercase tracking-wide text-muted font-semibold">Guests order in multiples of
           <input type="number" min={0} max={999} value={(val(item, 'soldIn') as number | null) ?? ''} placeholder="any" disabled={!canEdit}

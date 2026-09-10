@@ -25,6 +25,8 @@ export type FormItem = { id?: string; sku: string; name: string; description: st
   badge?: string | null
   /** Sold in multiples of N — the basket steps by N and starts at N. Coffee pods in 5s. */
   soldIn?: number | null
+  /** What one item holds — 1 = 5 pods. Shown under the name; bundles add it up. */
+  pieces?: number | null; pieceName?: string | null
   /** Volume breaks on this item — "3+ $2.50 each". Best qualifying break wins, priced server-side. */
   tiers?: PriceTier[] | null }
 
@@ -117,6 +119,8 @@ const serif: React.CSSProperties = { fontFamily: "'Iowan Old Style','Palatino Li
 const PAPER = 'linear-gradient(180deg,#FBF7F0 0%,#F6F1E8 100%)'
 const INK = '#1B1A17'
 const slug = (s: string) => 'cat-' + s.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+/** "10 pods" for 2 items of a 5-pod pack; null when the item does not say what it holds. */
+const piecesOf = (c: FormItem, n: number) => (c.pieces && c.pieceName ? (c.pieces * n) + ' ' + c.pieceName : null)
 
 export function GuestOrderForm({ data, onSubmit, onQuote, frame, edit, reviewOpen, onReviewChange, showConfirm }: {
   data: FormData
@@ -396,6 +400,7 @@ export function GuestOrderForm({ data, onSubmit, onQuote, frame, edit, reviewOpe
                       </div>
                     </div>
                     {c.description ? <div className="text-[13px] text-neutral-600 mt-1.5 leading-snug">{c.description}</div> : null}
+                    {c.pieces && c.pieceName ? <div className="text-[12.5px] mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 bg-[#F2EEE7] text-neutral-700"><b>1</b> = {c.pieces} {c.pieceName}</div> : null}
                     {c.size || (c.unit && step > 1) ? <div className="text-[12px] text-neutral-400 mt-1">{[c.size, step > 1 ? c.unit : null].filter(Boolean).join(' · ')}</div> : null}
                   </div>
                 </div>
@@ -411,7 +416,7 @@ export function GuestOrderForm({ data, onSubmit, onQuote, frame, edit, reviewOpe
                           <button onClick={() => bump(c, 1)} aria-label="More" disabled={n + step > c.maxQty} className="h-11 w-11 text-white text-xl leading-none active:bg-white/10 disabled:opacity-40">+</button>
                         </div>
                       ) : (
-                        <button onClick={() => setExact(c, 1)} className="h-11 px-5 rounded-full text-[14px] font-semibold text-white active:scale-[.98] transition" style={{ background: accent }}>Add · {money(unit)}</button>
+                        <button onClick={() => setExact(c, 1)} className="h-11 px-5 rounded-full text-[14px] font-semibold text-white active:scale-[.98] transition" style={{ background: accent }}>Add{piecesOf(c, 1) ? ' ' + piecesOf(c, 1) : ''} · {money(unit)}</button>
                       )}
                     </div>
                   ) : (
@@ -422,12 +427,14 @@ export function GuestOrderForm({ data, onSubmit, onQuote, frame, edit, reviewOpe
                             className={'inline-flex flex-col items-start justify-center h-11 px-3 rounded-2xl border text-left transition active:scale-[.98] ' + (on ? 'text-white' : 'bg-[#FBF8F3] text-neutral-800 border-neutral-200/80')}
                             style={on ? { background: accent, borderColor: accent } : undefined}>
                             <span className="text-[13px] font-semibold leading-none tabular-nums">{b.qty} for {money(b.total)}</span>
-                            {b.savePct > 0 ? <span className={'text-[10.5px] font-semibold leading-none mt-1 ' + (on ? 'text-white/85' : 'text-[#1F5C46]')}>save {b.savePct}%</span> : bundles.length > 1 ? <span className={'text-[10.5px] leading-none mt-1 ' + (on ? 'text-white/75' : 'text-neutral-400')}>{money(b.unit)} each</span> : null}
+                            {b.savePct > 0 ? <span className={'text-[10.5px] font-semibold leading-none mt-1 ' + (on ? 'text-white/85' : 'text-[#1F5C46]')}>save {b.savePct}%{piecesOf(c, b.qty) ? ' · ' + piecesOf(c, b.qty) : ''}</span>
+                              : piecesOf(c, b.qty) ? <span className={'text-[10.5px] leading-none mt-1 ' + (on ? 'text-white/75' : 'text-neutral-400')}>{piecesOf(c, b.qty)}</span>
+                              : bundles.length > 1 ? <span className={'text-[10.5px] leading-none mt-1 ' + (on ? 'text-white/75' : 'text-neutral-400')}>{money(b.unit)} each</span> : null}
                           </button>) })}
                       </div>
                       {n > 0 ? (
                         <div className="mt-2.5 flex items-center justify-between gap-3">
-                          <span className="text-[12.5px] text-neutral-500">{n} × {money(unit)} = <b className="text-neutral-800 tabular-nums">{money(Math.round(unit * n * 100) / 100)}</b></span>
+                          <span className="text-[12.5px] text-neutral-500">{n} × {money(unit)} = <b className="text-neutral-800 tabular-nums">{money(Math.round(unit * n * 100) / 100)}</b>{piecesOf(c, n) ? ' · ' + piecesOf(c, n) : ''}</span>
                           <div className="inline-flex items-center rounded-full overflow-hidden flex-shrink-0" style={{ background: INK }}>
                             <button onClick={() => bump(c, -1)} aria-label="Less" className="h-10 w-11 text-white text-xl leading-none active:bg-white/10">−</button>
                             <span className="text-white text-[15px] font-semibold tabular-nums w-8 text-center">{n}</span>
@@ -473,7 +480,7 @@ export function GuestOrderForm({ data, onSubmit, onQuote, frame, edit, reviewOpe
             {lines.length === 0 ? <div className="px-4 py-3 text-[13px] text-neutral-500">Nothing in the basket yet.</div> : null}
             {lines.map(l => (
               <div key={l.sku} className="flex items-center justify-between px-4 py-2.5 text-[14px] gap-3">
-                <div className="min-w-0"><b>{l.qty}×</b> {l.name}
+                <div className="min-w-0"><b>{l.qty}×</b> {l.name}{piecesOf(l, l.qty) ? <span className="text-neutral-500"> · {piecesOf(l, l.qty)}</span> : null}
                   {/* Show the break they earned — a discount nobody notices is a discount wasted. */}
                   {l.tier ? <span className="block text-[11.5px] font-semibold text-emerald-700">{l.tier.min_qty}+ price · {money(l.unitPrice)} each, saving {money(l.saved)}</span> : null}
                 </div>
