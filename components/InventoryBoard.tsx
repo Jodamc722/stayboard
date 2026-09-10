@@ -26,6 +26,7 @@ type Item = {
   /** Pack economics and the price ladder — see PricePanel below. */
   packSize: number | null; packCost: number | null; tiers: Tier[]
   imageOriginal: string | null
+  salePrice: number | null; badge: string | null
   /** How much is in ONE — 500 mL, 12 oz. Not the pack size. */
   sizeValue: number | null; sizeUnit: string | null
 }
@@ -727,7 +728,8 @@ function PricingTable({ items, val, setItem, canEdit, onEditPhoto }: { items: It
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] border-collapse">
+        <datalist id="inv-badges"><option value="New" /><option value="Limited" /><option value="Last few" /><option value="Popular" /><option value="Guest favourite" /></datalist>
+        <table className="w-full min-w-[900px] border-collapse">
           <thead>
             <tr className="border-b border-line bg-white">
               <th className={th}>Item</th>
@@ -735,6 +737,7 @@ function PricingTable({ items, val, setItem, canEdit, onEditPhoto }: { items: It
               <th className={th + ' w-[92px]'}>Costs us</th>
               <th className={th + ' w-[92px]'}>Guest pays</th>
               <th className={th + ' w-[96px]'}>We keep</th>
+              <th className={th + ' w-[190px]'}>Offer</th>
               <th className={th}>Buy more, pay less</th>
             </tr>
           </thead>
@@ -789,6 +792,22 @@ function PricingTable({ items, val, setItem, canEdit, onEditPhoto }: { items: It
                       {keep === null ? '—' : money(keep)}{keep !== null && price > 0 ? <span className="font-normal text-muted"> · {Math.round(keep / price * 100)}%</span> : null}
                     </span>
                   </td>
+                  {/* ON OFFER. The list price stays put so the guest can see what it was — a discount
+                      nobody can see is not a discount, it is just a lower price. */}
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <input type="number" min={0} step="0.01" value={(val(i, 'salePrice') as number | null) ?? ''} placeholder="now $" disabled={!canEdit}
+                        onChange={e => setItem(i.id, { salePrice: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={cell + ' w-[74px]'} />
+                      <input value={String(val(i, 'badge') ?? '')} placeholder="badge" list="inv-badges" disabled={!canEdit}
+                        onChange={e => setItem(i.id, { badge: e.target.value.slice(0, 16) } as any)} className={cell + ' w-[88px] tabular-nums-none'} />
+                    </div>
+                    {(() => { const sp = Number(val(i, 'salePrice')); if (!(sp > 0) || !(price > 0)) return null
+                      const off = Math.round((1 - sp / price) * 100)
+                      const m = cost === null ? null : Math.round((sp - cost) * 100) / 100
+                      return <div className={'text-[10.5px] mt-0.5 ' + (m !== null && m < 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>
+                        {off > 0 ? off + '% off · was ' + money(price) : 'not a discount'}{m !== null ? (m < 0 ? ' · BELOW COST' : ' · keep ' + money(m)) : ''}
+                      </div> })()}
+                  </td>
                   <td className="px-2 py-1.5">
                     <button type="button" onClick={() => setOpenBulk(o => o === i.id ? null : i.id)} className="text-left inline-flex items-center gap-1.5 flex-wrap">
                       {tiers.length
@@ -801,7 +820,7 @@ function PricingTable({ items, val, setItem, canEdit, onEditPhoto }: { items: It
                 </tr>
               )
             })}
-            {!rows.length ? <tr><td colSpan={6} className="px-4 py-8 text-center text-[13px] text-muted">Nothing matches “{q}”.</td></tr> : null}
+            {!rows.length ? <tr><td colSpan={7} className="px-4 py-8 text-center text-[13px] text-muted">Nothing matches “{q}”.</td></tr> : null}
           </tbody>
         </table>
       </div>

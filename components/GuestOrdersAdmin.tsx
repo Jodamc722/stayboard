@@ -8,7 +8,7 @@ import { ShoppingBag, Loader2, Save, Plus, Trash2, Check, AlertTriangle, ImagePl
 type Scope = { enabled?: boolean; orderByHoursBefore?: number; leadHours?: number; sameDayCutoffHour?: number; taxPct?: number }
 type Cfg = {
   enabled: boolean; createDaysBefore: number; customFieldName: string; orderByHoursBefore: number; leadHours: number; sameDayCutoffHour: number
-  checkInHour: number; taxPct: number; chargeMode: 'auto' | 'manual'; emailRecipients: string[]; publicBase: string; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; confirmTitle: string; confirmBody: string; confirmNext: string; skipSourcesRe: string
+  checkInHour: number; taxPct: number; chargeMode: 'auto' | 'manual'; emailRecipients: string[]; publicBase: string; formTitle: string; formIntro: string; brandLine: string; accentColor: string; footerNote: string; confirmTitle: string; confirmBody: string; confirmNext: string; spendRules: { min_subtotal_usd: number; percent_off: number }[]; skipSourcesRe: string
   marketRules: Record<string, Scope>; buildingRules: Record<string, Scope>
   hubs: Hub[]; hubRules: Record<string, Scope>
 }
@@ -194,6 +194,34 @@ export function GuestOrdersAdmin({ isOwner }: { isOwner: boolean }) {
         <input value={cfg.formTitle} onChange={e => set({ formTitle: e.target.value })} className={box + ' font-semibold'} placeholder="Headline (guest's first name is added)" disabled={ro} />
         <textarea value={cfg.formIntro} onChange={e => set({ formIntro: e.target.value })} rows={2} className={box} placeholder="Intro paragraph" disabled={ro} />
         <input value={cfg.footerNote} onChange={e => set({ footerNote: e.target.value })} className={box} placeholder="Footer note (payment / contact line)" disabled={ro} />
+        {/* SPEND AND SAVE — a rule about the basket, not about any one item. */}
+        <div className="pt-2.5 mt-1 border-t border-line">
+          <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">Spend and save <span className="normal-case font-normal">— comes off the order before tax. The highest one they reach applies.</span></div>
+          <div className="mt-1.5 space-y-1.5">
+            {(cfg.spendRules || []).slice().sort((a, b) => a.min_subtotal_usd - b.min_subtotal_usd).map((r, idx) => (
+              <div key={idx} className="flex items-center gap-2 text-[13px]">
+                <span className="text-muted">Spend</span>
+                <input type="number" min={1} step="1" value={r.min_subtotal_usd} disabled={ro}
+                  onChange={e => set({ spendRules: (cfg.spendRules || []).map((x, k) => k === idx ? { ...x, min_subtotal_usd: Math.max(1, Number(e.target.value) || 0) } : x) })}
+                  className="text-[12.5px] px-2 py-1.5 rounded-lg border border-line bg-white w-24 tabular-nums" />
+                <span className="text-muted">or more →</span>
+                <input type="number" min={1} max={50} step={1} value={r.percent_off} disabled={ro}
+                  onChange={e => set({ spendRules: (cfg.spendRules || []).map((x, k) => k === idx ? { ...x, percent_off: Math.min(50, Math.max(1, Number(e.target.value) || 0)) } : x) })}
+                  className="text-[12.5px] px-2 py-1.5 rounded-lg border border-line bg-white w-20 font-semibold tabular-nums" />
+                <span className="text-muted">% off the whole order</span>
+                {!ro ? <button type="button" onClick={() => set({ spendRules: (cfg.spendRules || []).filter((_, k) => k !== idx) })} className="text-muted hover:text-rose-600 ml-auto">×</button> : null}
+              </div>
+            ))}
+          </div>
+          {!ro ? (
+            <button type="button" disabled={(cfg.spendRules || []).length >= 4}
+              onClick={() => { const cur = cfg.spendRules || []; const last = cur.slice().sort((a, b) => a.min_subtotal_usd - b.min_subtotal_usd).pop()
+                set({ spendRules: [...cur, { min_subtotal_usd: last ? last.min_subtotal_usd * 2 : 75, percent_off: last ? Math.min(50, last.percent_off + 5) : 5 }] }) }}
+              className="mt-2 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-dashed border-line bg-white text-ink hover:border-brand-300 disabled:opacity-40">+ a threshold</button>
+          ) : null}
+          {!(cfg.spendRules || []).length ? <div className="text-[11.5px] text-muted mt-1">No basket discount — every order is priced by its items alone.</div> : null}
+        </div>
+
         {/* What the guest reads the moment they submit. The total and the lines are always shown. */}
         <div className="pt-2.5 mt-1 border-t border-line">
           <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">The confirmation screen <span className="normal-case font-normal">— after they place the order. See it live in the <a href="/guest-orders/design" className="underline">Design studio</a>.</span></div>

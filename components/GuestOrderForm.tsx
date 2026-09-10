@@ -12,6 +12,10 @@ export type PriceTier = { min_qty: number; unit_price_usd: number }
 export type FormItem = { id?: string; sku: string; name: string; description: string | null; price: number; unit: string | null; category: string; maxQty: number; image: string | null; fewLeft?: number | null
   /** How much is in one — "500 mL". Sits with the pack label under the name. */
   size?: string | null
+  /** On offer: what they pay now, with `price` shown struck through. */
+  salePrice?: number | null
+  /** A short promo word on the card — New, Limited, Last few. */
+  badge?: string | null
   /** Volume breaks on this item — "3+ $2.50 each". Best qualifying break wins, priced server-side. */
   tiers?: PriceTier[] | null }
 
@@ -19,7 +23,12 @@ export type FormItem = { id?: string; sku: string; name: string; description: st
 export function unitPriceFor(c: FormItem, qty: number): { unit: number; tier: PriceTier | null } {
   let hit: PriceTier | null = null
   for (const t of (c.tiers || [])) if (qty >= t.min_qty) hit = t
-  return { unit: hit ? hit.unit_price_usd : c.price, tier: hit }
+  // Mirrors priceForQty on the server: an offer price and a volume break both apply, the guest pays
+  // the lower of the two, and they never stack. The server still decides.
+  const candidates = [hit ? hit.unit_price_usd : c.price]
+  if (c.salePrice !== null && c.salePrice !== undefined && c.salePrice >= 0) candidates.push(c.salePrice)
+  const unit = Math.min(...candidates)
+  return { unit, tier: hit && hit.unit_price_usd <= unit ? hit : null }
 }
 /** The next break a guest has not reached yet — the nudge that turns 2 into 3. */
 export function nextTier(c: FormItem, qty: number): PriceTier | null {
@@ -31,7 +40,9 @@ export type FormData = {
   stay: { guestFirst: string; unit: string; building: string | null; checkIn: string; checkOut: string | null; checkInLabel: string; checkOutLabel: string; inHouse: boolean; departed: boolean }
   copy: { title: string; intro: string; taxPct: number; brand?: string; accent?: string; footer?: string
     /** The confirmation screen, word for word — see GuestOrdersCfg.confirmTitle. */
-    confirmTitle?: string; confirmBody?: string; confirmNext?: string }
+    confirmTitle?: string; confirmBody?: string; confirmNext?: string
+    /** "Spend $75, save 5%" — highest rung reached wins, off the subtotal before tax. */
+    spendRules?: { min_subtotal_usd: number; percent_off: number }[] }
   deadline: { orderBy: string; orderByLabel: string; arrivalDayStillPossible: boolean; nextDelivery: string; hoursBefore: number; leadHours: number; offered?: boolean; taxPct?: number; taxSource?: string; source?: string }
   catalog: FormItem[]
   orders: PastOrder[]
@@ -92,8 +103,15 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
   }), [data, qty])
   const count = lines.reduce((n, l) => n + l.qty, 0)
   const subtotal = lines.reduce((n, l) => n + l.total, 0)
-  const tax = Math.round(subtotal * data.copy.taxPct) / 100
-  const total = subtotal + tax
+  // SPEND AND SAVE. Mirrors spendDiscountFor on the server: highest rung reached wins, comes off the
+  // subtotal, tax is then charged on what they actually pay.
+  const rungs = (data.copy.spendRules || []).slice().sort((a, b) => a.min_subtotal_usd - b.min_subtotal_usd)
+  const hitRung = rungs.filter(r => subtotal >= r.min_subtotal_usd).pop() || null
+  const discount = hitRung ? Math.round(subtotal * hitRung.percent_off) / 100 : 0
+  const nextRung = rungs.filter(r => subtotal < r.min_subtotal_usd)[0] || null
+  const afterDiscount = Math.round((subtotal - discount) * 100) / 100
+  const tax = Math.round(afterDiscount * data.copy.taxPct) / 100
+  const total = afterDiscount + tax
   const bump = (sku: string, d: number, max: number) => setQty(q => { const n = Math.min(Math.max((q[sku] || 0) + d, 0), max); const next = { ...q }; if (n) next[sku] = n; else delete next[sku]; return next })
 
   async function place() {
@@ -222,10 +240,14 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
                   {c.image ? <img src={c.image} alt="" className="w-[84px] h-[84px] rounded-2xl object-contain flex-shrink-0 bg-[#F2EEE7]" /> : editable ? <div className="w-[84px] h-[84px] rounded-2xl bg-neutral-100 border border-dashed border-neutral-300 flex items-center justify-center text-[11px] text-neutral-400 flex-shrink-0">photo</div> : null}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline justify-between gap-3">
-                      <div className="text-[16px] font-semibold leading-tight">{c.name}</div>
-                      {(() => { const { unit, tier } = unitPriceFor(c, Math.max(1, n)); return (
+                      <div className="text-[16px] font-semibold leading-tight flex items-center gap-1.5 flex-wrap">
+                        {c.name}
+                        {c.badge ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white" style={{ background: accent }}>{c.badge}</span> : null}
+                        {c.salePrice !== null && c.salePrice !== undefined && c.salePrice < c.price ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-[#B0342C] text-white">{Math.round((1 - c.salePrice / c.price) * 100)}% off</span> : null}
+                      </div>
+                      {(() => { const { unit } = unitPriceFor(c, Math.max(1, n)); const off = unit < c.price; return (
                         <div className="text-right whitespace-nowrap">
-                          <div className="text-[15px] font-semibold tabular-nums">{money(unit)}{tier ? <span className="text-[12px] font-normal text-neutral-400 line-through ml-1.5">{money(c.price)}</span> : null}</div>
+                          <div className={'text-[15px] font-semibold tabular-nums ' + (off ? 'text-[#B0342C]' : '')}>{money(unit)}{off ? <span className="text-[12px] font-normal text-neutral-400 line-through ml-1.5">{money(c.price)}</span> : null}</div>
                         </div>
                       )})()}
                     </div>
@@ -296,9 +318,17 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
             ))}
             {(() => { const saved = lines.reduce((n, l) => n + (l.saved || 0), 0); return saved > 0
               ? <div className="flex justify-between px-4 py-2 text-[13px] font-semibold text-emerald-700"><span>Multi-buy saving</span><span className="tabular-nums">−{money(saved)}</span></div> : null })()}
+            {hitRung ? <div className="flex justify-between px-4 py-2 text-[13px] font-semibold text-emerald-700"><span>{hitRung.percent_off}% off orders over {money(hitRung.min_subtotal_usd)}</span><span className="tabular-nums">−{money(discount)}</span></div> : null}
             {tax ? <div className="flex justify-between px-4 py-2 text-[13px] text-neutral-600"><span>Sales tax ({data.copy.taxPct}%)</span><span className="tabular-nums">{money(tax)}</span></div> : null}
             <div className="flex justify-between px-4 py-3 text-[16px] font-semibold"><span>Total</span><span className="tabular-nums">{money(total)}</span></div>
           </div>
+          {/* The nudge, only when it is actually within reach — a "spend $60 more" line on a $12
+              basket is not an offer, it is a reminder that you are not the target customer. */}
+          {nextRung && subtotal > 0 && nextRung.min_subtotal_usd - subtotal <= Math.max(25, subtotal) ? (
+            <div className="mt-3 rounded-2xl px-4 py-2.5 text-[13px]" style={{ background: accent + '14', color: accent }}>
+              Add <b>{money(nextRung.min_subtotal_usd - subtotal)}</b> more and take <b>{nextRung.percent_off}% off</b> the whole order.
+            </div>
+          ) : null}
           <div className="mt-4">
             <div className="text-[11px] uppercase tracking-[0.18em] font-semibold text-neutral-500 mb-2">When would you like it?</div>
             <div className="grid gap-2">
