@@ -176,6 +176,11 @@ export const OPEN_PREFIXES = [
   // /api/public/field-board. Open here so a cleaner with no Lighthouse account can open the link
   // their supervisor sent; a signed-in user skips the passcode entirely.
   '/board/',
+  // STOCK COUNT LINK (Jon, 2026-09-10): "should be an inventory link that can be managed. They add
+  // a count of each item and overwrites what we have in stock." One link, any shelf, no login — the
+  // people who can see the shelf are the ones without Lighthouse accounts. The code is the
+  // capability and the optional passcode is checked server-side in /api/public/inventory-count.
+  '/count/',
   // TEAM SCHEDULER LINK (Jon, 2026-09-03): one link per market; picks land in schedule_staged, Submit emails Jon.
   '/scheduler/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
