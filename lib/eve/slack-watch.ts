@@ -31,7 +31,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { modelFor } from '@/lib/ai-models'
-import { slackApi, getDirectory, postToChannel, postThreadReply } from '@/lib/slack'
+import { slackGet, getDirectory, postToChannel, postThreadReply } from '@/lib/slack'
 import { getSlackRules, EVE_CHANNELS } from '@/lib/slack-rules'
 import { nameMatches } from '@/lib/person-name'
 import { saveMemory } from './memory'
@@ -125,12 +125,13 @@ function toMsg(x: any, n: Record<string, string>): Msg | null {
   }
 }
 
+let _readErrors: string[] = []
 async function history(channel: string, oldest: string | null): Promise<Msg[]> {
   const n = await names()
-  const body: any = { channel, limit: MAX_MESSAGES_PER_CHANNEL }
-  if (oldest) body.oldest = oldest
-  const j = await slackApi('conversations.history', body)
-  if (!j.ok) return []
+  const params: Record<string, string> = { channel, limit: String(MAX_MESSAGES_PER_CHANNEL) }
+  if (oldest) params.oldest = oldest
+  const j = await slackGet('conversations.history', params)
+  if (!j.ok) { _readErrors.push(`${channel}: ${j.error}`); return [] }
   const out = (j.messages || []).map((x: any) => toMsg(x, n)).filter(Boolean) as Msg[]
   out.reverse()
   return out
@@ -141,9 +142,9 @@ async function replies(channel: string, threadTs: string, oldest?: string | null
   if (_threadFetches >= MAX_THREAD_FETCHES_PER_RUN) return []
   _threadFetches++
   const n = await names()
-  const body: any = { channel, ts: threadTs, limit: 60 }
-  if (oldest) body.oldest = oldest
-  const j = await slackApi('conversations.replies', body)
+  const params: Record<string, string> = { channel, ts: threadTs, limit: '60' }
+  if (oldest) params.oldest = oldest
+  const j = await slackGet('conversations.replies', params)
   if (!j.ok) return []
   return (j.messages || []).map((x: any) => toMsg(x, n)).filter(Boolean).filter((m: Msg) => m.ts !== threadTs) as Msg[]
 }
@@ -305,6 +306,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   const out: WatchRun = { ok: true, channels: 0, read: 0, candidates: 0, modelCalls: 0, opened: 0, closed: 0, tracked: 0, nudged: 0, learned: 0, asked: 0, digest: false, notes: [] }
   const db = supabaseAdmin()
   _threadFetches = 0
+  _readErrors = []
 
   // The table is the one thing this cannot fake. Say so in words a person can act on.
   const probe = await db.from('eve_slack_items').select('id', { count: 'exact', head: true })
@@ -471,6 +473,10 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     if (r.ok) { out.digest = true; st.lastDigest = today }
     else out.notes.push(`digest: ${r.error}`)
   }
+
+  // A room she could not read is a fact for the run receipt, not a silent zero. "not_in_channel"
+  // means invite the bot; "missing_scope" means reinstall; both are somebody's ten-minute fix.
+  for (const e of _readErrors.slice(0, 12)) out.notes.push(`could not read ${e}`)
 
   await setSetting(WATCH_KEY, { cursors, lastRun: new Date().toISOString(), lastDigest: st.lastDigest }, 'slack-watch')
   return out
