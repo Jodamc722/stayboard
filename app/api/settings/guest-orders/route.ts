@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, sanitizeTiers, soldInOf } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, sanitizeTiers, soldInOf, piecesOf, pieceNameOf } from '@/lib/guest-orders'
 import { getSlackRules } from '@/lib/slack-rules'
 import { KNOWN_BUILDINGS, MARKETS, buildingOf, marketOf } from '@/lib/segments'
 
@@ -77,6 +77,8 @@ export async function PUT(req: NextRequest) {
       ...(c?.pack_cost_usd === undefined ? {} : { pack_cost_usd: c.pack_cost_usd === null || c.pack_cost_usd === '' ? null : Math.max(0, Math.round((Number(c.pack_cost_usd) || 0) * 100) / 100) }),
       ...(c?.tiers === undefined ? {} : { tiers: sanitizeTiers(c.tiers).length ? sanitizeTiers(c.tiers) : null }),
       ...(c?.sold_in === undefined ? {} : { sold_in: soldInOf(c.sold_in) }),
+      ...(c?.pieces === undefined ? {} : { pieces: piecesOf(c.pieces) }),
+      ...(c?.piece_name === undefined ? {} : { piece_name: pieceNameOf(c.piece_name) }),
     }))
     const inserts = rows.filter((r: any) => !r.id).map((r: any) => { const { id, ...rest } = r; return rest })
     const updates = rows.filter((r: any) => r.id)
