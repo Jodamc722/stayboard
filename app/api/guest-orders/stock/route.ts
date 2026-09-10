@@ -47,7 +47,7 @@ export async function GET() {
       price: c.price_usd, cost: c.cost_usd, reorderUrl: c.reorder_url, supplier: c.supplier, packNote: c.pack_note,
       // Pack economics + the price ladder, so Inventory can price an item without a second screen.
       packSize: c.pack_size, packCost: c.pack_cost_usd, tiers: c.tiers || [],
-      sizeValue: c.size_value, sizeUnit: c.size_unit,
+      sizeValue: c.size_value, sizeUnit: c.size_unit, imageOriginal: (c as any).image_original || null,
     }
   })
   const alerts = items.filter(i => i.tracked).flatMap(i => i.per.filter(p => p.state === 'out' || p.state === 'low').map(p => ({ item: i.name, scope: p.label, state: p.state, available: p.available })))
@@ -90,6 +90,7 @@ export async function PUT(req: NextRequest) {
     if (f.supplier !== undefined) patch.supplier = txt(f.supplier, 120)
     if (f.packNote !== undefined) patch.pack_note = txt(f.packNote, 80)
     if (f.imageUrl !== undefined) patch.image_url = txt(f.imageUrl, 600)
+    if (f.imageOriginal !== undefined) patch.image_original = txt(f.imageOriginal, 600)
     if (f.active !== undefined) patch.active = f.active === true
     if (f.trackStock !== undefined) patch.track_stock = f.trackStock === true
     if (f.maxQty !== undefined) patch.max_qty = Math.min(99, Math.max(1, Math.round(Number(f.maxQty) || 10)))
