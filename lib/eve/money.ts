@@ -208,6 +208,43 @@ export const MONEY_TOOLS: EveTool[] = [
       }
     },
   },
+
+  // ---- Ralphbot -------------------------------------------------------------------------------
+  // The Revenue App owns every dollar; Lighthouse owns every hour, clean, task and person. So when
+  // a money question can only be settled on his side of that line, the honest move is to ask him
+  // rather than to infer a number and present it as ours.
+  {
+    name: 'ask_ralph',
+    money: true,
+    description: 'DRAFT a question for Ralphbot, the boss\'s revenue bot on Telegram. This does NOT send anything — it puts the question in front of Jon for approval, and it only reaches Ralphbot if he says yes. Use it when a money question can only be settled by the Revenue App: a month\'s revenue when ours and theirs disagree, whether a month is final, what sits behind an expense line, what a projection assumes. Params: goal (one of revenue_variance, month_close, expense_category, projection_basis), question (what to ask, in full), why (what you would do differently depending on the answer — required; a question that changes nothing is not sent). Tell the person you have drafted it and that it is waiting on their approval; never imply you already asked him.',
+    input_schema: obj({ goal: S.str, question: S.str, why: S.str }, ['goal', 'question', 'why']),
+    run: async (input, ctx) => {
+      const { draftQuestion, ralphReadiness } = await import('./ralph')
+      const state = await ralphReadiness()
+      const res = await draftQuestion({
+        goal: String(input?.goal || ''), question: String(input?.question || ''),
+        why: String(input?.why || ''), by: ctx.email || 'eve',
+      })
+      if (!res.ok) return { drafted: false, error: res.error }
+      return {
+        drafted: true, id: res.id,
+        waiting_on: 'Jon — it goes out only if he approves it in Telegram.',
+        channel_ready: state.ready,
+        channel_blockers: state.ready ? undefined : state.blockers,
+      }
+    },
+  },
+  {
+    name: 'ralph_answers',
+    money: true,
+    description: 'What Ralphbot has actually told us, most recent first — the question we asked, his answer, and when. Read this before drafting a new question so you do not ask him something he has already answered, and quote him rather than paraphrasing when his number settles something.',
+    input_schema: obj({ limit: S.num }),
+    run: async (input) => {
+      const { recentAnswers } = await import('./ralph')
+      const rows = await recentAnswers(clampLimit(input?.limit, 10, 40))
+      return rows.length ? { answers: rows } : { answers: [], note: 'He has not answered anything yet — either nothing has been approved to send, or the channel is not switched on.' }
+    },
+  },
 ]
 
 export const MONEY_DOMAIN: EveDomain = {
