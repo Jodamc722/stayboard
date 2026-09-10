@@ -89,7 +89,7 @@ export type RunEveInput = {
   /** Domains to pre-open so she does not spend a turn on it (the /eve page does this). */
   domains?: string[]
   /** Where the question came from. Logged, and it slightly changes how she writes. */
-  source?: 'web' | 'telegram' | 'api'
+  source?: 'web' | 'telegram' | 'slack' | 'api'
   /** Extra situational line for the system prompt (e.g. "you are in a Telegram group"). */
   surfaceNote?: string
   maxTurns?: number
@@ -105,6 +105,19 @@ export type RunEveErr = { ok: false; status: number; error: string }
 export type RunEveResult = RunEveOk | RunEveErr
 
 /** How she writes in a chat app vs. in the app's own workspace. Content and permissions are identical. */
+// SLACK IS A SHARED ROOM, AND THAT IS THE WHOLE CONSTRAINT (Jon, 2026-09-10: "her responses need to
+// be slack focused, not super long to not clog up the page"). A long answer in Telegram costs one
+// person a scroll. The same answer in #vr-broward costs eleven people a scroll, buries what somebody
+// posted before it, and teaches the room to skim past her. So brevity here is not a style preference,
+// it is the difference between a colleague and a bot people mute.
+const SLACK_NOTE = `WHERE YOU ARE: a Slack channel, in front of the whole team. You are answering in a THREAD, so the channel only shows your first line — make that line the answer, not a preamble.
+
+Length is the hard part: aim for one to three sentences, and treat six as the ceiling. Give the call and the one fact it rests on. If the full picture needs more, say the call, then offer it — "want the breakdown?" — rather than posting it unasked.
+
+No headers, no tables, no bold-everything. A short bullet list only when you are genuinely listing units or people, one line each. Name the unit, the person and the time; never say "several units" when you can say which.
+
+You are in a room with the people you are talking about. Stay honest about the numbers and never single somebody out by name for something that went wrong — say what needs doing, not who failed.`
+
 const TELEGRAM_NOTE = `WHERE YOU ARE: Telegram, on a phone. Same you, tighter delivery — the person is probably standing somewhere, not sitting at a desk. Answer in a few short paragraphs. No headers, no tables, no markdown links; a plain bullet list only if you are listing more than three things. If a full answer needs a screen, give the call and the one number it rests on, then offer the detail.`
 
 export async function runEve(input: RunEveInput): Promise<RunEveResult> {
@@ -156,7 +169,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const preOpen = Array.isArray(input.domains) ? input.domains : []
   for (const d of preOpen) { const k = lc(d); if (DOMAIN_KEYS.indexOf(k) >= 0 && open.indexOf(k) < 0) open.push(k) }
 
-  const surface = [source === 'telegram' ? TELEGRAM_NOTE : '', input.surfaceNote || ''].filter(Boolean).join('\n')
+  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', input.surfaceNote || ''].filter(Boolean).join('\n')
   const voicePlus = [voice, surface].filter(Boolean).join('\n\n')
 
   // Token accounting per question, so the improvement loop can see what an answer COST as well as
@@ -295,7 +308,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
         const kind = /\b(always|never)\b/i.test(lastUser) ? 'rule' : 'preference'
         saveMemory({
           text: lastUser.trim(), kind, scope: 'portfolio', weight: 6, source: 'eve',
-          why: source === 'telegram' ? 'said on Telegram — auto-captured' : 'said in chat — auto-captured',
+          why: source === 'telegram' ? 'said on Telegram — auto-captured' : source === 'slack' ? 'said in Slack — auto-captured' : 'said in chat — auto-captured',
           evidence: chatId ? { chatId } : null, created_by: ctx.email || null,
         }).catch(() => {})
       }
