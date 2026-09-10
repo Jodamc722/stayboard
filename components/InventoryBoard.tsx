@@ -14,7 +14,8 @@
 // on automation that charges cards; locking the menu behind the same gate meant the people who
 // actually run the shelf could not fix a typo.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check, Plus, Trash2, ChevronDown, ChevronRight, X, Pencil, Tag, ClipboardList } from 'lucide-react'
+import { PhotoEditor } from '@/components/PhotoEditor'
+import { Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check, Plus, Trash2, ChevronDown, ChevronRight, X, Pencil, Tag, ClipboardList, Wand2 } from 'lucide-react'
 
 type Per = { scope: string; label: string; onHand: number; reserved: number; lowAt: number; available: number; state: 'unset' | 'out' | 'low' | 'ok' | 'untracked'; updatedAt: string | null; updatedBy: string | null }
 type Item = {
@@ -24,6 +25,7 @@ type Item = {
   price: number; cost: number | null; reorderUrl: string | null; supplier: string | null; packNote: string | null
   /** Pack economics and the price ladder — see PricePanel below. */
   packSize: number | null; packCost: number | null; tiers: Tier[]
+  imageOriginal: string | null
   /** How much is in ONE — 500 mL, 12 oz. Not the pack size. */
   sizeValue: number | null; sizeUnit: string | null
 }
@@ -66,6 +68,7 @@ export function InventoryBoard({ canEdit, view: fixedView }: { canEdit: boolean;
   const [coverOpen, setCoverOpen] = useState(false)
   const [unitQ, setUnitQ] = useState('')
   const [hubMenu, setHubMenu] = useState(false)
+  const [editPhoto, setEditPhoto] = useState<Item | null>(null)
   // TWO JOBS, TWO VIEWS. Counting is per shelf and happens in a storeroom; pricing is per item and
   // happens at a desk. Mixing them is what made one dense board that did neither well.
   const [ownView, setOwnView] = useState<'stock' | 'pricing'>('stock')
@@ -155,7 +158,7 @@ export function InventoryBoard({ canEdit, view: fixedView }: { canEdit: boolean;
       if (!up?.ok || !up.url) { setMsg({ tone: 'bad', text: up?.error || 'Could not upload that photo' }); return }
       // Attach through THIS endpoint, not the settings PUT — that one is owner-only, so anyone
       // else uploading a photo got a silent 403 after the file had already been stored.
-      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [], items: [{ id: item.id, name: item.name, imageUrl: up.url }] }) }).then(r => r.json())
+      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [], items: [{ id: item.id, name: item.name, imageUrl: up.url, ...(up.originalUrl ? { imageOriginal: up.originalUrl } : {}) }] }) }).then(r => r.json())
       if (j?.ok) { setMsg({ tone: 'ok', text: 'Photo added to ' + item.name }); await load() }
       else setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || 'Photo uploaded but not attached' })
     } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
@@ -198,7 +201,7 @@ export function InventoryBoard({ canEdit, view: fixedView }: { canEdit: boolean;
 
       {view === 'stock' ? <CountLinkCard /> : null}
 
-      {view === 'pricing' ? <PricingTable items={data.items} val={val} setItem={setItem} canEdit={canEdit} /> : null}
+      {view === 'pricing' ? <PricingTable items={data.items} val={val} setItem={setItem} canEdit={canEdit} onEditPhoto={canEdit ? setEditPhoto : undefined} /> : null}
 
       <div className={'flex flex-wrap items-center gap-2 ' + (view === 'pricing' ? 'hidden' : '')}>
         <div className="flex flex-wrap gap-1.5">
@@ -336,15 +339,20 @@ export function InventoryBoard({ canEdit, view: fixedView }: { canEdit: boolean;
               return (
                 <div key={i.id} className={'px-4 py-3 ' + (state === 'out' ? 'bg-rose-50/40' : state === 'low' ? 'bg-amber-50/40' : '')}>
                   <div className="flex flex-wrap items-start gap-3">
-                    <div className="relative flex-shrink-0">
+                    <div className="relative flex-shrink-0 group">
+                      {/* object-CONTAIN, not cover. A tall bottle in a square crop loses its cap and
+                          its base — which is exactly what "looks so bad from guest side" was. */}
                       {i.image
-                        ? <img src={i.image} alt="" className="w-14 h-14 rounded-xl object-cover border border-line" />
+                        ? <img src={i.image} alt="" className="w-14 h-14 rounded-xl object-contain bg-app border border-line" />
                         : <div className="w-14 h-14 rounded-xl border border-dashed border-line bg-app flex items-center justify-center text-muted"><ImagePlus size={16} /></div>}
                       {canEdit ? (
-                        <label className="absolute inset-0 cursor-pointer rounded-xl hover:bg-ink/10 flex items-center justify-center" title={i.image ? 'Replace photo' : 'Add a photo for reference'}>
+                        <label className="absolute inset-0 cursor-pointer rounded-xl hover:bg-ink/10 flex items-center justify-center" title={i.image ? 'Replace photo' : 'Add a photo'}>
                           <input type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(i, f); e.currentTarget.value = '' }} />
                           {busy === 'photo:' + i.id ? <Loader2 size={14} className="animate-spin text-ink" /> : null}
                         </label>
+                      ) : null}
+                      {canEdit && i.image ? (
+                        <button onClick={() => setEditPhoto(i)} title="Edit this photo" className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-ink text-white flex items-center justify-center shadow"><Wand2 size={11} /></button>
                       ) : null}
                     </div>
 
@@ -472,6 +480,12 @@ export function InventoryBoard({ canEdit, view: fixedView }: { canEdit: boolean;
           </div>
         )}
       </div>
+
+      {editPhoto && editPhoto.image ? (
+        <PhotoEditor itemId={editPhoto.id} name={editPhoto.name} url={editPhoto.image}
+          onDone={u => setData(d => d ? { ...d, items: d.items.map(x => x.id === editPhoto.id ? { ...x, image: u } : x) } : d)}
+          onClose={() => setEditPhoto(null)} />
+      ) : null}
 
       {canEdit && dirty ? (
         <div className="sticky bottom-3 flex justify-end">
@@ -685,7 +699,7 @@ function PriceLadder({ item, val, setItem, canEdit }: { item: Item; val: (i: Ite
 //
 // Pricing is a fact about the ITEM, not about a shelf, so this lists the whole menu and ignores the
 // shelf picker above it — otherwise the same price would appear to have two homes.
-function PricingTable({ items, val, setItem, canEdit }: { items: Item[]; val: (i: Item, k: keyof Item) => any; setItem: (id: string, patch: Partial<Item>) => void; canEdit: boolean }) {
+function PricingTable({ items, val, setItem, canEdit, onEditPhoto }: { items: Item[]; val: (i: Item, k: keyof Item) => any; setItem: (id: string, patch: Partial<Item>) => void; canEdit: boolean; onEditPhoto?: (i: Item) => void }) {
   const [openBulk, setOpenBulk] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const rows = items
@@ -736,7 +750,9 @@ function PricingTable({ items, val, setItem, canEdit }: { items: Item[]; val: (i
                 <tr key={i.id} className={'border-b border-line/60 align-middle ' + (isOpen ? 'bg-brand-50/30' : '')}>
                   <td className="px-2 py-1.5">
                     <div className="flex items-center gap-2 min-w-[190px]">
-                      {i.image ? <img src={i.image} alt="" className="w-8 h-8 rounded-lg object-cover border border-line flex-shrink-0" /> : <div className="w-8 h-8 rounded-lg border border-dashed border-line bg-app flex-shrink-0" />}
+                      {i.image
+                        ? <button type="button" onClick={() => onEditPhoto && onEditPhoto(i)} title="Edit this photo" className="flex-shrink-0"><img src={i.image} alt="" className="w-8 h-8 rounded-lg object-contain bg-app border border-line hover:border-brand-400" /></button>
+                        : <div className="w-8 h-8 rounded-lg border border-dashed border-line bg-app flex-shrink-0" />}
                       <div className="min-w-0">
                         <div className="text-[13px] font-semibold text-ink truncate">{String(val(i, 'name') ?? i.name)}</div>
                         <div className="text-[11px] text-muted truncate">{String(val(i, 'category') ?? '') || 'Extras'}</div>

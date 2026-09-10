@@ -219,7 +219,7 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
               <div key={c.sku} onClick={editable ? () => edit!.onItem(c) : undefined} className={'relative rounded-2xl bg-white p-4 transition-shadow ' + (sel ? 'ring-2 ring-neutral-900' : n ? 'shadow-[0_12px_30px_-16px_rgba(15,76,58,.45)] ring-1 ring-black/10' : 'shadow-[0_8px_24px_-18px_rgba(27,26,23,.35)] border border-neutral-200/60') + (editable ? ' cursor-pointer hover:ring-2 hover:ring-neutral-400' : '')}>
                 {editable ? <span className="absolute -top-2 right-3 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-neutral-900 text-white">Edit</span> : null}
                 <div className="flex gap-3">
-                  {c.image ? <img src={c.image} alt="" className="w-[84px] h-[84px] rounded-2xl object-cover flex-shrink-0 bg-neutral-100" /> : editable ? <div className="w-[84px] h-[84px] rounded-2xl bg-neutral-100 border border-dashed border-neutral-300 flex items-center justify-center text-[11px] text-neutral-400 flex-shrink-0">photo</div> : null}
+                  {c.image ? <img src={c.image} alt="" className="w-[84px] h-[84px] rounded-2xl object-contain flex-shrink-0 bg-[#F2EEE7]" /> : editable ? <div className="w-[84px] h-[84px] rounded-2xl bg-neutral-100 border border-dashed border-neutral-300 flex items-center justify-center text-[11px] text-neutral-400 flex-shrink-0">photo</div> : null}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline justify-between gap-3">
                       <div className="text-[16px] font-semibold leading-tight">{c.name}</div>

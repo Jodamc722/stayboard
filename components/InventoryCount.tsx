@@ -158,7 +158,7 @@ export function InventoryCount({ code }: { code: string }) {
             return (
               <div key={i.id} className={'rounded-2xl bg-white px-3.5 py-3 border ' + (n === null ? 'border-neutral-200/70' : 'border-neutral-900/20 shadow-[0_10px_26px_-18px_rgba(15,76,58,.5)]')}>
                 <div className="flex items-center gap-3">
-                  {i.image ? <img src={i.image} alt="" className="w-12 h-12 rounded-xl object-cover flex-shrink-0 bg-neutral-100" /> : <div className="w-12 h-12 rounded-xl bg-neutral-100 flex-shrink-0" />}
+                  {i.image ? <img src={i.image} alt="" className="w-12 h-12 rounded-xl object-contain flex-shrink-0 bg-neutral-100" /> : <div className="w-12 h-12 rounded-xl bg-neutral-100 flex-shrink-0" />}
                   <div className="min-w-0 flex-1">
                     <div className="text-[16px] font-semibold leading-tight truncate">{i.name}</div>
                     <div className="text-[12px] text-neutral-500 mt-0.5 truncate">
