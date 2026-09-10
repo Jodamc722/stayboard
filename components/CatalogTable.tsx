@@ -100,9 +100,9 @@ export function CatalogTable({ items, val, setItem, canEdit, buildings, markets,
             <thead>
               <tr className="border-b border-line bg-app/60">
                 <th className={head + ' px-3 py-2 text-left'}>Item</th>
-                <th className={head + ' px-2 py-2 text-left w-[96px]'}>Costs us</th>
-                <th className={head + ' px-2 py-2 text-left w-[96px]'}>Guest pays</th>
-                <th className={head + ' px-2 py-2 text-left w-[104px]'}>We keep</th>
+                <th className={head + ' px-2 py-2 text-left w-[96px]'} title="Per item — if one item is 5 pods, this is what 5 pods cost us">Costs us <span className="normal-case tracking-normal font-normal">/ item</span></th>
+                <th className={head + ' px-2 py-2 text-left w-[96px]'} title="Per item — the guest pays this for one item, whatever it holds">Guest pays <span className="normal-case tracking-normal font-normal">/ item</span></th>
+                <th className={head + ' px-2 py-2 text-left w-[104px]'}>We keep <span className="normal-case tracking-normal font-normal">/ item</span></th>
                 <th className={head + ' px-2 py-2 text-left'}>Buy more, pay less</th>
                 <th className={head + ' px-2 py-2 text-left w-[150px]'}>Sold at</th>
                 <th className="w-[44px]"></th>
@@ -286,14 +286,19 @@ function ItemDetail({ i, val, setItem, canEdit, price, cost, tiers, buildings, m
         </div>
       </Section>
 
-      <Section title="Money" hint="cost, price, and a discount for buying more">
+      <Section title="Money" hint={pieces && pieceName ? 'per item — one item is ' + pieces + ' ' + pieceName + ', so these are per ' + pieces + ' ' + pieceName : 'per item'}>
         <div className="flex flex-wrap items-end gap-3">
-          <label className={lab}>Costs us, each<input type="number" min={0} step="0.01" value={packed ? (cost ?? '') : ((val(i, 'cost') as number | null) ?? '')} placeholder="—" disabled={!canEdit || packed} onChange={e => setItem(i.id, { cost: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={box + ' w-28 mt-0.5'} /></label>
+          <label className={lab}>Costs us, per item<input type="number" min={0} step="0.01" value={packed ? (cost ?? '') : ((val(i, 'cost') as number | null) ?? '')} placeholder="—" disabled={!canEdit || packed} onChange={e => setItem(i.id, { cost: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={box + ' w-28 mt-0.5'} /></label>
           <span className="text-muted pb-2">or by the case:</span>
-          <label className={lab}>Units per case<input type="number" min={0} value={packSize ?? ''} placeholder="24" disabled={!canEdit} onChange={e => setItem(i.id, { packSize: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) } as any)} className={box + ' w-20 mt-0.5'} /></label>
+          <label className={lab}>Items per case<input type="number" min={0} value={packSize ?? ''} placeholder="24" disabled={!canEdit} onChange={e => setItem(i.id, { packSize: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) } as any)} className={box + ' w-20 mt-0.5'} /></label>
           <label className={lab}>Case costs<input type="number" min={0} step="0.01" value={packCost ?? ''} placeholder="11.88" disabled={!canEdit} onChange={e => setItem(i.id, { packCost: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={box + ' w-24 mt-0.5'} /></label>
-          {packed ? <span className="text-[11.5px] text-muted pb-2">= {money(cost || 0)} each</span> : null}
+          {packed ? <span className="text-[11.5px] text-muted pb-2">= {money(cost || 0)} per item</span> : null}
         </div>
+        {pieces && pieceName ? (
+          <div className="text-[11.5px] text-muted mt-2">
+            Per {pieceName.replace(/s$/, '')}: {cost !== null ? <>costs us <b className="text-ink">{money(cost / pieces)}</b></> : 'cost not set'}{price > 0 ? <> · guest pays <b className="text-ink">{money(price / pieces)}</b></> : null}. The guest only ever buys whole items of {pieces}.
+          </div>
+        ) : null}
         <div className="mt-3 pt-2.5 border-t border-line/70">
           <BulkEditor item={i} price={price} cost={cost} tiers={tiers} setItem={setItem} canEdit={canEdit} maxQty={maxQty} soldIn={soldIn} packSize={Number(packSize) || 0} />
         </div>
