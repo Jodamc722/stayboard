@@ -94,6 +94,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
   const done = t.reviewState === 'gm_approved'
   const inGmQueue = t.reviewState === 'ops_approved'
   const [amt, setAmt] = useState<string>(t.overrideAmount != null ? String(t.overrideAmount) : '')
+  const [editing, setEditing] = useState(false)
   const [note, setNote] = useState<string>(t.note || '')
   useEffect(() => { setAmt(t.overrideAmount != null ? String(t.overrideAmount) : ''); setNote(t.note || '') }, [t.overrideAmount, t.note])
 
@@ -121,7 +122,18 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
         </button>
 
         <div className="text-right">
-          <span className={'block text-[16px] font-bold tabular-nums leading-tight ' + (t.excluded ? 'text-muted line-through' : over ? 'text-amber-800' : 'text-ink')}>{money(t.billedAmount)}</span>
+          {/* The price is editable right here — click it, type, Enter or click away to save. Esc cancels. */}
+          {editing ? (
+            <input autoFocus value={amt} onChange={e => setAmt(e.target.value)} inputMode="decimal" placeholder={money(t.billedAmount)}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setAmt(t.overrideAmount != null ? String(t.overrideAmount) : ''); setEditing(false) } }}
+              onBlur={() => { setEditing(false); const v = amt.trim() === '' ? null : Number(amt.replace(/[$,]/g, '')); if (v !== (t.overrideAmount ?? null) && (v === null || Number.isFinite(v))) onEdit(t.id, { override_amount: v }) }}
+              className="h-8 w-28 rounded-lg border border-brand-400 ring-2 ring-brand-100 bg-white px-2 text-right text-[15px] font-bold tabular-nums text-ink outline-none" />
+          ) : (
+            <button onClick={() => { if (!done) setEditing(true) }} disabled={done} title={done ? 'GM-approved — send back to change' : 'Click to set the price'}
+              className={'block ml-auto text-[16px] font-bold tabular-nums leading-tight rounded px-1 -mx-1 ' + (done ? '' : 'hover:bg-brand-50 hover:ring-1 hover:ring-brand-200 ') + (t.excluded ? 'text-muted line-through' : over ? 'text-amber-800' : 'text-ink')}>
+              {money(t.billedAmount)}
+            </button>
+          )}
           <span className="block text-[10.5px] text-muted">
             {t.overrideAmount != null ? 'set by hand' : t.rateType === 'hourly' ? 'hourly' : t.laborAmount ? 'rate' : t.items.length ? 'line items' : 'no charge'}
           </span>
@@ -168,7 +180,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
             <label className="flex items-center gap-2 text-[12px]">
               <span className="text-muted w-24 shrink-0">Bill instead</span>
               <input value={amt} onChange={e => setAmt(e.target.value)} inputMode="decimal" placeholder={money(t.billedAmount)}
-                onBlur={() => { const v = amt.trim() === '' ? null : Number(amt); if (v === null || Number.isFinite(v)) onEdit(t.id, { override_amount: v }) }}
+                onBlur={() => { const v = amt.trim() === '' ? null : Number(amt.replace(/[$,]/g, '')); if (v !== (t.overrideAmount ?? null) && (v === null || Number.isFinite(v))) onEdit(t.id, { override_amount: v }) }}
                 className="h-8 w-28 rounded-lg border border-line bg-white px-2 tabular-nums text-ink" />
               {t.overrideAmount != null ? <button onClick={() => { setAmt(''); onEdit(t.id, { override_amount: null }) }} className="text-[11px] text-muted hover:text-ink">clear</button> : null}
             </label>
@@ -415,7 +427,7 @@ export function BillingReview() {
 
       <p className="text-[11px] text-muted">
         Approving never reloads the page and never reorders the owners — a row you have signed stays where it is, marked, until you switch queue or refresh.
-        Amber edge: over $150. GM approval is what goes on the statement; only an admin can give it.
+        Click a price to change it in place (Enter saves, Esc cancels). Amber edge: over $150. GM approval is what goes on the statement; only an admin can give it.
       </p>
     </div>
   )
