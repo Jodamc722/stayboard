@@ -190,23 +190,42 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       for (const u of (dir.users || [])) names[String((u as any).id)] = String((u as any).name || '')
     } catch { /* ids will just read as ids */ }
 
-    const rows: string[] = []
-    for (const m of (j.messages || [])) {
-      if (!m || m.type !== 'message' || m.subtype) continue
-      if (String(m.ts) === String(ev.ts)) continue          // her question is passed separately
+    const line = (m: any): string | null => {
+      if (!m || m.type !== 'message' || m.subtype) return null
+      if (String(m.ts) === String(ev.ts)) return null       // her question is passed separately
       const who = String(m.user) === me ? 'Eve'
         : names[String(m.user)] || String(m.username || m.bot_id || 'someone')
       const text = String(m.text || '')
         .replace(/<@([A-Z0-9]+)(\|[^>]*)?>/g, (_x: string, id: string) => '@' + (names[id] || id))
         .replace(/<(https?:\/\/[^|>]+)\|([^>]*)>/g, (_x: string, _u: string, l: string) => l)
         .trim()
-      if (!text) continue
-      rows.push(`${who}: ${text.slice(0, 300)}`)
+      return text ? `${who}: ${text.slice(0, 300)}` : null
     }
+    const rows = (j.messages || []).map(line).filter(Boolean) as string[]
     if (!inThread) rows.reverse()                            // history comes newest-first
-    if (!rows.length) return ''
+
+    // HER EARLIER EXCHANGES ARE HIDDEN IN THREADS. Slack keeps replies out of channel history, so
+    // when someone asks a follow-up as a NEW top-level message ("and the other unit?"), the ask she
+    // answered ten minutes ago and her answer to it are both invisible in the history above. Jon:
+    // "Eve needs to be able to read the previous ask on slack if it asks a follow up." So at the top
+    // level she also opens the last couple of threads in this room that she was tagged in.
+    const earlier: string[] = []
+    if (!inThread && me) {
+      const mine = (j.messages || [])
+        .filter((m: any) => m && m.type === 'message' && !m.subtype && String(m.ts) !== String(ev.ts)
+          && Number(m.reply_count) > 0 && String(m.text || '').includes(`<@${me}>`))
+        .slice(0, 2)
+      for (const root of mine) {
+        const t = await slackApi('conversations.replies', { channel, ts: String(root.ts), limit: 20 })
+        if (!t.ok) continue
+        const lines = (t.messages || []).map(line).filter(Boolean) as string[]
+        if (lines.length) earlier.push(lines.slice(0, 12).join('\n'))
+      }
+    }
+    if (!rows.length && !earlier.length) return ''
     const body = rows.slice(-25).join('\n').slice(-6000)
     return [
+      earlier.length ? 'EARLIER EXCHANGES WITH YOU IN THIS ROOM (most recent last — a follow-up probably refers to one of these):\n' + earlier.reverse().join('\n---\n') + '\n' : '',
       inThread ? 'THE THREAD SO FAR (oldest first):' : 'THE LAST FEW MESSAGES IN THIS CHANNEL (oldest first):',
       body,
       '',
@@ -284,6 +303,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       source: 'slack',
       denyTools: grant.denyTools,
       forceNoMoney: !grant.canMoney,
+      memoryWeightCap: grant.memoryWeightCap,
       surfaceNote: [
         `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.`,
         history,
