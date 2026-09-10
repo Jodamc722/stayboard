@@ -74,6 +74,11 @@ export async function GET() {
       fix: 'Connect Slack from the Integrations page, or set SLACK_BOT_TOKEN in Vercel.',
     },
     {
+      key: 'slack-signing', label: 'Slack signing secret', ok: has('SLACK_SIGNING_SECRET'), area: '@Eve in Slack, /doorcode',
+      breaks: 'Nothing Slack SENDS us can be verified, so it is all refused. @Eve never answers, /doorcode never runs, and Slack\'s own Request URL check fails with "your URL didn\'t respond with the value of the challenge parameter" — which reads like a broken endpoint rather than a missing secret. Posting TO Slack is unaffected, which is why this can sit unnoticed.',
+      fix: 'Slack app → Basic Information → App Credentials → Signing Secret. Add SLACK_SIGNING_SECRET in Vercel and redeploy.',
+    },
+    {
       key: 'ai', label: 'AI (Eve, replies, listing copy)', ok: has('ANTHROPIC_API_KEY'), area: 'Eve, Review voice, Listing AI',
       breaks: 'Eve, review replies, listing copy and every other AI feature return an error.',
       fix: 'Add ANTHROPIC_API_KEY in Vercel and redeploy.',
