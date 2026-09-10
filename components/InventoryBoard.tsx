@@ -14,7 +14,7 @@
 // on automation that charges cards; locking the menu behind the same gate meant the people who
 // actually run the shelf could not fix a typo.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check, Plus, Trash2, ChevronDown, ChevronRight, X, Pencil, Tag } from 'lucide-react'
+import { Package, Loader2, Save, ExternalLink, ImagePlus, AlertTriangle, Search, ShoppingCart, Check, Plus, Trash2, ChevronDown, ChevronRight, X, Pencil, Tag, ClipboardList } from 'lucide-react'
 
 type Per = { scope: string; label: string; onHand: number; reserved: number; lowAt: number; available: number; state: 'unset' | 'out' | 'low' | 'ok' | 'untracked'; updatedAt: string | null; updatedBy: string | null }
 type Item = {
@@ -61,6 +61,9 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
   const [coverOpen, setCoverOpen] = useState(false)
   const [unitQ, setUnitQ] = useState('')
   const [hubMenu, setHubMenu] = useState(false)
+  // TWO JOBS, TWO VIEWS. Counting is per shelf and happens in a storeroom; pricing is per item and
+  // happens at a desk. Mixing them is what made one dense board that did neither well.
+  const [view, setView] = useState<'stock' | 'pricing'>('stock')
 
   const load = useCallback(async () => {
     try {
@@ -176,7 +179,20 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
     <div className="space-y-4">
       {msg ? <div className={'rounded-xl px-3 py-2 text-[12.5px] ' + (msg.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200')}>{msg.text}</div> : null}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-1.5">
+        {(['stock', 'pricing'] as const).map(v => (
+          <button key={v} onClick={() => setView(v)} className={'px-3.5 py-1.5 rounded-lg text-[13px] font-semibold border ' + (view === v ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:border-brand-300')}>
+            {v === 'stock' ? 'Stock' : 'Pricing'}
+          </button>
+        ))}
+        <span className="text-[11.5px] text-muted ml-1">{view === 'stock' ? 'what is on each shelf' : 'what everything costs and sells for'}</span>
+      </div>
+
+      {view === 'stock' ? <CountLinkCard /> : null}
+
+      {view === 'pricing' ? <PricingTable items={data.items} val={val} setItem={setItem} canEdit={canEdit} /> : null}
+
+      <div className={'flex flex-wrap items-center gap-2 ' + (view === 'pricing' ? 'hidden' : '')}>
         <div className="flex flex-wrap gap-1.5">
           {data.scopes.map(s => (
             <button key={s.id} onClick={() => setScope(s.id)} className={'px-3 py-1.5 rounded-lg text-[12.5px] font-semibold border ' + (scope === s.id ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:border-brand-300')}>
@@ -201,7 +217,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
         </div>
       </div>
 
-      {scope === 'global' ? (
+      {view === 'pricing' ? null : scope === 'global' ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex gap-2">
           <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
           <div>This is the fallback shelf for any property not in a hub. If it reads zero, those properties show an <b>empty order form</b> — put the property in a hub, or count it here.</div>
@@ -263,7 +279,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
         </div>
       ) : null}
 
-      {adds.map((a, ai) => (
+      {(view === 'pricing' ? [] : adds).map((a, ai) => (
         <div key={a.key} className="rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/30 p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="text-[12.5px] font-semibold text-ink">New item on {here ? here.label : 'this shelf'}</div>
@@ -284,7 +300,7 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
       ))}
       <datalist id="inv-cats">{cats.map(c => <option key={c} value={c} />)}</datalist>
 
-      <div className="rounded-2xl border border-line bg-white overflow-hidden">
+      <div className={'rounded-2xl border border-line bg-white overflow-hidden ' + (view === 'pricing' ? 'hidden' : '')}>
         <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center justify-between flex-wrap gap-2">
           <div className="text-[12.5px] font-semibold text-ink flex items-center gap-1.5"><Package size={14} /> {here ? here.label : 'Shelf'} · {rows.length} item{rows.length === 1 ? '' : 's'}</div>
           <div className="text-[11.5px] text-muted">Use <b>Edit</b> on a row for its name, description, photo and removal.</div>
@@ -645,6 +661,235 @@ function PriceLadder({ item, val, setItem, canEdit }: { item: Item; val: (i: Ite
             </div>
           </div>
         ) : null}
+      </div>
+    </div>
+  )
+}
+
+// ── PRICING, AS A TABLE ───────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-10: "the way we set up the pricing looks terrible and it's time consuming." And:
+// "make it simple, easy and not complicated."
+//
+// The panel it replaces asked you to open one item, read six labelled boxes, close it, open the
+// next. With fifteen snacks to price that is fifteen round trips. This is the same numbers as one
+// row per item: cost, price, margin, bulk — type, Tab, type, Tab. Nothing expands unless you ask
+// for the bulk ladder, which is the only part that is not a single number.
+//
+// Pricing is a fact about the ITEM, not about a shelf, so this lists the whole menu and ignores the
+// shelf picker above it — otherwise the same price would appear to have two homes.
+function PricingTable({ items, val, setItem, canEdit }: { items: Item[]; val: (i: Item, k: keyof Item) => any; setItem: (id: string, patch: Partial<Item>) => void; canEdit: boolean }) {
+  const [openBulk, setOpenBulk] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const rows = items
+    .filter(i => !q || (i.name + ' ' + (i.category || '')).toLowerCase().includes(q.toLowerCase()))
+    .slice().sort((a, b) => (a.category || 'zz').localeCompare(b.category || 'zz') || a.name.localeCompare(b.name))
+
+  const costOf = (i: Item) => {
+    const ps = Number(val(i, 'packSize') || 0), pc = Number(val(i, 'packCost') || 0)
+    if (ps > 0 && pc > 0) return Math.round(pc / ps * 100) / 100
+    const c = val(i, 'cost')
+    return c === null || c === undefined || c === '' ? null : Number(c)
+  }
+  const th = 'text-[10.5px] uppercase tracking-wide text-muted font-semibold px-2 py-1.5 text-left'
+  const cell = 'text-[12.5px] px-1.5 py-1 rounded-lg border border-line bg-white text-ink focus:outline-none focus:border-brand-300 tabular-nums'
+
+  const unpriced = rows.filter(i => !(Number(val(i, 'price')) > 0)).length
+
+  return (
+    <div className="rounded-2xl border border-line bg-white overflow-hidden">
+      <div className="px-4 py-2.5 bg-app/60 border-b border-line flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[12.5px] font-semibold text-ink">Pricing · {rows.length} item{rows.length === 1 ? '' : 's'}
+          {unpriced ? <span className="ml-2 text-[11.5px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">{unpriced} with no price — hidden from guests</span> : null}
+        </div>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find an item…" className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-line bg-white w-44" />
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] border-collapse">
+          <thead>
+            <tr className="border-b border-line bg-white">
+              <th className={th}>Item</th>
+              <th className={th + ' w-[130px]'}>Size of one</th>
+              <th className={th + ' w-[92px]'}>Costs us</th>
+              <th className={th + ' w-[92px]'}>Guest pays</th>
+              <th className={th + ' w-[96px]'}>We keep</th>
+              <th className={th}>Buy more, pay less</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(i => {
+              const price = Number(val(i, 'price') ?? 0)
+              const cost = costOf(i)
+              const keep = cost === null ? null : Math.round((price - cost) * 100) / 100
+              const tiers: Tier[] = ((val(i, 'tiers') as Tier[]) || []).slice().sort((a, b) => a.min_qty - b.min_qty)
+              const packed = !!(Number(val(i, 'packSize')) > 0 && Number(val(i, 'packCost')) > 0)
+              const isOpen = openBulk === i.id
+              return (
+                <tr key={i.id} className={'border-b border-line/60 align-middle ' + (isOpen ? 'bg-brand-50/30' : '')}>
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-2 min-w-[190px]">
+                      {i.image ? <img src={i.image} alt="" className="w-8 h-8 rounded-lg object-cover border border-line flex-shrink-0" /> : <div className="w-8 h-8 rounded-lg border border-dashed border-line bg-app flex-shrink-0" />}
+                      <div className="min-w-0">
+                        <div className="text-[13px] font-semibold text-ink truncate">{String(val(i, 'name') ?? i.name)}</div>
+                        <div className="text-[11px] text-muted truncate">{String(val(i, 'category') ?? '') || 'Extras'}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <span className="inline-flex items-center gap-1">
+                      <input type="number" min={0} step="0.01" value={(val(i, 'sizeValue') as number | null) ?? ''} placeholder="—" disabled={!canEdit}
+                        onChange={e => setItem(i.id, { sizeValue: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={cell + ' w-[62px]'} />
+                      <select value={(val(i, 'sizeUnit') as string | null) ?? ''} disabled={!canEdit} onChange={e => setItem(i.id, { sizeUnit: e.target.value || null } as any)} className={cell + ' w-[64px]'}>
+                        <option value="">—</option>
+                        {SIZE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" min={0} step="0.01" value={packed ? (cost ?? '') : ((val(i, 'cost') as number | null) ?? '')} placeholder="—"
+                      disabled={!canEdit || packed} title={packed ? 'From the case: ' + money(Number(val(i, 'packCost'))) + ' ÷ ' + val(i, 'packSize') : ''}
+                      onChange={e => setItem(i.id, { cost: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } as any)} className={cell + ' w-[80px]' + (packed ? ' bg-app text-muted' : '')} />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" min={0} step="0.01" value={price} disabled={!canEdit}
+                      onChange={e => {
+                        // Raise the price and every discount keeps its percentage, instead of a
+                        // "30% off" quietly becoming 12% because the base moved underneath it.
+                        const next = Math.max(0, Number(e.target.value))
+                        const pcts = tiers.map(t => price > 0 ? 1 - t.unit_price_usd / price : 0)
+                        setItem(i.id, { price: next, ...(tiers.length ? { tiers: tiers.map((t, k) => ({ ...t, unit_price_usd: Math.round(next * (1 - pcts[k]) * 100) / 100 })) } : {}) } as any)
+                      }} className={cell + ' w-[80px] font-semibold'} />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <span className={'text-[12.5px] font-bold tabular-nums ' + (keep === null ? 'text-muted' : keep < 0 ? 'text-rose-700' : 'text-emerald-700')}>
+                      {keep === null ? '—' : money(keep)}{keep !== null && price > 0 ? <span className="font-normal text-muted"> · {Math.round(keep / price * 100)}%</span> : null}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <button type="button" onClick={() => setOpenBulk(o => o === i.id ? null : i.id)} className="text-left inline-flex items-center gap-1.5 flex-wrap">
+                      {tiers.length
+                        ? tiers.map(t => <span key={t.min_qty} className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 tabular-nums">{t.min_qty}+ {price > 0 ? Math.round((1 - t.unit_price_usd / price) * 100) + '% off' : money(t.unit_price_usd)}</span>)
+                        : <span className="text-[11.5px] text-muted hover:text-brand-700">one price · add a discount</span>}
+                      {isOpen ? <ChevronDown size={12} className="text-muted" /> : <ChevronRight size={12} className="text-muted" />}
+                    </button>
+                    {isOpen ? <BulkEditor item={i} price={price} cost={cost} tiers={tiers} setItem={setItem} canEdit={canEdit} maxQty={Number(val(i, 'maxQty') ?? 10)} /> : null}
+                  </td>
+                </tr>
+              )
+            })}
+            {!rows.length ? <tr><td colSpan={6} className="px-4 py-8 text-center text-[13px] text-muted">Nothing matches “{q}”.</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/** One number per break — the percent off. Everything else on the line is printed, not typed. */
+function BulkEditor({ item, price, cost, tiers, setItem, canEdit, maxQty }: { item: Item; price: number; cost: number | null; tiers: Tier[]; setItem: (id: string, patch: Partial<Item>) => void; canEdit: boolean; maxQty: number }) {
+  const put = (next: Tier[]) => setItem(item.id, { tiers: next.filter(t => t.min_qty >= 2).sort((a, b) => a.min_qty - b.min_qty).slice(0, 6) } as any)
+  const priceAt = (pct: number) => Math.round(price * (1 - Math.min(90, Math.max(0, pct)) / 100) * 100) / 100
+  const pctOf = (u: number) => price > 0 ? Math.round((1 - u / price) * 100) : 0
+  const add = (qty: number) => {
+    if (tiers.some(t => t.min_qty === qty)) return
+    const belowT = tiers.filter(t => t.min_qty < qty).pop()
+    put([...tiers, { min_qty: qty, unit_price_usd: priceAt(Math.min(50, (belowT ? pctOf(belowT.unit_price_usd) : 0) + 10)) }])
+  }
+  const nextQty = () => { for (const q of [3, 6, 12, 24]) if (!tiers.some(t => t.min_qty === q)) return q; return (tiers.length ? tiers[tiers.length - 1].min_qty : 2) + 1 }
+  const b = 'text-[12px] px-1.5 py-1 rounded-lg border border-line bg-white text-ink focus:outline-none focus:border-brand-300 tabular-nums'
+  return (
+    <div className="mt-2 space-y-1.5 pb-1">
+      {tiers.map((t, idx) => {
+        const each = t.unit_price_usd
+        const prev = idx > 0 ? tiers[idx - 1].unit_price_usd : price
+        const up = prev > 0 && each >= prev
+        const keep = cost === null ? null : Math.round((each - cost) * 100) / 100
+        return (
+          <div key={idx} className={'flex items-center gap-1.5 text-[12px] rounded-lg px-1.5 py-1 ' + (up ? 'bg-rose-50 border border-rose-200' : '')}>
+            <span className="text-muted">Buy</span>
+            <input type="number" min={2} max={99} value={t.min_qty} disabled={!canEdit} onChange={e => put(tiers.map((x, k) => k === idx ? { ...x, min_qty: Math.max(2, Math.floor(Number(e.target.value) || 2)) } : x))} className={b + ' w-[50px]'} />
+            <span className="text-muted">+ →</span>
+            <input type="number" min={0} max={90} step={5} value={pctOf(each)} disabled={!canEdit} onChange={e => put(tiers.map((x, k) => k === idx ? { ...x, unit_price_usd: priceAt(Number(e.target.value)) } : x))} className={b + ' w-[56px] font-semibold'} />
+            <span className="text-muted">% off =</span>
+            <b className="tabular-nums">{money(each)}</b>
+            <span className="text-muted">each</span>
+            {up ? <span className="text-[11px] font-semibold text-rose-800">costs more than buying {idx > 0 ? tiers[idx - 1].min_qty : 1}</span>
+              : keep !== null ? <span className={'text-[11px] ' + (keep < 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>{keep < 0 ? 'below cost' : 'keep ' + money(keep)}</span> : null}
+            {t.min_qty > maxQty ? <span className="text-[11px] font-semibold text-amber-800">max per order is {maxQty}</span> : null}
+            {canEdit ? <button type="button" onClick={() => put(tiers.filter((_, k) => k !== idx))} className="text-muted hover:text-rose-600 ml-auto"><X size={12} /></button> : null}
+          </div>
+        )
+      })}
+      {canEdit ? (
+        <div className="flex items-center gap-1 pt-0.5">
+          {[3, 6, 12].map(q => tiers.some(t => t.min_qty === q) ? null : <button key={q} type="button" onClick={() => add(q)} className="text-[11px] font-semibold px-1.5 py-0.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300">{q}+</button>)}
+          <button type="button" onClick={() => add(nextQty())} disabled={tiers.length >= 6} className="text-[11px] font-semibold px-1.5 py-0.5 rounded-lg border border-dashed border-line bg-white text-ink hover:border-brand-300 disabled:opacity-40">+ another</button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+// ── THE COUNTING LINK ─────────────────────────────────────────────────────────────────────────
+// One link, always there, minted the first time this card loads — nobody should have to decide to
+// "create" it. Beside it, who counted what and when, because Jon asked for exactly that: "it should
+// show who did the count."
+function CountLinkCard() {
+  const [d, setD] = useState<any>(null)
+  const [busy, setBusy] = useState('')
+  const [copied, setCopied] = useState(false)
+  const load = useCallback(async () => { try { setD(await fetch('/api/inventory-count', { cache: 'no-store' }).then(r => r.json())) } catch { /* offline */ } }, [])
+  useEffect(() => { load() }, [load])
+  async function put(body: any, key: string) {
+    setBusy(key)
+    try { await fetch('/api/inventory-count', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()); await load() } finally { setBusy('') }
+  }
+  if (!d?.ok) return null
+  const link = d.link
+  const counts = (d.counts || []) as any[]
+  const ago = (s: string) => { const m = Math.round((Date.now() - new Date(s).getTime()) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
+  return (
+    <div className="rounded-2xl border border-line bg-white p-3.5">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div>
+          <div className="text-[12.5px] font-semibold text-ink flex items-center gap-1.5"><ClipboardList size={14} /> Counting link</div>
+          <div className="text-[11.5px] text-muted mt-0.5">Send it to whoever is standing in the storeroom. No login — they pick the shelf, put a number next to what they see, and their name goes on the count.</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <a href={link.url} target="_blank" rel="noreferrer" className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300 inline-flex items-center gap-1">Open <ExternalLink size={11} /></a>
+          <button onClick={() => { navigator.clipboard?.writeText(link.url); setCopied(true); setTimeout(() => setCopied(false), 1600) }} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white inline-flex items-center gap-1">{copied ? <><Check size={12} /> Copied</> : 'Copy link'}</button>
+        </div>
+      </div>
+      <div className="mt-2 text-[12px] font-mono text-muted break-all">{link.url}</div>
+      <div className="flex items-center gap-3 mt-2 flex-wrap">
+        <label className="flex items-center gap-1.5 text-[12px] text-ink">
+          Passcode
+          <input defaultValue={link.passcode || ''} placeholder="none" onBlur={e => { if (e.target.value !== (link.passcode || '')) put({ passcode: e.target.value }, 'pass') }} className="text-[12.5px] px-2 py-1 rounded-lg border border-line bg-white w-28" />
+        </label>
+        <button onClick={() => { if (window.confirm('Make a new link?\n\nThe one you have already sent out stops working.')) put({ rotate: true }, 'rot') }} disabled={!!busy} className="text-[11.5px] text-muted hover:text-ink">new link</button>
+        {link.last_used_at ? <span className="text-[11.5px] text-muted">last used {ago(link.last_used_at)}</span> : <span className="text-[11.5px] text-muted">not used yet</span>}
+      </div>
+
+      <div className="mt-3 pt-2.5 border-t border-line">
+        <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Recent counts</div>
+        {!counts.length ? <div className="text-[12px] text-muted mt-1">Nobody has counted yet.</div> : (
+          <div className="mt-1.5 space-y-1.5">
+            {counts.slice(0, 6).map(c => {
+              const moved = (c.lines || []).filter((l: any) => l.delta !== 0)
+              return (
+                <div key={c.id} className="text-[12.5px]">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <b className="text-ink">{String(c.counted_by).split('@')[0]}</b>
+                    <span className="text-muted">counted {c.items} on {c.scope_label || c.scope} · {ago(c.created_at)}</span>
+                    <span className={'text-[11px] font-semibold px-1.5 py-0.5 rounded-full ' + (c.changed ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200')}>{c.changed ? c.changed + ' changed' : 'all matched'}</span>
+                  </div>
+                  {moved.length ? <div className="text-[11.5px] text-muted mt-0.5 truncate">{moved.slice(0, 5).map((l: any) => l.name + ' ' + l.before + '→' + l.after).join(' · ')}{moved.length > 5 ? ' +' + (moved.length - 5) + ' more' : ''}</div> : null}
+                  {c.note ? <div className="text-[11.5px] text-ink italic mt-0.5">“{c.note}”</div> : null}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
