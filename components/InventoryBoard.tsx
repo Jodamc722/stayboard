@@ -45,7 +45,12 @@ type NewItem = { key: string; name: string; description: string; category: strin
 const money = (n: number | null | undefined) => n === null || n === undefined ? '—' : '$' + (Math.round(n * 100) / 100).toFixed(2)
 const box = 'text-[12.5px] px-2 py-1.5 rounded-lg border border-line bg-white text-ink focus:outline-none focus:border-brand-300'
 
-export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
+/**
+ * `view` lets the Guest Orders tabs drive this board (Jon, 2026-09-10: "the count and costs should
+ * be done in the guest order tab"). Left out, the board shows its own Stock / Pricing switch — the
+ * standalone page still works that way.
+ */
+export function InventoryBoard({ canEdit, view: fixedView }: { canEdit: boolean; view?: 'stock' | 'pricing' }) {
   const [data, setData] = useState<Data | null>(null)
   const [err, setErr] = useState('')
   const [scope, setScope] = useState<string>('')
@@ -63,7 +68,8 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
   const [hubMenu, setHubMenu] = useState(false)
   // TWO JOBS, TWO VIEWS. Counting is per shelf and happens in a storeroom; pricing is per item and
   // happens at a desk. Mixing them is what made one dense board that did neither well.
-  const [view, setView] = useState<'stock' | 'pricing'>('stock')
+  const [ownView, setOwnView] = useState<'stock' | 'pricing'>('stock')
+  const view = fixedView || ownView
 
   const load = useCallback(async () => {
     try {
@@ -179,14 +185,16 @@ export function InventoryBoard({ canEdit }: { canEdit: boolean }) {
     <div className="space-y-4">
       {msg ? <div className={'rounded-xl px-3 py-2 text-[12.5px] ' + (msg.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200')}>{msg.text}</div> : null}
 
-      <div className="flex items-center gap-1.5">
-        {(['stock', 'pricing'] as const).map(v => (
-          <button key={v} onClick={() => setView(v)} className={'px-3.5 py-1.5 rounded-lg text-[13px] font-semibold border ' + (view === v ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:border-brand-300')}>
-            {v === 'stock' ? 'Stock' : 'Pricing'}
-          </button>
-        ))}
-        <span className="text-[11.5px] text-muted ml-1">{view === 'stock' ? 'what is on each shelf' : 'what everything costs and sells for'}</span>
-      </div>
+      {fixedView ? null : (
+        <div className="flex items-center gap-1.5">
+          {(['stock', 'pricing'] as const).map(v => (
+            <button key={v} onClick={() => setOwnView(v)} className={'px-3.5 py-1.5 rounded-lg text-[13px] font-semibold border ' + (view === v ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:border-brand-300')}>
+              {v === 'stock' ? 'Stock' : 'Pricing'}
+            </button>
+          ))}
+          <span className="text-[11.5px] text-muted ml-1">{view === 'stock' ? 'what is on each shelf' : 'what everything costs and sells for'}</span>
+        </div>
+      )}
 
       {view === 'stock' ? <CountLinkCard /> : null}
 

@@ -4,6 +4,7 @@
 // Every row is a card with the ONLY buttons that make sense for its status.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ShoppingBag, Check, X, RefreshCw, Copy, Send, Loader2, AlertTriangle, ExternalLink, Truck, Link2, Zap, Palette, Package } from 'lucide-react'
+import { InventoryBoard } from '@/components/InventoryBoard'
 
 type Line = { sku: string; name: string; qty: number; unit_price_usd: number; line_total_usd: number; unit_label?: string | null }
 type Order = {
@@ -40,10 +41,17 @@ const LANES: { key: string; label: string; statuses: string[] }[] = [
   { key: 'done', label: 'Delivered / closed', statuses: ['delivered', 'declined', 'cancelled'] },
 ]
 
+// ORDERS · LINKS · STOCK · PRICING — everything about guest orders on one page. Stock is per
+// shelf and belongs to whoever is restocking; Pricing is per item and belongs at a desk; keeping
+// them as separate tabs rather than one board is what stops either becoming a wall of numbers.
+const TABS = ['orders', 'links', 'stock', 'pricing'] as const
+type Tab = typeof TABS[number]
+const TAB_LABEL: Record<Tab, string> = { orders: 'Orders', links: 'Links · upcoming arrivals', stock: 'Stock count', pricing: 'Costs & pricing' }
+
 export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canMoney: boolean }) {
   const [data, setData] = useState<Data | null>(null)
   const [err, setErr] = useState('')
-  const [tab, setTab] = useState<'orders' | 'links'>('orders')
+  const [tab, setTab] = useState<Tab>('orders')
   const [lane, setLane] = useState<string>('all')
   const [busy, setBusy] = useState<string | null>(null)
   const [flash, setFlash] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
@@ -66,9 +74,15 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
   }, [])
   useEffect(() => { load() }, [load])
   useEffect(() => { const t = setInterval(load, 60_000); return () => clearInterval(t) }, [load])
-  // Stock moved to its own section (components/InventoryBoard.tsx). An old ?tab=stock bookmark
-  // should land where the thing went, not on a tab that quietly no longer exists.
-  useEffect(() => { if (typeof window !== 'undefined' && /[?&]tab=stock/.test(window.location.search)) window.location.replace('/guest-orders/inventory') }, [])
+  // Jon, 2026-09-10: "the count and costs should be done in the guest order tab in the app." So
+  // counting and pricing are tabs here rather than a page you navigate away to — /guest-orders is
+  // the one place the whole thing lives. A ?tab= in the URL still picks one, so old bookmarks and
+  // the links elsewhere in the app land where they meant to.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const t = new URLSearchParams(window.location.search).get('tab')
+    if (t && (TABS as readonly string[]).indexOf(t) >= 0) setTab(t as Tab)
+  }, [])
 
   async function act(action: string, id: string, extra: Record<string, any> = {}) {
     if (busy) return
@@ -119,7 +133,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      <div className={'grid grid-cols-2 sm:grid-cols-5 gap-2 ' + (tab === 'stock' || tab === 'pricing' ? 'hidden' : '')}>
         {LANES.map(l => (
           <button key={l.key} onClick={() => { setTab('orders'); setLane(lane === l.key ? 'all' : l.key) }} className={'rounded-2xl border px-3.5 py-3 text-left transition ' + (lane === l.key ? 'border-brand-400 bg-brand-50' : 'border-line bg-white hover:border-brand-200')}>
             <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">{l.label}</div>
@@ -130,11 +144,10 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
       </div>
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
-          {(['orders', 'links'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={'px-3.5 py-1.5 rounded-lg text-[13px] font-semibold ' + (tab === t ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{t === 'orders' ? 'Orders' : 'Links · upcoming arrivals'}</button>)}
+        <div className="inline-flex rounded-xl border border-line bg-white p-0.5 flex-wrap">
+          {TABS.map(t => <button key={t} onClick={() => setTab(t)} className={'px-3.5 py-1.5 rounded-lg text-[13px] font-semibold ' + (tab === t ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{TAB_LABEL[t]}</button>)}
         </div>
         <div className="flex items-center gap-2">
-          <a href="/guest-orders/inventory" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300"><Package size={13} /> Inventory</a>
           {canEdit ? <a href="/guest-orders/design" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300"><Palette size={13} /> Design studio</a> : null}
           <a href="/orders-live" target="_blank" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300"><ExternalLink size={13} /> Live link for the team</a>
           {canMoney ? <button onClick={() => act('run_cron', '')} disabled={!!busy} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50"><Zap size={13} /> Run now</button> : null}
@@ -142,6 +155,8 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
       </div>
 
       {flash ? <div className={'rounded-xl px-3.5 py-2.5 text-[13px] ' + (flash.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200')}>{flash.text}</div> : null}
+
+      {tab === 'stock' || tab === 'pricing' ? <InventoryBoard canEdit={canEdit} view={tab === 'pricing' ? 'pricing' : 'stock'} /> : null}
 
       {tab === 'orders' ? (
         shown.length === 0 ? (
