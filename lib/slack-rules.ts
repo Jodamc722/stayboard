@@ -166,6 +166,27 @@ const CH = {
   north: 'C08HW9XBZ8U',        // #vr-lakeworth-palmbeach-amri-capri-lucerne
   botanica: 'C0B8VTD0BFC',     // #vr-botanica
   parktower: 'C0AFLUUE8BH',    // #vr-parktower (private — bot must be invited)
+  // Not routing groups — the two rooms Eve talks TO rather than about. Both private.
+  leadership: 'C0BQ4EZR3DM', // #leadership (private — bot must be invited)
+  ccsJon: 'C07SBALUTU2',     // #ccs-and-jon (private — bot must be invited)
+  ccsBoard: 'C09DTAL4ZEW',   // #vr-ccs-messageboard — where guest-thread trouble gets flagged
+  eveApprovals: 'C0C13B7LPJ5', // #vr-eve — Jon made this 2026-09-10 for approvals (was #vr-eveapprovals)
+}
+
+/**
+ * The rooms Eve posts INTO that are not routing groups, exported so no other module hardcodes an
+ * id a second time and the two copies drift. All four are private: the bot posts nothing until it
+ * has been invited, and `postToChannel` returns `not_in_channel` rather than failing silently.
+ */
+export const EVE_CHANNELS = {
+  /** All approvals, per Jon: door codes, vacant units, anything Eve wants a yes for. */
+  approvals: CH.eveApprovals,
+  /** Escalations and the nightly handover. Anyone in the room can clear an escalation. */
+  leadership: CH.leadership,
+  /** Jon + customer care. Usable for approvals too — his call, 2026-09-10. */
+  ccsJon: CH.ccsJon,
+  /** Where a guest thread going wrong gets flagged with the team tagged. */
+  ccsBoard: CH.ccsBoard,
 }
 
 /**
@@ -226,10 +247,12 @@ export const DEFAULT_RULES: SlackRules = {
   defaultChannel: null,
   // #vr-ops-team-projects — low volume, already report-shaped, supervisors expect structure here.
   opsChannel: 'C083X66C17W',
-  // Left unset on purpose: Jon said "Leadership channel" and the only match in the workspace is
-  // #vr-jjleadership, which reads like the vendor's leadership room rather than Stay's. Pick it
-  // in the admin and invite the bot; until then the handover holds rather than going somewhere wrong.
-  leadershipChannel: null,
+  // #leadership — Jon, 2026-09-10: "#leadership and you can do CCS-and-Jon… and Leadership you can
+  // use for all approvals." This was deliberately left null for three weeks because auto-detect only
+  // found #vr-jjleadership, which is the VENDOR's leadership room — posting a handover there would
+  // have put our internal picture in front of an outside company. It is now set to the room Jon
+  // named, and it is a private channel, so the bot has to be invited: /invite @Lighthouse.
+  leadershipChannel: CH.leadership,
   leadership: [KARLA_SLACK_ID, ROBERTO_SLACK_ID, SILVIA_SLACK_ID, SULAMAN_SLACK_ID, BERNADETTE_SLACK_ID, JON_SLACK_ID],
   bilingualFieldChannels: true,
   groups: DEFAULT_GROUPS,
@@ -398,7 +421,13 @@ export function mergeRules(stored: any): SlackRules {
     firehose: chan(stored.firehose),
     defaultChannel: chan(stored.defaultChannel),
     opsChannel: stored.opsChannel === undefined ? d.opsChannel : chan(stored.opsChannel),
-    leadershipChannel: chan(stored.leadershipChannel),
+    // `|| d.leadershipChannel` on purpose, not `=== undefined`. This key shipped as null for three
+    // weeks, and mergeRules writes every key on every save — so a stored null means "the default was
+    // null when I last saved", not "I want no leadership channel". Treating it as unset is the only
+    // reading that gets Jon's #leadership pick applied to a settings blob written before today. The
+    // cost is that it cannot be blanked from the admin, only pointed somewhere else, which is the
+    // right trade for a channel whose absence silently swallows every escalation.
+    leadershipChannel: chan(stored.leadershipChannel) || d.leadershipChannel,
     leadership: leadership.length ? leadership : d.leadership.slice(),
     bilingualFieldChannels: stored.bilingualFieldChannels === undefined ? d.bilingualFieldChannels : !!stored.bilingualFieldChannels,
     // Never leave the app with nowhere to route: an empty list falls back to the seeded areas.
