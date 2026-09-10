@@ -7,7 +7,7 @@
 //        } — all four in one trip, all at 'edit' access
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock, sanitizeTiers, sizeUnitOf, soldInOf } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock, sanitizeTiers, sizeUnitOf, soldInOf, piecesOf, pieceNameOf } from '@/lib/guest-orders'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
 
@@ -47,7 +47,7 @@ export async function GET() {
       price: c.price_usd, cost: c.cost_usd, reorderUrl: c.reorder_url, supplier: c.supplier, packNote: c.pack_note,
       // Pack economics + the price ladder, so Inventory can price an item without a second screen.
       packSize: c.pack_size, packCost: c.pack_cost_usd, tiers: c.tiers || [],
-      sizeValue: c.size_value, sizeUnit: c.size_unit, salePrice: c.sale_price_usd, badge: c.badge, soldIn: c.sold_in, imageOriginal: (c as any).image_original || null,
+      sizeValue: c.size_value, sizeUnit: c.size_unit, salePrice: c.sale_price_usd, badge: c.badge, soldIn: c.sold_in, pieces: c.pieces, pieceName: c.piece_name, imageOriginal: (c as any).image_original || null,
     }
   })
   const alerts = items.filter(i => i.tracked).flatMap(i => i.per.filter(p => p.state === 'out' || p.state === 'low').map(p => ({ item: i.name, scope: p.label, state: p.state, available: p.available })))
@@ -106,6 +106,9 @@ export async function PUT(req: NextRequest) {
     if (f.badge !== undefined) patch.badge = txt(f.badge, 16)
     // SOLD IN MULTIPLES (Jon, 2026-09-10: coffee pods in 5s, "can't order one"). Blank or 1 = any.
     if (f.soldIn !== undefined) patch.sold_in = soldInOf(f.soldIn)
+    // WHAT ONE ITEM HOLDS (Jon, 2026-09-10: "1 = 5 pods"). Either half blank clears the label.
+    if (f.pieces !== undefined) patch.pieces = piecesOf(f.pieces)
+    if (f.pieceName !== undefined) patch.piece_name = pieceNameOf(f.pieceName)
     // HOW BIG ONE IS. Both halves clear together — a bare "500" with no unit is not a size, and a
     // unit with no number would divide by zero in every cost-per-measure sum on the board.
     if (f.sizeValue !== undefined) patch.size_value = f.sizeValue === null || f.sizeValue === '' ? null : (Math.max(0, Math.round(Number(f.sizeValue) * 100) / 100) || null)
