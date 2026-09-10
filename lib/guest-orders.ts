@@ -351,10 +351,26 @@ export type CatalogItem = {
   pack_size: number | null; pack_cost_usd: number | null
   /** Volume price breaks on THIS item — 3+ at $2.50 each. Highest qualifying min_qty wins. */
   tiers: PriceTier[] | null
+  /** How much is in ONE (500 mL, 12 oz) — not the pack size. Guests compare on this. */
+  size_value: number | null; size_unit: string | null
   /** Filled in when loaded for a scope: on_hand − reserved for that scope (null = not tracked). */
   available?: number | null
 }
 export type PriceTier = { min_qty: number; unit_price_usd: number }
+
+/** The measures we accept. A free-text unit cannot be divided by, and dividing is the whole point. */
+export const SIZE_UNITS = ['mL', 'L', 'fl oz', 'oz', 'g', 'kg', 'ct'] as const
+export function sizeUnitOf(v: any): string | null {
+  const t = String(v || '').trim().toLowerCase()
+  return (SIZE_UNITS as readonly string[]).find(u => u.toLowerCase() === t) || null
+}
+/** "500 mL" — what the guest reads. Trailing zeros dropped: 1.50 L reads 1.5 L. */
+export function sizeLabel(item: Pick<CatalogItem, 'size_value' | 'size_unit'>): string | null {
+  const v = Number(item.size_value)
+  const u = sizeUnitOf(item.size_unit)
+  if (!Number.isFinite(v) || v <= 0 || !u) return null
+  return String(Math.round(v * 100) / 100) + (u === 'ct' ? ' ct' : ' ' + u)
+}
 
 /** Clean a tier list from the builder or the DB: positive quantities, sorted, no duplicates. */
 export function sanitizeTiers(input: any): PriceTier[] {
@@ -434,6 +450,8 @@ export async function loadCatalog(opts?: { building?: string | null; market?: st
     pack_size: r.pack_size === null || r.pack_size === undefined ? null : Number(r.pack_size),
     pack_cost_usd: r.pack_cost_usd === null || r.pack_cost_usd === undefined ? null : Number(r.pack_cost_usd),
     tiers: sanitizeTiers(r.tiers).length ? sanitizeTiers(r.tiers) : null,
+    size_value: r.size_value === null || r.size_value === undefined ? null : Number(r.size_value),
+    size_unit: sizeUnitOf(r.size_unit),
     available: null })) as CatalogItem[]
   const b = String(opts?.building || '').toLowerCase()
   const m = String(opts?.market || '').toLowerCase()
