@@ -76,6 +76,12 @@ export type GuestOrdersCfg = {
   confirmTitle: string
   confirmBody: string
   confirmNext: string
+  /**
+   * SPEND AND SAVE (Jon, 2026-09-10: "if they spend xx amount can get 5% total, all customizable").
+   * A rule about the BASKET, not about an item — highest threshold the guest has reached wins, and
+   * it comes off the subtotal before tax.
+   */
+  spendRules: SpendRule[]
   /** Sources we never create links for (owner stays, blocks). Regex, case-insensitive. */
   skipSourcesRe: string
   /** Per-market overrides (Miami | Broward | North): switch a whole location off or change its timing. */
@@ -116,6 +122,7 @@ export const GUEST_ORDERS_DEFAULTS: GuestOrdersCfg = {
   footerNote: 'Once confirmed, the total is charged to the card on your reservation. Questions? Just reply to your booking message.',
   confirmTitle: 'Order received',
   confirmBody: 'Thank you — your order is with our team now.',
+  spendRules: [],
   confirmNext: 'You will get a confirmation of purchase shortly. If we need anything else from you — a brand preference, an allergy, where to leave it — we will reply to your booking message before we charge the card on your reservation.',
   skipSourcesRe: '^(owner|manual|block|blocked)',
   marketRules: {},
@@ -192,6 +199,7 @@ export function normalizeCfg(s: any): GuestOrdersCfg {
     confirmTitle: str(s.confirmTitle, d.confirmTitle, 80),
     confirmBody: str(s.confirmBody, d.confirmBody, 600),
     confirmNext: str(s.confirmNext, d.confirmNext, 600),
+    spendRules: sanitizeSpendRules(s.spendRules),
     skipSourcesRe: safeRe(str(s.skipSourcesRe, d.skipSourcesRe, 200), d.skipSourcesRe),
     marketRules: normScopes(s.marketRules, MARKETS as string[]),
     buildingRules: normScopes(s.buildingRules, KNOWN_BUILDINGS.map(b => b.label)),
@@ -355,6 +363,10 @@ export type CatalogItem = {
   size_value: number | null; size_unit: string | null
   /** The untouched upload. Edits re-render from here so crops never stack. */
   image_original: string | null
+  /** On offer: what they pay now. price_usd stays the "was" price shown struck through. */
+  sale_price_usd: number | null
+  /** A short word on the card — New, Limited, Last few. */
+  badge: string | null
   /** Filled in when loaded for a scope: on_hand − reserved for that scope (null = not tracked). */
   available?: number | null
 }
@@ -372,6 +384,32 @@ export function sizeLabel(item: Pick<CatalogItem, 'size_value' | 'size_unit'>): 
   const u = sizeUnitOf(item.size_unit)
   if (!Number.isFinite(v) || v <= 0 || !u) return null
   return String(Math.round(v * 100) / 100) + (u === 'ct' ? ' ct' : ' ' + u)
+}
+
+/** "Spend $75, save 5%" — one rung of the basket-level ladder. */
+export type SpendRule = { min_subtotal_usd: number; percent_off: number }
+
+/** Clean the spend ladder: real money, a real discount, sorted, deduped, capped. */
+export function sanitizeSpendRules(input: any): SpendRule[] {
+  const out: SpendRule[] = []
+  const seen: Record<number, boolean> = {}
+  for (const r of (Array.isArray(input) ? input : [])) {
+    const min = Math.round((Number(r?.min_subtotal_usd) || 0) * 100) / 100
+    const pct = Math.round(Number(r?.percent_off) || 0)
+    if (min <= 0 || pct <= 0 || pct > 50 || seen[min]) continue   // >50% off a whole basket is a typo
+    seen[min] = true
+    out.push({ min_subtotal_usd: min, percent_off: pct })
+    if (out.length >= 4) break
+  }
+  return out.sort((a, b) => a.min_subtotal_usd - b.min_subtotal_usd)
+}
+
+/** The rung this subtotal has reached, if any. Highest qualifying wins. */
+export function spendDiscountFor(subtotal: number, rules: SpendRule[]): { rule: SpendRule | null; amount: number } {
+  let hit: SpendRule | null = null
+  for (const r of sanitizeSpendRules(rules)) if (subtotal >= r.min_subtotal_usd) hit = r
+  if (!hit) return { rule: null, amount: 0 }
+  return { rule: hit, amount: Math.round(subtotal * hit.percent_off) / 100 }
 }
 
 /** Clean a tier list from the builder or the DB: positive quantities, sorted, no duplicates. */
@@ -405,12 +443,18 @@ export function unitCostOf(item: Pick<CatalogItem, 'cost_usd' | 'pack_size' | 'p
  * exactly. With tiers, the highest break the guest has reached applies to the WHOLE line (not just
  * the units above the break), which is how a shopper expects "3 for $2.50 each" to read.
  */
-export function priceForQty(item: Pick<CatalogItem, 'price_usd' | 'tiers'>, qty: number): { unit: number; tier: PriceTier | null } {
+export function priceForQty(item: Pick<CatalogItem, 'price_usd' | 'tiers' | 'sale_price_usd'>, qty: number): { unit: number; tier: PriceTier | null } {
   const list = Number(item.price_usd) || 0
+  const sale = item.sale_price_usd === null || item.sale_price_usd === undefined ? null : Number(item.sale_price_usd)
   const tiers = sanitizeTiers(item.tiers)
   let hit: PriceTier | null = null
   for (const t of tiers) if (qty >= t.min_qty) hit = t
-  return { unit: hit ? hit.unit_price_usd : list, tier: hit }
+  // An offer price and a volume break can both apply; the guest pays the LOWER of the two rather
+  // than whichever the code happened to check last. Two discounts never stack into a third.
+  const candidates = [hit ? hit.unit_price_usd : list]
+  if (sale !== null && sale >= 0) candidates.push(sale)
+  const unit = Math.min(...candidates)
+  return { unit, tier: hit && hit.unit_price_usd <= unit ? hit : null }
 }
 
 /**
@@ -455,6 +499,8 @@ export async function loadCatalog(opts?: { building?: string | null; market?: st
     size_value: r.size_value === null || r.size_value === undefined ? null : Number(r.size_value),
     size_unit: sizeUnitOf(r.size_unit),
     image_original: r.image_original || null,
+    sale_price_usd: r.sale_price_usd === null || r.sale_price_usd === undefined ? null : Number(r.sale_price_usd),
+    badge: (r.badge ? String(r.badge).trim().slice(0, 16) : null) || null,
     available: null })) as CatalogItem[]
   const b = String(opts?.building || '').toLowerCase()
   const m = String(opts?.market || '').toLowerCase()
@@ -569,8 +615,12 @@ export type OrderLine = {
   list_price_usd?: number | null; saved_usd?: number | null
 }
 
-/** `taxPct` is the rate that APPLIES TO THIS STAY (timingFor().taxPct) — never the global default. */
-export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: number }[], taxPct: number): { lines: OrderLine[]; subtotal: number; tax: number; total: number; problems: string[] } {
+/**
+ * `taxPct` is the rate that APPLIES TO THIS STAY (timingFor().taxPct) — never the global default.
+ * `spendRules` is the basket-level ladder; it comes off the SUBTOTAL, so tax is charged on what the
+ * guest actually pays rather than on a number they never saw.
+ */
+export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: number }[], taxPct: number, spendRules: SpendRule[] = []): { lines: OrderLine[]; subtotal: number; tax: number; total: number; discount: number; discountNote: string | null; problems: string[] } {
   const lines: OrderLine[] = []
   const problems: string[] = []
   for (const b of basket) {
@@ -589,9 +639,13 @@ export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: 
       list_price_usd: tier ? item.price_usd : null, saved_usd: saved > 0 ? saved : null })
   }
   const subtotal = Math.round(lines.reduce((n, l) => n + l.line_total_usd, 0) * 100) / 100
-  const tax = Math.round(subtotal * (Number(taxPct) || 0) / 100 * 100) / 100
-  const total = Math.round((subtotal + tax) * 100) / 100
-  return { lines, subtotal, tax, total, problems }
+  const { rule, amount } = spendDiscountFor(subtotal, spendRules)
+  const discount = Math.min(amount, subtotal)
+  const taxable = Math.round((subtotal - discount) * 100) / 100
+  const tax = Math.round(taxable * (Number(taxPct) || 0) / 100 * 100) / 100
+  const total = Math.round((taxable + tax) * 100) / 100
+  const discountNote = rule ? rule.percent_off + '% off orders over ' + money(rule.min_subtotal_usd) : null
+  return { lines, subtotal, tax, total, discount, discountNote, problems }
 }
 
 export function summarizeLines(lines: OrderLine[], max = 4): string {
@@ -787,6 +841,8 @@ export type OrderRow = {
   id: string; link_code: string; reservation_id: string; listing_id: string | null; unit: string | null; building: string | null; market: string | null
   guest_name: string | null; guest_email: string | null; check_in: string | null; check_out: string | null
   status: OrderStatus; items: OrderLine[]; subtotal_usd: number; tax_usd: number; total_usd: number; currency: string; guest_note: string | null
+  /** Basket-level spend-and-save actually applied, and the rule it came from. */
+  discount_usd: number; discount_note: string | null
   submitted_at: string; approve_token: string | null; approved_at: string | null; approved_by: string | null
   declined_at: string | null; declined_by: string | null; decline_reason: string | null
   paid_at: string | null; paid_via: string | null; payment_note: string | null; guesty_payment_id: string | null; guesty_invoice_item_ids: string[]; folio_lines_done: number; folio_note: string | null; charge_error: string | null
@@ -800,6 +856,7 @@ export type OrderRow = {
 
 function normOrder(r: any): OrderRow {
   return { ...r, items: Array.isArray(r.items) ? r.items : [], subtotal_usd: Number(r.subtotal_usd) || 0, tax_usd: Number(r.tax_usd) || 0, total_usd: Number(r.total_usd) || 0,
+    discount_usd: Number(r.discount_usd) || 0, discount_note: r.discount_note || null,
     guesty_invoice_item_ids: r.guesty_invoice_item_ids || [], folio_lines_done: Number(r.folio_lines_done) || 0, requested_delivery: (['asap','arrival','date'].indexOf(r.requested_delivery) >= 0 ? r.requested_delivery : 'auto') as DeliveryMode, requested_date: r.requested_date || null, stock_scope: r.stock_scope || null, stock_note: r.stock_note || null, collect_method: r.collect_method || null, collect_card: r.collect_card || null, assignee_names: r.assignee_names || [], assignee_ids: r.assignee_ids || [] }
 }
 
@@ -822,7 +879,7 @@ export async function submitOrder(link: LinkRow, basket: { sku: string; qty: num
   const hub = hubOf(cfg, link.building, link.listing_id)
   const catalog = await loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true })
   // Tax is the rate for THIS building's area (Broward ≠ Miami), resolved the same way as timing.
-  const priced = priceBasket(catalog, basket, timingFor(cfg, link.building, link.market, link.listing_id).taxPct)
+  const priced = priceBasket(catalog, basket, timingFor(cfg, link.building, link.market, link.listing_id).taxPct, cfg.spendRules)
   if (priced.problems.length) return { ok: false, error: priced.problems.join(' · ') }
   if (!priced.lines.length) return { ok: false, error: 'Pick at least one item.' }
   const db = supabaseAdmin()
@@ -830,6 +887,9 @@ export async function submitOrder(link: LinkRow, basket: { sku: string; qty: num
     link_code: link.code, reservation_id: link.reservation_id, listing_id: link.listing_id, unit: link.unit, building: link.building, market: link.market,
     guest_name: link.guest_name, guest_email: link.guest_email, check_in: link.check_in, check_out: link.check_out,
     status: 'submitted', items: priced.lines, subtotal_usd: priced.subtotal, tax_usd: priced.tax, total_usd: priced.total, currency: 'USD',
+    // Stored, not re-derived: the folio, the email and the board must all agree on one number even
+    // after somebody edits the spend ladder next week.
+    discount_usd: priced.discount, discount_note: priced.discountNote,
     guest_note: guestNote ? guestNote.slice(0, 600) : null, approve_token: null,
     requested_delivery: delivery && ['asap', 'arrival', 'date'].indexOf(delivery.mode) >= 0 ? delivery.mode : 'auto',
     requested_date: delivery && delivery.mode === 'date' && delivery.date && /^\d{4}-\d{2}-\d{2}$/.test(delivery.date) ? delivery.date : null,
@@ -987,7 +1047,11 @@ export async function approveOrder(id: string, actor: string): Promise<{ ok: boo
  *  needs a balance to bill against in the first place. */
 async function postFolio(order: OrderRow, taxPct: number): Promise<{ ok: boolean; error?: string; done: number; total: number; ids: string[] }> {
   const lines = order.items.map(l => ({ title: l.qty + '× ' + l.name, description: 'Guest order · ' + l.qty + ' × ' + money(l.unit_price_usd) + (l.unit_label ? ' (' + l.unit_label + ')' : ''), amount: l.line_total_usd, feeCode: l.fee_code }))
-  if (order.tax_usd > 0) lines.push({ title: 'Sales tax on guest order', description: taxPct + '% on ' + money(order.subtotal_usd), amount: order.tax_usd, feeCode: 'GUEST_SERVICE' })
+  // The discount has to reach the folio as its own NEGATIVE line. Leaving it out would charge the
+  // card the undiscounted total while the guest's confirmation says otherwise — the worst kind of
+  // disagreement to find out about from a chargeback.
+  if (order.discount_usd > 0) lines.push({ title: order.discount_note || 'Order discount', description: 'Discount on ' + money(order.subtotal_usd), amount: -order.discount_usd, feeCode: 'GUEST_SERVICE' })
+  if (order.tax_usd > 0) lines.push({ title: 'Sales tax on guest order', description: taxPct + '% on ' + money(Math.round((order.subtotal_usd - order.discount_usd) * 100) / 100), amount: order.tax_usd, feeCode: 'GUEST_SERVICE' })
   let done = order.folio_lines_done || 0
   let ids = order.guesty_invoice_item_ids || []
   if (done >= lines.length) return { ok: true, done, total: lines.length, ids }
