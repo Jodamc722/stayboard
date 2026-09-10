@@ -40,7 +40,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { botToken, emailForSlackUser, slackProfileEmail, getDirectory, slackApi } from '@/lib/slack'
 import { accessForEmail } from '@/lib/access'
-import { runEve, canUseEve } from '@/lib/eve/run'
+import { runEve } from '@/lib/eve/run'
+import { tierFor, tierNote, escalate, looksRefused } from '@/lib/eve/slack-tier'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -178,42 +179,68 @@ export async function POST(req: NextRequest) {
   // The Slack user id is resolved to a Lighthouse user and the ANSWER IS SHAPED BY THAT PERSON'S
   // permissions — money redaction included. It deliberately does not matter that the channel is
   // full of other people: the asker's access is what governs, exactly as it does everywhere else.
+  // WHO IS ASKING — but no longer a gate. Jon, 2026-09-10: "I would approve anyone to use eve for
+  // now… give free access. Slack eve is not approval or doing, it's more information based. Only
+  // admin users can direct eve." So an unrecognised asker is not turned away; they are answered at
+  // the floor their room allows. See lib/eve/slack-tier.ts for what each tier may contain.
   const email = await emailForSlackUser(user)
-  if (!email) {
-    await say(channel, threadTs, `I can't tell who you are — there's no email on your Slack profile, so I have no way to know what you're allowed to see.`)
-    return ok()
-  }
-  const access = await accessForEmail(email)
-  if (!access) {
+  const access = email ? await accessForEmail(email) : null
+  const grant = await tierFor(access, channel)
+
+  // Only worth saying anything about identity when somebody who clearly SHOULD be recognised isn't —
+  // an unmapped vendor is expected and does not need telling.
+  if (email && !access && grant.tier !== 'vendor') {
     // "Not active" and "not a user at all" are DIFFERENT PROBLEMS with different fixes, and saying
     // "your account isn't active" for both sends people looking for a switch that does not exist.
     // The common cause is neither: a Slack profile on one email domain and a Lighthouse login on
     // another, which the person cannot diagnose or fix from their side. So say what was looked up.
     const profile = await slackProfileEmail(user)
     const mapped = profile && profile !== email
+    // Said once, alongside a real answer — not instead of one.
     await say(channel, threadTs,
-      `I looked you up as *${email}*${mapped ? ` (mapped from your Slack email ${profile})` : ''} and that isn't an active Lighthouse user — either there's no account on that address or it's switched off.\n\nIf you log into Lighthouse with a different email, that's the whole problem: add \`"${user}": "your@email"\` to the *slack_user_map* app setting and I'll know you next time.`)
-    return ok()
-  }
-  if (!canUseEve(access)) {
-    await say(channel, threadTs, `Your Lighthouse role doesn't have me switched on. Jon can change that at Users & admin → Roles.`)
-    return ok()
+      `Heads up: I looked you up as *${email}*${mapped ? ` (mapped from ${profile})` : ''} and that isn't an active Lighthouse user, so I'm answering you at the general level. If you log in with a different address, add \`"${user}": "your@email"\` to the *slack_user_map* app setting and I'll know you properly.`)
   }
 
   const where = await channelName(channel)
 
   try {
+    // An unmapped asker still needs an Access object, because every tool downstream expects one.
+    // This is the emptiest one there is: no email, no features, no role — so `canSeeMoney` is false
+    // on its own merits and nothing keyed to a person can resolve. The tier has already removed the
+    // sensitive tools; this makes sure that even if one were reachable it would find nobody behind
+    // the request.
+    const anonymous = {
+      user: null, email: null, role: null, allowed: true, bootstrap: false,
+      features: {}, workspace: 'gm', profile: {}, prefs: {},
+      accessRole: null, levels: {}, landing: '/',
+    } as any
+    const asAccess = access || anonymous
+
     const out = await runEve({
-      access,
+      access: asAccess,
       messages: [{ role: 'user', content: question }],
       source: 'slack',
-      surfaceNote: `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.`,
+      denyTools: grant.denyTools,
+      forceNoMoney: !grant.canMoney,
+      surfaceNote: `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.\n\n${tierNote(grant)}`,
     })
     if (!out.ok) {
       await say(channel, threadTs, `I hit an error: ${out.error}`)
       return ok()
     }
     await say(channel, threadTs, out.reply)
+
+    // She said no. Put it where somebody can say yes (Jon: "put approval in leadership chat, thats
+    // where this can get approved by anyone in that chat"). Admins are not escalated — if an admin
+    // could not have it, nobody in leadership can grant it either.
+    if (!grant.canDirect && looksRefused(out.reply)) {
+      const esc = await escalate({
+        asked: question, askerEmail: email, askerSlackId: user, channel, channelLabel: where,
+      })
+      if (esc.ok) {
+        await say(channel, threadTs, `I've put that in front of leadership — anyone in there can approve it.`)
+      }
+    }
     return ok()
   } catch (e: any) {
     await say(channel, threadTs, `I hit an error before I could answer. ${String(e?.message || e).slice(0, 200)}`)
