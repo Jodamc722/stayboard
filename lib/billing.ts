@@ -53,11 +53,39 @@ export type BillingTask = {
   billedHours: number | null
   reviewedBy: string | null
   reviewedAt: string | null
+  // Two-stage review (migration 076). 'auto' as gmBy means a $0 departure clean nobody needs to see.
+  reviewState: ReviewState
+  opsBy: string | null; opsAt: string | null
+  gmBy: string | null; gmAt: string | null
   // Computed
   laborAmount: number              // rate math only (before items/override)
   billedAmount: number             // what the owner is billed for this task (0 when excluded)
   reportUrl: string | null
+  /** What looks off about this task. Empty means nothing tripped. */
+  flags: BillingFlag[]
 }
+
+export type ReviewState = 'open' | 'ops_approved' | 'gm_approved'
+
+/**
+ * WHAT LOOKS OFF (Jon, 2026-09-10: "it should highlight or identify things that look off. If a
+ * price is above 150, it should flag it"). A flag never blocks approval — a reviewer who has looked
+ * can still sign it — it just makes sure the eye lands there first.
+ */
+export type BillingFlag =
+  | 'over_150'        // billed amount above $150 — Jon's line
+  | 'no_price'        // finished, billable, and $0 with no override: somebody forgot to price it
+  | 'override_far'    // hand-set amount more than 50% or $50 away from what the task computes to
+  | 'no_detail'       // billing detail never pulled, so cost lines may be missing
+  | 'duplicate'       // same unit, same day, same task name as another task in the window
+  | 'long_hours'      // hourly task over 8 billed hours, or over 8 actual hours on the clock
+  | 'no_owner'        // could not be attributed to an owner — will not reach a statement
+
+export const FLAG_LABEL: Record<BillingFlag, string> = {
+  over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
+  no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
+}
+export const OVER_LINE_USD = 150
 
 export type OwnerGroup = {
   ownerId: string | null
@@ -65,6 +93,8 @@ export type OwnerGroup = {
   units: number
   tasks: number
   billed: number
+  /** Review progress over the WHOLE window, never over a filtered view. */
+  open: number; opsApproved: number; gmApproved: number; flagged: number
   labor: number
   laborInhouse: number   // labor $ done by our Homebase staff
   laborVendor: number    // labor $ done by outside vendors
@@ -391,6 +421,12 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     let reviewedBy = a && a.reviewed_by ? String(a.reviewed_by) : null
     let reviewedAt = a && a.reviewed_at ? String(a.reviewed_at) : null
     if (!reviewedBy && billed === 0 && isDepartureCleanName(t.name)) { reviewedBy = 'auto'; reviewedAt = null }
+    // The two-stage state. A $0 departure clean that nobody has touched is signed off as 'auto' —
+    // there is nothing to approve and it must not clog either queue — but the moment a human has
+    // set any state, or the clean carries money, it is a real row that needs real eyes.
+    let reviewState: ReviewState = a && (a.review_state === 'ops_approved' || a.review_state === 'gm_approved') ? a.review_state : 'open'
+    let gmBy = a && a.gm_by ? String(a.gm_by) : null
+    if (reviewState === 'open' && billed === 0 && isDepartureCleanName(t.name)) { reviewState = 'gm_approved'; gmBy = 'auto' }
     const doerName = (Array.isArray(t.assignees) && t.assignees[0] && t.assignees[0].name ? String(t.assignees[0].name) : '') || String(t.assignee_name || '') || String(t.finished_by_name || '')
     const crew: 'inhouse' | 'vendor' | null = doerName && staffNames.length
       ? (nameMatchesRoster(doerName, staffNames) ? 'inhouse' : 'vendor')
@@ -421,20 +457,54 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
       billedHours,
       reviewedBy,
       reviewedAt,
+      reviewState,
+      opsBy: a && a.ops_by ? String(a.ops_by) : null, opsAt: a && a.ops_at ? String(a.ops_at) : null,
+      gmBy, gmAt: a && a.gm_at ? String(a.gm_at) : null,
       crew,
       laborAmount: labor,
       billedAmount: billed,
       reportUrl: t.report_url ? String(t.report_url) : null,
+      flags: [],
     }
   })
+
+  // ── WHAT LOOKS OFF ──────────────────────────────────────────────────────────────────────────
+  // Computed over the whole window because one of the checks (duplicate) needs the neighbours.
+  const DONE_RE = /complet|close|approv|finish/i
+  const seenKey: Record<string, number> = {}
+  for (const t of tasks) {
+    const k = (t.listingId || t.unit) + '|' + (t.scheduledDate || (t.finishedAt || '').slice(0, 10)) + '|' + t.name.trim().toLowerCase()
+    seenKey[k] = (seenKey[k] || 0) + 1
+  }
+  for (const t of tasks) {
+    const f: BillingFlag[] = []
+    const finished = DONE_RE.test(t.status) || !!t.finishedAt
+    if (t.billedAmount > OVER_LINE_USD) f.push('over_150')
+    if (finished && !t.excluded && t.billedAmount === 0 && t.overrideAmount == null && !isDepartureCleanName(t.name)) f.push('no_price')
+    if (t.overrideAmount != null) {
+      const computed = Math.round((t.laborAmount + t.items.reduce((s2, x) => s2 + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)) * 100) / 100
+      const gap = Math.abs(t.overrideAmount - computed)
+      if (computed > 0 ? (gap / computed > 0.5 || gap > 50) : t.overrideAmount > 50) f.push('override_far')
+    }
+    if (!t.hasDetail && !t.excluded) f.push('no_detail')
+    const k = (t.listingId || t.unit) + '|' + (t.scheduledDate || (t.finishedAt || '').slice(0, 10)) + '|' + t.name.trim().toLowerCase()
+    if ((seenKey[k] || 0) > 1 && !isDepartureCleanName(t.name)) f.push('duplicate')
+    if ((t.billedHours != null && t.billedHours > 8) || (t.actualMinutes != null && t.actualMinutes > 8 * 60)) f.push('long_hours')
+    if (!t.ownerId && !t.excluded) f.push('no_owner')
+    t.flags = f
+  }
 
   const groups: Record<string, OwnerGroup> = {}
   const unitsSeen: Record<string, Record<string, boolean>> = {}
   for (const t of tasks) {
     const k = t.ownerId || '—'
-    if (!groups[k]) { groups[k] = { ownerId: t.ownerId, ownerName: t.ownerName, units: 0, tasks: 0, billed: 0, labor: 0, laborInhouse: 0, laborVendor: 0, items: 0, actualMinutes: 0 }; unitsSeen[k] = {} }
+    if (!groups[k]) { groups[k] = { ownerId: t.ownerId, ownerName: t.ownerName, units: 0, tasks: 0, billed: 0, open: 0, opsApproved: 0, gmApproved: 0, flagged: 0, labor: 0, laborInhouse: 0, laborVendor: 0, items: 0, actualMinutes: 0 }; unitsSeen[k] = {} }
     const g = groups[k]
     g.tasks += 1
+    if (t.reviewState === 'open') g.open += 1
+    else if (t.reviewState === 'ops_approved') g.opsApproved += 1
+    else g.gmApproved += 1
+    if (t.flags.length) g.flagged += 1
     g.billed = Math.round((g.billed + t.billedAmount) * 100) / 100
     if (!t.excluded) {
       g.labor = Math.round((g.labor + t.laborAmount) * 100) / 100
