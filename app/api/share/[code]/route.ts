@@ -204,7 +204,12 @@ async function handle(code: string, pw: string, body?: any) {
         jobs: m.jobs, cleans: m.cleans,
         perDay: m.perDay,
         people: m.people.slice(0, 60).map(p => ({
-          name: p.name, dept: p.dept, daysWorked: p.daysWorked, jobs: p.jobs, cleans: p.cleans,
+          // The ROSTER travels too (Jon, 2026-09-10: "make sure HK team scheduled is showing
+          // regardless of tasks"). Without it a shared board can only show people who hold work,
+          // so somebody rostered on with nothing assigned — the row worth acting on — was visible
+          // in the app and invisible on the link. It is a rota, not guest data: no privacy rule
+          // applies to who is working.
+          name: p.name, dept: p.dept, daysWorked: p.daysWorked, jobs: p.jobs, cleans: p.cleans, roster: p.roster,
           byDay: Object.keys(p.byDay).reduce((acc: Record<string, any[]>, d) => {
             acc[d] = p.byDay[d].slice(0, 14).map(j => ({
               unit: j.unit, task: j.task, status: j.status, isClean: j.isClean, departure: j.departure, vendor: j.vendor, tags: j.tags,
