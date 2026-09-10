@@ -93,6 +93,10 @@
       "schedule": "3 9 * * *"
     },
     {
+      "path": "/api/cron/billing-ai",
+      "schedule": "23 9 * * *"
+    },
+    {
       "path": "/api/cron/guide-activations",
       "schedule": "18 9 * * *"
     },
