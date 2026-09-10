@@ -4,6 +4,7 @@
 // Admins only; the URL is saved onto the item when the catalog is saved.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
 import { renderPhoto } from '@/lib/photo-fix'
@@ -24,7 +25,9 @@ async function ensureBucket(sb: ReturnType<typeof supabaseAdmin>) {
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  // Same bar as the attach step this feeds (PUT /api/guest-orders/stock is edit-level): a person
+  // who may edit the menu may put a photo on it. Admin-only here meant a silent 403 for them.
+  if (!(access.role === 'admin' || atLeast(access.levels?.['guest-orders'], 'edit'))) return NextResponse.json({ error: 'guest-orders edit access required' }, { status: 403 })
   let form: FormData
   try { form = await req.formData() } catch { return NextResponse.json({ error: 'multipart form-data required' }, { status: 400 }) }
   const file = form.get('file')
