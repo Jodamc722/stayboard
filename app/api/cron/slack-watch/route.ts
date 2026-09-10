@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { runSlackWatch, openItems } from '@/lib/eve/slack-watch'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
+import { eveGate } from '../../agent/route'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -21,10 +22,17 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // Two ways in: Vercel's scheduler with the bearer, or a signed-in Eve admin pressing "run now".
+  // With CRON_SECRET set, cronAllowed refuses everything else outright — which is correct for a job
+  // that spends money, and also means there was no way for Jon to run it by hand. So an admin
+  // session is the second key, throttled the same way so a double-click cannot run it twice.
   const allowed = cronAllowed(req)
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!allowed.ok) {
+    const gate = await eveGate()
+    if (!gate.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   if (!allowed.viaSecret) {
-    const skip = await tooSoon('slack-watch', 45)
+    const skip = await tooSoon('slack-watch', 20)
     if (skip) return NextResponse.json({ ok: true, ...skip })
   }
   const url = new URL(req.url)
