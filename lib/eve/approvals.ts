@@ -15,7 +15,7 @@
 // have to verify. Nothing about the security model moves into Slack.
 import 'server-only'
 import { getSetting, setSetting } from '@/lib/app-settings'
-import { postToChannel, postThreadReply, getDirectory } from '@/lib/slack'
+import { postToChannel, postThreadReply, getDirectory, inviteHint } from '@/lib/slack'
 import { EVE_CHANNELS } from '@/lib/slack-rules'
 import { lc } from './ctx'
 
@@ -58,10 +58,10 @@ export async function setApprovalsChannel(nameOrId: string, by: string): Promise
       ? chans.find(c => String(c.id) === q.toUpperCase())
       : (chans.find(c => lc(c.name) === lc(q)) || chans.find(c => lc(c.name).includes(lc(q))))
     if (!hit) {
-      return { ok: false, error: `No channel matching "${nameOrId}". The bot can only see channels it belongs to — for a private one, /invite @Lighthouse first.` }
+      return { ok: false, error: `No channel matching "${nameOrId}". The bot can only see channels it belongs to — for a private one, ${await inviteHint()} first.` }
     }
     if (hit.isMember === false) {
-      return { ok: false, error: `Found #${hit.name}, but the bot is not in it. Run "/invite @Lighthouse" in that channel, then set it again.` }
+      return { ok: false, error: `Found #${hit.name}, but the bot is not in it. Run "${await inviteHint()}" in that channel, then set it again.` }
     }
     const ch = { id: String(hit.id), name: String(hit.name) }
     const res = await setSetting(APPROVALS_CHANNEL_KEY, ch, by)

@@ -15,7 +15,7 @@
 // reports how many channels and messages it actually looked at so a thin answer reads as thin
 // rather than as "nothing was said".
 import 'server-only'
-import { botToken, getDirectory } from '@/lib/slack'
+import { botToken, getDirectory, inviteHint } from '@/lib/slack'
 import { lc } from './ctx'
 
 const API = 'https://slack.com/api/'
@@ -102,7 +102,7 @@ export async function channelHistory(nameOrId: string, opts?: { days?: number; l
   const j = await slackGet('conversations.history', { channel: ch.id, oldest, limit: String(limit) })
   if (!j.ok) {
     const hint = j.error === 'not_in_channel'
-      ? ` The bot is not in #${ch.name}. Invite it with "/invite @Lighthouse" in that channel.`
+      ? ` The bot is not in #${ch.name}. Invite it with "${await inviteHint()}" in that channel.`
       : j.error === 'missing_scope' ? ' The install predates the read scopes — reconnect Slack from /command.' : ''
     return { error: `Slack: ${j.error}.${hint}`, channel: '#' + ch.name }
   }
@@ -204,11 +204,12 @@ export async function searchChannels(query: string, opts?: { days?: number; chan
 /** Which channels can Eve actually see? The honest answer to "why didn't you find it". */
 export async function slackReach(): Promise<any> {
   const m = await maps(true)
+  const hint = await inviteHint()
   const inCh = m.list.filter(c => c.isMember !== false)
   const outCh = m.list.filter(c => c.isMember === false)
   return {
     can_read: inCh.map(c => ({ channel: '#' + c.name, private: c.isPrivate })),
-    cannot_read: outCh.map(c => ({ channel: '#' + c.name, private: c.isPrivate, fix: c.isPrivate ? 'invite the bot: /invite @Lighthouse' : 'the bot can join this one automatically' })),
+    cannot_read: outCh.map(c => ({ channel: '#' + c.name, private: c.isPrivate, fix: c.isPrivate ? `invite the bot: ${hint}` : 'the bot can join this one automatically' })),
     never_readable: 'Direct messages and group DMs. The bot has no im:history scope, so this is a hard limit, not a setting.',
   }
 }

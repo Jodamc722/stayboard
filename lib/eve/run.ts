@@ -23,6 +23,7 @@ import { wireTools, runTool, DOMAIN_KEYS } from './registry'
 import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory } from './memory'
 import { appAtlas } from './atlas'
 import { buildSystemBlocks, getVoiceProfile } from './prompt'
+import { detectLanguage, languageNote, getLingo, lingoNote } from './voice'
 import { modelFor } from '@/lib/ai-models'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
@@ -176,6 +177,14 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const memories = await loadMemories(scopes, ctx.email, 60, lastUser || wholeThread)
   const voice = await safe(getVoiceProfile(), '')
 
+  // WHAT LANGUAGE TO ANSWER IN, decided here rather than left to the model. Read off the LAST user
+  // message, not the whole thread: a supervisor who opens in English and switches to Spanish has
+  // switched, and Eve should switch with them mid-conversation rather than at the next question.
+  const lang = detectLanguage(lastUser)
+  // How this team writes. Absent until the nightly pass has read enough real messages to have an
+  // opinion, and absent is correct — an invented house style is worse than a neutral one.
+  const lingo = await safe(getLingo(), null as any)
+
   const userName = String((access.profile as any)?.name || '') || (access.email ? access.email.split('@')[0] : '')
 
   const open: string[] = []
@@ -183,7 +192,11 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   for (const d of preOpen) { const k = lc(d); if (DOMAIN_KEYS.indexOf(k) >= 0 && open.indexOf(k) < 0) open.push(k) }
 
   const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', input.surfaceNote || ''].filter(Boolean).join('\n')
-  const voicePlus = [voice, surface].filter(Boolean).join('\n\n')
+  // ORDER IS PRECEDENCE. The prompt tells the model these notes override what came before, so the
+  // last word belongs to the narrowest instruction: house vocabulary first, then where she is
+  // standing, then Jon's own hand-written voice notes, and the language rule last of all, because
+  // getting the language wrong makes every other improvement here invisible.
+  const voicePlus = [lingo ? lingoNote(lingo) : '', surface, voice, languageNote(lang.lang)].filter(Boolean).join('\n\n')
 
   // Token accounting per question, so the improvement loop can see what an answer COST as well as
   // whether it was right. cacheRead is the number that says whether caching is working.
