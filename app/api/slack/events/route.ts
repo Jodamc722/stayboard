@@ -38,7 +38,7 @@
 // costs the room nothing.
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
-import { botToken, emailForSlackUser, getDirectory, slackApi } from '@/lib/slack'
+import { botToken, emailForSlackUser, slackProfileEmail, getDirectory, slackApi } from '@/lib/slack'
 import { accessForEmail } from '@/lib/access'
 import { runEve, canUseEve } from '@/lib/eve/run'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -180,12 +180,19 @@ export async function POST(req: NextRequest) {
   // full of other people: the asker's access is what governs, exactly as it does everywhere else.
   const email = await emailForSlackUser(user)
   if (!email) {
-    await say(channel, threadTs, `I don't know who you are in Lighthouse — your Slack account isn't matched to a user there, so I can't tell what you're allowed to see. Ask Jon to link it.`)
+    await say(channel, threadTs, `I can't tell who you are — there's no email on your Slack profile, so I have no way to know what you're allowed to see.`)
     return ok()
   }
   const access = await accessForEmail(email)
   if (!access) {
-    await say(channel, threadTs, `Your Lighthouse account (${email}) isn't active, so I can't answer.`)
+    // "Not active" and "not a user at all" are DIFFERENT PROBLEMS with different fixes, and saying
+    // "your account isn't active" for both sends people looking for a switch that does not exist.
+    // The common cause is neither: a Slack profile on one email domain and a Lighthouse login on
+    // another, which the person cannot diagnose or fix from their side. So say what was looked up.
+    const profile = await slackProfileEmail(user)
+    const mapped = profile && profile !== email
+    await say(channel, threadTs,
+      `I looked you up as *${email}*${mapped ? ` (mapped from your Slack email ${profile})` : ''} and that isn't an active Lighthouse user — either there's no account on that address or it's switched off.\n\nIf you log into Lighthouse with a different email, that's the whole problem: add \`"${user}": "your@email"\` to the *slack_user_map* app setting and I'll know you next time.`)
     return ok()
   }
   if (!canUseEve(access)) {
