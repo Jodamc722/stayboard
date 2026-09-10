@@ -38,7 +38,7 @@
 // costs the room nothing.
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
-import { botToken, getDirectory, slackApi } from '@/lib/slack'
+import { botToken, getDirectory, slackApi, slackGet } from '@/lib/slack'
 import { resolveLighthouseEmail, identityHint } from '@/lib/slack-identity'
 import { accessForEmail } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
@@ -180,9 +180,10 @@ export async function POST(req: NextRequest) {
 async function conversationSoFar(channel: string, ev: any, me: string): Promise<string> {
   const inThread = ev.thread_ts && String(ev.thread_ts) !== String(ev.ts)
   try {
+    // slackGet, not slackApi: these two methods ignore a JSON body. See lib/slack.ts.
     const j = inThread
-      ? await slackApi('conversations.replies', { channel, ts: String(ev.thread_ts), limit: 30 })
-      : await slackApi('conversations.history', { channel, limit: 14 })
+      ? await slackGet('conversations.replies', { channel, ts: String(ev.thread_ts), limit: '30' })
+      : await slackGet('conversations.history', { channel, limit: '14' })
     if (!j.ok) return ''
     let names: Record<string, string> = {}
     try {
@@ -216,7 +217,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
           && Number(m.reply_count) > 0 && String(m.text || '').includes(`<@${me}>`))
         .slice(0, 2)
       for (const root of mine) {
-        const t = await slackApi('conversations.replies', { channel, ts: String(root.ts), limit: 20 })
+        const t = await slackGet('conversations.replies', { channel, ts: String(root.ts), limit: '20' })
         if (!t.ok) continue
         const lines = (t.messages || []).map(line).filter(Boolean) as string[]
         if (lines.length) earlier.push(lines.slice(0, 12).join('\n'))
