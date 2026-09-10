@@ -248,10 +248,10 @@ export const DEFAULT_RULES: SlackRules = {
   // #vr-ops-team-projects — low volume, already report-shaped, supervisors expect structure here.
   opsChannel: 'C083X66C17W',
   // #leadership — Jon, 2026-09-10: "#leadership and you can do CCS-and-Jon… and Leadership you can
-  // use for all approvals." This was deliberately left null for three weeks because auto-detect only
-  // found #vr-jjleadership, which is the VENDOR's leadership room — posting a handover there would
-  // have put our internal picture in front of an outside company. It is now set to the room Jon
-  // named, and it is a private channel, so the bot has to be invited: /invite @Eve.
+  // use for all approvals." The DEFAULT sat at null for three weeks because auto-detect only found
+  // #vr-jjleadership, which is the VENDOR's leadership room — a handover posted there would have put
+  // our internal picture in front of an outside company. Somebody set the real one in the admin long
+  // ago; this only brings the code default in line, so a reset config lands in the right room.
   leadershipChannel: CH.leadership,
   leadership: [KARLA_SLACK_ID, ROBERTO_SLACK_ID, SILVIA_SLACK_ID, SULAMAN_SLACK_ID, BERNADETTE_SLACK_ID, JON_SLACK_ID],
   bilingualFieldChannels: true,
@@ -421,13 +421,14 @@ export function mergeRules(stored: any): SlackRules {
     firehose: chan(stored.firehose),
     defaultChannel: chan(stored.defaultChannel),
     opsChannel: stored.opsChannel === undefined ? d.opsChannel : chan(stored.opsChannel),
-    // `|| d.leadershipChannel` on purpose, not `=== undefined`. This key shipped as null for three
-    // weeks, and mergeRules writes every key on every save — so a stored null means "the default was
-    // null when I last saved", not "I want no leadership channel". Treating it as unset is the only
-    // reading that gets Jon's #leadership pick applied to a settings blob written before today. The
-    // cost is that it cannot be blanked from the admin, only pointed somewhere else, which is the
-    // right trade for a channel whose absence silently swallows every escalation.
-    leadershipChannel: chan(stored.leadershipChannel) || d.leadershipChannel,
+    // `=== undefined`, matching opsChannel above, so an explicit clear in the admin still sticks.
+    //
+    // I briefly made this `|| d.leadershipChannel` on the theory that a stored null could not be
+    // distinguished from "never set". It could: #leadership has been receiving the labor report and
+    // the arrivals heads-up for weeks, and runNotableArrivals falls back to opsChannel — so a null
+    // here would have sent those to #vr-ops-team-projects instead. The stored value was set all
+    // along. The `||` form only removed the ability to blank the field, and bought nothing.
+    leadershipChannel: stored.leadershipChannel === undefined ? d.leadershipChannel : chan(stored.leadershipChannel),
     leadership: leadership.length ? leadership : d.leadership.slice(),
     bilingualFieldChannels: stored.bilingualFieldChannels === undefined ? d.bilingualFieldChannels : !!stored.bilingualFieldChannels,
     // Never leave the app with nowhere to route: an empty list falls back to the seeded areas.
