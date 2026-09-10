@@ -102,9 +102,13 @@ const KNOWN_EMPLOYEE_KEYS = new Set([
 // is someone I don't see"). getLocationUuid returns locations[0], so on a multi-location Homebase
 // account every employee at the other locations was invisible. Falls back to the single fixed
 // location when HOMEBASE_LOCATION_UUID pins one.
+// Locations change about never; every roster, shift and timecard call used to start with this
+// round trip. Memoised for ten minutes per instance.
+let _locs: { at: number; ids: string[] } | null = null
 export async function getLocationUuids(): Promise<string[]> {
   const fixed = process.env.HOMEBASE_LOCATION_UUID
   if (fixed) return [fixed]
+  if (_locs && Date.now() - _locs.at < 10 * 60 * 1000) return _locs.ids
   const locs = arr(await hb('/locations'))
   const out: string[] = []
   for (const l of locs) {
@@ -112,6 +116,7 @@ export async function getLocationUuids(): Promise<string[]> {
     if (u) out.push(String(u))
   }
   if (!out.length) throw new Error('No Homebase locations visible to this API key')
+  _locs = { at: Date.now(), ids: out }
   return out
 }
 

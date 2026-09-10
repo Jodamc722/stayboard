@@ -31,7 +31,7 @@ import 'server-only'
 // send on a partial read, and a shared board must not quietly understate what the crew cost.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getTimecardsAudited } from '@/lib/homebase-labor'
-import { getShifts } from '@/lib/homebase'
+import { getShifts, type Shift } from '@/lib/homebase'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { laborAmount } from '@/lib/billing'
 import { ownerTotal } from '@/lib/labor-econ'
@@ -294,10 +294,14 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
   const CLEANING_ROLE = /clean|housekeep|turn|hk\b/i
   const AHEAD_CAP = 7
   let shiftsCounted = 0, shiftsSkipped = 0, noRoleKept = 0
-  for (const d of ahead.slice(0, AHEAD_CAP)) {
+  // All seven days go to Homebase at once — one after another cost ~2 s on a cold link.
+  const aheadDays = ahead.slice(0, AHEAD_CAP)
+  const shiftsByDay = await Promise.all(aheadDays.map(d => getShifts(d).catch(() => null as Shift[] | null)))
+  for (let di = 0; di < aheadDays.length; di++) {
+    const d = aheadDays[di]
     try {
-      const all = await getShifts(d)
-      if (!all.length) continue
+      const all = shiftsByDay[di]
+      if (!all || !all.length) continue
       const labelled = all.filter(s => str(s.role) || str(s.department))
       const anyCleaning = labelled.some(s => CLEANING_ROLE.test(`${str(s.role)} ${str(s.department)}`))
       // If nothing on the roster is labelled as cleaning, the roles are not filled in on this

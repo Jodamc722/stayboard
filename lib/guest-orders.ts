@@ -367,6 +367,9 @@ export type CatalogItem = {
   sale_price_usd: number | null
   /** A short word on the card — New, Limited, Last few. */
   badge: string | null
+  /** Sold in multiples of N (coffee pods in 5s): the basket steps by N and any other quantity rounds
+   *  UP to the next multiple. null/1 = any quantity. Not pack_size — that is what WE buy by. */
+  sold_in: number | null
   /** Filled in when loaded for a scope: on_hand − reserved for that scope (null = not tracked). */
   available?: number | null
 }
@@ -384,6 +387,19 @@ export function sizeLabel(item: Pick<CatalogItem, 'size_value' | 'size_unit'>): 
   const u = sizeUnitOf(item.size_unit)
   if (!Number.isFinite(v) || v <= 0 || !u) return null
   return String(Math.round(v * 100) / 100) + (u === 'ct' ? ' ct' : ' ' + u)
+}
+
+/** A valid "sold in multiples of" — 2..999; anything else means "any quantity". */
+export function soldInOf(v: any): number | null {
+  const n = Math.floor(Number(v) || 0)
+  return n >= 2 && n <= 999 ? n : null
+}
+/** The quantity the guest actually gets: rounded UP to the item's multiple (7 pods → 10 in 5s). */
+export function snapToSoldIn(qty: number, soldIn: number | null | undefined): number {
+  const n = Math.floor(Number(qty) || 0)
+  const step = soldInOf(soldIn)
+  if (n <= 0 || !step) return Math.max(0, n)
+  return Math.ceil(n / step) * step
 }
 
 /** "Spend $75, save 5%" — one rung of the basket-level ladder. */
@@ -501,6 +517,7 @@ export async function loadCatalog(opts?: { building?: string | null; market?: st
     image_original: r.image_original || null,
     sale_price_usd: r.sale_price_usd === null || r.sale_price_usd === undefined ? null : Number(r.sale_price_usd),
     badge: (r.badge ? String(r.badge).trim().slice(0, 16) : null) || null,
+    sold_in: soldInOf(r.sold_in),
     available: null })) as CatalogItem[]
   const b = String(opts?.building || '').toLowerCase()
   const m = String(opts?.market || '').toLowerCase()
@@ -625,10 +642,12 @@ export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: 
   const problems: string[] = []
   for (const b of basket) {
     const item = catalog.find(c => c.sku === b.sku)
-    const qty = Math.floor(Number(b.qty) || 0)
     if (!item) { problems.push('"' + b.sku + '" is no longer available'); continue }
+    // Sold in multiples: the browser steps by the multiple already; a hand-edited or stale number
+    // rounds UP here rather than slipping one pod through at a pack price.
+    const qty = snapToSoldIn(Math.floor(Number(b.qty) || 0), item.sold_in)
     if (qty <= 0) continue
-    if (qty > item.max_qty) { problems.push(item.name + ': max ' + item.max_qty); continue }
+    if (qty > item.max_qty) { problems.push(item.name + ': max ' + item.max_qty + (item.sold_in && item.sold_in > 1 ? ' (sold in ' + item.sold_in + 's)' : '')); continue }
     if (item.track_stock && item.available !== null && item.available !== undefined && qty > item.available) { problems.push(item.name + ': only ' + item.available + ' left'); continue }
     // Volume break, if the quantity earned one. Priced HERE, server-side — the browser's number is
     // never trusted for money.
