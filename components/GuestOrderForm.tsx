@@ -30,9 +30,16 @@ export function unitPriceFor(c: FormItem, qty: number): { unit: number; tier: Pr
   const unit = Math.min(...candidates)
   return { unit, tier: hit && hit.unit_price_usd <= unit ? hit : null }
 }
-/** The next break a guest has not reached yet — the nudge that turns 2 into 3. */
+/**
+ * The next break a guest has not reached yet — the nudge that turns 2 into 3.
+ *
+ * It must BEAT what they are already paying. With an offer price of $11 running against a 3+ break
+ * of $12, the old version cheerfully advertised "3+ $12 each · save 20%" — inviting the guest to buy
+ * more in order to pay more, and quoting the saving against a list price nobody was being charged.
+ */
 export function nextTier(c: FormItem, qty: number): PriceTier | null {
-  const up = (c.tiers || []).filter(t => qty < t.min_qty).sort((a, b) => a.min_qty - b.min_qty)
+  const nowPaying = unitPriceFor(c, Math.max(1, qty)).unit
+  const up = (c.tiers || []).filter(t => qty < t.min_qty && t.unit_price_usd < nowPaying).sort((a, b) => a.min_qty - b.min_qty)
   return up.length ? up[0] : null
 }
 export type PastOrder = { id: string; status: string; items: { name: string; qty: number; line_total_usd: number }[]; total: number; submittedAt: string; deliveryDate: string | null; deliveryNote: string | null; paid: boolean; requested?: string; requestedDate?: string | null }
@@ -257,7 +264,8 @@ export function GuestOrderForm({ data, onSubmit, frame, edit, reviewOpen, onRevi
                       {c.fewLeft !== null && c.fewLeft !== undefined ? <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">Only {c.fewLeft} left</span> : null}
                       {/* The multi-buy nudge: what the next break costs, and what it saves. */}
                       {(() => { const nx = nextTier(c, n); if (!nx || c.price <= 0) return null
-                        const off = Math.round(((c.price - nx.unit_price_usd) / c.price) * 100)
+                        const nowPaying = unitPriceFor(c, Math.max(1, n)).unit
+                        const off = nowPaying > 0 ? Math.round(((nowPaying - nx.unit_price_usd) / nowPaying) * 100) : 0
                         return <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: accent + '1a', color: accent }}>{nx.min_qty}+ {money(nx.unit_price_usd)} each{off > 0 ? ' · save ' + off + '%' : ''}</span>
                       })()}
                     </div>
