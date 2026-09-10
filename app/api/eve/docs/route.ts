@@ -14,9 +14,11 @@ import { eveGate } from '../../agent/route'
 import { isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { chunkDoc, countWords } from '@/lib/eve/docs'
+import { studyDoc, studyStatus } from '@/lib/eve/study'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+// 300, not 60: an upload no longer just files the document, it reads it. See the study pass below.
+export const maxDuration = 300
 
 const CATEGORIES = ['sop', 'playbook', 'policy', 'reference', 'research']
 
@@ -35,8 +37,15 @@ export async function GET() {
       const { data: ch } = await db.from('eve_doc_chunks').select('doc_id').in('doc_id', ids).limit(5000)
       for (const c of ((ch as any[]) || [])) counts[String(c.doc_id)] = (counts[String(c.doc_id)] || 0) + 1
     }
+    // What she actually took from each one. A library screen that shows only titles and word counts
+    // cannot answer the question a person actually has, which is "did she understand it".
+    const studied = await studyStatus(ids)
     return NextResponse.json({
-      docs: ((data as any[]) || []).map(d => ({ ...d, sections: counts[String(d.id)] || 0 })),
+      docs: ((data as any[]) || []).map(d => ({
+        ...d,
+        sections: counts[String(d.id)] || 0,
+        study: studied[String(d.id)] || null,
+      })),
       categories: CATEGORIES,
     })
   } catch (e: any) {
@@ -86,7 +95,24 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < chunks.length; i += 100) {
       await db.from('eve_doc_chunks').insert(chunks.slice(i, i + 100))
     }
-    return NextResponse.json({ ok: true, id: docId, title, words: row.words, sections: chunks.length, replaced: !!existing?.id })
+
+    // AND THEN SHE READS IT. Storing and chunking is a filing cabinet; this is the part where the
+    // document changes what she believes, and where a rule that contradicts something she already
+    // follows becomes a question for a person instead of a silent overwrite. It runs inline rather
+    // than on the schedule because the answer to "did she understand it" belongs in the response to
+    // the upload, while the person is still looking at the screen. If it fails — no API key, a slow
+    // model, a document too strange to parse — the upload still succeeded and studyPending() picks
+    // it up at 01:47.
+    const study = await studyDoc(docId, { by: access.email || undefined }).catch((e: any) => ({
+      ok: false, error: String(e?.message || e).slice(0, 200),
+    } as any))
+
+    return NextResponse.json({
+      ok: true, id: docId, title, words: row.words, sections: chunks.length, replaced: !!existing?.id,
+      study: study?.ok
+        ? { rules: study.rules, conflicts: study.conflicts, questions: study.questions, learned: study.learned, raised: study.raised }
+        : { error: study?.error || 'not studied', note: 'Filed and searchable. I will read it properly tonight.' },
+    })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 500 })
   }
