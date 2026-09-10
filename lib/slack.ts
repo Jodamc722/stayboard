@@ -316,6 +316,33 @@ export async function getDirectory(force?: boolean): Promise<Directory> {
 }
 
 /** Who the bot is posting as — used by the admin screen to prove the install worked. */
+/**
+ * WHAT PEOPLE ACTUALLY TYPE TO REACH HER.
+ *
+ * Jon, 2026-09-10: "in slack we should be able to @eve not have to be lighthouse." The app is
+ * called Lighthouse and the bot is now called Eve, and every "invite the bot" hint in this codebase
+ * used to spell the app name — so the one instruction we give people was the one string guaranteed
+ * to go stale the moment the bot was renamed. Ask Slack instead of hardcoding it: auth.test returns
+ * the bot's current username, which IS the @-handle. Cached for ten minutes because it changes
+ * roughly never, and falls back to the name we expect rather than to nothing, because a hint that
+ * says "/invite @" helps no one.
+ */
+let _handle = ''
+let _handleAt = 0
+export async function botHandle(): Promise<string> {
+  if (_handle && Date.now() - _handleAt < 600_000) return _handle
+  try {
+    const me = await whoAmI()
+    if (me.ok && me.user) { _handle = me.user; _handleAt = Date.now(); return _handle }
+  } catch { /* fall through */ }
+  return _handle || 'Eve'
+}
+
+/** "/invite @Eve" — the whole hint, so no call site has to remember the @ or the slash. */
+export async function inviteHint(): Promise<string> {
+  return `/invite @${await botHandle()}`
+}
+
 export async function whoAmI(): Promise<{ ok: boolean; team?: string; user?: string; userId?: string; error?: string }> {
   const j = await slackApi('auth.test', {})
   if (!j.ok) return { ok: false, error: String(j.error || 'failed') }

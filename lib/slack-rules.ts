@@ -251,7 +251,7 @@ export const DEFAULT_RULES: SlackRules = {
   // use for all approvals." This was deliberately left null for three weeks because auto-detect only
   // found #vr-jjleadership, which is the VENDOR's leadership room — posting a handover there would
   // have put our internal picture in front of an outside company. It is now set to the room Jon
-  // named, and it is a private channel, so the bot has to be invited: /invite @Lighthouse.
+  // named, and it is a private channel, so the bot has to be invited: /invite @Eve.
   leadershipChannel: CH.leadership,
   leadership: [KARLA_SLACK_ID, ROBERTO_SLACK_ID, SILVIA_SLACK_ID, SULAMAN_SLACK_ID, BERNADETTE_SLACK_ID, JON_SLACK_ID],
   bilingualFieldChannels: true,
