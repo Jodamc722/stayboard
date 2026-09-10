@@ -428,6 +428,71 @@ export function spendDiscountFor(subtotal: number, rules: SpendRule[]): { rule: 
   return { rule: hit, amount: Math.round(subtotal * hit.percent_off) / 100 }
 }
 
+// ── Coupon codes ──────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-10: "have coupon code enter area for guests that we can send to them." A code is a
+// row in guest_order_coupons; the guest types it on the form, the server decides what it is worth
+// (never the browser), and it is stored on the order as its own line. It applies AFTER the
+// spend-and-save ladder, on what is left, and never takes the basket below zero.
+
+export type Coupon = {
+  id: string; code: string; label: string | null
+  percent_off: number | null; amount_off_usd: number | null; min_subtotal_usd: number
+  buildings: string[] | null; starts_at: string | null; expires_at: string | null
+  max_uses: number | null; used: number; active: boolean
+  created_by: string | null; created_at: string; updated_at: string
+}
+export const normCouponCode = (v: any) => String(v || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32)
+function normCoupon(r: any): Coupon {
+  return {
+    id: String(r.id), code: normCouponCode(r.code), label: r.label || null,
+    percent_off: r.percent_off === null || r.percent_off === undefined ? null : Number(r.percent_off),
+    amount_off_usd: r.amount_off_usd === null || r.amount_off_usd === undefined ? null : Number(r.amount_off_usd),
+    min_subtotal_usd: Number(r.min_subtotal_usd) || 0,
+    buildings: Array.isArray(r.buildings) && r.buildings.length ? r.buildings.map((x: any) => String(x)) : null,
+    starts_at: r.starts_at || null, expires_at: r.expires_at || null,
+    max_uses: r.max_uses === null || r.max_uses === undefined ? null : Number(r.max_uses), used: Number(r.used) || 0,
+    active: r.active !== false, created_by: r.created_by || null, created_at: r.created_at, updated_at: r.updated_at,
+  }
+}
+export async function findCoupon(code: string): Promise<Coupon | null> {
+  const c = normCouponCode(code)
+  if (!c) return null
+  const { data } = await supabaseAdmin().from('guest_order_coupons').select('*').eq('code', c).limit(1)
+  return data && data[0] ? normCoupon(data[0]) : null
+}
+export async function listCoupons(): Promise<Coupon[]> {
+  const { data } = await supabaseAdmin().from('guest_order_coupons').select('*').order('created_at', { ascending: false }).limit(200)
+  return (data || []).map(normCoupon)
+}
+/** "15% off" / "$10 off" — what a coupon is worth, in words. */
+export function couponWorth(c: Pick<Coupon, 'percent_off' | 'amount_off_usd'>): string {
+  if (c.percent_off && c.percent_off > 0) return Math.round(c.percent_off * 100) / 100 + '% off'
+  if (c.amount_off_usd && c.amount_off_usd > 0) return money(c.amount_off_usd) + ' off'
+  return 'no discount'
+}
+/** Why a code cannot be used right now — null means it can. Written for the guest to read. */
+export function couponProblem(c: Coupon | null, subtotal: number, building: string | null | undefined, now = new Date()): string | null {
+  if (!c) return 'We don\u2019t recognise that code.'
+  if (!c.active) return 'That code is no longer active.'
+  if (c.starts_at && new Date(c.starts_at).getTime() > now.getTime()) return 'That code isn\u2019t live yet.'
+  if (c.expires_at && new Date(c.expires_at).getTime() < now.getTime()) return 'That code has expired.'
+  if (c.max_uses !== null && c.used >= c.max_uses) return 'That code has been fully used.'
+  if (c.buildings && c.buildings.length) {
+    const b = String(building || '').toLowerCase()
+    if (!c.buildings.some(x => x.toLowerCase() === b)) return 'That code isn\u2019t valid at this property.'
+  }
+  if (c.min_subtotal_usd > 0 && subtotal < c.min_subtotal_usd) return 'That code needs an order of ' + money(c.min_subtotal_usd) + ' or more.'
+  return null
+}
+/** What the coupon takes off `base` (the subtotal after the spend ladder). Never more than base. */
+export function couponAmount(c: Coupon, base: number): number {
+  const b = Math.max(0, Number(base) || 0)
+  let a = 0
+  if (c.percent_off && c.percent_off > 0) a = b * c.percent_off / 100
+  else if (c.amount_off_usd && c.amount_off_usd > 0) a = c.amount_off_usd
+  return Math.min(b, Math.round(a * 100) / 100)
+}
+
 /** Clean a tier list from the builder or the DB: positive quantities, sorted, no duplicates. */
 export function sanitizeTiers(input: any): PriceTier[] {
   const out: PriceTier[] = []
@@ -637,7 +702,10 @@ export type OrderLine = {
  * `spendRules` is the basket-level ladder; it comes off the SUBTOTAL, so tax is charged on what the
  * guest actually pays rather than on a number they never saw.
  */
-export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: number }[], taxPct: number, spendRules: SpendRule[] = []): { lines: OrderLine[]; subtotal: number; tax: number; total: number; discount: number; discountNote: string | null; problems: string[] } {
+export type PricedBasket = { lines: OrderLine[]; subtotal: number; tax: number; total: number; discount: number; discountNote: string | null; problems: string[]
+  /** The spend-ladder part and the coupon part of `discount`, separately, so each can be shown. */
+  spendDiscount: number; spendNote: string | null; coupon: { code: string; label: string | null; amount: number } | null; couponProblem: string | null }
+export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: number }[], taxPct: number, spendRules: SpendRule[] = [], coupon?: { coupon: Coupon | null; code: string; building: string | null } | null): PricedBasket {
   const lines: OrderLine[] = []
   const problems: string[] = []
   for (const b of basket) {
@@ -659,12 +727,26 @@ export function priceBasket(catalog: CatalogItem[], basket: { sku: string; qty: 
   }
   const subtotal = Math.round(lines.reduce((n, l) => n + l.line_total_usd, 0) * 100) / 100
   const { rule, amount } = spendDiscountFor(subtotal, spendRules)
-  const discount = Math.min(amount, subtotal)
+  const spendDiscount = Math.min(amount, subtotal)
+  const spendNote = rule ? rule.percent_off + '% off orders over ' + money(rule.min_subtotal_usd) : null
+  // The coupon, if the guest typed one: judged on the subtotal (what they see), taken off what is
+  // left after the ladder. A code that does not qualify costs nothing and says why.
+  let cp: PricedBasket['coupon'] = null
+  let couponProblemText: string | null = null
+  if (coupon && coupon.code) {
+    const why = couponProblem(coupon.coupon, subtotal, coupon.building)
+    if (why || !coupon.coupon) couponProblemText = why || 'We don\u2019t recognise that code.'
+    else {
+      const a = couponAmount(coupon.coupon, Math.round((subtotal - spendDiscount) * 100) / 100)
+      cp = { code: coupon.coupon.code, label: coupon.coupon.label, amount: a }
+    }
+  }
+  const discount = Math.min(Math.round((spendDiscount + (cp ? cp.amount : 0)) * 100) / 100, subtotal)
   const taxable = Math.round((subtotal - discount) * 100) / 100
   const tax = Math.round(taxable * (Number(taxPct) || 0) / 100 * 100) / 100
   const total = Math.round((taxable + tax) * 100) / 100
-  const discountNote = rule ? rule.percent_off + '% off orders over ' + money(rule.min_subtotal_usd) : null
-  return { lines, subtotal, tax, total, discount, discountNote, problems }
+  const discountNote = [spendNote, cp ? 'Code ' + cp.code + (cp.label ? ' (' + cp.label + ')' : '') : null].filter(Boolean).join(' + ') || null
+  return { lines, subtotal, tax, total, discount, discountNote, problems, spendDiscount, spendNote, coupon: cp, couponProblem: couponProblemText }
 }
 
 export function summarizeLines(lines: OrderLine[], max = 4): string {
@@ -860,8 +942,10 @@ export type OrderRow = {
   id: string; link_code: string; reservation_id: string; listing_id: string | null; unit: string | null; building: string | null; market: string | null
   guest_name: string | null; guest_email: string | null; check_in: string | null; check_out: string | null
   status: OrderStatus; items: OrderLine[]; subtotal_usd: number; tax_usd: number; total_usd: number; currency: string; guest_note: string | null
-  /** Basket-level spend-and-save actually applied, and the rule it came from. */
+  /** Everything taken off the basket (spend ladder + coupon), and the words for it. */
   discount_usd: number; discount_note: string | null
+  /** The coupon the guest used, if any — its share is already inside discount_usd. */
+  coupon_code: string | null; coupon_discount_usd: number
   submitted_at: string; approve_token: string | null; approved_at: string | null; approved_by: string | null
   declined_at: string | null; declined_by: string | null; decline_reason: string | null
   paid_at: string | null; paid_via: string | null; payment_note: string | null; guesty_payment_id: string | null; guesty_invoice_item_ids: string[]; folio_lines_done: number; folio_note: string | null; charge_error: string | null
@@ -876,6 +960,7 @@ export type OrderRow = {
 function normOrder(r: any): OrderRow {
   return { ...r, items: Array.isArray(r.items) ? r.items : [], subtotal_usd: Number(r.subtotal_usd) || 0, tax_usd: Number(r.tax_usd) || 0, total_usd: Number(r.total_usd) || 0,
     discount_usd: Number(r.discount_usd) || 0, discount_note: r.discount_note || null,
+    coupon_code: r.coupon_code || null, coupon_discount_usd: Number(r.coupon_discount_usd) || 0,
     guesty_invoice_item_ids: r.guesty_invoice_item_ids || [], folio_lines_done: Number(r.folio_lines_done) || 0, requested_delivery: (['asap','arrival','date'].indexOf(r.requested_delivery) >= 0 ? r.requested_delivery : 'auto') as DeliveryMode, requested_date: r.requested_date || null, stock_scope: r.stock_scope || null, stock_note: r.stock_note || null, collect_method: r.collect_method || null, collect_card: r.collect_card || null, assignee_names: r.assignee_names || [], assignee_ids: r.assignee_ids || [] }
 }
 
@@ -893,14 +978,27 @@ async function patch(id: string, fields: Record<string, any>): Promise<void> {
 }
 
 /** Guest hop: basket → order row → approvers told. */
-export async function submitOrder(link: LinkRow, basket: { sku: string; qty: number }[], guestNote: string, origin: string | null, delivery?: { mode: DeliveryMode; date?: string | null }): Promise<{ ok: boolean; order?: OrderRow; error?: string }> {
+/** Price a basket for a link exactly as submitOrder will — the form's live totals and coupon check. */
+export async function quoteBasket(link: LinkRow, basket: { sku: string; qty: number }[], couponCode?: string | null): Promise<PricedBasket> {
   const cfg = await getGuestOrdersCfg()
   const hub = hubOf(cfg, link.building, link.listing_id)
-  const catalog = await loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true })
+  const code = normCouponCode(couponCode)
+  const [catalog, coupon] = await Promise.all([
+    loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true }),
+    code ? findCoupon(code) : Promise.resolve(null),
+  ])
   // Tax is the rate for THIS building's area (Broward ≠ Miami), resolved the same way as timing.
-  const priced = priceBasket(catalog, basket, timingFor(cfg, link.building, link.market, link.listing_id).taxPct, cfg.spendRules)
+  return priceBasket(catalog, basket, timingFor(cfg, link.building, link.market, link.listing_id).taxPct, cfg.spendRules, code ? { coupon, code, building: link.building } : null)
+}
+
+export async function submitOrder(link: LinkRow, basket: { sku: string; qty: number }[], guestNote: string, origin: string | null, delivery?: { mode: DeliveryMode; date?: string | null }, couponCode?: string | null): Promise<{ ok: boolean; order?: OrderRow; error?: string }> {
+  const cfg = await getGuestOrdersCfg()
+  const priced = await quoteBasket(link, basket, couponCode)
   if (priced.problems.length) return { ok: false, error: priced.problems.join(' · ') }
   if (!priced.lines.length) return { ok: false, error: 'Pick at least one item.' }
+  // A code that stopped qualifying between the form and the submit is an error, not a silent
+  // full-price order — the guest pressed the button expecting the discount they were shown.
+  if (priced.couponProblem) return { ok: false, error: priced.couponProblem }
   const db = supabaseAdmin()
   const row = {
     link_code: link.code, reservation_id: link.reservation_id, listing_id: link.listing_id, unit: link.unit, building: link.building, market: link.market,
@@ -909,6 +1007,7 @@ export async function submitOrder(link: LinkRow, basket: { sku: string; qty: num
     // Stored, not re-derived: the folio, the email and the board must all agree on one number even
     // after somebody edits the spend ladder next week.
     discount_usd: priced.discount, discount_note: priced.discountNote,
+    coupon_code: priced.coupon ? priced.coupon.code : null, coupon_discount_usd: priced.coupon ? priced.coupon.amount : 0,
     guest_note: guestNote ? guestNote.slice(0, 600) : null, approve_token: null,
     requested_delivery: delivery && ['asap', 'arrival', 'date'].indexOf(delivery.mode) >= 0 ? delivery.mode : 'auto',
     requested_date: delivery && delivery.mode === 'date' && delivery.date && /^\d{4}-\d{2}-\d{2}$/.test(delivery.date) ? delivery.date : null,
@@ -916,6 +1015,14 @@ export async function submitOrder(link: LinkRow, basket: { sku: string; qty: num
   const ins = await db.from('guest_orders').insert(row).select('*').limit(1)
   if (ins.error) return { ok: false, error: ins.error.message }
   const order = normOrder((ins.data || [])[0])
+  // Count the use. Not transactional with the insert — a race can let one extra order through on
+  // a nearly-exhausted code, which is the cheap side to be wrong on.
+  if (priced.coupon) {
+    try {
+      const { data: cur } = await db.from('guest_order_coupons').select('used').eq('code', priced.coupon.code).limit(1)
+      await db.from('guest_order_coupons').update({ used: (Number((cur || [])[0]?.used) || 0) + 1, updated_at: new Date().toISOString() }).eq('code', priced.coupon.code)
+    } catch { /* the order stands; the counter is advisory */ }
+  }
   try { await notifyNewOrder(order, cfg, origin) } catch (e) { console.error('guest-orders: notify failed', e) }
   return { ok: true, order }
 }
