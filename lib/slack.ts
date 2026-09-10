@@ -242,7 +242,38 @@ export async function fetchChannels(): Promise<SlackChannel[]> {
  * "unknown person", which resolves to no access. Never guess from the display name: `user_name` is
  * a nickname anyone can change, and two people can share one.
  */
-export async function emailForSlackUser(slackUserId: string): Promise<string | null> {
+/**
+ * WHOSE SLACK ACCOUNT IS THIS, IN LIGHTHOUSE TERMS.
+ *
+ * The obvious answer — the email on their Slack profile — is right until it isn't, and it isn't for
+ * anyone whose Slack was set up under a different domain from the one they log into Lighthouse
+ * with. Jon's Slack profile says jon@staysoflo.com; Lighthouse knows him by another address. Left
+ * alone that reads to the user as "your account isn't active", which is both wrong and unfixable
+ * from their side.
+ *
+ * So an OVERRIDE MAP comes first: `app_settings.slack_user_map`, keyed by Slack user id ("U04G9…")
+ * or by the Slack profile email, valued with the Lighthouse email. It lives in app_settings rather
+ * than a table because it is a handful of rows that change when somebody joins, and because a
+ * feature that needs a hand-run migration is a feature that ships dark.
+ */
+export const SLACK_USER_MAP_KEY = 'slack_user_map'
+
+export async function slackUserMap(): Promise<Record<string, string>> {
+  try {
+    const raw = await getSetting<Record<string, string>>(SLACK_USER_MAP_KEY, {})
+    if (!raw || typeof raw !== 'object') return {}
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw)) {
+      const key = String(k || '').trim().toLowerCase()
+      const val = String(v || '').trim().toLowerCase()
+      if (key && val) out[key] = val
+    }
+    return out
+  } catch { return {} }
+}
+
+/** The email on their Slack profile, before any mapping. Useful for telling somebody WHY they were not recognised. */
+export async function slackProfileEmail(slackUserId: string): Promise<string | null> {
   const id = String(slackUserId || '').trim()
   if (!id) return null
   try {
@@ -251,6 +282,17 @@ export async function emailForSlackUser(slackUserId: string): Promise<string | n
     const email = String((hit as any)?.email || '').trim().toLowerCase()
     return email || null
   } catch { return null }
+}
+
+export async function emailForSlackUser(slackUserId: string): Promise<string | null> {
+  const id = String(slackUserId || '').trim().toLowerCase()
+  if (!id) return null
+  const map = await slackUserMap()
+  if (map[id]) return map[id]                    // mapped by Slack user id
+  const email = await slackProfileEmail(id)
+  if (!email) return null
+  if (map[email]) return map[email]              // mapped by Slack profile email
+  return email
 }
 
 export async function getDirectory(force?: boolean): Promise<Directory> {
