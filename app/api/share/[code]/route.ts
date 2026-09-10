@@ -37,6 +37,9 @@ function pickRange(body: any, today: string, windowDays: number): { from: string
   return { from, to }
 }
 
+const MEMO_MS = 90 * 1000
+const payloadMemo: Map<string, { at: number; out: any }> = new Map()
+
 async function handle(code: string, pw: string, body?: any) {
   if (!/^[0-9a-f]{12,32}$/i.test(code)) return NextResponse.json({ error: 'not found' }, { status: 404 })
   const db = supabaseAdmin()
@@ -46,6 +49,13 @@ async function handle(code: string, pw: string, body?: any) {
   if (link.passcode && pw !== link.passcode) {
     return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: pw ? 'Wrong passcode.' : undefined }, { status: pw ? 403 : 200 })
   }
+
+  // The unlocked payload is memoised for 90 s per (link, range, crew): a reviewer flipping
+  // In-house / Vendor / Calendar or re-opening the page must not pay the Homebase + planner walk
+  // (1–3 s) again. The passcode was checked above, and the memo lives only in this instance.
+  const memoKey = code + '|' + str(body?.from) + '|' + str(body?.to) + '|' + str(body?.crew) + '|' + ymdET(new Date()) + '|' + String(link.updated_at || '')
+  const hit = payloadMemo.get(memoKey)
+  if (hit && Date.now() - hit.at < MEMO_MS) return NextResponse.json(hit.out, { headers: { 'x-share-memo': 'hit' } })
 
   const sections: Record<string, boolean> = link.sections || {}
   const showMoney = link.show_money === true
@@ -234,6 +244,8 @@ async function handle(code: string, pw: string, body?: any) {
       }))
   }
 
+  payloadMemo.set(memoKey, { at: Date.now(), out })
+  if (payloadMemo.size > 200) { const first = payloadMemo.keys().next().value; if (first) payloadMemo.delete(first) }
   return NextResponse.json(out)
 }
 
