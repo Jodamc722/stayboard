@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, listStock, setStock, sanitizeTiers, sizeUnitOf, soldInOf, piecesOf, pieceNameOf } from '@/lib/guest-orders'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
+import { buildingOf, KNOWN_BUILDINGS, MARKETS } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,7 +42,7 @@ export async function GET() {
     })
     return {
       id: c.id, sku: c.sku, name: c.name, category: c.category, image: c.image_url, active: c.active,
-      hubs: c.hubs, buildings: c.buildings, per, tracked: c.track_stock,
+      hubs: c.hubs, buildings: c.buildings, markets: c.markets, feeCode: c.fee_code, sort: c.sort, per, tracked: c.track_stock,
       description: c.description, unit: c.unit_label, maxQty: c.max_qty,
       price: c.price_usd, cost: c.cost_usd, reorderUrl: c.reorder_url, supplier: c.supplier, packNote: c.pack_note,
       // Pack economics + the price ladder, so Inventory can price an item without a second screen.
@@ -51,7 +51,7 @@ export async function GET() {
     }
   })
   const alerts = items.filter(i => i.tracked).flatMap(i => i.per.filter(p => p.state === 'out' || p.state === 'low').map(p => ({ item: i.name, scope: p.label, state: p.state, available: p.available })))
-  return NextResponse.json({ ok: true, scopes, items, alerts, untracked: catalog.filter(c => !c.track_stock && c.active).length, listings, buildings: KNOWN_BUILDINGS.map(b => b.label) })
+  return NextResponse.json({ ok: true, scopes, items, alerts, untracked: catalog.filter(c => !c.track_stock && c.active).length, listings, buildings: KNOWN_BUILDINGS.map(b => b.label), markets: MARKETS })
 }
 
 export async function PUT(req: NextRequest) {
@@ -93,6 +93,20 @@ export async function PUT(req: NextRequest) {
     if (f.imageOriginal !== undefined) patch.image_original = txt(f.imageOriginal, 600)
     if (f.active !== undefined) patch.active = f.active === true
     if (f.trackStock !== undefined) patch.track_stock = f.trackStock === true
+    // WHERE IT IS SOLD (Jon, 2026-09-10: "this should be how all inventory is managed"). Empty =
+    // everywhere, the same rule loadCatalog applies. Names are matched against the known lists so
+    // a typo cannot quietly hide an item from every property.
+    const list = (v: any, known: string[] | null) => {
+      if (v === null) return null
+      const arr = (Array.isArray(v) ? v : []).map((x: any) => String(x || '').trim()).filter(Boolean)
+      const keep = known ? arr.map(x => known.find(k => k.toLowerCase() === x.toLowerCase())).filter(Boolean) as string[] : arr.map(x => x.slice(0, 60))
+      return keep.length ? Array.from(new Set(keep)) : null
+    }
+    if (f.buildings !== undefined) patch.buildings = list(f.buildings, KNOWN_BUILDINGS.map(b => b.label))
+    if (f.markets !== undefined) patch.markets = list(f.markets, MARKETS as unknown as string[])
+    if (f.hubs !== undefined) patch.hubs = list(f.hubs, null)
+    if (f.feeCode !== undefined) patch.fee_code = txt(f.feeCode, 40) || 'GUEST_SERVICE'
+    if (f.sort !== undefined) patch.sort = Math.min(9999, Math.max(0, Math.round(Number(f.sort) || 100)))
     if (f.maxQty !== undefined) patch.max_qty = Math.min(99, Math.max(1, Math.round(Number(f.maxQty) || 10)))
     if (f.price !== undefined) patch.price_usd = Math.max(0, Math.round((Number(f.price) || 0) * 100) / 100)
     if (f.cost !== undefined) patch.cost_usd = f.cost === null || f.cost === '' ? null : Math.max(0, Math.round((Number(f.cost) || 0) * 100) / 100)
@@ -147,7 +161,9 @@ export async function PUT(req: NextRequest) {
       if (!data || !data.length) break
       sku = base.slice(0, 26) + '-' + i
     }
-    const row = { sku, name, fee_code: 'GUEST_SERVICE', price_usd: 0, sort: 100, active: true, track_stock: true, ...itemPatch(n, errors) }
+    // From the Catalog tab an item starts UNCOUNTED (always offered); from a shelf it starts counted
+    // on that shelf. A counted item with no count row would be hidden from every guest.
+    const row = { sku, name, fee_code: 'GUEST_SERVICE', price_usd: 0, sort: 100, active: true, track_stock: n?.trackStock === undefined ? true : n.trackStock === true, ...itemPatch(n, errors) }
     const { data, error } = await db.from('guest_order_catalog').insert(row).select('id').limit(1)
     if (error) { errors.push(name + ': ' + error.message); continue }
     const newId = data && data[0] ? String((data[0] as any).id) : ''
@@ -155,7 +171,7 @@ export async function PUT(req: NextRequest) {
       created.push(newId)
       // Put it on the shelf it was created from, so it appears where the person is standing
       // instead of silently landing on the global shelf.
-      const sc = String(n?.scope || 'global')
+      const sc = String(n?.scope || '')
       if (/^(global|hub:[a-z0-9\-]{1,40})$/.test(sc)) await setStock(newId, sc, Math.max(0, Math.round(Number(n?.onHand) || 0)), n?.lowAt === undefined || n?.lowAt === '' ? null : Number(n.lowAt), actor)
     }
   }
