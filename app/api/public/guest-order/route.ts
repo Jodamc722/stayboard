@@ -3,10 +3,11 @@
 // this route can enumerate links, reservations or other guests.
 //
 //   GET  ?code=…            the stay, the catalog for that building, the deadline, past orders
-//   POST { code, basket, note }   submit a basket (priced server-side, never from the client)
+//   POST { code, basket, note, coupon }   submit a basket (priced server-side, never from the client)
+//   POST { code, basket, coupon, quote: true }   price it without ordering — live totals + coupon check
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getGuestOrdersCfg, loadCatalog, orderByFor, submitOrder, ordersForLink, fmtDay, fmtTimeET, todayET, timingFor, hubOf, sizeLabel, type LinkRow } from '@/lib/guest-orders'
+import { getGuestOrdersCfg, loadCatalog, orderByFor, submitOrder, ordersForLink, fmtDay, fmtTimeET, todayET, timingFor, hubOf, sizeLabel, quoteBasket, normCouponCode, type LinkRow } from '@/lib/guest-orders'
 import { isLiveStay } from '@/lib/stay-status'
 
 export const dynamic = 'force-dynamic'
@@ -25,6 +26,7 @@ function publicOrder(o: any) {
     id: String(o.id).slice(0, 8), status: o.status, items: o.items, subtotal: o.subtotal_usd, tax: o.tax_usd, total: o.total_usd,
     submittedAt: o.submitted_at, deliveryDate: o.delivery_date, deliveryNote: o.delivery_note, note: o.guest_note, requested: o.requested_delivery, requestedDate: o.requested_date,
     paid: !!o.paid_at, declined: o.status === 'declined', delivered: o.status === 'delivered',
+    discount: Number(o.discount_usd) || 0, discountNote: o.discount_note || null, coupon: o.coupon_code || null,
   }
 }
 
@@ -32,10 +34,10 @@ export async function GET(req: NextRequest) {
   const code = String(req.nextUrl.searchParams.get('code') || '').trim()
   const link = await linkFor(code)
   if (!link) return NextResponse.json({ ok: false, error: 'This order link is not valid.' }, { status: 404 })
-  const cfg = await getGuestOrdersCfg()
+  const [cfg, orders] = await Promise.all([getGuestOrdersCfg(), ordersForLink(link.code)])
   const timing = timingFor(cfg, link.building, link.market, link.listing_id)
   const hub = hubOf(cfg, link.building, link.listing_id)
-  const [catalog, orders] = await Promise.all([loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true }), ordersForLink(link.code)])
+  const catalog = await loadCatalog({ building: link.building, market: link.market, hub: hub ? hub.id : null, hideOutOfStock: true })
   // first open, remembered once — the board shows "opened" so the team knows the guest saw it
   if (!link.opened_at) { try { await supabaseAdmin().from('guest_order_links').update({ opened_at: new Date().toISOString() }).eq('code', link.code) } catch { /* cosmetic */ } }
 
@@ -80,6 +82,13 @@ export async function POST(req: NextRequest) {
   const rstatus = String(((rs || [])[0] || {}).status || '')
   if (rstatus && !isLiveStay(rstatus)) return NextResponse.json({ ok: false, error: 'This reservation is no longer active. If that is a surprise, reply to your booking message and we will help.' }, { status: 400 })
   const basket = (Array.isArray(body?.basket) ? body.basket : []).map((b: any) => ({ sku: String(b?.sku || '').slice(0, 60), qty: Math.floor(Number(b?.qty) || 0) })).filter((b: any) => b.sku && b.qty > 0).slice(0, 40)
+  const coupon = normCouponCode(body?.coupon) || null
+  // A QUOTE: the same pricing the order will get, so the form's totals and the coupon verdict come
+  // from the server and never from arithmetic in the browser.
+  if (body?.quote === true) {
+    const q = await quoteBasket(link, basket, coupon)
+    return NextResponse.json({ ok: true, quote: { lines: q.lines, subtotal: q.subtotal, discount: q.discount, spendDiscount: q.spendDiscount, spendNote: q.spendNote, coupon: q.coupon, couponProblem: q.couponProblem, tax: q.tax, total: q.total, problems: q.problems } })
+  }
   if (!basket.length) return NextResponse.json({ ok: false, error: 'Pick at least one item.' }, { status: 400 })
   // one open basket at a time — a second submit while the first waits is almost always a double tap
   const open = (await ordersForLink(link.code)).filter(o => o.status === 'submitted')
@@ -93,7 +102,7 @@ export async function POST(req: NextRequest) {
     if (link.check_out && date >= link.check_out) return NextResponse.json({ ok: false, error: 'Delivery has to be before your checkout day.' }, { status: 400 })
     if (date < todayET()) return NextResponse.json({ ok: false, error: 'That date has passed.' }, { status: 400 })
   } else date = null
-  const r = await submitOrder(link, basket, String(body?.note || ''), req.nextUrl.origin, { mode, date })
+  const r = await submitOrder(link, basket, String(body?.note || ''), req.nextUrl.origin, { mode, date }, coupon)
   if (!r.ok || !r.order) return NextResponse.json({ ok: false, error: r.error || 'Could not place the order.' }, { status: 400 })
   return NextResponse.json({ ok: true, order: publicOrder(r.order) })
 }
