@@ -353,6 +353,8 @@ export type CatalogItem = {
   tiers: PriceTier[] | null
   /** How much is in ONE (500 mL, 12 oz) — not the pack size. Guests compare on this. */
   size_value: number | null; size_unit: string | null
+  /** The untouched upload. Edits re-render from here so crops never stack. */
+  image_original: string | null
   /** Filled in when loaded for a scope: on_hand − reserved for that scope (null = not tracked). */
   available?: number | null
 }
@@ -452,6 +454,7 @@ export async function loadCatalog(opts?: { building?: string | null; market?: st
     tiers: sanitizeTiers(r.tiers).length ? sanitizeTiers(r.tiers) : null,
     size_value: r.size_value === null || r.size_value === undefined ? null : Number(r.size_value),
     size_unit: sizeUnitOf(r.size_unit),
+    image_original: r.image_original || null,
     available: null })) as CatalogItem[]
   const b = String(opts?.building || '').toLowerCase()
   const m = String(opts?.market || '').toLowerCase()
