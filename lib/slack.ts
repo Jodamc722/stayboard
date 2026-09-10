@@ -87,8 +87,14 @@ export async function slackApi(method: string, body: Record<string, any>): Promi
   }
 }
 
-/** GET-style Slack call for the list endpoints, which want query params and a cursor. */
-async function slackGet(method: string, params: Record<string, string>): Promise<any> {
+/**
+ * GET-style Slack call. NOT just for the list endpoints: conversations.history and
+ * conversations.replies do not accept a JSON body at all — POST them JSON and Slack ignores the
+ * body and answers with an error that reads like "no such channel". Both the Slack watcher and
+ * Eve's thread-reading in the events route went dark for an afternoon exactly that way (2026-09-10).
+ * Reads go through here; only chat.postMessage-style writes go through slackApi.
+ */
+export async function slackGet(method: string, params: Record<string, string>): Promise<any> {
   const token = await botToken()
   if (!token) return { ok: false, error: 'no_bot_token' }
   const qs = new URLSearchParams(params).toString()
