@@ -126,6 +126,18 @@ export async function POST(req: NextRequest) {
   // signs that request like any other — so verification comes first and the challenge second.
   const ts = req.headers.get('x-slack-request-timestamp') || ''
   const sig = req.headers.get('x-slack-signature') || ''
+
+  // A MISSING SECRET IS NOT AN UNAUTHORIZED REQUEST, and saying so cost an hour once. With
+  // SLACK_SIGNING_SECRET unset every Slack call is refused, and the only thing Slack reports back is
+  // "your URL didn't respond with the value of the challenge parameter" — which reads like a broken
+  // endpoint. Two different problems must not share one error.
+  if (!process.env.SLACK_SIGNING_SECRET) {
+    return NextResponse.json({
+      error: 'SLACK_SIGNING_SECRET is not set',
+      detail: 'Set it in Vercel (Slack app → Basic Information → App Credentials → Signing Secret) and redeploy. Until then every request from Slack is refused, including this URL check.',
+    }, { status: 503 })
+  }
+
   if (!verify(raw, ts, sig)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
@@ -202,8 +214,16 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// A GET is how you check the route is deployed without a signing secret. It says nothing about
-// whether the app is configured — that belongs behind an admin route.
+// A GET is how you check the route is deployed. It reports whether the signing secret EXISTS —
+// a boolean, never the value — because the alternative is guessing at the cause of a failed URL
+// check, and the boolean gives away nothing an attacker could use.
 export async function GET() {
-  return NextResponse.json({ ok: true, service: 'slack-events' })
+  return NextResponse.json({
+    ok: true,
+    service: 'slack-events',
+    signingSecret: !!process.env.SLACK_SIGNING_SECRET,
+    note: process.env.SLACK_SIGNING_SECRET
+      ? 'Signing secret is set. A failed Slack URL check now means something else.'
+      : 'SLACK_SIGNING_SECRET is NOT set — every request from Slack is refused, including the URL check.',
+  })
 }
