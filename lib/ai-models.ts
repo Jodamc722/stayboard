@@ -116,6 +116,9 @@ export const AI_TASKS: AiTask[] = [
   { key: 'billing', title: 'Billable hours — titles & translation', group: 'Operations', def: 'sonnet',
     what: 'Tidies task titles for owner statements; translates descriptions.',
     matters: 'Wording on a statement line; the numbers come from elsewhere.' },
+  { key: 'billing-judge', title: 'Billable review — unit checks & strips', group: 'Operations', def: 'fable',
+    what: 'Reads a unit check or strip whose description is not the template and says whether real chargeable work happened, with a suggested amount and a reason.',
+    matters: 'Decides whether a routine visit reaches an owner statement. Called once per task, a couple of dozen a month; a human still approves every dollar.' },
 ]
 
 const TASK_KEYS = new Set(AI_TASKS.map(t => t.key))

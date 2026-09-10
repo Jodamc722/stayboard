@@ -16,7 +16,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { isDepartureCleanName } from './breezeway'
 import { getEmployeeNames, nameMatchesRoster } from './homebase'
-import { getSetting, setSetting } from './app-settings'
+import { getSetting, setSetting, getOpsPresets } from './app-settings'
 
 // key identifies a line item across pulls ('cost:<breezewayId>' / 'supply:<id>' / 'extra:<idx>').
 // originalAmount is set when OUR override replaced the Breezeway amount (the override wins in
@@ -57,6 +57,11 @@ export type BillingTask = {
   reviewState: ReviewState
   opsBy: string | null; opsAt: string | null
   gmBy: string | null; gmAt: string | null
+  // Routine access tasks (Jon, 2026-09-10: "unit check without task should not cost anything, use
+  // AI to determine if it should have a cost… so auto close unit check… also unit strip is not a
+  // billable task"). See ROUTINE TASKS below. null = a normal task.
+  routine: RoutineKind | null
+  aiVerdict: AiVerdict | null; aiReason: string | null; aiAmount: number | null; aiAt: string | null
   // Computed
   laborAmount: number              // rate math only (before items/override)
   billedAmount: number             // what the owner is billed for this task (0 when excluded)
@@ -66,6 +71,31 @@ export type BillingTask = {
 }
 
 export type ReviewState = 'open' | 'ops_approved' | 'gm_approved'
+export type AiVerdict = 'no_charge' | 'bill'
+
+export type RoutineKind = 'unit_check' | 'strip'
+
+/**
+ * ROUTINE TASKS. A "Unit check" in Breezeway is an access log — 870 of 890 since July carry the
+ * template text "This is for any no task to keep log of your unit access." — and a "Strip &
+ * Walkthrough" (1,147 since July, no rate, no description) is the bed strip before a clean. Neither
+ * costs an owner anything and neither belongs in a review queue: they close themselves ($0, GM
+ * 'auto') exactly like a $0 departure clean. The exceptions are the few whose description says
+ * something real ("guest reported no hot water", "restock silverware"): those go to the model once
+ * (lib/billing-ai), which answers no_charge (→ closes itself) or bill (→ stays open, flagged, with
+ * the reason and a suggested amount the reviewer can take with one click). A human price, note,
+ * exclusion, ops approval or cost line always wins over the automation.
+ */
+export const isUnitCheckName = (s: string) => /unit[\s\-_]*check/i.test(String(s || ''))
+// "Strip & Walkthrough", "Unit strip", "Strip beds" — not "weather strip" inside a maintenance title.
+export const isStripName = (s: string) => /(^|[^a-z])(?<!weather[\s-]?)(unit\s*)?strip\s*(&|and|\/|beds?|walk|linen|:|-|$)/i.test(String(s || ''))
+// A "Departure clean / unit check" is the clean, not the check — the clean rule owns it.
+export const routineKindOf = (name: string): RoutineKind | null =>
+  isDepartureCleanName(name) ? null : isUnitCheckName(name) ? 'unit_check' : isStripName(name) ? 'strip' : null
+const ACCESS_LOG_RE = /keep (a )?log of (your )?unit access|no task to keep log/i
+/** A routine task whose description is blank or the access-log template: nothing to judge. */
+export const isBareRoutine = (name: string, description: string | null) =>
+  !!routineKindOf(name) && (!String(description || '').trim() || ACCESS_LOG_RE.test(String(description || '')))
 
 /**
  * WHAT LOOKS OFF (Jon, 2026-09-10: "it should highlight or identify things that look off. If a
@@ -80,10 +110,13 @@ export type BillingFlag =
   | 'duplicate'       // same unit, same day, same task name as another task in the window
   | 'long_hours'      // hourly task over 8 billed hours, or over 8 actual hours on the clock
   | 'no_owner'        // could not be attributed to an owner — will not reach a statement
+  | 'ai_bill'         // unit check the model says involved real work — reason + suggested amount attached
+  | 'ai_pending'      // unit check with a real description that the model has not judged yet
 
 export const FLAG_LABEL: Record<BillingFlag, string> = {
   over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
   no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
+  ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
 }
 export const OVER_LINE_USD = 150
 
@@ -305,13 +338,29 @@ function ownerNameFor(owners: OwnerMap, ownerId: string): string | null {
 }
 /** Match a building property name ("Eden Exterior") to a building token owner. Longest token wins. */
 function ownerFromName(name: string, tokens: TokenOwner): { ownerId: string; ownerName: string } | null {
-  const hay = ' ' + String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' '
+  const spaced = ' ' + String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' '
+  // "17 West Property" must find the token the building "17WEST" makes ("17west"), so a second
+  // reading closes the gap between a digit and a letter (Jon, 2026-09-10: "17west property is
+  // 17west"). Only that gap — "eden exterior" never becomes "edenexterior".
+  const glued = spaced.replace(/(\d) +([a-z])/g, '$1$2').replace(/([a-z]) +(\d)/g, '$1$2')
   let hit: { ownerId: string; ownerName: string } | null = null
   let hitLen = 0
   for (const tok of Object.keys(tokens)) {
-    if (tok.length > hitLen && hay.indexOf(' ' + tok + ' ') >= 0) { hit = tokens[tok]; hitLen = tok.length }
+    if (tok.length > hitLen && (spaced.indexOf(' ' + tok + ' ') >= 0 || glued.indexOf(' ' + tok + ' ') >= 0)) { hit = tokens[tok]; hitLen = tok.length }
   }
   return hit
+}
+
+/**
+ * Buildings we no longer manage never reach a statement (Jon, 2026-09-10: "waves property, that
+ * is no longer a listing we manage"). The list is the ops preset `groups.skip` — the same one
+ * that keeps them out of health scoring and ops plans — so one setting retires a building
+ * everywhere. Matched as a whole word against the unit, the building and the Breezeway property.
+ */
+function skippedBuildingRe(skip: string[]): RegExp | null {
+  const words = skip.map(x => String(x || '').trim().toLowerCase().replace(/[^a-z0-9 ]+/g, '')).filter(Boolean)
+  if (!words.length) return null
+  return new RegExp('(^|[^a-z0-9])(' + words.map(w => w.replace(/ +/g, '[\\s-]*')).join('|') + ')([^a-z0-9]|$)', 'i')
 }
 
 /** Assemble the month's billing view: mirror ⋈ details ⋈ adjustments ⋈ owners ⋈ listing names. */
@@ -396,7 +445,18 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
   }
   const tokens = orphanHomes.length ? await buildingOwnerTokens(owners) : {}
 
-  const tasks: BillingTask[] = raw.map(t => {
+  // Retired buildings (ops preset groups.skip, e.g. Waves) are dropped before anything is billed.
+  let skipRe: RegExp | null = null
+  try { skipRe = skippedBuildingRe((await getOpsPresets()).groups.skip) } catch { skipRe = null }
+  const kept = !skipRe ? raw : raw.filter(t => {
+    const lid = String(t.reference_property_id || '')
+    const hid = t.home_id != null ? String(t.home_id) : ''
+    const nm = names[lid], prop = hid ? propName[hid] : undefined
+    const hay = [nm && nm.unit, nm && nm.building, prop && prop.name].filter(Boolean).join(' | ')
+    return !skipRe!.test(hay)
+  })
+
+  const tasks: BillingTask[] = kept.map(t => {
     const id = String(t.id)
     const lid = String(t.reference_property_id || '') || null
     const d = details[id] || null
@@ -427,6 +487,14 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     let reviewState: ReviewState = a && (a.review_state === 'ops_approved' || a.review_state === 'gm_approved') ? a.review_state : 'open'
     let gmBy = a && a.gm_by ? String(a.gm_by) : null
     if (reviewState === 'open' && billed === 0 && isDepartureCleanName(t.name)) { reviewState = 'gm_approved'; gmBy = 'auto' }
+    // Routine tasks (unit check, strip) close themselves at $0 unless a human touched them or the model saw real work.
+    const descr = t.descr ? String(t.descr) : null
+    const routine = routineKindOf(t.name)
+    const aiVerdict: AiVerdict | null = a && (a.ai_verdict === 'no_charge' || a.ai_verdict === 'bill') ? a.ai_verdict : null
+    const humanTouched = !!a && (a.override_amount != null || !!a.excluded || !!a.ops_by || !!(a.note && !/^AI:/.test(String(a.note))))
+    if (reviewState === 'open' && routine && billed === 0 && !humanTouched && (isBareRoutine(t.name, descr) || aiVerdict === 'no_charge')) {
+      reviewState = 'gm_approved'; gmBy = 'auto'
+    }
     const doerName = (Array.isArray(t.assignees) && t.assignees[0] && t.assignees[0].name ? String(t.assignees[0].name) : '') || String(t.assignee_name || '') || String(t.finished_by_name || '')
     const crew: 'inhouse' | 'vendor' | null = doerName && staffNames.length
       ? (nameMatchesRoster(doerName, staffNames) ? 'inhouse' : 'vendor')
@@ -439,7 +507,7 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
       ownerName: own ? own.ownerName : 'Unassigned owner',
       department: String(t.type_department || 'other'),
       name: String(t.name || 'Task ' + id),
-      description: t.descr ? String(t.descr) : null,
+      description: descr,
       status: String(t.status || ''),
       assignees: Array.isArray(t.assignees) ? t.assignees : (t.assignee_name ? [{ id: null, name: String(t.assignee_name) }] : []),
       finishedBy: t.finished_by_name ? String(t.finished_by_name) : null,
@@ -460,6 +528,10 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
       reviewState,
       opsBy: a && a.ops_by ? String(a.ops_by) : null, opsAt: a && a.ops_at ? String(a.ops_at) : null,
       gmBy, gmAt: a && a.gm_at ? String(a.gm_at) : null,
+      routine,
+      aiVerdict, aiReason: a && a.ai_reason ? String(a.ai_reason) : null,
+      aiAmount: a && a.ai_amount != null && Number.isFinite(Number(a.ai_amount)) ? Number(a.ai_amount) : null,
+      aiAt: a && a.ai_at ? String(a.ai_at) : null,
       crew,
       laborAmount: labor,
       billedAmount: billed,
@@ -480,7 +552,11 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     const f: BillingFlag[] = []
     const finished = DONE_RE.test(t.status) || !!t.finishedAt
     if (t.billedAmount > OVER_LINE_USD) f.push('over_150')
-    if (finished && !t.excluded && t.billedAmount === 0 && t.overrideAmount == null && !isDepartureCleanName(t.name)) f.push('no_price')
+    if (finished && !t.excluded && t.billedAmount === 0 && t.overrideAmount == null && !isDepartureCleanName(t.name) && !t.routine) f.push('no_price')
+    if (t.routine && t.reviewState === 'open' && t.overrideAmount == null && !t.excluded) {
+      if (t.aiVerdict === 'bill') f.push('ai_bill')
+      else if (!t.aiVerdict && t.billedAmount === 0 && !isBareRoutine(t.name, t.description)) f.push('ai_pending')
+    }
     if (t.overrideAmount != null) {
       const computed = Math.round((t.laborAmount + t.items.reduce((s2, x) => s2 + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)) * 100) / 100
       const gap = Math.abs(t.overrideAmount - computed)
@@ -488,7 +564,7 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     }
     if (!t.hasDetail && !t.excluded) f.push('no_detail')
     const k = (t.listingId || t.unit) + '|' + (t.scheduledDate || (t.finishedAt || '').slice(0, 10)) + '|' + t.name.trim().toLowerCase()
-    if ((seenKey[k] || 0) > 1 && !isDepartureCleanName(t.name)) f.push('duplicate')
+    if ((seenKey[k] || 0) > 1 && !isDepartureCleanName(t.name) && !t.routine) f.push('duplicate')
     if ((t.billedHours != null && t.billedHours > 8) || (t.actualMinutes != null && t.actualMinutes > 8 * 60)) f.push('long_hours')
     if (!t.ownerId && !t.excluded) f.push('no_owner')
     t.flags = f
