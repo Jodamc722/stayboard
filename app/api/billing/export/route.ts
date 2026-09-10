@@ -5,8 +5,8 @@
 //         SpreadsheetML output, which Excel opened reluctantly and rendered poorly.
 //   zip — one standalone .xlsx per owner, named "<Owner> - Billable Labor - <Month>.xlsx",
 //         for dropping straight into each owner's statement. $0 owners are skipped.
-// done=1 → completed work only (matches the board default). reviewed=1 → only owners marked
-// reviewed for the month (the close-out set).
+// done=1 → completed work only (matches the board default). reviewed=1 → only lines that are
+// GM-approved (review_state = 'gm_approved'; the close-out set).
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { billingMonth, billingRange, type BillingTask } from '@/lib/billing'
@@ -340,8 +340,8 @@ export async function GET(req: NextRequest) {
     let scoped = ownerId ? tasks.filter(t => String(t.ownerId || '') === ownerId) : tasks
     if (doneOnly) scoped = scoped.filter(t => /complet|close|approv|finish/.test(t.status) || t.finishedAt || t.overrideAmount != null)
     if (sp.get('reviewed') === '1') {
-      const reviews = await getSetting<Record<string, any>>('billing_review:' + month, {})
-      scoped = scoped.filter(t => !!reviews[String(t.ownerId || 'unassigned')])
+      // The close-out set: only lines that passed ops review AND GM sign-off (billing_adjustments.review_state).
+      scoped = scoped.filter(t => t.reviewState === 'gm_approved')
     }
 
     if (format === 'zip') {
