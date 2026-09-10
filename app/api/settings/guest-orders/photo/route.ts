@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
+import { renderPhoto } from '@/lib/photo-fix'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -34,13 +35,25 @@ export async function POST(req: NextRequest) {
   if (buf.length < 256) return NextResponse.json({ error: 'file too small or empty' }, { status: 400 })
   const sb = supabaseAdmin()
   try { await ensureBucket(sb) } catch (e: any) { return NextResponse.json({ error: e?.message || 'storage bucket unavailable' }, { status: 500 }) }
-  let out: Buffer
+  // TWO FILES ARE STORED. The ORIGINAL is kept untouched so every later edit re-renders from it
+  // rather than stacking crops and re-compressions on top of each other; the RENDERED one is what
+  // guests see, squared and levelled on the way in so nobody has to remember to tidy it.
+  let orig: Buffer, out: Buffer
   try {
-    out = await sharp(buf, { failOn: 'none' }).rotate().resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 86, mozjpeg: true }).toBuffer()
+    orig = await sharp(buf, { failOn: 'none' }).rotate().resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 92, mozjpeg: true }).toBuffer()
   } catch { return NextResponse.json({ error: 'that file is not an image we can read' }, { status: 400 }) }
-  const path = sku + '/' + Date.now().toString(36) + '.jpg'
+  // If the smart pass fails for any reason the upload still succeeds with a plain square — a photo
+  // that is slightly worse beats an upload that mysteriously did not happen.
+  try { out = await renderPhoto(orig) } catch {
+    out = await sharp(orig).resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 86, mozjpeg: true }).toBuffer()
+  }
+  const stamp = Date.now().toString(36)
+  const path = sku + '/' + stamp + '.jpg'
+  const origPath = sku + '/' + stamp + '-original.jpg'
   const up = await sb.storage.from(BUCKET).upload(path, out, { contentType: 'image/jpeg', upsert: true })
   if (up.error) return NextResponse.json({ error: 'upload failed: ' + up.error.message }, { status: 500 })
+  await sb.storage.from(BUCKET).upload(origPath, orig, { contentType: 'image/jpeg', upsert: true })
   const url = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
-  return NextResponse.json({ ok: true, url })
+  const originalUrl = sb.storage.from(BUCKET).getPublicUrl(origPath).data.publicUrl
+  return NextResponse.json({ ok: true, url, originalUrl })
 }
