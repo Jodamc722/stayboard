@@ -4,7 +4,7 @@
 // offer a real list instead of asking someone to type a channel name from memory.
 import { NextRequest, NextResponse } from 'next/server'
 import { getApprovalsChannel, setApprovalsChannel } from '@/lib/eve/approvals'
-import { getDirectory, botConnected } from '@/lib/slack'
+import { getDirectory, botConnected, botHandle } from '@/lib/slack'
 import { eveGate } from '../../agent/route'
 
 export const dynamic = 'force-dynamic'
@@ -24,7 +24,9 @@ export async function GET() {
     } catch { /* leave empty; the UI says so */ }
   }
   const current = await getApprovalsChannel()
-  return NextResponse.json({ ok: true, connected, current, channels })
+  // The bot's real @-handle, so the "invite it" hint on screen always names what people must type.
+  const handle = connected ? await botHandle() : 'Eve'
+  return NextResponse.json({ ok: true, connected, current, channels, handle })
 }
 
 export async function POST(req: NextRequest) {
