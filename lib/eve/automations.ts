@@ -97,6 +97,10 @@ export const AUTOMATIONS: AutomationDef[] = [
   { key: 'eve-learn', label: 'Nightly learning pass', area: 'eve', path: '/api/eve/learn',
     what: 'Mines messages, reviews and her own chat log into knowledge, expires beliefs that stopped being true, and writes new questions for a human.', receipt: 'automation_runs',
     settingsPath: '/users → Settings → Eve → Memory' },
+  { key: 'slack-watch', label: 'Keeping tabs on Slack', area: 'eve', path: '/api/cron/slack-watch',
+    what: 'Reads the team channels twice a day. Pulls out commitments, open problems, unanswered questions and decisions; closes them from thread replies, finished Breezeway tasks or closed glitches; nudges the owner once in the thread; posts a morning roll-up in #vr-eve; and files what it learned into memory.', receipt: 'automation_runs',
+    settingsPath: '/vr-eve in Slack',
+    notes: 'Hard caps per run: 12 channels, 60 candidates per model call, 8 model calls, 80 thread reads. A quiet day costs a Slack read and nothing else. Needs migration 084.' },
 
   // ---- Guests ---------------------------------------------------------------------------------
   { key: 'sentiment', label: 'Guest sentiment scan', area: 'guests', path: '/api/sentiment/scan',

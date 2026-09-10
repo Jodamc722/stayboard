@@ -100,6 +100,13 @@ export type RunEveInput = {
    * instruction not to use one is a suggestion.
    */
   denyTools?: string[]
+  /**
+   * Ceiling on the weight a `remember` call may carry from this surface. Staff teaching Eve in Slack
+   * is learning and should be allowed (Jon: "make learning and teaching eve to be a co-worker"), but
+   * a fact from a channel must never outrank one Jon gave her directly. Jon's answers are 8; a
+   * document is 7; a colleague in a channel is 5 at most, and the row says who said it.
+   */
+  memoryWeightCap?: number
   /** Force money redaction regardless of the person's own permission — a shared room, not a private one. */
   forceNoMoney?: boolean
   maxTurns?: number
@@ -285,7 +292,12 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
             results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ error: 'That is not something you can do from here. An admin can.' }) })
             continue
           }
-          const { output, opened } = await runTool(block.name, block.input || {}, ctx, open)
+          let args = block.input || {}
+          if (block.name === 'remember' && Number.isFinite(input.memoryWeightCap)) {
+            const cap = Number(input.memoryWeightCap)
+            args = { ...args, weight: Math.min(cap, Number(args.weight) || cap), why: `${String(args.why || '').slice(0, 200)} [said by ${ctx.email || 'someone'} in Slack]`.trim() }
+          }
+          const { output, opened } = await runTool(block.name, args, ctx, open)
           if (opened && open.indexOf(opened) < 0) open.push(opened)
           results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output).slice(0, TOOL_RESULT_CHARS) })
         }

@@ -14,12 +14,12 @@
 //
 // So nobody is ever refused an answer. What changes is what an answer is allowed to contain.
 //
-//   ADMIN   — a mapped Lighthouse admin. Everything, and the only tier that may DIRECT her: ask her
-//             to remember something, draft a message, propose an action.
-//   STAFF   — a mapped, active, non-admin user. Every operational answer. No money, no door codes,
-//             no guest contact details.
+//   ADMIN   — a Lighthouse admin. Everything, including money (never in a vendor room).
+//   STAFF   — anyone we recognise. Everything a colleague needs, and they may TEACH her — a fact
+//             from a channel just carries less weight than one from Jon. Not money; not door codes
+//             or entry to an occupied unit, which always go through the approvals flow.
 //   VENDOR  — the channel belongs to a vendor-run area, or the asker maps to nobody. Operational
-//             answers about THEIR OWN buildings only, and the same three exclusions.
+//             answers about THEIR OWN buildings; nothing about guests, money or codes; no teaching.
 //
 // THE TIER IS THE FLOOR, NEVER THE CEILING. A staff member who is cleared for money in Lighthouse
 // still does not get money in a Slack channel, because the channel has other people in it. The
@@ -44,17 +44,27 @@ export type TierGrant = {
   canDirect: boolean
   /** Tool names removed before the model ever sees them. */
   denyTools: string[]
+  /** Highest weight a `remember` from this person in this room may carry. */
+  memoryWeightCap: number
   /** The routing group whose channel this is, when it is one of ours. */
   group: RoutingGroup | null
 }
 
-// Tools that ACT rather than report. Directing Eve means reaching one of these, so they are what
-// "only admins can direct her" actually resolves to in code — a list, not a hope about phrasing.
-const DIRECTING_TOOLS = ['remember', 'recommend', 'ask_jon', 'ask_ralph', 'slack_queue']
-
-// Tools that hand over something physical or personal. Off below admin in a shared room, whatever
-// the individual's own Lighthouse permissions say.
-const SENSITIVE_TOOLS = ['door_code', 'door_code_check', 'guest_profile', 'guest_thread', 'guest_history']
+// Jon, 2026-09-10, second pass: "anyone can ask if they need something, only approvals are PTE and
+// door codes… Money is not something eve should ever share, only GM (me or approved user)… make
+// learning and teaching eve to be a co-worker."
+//
+// So the list of what a colleague CANNOT reach in Slack is now exactly two things and a half:
+//   - door codes and entry to an occupied unit go through the approvals flow, always
+//   - money is Jon's and approved users', and never read aloud in a vendor room
+//   - and the two bot-to-bot / queue tools stay with admins, because nobody else needs them
+// Everything else — including teaching her — is open. A colleague who says "Eve, remember Botanica's
+// crew starts at 11" is doing exactly what Jon asked for; the fact just goes in at a weight below his.
+const ENTRY_TOOLS = ['door_code', 'door_code_check']
+const ADMIN_ONLY = ['ask_ralph', 'slack_queue']
+// A vendor room has an outside company reading it, so a guest's own words and contact details stay
+// out too — those are ours and the guest's, not the contractor's.
+const GUEST_TOOLS = ['guest_profile', 'guest_thread', 'guest_history']
 
 export async function tierFor(access: Access | null, channelId: string): Promise<TierGrant> {
   const rules = await getSlackRules().catch(() => null as any)
@@ -65,26 +75,24 @@ export async function tierFor(access: Access | null, channelId: string): Promise
   ) || null
 
   const isAdmin = !!access && (isSuperadmin(access.email) || access.role === 'admin')
-
-  // A vendor ROOM outranks a staff badge: an admin's own answer is still going into a room with an
-  // outside company in it. Only the buildings scope relaxes for a recognised admin.
   const vendorRoom = !!group && !!group.vendor
 
   if (isAdmin && !vendorRoom) {
-    return { tier: 'admin', buildings: [], canMoney: true, canDirect: true, denyTools: [], group }
+    return { tier: 'admin', buildings: [], canMoney: true, canDirect: true, denyTools: [], memoryWeightCap: 10, group }
   }
   if (isAdmin && vendorRoom) {
-    // Still an admin, still may direct her — but money does not get read aloud in a vendor room.
-    return { tier: 'admin', buildings: [], canMoney: false, canDirect: true, denyTools: ['door_code', 'door_code_check'], group }
+    return { tier: 'admin', buildings: [], canMoney: false, canDirect: true, denyTools: ENTRY_TOOLS, memoryWeightCap: 10, group }
   }
   if (access && !vendorRoom) {
-    return { tier: 'staff', buildings: [], canMoney: false, canDirect: false, denyTools: DIRECTING_TOOLS.concat(SENSITIVE_TOOLS), group }
+    return { tier: 'staff', buildings: [], canMoney: false, canDirect: true, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY), memoryWeightCap: 5, group }
   }
+  // Unrecognised, or a vendor room. Still answered — about their own buildings, minus what is ours.
   return {
     tier: 'vendor',
     buildings: group ? (group.buildings || []).slice() : [],
     canMoney: false, canDirect: false,
-    denyTools: DIRECTING_TOOLS.concat(SENSITIVE_TOOLS),
+    denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY, GUEST_TOOLS, ['remember', 'recommend', 'ask_jon', 'close_item']),
+    memoryWeightCap: 0,
     group,
   }
 }
@@ -105,9 +113,9 @@ export function tierNote(g: TierGrant): string {
   if (g.tier === 'staff') {
     return `${where} You are talking to a colleague in a shared channel — someone who works here, mid-shift, who asked you because it was faster than looking. BE USEFUL FIRST. Answer the operational question properly and completely: what is late, who is where, what a unit needs, what the guest said, what happened yesterday. Go and pull the records the way you would for anyone.
 
-Three things are not yours to hand over in a room like this: dollar amounts, door codes, and a guest's contact details. Say so in one short line and offer the way to get them — an admin can ask you directly, and codes go through the approvals channel. Do not apologise at length, do not explain your permissions, and never let one thing you cannot give turn into a whole answer you did not give.
+Two things are not yours to hand over in a room like this: dollar amounts (those are the GM's), and door codes or entry to an occupied unit (those go through the approvals flow in #vr-eve). One short line if it comes up, then answer everything else. Do not apologise at length, do not explain your permissions, and never let one thing you cannot give turn into a whole answer you did not give.
 
-If they ask you to remember, change or send something, that instruction has to come from an admin. Say that plainly and offer to put it in front of leadership. It is a routing answer, not a refusal.`.trim()
+If they teach you something — a rule, who handles what, a quirk of a building — WRITE IT DOWN with remember. That is them helping you do your job, and it is exactly what you are here for.`.trim()
   }
   const b = g.buildings.length ? ` They look after: ${g.buildings.join(', ')}.` : ''
   return `${where} This room is run by a contractor — the people in it do the work but are not on our payroll, so treat it as a shared room with an outside company in it.${b}

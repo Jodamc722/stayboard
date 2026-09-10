@@ -11,6 +11,8 @@ import 'server-only'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
 import { channelHistory, threadReplies, searchChannels, slackReach } from './slack-read'
+import { openItems } from './slack-watch'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const SLACK_TOOLS: EveTool[] = [
   {
@@ -32,6 +34,30 @@ export const SLACK_TOOLS: EveTool[] = [
     description: 'Pull a full Slack thread once search or channel history shows a message with replies. Params: channel and thread_ts (the ts value from the message). The replies are usually where the actual decision is.',
     input_schema: obj({ channel: S.str, thread_ts: S.str }, ['channel', 'thread_ts']),
     run: async (input) => threadReplies(String(input?.channel || ''), String(input?.thread_ts || '')),
+  },
+  {
+    name: 'open_items',
+    description: 'What you are KEEPING TABS ON from the channels: commitments people made, problems still open, questions nobody answered, decisions made in chat. Twice a day you read the team rooms and track these; they close when a thread reply says done, a Breezeway task finishes, or a glitch is closed. Use this when someone asks what is outstanding, what was promised, whether something got handled, or what is open for a unit or a person. Params: unit, owner, kind — all optional filters.',
+    input_schema: obj({ unit: S.str, owner: S.str, kind: S.str }),
+    run: async (input) => {
+      const all = await openItems(100)
+      const u = String(input?.unit || '').toLowerCase(), o = String(input?.owner || '').toLowerCase(), k = String(input?.kind || '').toLowerCase()
+      const rows = all.filter(i => (!u || String(i.unit || '').toLowerCase().includes(u)) && (!o || String(i.owner_name || '').toLowerCase().includes(o)) && (!k || i.kind === k))
+      return { open: rows.length, items: rows.slice(0, 40).map(i => ({ kind: i.kind, summary: i.summary, owner: i.owner_name, unit: i.unit, building: i.building, since: i.first_seen.slice(0, 10), due: i.due_at ? i.due_at.slice(0, 10) : null, channel: i.channel_name, tracked_in: i.tracked_in, nudged: i.nudge_count > 0 })) }
+    },
+  },
+  {
+    name: 'close_item',
+    description: 'Mark one of the tracked items as done, because a person in the conversation told you it is handled. Params: summary_contains (a distinctive phrase from the item), reason (who said so and what). Only close what you were TOLD is done — never guess.',
+    input_schema: obj({ summary_contains: S.str, reason: S.str }, ['summary_contains', 'reason']),
+    run: async (input, ctx) => {
+      const q = String(input?.summary_contains || '').toLowerCase()
+      if (q.length < 4) return { error: 'Give me a longer phrase from the item.' }
+      const hits = (await openItems(200)).filter(i => i.summary.toLowerCase().includes(q))
+      if (hits.length !== 1) return { error: hits.length ? `${hits.length} items match — be more specific.` : 'No open item matches that.' }
+      const { error } = await supabaseAdmin().from('eve_slack_items').update({ status: 'closed', closed_reason: `${ctx.email || 'someone'}: ${String(input?.reason || '').slice(0, 160)}`, closed_at: new Date().toISOString() }).eq('id', hits[0].id)
+      return error ? { error: error.message } : { closed: hits[0].summary }
+    },
   },
   {
     name: 'slack_reach',
