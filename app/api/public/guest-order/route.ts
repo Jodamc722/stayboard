@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
     },
     copy: { title: cfg.formTitle, intro: cfg.formIntro, taxPct: timing.taxPct, brand: cfg.brandLine, accent: cfg.accentColor, footer: cfg.footerNote, confirmTitle: cfg.confirmTitle, confirmBody: cfg.confirmBody, confirmNext: cfg.confirmNext, spendRules: cfg.spendRules },
     deadline: { orderBy: orderBy.toISOString(), orderByLabel: fmtTimeET(orderBy) + ' ET', arrivalDayStillPossible, nextDelivery, hoursBefore: timing.orderByHoursBefore, leadHours: timing.leadHours, offered: timing.enabled },
-    catalog: catalog.map(c => ({ sku: c.sku, name: c.name, description: c.description, price: c.price_usd, salePrice: c.sale_price_usd, badge: c.badge, unit: c.unit_label, size: sizeLabel(c), category: c.category || 'Extras', maxQty: c.track_stock && c.available !== null && c.available !== undefined ? Math.min(c.max_qty, c.available) : c.max_qty, tiers: c.tiers || null, image: c.image_url, fewLeft: c.track_stock && c.available !== null && c.available !== undefined && c.available <= 3 ? c.available : null })),
+    catalog: catalog.map(c => ({ sku: c.sku, name: c.name, description: c.description, price: c.price_usd, salePrice: c.sale_price_usd, badge: c.badge, soldIn: c.sold_in, unit: c.unit_label, size: sizeLabel(c), category: c.category || 'Extras', maxQty: c.track_stock && c.available !== null && c.available !== undefined ? Math.min(c.max_qty, c.available) : c.max_qty, tiers: c.tiers || null, image: c.image_url, fewLeft: c.track_stock && c.available !== null && c.available !== undefined && c.available <= 3 ? c.available : null })),
     orders: orders.map(publicOrder),
   })
 }
