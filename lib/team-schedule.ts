@@ -397,7 +397,12 @@ export async function buildTeamSchedule(opts: {
     const name = str(t.name)
     const jobDept = deptOf(t.type_department)
     // Inspections ride with cleaning: whoever turns the unit is the one who gets walked through it.
-    if (dept === 'cleaning' && jobDept === 'Maintenance') continue
+    // A CLEANING BOARD SHOWS HOUSEKEEPING. Excluding only Maintenance let Inspections and anything
+    // Breezeway files as Other onto the rota — measured 2026-09-10, one Tuesday carried 26 of them:
+    // pre-arrival inspections, fob deliveries, quality checks. Real work, all of it, and none of it
+    // the cleaning schedule. Housekeeping's own non-turnover jobs (strip and walkthrough, touch-ups)
+    // stay, because those are the crew's day.
+    if (dept === 'cleaning' && jobDept !== 'Housekeeping') continue
     if (dept === 'maintenance' && jobDept !== 'Maintenance') continue
     const job: Job = {
       id: str(t.id),
