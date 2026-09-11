@@ -66,9 +66,13 @@ export async function askQuestion(input: {
   if (!why) return { ok: false, error: 'Say what you would do differently if you knew. A question that changes nothing does not get asked.' }
 
   try {
+    const scope = String(input.scope || 'portfolio')
     const { data: open } = await db.from('eve_questions')
-      .select('id,question,asked_count').eq('status', 'open').order('updated_at', { ascending: false }).limit(200)
-    const twin = ((open || []) as any[]).find(q => sameQuestion(String(q.question), question))
+      .select('id,question,asked_count,scope').eq('status', 'open').order('updated_at', { ascending: false }).limit(200)
+    // Same words AND same scope. Twenty-two "who does what at <building>?" questions differ by one
+    // word each; on words alone they collapsed into two, and twenty buildings never got asked about.
+    // A question about Eden is not a repeat of a question about Capri, however alike they read.
+    const twin = ((open || []) as any[]).find(q => String(q.scope || 'portfolio') === scope && sameQuestion(String(q.question), question))
     if (twin) {
       await db.from('eve_questions').update({
         asked_count: Number(twin.asked_count || 1) + 1, updated_at: new Date().toISOString(),
@@ -76,7 +80,7 @@ export async function askQuestion(input: {
       return { ok: true, id: String(twin.id), repeated: true }
     }
     const { data, error } = await db.from('eve_questions').insert({
-      question, why, scope: String(input.scope || 'portfolio'),
+      question, why, scope,
       kind: ['gap', 'verify', 'conflict'].includes(String(input.kind)) ? String(input.kind) : 'gap',
       evidence: input.evidence ?? null,
       source: String(input.source) === 'eve' ? 'eve' : 'system',
