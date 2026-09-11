@@ -130,10 +130,15 @@ export async function GET(req: NextRequest) {
     const hkPayroll = Number(hk.payroll) || 0
     const hkProfit = Math.round((revenue - hkPayroll) * 100) / 100
     const hkMarginPct = revenue > 0 ? Math.round(hkProfit / revenue * 100) : null
-    const revPerHour = hkHours > 0 ? revenue / hkHours : null
-    const cleansPerHour = hkHours > 0 && revCleans > 0 ? revCleans / hkHours : null
-    const hoursPerClean = revCleans > 0 && hkHours > 0 ? hkHours / revCleans : null
-    const costPerClean = revCleans > 0 ? hkPayroll / revCleans : null
+    // RATIOS NEED A REAL DAY BEHIND THEM. Previewed at 9am with 0.2h on the clock, the same maths
+    // printed "$5,657 per HK hour" and "440 cleans per shift". Under an hour, the ratios are blank;
+    // under four hours, they print but are not compared with the week (the day is still going).
+    const enoughHours = hkHours >= 1
+    const fullDay = hkHours >= 4
+    const revPerHour = enoughHours ? revenue / hkHours : null
+    const cleansPerHour = enoughHours && revCleans > 0 ? revCleans / hkHours : null
+    const hoursPerClean = enoughHours && revCleans > 0 ? hkHours / revCleans : null
+    const costPerClean = enoughHours && revCleans > 0 ? hkPayroll / revCleans : null
     const feePerClean = revCleans > 0 ? depRevenue / revCleans : null
     const ca = ecT.cleanAudit || {}
     const caClosed = Number(ca.closed) || 0, caOpen = Number(ca.openCounted) || 0
@@ -146,6 +151,7 @@ export async function GET(req: NextRequest) {
     const avgHoursPerClean7 = cleans7 > 0 && hkHours7 > 0 ? hkHours7 / cleans7 : null
     const vs = (today: number | null, week: number | null, goodWhen: 'higher' | 'lower', fmt: (n: number) => string) => {
       if (today == null || week == null || week === 0) return ''
+      if (!fullDay) return ` <span style="${MUTED}">(7-day ${fmt(week)}; day still in progress)</span>`
       const diff = (today - week) / week
       if (Math.abs(diff) < 0.03) return ` <span style="${MUTED}">(on the week's pace)</span>`
       const good = goodWhen === 'higher' ? diff > 0 : diff < 0
@@ -165,7 +171,7 @@ export async function GET(req: NextRequest) {
       `<table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px">` +
       `<tr><td style="${td}">Revenue per HK hour</td><td style="${td};text-align:right"><b>${revPerHour != null ? rate(revPerHour) : '&mdash;'}</b>${vs(revPerHour, avgRevPerHour7, 'higher', n => rate(n))}</td></tr>` +
       `<tr><td style="${td}">Labor cost per clean</td><td style="${td};text-align:right"><b>${costPerClean != null ? rate(costPerClean) : '&mdash;'}</b>${vs(costPerClean, avgCostPerClean7, 'lower', n => rate(n))}${feePerClean != null ? ` <span style="${MUTED}">&middot; fee ${rate(feePerClean)}/clean</span>` : ''}</td></tr>` +
-      `<tr><td style="${td}">Hours per clean</td><td style="${td};text-align:right"><b>${hoursPerClean != null ? r1(hoursPerClean) + 'h' : '&mdash;'}</b>${vs(hoursPerClean, avgHoursPerClean7, 'lower', n => r1(n) + 'h')}${cleansPerHour != null ? ` <span style="${MUTED}">&middot; ${r1(cleansPerHour * 8)} cleans per 8h shift</span>` : ''}</td></tr>` +
+      `<tr><td style="${td}">Hours per clean</td><td style="${td};text-align:right"><b>${hoursPerClean != null ? (Math.round(hoursPerClean * 100) / 100) + 'h' : '&mdash;'}</b>${vs(hoursPerClean, avgHoursPerClean7, 'lower', n => r1(n) + 'h')}${cleansPerHour != null ? ` <span style="${MUTED}">&middot; ${r1(cleansPerHour * 8)} cleans per 8h shift</span>` : ''}</td></tr>` +
       `</table>` +
       (mkRows.length > 1 ? `<table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px"><tr><th style="${th}">Market</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">HK hours</th><th style="${th};text-align:right">Payroll</th><th style="${th};text-align:right">Revenue</th><th style="${th};text-align:right">HK profit</th><th style="${th};text-align:right">$/clean</th></tr>` +
         mkRows.map(m => `<tr><td style="${td}">${esc(m.label)}</td><td style="${td};text-align:right">${m.cleans}</td><td style="${td};text-align:right">${r1(m.hours)}h</td><td style="${td};text-align:right">${money(m.payroll)}</td><td style="${td};text-align:right">${money(m.cleaningRevenue)}</td><td style="${td};text-align:right"><span style="${(m.margin || 0) < 0 ? RED : GREEN}">${money(m.margin)}</span></td><td style="${td};text-align:right"><b>${m.laborCostPerClean != null ? rate(m.laborCostPerClean) : '&mdash;'}</b></td></tr>`).join('') + '</table>' : '') +
