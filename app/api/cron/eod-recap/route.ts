@@ -3,13 +3,20 @@
 // priority tasks completed, track payroll vs labor, and tasks completed. Also have a 7 day recap
 // and an overview of tomorrow.")
 //
-// The morning brief says what the day should be. This is the evening answer: what it was.
-//   1. REVENUE CLEANS      departure cleans that earned a fee today — the number that pays everyone
-//   2. PRIORITIES          the things the 7am brief said mattered, and whether they got done
-//   3. PAYROLL vs LABOR    what today cost against what it earned, by crew, from punches
-//   4. TASKS COMPLETED     everything closed on the board today, by kind
-//   5. LAST 7 DAYS         the same money, over the week, with cleans by day
-//   6. TOMORROW            who is scheduled, what is booked, what is still unassigned
+// Jon, 2026-09-11: "separate HK profit, supervisor another line item, and then maintenance. Instead
+// of having the profit at the top, just have it based on housekeeping hours and revenue generated.
+// Also show the cleans a little bit more breakdown of what was completed that day. The goal is to
+// have a general idea of our effectiveness and efficiency in revenue and labor management."
+//
+// So the recap reads like an owner-operator's evening: no blended company profit at the top —
+// the headline is the housekeeping line, because that is the line the staffing decisions live on.
+//   1. HOUSEKEEPING        cleans · revenue · HK hours → revenue per hour, cost per clean, HK profit
+//   2. SUPERVISION         its own line: what it cost, what it covered, HK profit after supervision
+//   3. MAINTENANCE         separate: billed vs its own payroll, jobs billed / left blank
+//   4. CLEANS COMPLETED    the breakdown: by market and building, by type, by person (cleans per hour)
+//   5. PRIORITIES          the things the 7am brief said mattered, and whether they got done
+//   6. LAST 7 DAYS         the same three lines over the week, with today against the week's average
+//   7. TOMORROW            who is scheduled, what is booked, what is still unassigned
 //
 // SAME ENGINE AS EVERYTHING ELSE. Every dollar and hour here is lib/labor-econ over today (and the
 // trailing week); cleans are Breezeway completions on their ET finish day; tomorrow is the day
@@ -96,7 +103,7 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin()
     const qFrom = addDays(today, -1), qTo = addDays(today, 1)
     const { data: doneRows } = await db.from('breezeway_tasks_sync')
-      .select('id,name,type_department,status,finished_at,assignees,finished_by_name,reference_property_id')
+      .select('id,name,type_department,status,finished_at,assignees,finished_by_name,reference_property_id,total_minutes,scheduled_date')
       .gte('finished_at', qFrom).lte('finished_at', qTo + 'T23:59:59').limit(3000)
     const doneToday = ((doneRows || []) as any[]).filter(t => etDay(t.finished_at) === today && !/delete|cancel/i.test(str(t.status)))
     const byKind = { clean: 0, other: 0, maintenance: 0, inspection: 0 }
@@ -112,35 +119,93 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // ── 1. REVENUE CLEANS ──────────────────────────────────────────────────────────────────────
+    // ── 1. HOUSEKEEPING — the line the staffing decisions live on ──────────────────────────
     const hk = KT.housekeeping || {}
     const revCleans = Number(hk.cleans) || 0
     const depRevenue = Number(hk.revenue) || 0
     const chargedN = Number(hk.chargedCleanCount) || 0
     const chargedRev = Number(hk.chargedCleans) || 0
     const revenue = Number(hk.revenueWithCharged ?? hk.revenue) || 0
-    // How the clean count was reached — closed on the board vs assigned today and never closed
-    // (the house rule counts those as done on their scheduled day). Printed so the 5-vs-9 kind of
-    // question answers itself instead of landing in Jon's inbox.
+    const hkHours = Number(hk.hours) || 0
+    const hkPayroll = Number(hk.payroll) || 0
+    const hkProfit = Math.round((revenue - hkPayroll) * 100) / 100
+    const hkMarginPct = revenue > 0 ? Math.round(hkProfit / revenue * 100) : null
+    const revPerHour = hkHours > 0 ? revenue / hkHours : null
+    const cleansPerHour = hkHours > 0 && revCleans > 0 ? revCleans / hkHours : null
+    const hoursPerClean = revCleans > 0 && hkHours > 0 ? hkHours / revCleans : null
+    const costPerClean = revCleans > 0 ? hkPayroll / revCleans : null
+    const feePerClean = revCleans > 0 ? depRevenue / revCleans : null
     const ca = ecT.cleanAudit || {}
     const caClosed = Number(ca.closed) || 0, caOpen = Number(ca.openCounted) || 0
-    const hkPayroll = Number(hk.payroll) || 0
-    const mtRev = Number(KT.maintenance?.revenue) || 0
-    const payrollAll = Number(KT.allIn?.payroll) || 0
-    const profit = Number(KT.allIn?.margin) || 0
-    const mkRows = ((ecT.pnl?.perClean?.markets || []) as any[]).filter(m => m.cleans > 0)
-    const revenueCard = card(
-      secTitle('Revenue cleans today', niceDay(today)) +
-      `<p style="margin:0;font-size:15px;line-height:1.6"><b style="font-size:22px">${revCleans}</b> departure clean${revCleans === 1 ? '' : 's'}${Number(hk.cleansByOtherCrews) > 0 ? ` <span style="${MUTED}">(${hk.cleansByOtherCrews} covered by other crews)</span>` : ''} &rarr; <b>${money(depRevenue)}</b> in cleaning fees to housekeeping` +
-      (hk.costPerClean != null ? ` <span style="${MUTED}">&middot; ${rate(hk.costPerClean)} of housekeeper pay per clean</span>` : '') + `</p>` +
-      (caOpen > 0 ? `<p style="margin:4px 0 0;font-size:12.5px;color:#6b7280">${caClosed} closed on the board &middot; <span style="${AMBER}">${caOpen} assigned today and never closed</span> &mdash; counted as done, per the house rule; the unit is listed under Priorities.</p>` : '') +
-      (chargedN > 0 ? `<p style="margin:4px 0 0;font-size:12.5px;color:#6b7280">+ ${chargedN} charged mid-stay${chargedN === 1 ? '' : 's'}/refresh${chargedN === 1 ? '' : 'es'} &rarr; ${money(chargedRev)} &mdash; in the revenue total (<b>${money(revenue)}</b>), never in the clean count.</p>` : '') +
-      (mkRows.length ? `<table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px"><tr><th style="${th}">Market</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">HK payroll</th><th style="${th};text-align:right">$/clean</th></tr>` +
-        mkRows.map(m => `<tr><td style="${td}">${esc(m.label)}</td><td style="${td};text-align:right">${m.cleans}</td><td style="${td};text-align:right">${money(m.housekeeping?.payroll)}</td><td style="${td};text-align:right"><b>${rate(m.housekeeping?.perClean)}</b></td></tr>`).join('') + '</table>' : '') +
-      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">A departure clean lands on the day it was finished in Breezeway (or its scheduled day if nobody closed it), and carries its checkout's cleaning fee net of the channel cut. Cleans moved to another day count on that day. $/clean is housekeeper wages from Homebase punches divided by every departure clean, whichever crew turned the unit — a covered turn lowers the rate; its fee sits on that crew.</p>`
+    // The week's pace, so today can be read against something. Same engine, same rules.
+    const hk7 = K7.housekeeping || {}
+    const rev7 = Number(hk7.revenueWithCharged ?? hk7.revenue) || 0
+    const hkHours7 = Number(hk7.hours) || 0, hkPay7 = Number(hk7.payroll) || 0, cleans7 = Number(hk7.cleans) || 0
+    const avgRevPerHour7 = hkHours7 > 0 ? rev7 / hkHours7 : null
+    const avgCostPerClean7 = cleans7 > 0 ? hkPay7 / cleans7 : null
+    const avgHoursPerClean7 = cleans7 > 0 && hkHours7 > 0 ? hkHours7 / cleans7 : null
+    const vs = (today: number | null, week: number | null, goodWhen: 'higher' | 'lower', fmt: (n: number) => string) => {
+      if (today == null || week == null || week === 0) return ''
+      const diff = (today - week) / week
+      if (Math.abs(diff) < 0.03) return ` <span style="${MUTED}">(on the week's pace)</span>`
+      const good = goodWhen === 'higher' ? diff > 0 : diff < 0
+      return ` <span style="${good ? GREEN : AMBER}">(${diff > 0 ? '+' : ''}${Math.round(diff * 100)}% vs 7-day ${fmt(week)})</span>`
+    }
+    const mkRows = ((ecT.buckets || []) as any[]).filter(m => m.inHouse && (m.cleans > 0 || m.hours > 0))
+    const tile = (label: string, value: string, sub?: string) =>
+      `<td style="padding:6px 10px 6px 0;vertical-align:top"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;font-weight:600">${label}</div><div style="font-size:20px;font-weight:800;line-height:1.2">${value}</div>${sub ? `<div style="font-size:11.5px;color:#6b7280">${sub}</div>` : ''}</td>`
+    const hkCard = card(
+      secTitle('Housekeeping', niceDay(today) + ' &middot; the line that pays') +
+      `<table cellspacing="0" cellpadding="0" style="width:100%"><tr>` +
+      tile('Departure cleans', String(revCleans), Number(hk.cleansByOtherCrews) > 0 ? `${hk.cleansByOtherCrews} covered by other crews` : (caOpen > 0 ? `${caClosed} closed on the board, ${caOpen} counted by rule` : 'all closed on the board')) +
+      tile('Cleaning revenue', money(revenue), chargedN > 0 ? `${money(depRevenue)} fees + ${money(chargedRev)} charged extras` : 'net of channel cut') +
+      tile('HK hours', `${r1(hkHours)}h`, `${money(hkPayroll)} housekeeper payroll`) +
+      tile('HK profit', `<span style="${hkProfit < 0 ? RED : GREEN}">${money(hkProfit)}</span>`, hkMarginPct != null ? `${hkMarginPct}% of cleaning revenue` : 'no revenue today') +
+      `</tr></table>` +
+      `<table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px">` +
+      `<tr><td style="${td}">Revenue per HK hour</td><td style="${td};text-align:right"><b>${revPerHour != null ? rate(revPerHour) : '&mdash;'}</b>${vs(revPerHour, avgRevPerHour7, 'higher', n => rate(n))}</td></tr>` +
+      `<tr><td style="${td}">Labor cost per clean</td><td style="${td};text-align:right"><b>${costPerClean != null ? rate(costPerClean) : '&mdash;'}</b>${vs(costPerClean, avgCostPerClean7, 'lower', n => rate(n))}${feePerClean != null ? ` <span style="${MUTED}">&middot; fee ${rate(feePerClean)}/clean</span>` : ''}</td></tr>` +
+      `<tr><td style="${td}">Hours per clean</td><td style="${td};text-align:right"><b>${hoursPerClean != null ? r1(hoursPerClean) + 'h' : '&mdash;'}</b>${vs(hoursPerClean, avgHoursPerClean7, 'lower', n => r1(n) + 'h')}${cleansPerHour != null ? ` <span style="${MUTED}">&middot; ${r1(cleansPerHour * 8)} cleans per 8h shift</span>` : ''}</td></tr>` +
+      `</table>` +
+      (mkRows.length > 1 ? `<table width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px"><tr><th style="${th}">Market</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">HK hours</th><th style="${th};text-align:right">Payroll</th><th style="${th};text-align:right">Revenue</th><th style="${th};text-align:right">HK profit</th><th style="${th};text-align:right">$/clean</th></tr>` +
+        mkRows.map(m => `<tr><td style="${td}">${esc(m.label)}</td><td style="${td};text-align:right">${m.cleans}</td><td style="${td};text-align:right">${r1(m.hours)}h</td><td style="${td};text-align:right">${money(m.payroll)}</td><td style="${td};text-align:right">${money(m.cleaningRevenue)}</td><td style="${td};text-align:right"><span style="${(m.margin || 0) < 0 ? RED : GREEN}">${money(m.margin)}</span></td><td style="${td};text-align:right"><b>${m.laborCostPerClean != null ? rate(m.laborCostPerClean) : '&mdash;'}</b></td></tr>`).join('') + '</table>' : '') +
+      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Housekeeper wages from Homebase punches only. A departure clean lands on the day it was finished (or its scheduled day if nobody closed it) and carries its checkout's cleaning fee net of the channel cut. Charged mid-stays and refreshes are in revenue, never in the clean count. ${punchesOk ? 'Every Homebase punch for today came back.' : '<span style="' + RED + '">Homebase did not return every punch &mdash; hours and payroll are a floor tonight.</span>'}</p>`
     )
 
-    // ── 2. PRIORITIES — did the day's promises get kept ───────────────────────────────────────
+    // ── 2. SUPERVISION — its own line ──────────────────────────────────────────────────────────
+    const sup = KT.supervision || {}
+    const supPayroll = Number(sup.payroll) || 0, supHours = Number(sup.hours) || 0, supPeople = Number(sup.people) || 0
+    const supCleans = Number(sup.cleans) || 0
+    const hkAfterSup = Math.round((hkProfit - supPayroll) * 100) / 100
+    const loadedPerClean = revCleans > 0 ? (hkPayroll + supPayroll) / revCleans : null
+    const supCard = card(
+      secTitle('Supervision', 'its own line &middot; overhead the cleaning line carries') +
+      `<table cellspacing="0" cellpadding="0" style="width:100%"><tr>` +
+      tile('Cost today', money(supPayroll), `${supPeople} ${supPeople === 1 ? 'person' : 'people'} &middot; ${r1(supHours)}h${sup.names && sup.names.length ? ' &middot; ' + esc((sup.names as string[]).slice(0, 4).join(', ')) : ''}`) +
+      tile('Turns they covered', String(supCleans), supCleans ? 'counted as cleans; fees sit with housekeeping' : 'no cleans by supervisors') +
+      tile('HK profit after supervision', `<span style="${hkAfterSup < 0 ? RED : GREEN}">${money(hkAfterSup)}</span>`, revenue > 0 ? `${Math.round(hkAfterSup / revenue * 100)}% of cleaning revenue` : '') +
+      tile('Loaded cost per clean', loadedPerClean != null ? rate(loadedPerClean) : '&mdash;', costPerClean != null ? `${rate(costPerClean)} cleaners + ${revCleans > 0 ? rate(supPayroll / revCleans) : '&mdash;'} supervision` : '') +
+      `</tr></table>` +
+      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Supervisors are a fixed cost of running the cleaning line, so they are shown against it &mdash; not inside it. Salaried people carry their salary for the day, never punches.</p>`
+    )
+
+    // ── 3. MAINTENANCE — separate ──────────────────────────────────────────────────────────────
+    const mt = KT.maintenance || {}
+    const mtRev = Number(mt.revenue) || 0, mtPayroll = Number(mt.payroll) || 0, mtHours = Number(mt.hours) || 0
+    const mtProfit = Math.round((mtRev - mtPayroll) * 100) / 100
+    const mtDept = ((ecT.departments || []) as any[]).find((d: any) => d.key === 'maintenance') || {}
+    const mtCard = card(
+      secTitle('Maintenance', 'separate line &middot; its own revenue, its own crew') +
+      `<table cellspacing="0" cellpadding="0" style="width:100%"><tr>` +
+      tile('Billed to owners', money(mtRev), `${Number(mt.tasksBilled) || 0} job${Number(mt.tasksBilled) === 1 ? '' : 's'} with a charge`) +
+      tile('Hours', `${r1(mtHours)}h`, `${money(mtPayroll)} payroll &middot; ${Number(mtDept.people) || 0} ${Number(mtDept.people) === 1 ? 'person' : 'people'}`) +
+      tile('Maintenance profit', `<span style="${mtProfit < 0 ? RED : GREEN}">${money(mtProfit)}</span>`, mtHours > 0 ? `${rate(mtRev / mtHours)} billed per hour` : '') +
+      tile('Left blank', String(Number(mt.tasksNoCharge) || 0), Number(mt.tasksNoCharge) ? 'closed with no charge entered' : 'every job priced') +
+      `</tr></table>` +
+      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Billed = owner-billable charges on maintenance tasks finished today (17WEST excluded). A day with hours and no billing is either unbillable upkeep or a charge nobody typed &mdash; the blank count says which.</p>`
+    )
+
+    // ── 5. PRIORITIES — did the day's promises get kept ───────────────────────────────────────
     const deps: any[] = (sheetT?.departures || [])
     const sameDay = deps.filter(d => d.sameDayTurn && !d.extension)
     const sameDayDone = sameDay.filter(d => d.clean && d.clean.status === 'done')
@@ -172,47 +237,67 @@ export async function GET(req: NextRequest) {
       (!stillOpen.length && !noClean.length && allDep.length ? `<p style="margin:8px 0 0;font-size:12.5px"><span style="${GREEN}">Every checkout was cleaned and closed.</span></p>` : '')
     )
 
-    // ── 3. PAYROLL vs LABOR — by crew, from punches ───────────────────────────────────────────
-    const depts: any[] = (ecT.departments || []).filter((x: any) => (x.hours || 0) > 0 || (x.payroll || 0) > 0)
-    const ORDER = ['housekeeping', 'supervision', 'maintenance', 'ccs', 'inspection', 'other']
-    depts.sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key))
-    const earnedOf = (k: string) => k === 'housekeeping' ? revenue : k === 'maintenance' ? mtRev : null
-    const laborRows = depts.map(x => {
-      const earned = earnedOf(x.key)
-      return `<tr><td style="${td}"><b>${esc(x.label)}</b> <span style="${MUTED};font-size:11.5px">${x.people} ${x.people === 1 ? 'person' : 'people'}</span></td>` +
-        `<td style="${td};text-align:right">${r1(x.hours)}h</td>` +
-        `<td style="${td};text-align:right">${money(x.payroll)}</td>` +
-        `<td style="${td};text-align:right">${earned != null ? money(earned) : '<span style="' + MUTED + '">&mdash;</span>'}</td>` +
-        `<td style="${td};text-align:right;white-space:nowrap">${earned != null && earned > 0 ? `<span style="${(earned - x.payroll) < 0 ? RED : GREEN}">${money(earned - x.payroll)}</span>` : '<span style="' + MUTED + '">&mdash;</span>'}</td></tr>`
-    }).join('')
-    const totalHours = r1(depts.reduce((a, x) => a + (x.hours || 0), 0))
-    const openCards = (ecT.people || []).filter((p: any) => p.openCard || p.hoursSoFar).length
-    const laborCard = card(
-      secTitle('Payroll vs labor', 'Homebase punches &middot; today') +
-      `<p style="margin:0 0 8px;font-size:14px">Earned <b>${money(revenue + mtRev)}</b> <span style="${MUTED}">(${money(revenue)} cleaning + ${money(mtRev)} maintenance billed)</span> against <b>${money(payrollAll)}</b> payroll for <b>${totalHours}h</b> &rarr; ` +
-      `<b style="${profit < 0 ? RED : GREEN}">${money(profit)}</b> ${profit < 0 ? 'loss' : 'profit'}` +
-      (KT.allIn?.marginPct != null ? ` <span style="${MUTED}">(${Math.round(KT.allIn.marginPct)}% margin)</span>` : '') + `</p>` +
-      `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}">Crew</th><th style="${th};text-align:right">Hours</th><th style="${th};text-align:right">Payroll</th><th style="${th};text-align:right">Earned</th><th style="${th};text-align:right">Net</th></tr>${laborRows}</table>` +
-      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">${punchesOk ? 'Every Homebase punch for today came back.' : '<span style="' + RED + '">Homebase did not return every punch &mdash; payroll is a floor tonight.</span>'} Anyone still clocked in is counted to now. Salaried people carry their salary, never punches. Housekeeping earns cleaning fees; maintenance earns billable charges; supervisors and CCS are overhead the two crews carry.</p>`
+    // ── 4. CLEANS COMPLETED — the breakdown ───────────────────────────────────────────────────
+    const KIND_RE: [string, RegExp][] = [
+      ['Departure cleans', /departure clean|turnover clean|check-?out clean|move-?out clean|limpieza de salida/i],
+      ['Mid-stay / refresh', /mid-?stay|refresh|touch-?up|linen (change|swap)|towel (change|swap)/i],
+      ['Deep cleans', /deep clean/i],
+      ['Strips', /strip/i],
+    ]
+    const hkTasks = doneToday.filter(t => /housekeep|clean/i.test(str(t.type_department)) || kindOfTask(t) === 'clean')
+    const typeCounts: Record<string, number> = {}
+    let cleanMinutes = 0, cleanTimed = 0
+    for (const t of hkTasks) {
+      const nm = str(t.name)
+      const k = (KIND_RE.find(([, re]) => re.test(nm)) || ['Other housekeeping'])[0] as string
+      typeCounts[k] = (typeCounts[k] || 0) + 1
+      if (k === 'Departure cleans' && Number(t.total_minutes) > 0) { cleanMinutes += Number(t.total_minutes); cleanTimed++ }
+    }
+    const typeLine = Object.keys(typeCounts).sort((x, y) => typeCounts[y] - typeCounts[x]).map(k => `<b>${typeCounts[k]}</b> ${k.toLowerCase()}`).join(' &middot; ')
+    // By building — from the day sheet, which knows every checkout, cleaned or not.
+    const byBuilding: Record<string, { market: string; done: number; open: number; none: number; sameDay: number }> = {}
+    for (const d of allDep) {
+      const b = str(d.building) || str(d.market) || 'Other'
+      const row = byBuilding[b] ||= { market: str(d.market), done: 0, open: 0, none: 0, sameDay: 0 }
+      if (d.clean && d.clean.status === 'done') row.done++; else if (d.clean) row.open++; else row.none++
+      if (d.sameDayTurn) row.sameDay++
+    }
+    const bRows = Object.keys(byBuilding).sort((x, y) => (byBuilding[y].done + byBuilding[y].open + byBuilding[y].none) - (byBuilding[x].done + byBuilding[x].open + byBuilding[x].none))
+    // By person — the staffing view: cleans, hours on the clock, cleans per hour, wages per clean.
+    const people: any[] = ((ecT.people || []) as any[]).filter(p => (p.hours || 0) > 0 || (p.depCleans || 0) > 0 || (p.cleans || 0) > 0)
+    const hkPeople = people.filter(p => p.dept === 'housekeeping').sort((x, y) => (y.depCleans || 0) - (x.depCleans || 0) || (y.hours || 0) - (x.hours || 0))
+    const coverPeople = people.filter(p => p.dept !== 'housekeeping' && (p.depCleans || 0) > 0)
+    const idle = hkPeople.filter(p => (p.hours || 0) >= 2 && !(p.depCleans || 0) && !(p.cleans || 0))
+    const pRow = (p: any) => {
+      const cleans = Number(p.depCleans) || 0, hrs = Number(p.hours) || 0, wages = Number(p.payroll) || 0
+      const cph = hrs > 0 && cleans > 0 ? cleans / hrs : null
+      const wpc = cleans > 0 ? wages / cleans : null
+      const extra = (Number(p.cleans) || 0) - cleans
+      return `<tr><td style="${td}">${esc(p.name)}${p.dept !== 'housekeeping' ? ` <span style="${MUTED};font-size:11px">${esc(p.dept)}</span>` : ''}${p.market ? ` <span style="${MUTED};font-size:11px">${esc(p.market)}</span>` : ''}</td>` +
+        `<td style="${td};text-align:right"><b>${cleans || '<span style="' + MUTED + '">&mdash;</span>'}</b>${extra > 0 ? ` <span style="${MUTED}">+${extra} other</span>` : ''}</td>` +
+        `<td style="${td};text-align:right">${hrs ? r1(hrs) + 'h' : '<span style="' + MUTED + '">&mdash;</span>'}</td>` +
+        `<td style="${td};text-align:right">${cph != null ? r1(cph * 8) : '<span style="' + MUTED + '">&mdash;</span>'}</td>` +
+        `<td style="${td};text-align:right">${wpc != null ? `<span style="${costPerClean != null && wpc > costPerClean * 1.25 ? AMBER : ''}">${rate(wpc)}</span>` : (hrs > 0 ? `<span style="${AMBER}">${money(wages)} for 0 cleans</span>` : '<span style="' + MUTED + '">&mdash;</span>')}</td></tr>`
+    }
+    const cleansCard = card(
+      secTitle('Cleans completed', `${hkTasks.length} housekeeping task${hkTasks.length === 1 ? '' : 's'} closed today`) +
+      (typeLine ? `<p style="margin:0 0 8px;font-size:13px;line-height:1.8">${typeLine}` + (cleanTimed ? ` <span style="${MUTED}">&middot; ${Math.round(cleanMinutes / cleanTimed)} min average on the clock per departure clean (${cleanTimed} timed)</span>` : '') + `</p>` : '') +
+      `<p style="margin:0 0 8px;font-size:13px">${sameDay.length ? `<b>${sameDayDone.length} of ${sameDay.length}</b> same-day turns done &middot; ` : ''}<b>${allDepDone.length} of ${allDep.length}</b> checkouts cleaned${stillOpen.length ? ` &middot; <span style="${RED}">${stillOpen.length} still open</span>` : ''}${noClean.length ? ` &middot; <span style="${AMBER}">${noClean.length} with no clean on the board</span>` : ''}</p>` +
+      (bRows.length ? `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}">Building</th><th style="${th};text-align:right">Checkouts</th><th style="${th};text-align:right">Cleaned</th><th style="${th};text-align:right">Open</th><th style="${th};text-align:right">Same-day</th></tr>` +
+        bRows.slice(0, 14).map(b => { const r = byBuilding[b]; const all = r.done + r.open + r.none; return `<tr><td style="${td}">${esc(b)}${r.market ? ` <span style="${MUTED};font-size:11px">${esc(r.market)}</span>` : ''}</td><td style="${td};text-align:right">${all}</td><td style="${td};text-align:right"><span style="${r.done === all ? GREEN : ''}">${r.done}</span></td><td style="${td};text-align:right">${r.open + r.none ? `<span style="${r.none ? AMBER : RED}">${r.open + r.none}${r.none ? ' <span style="font-weight:400;font-size:11px">(' + r.none + ' no task)</span>' : ''}</span>` : '<span style="' + MUTED + '">&mdash;</span>'}</td><td style="${td};text-align:right">${r.sameDay || '<span style="' + MUTED + '">&mdash;</span>'}</td></tr>` }).join('') +
+        (bRows.length > 14 ? `<tr><td colspan="5" style="${td};color:#6b7280">+${bRows.length - 14} more buildings</td></tr>` : '') + '</table>' : '') +
+      (hkPeople.length || coverPeople.length ? `<p style="margin:12px 0 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;font-weight:600">By person &middot; the staffing view</p>` +
+        `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}">Person</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">On the clock</th><th style="${th};text-align:right">Cleans / 8h</th><th style="${th};text-align:right">Wages / clean</th></tr>` +
+        hkPeople.slice(0, 14).map(pRow).join('') + coverPeople.map(pRow).join('') + '</table>' : '') +
+      (idle.length ? `<p style="margin:8px 0 0;font-size:12.5px"><span style="${AMBER}">On the clock with no cleans:</span> ${esc(idle.map(p => `${p.name} (${r1(p.hours)}h)`).join(', '))} <span style="${MUTED}">&mdash; strips, inspections or projects; worth knowing which.</span></p>` : '') +
+      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Cleans per 8h is the person's departure cleans over their hours on the clock, scaled to a full shift. Wages per clean is amber when it runs 25% above today's crew average. Other kinds of housekeeping (strips, refreshes) show as "+N other".</p>`
     )
 
-    // ── 4. TASKS COMPLETED ─────────────────────────────────────────────────────────────────────
-    const topPeople = Object.keys(byPerson).map(n => ({ n, ...byPerson[n] })).sort((a, b) => (b.clean + b.jobs) - (a.clean + a.jobs)).slice(0, 10)
-    const tasksCard = card(
-      secTitle('Tasks completed today', `${doneToday.length} closed on the board`) +
-      `<p style="margin:0 0 8px;font-size:13px;line-height:1.8">` +
-      `<b>${byKind.clean}</b> departure cleans closed &middot; <b>${byKind.other}</b> other housekeeping &middot; <b>${byKind.maintenance}</b> maintenance &middot; <b>${byKind.inspection}</b> inspections</p>` +
-      (KT.maintenance?.tasksNoCharge ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${AMBER}">${KT.maintenance.tasksNoCharge} job${KT.maintenance.tasksNoCharge === 1 ? '' : 's'} closed by the maintenance crew with no charge entered</span> <span style="${MUTED}">&mdash; billable or not, the field was left blank (17WEST excluded).</span></p>` : '') +
-      (topPeople.length ? `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}">Person</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">Other jobs</th></tr>` +
-        topPeople.map(p => `<tr><td style="${td}">${esc(p.n)}</td><td style="${td};text-align:right">${p.clean || '<span style="' + MUTED + '">&mdash;</span>'}</td><td style="${td};text-align:right">${p.jobs || '<span style="' + MUTED + '">&mdash;</span>'}</td></tr>`).join('') + '</table>' : '')
-    )
-
-    // ── 5. LAST 7 DAYS ────────────────────────────────────────────────────────────────────────
-    const hk7 = K7.housekeeping || {}
-    const rev7 = Number(hk7.revenueWithCharged ?? hk7.revenue) || 0
-    const mt7 = Number(K7.maintenance?.revenue) || 0
-    const pay7 = Number(K7.allIn?.payroll) || 0
-    const prof7 = Number(K7.allIn?.margin) || 0
+    // ── 6. LAST 7 DAYS — the same three lines over the week ────────────────────────────────
+    const sup7 = K7.supervision || {}, mt7k = K7.maintenance || {}
+    const hkProfit7 = Math.round((rev7 - hkPay7) * 100) / 100
+    const supPay7 = Number(sup7.payroll) || 0
+    const mt7 = Number(mt7k.revenue) || 0, mtPay7 = Number(mt7k.payroll) || 0, mtHours7 = Number(mt7k.hours) || 0
     const cleansByDay: Record<string, number> = {}
     // The engine's per-person day ledger: { d, cleans, fee, … } keyed by name.
     for (const rows of Object.values((ec7.personDays || {}) as Record<string, any[]>)) for (const day of rows) cleansByDay[day.d] = (cleansByDay[day.d] || 0) + (day.cleans || 0)
@@ -222,14 +307,18 @@ export async function GET(req: NextRequest) {
     }).join(' &nbsp; ')
     const weekCard = card(
       secTitle('Last 7 days', `${niceDay(d7)} &ndash; ${niceDay(today)}`) +
-      `<table width="100%" cellspacing="0" cellpadding="0">` +
-      `<tr><td style="${td}">Revenue cleans</td><td style="${td};text-align:right"><b>${Number(hk7.cleans) || 0}</b>${hk7.costPerClean != null ? ` <span style="${MUTED}">&middot; ${rate(hk7.costPerClean)}/clean</span>` : ''}</td></tr>` +
-      `<tr><td style="${td}">Cleaning revenue</td><td style="${td};text-align:right">${money(rev7)}</td></tr>` +
-      `<tr><td style="${td}">Maintenance billed</td><td style="${td};text-align:right">${money(mt7)}</td></tr>` +
-      `<tr><td style="${td}">Payroll, everyone</td><td style="${td};text-align:right">${money(pay7)}</td></tr>` +
-      `<tr><td style="${td}"><b>Profit</b></td><td style="${td};text-align:right"><b style="${prof7 < 0 ? RED : GREEN}">${money(prof7)}</b>${K7.allIn?.marginPct != null ? ` <span style="${MUTED}">(${Math.round(K7.allIn.marginPct)}%)</span>` : ''}</td></tr>` +
+      `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}"></th><th style="${th};text-align:right">Week</th><th style="${th};text-align:right">Per day</th></tr>` +
+      `<tr><td style="${td}">Departure cleans</td><td style="${td};text-align:right"><b>${cleans7}</b></td><td style="${td};text-align:right">${r1(cleans7 / 7)}</td></tr>` +
+      `<tr><td style="${td}">Cleaning revenue</td><td style="${td};text-align:right">${money(rev7)}</td><td style="${td};text-align:right">${money(rev7 / 7)}</td></tr>` +
+      `<tr><td style="${td}">HK hours &middot; payroll</td><td style="${td};text-align:right">${r1(hkHours7)}h &middot; ${money(hkPay7)}</td><td style="${td};text-align:right">${r1(hkHours7 / 7)}h</td></tr>` +
+      `<tr><td style="${td}"><b>HK profit</b></td><td style="${td};text-align:right"><b style="${hkProfit7 < 0 ? RED : GREEN}">${money(hkProfit7)}</b>${rev7 > 0 ? ` <span style="${MUTED}">(${Math.round(hkProfit7 / rev7 * 100)}%)</span>` : ''}</td><td style="${td};text-align:right">${money(hkProfit7 / 7)}</td></tr>` +
+      `<tr><td style="${td}">Supervision</td><td style="${td};text-align:right">${money(supPay7)}${Number(sup7.hours) ? ` <span style="${MUTED}">&middot; ${r1(sup7.hours)}h</span>` : ''}</td><td style="${td};text-align:right">${money(supPay7 / 7)}</td></tr>` +
+      `<tr><td style="${td}"><b>HK profit after supervision</b></td><td style="${td};text-align:right"><b style="${(hkProfit7 - supPay7) < 0 ? RED : GREEN}">${money(hkProfit7 - supPay7)}</b></td><td style="${td};text-align:right">${money((hkProfit7 - supPay7) / 7)}</td></tr>` +
+      `<tr><td style="${td}">Maintenance billed &middot; payroll</td><td style="${td};text-align:right">${money(mt7)} &middot; ${money(mtPay7)}${mtHours7 ? ` <span style="${MUTED}">(${r1(mtHours7)}h)</span>` : ''}</td><td style="${td};text-align:right">${money(mt7 / 7)}</td></tr>` +
+      `<tr><td style="${td}"><b>Maintenance profit</b></td><td style="${td};text-align:right"><b style="${(mt7 - mtPay7) < 0 ? RED : GREEN}">${money(mt7 - mtPay7)}</b></td><td style="${td};text-align:right">${money((mt7 - mtPay7) / 7)}</td></tr>` +
       `</table>` +
-      `<p style="margin:10px 0 0;font-size:12.5px"><span style="${MUTED}">Cleans by day:</span> ${dayChips}</p>` +
+      `<p style="margin:8px 0 0;font-size:12.5px"><span style="${MUTED}">Efficiency this week:</span> ${avgRevPerHour7 != null ? `<b>${rate(avgRevPerHour7)}</b> revenue per HK hour` : ''}${avgCostPerClean7 != null ? ` &middot; <b>${rate(avgCostPerClean7)}</b> labor per clean` : ''}${avgHoursPerClean7 != null ? ` &middot; <b>${r1(avgHoursPerClean7)}h</b> per clean` : ''}</p>` +
+      `<p style="margin:6px 0 0;font-size:12.5px"><span style="${MUTED}">Cleans by day:</span> ${dayChips}</p>` +
       (ec7.payrollAudit?.complete === false ? `<p style="margin:8px 0 0;font-size:11px;color:#dc2626">Homebase did not return every week in this window &mdash; the payroll here is a floor.</p>` : '')
     )
 
@@ -265,10 +354,10 @@ export async function GET(req: NextRequest) {
     )
 
     // ── assemble ───────────────────────────────────────────────────────────────────────────────
-    const verdict = `<b>${revCleans}</b> departure clean${revCleans === 1 ? '' : 's'} earned <b>${money(revenue)}</b>` +
-      (mtRev > 0 ? `, maintenance billed <b>${money(mtRev)}</b>` : '') + ` &mdash; <b>${money(revenue + mtRev)}</b> against <b>${money(payrollAll)}</b> of payroll ` +
-      `&rarr; <b style="${profit < 0 ? RED : GREEN}">${money(profit)} ${profit < 0 ? 'loss' : 'profit'}</b>` +
-      (KT.allIn?.marginPct != null ? ` <span style="${MUTED}">(${Math.round(KT.allIn.marginPct)}%)</span>` : '') + `. ` +
+    const verdict = `<b>${revCleans}</b> departure clean${revCleans === 1 ? '' : 's'} &middot; <b>${money(revenue)}</b> cleaning revenue &middot; <b>${r1(hkHours)}h</b> housekeeping` +
+      (revPerHour != null ? ` &rarr; <b>${rate(revPerHour)}</b> per HK hour` : '') + (costPerClean != null ? `, <b>${rate(costPerClean)}</b> labor per clean` : '') +
+      `. HK profit <b style="${hkProfit < 0 ? RED : GREEN}">${money(hkProfit)}</b>${hkMarginPct != null ? ` (${hkMarginPct}%)` : ''}; after supervision <b style="${hkAfterSup < 0 ? RED : GREEN}">${money(hkAfterSup)}</b>. ` +
+      `Maintenance billed <b>${money(mtRev)}</b> on ${r1(mtHours)}h &rarr; <b style="${mtProfit < 0 ? RED : GREEN}">${money(mtProfit)}</b>. ` +
       `${allDepDone.length} of ${allDep.length} checkouts cleaned` + (sameDay.length ? `, ${sameDayDone.length} of ${sameDay.length} same-day turns` : '') + `.`
     const html = `<!doctype html><html><body style="margin:0;background:#f5f5f4;${FONT};color:#0b1220">` +
       `<div style="max-width:720px;margin:0 auto;padding:18px">` +
@@ -277,12 +366,12 @@ export async function GET(req: NextRequest) {
       `<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">End of day</p>` +
       `<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">${niceDay(today)}</p></div>` +
       `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:13px 18px;margin:12px 0 0"><p style="margin:0;font-size:14px;line-height:1.6">${verdict}</p></div>` +
-      revenueCard + prioCard + laborCard + tasksCard + weekCard + tomorrowCard +
+      hkCard + supCard + mtCard + cleansCard + prioCard + weekCard + tomorrowCard +
       `<table width="100%" cellspacing="0" cellpadding="0" style="margin:12px 0"><tr><td>` +
       `<a href="${APP_URL}/labor" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">Open the Labor board &rarr;</a></td></tr></table>` +
       `<p style="margin:0;font-size:11px;color:#9ca3af;text-align:center">Sent automatically every evening. Same engine as the Labor board and the morning briefs.</p>` +
       `</div></body></html>`
-    const subject = `EOD ${niceDay(today)}: ${revCleans} cleans, ${money(revenue + mtRev)} earned vs ${money(payrollAll)} payroll, ${money(profit)} ${profit < 0 ? 'loss' : 'profit'}`
+    const subject = `EOD ${niceDay(today)}: ${revCleans} cleans · ${money(revenue)} rev · ${r1(hkHours)} HK h · HK profit ${money(hkProfit)}${hkMarginPct != null ? ' (' + hkMarginPct + '%)' : ''} · maint ${mtProfit < 0 ? '-' : '+'}${money(Math.abs(mtProfit))}`
 
     if (preview) return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 
@@ -291,7 +380,7 @@ export async function GET(req: NextRequest) {
     const to: string[] = test ? [me as string] : Array.from(new Set([...(cfg.full || []), OWNER].filter(Boolean)))
     const cc = test ? [] : STANDING_CC.filter(c => !to.includes(c))
     const r = await sendGmail({ fromEmail, to, cc, subject: (test ? '[TEST] ' : '') + subject, html })
-    return NextResponse.json({ ok: r.ok, to: to.length, subject, error: r.error, counts: { revCleans, revenue, payrollAll, profit, done: doneToday.length } })
+    return NextResponse.json({ ok: r.ok, to: to.length, subject, error: r.error, counts: { revCleans, revenue, hkHours, hkPayroll, hkProfit, supPayroll, mtRev, mtPayroll, done: doneToday.length } })
   } catch (e: any) {
     // A recap that did not send looks like a quiet night — say so, to the owner.
     await sendGmail({ fromEmail: OWNER, to: [OWNER], subject: '⚠️ End-of-day recap did not send', html: `<p style="${FONT};font-size:14px">The EOD recap for ${today} failed to build: ${esc(String(e?.message || e)).slice(0, 300)}</p>` }).catch(() => null)
