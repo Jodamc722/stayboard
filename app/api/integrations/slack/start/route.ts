@@ -23,6 +23,7 @@
 //   groups:history     read messages in PRIVATE channels the bot has been invited to
 //   channels:join      let the bot add itself to a public channel, so the #vr-* channels do not
 //                      each need a manual invite. Private ones still do — no scope avoids that.
+//   app_mentions:read  receive the app_mention event, i.e. be @-mentioned at all (the events route).
 //
 // WHAT IS DELIBERATELY STILL NOT REQUESTED, and why it matters:
 //   im:history / mpim:history  — DMs and group DMs. Jon's explicit choice was "their channels only,
@@ -52,6 +53,10 @@ const SCOPES = [
   'channels:history',
   'groups:history',
   'channels:join',
+  // @Eve. Added to the Slack app config by hand on 2026-09-10 when the events webhook went live, but
+  // never here — and a re-authorisation grants exactly the list in this URL, so the next reconnect
+  // would have quietly revoked it and @Eve would have stopped answering with no error anywhere.
+  'app_mentions:read',
 ].join(',')
 
 export async function GET(req: NextRequest) {
