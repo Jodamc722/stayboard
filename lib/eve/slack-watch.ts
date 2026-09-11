@@ -447,9 +447,14 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     }
   }
 
-  // ---- 5. Urgent today: say it now, in her room. -----------------------------------------------
-  for (const it of urgentNew) {
-    await postToChannel(EVE_CHANNELS.approvals, `⚠️ *Affects a guest today* — ${it.summary}${it.unit ? ` (${it.unit})` : ''}${it.owner_name ? ` · ${it.owner_name}` : ''}\nfrom #${it.channel_name}`)
+  // ---- 5. Urgent today: say it now, in her room — ONE message, however many there are. ---------
+  // The first live run found eight and posted eight, back to back. Eight pings for one pass is how
+  // a room gets muted; one message with eight lines is something a person reads.
+  if (urgentNew.length) {
+    const lines = urgentNew.slice(0, 12).map(it =>
+      `• ${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''}${it.owner_name ? ` · ${it.owner_name}` : ''} — #${it.channel_name}`)
+    const more = urgentNew.length > 12 ? `\n…and ${urgentNew.length - 12} more` : ''
+    await postToChannel(EVE_CHANNELS.approvals, `⚠️ *Affects a guest today (${urgentNew.length})*\n${lines.join('\n')}${more}`)
   }
 
   // ---- 6. The morning roll-up, once a day, in her room. ----------------------------------------
@@ -470,7 +475,10 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     if (learnedTexts.length) parts.push(`*What I learned yesterday* — tell me if any of this is wrong\n${learnedTexts.slice(0, 5).map(t => `• ${t.slice(0, 140)}`).join('\n')}`)
     if (parts.length === 1) parts.push('Nothing open. Quiet day.')
     const r = await postToChannel(EVE_CHANNELS.approvals, parts.join('\n\n'))
-    if (r.ok) { out.digest = true; st.lastDigest = today }
+    // A roll-up with nothing in it does not claim the day. The first live run was preceded by two
+    // empty ones (the reads were failing) and each said "quiet day" and took today's slot — so the
+    // real roll-up, with 30 open items, never went out. Only a digest with content counts.
+    if (r.ok) { out.digest = true; if (openNow.length || closed.length) st.lastDigest = today }
     else out.notes.push(`digest: ${r.error}`)
   }
 
