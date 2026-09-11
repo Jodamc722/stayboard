@@ -9,6 +9,7 @@ import { nightlyVision } from '@/lib/eve/vision'
 import { generateQuestions } from '@/lib/eve/questions'
 import { studyPending } from '@/lib/eve/study'
 import { learnLingo } from '@/lib/eve/voice'
+import { askCalibrationQuestions } from '@/lib/eve/operating-model'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { recordRun } from '@/lib/automation-runs'
@@ -88,6 +89,11 @@ export async function POST(req: NextRequest) {
   let questions: any = null
   try { questions = await generateQuestions() }
   catch (e: any) { questions = { error: String(e?.message || e).slice(0, 160) } }
+  // WHO DOES WHAT (Jon, 2026-09-11: "she needs to know that... Eve needs to learn, ask questions").
+  // One question per building still running on an assumption. Dedupes against open questions, so
+  // this is idempotent night to night; once Jon answers, that building stops being asked about.
+  try { const c = await askCalibrationQuestions(); questions = { ...(questions || {}), calibration: c } }
+  catch (e: any) { questions = { ...(questions || {}), calibration: { error: String(e?.message || e).slice(0, 160) } } }
 
   // A LITTLE MORE OF THE PORTFOLIO GETS LOOKED AT, EVERY NIGHT (Jon, 2026-08-24: "get smart slowly
   // but daily... what makes you better is you can see things too"). A fixed quota, worst-covered
