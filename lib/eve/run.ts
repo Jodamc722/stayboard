@@ -24,6 +24,7 @@ import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory 
 import { appAtlas } from './atlas'
 import { buildSystemBlocks, getVoiceProfile } from './prompt'
 import { detectLanguage, languageNote, getLingo, lingoNote } from './voice'
+import { getOperatingModel, renderOperatingModel } from './operating-model'
 import { modelFor } from '@/lib/ai-models'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
@@ -191,6 +192,9 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   // How this team writes. Absent until the nightly pass has read enough real messages to have an
   // opinion, and absent is correct — an invented house style is worse than a neutral one.
   const lingo = await safe(getLingo(), null as any)
+  // Who does what, per building. Goes in the STABLE block: it only changes when Jon answers a
+  // calibration question, and a wrong answer here is the most expensive kind she can give.
+  const operatingModel = await safe(getOperatingModel().then(renderOperatingModel), '')
 
   const userName = String((access.profile as any)?.name || '') || (access.email ? access.email.split('@')[0] : '')
 
@@ -234,7 +238,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       //      means turn N pays full price only for what turn N-1 added.
       // Opening a new domain changes the tool list, which invalidates the cache for that one turn.
       // That is fine: a write costs 25% over list once, and every turn after it reads again.
-      const blocks = buildSystemBlocks({ headline, memories: appAtlas() + '\n\n' + renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney })
+      const blocks = buildSystemBlocks({ headline, memories: appAtlas() + '\n\n' + renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel })
       const system: any[] = [
         { type: 'text', text: blocks.stable, cache_control: { type: 'ephemeral' } },
         { type: 'text', text: blocks.dynamic },

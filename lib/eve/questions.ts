@@ -119,6 +119,17 @@ export async function answerQuestion(id: string, answer: string, by: string): Pr
       answered_at: new Date().toISOString(), memory_id: saved.id || null,
       updated_at: new Date().toISOString(),
     }).eq('id', id)
+
+    // A calibration answer ("who does what at Botanica?") also rewrites the operating model, so the
+    // very next prompt is built on it rather than waiting for a memory to be retrieved by luck.
+    // Dynamic import: operating-model imports askQuestion from here, and a static import back would
+    // be a cycle.
+    if (q.evidence && typeof q.evidence === 'object' && q.evidence.calibration && q.evidence.building) {
+      try {
+        const { applyCalibrationAnswer } = await import('./operating-model')
+        await applyCalibrationAnswer(String(q.evidence.building), text, by, q.evidence.assumed)
+      } catch { /* the memory is saved either way; the model catches up on the next answer */ }
+    }
     return { ok: true, memoryId: saved.id }
   } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 200) } }
 }
