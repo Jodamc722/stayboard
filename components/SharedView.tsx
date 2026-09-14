@@ -4,7 +4,7 @@
 // verified, what the notes say. Only sections the link enables ever arrive from the API — this
 // component cannot leak what it was never sent.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users, RefreshCw } from 'lucide-react'
+import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users, RefreshCw, AtSign } from 'lucide-react'
 import { PlannerView, PlannerLegend, type PGroup } from './PlannerView'
 import { ScheduleLaborStrip } from './ScheduleLaborStrip'
 import { DayCleans } from './DayCleans'
@@ -170,6 +170,43 @@ export function SharedView({ code }: { code: string }) {
               ))}
               {!s.cleaning.length ? <p className="px-4 py-4 text-[12.5px] text-neutral-400">Nothing scheduled.</p> : null}
             </div>
+          </Sec>
+        ) : null}
+
+        {s.audience ? (
+          <Sec Icon={AtSign} title="Audience" sub={s.audience.basis}>
+            {/* Counts and labels only — by design. The API cannot send a name, address or phone
+                here, so there is nothing on this page to accidentally reveal. */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-neutral-100">
+              {[
+                ['Contacts', s.audience.contacts],
+                ['Reachable by email', s.audience.mailable],
+                ['Repeat guests', s.audience.repeat],
+                ['Booked direct', s.audience.everDirect],
+              ].map(([l, v]: any) => (
+                <div key={l} className="px-3 py-3 text-center">
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-neutral-400">{l}</p>
+                  <p className="text-[17px] font-bold text-neutral-900 tabular-nums mt-0.5">{Number(v || 0).toLocaleString()}</p>
+                </div>
+              ))}
+            </div>
+            {(s.audience.channels || []).length ? (
+              <div className="border-t border-neutral-100">
+                <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-wider font-bold text-neutral-400">Where they came from</p>
+                <div className="divide-y divide-neutral-100">
+                  {(s.audience.channels || []).map((c: any) => (
+                    <div key={c.label} className="px-4 py-2 flex items-center gap-2 text-[13px]">
+                      <span className="text-neutral-900">{c.label}</span>
+                      <span className="ml-auto tabular-nums font-semibold text-neutral-900">{Number(c.count).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <p className="px-4 py-2.5 text-[10.5px] text-neutral-400 border-t border-neutral-100">
+              {Number(s.audience.relay || 0).toLocaleString()} of these gave only a channel forwarding address, which
+              cannot be mailed. No names, email addresses or phone numbers are shared on this link.
+            </p>
           </Sec>
         ) : null}
 

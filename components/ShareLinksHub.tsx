@@ -33,6 +33,7 @@ const SECTIONS: { key: string; label: string; sub: string }[] = [
   { key: 'reservations', label: 'Reservations', sub: 'in-house + upcoming stays' },
   { key: 'revenue', label: 'Revenue & ADR', sub: 'stays, nights, ADR for the window' },
   { key: 'marketing', label: 'Booking sources', sub: 'direct vs OTA — the marketing lens' },
+  { key: 'audience', label: 'Audience', sub: 'how many contacts these units have and where they came from — counts only, no names or emails' },
   { key: 'cleaning', label: 'Cleaning & tasks', sub: 'the next 14 days of scheduled work' },
   { key: 'verification', label: 'Guest verification', sub: 'verified / pending per arrival' },
   { key: 'notes', label: 'Reservation notes', sub: 'notes on current + upcoming stays' },

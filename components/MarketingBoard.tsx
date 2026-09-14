@@ -6,7 +6,7 @@
 // The whole board is keyed on when a booking was MADE, not when the stay happens. That is the
 // only honest way to answer "did marketing work in July?".
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Search, RefreshCw, Download, TrendingUp, TrendingDown, Minus, Lock, AlertTriangle } from 'lucide-react'
+import { Search, RefreshCw, Download, TrendingUp, TrendingDown, Minus, Lock, AlertTriangle, Loader2 } from 'lucide-react'
 
 type Bucket = 'be' | 'website' | 'direct' | 'manual' | 'owner' | 'ota'
 type Family = 'direct' | 'manual' | 'owner' | 'ota'
@@ -349,6 +349,74 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
 }
 
 // ── the board ───────────────────────────────────────────────────────────────
+// THE AUDIENCE (Jon, 2026-09-14). "Add the contact list to the direct booking / marketing link."
+//
+// It is the SHAPE of the list, not the list. Jon chose counts and segments over putting guest
+// contact details on a password-shared URL, so this card can show how big the audience is and
+// where it came from — and there is nothing here to leak, because the endpoint never sends a name.
+// Loaded on its own so a slow two-year read never delays the report above it.
+function AudienceCard() {
+  const [a, setA] = useState<any>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    fetch('/api/public/marketing-audience', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (j.ok) setA(j); else setErr(String(j.error || 'Could not load the audience.')) })
+      .catch(e => setErr(String(e?.message || e)))
+  }, [])
+
+  if (err) return null
+  return (
+    <div className="rounded-2xl bg-white ring-1 ring-line overflow-hidden mb-4">
+      <div className="px-4 py-3 border-b border-line">
+        <p className="text-[13.5px] font-bold text-ink">Audience</p>
+        <p className="text-[11.5px] text-muted">{a ? a.basis : 'counting…'}</p>
+      </div>
+      {!a ? (
+        <div className="px-4 py-8 text-center text-[12.5px] text-muted">
+          <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Counting the audience…
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-line">
+            {[
+              ['Contacts', a.contacts, ''],
+              ['Reachable by email', a.mailable, a.contacts ? Math.round((a.mailable / a.contacts) * 100) + '% of the list' : ''],
+              ['Repeat guests', a.repeat, ''],
+              ['Booked direct', a.everDirect, 'at least once'],
+            ].map(([l, v, sub]: any) => (
+              <div key={l} className="px-3 py-3.5 text-center">
+                <p className="text-[10px] uppercase tracking-wider font-bold text-muted">{l}</p>
+                <p className="text-[19px] font-bold text-ink tabular-nums mt-0.5">{Number(v || 0).toLocaleString()}</p>
+                {sub ? <p className="text-[10.5px] text-muted mt-0.5">{sub}</p> : null}
+              </div>
+            ))}
+          </div>
+          {(a.channels || []).length ? (
+            <div className="border-t border-line">
+              <p className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-wider font-bold text-muted">Where the audience came from</p>
+              <div className="divide-y divide-line">
+                {(a.channels || []).slice(0, 8).map((c: any) => (
+                  <div key={c.label} className="px-4 py-1.5 flex items-center gap-2 text-[12.5px]">
+                    <span className="text-ink">{c.label}</span>
+                    <span className="ml-auto tabular-nums font-semibold text-ink">{Number(c.count).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <p className="px-4 py-2.5 text-[11px] text-muted border-t border-line">
+            {Number(a.relay || 0).toLocaleString()} of these only ever gave a channel forwarding address
+            (<span className="font-mono text-[10.5px]">…@guest.airbnb.com</span> and the like), which expires and
+            cannot be marketed to — winning the direct booking is what turns one into a real contact.
+            No names, email addresses or phone numbers are shared on this link.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 export function MarketingBoard({ partner }: { partner?: boolean }) {
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
@@ -892,6 +960,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               </div>
             ) : null}
           </div>
+
+          <AudienceCard />
 
           <p className="text-[11px] text-muted px-1 pb-2">
             Booking dates are Eastern time. Revenue is net accommodation on bookings that are confirmed, in house or completed — canceled bookings and open inquiries carry $0.

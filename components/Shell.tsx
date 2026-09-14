@@ -13,7 +13,7 @@ import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -104,6 +104,8 @@ export const SECTIONS: NavSection[] = [
       // Guests directory (2026-08-18, Jon, parallel session): guest profiles aggregated from
       // reservations; VIP on a profile feeds auto-inspections.
       { to: '/guests',       label: 'Guests',       Icon: Contact },
+      // Contacts (2026-09-14, Jon): the same people as a mailing list, with the Mailchimp push.
+      { to: '/contacts',     label: 'Contacts',     Icon: AtSign },
     ],
   },
   {
