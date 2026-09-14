@@ -381,13 +381,17 @@ export function audienceSummary(contacts: Contact[]) {
     }
     if (c.lastBuilding) byBuilding[c.lastBuilding] = (byBuilding[c.lastBuilding] || 0) + 1
   }
-  const top = (o: Record<string, number>, n: number) =>
-    Object.entries(o).map(([label, count]) => ({ label, count, mailable: mailableByChannel[label] || 0 }))
+  // `mailable` is a per-CHANNEL number. Handing the same map to the buildings list stamped every
+  // building with a meaningless 0, which is worse than no field at all — a reader would take it to
+  // mean no one in Eden can be emailed. Buildings get counts only.
+  const top = (o: Record<string, number>, n: number, withMailable?: Record<string, number>) =>
+    Object.entries(o)
+      .map(([label, count]) => withMailable ? { label, count, mailable: withMailable[label] || 0 } : { label, count })
       .sort((a, b) => b.count - a.count).slice(0, n)
   return {
     contacts: contacts.length,
     mailable, restricted, relay, noEmail, withPhone, repeat, everDirect,
-    channels: top(byChannel, 12),
-    buildings: top(byBuilding, 12),
+    channels: top(byChannel, 12, mailableByChannel) as { label: string; count: number; mailable: number }[],
+    buildings: top(byBuilding, 12) as { label: string; count: number }[],
   }
 }
