@@ -68,6 +68,10 @@ const isGone = (s: string) => isTaskGone(s)
 
 export type OpsDay = Awaited<ReturnType<typeof buildOpsDay>>
 
+/** Breezeway files building and common-area work against no listing at all; this is its home. */
+export const NO_UNIT = '__no_unit__'
+export const NO_UNIT_LABEL = 'Building & common areas'
+
 /** Build the Today-in-Ops picture for a date (YYYY-MM-DD, ET) — today when null/invalid. */
 export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?: boolean } = {}) {
   const db = supabaseAdmin()
@@ -241,7 +245,22 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     if (d && (!lastOut[id] || d > lastOut[id])) lastOut[id] = d
   }
   const tasks = (taskRows as any[]).filter(t => !isGone(str(t.status).toLowerCase())).map(t => {
-    const lid = String(t.reference_property_id)
+    // ── WORK THAT BELONGS TO NO UNIT (2026-09-14, after Jon: "Helem has three tasks in Breezeway
+    // but only two show") ────────────────────────────────────────────────────────────────────────
+    // 20 of today's 101 tasks carry no reference_property_id at all: the pool, the parking floors,
+    // the lobby, the exterior drains, pushing laundry between houses. Real work, assigned to real
+    // people, and Breezeway simply does not tie it to a listing.
+    //
+    // `String(null)` is the string "null", so these all landed in one row keyed "null", titled
+    // "Unknown unit" and filed under market "Other" — which reads as a data fault rather than a
+    // category of work, sorts to the bottom, and (the actual bug) vanishes the moment somebody
+    // filters the board to a market, taking a person's task count down with it. Helem's third task
+    // is one of these; she is also the SECOND assignee on it, so nothing else surfaced it either.
+    //
+    // A named key and an honest label. The row is marked noUnit so the board can keep showing it
+    // under a market filter: we cannot know which market a laundry run belongs to, and hiding
+    // assigned work is a worse answer than showing one row that does not fit the filter.
+    const lid = t.reference_property_id ? String(t.reference_property_id) : NO_UNIT
     const li = lmap[lid]
     const dept = deptOf(t.type_department)
     const type = typeOf(t.name, dept)
@@ -283,7 +302,8 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
     const missed = clocked && done && finishedMin != null && finishedMin > DEADLINE_MIN
     return {
       id: String(t.id), listingId: lid,
-      unit: li ? li.name : 'Unknown unit', market: li ? li.market : 'Other', market2: li ? li.market2 : null,
+      unit: li ? li.name : (lid === NO_UNIT ? NO_UNIT_LABEL : 'Unknown unit'),
+      market: li ? li.market : 'Other', market2: li ? li.market2 : null,
       dept, type, name: t.name || 'Task', status,
       assignees: ppl.map((p: any) => p && p.name).filter(Boolean),
       assigneeIds: ppl.map((p: any) => Number(p && p.id)).filter((n: number) => Number.isFinite(n)),
@@ -329,6 +349,8 @@ export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?
         arrivingNights: inNights[t.listingId] ?? null,
         arrivingGuest: inGuest[t.listingId] || null,
         qc: qcByListing[t.listingId] || [], tasks: [],
+        // Survives the market filter — see the note above the task builder.
+        noUnit: t.listingId === NO_UNIT,
       }
     }
     unitMap[t.listingId].tasks.push(t)
