@@ -53,10 +53,15 @@ const SEGS = [
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
-    <div className="rounded-2xl bg-white ring-1 ring-line px-4 py-3.5">
+    // min-w-0 is load-bearing. A grid column's default minimum is max-content, not zero, so a tile
+    // whose sub-line reads "869 channel-blocked · 344 relay · 4,725 no address" refuses to shrink
+    // below that line's natural width, widens its column past its 1fr share, and shoves the whole
+    // page off the right edge of the viewport — taking the toolbar and the banner with it. The
+    // cards looked fine; everything beside them got clipped.
+    <div className="min-w-0 rounded-2xl bg-white ring-1 ring-line px-4 py-3.5">
       <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted">{label}</p>
       <p className={'text-[22px] font-bold tabular-nums leading-tight mt-0.5 ' + (tone || 'text-ink')}>{value}</p>
-      {sub ? <p className="text-[11.5px] text-muted mt-0.5">{sub}</p> : null}
+      {sub ? <p className="text-[11.5px] text-muted mt-0.5 break-words">{sub}</p> : null}
     </div>
   )
 }
@@ -119,7 +124,7 @@ export function ContactList() {
           {s.restricted > 0 ? (
             <div className="flex items-start gap-2.5">
               <Ban size={15} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="text-[12.5px] text-amber-900 leading-relaxed">
+              <p className="min-w-0 text-[12.5px] text-amber-900 leading-relaxed">
                 <span className="font-bold">{s.restricted.toLocaleString()} are blocked by their booking channel.</span>{' '}
                 {(data?.restrictedChannels || []).join(', ') || 'No channels'} forbid marketing to guests booked through
                 them, and they hand over a real address, so the address alone cannot tell you. These never reach
@@ -130,7 +135,7 @@ export function ContactList() {
           {s.relay > 0 ? (
             <div className="flex items-start gap-2.5">
               <AlertTriangle size={15} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="text-[12.5px] text-amber-900 leading-relaxed">
+              <p className="min-w-0 text-[12.5px] text-amber-900 leading-relaxed">
                 <span className="font-bold">{s.relay.toLocaleString()} only ever gave a channel forwarding address</span>
                 {' '}— <span className="font-mono text-[11.5px]">a1b2c3@guest.airbnb.com</span> and the like. They stop
                 working when the booking closes and they bounce. Kept here for front-desk lookup, never uploaded.
@@ -144,9 +149,14 @@ export function ContactList() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-[220px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          {/* Chrome guesses from the placeholder, sees "email", and drops a saved address into the
+              search box. autoComplete="off" is advisory and Chrome often ignores it; a name it does
+              not recognise plus the password-manager opt-outs is what actually stops it. */}
           <input
             value={typed} onChange={e => setTyped(e.target.value)}
             placeholder="Name, email, phone, unit or tag"
+            name="contact-lookup" autoComplete="off" data-1p-ignore data-lpignore="true"
+            spellCheck={false} autoCapitalize="none" autoCorrect="off"
             className="w-full h-9 pl-9 pr-3 rounded-xl border border-line bg-white text-base sm:text-[13px] focus:outline-none focus:ring-2 focus:ring-brand-200"
           />
         </div>
@@ -433,8 +443,16 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
               shown back to the browser, and is only ever used to talk to Mailchimp.
             </p>
             <div className="flex gap-2 flex-wrap">
+              {/* Chrome autofills ANY type="password" input from the saved-password store, and
+                  autoComplete="off" does not stop it — so clicking near this field dropped a Google
+                  password into it. Saving that as a Mailchimp key would fail confusingly at best,
+                  and store the wrong secret at worst. "new-password" is the value Chrome honours,
+                  and the data-* attributes opt out of 1Password and LastPass. */}
               <input value={apiKey} onChange={e => setApiKey(e.target.value)} type="password"
-                autoComplete="off" placeholder="Mailchimp API key"
+                name="mailchimp-api-key" autoComplete="new-password"
+                data-1p-ignore data-lpignore="true" data-form-type="other"
+                spellCheck={false} autoCapitalize="none" autoCorrect="off"
+                placeholder="Mailchimp API key"
                 className="flex-1 min-w-[240px] h-9 px-3 rounded-xl border border-line bg-white text-base sm:text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-brand-200" />
               <button disabled={!apiKey.trim() || !!busy}
                 onClick={async () => {
