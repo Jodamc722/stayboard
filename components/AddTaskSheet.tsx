@@ -55,15 +55,62 @@ export function openAddTask(seed?: AddTaskSeed | string) {
   try { window.dispatchEvent(new CustomEvent('task:add', { detail })) } catch { /* SSR */ }
 }
 
-// The quick presets. These are OUR standing instructions for work that has no Breezeway template,
-// and they are deliberately one sentence each: everything unit-specific comes from the brief.
-const PRESETS: { key: string; label: string; hint: string; department: string; priority: string; title: string; base: string; useIntel?: boolean }[] = [
-  { key: 'inspection', label: 'Inspection', hint: 'standard unit check', department: 'inspection', priority: 'high', title: 'Unit Check', useIntel: true, base: 'Standard unit inspection: cleanliness against the photos, damage and wear, amenities present and working, consumables restocked.' },
-  { key: 'deepclean', label: 'Deep clean', hint: 'beyond turnover', department: 'housekeeping', priority: 'normal', title: 'Deep Clean', useIntel: true, base: 'Deep clean beyond the turnover standard: inside appliances, behind and under furniture, grout and caulk, vents, baseboards, window tracks, upholstery and mattress protectors.' },
-  { key: 'pm', label: 'PM check', hint: 'A/C, plumbing, detectors', department: 'maintenance', priority: 'normal', title: 'Preventative Maintenance Task', useIntel: true, base: 'Preventative maintenance pass: A/C, plumbing under sinks, water heater, smoke and CO detectors, light bulbs, door hardware.' },
-  { key: 'batteries', label: 'Lock batteries', hint: 'annual', department: 'maintenance', priority: 'normal', title: 'Replace lock batteries', base: 'Annual lock battery replacement. Replace batteries in every door lock, re-test the lock and the codes afterwards, and log the date.' },
-  { key: 'acfilter', label: 'A/C filter', hint: 'size + date', department: 'maintenance', priority: 'normal', title: 'Change A/C filter', base: 'Change the central A/C filter. Note the filter size used and log the date.' },
-  { key: 'audit', label: 'Annual audit', hint: 'files the audit link', department: 'inspection', priority: 'normal', title: 'Annual Quality Audit', useIntel: true, base: 'Annual quality audit: score the unit against the standard checklist, log damage and wear, confirm inventory counts, photograph anything below standard.' },
+// ── THE PRESETS ARE THE TEAM'S OWN TASK NAMES (Jon, 2026-09-14) ────────────────────────────────
+// "The template for adding a task should be HK audit Inspection, Preventative Maintance one,
+// Glitch one, Unit Check, Refresh, in house Pest control, field priority, anual audit, ect."
+//
+// WHAT WAS HERE BEFORE WAS INVENTED. "Inspection", "Deep clean", "PM check", "Lock batteries",
+// "A/C filter" — seven plausible-sounding presets written in this repo by someone who had not
+// looked at what the crew actually files. Two of them happened to match a real task name; the
+// rest did not exist anywhere in Breezeway, so picking one created a task whose title nothing
+// else in the business recognises — not the billing board, not the EOD brief, not the person
+// who later searches Breezeway for "how often do we do pest control".
+//
+// These are the real ones, taken from what the team has actually created (breezeway_tasks_sync,
+// deleted rows excluded), with their real departments and ordered by how often they are used:
+//
+//   Unit Check .............................. 897   inspection
+//   Audit HK Checklist ...................... 279   inspection
+//   Audit Scoring HK ........................ 217   inspection
+//   Preventative Pest Control (In-House) .... 176   maintenance
+//   Preventative Maintenance Task ............ 81   maintenance
+//   Guest Reported / Glitch .................. 61   maintenance
+//   Field Reported Priority .................. 26   maintenance
+//   Refresh / Exchange linen / towels ........ 25   housekeeping
+//
+// ONE SPELLING EACH, DELIBERATELY. Pest control is filed under three different names today
+// ("Preventative Pest Control (In-House)", "In house pest control", "In-house Pest Control
+// Protocol (Guest Reported)") and refresh under four. Every extra spelling is a row that will not
+// group with its siblings when somebody counts the work or bills it, so each preset picks the
+// dominant name and sticks to it. Typing a different title by hand still works — this only
+// decides what the buttons put there.
+//
+// The titles also have to survive two pieces of machinery downstream, so they are not free text:
+// lib/listingIntel's intelKindFor reads the title to choose which brief the crew gets (every one
+// of these lands on the right one), and /api/ops-today/add-task mints an audit link only when the
+// title says both "annual" and "audit" — which is why the last one is spelled Annual Quality Audit.
+//
+// The live Breezeway template list still sits ABOVE these and should be preferred: a template
+// carries its real checklist into the field app. These are for work that has no template.
+const PRESETS: { key: string; label: string; hint: string; department: string; priority: string; title: string; base: string }[] = [
+  { key: 'unitcheck', label: 'Unit Check', hint: 'the standard walk', department: 'inspection', priority: 'high', title: 'Unit Check',
+    base: 'Unit check: cleanliness against the photos, damage and wear, amenities present and working, consumables restocked.' },
+  { key: 'audithk', label: 'Audit HK Checklist', hint: 'housekeeping audit', department: 'inspection', priority: 'normal', title: 'Audit HK Checklist',
+    base: 'Housekeeping audit against the checklist. Photograph anything below standard.' },
+  { key: 'auditscore', label: 'Audit Scoring HK', hint: 'scored HK audit', department: 'inspection', priority: 'normal', title: 'Audit Scoring HK',
+    base: 'Score the clean against the standard. Log the score and photograph anything that costs a point.' },
+  { key: 'pest', label: 'Pest Control', hint: 'in-house, preventative', department: 'maintenance', priority: 'normal', title: 'Preventative Pest Control (In-House)',
+    base: 'In-house preventative pest treatment: kitchen, bathrooms, baseboards, balcony and any entry points. Note what was treated and flag an exterminator if there are live signs.' },
+  { key: 'pm', label: 'Preventative Maintenance', hint: 'A/C, plumbing, detectors', department: 'maintenance', priority: 'normal', title: 'Preventative Maintenance Task',
+    base: 'Preventative maintenance pass: A/C, plumbing under sinks, water heater, smoke and CO detectors, light bulbs, door hardware.' },
+  { key: 'glitch', label: 'Guest Reported / Glitch', hint: 'a guest hit a problem', department: 'maintenance', priority: 'high', title: 'Guest Reported / Glitch',
+    base: 'A guest reported this. Fix it, then say in the notes what it was and whether the guest was told.' },
+  { key: 'fieldpri', label: 'Field Reported Priority', hint: 'the crew found it', department: 'maintenance', priority: 'urgent', title: 'Field Reported Priority',
+    base: 'Raised from the field as a priority. Handle it today, or say in the notes what is blocking it.' },
+  { key: 'refresh', label: 'Refresh', hint: 'linen, towels, amenities', department: 'housekeeping', priority: 'normal', title: 'Refresh / Exchange linen / towels / amenities',
+    base: 'Mid-stay refresh: exchange linen and towels, restock amenities and paper goods, tidy and take the trash. The guest is in residence — leave their belongings where they are.' },
+  { key: 'annual', label: 'Annual Quality Audit', hint: 'files the audit link', department: 'inspection', priority: 'normal', title: 'Annual Quality Audit',
+    base: 'Annual quality audit: score the unit against the standard checklist, log damage and wear, confirm inventory counts, photograph anything below standard.' },
   { key: 'custom', label: 'Custom', hint: 'type it yourself', department: 'maintenance', priority: 'normal', title: '', base: '' },
 ]
 
@@ -319,7 +366,7 @@ export function AddTaskSheet({
             {tplQ && bzHits.length === 0 && <span className="text-[11.5px] text-muted py-2">No template matches &ldquo;{tplQ}&rdquo;.</span>}
           </div>
         )}
-        <p className={cap + ' mt-3 mb-1.5'}>{bzTpls.length > 0 ? 'Or a quick preset' : 'What kind of work'}</p>
+        <p className={cap + ' mt-3 mb-1.5'}>{bzTpls.length > 0 ? 'Or one of our task types' : 'What kind of work'}</p>
         <div className="flex flex-wrap gap-1.5">
           {PRESETS.map(t => (
             <button key={t.key} onClick={() => usePreset(t.key)}
