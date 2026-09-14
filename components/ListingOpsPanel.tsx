@@ -1,6 +1,5 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { buildTaskBrief } from '@/lib/task-brief'
 import { X, AlertTriangle, Star, ClipboardCheck, Loader2 } from 'lucide-react'
 
 type Ops = {
@@ -55,16 +54,15 @@ export default function ListingOpsPanel({
     setMsg('')
     try {
       const title = 'Inspection - ' + (ops?.unit || unitName || 'Unit')
-      // ONE FORMAT FOR TASK BODIES (2026-09-14). This built its own: "Why: a; b  |  Last feedback
-      // (2/5): <300 chars>  |  Check: a; b; c; d" — one long line with semicolons doing the work
-      // of paragraphs, and the generic fallback checklist pasted in whenever the unit was quiet.
-      // lib/task-brief is now the single decision about how a Breezeway description reads, shared
-      // with the Add-a-task sheet, so the crew sees the same shape wherever the task came from.
-      const description = buildTaskBrief(
-        'Inspection triggered from the scheduler for ' + (ops?.unit || unitName || 'this unit') + '.',
-        ops as any,
-        { unit: ops?.unit || unitName || undefined },
-      )
+      // THE REASON, NOT THE BRIEF (2026-09-14). This used to build its own: "Why: a; b  |  Last
+      // feedback (2/5): <300 chars>  |  Check: a; b; c; d" — one long line with semicolons doing
+      // the work of paragraphs, and the generic fallback checklist pasted in whenever the unit was
+      // quiet. /api/sentiment/create-qc now attaches lib/listingIntel itself, the same block the
+      // rest of the app uses: role-shaped, bilingual, scored against the portfolio. Composing a
+      // second, thinner copy here would put the same guest quote in front of the crew twice.
+      const why = (ops?.inspection?.reasons || []).join('; ')
+      const description = 'Inspection raised from the scheduler for ' + (ops?.unit || unitName || 'this unit')
+        + (why ? ' — ' + why + '.' : '.')
       const cr = await fetch('/api/sentiment/create-qc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

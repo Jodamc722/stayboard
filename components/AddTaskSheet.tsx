@@ -20,14 +20,20 @@
 //   whole form is visible from the first frame now; the unit is one required field among several,
 //   and Create says which piece is still missing rather than silently staying grey.
 //
-// ── THE DESCRIPTION ─────────────────────────────────────────────────────────────────────────────
-// What goes in the body is lib/task-brief's decision, not this file's — the scheduler's unit panel
-// composes the same brief for the same reason, and two screens inventing two formats for the same
-// text is how the field app ends up with tasks nobody reads. See that file for the rules.
+// ── THE DESCRIPTION: THIS SHEET DOES NOT WRITE THE UNIT BRIEF ───────────────────────────────────
+// /api/ops-today/add-task has attached lib/listingIntel to every task it creates since August —
+// role-shaped (a cleaner, an inspector and a tech need three different briefs), bilingual, scored
+// against the portfolio. This sheet used to compose its OWN guest feedback and quoted review in
+// the browser, and the server then appended the real block underneath, so the crew opened a task
+// carrying the same complaint twice in two formats. That was the noise.
+//
+// The box below therefore holds the STANDING INSTRUCTION for this kind of work and anything the
+// person types — nothing about this particular unit. What the unit has on it is SHOWN beside the
+// box instead, so you can see it while you decide, and attached once by the server on create.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, X, Loader2, Users, CalendarDays, Search } from 'lucide-react'
 import { useModal } from '@/components/Modal'
-import { buildTaskBrief, type BriefIntel } from '@/lib/task-brief'
+import { previewRows, type BriefIntel } from '@/lib/task-brief'
 
 export type Roster = { id: number; name: string; departments: string[] }
 type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null; status?: string | null }
@@ -90,9 +96,9 @@ export function AddTaskSheet({
   const [prio, setPrio] = useState('normal')
   const [date, setDate] = useState(boardDate || todayYmd())
   const [desc, setDesc] = useState('')
-  // TRUE until the person edits the body by hand. The brief re-composes itself as the unit and the
-  // template change — but the moment somebody types in that box it is theirs, and re-composing
-  // over it would delete their words. This is the whole reason the flag exists.
+  // TRUE until the person edits the box by hand. Switching template swaps the standing instruction
+  // underneath them — which is right until they have written something, at which point the box is
+  // theirs and overwriting it would delete their words.
   const [descAuto, setDescAuto] = useState(true)
   const [picked, setPicked] = useState<number[]>([])
   const [intel, setIntel] = useState<BriefIntel | null>(null)
@@ -132,25 +138,18 @@ export function AddTaskSheet({
       .finally(() => setIntelBusy(false))
   }, [unit])
 
-  // ── THE BODY RECOMPOSES WHEN ITS INPUTS CHANGE ────────────────────────────────────────────────
-  // Picking the unit after the template used to leave the guest evidence out entirely: the brief
-  // was built once, at the moment the template was tapped, and picking a unit afterwards never
-  // rebuilt it. Since the gate is gone and either order is now normal, the body follows both.
-  const baseFor = useCallback((k: string, id: number | null): { base: string; useIntel: boolean } => {
-    if (id != null) {
-      const t = bzTpls.find(x => x.id === id)
-      return { base: String(t?.description || ''), useIntel: true }
-    }
-    const p = PRESETS.find(x => x.key === k)
-    return { base: p?.base || '', useIntel: !!p?.useIntel }
+  // The standing instruction for whatever is selected. No unit evidence — see the header.
+  const baseFor = useCallback((k: string, id: number | null): string => {
+    if (id != null) return String(bzTpls.find(x => x.id === id)?.description || '')
+    return PRESETS.find(x => x.key === k)?.base || ''
   }, [bzTpls])
 
   useEffect(() => {
     if (!descAuto) return
-    const { base, useIntel } = baseFor(tpl, tplId)
-    if (!base && !useIntel) { setDesc(''); return }
-    setDesc(buildTaskBrief(base, useIntel ? intel : null, { unit: unit ? (unit.nickname || unit.title || '') : undefined }))
-  }, [tpl, tplId, intel, unit, descAuto, baseFor])
+    setDesc(baseFor(tpl, tplId))
+  }, [tpl, tplId, descAuto, baseFor])
+
+  const preview = useMemo(() => previewRows(intel), [intel])
 
   const usePreset = (k: string) => {
     const p = PRESETS.find(x => x.key === k)!
@@ -310,20 +309,44 @@ export function AddTaskSheet({
             className={fld + ' col-span-2 sm:col-span-1'} />
         </div>
 
-        {/* ── THE BRIEF ─────────────────────────────────────────────────────────────────────── */}
+        {/* ── THE INSTRUCTION ───────────────────────────────────────────────────────────────── */}
         <div className="flex items-baseline gap-2 mt-3.5 mb-1.5">
-          <p className={cap}>Details the crew sees</p>
+          <p className={cap}>What to do</p>
           {!descAuto && (
             <button onClick={() => setDescAuto(true)} className="ml-auto text-[11px] font-semibold text-brand-700 hover:underline">
-              Rebuild from this unit
+              Reset to the template
             </button>
           )}
         </div>
-        <textarea value={desc} onChange={e => { setDesc(e.target.value); setDescAuto(false) }} rows={desc ? 8 : 3}
-          placeholder={unit ? 'Anything else the crew should know.' : 'Pick a unit and this fills itself in with that unit’s guest feedback and open glitches.'}
-          className="w-full rounded-xl border border-line px-3 py-2 text-[12px] leading-[1.5] font-mono text-ink/80" />
-        {descAuto && unit && intel && !intel.generic && (intel.focus || []).length > 0 && (
-          <p className="text-[11px] text-muted mt-1">Built from this unit’s recent guest feedback and glitches. Edit freely — it stops rebuilding once you do.</p>
+        <textarea value={desc} onChange={e => { setDesc(e.target.value); setDescAuto(false) }} rows={4}
+          placeholder="The instruction for this job. What the unit has on it is attached automatically."
+          className="w-full rounded-xl border border-line px-3 py-2 text-[12.5px] leading-[1.5] text-ink/85" />
+
+        {/* ── WHAT THE UNIT HAS ON IT ───────────────────────────────────────────────────────────
+            SHOWN, NOT PASTED. The server attaches the real brief (lib/listingIntel) on create, in
+            the crew's language and shaped to their job. Copying it into the box above would mean
+            the same complaint reaching the field twice, which is what this whole change removes. */}
+        {unit && (
+          <div className="mt-3 rounded-xl border border-line bg-app/50 p-3">
+            <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+              What the crew also gets about {uname(unit)}
+            </p>
+            {intelBusy ? (
+              <p className="text-[12px] text-muted mt-1.5 inline-flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> Reading this unit’s history…</p>
+            ) : preview.length === 0 ? (
+              <p className="text-[12px] text-muted mt-1.5">Nothing outstanding — no low reviews and no open glitches. The task goes out with just the instruction above.</p>
+            ) : (
+              <ul className="mt-2 space-y-1.5">
+                {preview.map((r, i) => (
+                  <li key={i} className="text-[12px] leading-snug">
+                    <span className={'font-semibold ' + (r.tone === 'alert' ? 'text-rose-700' : 'text-ink')}>{r.label}</span>
+                    {r.detail ? <span className="text-muted"> — {r.detail}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-[10.5px] text-muted mt-2">Attached by the server when you create it, in the crew’s language.</p>
+          </div>
         )}
 
         {/* ── WHO ───────────────────────────────────────────────────────────────────────────── */}

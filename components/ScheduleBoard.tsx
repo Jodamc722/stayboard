@@ -73,13 +73,23 @@ function agoLabel(iso?: string) {
   const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
   return `${Math.floor(h / 24)}d ago`
 }
+// THE OPERATIONAL HEADER ONLY — the facts about getting into this unit today that nothing else
+// knows. /api/schedule/assign attaches lib/listingIntel's cleaner block underneath this, which
+// already carries the deadline, the length of the stay that just ended, pets, the unit's standing
+// complaint pattern and the last inspection — in English and Spanish. Anything said there does not
+// belong here.
+//
+// SAME-DAY TURN LEFT THIS LINE (2026-09-14). It was being told three times: appended to the task
+// NAME as "⚠ SAME-DAY TURN" by the assign route, spelled out here, and stated again by the intel
+// block's opening line ("DEADLINE: next guest arrives TODAY at 4pm"). The name carries it at a
+// glance and the deadline line carries the detail, so the middle copy was pure repetition — and a
+// description whose first half repeats the title is how people learn to skip descriptions.
 function descFor(c: Clean): string {
   const parts = [`${c.unit}`]
   if (c.vendor) parts.push(`VENDOR CLEAN — ${c.vendor} hotel staff`)
   if (c.doorCode) parts.push(`Door code: ${c.doorCode}`)
   // Generated "new code to set" removed from pushes (Jon 2026-07-09) — it was a suggestion, not a
   // real lock code. TODO: include the real PROGRAMMING CODE here once we know its Guesty field.
-  if (c.sameDayTurn) parts.push('SAME-DAY TURN — guest arriving today, rush the turnover')
   if (c.guestOut) parts.push(`Guest out: ${c.guestOut}`)
   return parts.join(' | ')
 }
@@ -463,7 +473,13 @@ const d = data?.weekStart || date
 if (!window.confirm('Create a review-audit inspection for ' + s.unit + ' on ' + d + ' in Breezeway?')) return
 setSugBusy(p => ({ ...p, [s.listingId]: true }))
 try {
-const desc = 'REVIEW AUDIT: ' + (s.guest || 'a guest') + ' left a ' + (s.rating ?? '?') + '-star review on ' + s.reviewedAt + (s.excerpt ? ' - "' + s.excerpt + '"' : '') + '\nCHECK FOR: walk the unit against the review - cleanliness, maintenance, amenities. Photos + notes required.\nFIT: ' + (s.fit === 'checkout' ? 'guest checks out this day' : 'unit is vacant this day')
+// THE REASON, NOT THE BRIEF (2026-09-14). This pasted the guest's review, a checklist and the
+// scheduling rationale into the body — and /api/sentiment/create-qc now attaches lib/listingIntel,
+// which already opens an inspection block with that same review in the guest's own words, in both
+// languages. Two copies of one quote is the noise; the line below is what only THIS caller knows.
+const desc = 'Review audit raised from the scheduler: ' + (s.guest || 'a guest') + ' left a ' + (s.rating ?? '?') + '-star review on ' + s.reviewedAt + '. '
+  + (s.fit === 'checkout' ? 'Scheduled for this day because the guest checks out.' : 'Scheduled for this day because the unit is vacant.')
+  + ' Walk the unit against the review; photos and notes required.'
 const r = await fetch('/api/sentiment/create-qc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: s.listingId, date: d, issueType: 'review-audit', department: 'inspection', priority: 'normal', title: 'Review audit - ' + s.unit, description: desc }) })
 const j = await r.json().catch(() => null)
 if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || 'Could not create the audit.')
