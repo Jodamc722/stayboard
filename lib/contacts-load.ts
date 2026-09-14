@@ -12,7 +12,7 @@ import { buildContacts, type Contact } from './guest-contacts'
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
 /** Two years of stays, the reviews to match against them, and the profile layer. */
-export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; today: string; truncated: boolean }> {
+export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; today: string; truncated: boolean; shortReads: string[] }> {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const since = ymdET(new Date(Date.now() - days * 86400000))
@@ -40,7 +40,17 @@ export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; t
     profiles: profPage.rows || [],
     today,
   })
-  // Honest about a ceiling we actually hit, rather than showing a short list as if it were whole.
-  const truncated = !!(resPage.truncated || revPage.truncated || profPage.truncated || listPage.truncated)
-  return { contacts, today, truncated }
+  // NAME THE READ THAT FELL SHORT. pageRows sets `truncated` for TWO different reasons — it hit its
+  // page ceiling, or the query errored (a renamed column, a statement timeout, an expired key all
+  // resolve as { data: null, error } rather than throwing). A single boolean cannot tell those
+  // apart, and the fix is opposite in each case: raise the ceiling, or go find the broken query.
+  // The first version of this file selected a column called `city`, which does not exist; the read
+  // errored, every contact came back with no building, and the only signal was a bare "truncated".
+  const shortReads = [
+    resPage.truncated ? 'reservations' : '',
+    revPage.truncated ? 'reviews' : '',
+    profPage.truncated ? 'guest profiles' : '',
+    listPage.truncated ? 'listings' : '',
+  ].filter(Boolean)
+  return { contacts, today, truncated: shortReads.length > 0, shortReads }
 }
