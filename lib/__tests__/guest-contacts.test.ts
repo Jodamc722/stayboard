@@ -106,6 +106,46 @@ const clearCs = buildContacts({
 })
 eq('unambiguous review is credited', clearCs.reduce((a, c) => a + c.reviews, 0), 1)
 
+// THE CHANNEL RULE (Jon, 2026-09-14: "we can not send email / content to expedia guests").
+//
+// Unlike Airbnb, Expedia hands over the guest's REAL address, so the relay check waves it through.
+// The block has to come from the channel, not the mailbox. And a guest who later books direct is
+// ours again — that is the win-back list, and it must not be blocked.
+const expRes = [
+  { listing_id: 'L1', guest_name: 'Ellen Expedia', guest_email: 'ellen@gmail.com', check_in: '2026-02-01', check_out: '2026-02-04', nights: 3, status: 'checked_out', source: 'expedia', money_total: 500 },
+  { listing_id: 'L1', guest_name: 'Hal Hotels', guest_email: 'hal@gmail.com', check_in: '2026-02-01', check_out: '2026-02-04', nights: 3, status: 'checked_out', source: 'hotels.com', money_total: 500 },
+  // came via Expedia, came BACK direct -> ours
+  { listing_id: 'L1', guest_name: 'Wanda Winback', guest_email: 'wanda@gmail.com', check_in: '2026-01-01', check_out: '2026-01-04', nights: 3, status: 'checked_out', source: 'expedia', money_total: 500 },
+  { listing_id: 'L1', guest_name: 'Wanda Winback', guest_email: 'wanda@gmail.com', check_in: '2026-05-01', check_out: '2026-05-04', nights: 3, status: 'checked_out', source: 'website', money_total: 500 },
+  // a channel NOT on the blocked list stays mailable
+  { listing_id: 'L1', guest_name: 'Abe Airbnb', guest_email: 'abe@gmail.com', check_in: '2026-02-01', check_out: '2026-02-04', nights: 3, status: 'checked_out', source: 'airbnb2', money_total: 500 },
+]
+const expCs = buildContacts({ reservations: expRes as any, listings: listings as any, reviews: [], profiles: [], today: '2026-09-14' })
+const by = (e: string) => expCs.find(c => c.email === e)!
+eq('expedia guest is blocked despite a real address', by('ellen@gmail.com').mail, 'restricted')
+eq('expedia guest is flagged restricted', by('ellen@gmail.com').restricted, true)
+eq('hotels.com counts as Expedia Group', by('hal@gmail.com').mail, 'restricted')
+eq('a later direct booking wins them back', by('wanda@gmail.com').mail, 'mailable')
+eq('win-back is not flagged restricted', by('wanda@gmail.com').restricted, false)
+eq('an unblocked channel stays mailable', by('abe@gmail.com').mail, 'mailable')
+
+// The blocked list is configurable, not baked in.
+const bothBlocked = buildContacts({
+  reservations: expRes as any, listings: listings as any, reviews: [], profiles: [], today: '2026-09-14',
+  restrictedChannels: ['Expedia Group', 'Airbnb'],
+})
+eq('adding Airbnb to the list blocks Airbnb', bothBlocked.find(c => c.email === 'abe@gmail.com')!.mail, 'restricted')
+const noneBlocked = buildContacts({
+  reservations: expRes as any, listings: listings as any, reviews: [], profiles: [], today: '2026-09-14',
+  restrictedChannels: [],
+})
+eq('an empty list blocks nobody', noneBlocked.find(c => c.email === 'ellen@gmail.com')!.mail, 'mailable')
+
+// And the summary must count them apart from everyone else.
+const expSum = audienceSummary(expCs)
+eq('summary counts the restricted', expSum.restricted, 2)
+eq('restricted are not counted as mailable', expSum.mailable, 2)   // Wanda + Abe
+
 const s = audienceSummary(cs)
 eq('summary mailable', s.mailable, 1)
 eq('summary relay', s.relay, 1)
