@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { buildTaskBrief } from '@/lib/task-brief'
 import { X, AlertTriangle, Star, ClipboardCheck, Loader2 } from 'lucide-react'
 
 type Ops = {
@@ -54,11 +55,16 @@ export default function ListingOpsPanel({
     setMsg('')
     try {
       const title = 'Inspection - ' + (ops?.unit || unitName || 'Unit')
-      const parts: string[] = []
-      if (ops?.inspection?.reasons?.length) parts.push('Why: ' + ops.inspection.reasons.join('; '))
-      if (ops?.lastFeedback) parts.push('Last feedback (' + (ops.lastFeedback.rating ?? '?') + '/5): ' + ops.lastFeedback.excerpt)
-      if (ops?.checklist?.length) parts.push('Check: ' + ops.checklist.join('; '))
-      const description = parts.join('  |  ')
+      // ONE FORMAT FOR TASK BODIES (2026-09-14). This built its own: "Why: a; b  |  Last feedback
+      // (2/5): <300 chars>  |  Check: a; b; c; d" — one long line with semicolons doing the work
+      // of paragraphs, and the generic fallback checklist pasted in whenever the unit was quiet.
+      // lib/task-brief is now the single decision about how a Breezeway description reads, shared
+      // with the Add-a-task sheet, so the crew sees the same shape wherever the task came from.
+      const description = buildTaskBrief(
+        'Inspection triggered from the scheduler for ' + (ops?.unit || unitName || 'this unit') + '.',
+        ops as any,
+        { unit: ops?.unit || unitName || undefined },
+      )
       const cr = await fetch('/api/sentiment/create-qc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

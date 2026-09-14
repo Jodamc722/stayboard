@@ -8,11 +8,12 @@ import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from 
 import { TAB_SETS, tabSetForPath, type TabSet } from '@/lib/tabsets'
 import { applyNavLayout, type NavLayout } from '@/lib/nav-layout'
 import { EveFloat } from '@/components/EveFloat'
+import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
 import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -442,6 +443,19 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border border-line bg-white text-muted">⌘K</span>
       </button>
 
+      {/* ADD A TASK, FROM ANY SCREEN (Jon, 2026-09-14: "add a way to add a task easy, should feel
+          like breezeway"). The sheet used to live inside Today in Ops and nowhere else, so filing
+          the work you just decided on while reading a review or a glitch meant navigating away
+          first — which is where the thought gets dropped. Same gate as Today in Ops: a role that
+          cannot see the board cannot file onto it. */}
+      {canSee('/plan') && (
+        <button type="button" onClick={() => { openAddTask(); if (onNavigate) onNavigate() }}
+          className="w-full flex items-center gap-2.5 mb-2 px-3 py-2 rounded-xl bg-ink text-white text-sm font-semibold hover:opacity-90 transition-all">
+          <Plus size={15} />
+          <span>Add a task</span>
+        </button>
+      )}
+
       {(
         // YOUR TABS (Jon, 2026-08-19: "revamp the tabs on the side… a star section, called
         // something, maybe Your tabs"). The personal band gets its own softly-tinted card so it
@@ -562,8 +576,14 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           </button>
           <img src="/icon-192.png" alt="Lighthouse" className="w-7 h-7 rounded-lg shadow-sm" />
           <span className="font-semibold text-[15px] text-ink truncate">{currentLabel}</span>
+          {canSee('/plan') && (
+            <button type="button" onClick={() => openAddTask()} aria-label="Add a task"
+              className="ml-auto w-10 h-10 rounded-lg bg-ink text-white grid place-items-center active:opacity-80">
+              <Plus size={18} />
+            </button>
+          )}
           <button type="button" onClick={() => setPaletteOpen(true)} aria-label="Jump to a tab"
-            className="ml-auto w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app">
+            className={(canSee('/plan') ? '' : 'ml-auto ') + 'w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app'}>
             <Search size={17} />
           </button>
         </header>
@@ -594,6 +614,9 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         {/* Eve rides along on every page (Jon, 2026-08-19: floating icon, not a page). Same
             role gate the old sidebar entry used — a role with eve 'off' never sees the bubble. */}
         {canSee('/eve') && <EveFloat />}
+
+        {/* One mount for the whole app; openAddTask() from anywhere raises it. */}
+        {canSee('/plan') && <AddTaskHost />}
 
         {/* Mobile bottom bar — the first four pins. One thumb, no scrolling.
             It renders unconditionally: it used to be gated on `pinned.length > 0`, which meant a
