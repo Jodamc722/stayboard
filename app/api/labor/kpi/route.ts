@@ -92,6 +92,56 @@ export async function GET(req: Request) {
     const settings = await getLaborSettings(marketParam === 'all' ? 'default' : marketParam)
     const weekStart = ((settings as any).week_start === 'monday' ? 'monday' : 'sunday') as 'sunday' | 'monday'
     const week = currentWorkweek(now, weekStart)
+
+    // ── TEAM-TODAY SUMMARY (?summary=1) — added 2026-09-14, the tab-by-tab walk ─────────────────
+    // The collapsed "Team today" strip (components/LaborStrip, mounted on Today in Ops and the
+    // Scheduler) reads exactly four numbers plus the per-person table: who is clocked in, who is
+    // scheduled, hours worked, payroll so far, and OT/no-show flags. Every one of those comes from
+    // HOMEBASE ALONE — shifts, timecards, and computeLaborKpis over them.
+    //
+    // It was getting them from the full response. That means every load of /plan — the busiest
+    // page in the app, eight people on it all day — paged every Breezeway task and every Guesty
+    // reservation in the window, walked the listings table, and ran the whole labor-economics
+    // engine, to fill a bar that starts COLLAPSED. Worse, the strip re-ran it on a five-minute
+    // timer with no visibility check, so a phone in a pocket kept paying for it.
+    //
+    // This branch answers the strip from the three Homebase reads it actually consumes and returns
+    // before any of that starts. It is deliberately a separate early return rather than a flag
+    // threaded through the body below: the full response keeps exactly the shape it had, so the
+    // labor board, the briefs and the reports cannot be affected by a change made for a strip.
+    if (url.searchParams.get('summary') === '1') {
+      const [dayShifts, tcAudit, weekShifts] = await Promise.all([
+        shiftsForRange(start, end),
+        getTimecardsAudited(start, end),
+        shiftsForRange(week.start, week.end),
+      ])
+      const timecards = tcAudit.cards
+      const kpis = computeLaborKpis({
+        start, end, shifts: dayShifts, timecards, weekShifts,
+        cleansCompleted: null, occupiedNights: null,
+        todayISO: now.toISOString(),
+        otWeeklyHours: Number(settings.ot_weekly_hours) || 40,
+        weekStartDate: week.start,
+      } as any)
+      const tcToday = timecards.filter(t => t.date === today)
+      const shToday = (dayShifts as any[]).filter(s => s.date === today)
+      const sumBody = {
+        ok: true, summary: true, market: marketParam, week: { ...week, weekStart }, settings,
+        payrollComplete: tcAudit.complete,
+        payrollFailedWeeks: tcAudit.failedWeeks || [],
+        people: kpis.people, flags: kpis.flags,
+        today: (start <= today && today <= end) ? {
+          date: today,
+          clockedInNow: Array.from(new Set(tcToday.filter(t => t.open).map(t => t.name))),
+          hoursSoFar: round2(tcToday.reduce((a, t) => a + (t.hours ?? 0), 0)),
+          payrollSoFar: round2(tcToday.reduce((a, t) => a + (t.laborCost ?? 0), 0)),
+          scheduledPayroll: round2(shToday.filter((s: any) => !s.open).reduce((a: number, s: any) => a + (s.scheduledCost ?? 0), 0)),
+        } : null,
+      }
+      // Same money gate as the full response — the amounts leave the payload on the server.
+      return NextResponse.json(showMoney ? { ...sumBody, moneyHidden: false } : { ...redactMoney(sumBody), moneyHidden: true })
+    }
+
     const sb = supabaseAdmin()
     // Same rule as the ops board: vendor-cleaned buildings (operator-editable in /users -> Ops presets)
     // live in the vendor bucket, not inside their geographic market's numbers.
