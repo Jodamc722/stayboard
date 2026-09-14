@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bucketFor, familyFor, FAMILY_LABEL } from '@/lib/marketing'
+import { buildContacts, audienceSummary } from '@/lib/guest-contacts'
 import { marketOf } from '@/lib/segments'
 import { buildTeamSchedule, addDays as addDaysET } from '@/lib/team-schedule'
 import { scheduleLabor } from '@/lib/schedule-labor'
@@ -153,6 +154,33 @@ async function handle(code: string, pw: string, body?: any) {
       basis: `bookings made in the last ${windowDays} days`,
       families: Object.values(fam).map(g => ({ label: g.label, count: g.count, value: showMoney ? Math.round(g.value) : undefined }))
         .sort((a, b) => b.count - a.count),
+    }
+  }
+
+  // ── AUDIENCE (Jon, 2026-09-14: "add the contact list to the direct booking / marketing link") ──
+  // COUNTS AND LABELS ONLY. Jon chose this shape over putting the list itself on a URL, and the
+  // code has to enforce the choice rather than rely on it: audienceSummary() cannot emit a name,
+  // an address or a phone number, and the raw contacts built here never leave this function.
+  // A partner gets the SHAPE of the audience for their own units — how many people, how many are
+  // reachable, which channels they came from — which is what you need to plan a campaign.
+  if (sections.audience) {
+    const twoYears = ymdET(new Date(Date.now() - 730 * 86400000))
+    let ares: any[] = []
+    for (let i = 0; i < 12; i++) {
+      const { data: page } = await db.from('guesty_reservations')
+        .select('listing_id, guest_id, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, money_total')
+        .in('listing_id', idList.slice(0, 400))
+        .gte('check_in', twoYears)
+        .order('check_in', { ascending: false }).range(i * 1000, i * 1000 + 999)
+      ares = ares.concat(page || [])
+      if (!page || page.length < 1000) break
+    }
+    const scoped = (listings || []).filter((l: any) => ids.has(str((l as any).id)))
+      .map((l: any) => ({ id: str(l.id), nickname: l.nickname, title: l.title, building: l.building, city: (l as any).address_city }))
+    const contacts = buildContacts({ reservations: ares, listings: scoped, reviews: [], profiles: [], today })
+    out.sections.audience = {
+      basis: `everyone who has stayed in these ${idList.length} unit${idList.length === 1 ? '' : 's'} in the last two years`,
+      ...audienceSummary(contacts),
     }
   }
 
