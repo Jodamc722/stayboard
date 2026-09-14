@@ -43,8 +43,9 @@ export async function GET(_req: NextRequest) {
     const [resPage, listPage] = await Promise.all([
       pageRows<any>((a, b) => db.from('guesty_reservations')
         .select('listing_id, guest_id, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, money_total')
-        .gte('check_in', since).order('check_in', { ascending: false }).range(a, b), 30),
-      pageRows<any>((a, b) => db.from('guesty_listings').select('id, nickname, title, building, city').order('id').range(a, b), 3),
+        .in('status', ['confirmed', 'checked_in', 'checked_out', 'completed'])
+        .gte('check_in', since).order('check_in', { ascending: false }).range(a, b), 40),
+      pageRows<any>((a, b) => db.from('guesty_listings').select('id, nickname, title, building, address_city').order('id').range(a, b), 3),
     ])
 
     const contacts = buildContacts({
