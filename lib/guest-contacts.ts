@@ -296,7 +296,9 @@ export function buildContacts(opts: {
     const p = profBy[c.key]
     const rated = (c as any)._rated || 0
     const sum = (c as any)._sum || 0
-    const { _units, _buildings, _markets, _channels, ...rest } = c as any
+    // _rated/_sum are the running total behind reviewAvg. They are accumulator state, not contact
+    // data, and were riding out through ...rest into the API response — strip them here.
+    const { _units, _buildings, _markets, _channels, _rated, _sum, ...rest } = c as any
     return {
       ...rest,
       units: Array.from(_units as Set<string>).slice(0, 12),
