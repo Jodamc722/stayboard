@@ -65,7 +65,19 @@ type TriageRow = {
 
 const GLITCH_OPEN = ['pool', 'ops', 'guest_followup', 'refund', 'manager_review', 'incident']
 const WO_CLOSED = ['done', 'cancelled']
-const TASK_DONE = /finish|clos|complete|done|cancel/i
+// ── A DELETED TASK IS NOT OPEN WORK (2026-09-14, the tab-by-tab walk) ──────────────────────────
+// This regex decided what counts as "still open", and it never included `delet`. Breezeway's
+// status vocabulary does: of the 420 unfinished maintenance tasks in the last 60 days, 314 were
+// DELETED — 306 of them past their scheduled date, the oldest from July 16. Because the triage
+// score weights age, those 314 sorted straight to the top, so the first thing anyone saw on the
+// page built to give us "a grip on maintenance" was three hundred deleted rows wearing overdue
+// badges. The real queue is 106 items. Five people opened this page in thirty days; I would not
+// have opened it twice either.
+//
+// lib/command-day's OPEN() helper has excluded '%delete%' since it was written, which is why the
+// Command Center's maintenance counts never looked like this. One vocabulary, two spellings of
+// it, and only one of them complete — so this list is now spelled out rather than improvised.
+const TASK_DONE = /finish|clos|complete|done|cancel|delet/i
 
 export default async function MaintenancePage() {
   const access = await getAccess()
@@ -84,7 +96,7 @@ export default async function MaintenancePage() {
       .gte('scheduled_date', shift(today, -60)).limit(1000),
     // Closed maintenance work in the last 30 days, to find what never got billed.
     db.from('breezeway_tasks_sync')
-      .select('id, reference_property_id, name, assignee_name, finished_at, total_minutes')
+      .select('id, reference_property_id, name, status, assignee_name, finished_at, total_minutes')
       .eq('type_department', 'maintenance')
       .gte('finished_at', d30 + 'T00:00:00').limit(2000),
     db.from('glitches').select('id,status,unit,market,glitch_type,category,overview,assignee,due_date,created_at,breezeway_task_id').limit(1000),
@@ -114,7 +126,11 @@ export default async function MaintenancePage() {
       billed[str(d.task_id)] = dollars > 0 || str(d.rate_type).length > 0
     }
   }
-  const unbilled = doneTasks.filter(t => !billed[str(t.id)])
+  // Same rule on the money side: a deleted task with a finish time on it is not revenue we failed
+  // to bill, and chasing one wastes the exact attention this section exists to direct.
+  const unbilled = doneTasks
+    .filter(t => !/delet/i.test(str(t.status)))
+    .filter(t => !billed[str(t.id)])
     .sort((a, b) => str(a.finished_at).localeCompare(str(b.finished_at)))
 
   // ---- the triage queue: every open item across all three systems, ranked ----
