@@ -114,7 +114,13 @@ const PRESETS: { key: string; label: string; hint: string; department: string; p
   { key: 'custom', label: 'Custom', hint: 'type it yourself', department: 'maintenance', priority: 'normal', title: '', base: '' },
 ]
 
-const DEPTS = ['maintenance', 'housekeeping', 'inspection', 'safety']
+const DEPTS = ['inspection', 'maintenance', 'housekeeping', 'safety']
+// Breezeway's API says "housekeeping"; Jon asked for the picker to read "inspection, maintenance
+// or cleaning". The label is what the person reads, the key is what gets sent — so the dropdown
+// speaks the team's language without renaming anything downstream.
+const DEPT_LABEL: Record<string, string> = {
+  inspection: 'Inspection', maintenance: 'Maintenance', housekeeping: 'Cleaning', safety: 'Safety',
+}
 const PRIOS = ['normal', 'high', 'urgent', 'low']
 const todayYmd = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 
@@ -151,9 +157,11 @@ export function AddTaskSheet({
   const [tpl, setTpl] = useState('custom')
   const [bzTpls, setBzTpls] = useState<BzTpl[]>([])
   const [tplId, setTplId] = useState<number | null>(null)
-  const [tplQ, setTplQ] = useState('')
   const [title, setTitle] = useState('')
-  const [dept, setDept] = useState('maintenance')
+  // INSPECTION FIRST. Unit Check alone is 897 of the tasks the team files; the three inspection
+  // types together outnumber every maintenance type combined. The picker opens on the answer most
+  // people want.
+  const [dept, setDept] = useState('inspection')
   const [prio, setPrio] = useState('normal')
   const [date, setDate] = useState(seed?.date || boardDate || todayYmd())
   const [desc, setDesc] = useState('')
@@ -246,6 +254,43 @@ export function AddTaskSheet({
     setDescAuto(true)
   }
 
+  // ── ONE DROPDOWN, GROUPED, FILTERED BY TYPE (Jon, 2026-09-14: "have the template in drop down
+  // like they are in Breezeway based on the type, inspection, maintenance or cleaning") ──────────
+  // The picker was two walls of chips — up to ten live Breezeway templates and ten of our own —
+  // and neither told you which department it belonged to until you read the small print under the
+  // name. Breezeway asks the question in the right order: what KIND of work is this, then which
+  // template. Type first, and the list below it only contains things that can be that type.
+  //
+  // One control for both sources, because from where you are standing they are the same decision.
+  // The value carries which list it came from: `bz:<id>` for a live Breezeway template (its real
+  // checklist travels with the task), `p:<key>` for one of ours.
+  const onPickTemplate = (value: string) => {
+    if (!value) { setTpl('custom'); setTplId(null); setDescAuto(true); return }
+    if (value.startsWith('bz:')) {
+      const t = bzTpls.find(x => String(x.id) === value.slice(3))
+      if (t) useBzTpl(t)
+      return
+    }
+    usePreset(value.slice(2))
+  }
+
+  // Changing the type drops a template that cannot live there — leaving "Audit HK Checklist"
+  // selected under Maintenance would send a task whose title and department disagree, and the
+  // brief the crew gets is chosen from the title.
+  const onPickDept = (d: string) => {
+    setDept(d)
+    const keepBz = tplId != null && bzTpls.some(t => t.id === tplId && (!t.department || t.department === d))
+    const keepPreset = tplId == null && PRESETS.some(x => x.key === tpl && x.department === d)
+    if (keepBz || keepPreset) return
+    setTpl('custom'); setTplId(null); setDescAuto(true)
+    // AND THE TITLE IT PUT THERE. Dropping the template but leaving "Departure Clean Checklist"
+    // in the title box under a type of Inspection is worse than either: lib/listingIntel picks
+    // which brief the crew gets by reading the TITLE, so the task would have gone out calling
+    // itself a clean and briefing the cleaner. Only a title we wrote is cleared; anything the
+    // person typed is theirs.
+    setTitle(cur => (PRESETS.some(x => x.title && x.title === cur) || bzTpls.some(x => x.name === cur) ? '' : cur))
+  }
+
   // TYPING "17WEST 403" MUST FIND "17WEST - 403 - 2BR". Every nickname carries separators, so a
   // raw substring test failed on the most natural query a coordinator types. Normalise both sides
   // to words and require every word typed to appear.
@@ -263,13 +308,22 @@ export function AddTaskSheet({
     return scored.sort((a, b) => a.rank - b.rank).slice(0, 7).map(x => x.l)
   }, [uq, listings])
 
-  // The filter box is always there now. It used to appear only above twelve templates, which is
-  // the one case where you can already see them all.
-  const bzHits = useMemo(() => {
-    const n = tplQ.trim().toLowerCase()
-    const pool = bzTpls.filter(t => !n || (t.name + ' ' + t.department).toLowerCase().includes(n))
-    return n ? pool.slice(0, 24) : pool.slice(0, 10)
-  }, [bzTpls, tplQ])
+  // What each list offers for the type currently chosen. A Breezeway template with no department
+  // on it is shown under every type rather than hidden: an unclassified template is a gap in
+  // Breezeway's own data, and silently dropping it would make a template somebody relies on look
+  // like it had been deleted.
+  const bzForDept = useMemo(
+    () => bzTpls.filter(t => !t.department || t.department === dept),
+    [bzTpls, dept])
+  // A PRESET THAT DUPLICATES A LIVE TEMPLATE IS NOISE. Our presets were named after the tasks the
+  // team actually files, so several of them match a real Breezeway template by title — and the
+  // template is strictly better, because it carries its checklist into the field app. Showing both
+  // offers the same words twice and lets somebody pick the weaker one by accident.
+  const presetsForDept = useMemo(() => {
+    const live = new Set(bzTpls.map(t => t.name.trim().toLowerCase()))
+    return PRESETS.filter(t => t.key !== 'custom' && t.department === dept && !live.has(t.title.trim().toLowerCase()))
+  }, [dept, bzTpls])
+  const pickValue = tplId != null ? 'bz:' + tplId : (tpl && tpl !== 'custom' ? 'p:' + tpl : '')
 
   const missing = !unit ? 'Pick a unit' : !title.trim() ? 'Give it a title' : ''
   // Say whose row this came from, so a ＋ pressed on a person row is visibly about that person.
@@ -345,53 +399,50 @@ export function AddTaskSheet({
           </div>
         )}
 
-        {/* ── TEMPLATE ──────────────────────────────────────────────────────────────────────── */}
-        <div className="flex items-baseline gap-2 mt-4 mb-1.5">
-          <p className={cap}>Template</p>
-          {bzTpls.length > 0 && <span className="text-[10.5px] text-muted">· the crew gets the real checklist</span>}
-          {bzTpls.length > 6 && (
-            <input value={tplQ} onChange={e => setTplQ(e.target.value)} placeholder="filter…"
-              className="ml-auto w-28 rounded-lg border border-line px-2 py-1 text-[11px]" />
-          )}
+        {/* ── TYPE, THEN TEMPLATE — the order Breezeway asks in ──────────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-2 mt-4">
+          <label className="flex flex-col gap-1">
+            <span className={cap}>Type</span>
+            <select value={dept} onChange={e => onPickDept(e.target.value)} className={fld}>
+              {DEPTS.map(x => <option key={x} value={x}>{DEPT_LABEL[x] || x}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 min-w-0">
+            <span className={cap}>Template</span>
+            <select value={pickValue} onChange={e => onPickTemplate(e.target.value)} className={fld}>
+              <option value="">No template — type it yourself</option>
+              {bzForDept.length > 0 && (
+                <optgroup label="Breezeway templates — the crew gets the real checklist">
+                  {bzForDept.map(t => <option key={t.id} value={'bz:' + t.id}>{t.name}</option>)}
+                </optgroup>
+              )}
+              {presetsForDept.length > 0 && (
+                <optgroup label="Our task types">
+                  {presetsForDept.map(t => <option key={t.key} value={'p:' + t.key}>{t.title || t.label}</option>)}
+                </optgroup>
+              )}
+            </select>
+          </label>
         </div>
-        {bzTpls.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {bzHits.map(t => (
-              <button key={t.id} onClick={() => useBzTpl(t)}
-                className={'px-3 py-2 rounded-xl border-2 text-left max-w-full ' + (tplId === t.id ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line text-ink hover:border-brand-500/50')}>
-                <span className="block text-[12.5px] font-bold leading-tight truncate">{t.name}</span>
-                <span className={'block text-[10px] ' + (tplId === t.id ? 'text-white/70' : 'text-muted')}>{t.department || 'Breezeway template'}</span>
-              </button>
-            ))}
-            {tplQ && bzHits.length === 0 && <span className="text-[11.5px] text-muted py-2">No template matches &ldquo;{tplQ}&rdquo;.</span>}
-          </div>
-        )}
-        <p className={cap + ' mt-3 mb-1.5'}>{bzTpls.length > 0 ? 'Or one of our task types' : 'What kind of work'}</p>
-        <div className="flex flex-wrap gap-1.5">
-          {PRESETS.map(t => (
-            <button key={t.key} onClick={() => usePreset(t.key)}
-              className={'px-3 py-2 rounded-xl border-2 text-left ' + (tpl === t.key ? 'bg-ink border-ink text-white' : 'bg-white border-line text-ink hover:border-ink/30')}>
-              <span className="block text-[12.5px] font-bold leading-tight">{t.label}</span>
-              <span className={'block text-[10px] ' + (tpl === t.key ? 'text-white/70' : 'text-muted')}>{t.hint}</span>
-            </button>
-          ))}
-        </div>
+        {/* Say what picking it did. A Breezeway template carries its checklist into the field app;
+            one of ours only fills the title and the standing instruction, and the difference
+            decides whether the crew gets a list to tick. */}
+        {tplId != null ? (
+          <p className="text-[11px] text-muted mt-1.5">This template’s checklist travels with the task into the field app.</p>
+        ) : bzForDept.length === 0 && bzTpls.length > 0 ? (
+          <p className="text-[11px] text-muted mt-1.5">No Breezeway template is filed under {DEPT_LABEL[dept] || dept}.</p>
+        ) : null}
 
         {/* ── THE TASK ──────────────────────────────────────────────────────────────────────── */}
         <p className={cap + ' mt-4 mb-1.5'}>The task</p>
         <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What needs doing?"
           className="w-full rounded-xl border border-line px-3 py-2.5 text-[13.5px] mb-2" />
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          <select value={dept} onChange={e => setDept(e.target.value)} className={fld} aria-label="Department">
-            {DEPTS.map(x => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
-          </select>
+        {/* Department moved up to Type, where it now drives the template list. */}
+        <div className="grid grid-cols-2 gap-2">
           <select value={prio} onChange={e => setPrio(e.target.value)} className={fld} aria-label="Priority">
             {PRIOS.map(x => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
           </select>
-          {/* Three across is ~90px a column on a phone and a native date picker does not fit, so
-              the date takes its own full-width row below 640px. */}
-          <input type="date" value={date} onChange={e => setDate(e.target.value)} aria-label="Date"
-            className={fld + ' col-span-2 sm:col-span-1'} />
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} aria-label="Date" className={fld} />
         </div>
 
         {/* ── THE INSTRUCTION ───────────────────────────────────────────────────────────────── */}
