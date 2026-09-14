@@ -42,6 +42,10 @@ export const FEATURES: Feature[] = [
   // Guests directory + profiles (2026-08-18, Jon): "a tab where we have all guest info, create a
   // guest profile as well." Aggregated from reservations; VIP on a profile feeds auto-inspections.
   { key: 'guests',        label: 'Guests',            path: '/guests', group: 'Guests' },
+  // Contacts (2026-09-14, Jon): the guest list as a MAILING list — and the door to Mailchimp.
+  // Separate key from `guests` on purpose: looking a guest up at the front desk and exporting six
+  // thousand email addresses are not the same privilege, and should not be granted by one switch.
+  { key: 'contacts',      label: 'Contacts',          path: '/contacts', group: 'Guests' },
   // Gated 2026-08-06 (Jon, second pass): guest PII on an auth-only page deserves a role setting.
   // Re-applied after the Patterns upload (73bd724) landed from a pre-salato copy of this file.
   // The public share/verify links (/salato/share, /salato/verify) stay open — OPEN_PREFIXES wins
@@ -316,7 +320,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims'] },
+    pages: ['home', 'revenue', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts'] },
 ]
 
 export function normWorkspace(v: any): Workspace {
