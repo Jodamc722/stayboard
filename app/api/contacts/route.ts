@@ -43,10 +43,12 @@ export async function GET(req: NextRequest) {
 
   let all: Contact[]
   let truncated = false
+  let shortReads: string[] = []
   try {
     const r = await loadContacts()
     all = r.contacts
     truncated = r.truncated
+    shortReads = r.shortReads
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: str(e?.message || e).slice(0, 300) }, { status: 500 })
   }
@@ -86,7 +88,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    q, seg, truncated,
+    q, seg, truncated, shortReads,
     summary: audienceSummary(all),
     shown: picked.length,
     contacts: picked.slice(0, q || seg ? 1000 : 500),
