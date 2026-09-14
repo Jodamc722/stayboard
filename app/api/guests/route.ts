@@ -73,7 +73,12 @@ export async function GET(req: NextRequest) {
     if (g.history.length < 20) g.history.push({ unit: unit || 'Unit', checkIn: ci, checkOut: co, nights: Number(r.nights) || 0, value: Number(r.money_total) || 0, source: str(r.source) })
   }
 
-  const { rows: profiles } = await pageRows<any>((a, b) => db.from('guest_profiles').select('*').order('id').range(a, b), 10)
+  // ORDER BY guest_key, NOT id. guest_profiles has no id column — its primary key is guest_key
+  // (migration 043), so this ordered by something that does not exist. PostgREST answered with an
+  // error, supabase-js resolved it instead of throwing, and this read has been returning ZERO
+  // profiles since it shipped: every VIP badge, tag and note on this page was invisible. The VIP
+  // auto-inspection path was never affected — that reads guest_profiles with .eq('vip', true).
+  const { rows: profiles } = await pageRows<any>((a, b) => db.from('guest_profiles').select('*').order('guest_key').range(a, b), 10)
   const profBy: Record<string, any> = {}
   for (const p of profiles || []) profBy[str((p as any).guest_key)] = p
 
