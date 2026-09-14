@@ -91,7 +91,7 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
     const week = await marketWeek(link.market, ws)
     const db = supabaseAdmin()
     const { data: subs } = await db.from('schedule_submissions').select('id,week_start,week_end,submitted_by,note,status,feedback,reviewed_at,created_at').eq('link_code', link.code).order('created_at', { ascending: false }).limit(6)
-    return NextResponse.json({ ok: true, link: { market: link.market, label: link.label || link.market + ' team schedule' }, ...week, submissions: subs || [] })
+    return NextResponse.json({ ok: true, link: { market: link.market, label: link.label || link.market + ' team schedule', viewOnly: link.view_only === true }, ...week, submissions: subs || [] })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
 }
 
@@ -100,6 +100,17 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   if (!link) return NextResponse.json({ ok: false, error: 'This link is not active.' }, { status: 404 })
   const b = await req.json().catch(() => ({} as any))
   if (!(await unlocked(link, str(b.pass) || null))) return NextResponse.json({ ok: false, locked: true }, { status: 401 })
+  // A VIEW-ONLY LINK CANNOT WRITE, AND THE SERVER IS WHERE THAT IS TRUE (migration 084). Hiding the
+  // controls in components/TeamScheduler is for the person holding the phone; it is not a control.
+  // The link IS the credential here — no login stands behind it — so anyone who has the URL can
+  // reach this endpoint directly, and a read-only link whose read-only-ness lives in the browser
+  // is not read-only at all.
+  if (link.view_only === true) {
+    return NextResponse.json({
+      ok: false, viewOnly: true,
+      error: 'This link shows the schedule but cannot change it. Ask for the team link if you need to assign.',
+    }, { status: 403 })
+  }
   const who = str(b.who).slice(0, 80)
   const db = supabaseAdmin()
   const now = new Date().toISOString()
