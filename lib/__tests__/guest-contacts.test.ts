@@ -36,8 +36,12 @@ eq('name single', splitName('Cher'), { first: 'Cher', last: '', full: 'Cher' })
 eq('name mixedcase kept', splitName('Ronald McDonald').last, 'McDonald')
 eq('name empty', splitName(null), { first: '', last: '', full: '' })
 
+// address_city, NOT city. The column is called address_city everywhere else in the repo; the first
+// version of this shipped selecting `city`, PostgREST answered with an error, pageRows turned that
+// into zero listings, and every single contact came back with no building and market "Unknown" —
+// silently, with the page looking fine. Both spellings are accepted; this pins that they work.
 const listings = [
-  { id: 'L1', nickname: 'Rustic 10 - 1BR', building: 'Rustic', city: 'Fort Lauderdale' },
+  { id: 'L1', nickname: 'Rustic 10 - 1BR', building: 'Rustic', address_city: 'Fort Lauderdale' },
   { id: 'L2', nickname: 'Eden 1203 - Suite', building: 'Eden', city: 'Miami' },
 ]
 const res = [
@@ -66,6 +70,7 @@ eq('john not mailable', john.mail, 'relay')
 eq('john reviews counted once per unit', john.reviews, 2)
 eq('john review avg', john.reviewAvg, 4.5)
 eq('john building', john.lastBuilding, 'Rustic')
+eq('john market resolved from address_city', john.markets.includes('Unknown'), false)
 eq('john name split', [john.first, john.last], ['John', 'Smith'])
 const maria = cs.find(c => c.key === 'e:maria@gmail.com')!
 eq('maria mailable', maria.mail, 'mailable')
