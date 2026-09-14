@@ -445,18 +445,11 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border border-line bg-white text-muted">⌘K</span>
       </button>
 
-      {/* ADD A TASK, FROM ANY SCREEN (Jon, 2026-09-14: "add a way to add a task easy, should feel
-          like breezeway"). The sheet used to live inside Today in Ops and nowhere else, so filing
-          the work you just decided on while reading a review or a glitch meant navigating away
-          first — which is where the thought gets dropped. Same gate as Today in Ops: a role that
-          cannot see the board cannot file onto it. */}
-      {canSee('/plan') && (
-        <button type="button" onClick={() => { openAddTask(); if (onNavigate) onNavigate() }}
-          className="w-full flex items-center gap-2.5 mb-2 px-3 py-2 rounded-xl bg-ink text-white text-sm font-semibold hover:opacity-90 transition-all">
-          <Plus size={15} />
-          <span>Add a task</span>
-        </button>
-      )}
+      {/* The "Add a task" button that used to sit here is gone (Jon, 2026-09-14). It was the
+          loudest thing in the sidebar — a solid black block directly under the search and above the
+          user's own tabs — for an action the sidebar is not for. The sheet itself is unchanged and
+          still reachable: openAddTask() works from anywhere, and the + in the mobile header still
+          raises it. */}
 
       {(
         // YOUR TABS (Jon, 2026-08-19: "revamp the tabs on the side… a star section, called
