@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
-import { buildIntel, intelKindFor } from '@/lib/listingIntel'
+import { buildIntel, intelKindFor, INTEL_STRIP_RE } from '@/lib/listingIntel'
 import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
@@ -75,7 +75,11 @@ export async function POST(req: NextRequest) {
     // on order. Best-effort: a failure here must never stop the task being created.
     let intel: string | null = null
     try { intel = await buildIntel(listingId, { kind: intelKindFor(title, department), date, taskName: title }) } catch (e) { console.error('add-task: intel failed', e) }
-    const description = String(body?.description || '').slice(0, 1000)
+    // A CALLER MUST NOT SHIP ITS OWN INTEL BLOCK. The sheet used to compose guest feedback and a
+    // quoted review in the browser, and this route then appended the real thing underneath — so the
+    // crew opened a task carrying the same complaint twice, in two formats. The sheet sends the
+    // standing instruction now; this strips any block from an older client to be certain.
+    const description = String(body?.description || '').replace(INTEL_STRIP_RE, '').trim().slice(0, 1000)
       + (link ? '\n\nAUDIT LINK (open on your phone): ' + link + '\nLog every finding in that link as you walk — fixes and cleans become team tasks, and anything below par becomes an order automatically. Photograph anything below standard.' : '')
       + (intel ? '\n\n' + intel : '')
       + (user.email ? '\n\nAdded from Today in Ops by ' + user.email : '')
