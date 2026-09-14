@@ -116,7 +116,7 @@ export type Contact = {
   history: Stay[]
 }
 
-export type ListingLite = { id: string; nickname?: string | null; title?: string | null; building?: string | null; city?: string | null }
+export type ListingLite = { id: string; nickname?: string | null; title?: string | null; building?: string | null; address_city?: string | null; city?: string | null }
 export type ReservationLite = {
   listing_id?: string | null; listing_name?: string | null
   guest_id?: string | null; guest_name?: string | null; guest_email?: string | null; guest_phone?: string | null
@@ -148,7 +148,9 @@ export function buildContacts(opts: {
   const unitOf: Record<string, { name: string; building: string | null; market: string }> = {}
   for (const l of listings) {
     const name = str(l.nickname || l.title)
-    unitOf[str(l.id)] = { name, building: buildingOf(l.building, name), market: marketOf(l.building, l.city, name) }
+    // address_city is what the column is actually called; `city` stays accepted so a caller
+    // that already has a mapped shape (the share route) keeps working.
+    unitOf[str(l.id)] = { name, building: buildingOf(l.building, name), market: marketOf(l.building, l.address_city ?? l.city, name) }
   }
 
   // listingId → nameKey → { count, sum }
