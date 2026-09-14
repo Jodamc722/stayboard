@@ -136,6 +136,8 @@ export function tagsFor(c: Contact): string[] {
 export type SyncResult = {
   attempted: number; created: number; updated: number; failed: number
   skippedNotMailable: number
+  /** Held back by a CHANNEL rule rather than a bad address — Expedia and friends. */
+  skippedRestricted: number
   errors: { email: string; reason: string }[]
 }
 
@@ -147,10 +149,14 @@ export type SyncResult = {
  * email. Losing the contact over a badly formatted phone field is the worse outcome.
  */
 export async function syncContacts(conn: MailchimpConnection, contacts: Contact[], opts?: { dryRun?: boolean }): Promise<SyncResult> {
-  const out: SyncResult = { attempted: 0, created: 0, updated: 0, failed: 0, skippedNotMailable: 0, errors: [] }
+  const out: SyncResult = { attempted: 0, created: 0, updated: 0, failed: 0, skippedNotMailable: 0, skippedRestricted: 0, errors: [] }
 
-  // The second gate. Anything that is not a real address stops here no matter who called.
+  // The last gate, and it is deliberately redundant with the caller's. Anything that is not a real
+  // address, or that a channel forbids us marketing to, stops here no matter who asked. The two are
+  // counted separately because they mean different things: one is a dead mailbox, the other is a
+  // live person we are contractually not allowed to email.
   const rows = contacts.filter(c => {
+    if (c.mail === 'restricted') { out.skippedRestricted++; return false }
     if (c.mail !== 'mailable' || !c.email) { out.skippedNotMailable++; return false }
     return true
   })

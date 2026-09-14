@@ -36,7 +36,15 @@ const RELAY_DOMAINS = [
 const JUNK_LOCAL = /^(no-?reply|donotreply|do-not-reply|postmaster|mailer-daemon|unknown|guest|test)$/i
 const JUNK_DOMAIN = /(^|\.)(example|test|invalid|localhost|none|noemail)(\.|$)/i
 
-export type MailState = 'mailable' | 'relay' | 'invalid' | 'none'
+// 'restricted' is not about the address at all — it is a CHANNEL rule. Expedia (and the OTAs
+// generally) forbid using guest details obtained through them for your own marketing, and unlike
+// Airbnb they often hand over the guest's real address, so a perfectly valid mailbox can still be
+// one we are not allowed to write to. It ranks above 'mailable' deliberately: every gate in the
+// app already asks `mail === 'mailable'`, so making this a state means no gate can forget it.
+export type MailState = 'mailable' | 'restricted' | 'relay' | 'invalid' | 'none'
+
+/** Channels blocked by default until someone changes it in the app. Jon, 2026-09-14. */
+export const DEFAULT_RESTRICTED_CHANNELS = ['Expedia Group']
 
 /** Why an address can or cannot be marketed to. The reason is shown to the user, not just the flag. */
 export function classifyEmail(raw: string | null | undefined): { email: string | null; state: MailState; reason: string } {
@@ -104,6 +112,8 @@ export type Contact = {
   first: string; last: string; name: string
   email: string | null; mail: MailState; mailReason: string
   phone: string | null
+  /** True when a channel rule, not the address, is what stops us mailing them. */
+  restricted: boolean
   // How they book. `channel` is the most recent; `channels` is everything they have ever used, so
   // "has booked direct at least once" is answerable — that is the win-back list.
   channel: string; family: Family; channels: string[]; everDirect: boolean
@@ -207,10 +217,13 @@ export function buildContacts(opts: {
   reviews?: ReviewLite[]
   profiles?: ProfileLite[]
   today: string
+  /** Channels we may not market to. Defaults to DEFAULT_RESTRICTED_CHANNELS. */
+  restrictedChannels?: string[]
 }): Contact[] {
   const { reservations, listings, today } = opts
   const reviews = opts.reviews || []
   const profiles = opts.profiles || []
+  const restricted = new Set((opts.restrictedChannels || DEFAULT_RESTRICTED_CHANNELS).map(x => str(x).toLowerCase()))
 
   const unitOf: Record<string, { name: string; building: string | null; market: string }> = {}
   for (const l of listings) {
@@ -236,7 +249,7 @@ export function buildContacts(opts: {
     if (!c) {
       c = m[key] = {
         key, first: nm.first, last: nm.last, name: nm.full || 'Guest',
-        email: null, mail: 'none', mailReason: 'No email on any booking', phone: null,
+        email: null, mail: 'none', mailReason: 'No email on any booking', phone: null, restricted: false,
         channel: '', family: 'ota', channels: [], everDirect: false,
         stays: 0, nights: 0, value: 0,
         firstStay: '9999-99-99', lastStay: '', nextStay: null, inHouse: false,
@@ -274,7 +287,9 @@ export function buildContacts(opts: {
 
     // Best contact details win: a real address beats a relay, and any address beats none.
     const cand = classifyEmail(r.guest_email)
-    const rank: Record<MailState, number> = { mailable: 3, relay: 2, invalid: 1, none: 0 }
+    // 'restricted' never appears here — classifyEmail only judges the address, and the channel
+    // rule is applied once at the end, after every booking has been counted.
+    const rank: Record<MailState, number> = { mailable: 3, restricted: 3, relay: 2, invalid: 1, none: 0 }
     if (cand.email && rank[cand.state] > rank[c.mail]) { c.email = cand.email; c.mail = cand.state; c.mailReason = cand.reason }
     const ph = str(r.guest_phone).trim()
     if (ph && (!c.phone || ph.length > c.phone.length)) c.phone = ph
@@ -293,6 +308,17 @@ export function buildContacts(opts: {
   for (const p of profiles) profBy[str(p.guest_key)] = p
 
   const out: Contact[] = Object.values(m).map(c => {
+    // THE CHANNEL RULE, applied once, after every booking has been seen.
+    //
+    // A guest who has since booked DIRECT is ours: we captured them through our own booking engine,
+    // which is a relationship we own rather than one the channel lent us. Jon's call, 2026-09-14 —
+    // that is what makes "has booked direct" the win-back list rather than a dead end.
+    const hitChannels = Array.from(c._channels as Set<string>).filter(ch => restricted.has(ch.toLowerCase()))
+    if (hitChannels.length && !c.everDirect && c.mail === 'mailable') {
+      c.mail = 'restricted'
+      c.restricted = true
+      c.mailReason = hitChannels[0] + ' forbids marketing to guests booked through them — win the direct booking to earn the contact'
+    }
     const p = profBy[c.key]
     const rated = (c as any)._rated || 0
     const sum = (c as any)._sum || 0
@@ -321,7 +347,7 @@ export function buildContacts(opts: {
     const cls = classifyEmail(p.email)
     out.push({
       key: k, first: nm.first, last: nm.last, name: nm.full || 'Guest',
-      email: cls.email, mail: cls.state, mailReason: cls.reason, phone: str(p.phone) || null,
+      email: cls.email, mail: cls.state, mailReason: cls.reason, phone: str(p.phone) || null, restricted: false,
       channel: 'Added by hand', family: 'direct', channels: [], everDirect: false,
       stays: 0, nights: 0, value: 0, firstStay: '', lastStay: '', nextStay: null, inHouse: false,
       units: [], buildings: [], markets: [], lastUnit: '', lastBuilding: null,
@@ -339,23 +365,29 @@ export function buildContacts(opts: {
 export function audienceSummary(contacts: Contact[]) {
   const byChannel: Record<string, number> = {}
   const byBuilding: Record<string, number> = {}
-  let mailable = 0, relay = 0, noEmail = 0, withPhone = 0, repeat = 0, everDirect = 0
+  const mailableByChannel: Record<string, number> = {}
+  let mailable = 0, relay = 0, noEmail = 0, withPhone = 0, repeat = 0, everDirect = 0, restricted = 0
   for (const c of contacts) {
     if (c.mail === 'mailable') mailable++
+    else if (c.mail === 'restricted') restricted++
     else if (c.mail === 'relay') relay++
     else noEmail++
     if (c.phone) withPhone++
     if (c.stays >= 2) repeat++
     if (c.everDirect) everDirect++
-    if (c.channel) byChannel[c.channel] = (byChannel[c.channel] || 0) + 1
+    if (c.channel) {
+      byChannel[c.channel] = (byChannel[c.channel] || 0) + 1
+      if (c.mail === 'mailable') mailableByChannel[c.channel] = (mailableByChannel[c.channel] || 0) + 1
+    }
     if (c.lastBuilding) byBuilding[c.lastBuilding] = (byBuilding[c.lastBuilding] || 0) + 1
   }
   const top = (o: Record<string, number>, n: number) =>
-    Object.entries(o).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count).slice(0, n)
+    Object.entries(o).map(([label, count]) => ({ label, count, mailable: mailableByChannel[label] || 0 }))
+      .sort((a, b) => b.count - a.count).slice(0, n)
   return {
     contacts: contacts.length,
-    mailable, relay, noEmail, withPhone, repeat, everDirect,
-    channels: top(byChannel, 10),
+    mailable, restricted, relay, noEmail, withPhone, repeat, everDirect,
+    channels: top(byChannel, 12),
     buildings: top(byBuilding, 12),
   }
 }

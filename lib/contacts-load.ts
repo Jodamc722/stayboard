@@ -7,15 +7,32 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
-import { buildContacts, type Contact } from './guest-contacts'
+import { buildContacts, DEFAULT_RESTRICTED_CHANNELS, type Contact } from './guest-contacts'
+import { getSetting, setSetting } from './app-settings'
+
+/** Channels we may not market to. Editable in the app so a new OTA rule needs no deploy. */
+export const RESTRICTED_KEY = 'marketing_restricted_channels'
+
+export async function getRestrictedChannels(): Promise<string[]> {
+  const v = await getSetting<any>(RESTRICTED_KEY, null)
+  if (!Array.isArray(v)) return DEFAULT_RESTRICTED_CHANNELS
+  return v.map(x => String(x || '').trim()).filter(Boolean)
+}
+
+export async function setRestrictedChannels(list: string[], actor: string) {
+  const clean = Array.from(new Set((list || []).map(x => String(x || '').trim()).filter(Boolean))).slice(0, 20)
+  return setSetting(RESTRICTED_KEY, clean, actor)
+}
 
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
 /** Two years of stays, the reviews to match against them, and the profile layer. */
-export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; today: string; truncated: boolean; shortReads: string[] }> {
+export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; today: string; truncated: boolean; shortReads: string[]; restrictedChannels: string[] }> {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const since = ymdET(new Date(Date.now() - days * 86400000))
+
+  const restrictedChannels = await getRestrictedChannels()
 
   const [resPage, revPage, profPage, listPage] = await Promise.all([
     pageRows<any>((a, b) => db.from('guesty_reservations')
@@ -44,6 +61,7 @@ export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; t
     reviews: revPage.rows || [],
     profiles: profPage.rows || [],
     today,
+    restrictedChannels,
   })
   // NAME THE READ THAT FELL SHORT. pageRows sets `truncated` for TWO different reasons — it hit its
   // page ceiling, or the query errored (a renamed column, a statement timeout, an expired key all
@@ -57,5 +75,5 @@ export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; t
     profPage.truncated ? 'guest profiles' : '',
     listPage.truncated ? 'listings' : '',
   ].filter(Boolean)
-  return { contacts, today, truncated: shortReads.length > 0, shortReads }
+  return { contacts, today, truncated: shortReads.length > 0, shortReads, restrictedChannels }
 }
