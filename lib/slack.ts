@@ -66,6 +66,58 @@ export async function botConnected(): Promise<boolean> {
   return !!(await botToken())
 }
 
+/**
+ * UPLOAD A FILE INTO A CHANNEL (2026-09-14, for the housekeeping day sheet).
+ *
+ * Slack retired files.upload; the path now is three calls, and all three have to succeed or the
+ * file exists in the workspace attached to nothing:
+ *
+ *   1. files.getUploadURLExternal — GET, form-encoded, needs the exact byte length up front.
+ *   2. PUT-ish POST of the bytes to the URL it hands back. This one is NOT a Slack API endpoint,
+ *      takes no bearer token, and answers with plain text rather than JSON.
+ *   3. files.completeUploadExternal — the step that actually puts it in the channel. Skip it and
+ *      the upload silently becomes an orphan nobody can see.
+ *
+ * Needs the `files:write` scope. A bot that has never posted a file will fail step 1 with
+ * `missing_scope`, which is passed back verbatim rather than flattened into "upload failed" —
+ * that error names the fix, and a caller who hides it makes somebody debug Slack blind.
+ */
+export async function uploadFileToChannel(opts: {
+  channel: string
+  filename: string
+  bytes: Buffer | Uint8Array
+  title?: string
+  comment?: string
+}): Promise<SlackResult & { fileId?: string }> {
+  const token = await botToken()
+  if (!token) return { ok: false, error: 'no_bot_token' }
+  const body = Buffer.isBuffer(opts.bytes) ? opts.bytes : Buffer.from(opts.bytes)
+  try {
+    const getUrl = API + 'files.getUploadURLExternal?' + new URLSearchParams({
+      filename: opts.filename, length: String(body.length),
+    }).toString()
+    const step1 = await fetch(getUrl, { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' }).then(r => r.json())
+    if (!step1 || !step1.ok || !step1.upload_url || !step1.file_id) {
+      return { ok: false, error: String((step1 && step1.error) || 'upload_url_failed') }
+    }
+
+    const form = new FormData()
+    form.append('file', new Blob([new Uint8Array(body)]), opts.filename)
+    const put = await fetch(String(step1.upload_url), { method: 'POST', body: form })
+    if (!put.ok) return { ok: false, error: 'upload_put_' + put.status }
+
+    const step3 = await slackApi('files.completeUploadExternal', {
+      files: [{ id: step1.file_id, title: opts.title || opts.filename }],
+      channel_id: opts.channel,
+      ...(opts.comment ? { initial_comment: opts.comment } : {}),
+    })
+    if (!step3 || !step3.ok) return { ok: false, error: String((step3 && step3.error) || 'complete_failed') }
+    return { ok: true, channel: opts.channel, fileId: String(step1.file_id) }
+  } catch (e: any) {
+    return { ok: false, error: String((e && e.message) || 'upload_failed') }
+  }
+}
+
 /** Raw Slack Web API call. Returns the parsed body; `ok:false` on any transport or API error. */
 export async function slackApi(method: string, body: Record<string, any>): Promise<any> {
   const token = await botToken()
