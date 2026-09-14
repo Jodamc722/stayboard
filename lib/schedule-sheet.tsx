@@ -3,6 +3,19 @@
 // visually easy to see. It should show the cleaner the unit, the checkout time, the bedroom size,
 // and any notes").
 //
+// ── THE SHAPE CAME FROM JON'S OWN SHEET ─────────────────────────────────────────────────────────
+// The first pass grouped the day under a heading per cleaner. Jon: "the format is so unclear, let
+// me show you what i kind of want it to look like" — and sent the spreadsheet the team actually
+// works from: a FLAT GRID, one row per clean, with the cleaner and the building each a coloured
+// pill in their own column. Then "I would add same day turn, Checkout time, ect".
+//
+// That is a better answer than headings and it is worth saying why, because the difference is not
+// taste. A heading tells you where a block starts; a coloured column tells you at a glance how
+// much of the day is yours and where it is clustered, WITHOUT reading a word. Vilma finds her four
+// rows by colour from arm's length, and the building colour beside it says whether she is in one
+// tower all morning or crossing town. Headings cannot do that, and the crew had already worked it
+// out for themselves in a spreadsheet.
+//
 // ── WHY AN IMAGE AND NOT A MESSAGE ──────────────────────────────────────────────────────────────
 // Slack renders a posted image inline, at a glance, on a phone, in a channel a cleaner is already
 // in — no link to open, no login, no app. A text message of forty cleans is a wall nobody reads to
@@ -15,13 +28,8 @@
 // mode there is a sheet of empty boxes posted to the team channel.
 //
 // SATORI IS FLEXBOX ONLY. No grid, no floats, and every element with more than one child needs an
-// explicit display:flex. Widths are fixed pixel columns for that reason, which is also what keeps
-// the columns aligned down the page.
-//
-// ── GROUPED BY CLEANER, BECAUSE OF THE QUESTION IT ANSWERS ──────────────────────────────────────
-// "Where am I cleaning today" is a question about a person, so the person is the heading and their
-// units are the list. A unit-ordered sheet makes every cleaner read all forty rows to find their
-// four. Unassigned sits last and loudly: it is the only part of the sheet that is a request.
+// explicit display:flex. Every column is a fixed pixel width for that reason — which is also what
+// keeps them in line down a forty-row page.
 import { ImageResponse } from 'next/og'
 import sharp from 'sharp'
 import { buildSchedule } from '@/lib/schedule-build'
@@ -32,16 +40,47 @@ type Clean = {
   listingId: string; unit: string; market: string; hub: string
   bedrooms: number | null; checkOutTime: string | null; doorCode: string | null
   sameDayTurn: boolean; vendor: string | null; assignedNames: string[]
+  guestOut?: string | null; nights?: number | null
   extended?: boolean; movedFrom?: string | null; blocked?: boolean; walkInRisk?: boolean
   nextArrival?: string | null; guestyOnly?: boolean
 }
 
-const INK = '#0f172a'
-const MUTED = '#64748b'
-const LINE = '#e2e8f0'
-const RED = '#b91c1c'
-const REDBG = '#fef2f2'
-const AMBER = '#b45309'
+const INK = '#0b0b0b'
+const MUTED = '#52514e'
+const LINE = '#e4e4e1'
+const SURFACE = '#ffffff'
+const STRIPE = '#f7f8fa'
+const RED = '#c0322f'
+const REDBG = '#fdeceb'
+
+// ── IDENTITY COLOUR ─────────────────────────────────────────────────────────────────────────────
+// The eight hues of the validated categorical palette, in their fixed order (dataviz skill,
+// references/palette.md). Assigned in fixed order and never cycled into new generated hues: a
+// ninth person or building reuses a slot rather than inventing a colour nobody has learned.
+//
+// Colour NEVER carries meaning alone here — every pill has its name written inside it, which is
+// also the relief the palette's contrast warning requires for three of these hues. What the colour
+// buys is speed: finding your own rows without reading, and seeing that they cluster in one tower.
+const HUES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948']
+
+/** Same name, same colour, every day — a colour that moves between people is worse than none. */
+function slotFor(name: string): number {
+  const s = String(name || '').trim().toLowerCase()
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  return h % HUES.length
+}
+const hex2rgb = (h: string) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]
+const rgb2hex = (r: number, g: number, b: number) =>
+  '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')
+/** A pale wash of the hue for the pill, and a deep step of it for the text on top. */
+function pill(name: string): { bg: string; fg: string } {
+  const [r, g, b] = hex2rgb(HUES[slotFor(name)])
+  return {
+    bg: rgb2hex(r + (255 - r) * 0.84, g + (255 - g) * 0.84, b + (255 - b) * 0.84),
+    fg: rgb2hex(r * 0.52, g * 0.52, b * 0.52),
+  }
+}
 
 const niceDay = (ymd: string) => {
   const [y, m, d] = String(ymd).split('-').map(Number)
@@ -61,39 +100,69 @@ const niceTime = (v: string | null | undefined): string => {
   const h12 = h % 12 === 0 ? 12 : h % 12
   return h12 + ':' + mm + ' ' + ampm
 }
+/** Sortable minutes, so 9:00 AM precedes 11:00 AM precedes 1:00 PM. */
+const timeKey = (v: string | null | undefined): number => {
+  const s = String(v || '').trim()
+  const m = s.match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return 9999
+  let h = Number(m[1])
+  if (/pm/i.test(s) && h < 12) h += 12
+  if (/am/i.test(s) && h === 12) h = 0
+  return h * 60 + Number(m[2])
+}
 const shortDate = (v: string | null | undefined) => {
   const s = String(v || '').slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return ''
   const [y, m, d] = s.split('-').map(Number)
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
+const sizeOf = (n: number | null | undefined) => (n == null ? '—' : n === 0 ? 'Studio' : n + ' BR')
+
+// A PILL MUST NEVER WRAP. "Shaany Christian" went to two lines, which made the pill taller than its
+// row, and the colour bled down over the row beneath it. Long names lose the surname to an initial
+// — the crew know each other by first name, and the colour is doing the identifying anyway.
+function shortName(n: string): string {
+  const s = String(n || '').replace(/\s+/g, ' ').trim()
+  if (s.length <= 15) return s
+  const parts = s.split(' ')
+  return parts.length > 1 ? parts[0] + ' ' + parts[parts.length - 1][0] + '.' : s.slice(0, 15)
+}
+/** Same reason, for the guest: a clipped half-name reads as a bug, an ellipsis reads as a name. */
+function clip(s: string, max: number): string {
+  const t = String(s || '').replace(/\s+/g, ' ').trim()
+  if (t.length <= max) return t
+  const cut = t.slice(0, max)
+  const sp = cut.lastIndexOf(' ')
+  return (sp > max * 0.55 ? cut.slice(0, sp) : cut) + '…'
+}
 
 // THE NOTES COLUMN. There is no free-text note on a clean in the schedule payload — a note typed on
-// the board goes onto the Breezeway task, not onto this row. So "notes" here is the set of facts
-// that change how the clean is done, in the order they change it, and never more than fits a line.
-function notesFor(c: Clean): { text: string; urgent: boolean } {
+// the board goes onto the Breezeway task, not onto this row. So "notes" is the set of facts that
+// change how the clean is done. Same-day turn has left this column: Jon asked for it as its own
+// thing, and a flag competing with four others for one line is how it gets missed.
+function notesFor(c: Clean): string {
   const bits: string[] = []
-  let urgent = false
   if (c.extended) bits.push('EXTENDED — do not clean')
-  else if (c.sameDayTurn) { bits.push('SAME-DAY TURN'); urgent = true }
   if (c.blocked) bits.push('unit blocked')
   if (c.movedFrom) bits.push('moved from ' + shortDate(c.movedFrom))
   if (c.vendor) bits.push(c.vendor + ' staff')
-  if (c.walkInRisk) { bits.push('walk-in risk'); urgent = true }
+  if (c.walkInRisk) bits.push('walk-in risk')
   if (c.doorCode) bits.push('code ' + c.doorCode)
-  if (!bits.length && c.nextArrival) bits.push('next in ' + shortDate(c.nextArrival))
-  // Three facts is what fits. The door code is the one people scroll back for, so when the line is
-  // full it is the one that survives — the rest are visible on the board.
-  const kept = bits.length > 3 ? bits.slice(0, 2).concat(bits.filter(b => b.startsWith('code ')).slice(0, 1)) : bits
-  return { text: kept.join(' · '), urgent }
+  if (!bits.length && c.nextArrival) bits.push('next guest ' + shortDate(c.nextArrival))
+  return bits.slice(0, 2).join(' · ')
 }
 
-const ROW_H = 46
-const GROUP_H = 54
-const HEAD_H = 132
-const FOOT_H = 58
-const COLS_H = 34
-const WIDTH = 1180
+// Fixed columns, in the order Jon's own sheet reads them. Sum + the 34px gutters = WIDTH.
+// Jon's spreadsheet has a TYPE column because it covers more than cleans. This sheet is departure
+// cleans only, so every row would read "Checkout" — a column where every cell says the same word
+// costs 112px and earns nothing. The width it frees goes to NOTES, which was being clipped.
+const C = { who: 186, bldg: 148, unit: 262, guest: 240, out: 128, size: 84, turn: 128 }
+const WIDTH = 1500
+const ROW_H = 44
+const HEAD_H = 128
+const COLS_H = 38
+const FOOT_H = 54
+const PAD = '0 34px'
 
 export async function buildScheduleSheet(opts: SheetOpts): Promise<{
   jpeg: Buffer; filename: string; title: string
@@ -110,102 +179,110 @@ export async function buildScheduleSheet(opts: SheetOpts): Promise<{
   }
   const cleans = all.filter(c => market === 'all' || String(c.market || '').toLowerCase() === market)
 
-  // Group by cleaner. A clean with two names on it appears under BOTH — they are both going, and a
-  // sheet that picks one of them for brevity is how the second person does not turn up.
-  const byPerson: Record<string, Clean[]> = {}
-  const unassigned: Clean[] = []
+  // ── ONE ROW PER CLEAN, PER PERSON ON IT ──────────────────────────────────────────────────────
+  // A clean with two names gets a row under each of them. They are both going, and a sheet that
+  // prints it once under the first name is how the second person does not turn up.
+  type Row = { c: Clean; who: string }
+  const rows: Row[] = []
   for (const c of cleans) {
     const names = (c.assignedNames || []).filter(Boolean)
-    if (!names.length) { unassigned.push(c); continue }
-    for (const n of names) (byPerson[n] = byPerson[n] || []).push(c)
+    if (!names.length) { rows.push({ c, who: '' }); continue }
+    for (const n of names) rows.push({ c, who: n })
   }
-  const people = Object.keys(byPerson).sort((a, b) => a.localeCompare(b))
-  for (const p of people) {
-    byPerson[p].sort((a, b) => niceTime(a.checkOutTime).localeCompare(niceTime(b.checkOutTime)) || a.unit.localeCompare(b.unit))
-  }
-  unassigned.sort((a, b) => a.unit.localeCompare(b.unit))
+  // Sorted the way the eye wants to read it: person, then building (so their tower groups), then
+  // the clock. Unassigned last — it is the only part of the sheet that is a request.
+  rows.sort((a, b) =>
+    (a.who ? 0 : 1) - (b.who ? 0 : 1)
+    || a.who.localeCompare(b.who)
+    || String(a.c.hub || '').localeCompare(String(b.c.hub || ''))
+    || timeKey(a.c.checkOutTime) - timeKey(b.c.checkOutTime)
+    || a.c.unit.localeCompare(b.c.unit))
 
+  const people = Array.from(new Set(rows.filter(r => r.who).map(r => r.who)))
   const sameDay = cleans.filter(c => c.sameDayTurn && !c.extended).length
-  const counts = { cleans: cleans.length, cleaners: people.length, sameDay, unassigned: unassigned.length }
+  const counts = {
+    cleans: cleans.length, cleaners: people.length, sameDay,
+    unassigned: cleans.filter(c => !(c.assignedNames || []).filter(Boolean).length).length,
+  }
 
-  const groups: { name: string; rows: Clean[]; unassigned?: boolean }[] =
-    people.map(n => ({ name: n, rows: byPerson[n] }))
-  if (unassigned.length) groups.push({ name: 'NOT ASSIGNED YET', rows: unassigned, unassigned: true })
-
-  const rowCount = groups.reduce((a, g) => a + g.rows.length, 0)
-  const height = Math.min(5200, HEAD_H + COLS_H + groups.length * GROUP_H + rowCount * ROW_H + FOOT_H)
+  const shown = rows.slice(0, 80)
+  const height = HEAD_H + COLS_H + shown.length * ROW_H + FOOT_H
   const mkLabel = market === 'all' ? 'All areas' : market.charAt(0).toUpperCase() + market.slice(1)
 
+  // Satori refuses a style object carrying an explicit `undefined` — it reads every value — so the
+  // fixed-width and the flexible header cell are two literals rather than one conditional.
+  const TH = { display: 'flex' as const, fontSize: 15, color: MUTED }
+
   const el = (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', backgroundColor: '#ffffff', fontFamily: 'sans-serif' }}>
-      {/* HEADER — the day, the area, and the three numbers that describe it */}
-      <div style={{ display: 'flex', flexDirection: 'column', padding: '28px 40px 18px 40px', borderBottom: `3px solid ${INK}` }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', backgroundColor: SURFACE, fontFamily: 'sans-serif' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', padding: '26px 34px 16px 34px', borderBottom: `3px solid ${INK}` }}>
         <div style={{ display: 'flex', alignItems: 'baseline' }}>
-          <div style={{ display: 'flex', fontSize: 40, fontWeight: 700, color: INK }}>Housekeeping — {niceDay(date)}</div>
-          <div style={{ display: 'flex', marginLeft: 'auto', fontSize: 24, color: MUTED }}>{mkLabel}</div>
+          <div style={{ display: 'flex', fontSize: 38, fontWeight: 700, color: INK }}>Housekeeping — {niceDay(date)}</div>
+          <div style={{ display: 'flex', marginLeft: 'auto', fontSize: 23, color: MUTED }}>{mkLabel}</div>
         </div>
-        <div style={{ display: 'flex', marginTop: 10, fontSize: 24, color: MUTED }}>
+        <div style={{ display: 'flex', marginTop: 9, fontSize: 22, color: MUTED }}>
           {counts.cleans} {counts.cleans === 1 ? 'clean' : 'cleans'} · {counts.cleaners} {counts.cleaners === 1 ? 'cleaner' : 'cleaners'}
           {sameDay > 0 ? ' · ' + sameDay + ' same-day ' + (sameDay === 1 ? 'turn' : 'turns') : ''}
-          {unassigned.length > 0 ? ' · ' + unassigned.length + ' unassigned' : ''}
+          {counts.unassigned > 0 ? ' · ' + counts.unassigned + ' unassigned' : ''}
         </div>
       </div>
 
-      {/* COLUMN LABELS ONCE, not per group. Four unlabelled columns of times and numbers make a
-          reader work out what they are looking at; repeating the labels every group turns the sheet
-          into stripes. */}
-      <div style={{ display: 'flex', alignItems: 'center', height: COLS_H, padding: '0 40px 0 50px', backgroundColor: '#ffffff' }}>
-        <div style={{ display: 'flex', width: 430, fontSize: 16, letterSpacing: 1, color: MUTED }}>UNIT</div>
-        <div style={{ display: 'flex', width: 150, fontSize: 16, letterSpacing: 1, color: MUTED }}>GUEST OUT</div>
-        <div style={{ display: 'flex', width: 110, fontSize: 16, letterSpacing: 1, color: MUTED }}>SIZE</div>
-        <div style={{ display: 'flex', flex: 1, fontSize: 16, letterSpacing: 1, color: MUTED }}>NOTES</div>
+      <div style={{ display: 'flex', alignItems: 'center', height: COLS_H, padding: PAD, backgroundColor: SURFACE }}>
+        <div style={{ ...TH, width: C.who }}>CLEANER</div>
+        <div style={{ ...TH, width: C.bldg }}>BUILDING</div>
+        <div style={{ ...TH, width: C.unit }}>UNIT</div>
+        <div style={{ ...TH, width: C.guest }}>GUEST OUT</div>
+        <div style={{ ...TH, width: C.out }}>CHECKOUT</div>
+        <div style={{ ...TH, width: C.size }}>SIZE</div>
+        <div style={{ ...TH, width: C.turn }}>TURN</div>
+        <div style={{ ...TH, flex: 1 }}>NOTES</div>
       </div>
 
-      {groups.map(g => (
-        <div key={g.name} style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', height: GROUP_H, padding: '0 40px',
-            backgroundColor: g.unassigned ? REDBG : '#f1f5f9',
+      {shown.map((r, i) => {
+        const c = r.c
+        const who = r.who || 'UNASSIGNED'
+        const wp = r.who ? pill(r.who) : { bg: REDBG, fg: RED }
+        const bp = pill(String(c.hub || c.market || 'Other'))
+        const turn = c.extended ? null : c.sameDayTurn
+        // A stripe that changes with the PERSON, not every other row: the band is what says "these
+        // four are one run" at the size this gets read at.
+        const band = (people.indexOf(r.who) % 2 === 1) ? STRIPE : SURFACE
+        return (
+          <div key={c.listingId + ':' + i} style={{
+            display: 'flex', alignItems: 'center', height: ROW_H, padding: PAD,
+            backgroundColor: r.who ? band : REDBG, borderBottom: `1px solid ${LINE}`,
           }}>
-            <div style={{ display: 'flex', fontSize: 27, fontWeight: 700, color: g.unassigned ? RED : INK }}>{g.name}</div>
-            <div style={{ display: 'flex', marginLeft: 'auto', fontSize: 22, color: g.unassigned ? RED : MUTED }}>
-              {g.rows.length} {g.rows.length === 1 ? 'clean' : 'cleans'}
+            <div style={{ display: 'flex', width: C.who }}>
+              <div style={{ display: 'flex', backgroundColor: wp.bg, color: wp.fg, fontSize: 19, fontWeight: 700, padding: '3px 12px', borderRadius: 999, whiteSpace: 'nowrap' }}>{r.who ? shortName(r.who) : who}</div>
             </div>
+            <div style={{ display: 'flex', width: C.bldg }}>
+              <div style={{ display: 'flex', backgroundColor: bp.bg, color: bp.fg, fontSize: 18, fontWeight: 700, padding: '3px 12px', borderRadius: 999, whiteSpace: 'nowrap' }}>{clip(c.hub || '—', 11)}</div>
+            </div>
+            <div style={{ display: 'flex', width: C.unit, fontSize: 21, fontWeight: 600, color: INK, overflow: 'hidden', whiteSpace: 'nowrap' }}>{clip(c.unit, 24)}</div>
+            <div style={{ display: 'flex', width: C.guest, fontSize: 19, color: MUTED, overflow: 'hidden', whiteSpace: 'nowrap' }}>{clip(c.guestOut || '—', 22)}</div>
+            <div style={{ display: 'flex', width: C.out, fontSize: 20, fontWeight: 600, color: INK }}>{niceTime(c.checkOutTime)}</div>
+            <div style={{ display: 'flex', width: C.size, fontSize: 19, color: MUTED }}>{sizeOf(c.bedrooms)}</div>
+            <div style={{ display: 'flex', width: C.turn }}>
+              {turn
+                ? <div style={{ display: 'flex', backgroundColor: RED, color: '#ffffff', fontSize: 16, fontWeight: 700, padding: '3px 10px', borderRadius: 6 }}>SAME-DAY</div>
+                : <div style={{ display: 'flex', fontSize: 19, color: '#9aa0a6' }}>—</div>}
+            </div>
+            <div style={{ display: 'flex', flex: 1, fontSize: 18, color: c.extended ? RED : MUTED, overflow: 'hidden', whiteSpace: 'nowrap' }}>{clip(notesFor(c), 30)}</div>
           </div>
-          {g.rows.map((c, i) => {
-            const n = notesFor(c)
-            return (
-              <div key={c.listingId + ':' + i} style={{
-                display: 'flex', alignItems: 'center', height: ROW_H, padding: '0 40px',
-                borderBottom: `1px solid ${LINE}`,
-                // The urgent rail is the one thing readable at thumbnail size in a channel.
-                borderLeft: n.urgent ? `10px solid ${RED}` : '10px solid #ffffff',
-              }}>
-                <div style={{ display: 'flex', width: 430, fontSize: 25, fontWeight: 600, color: INK, overflow: 'hidden', whiteSpace: 'nowrap' }}>{c.unit}</div>
-                <div style={{ display: 'flex', width: 150, fontSize: 24, color: INK }}>{niceTime(c.checkOutTime)}</div>
-                {/* A studio is not "0 BR" — that reads as missing data, and the size is the thing that tells
-                    a cleaner how long the unit takes. */}
-                <div style={{ display: 'flex', width: 110, fontSize: 24, color: MUTED }}>
-                  {c.bedrooms == null ? '—' : c.bedrooms === 0 ? 'Studio' : c.bedrooms + ' BR'}
-                </div>
-                {/* ONE LINE, ALWAYS. A wrapping note pushed its row taller than the height this sheet was
-                    measured at, so every row below it slid down and the last one fell off the image. */}
-                <div style={{ display: 'flex', flex: 1, fontSize: 21, color: n.urgent ? RED : AMBER, overflow: 'hidden', whiteSpace: 'nowrap' }}>{n.text}</div>
-              </div>
-            )
-          })}
-        </div>
-      ))}
+        )
+      })}
 
-      <div style={{ display: 'flex', marginTop: 'auto', padding: '12px 40px', fontSize: 19, color: MUTED, borderTop: `1px solid ${LINE}` }}>
-        Times are the guest&apos;s checkout. A red bar means the next guest arrives today.
+      <div style={{ display: 'flex', marginTop: 'auto', padding: '12px 34px', fontSize: 18, color: MUTED, borderTop: `1px solid ${LINE}` }}>
+        {rows.length > shown.length
+          ? (rows.length - shown.length) + ' more on the board · times are the guest’s checkout · SAME-DAY means the next guest arrives today'
+          : 'Times are the guest’s checkout. SAME-DAY means the next guest arrives today.'}
       </div>
     </div>
   )
 
   const png = Buffer.from(await new ImageResponse(el, { width: WIDTH, height }).arrayBuffer())
   // JPEG because Jon asked for it, and because a 40-row sheet is meaningfully smaller than the PNG
-  // on a phone with one bar of signal. Quality 90: the type has to stay crisp when Slack scales it.
+  // on a phone with one bar of signal. 4:4:4 so the coloured pills keep their edges.
   const jpeg = await sharp(png).jpeg({ quality: 90, chromaSubsampling: '4:4:4' }).toBuffer()
 
   return {
