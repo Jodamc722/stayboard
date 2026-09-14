@@ -52,11 +52,19 @@ const res = [
   // cancelled must not count
   { listing_id: 'L2', guest_name: 'Ghost Person', guest_email: 'ghost@gmail.com', check_in: '2026-03-01', check_out: '2026-03-03', nights: 2, status: 'cancelled', source: 'vrbo', money_total: 400, guest_id: 'G9' },
 ]
+// guesty_reviews.guest_name is null on the rows this account actually holds, so attribution runs
+// off the STAY: the review belongs to whoever last checked out of that unit before it appeared.
 const reviews = [
-  { listing_id: 'L1', guest_name: 'John Smith', rating: 5, created_at: '2026-01-20' },
-  { listing_id: 'L1', guest_name: 'john  smith', rating: 4, created_at: '2026-06-10' },
-  // a Maria Garcia who reviewed a unit OUR Maria never stayed in must not be credited
-  { listing_id: 'L1', guest_name: 'Maria Garcia', rating: 1, created_at: '2026-02-01' },
+  // nameless, 6 days after John's 2026-01-14 checkout -> John
+  { listing_id: 'L1', guest_name: null, rating: 5, created_at: '2026-01-20' },
+  // nameless, 5 days after John's 2026-06-05 checkout -> John
+  { listing_id: 'L1', guest_name: null, rating: 4, created_at: '2026-06-10' },
+  // named, and the name wins outright
+  { listing_id: 'L2', guest_name: 'Maria Garcia', rating: 3, created_at: '2026-03-10' },
+  // far outside the window after any checkout at L1 -> nobody
+  { listing_id: 'L1', guest_name: null, rating: 1, created_at: '2026-12-25' },
+  // a unit nobody in this set ever stayed in -> nobody
+  { listing_id: 'L9', guest_name: null, rating: 1, created_at: '2026-01-20' },
 ]
 const cs = buildContacts({ reservations: res as any, listings: listings as any, reviews: reviews as any, profiles: [], today: '2026-09-14' })
 eq('contact count (cancelled dropped)', cs.length, 2)
@@ -67,15 +75,36 @@ eq('john everDirect', john.everDirect, true)
 eq('john channels', john.channels, ['Airbnb', 'Direct'])
 eq('john relay email still visible', john.email, 'j@guest.airbnb.com')
 eq('john not mailable', john.mail, 'relay')
-eq('john reviews counted once per unit', john.reviews, 2)
+eq('john gets both nameless reviews via his stays', john.reviews, 2)
 eq('john review avg', john.reviewAvg, 4.5)
 eq('john building', john.lastBuilding, 'Rustic')
 eq('john market resolved from address_city', john.markets.includes('Unknown'), false)
 eq('john name split', [john.first, john.last], ['John', 'Smith'])
 const maria = cs.find(c => c.key === 'e:maria@gmail.com')!
 eq('maria mailable', maria.mail, 'mailable')
-eq('maria NOT credited with other-unit review', maria.reviews, 0)
+eq('maria credited by name on her own unit', maria.reviews, 1)
 eq('maria channel', maria.channel, 'Vrbo')
+
+// AMBIGUITY. Two different guests check out of the same unit a day apart; a review lands four days
+// later. There is no honest way to say whose it is, so it must be credited to NEITHER.
+const ambRes = [
+  { listing_id: 'L1', guest_name: 'Alice A', guest_email: 'alice@gmail.com', check_in: '2026-04-01', check_out: '2026-04-05', nights: 4, status: 'checked_out', source: 'website', money_total: 100 },
+  { listing_id: 'L1', guest_name: 'Bob B', guest_email: 'bob@gmail.com', check_in: '2026-04-05', check_out: '2026-04-06', nights: 1, status: 'checked_out', source: 'website', money_total: 100 },
+]
+const ambCs = buildContacts({
+  reservations: ambRes as any, listings: listings as any,
+  reviews: [{ listing_id: 'L1', guest_name: null, rating: 5, created_at: '2026-04-10' }] as any,
+  profiles: [], today: '2026-09-14',
+})
+eq('ambiguous review credited to nobody', ambCs.reduce((a, c) => a + c.reviews, 0), 0)
+
+// And the unambiguous version of the same shape IS credited.
+const clearCs = buildContacts({
+  reservations: [ambRes[0]] as any, listings: listings as any,
+  reviews: [{ listing_id: 'L1', guest_name: null, rating: 5, created_at: '2026-04-10' }] as any,
+  profiles: [], today: '2026-09-14',
+})
+eq('unambiguous review is credited', clearCs.reduce((a, c) => a + c.reviews, 0), 1)
 
 const s = audienceSummary(cs)
 eq('summary mailable', s.mailable, 1)
