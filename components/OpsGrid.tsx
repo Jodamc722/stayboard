@@ -936,7 +936,13 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   // A unit belongs to its market AND, for vendor buildings, to the geography behind it — same
   // two-market rule the board and the API use, so picking North here shows what North shows there.
   const inMkt = (m?: string | null, m2?: string | null) => mkt === 'all' || m === mkt || m2 === mkt
-  const units = useMemo(() => allUnits.filter(u => inMkt(u.market, u.market2)), [allUnits, mkt])
+  // THE NO-UNIT ROW IGNORES THE MARKET FILTER (2026-09-14). Building and common-area work — the
+  // pool, the parking floors, the lobby, laundry runs between houses — carries no listing in
+  // Breezeway, so it has no market for the filter to match and used to disappear the moment
+  // anybody narrowed the board. That took people's task counts down with it: Helem's third task
+  // of the day was one of these. One row that does not fit the filter is a far smaller problem
+  // than assigned work the board quietly stops mentioning.
+  const units = useMemo(() => allUnits.filter(u => (u as any).noUnit || inMkt(u.market, u.market2)), [allUnits, mkt])
   const glitchesInMkt = useMemo(() => glitches.filter(g => inMkt(g.market, g.market2)), [glitches, mkt])
 
   // How much work on this slice of the board nobody owns. It is the label on the Plan day button
