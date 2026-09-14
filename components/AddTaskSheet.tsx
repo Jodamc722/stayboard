@@ -325,6 +325,29 @@ export function AddTaskSheet({
   }, [dept, bzTpls])
   const pickValue = tplId != null ? 'bz:' + tplId : (tpl && tpl !== 'custom' ? 'p:' + tpl : '')
 
+  // ── THE CREW, IN TWO GROUPS, NOBODY HIDDEN (Jon, 2026-09-14: "in the task should have a drop
+  // down of assignee") ──────────────────────────────────────────────────────────────────────────
+  // This was a chip row that FILTERED the roster to the chosen type and then cut it at twelve. Two
+  // quiet failures came out of that: a person who could genuinely take the job — the supervisor who
+  // also inspects, the maintenance tech covering a clean — simply was not on the screen, and once
+  // the crew grew past twelve, whoever sorted last stopped existing. Neither said anything; the
+  // person just was not there, which reads as "they are not on today" rather than "this list is
+  // short".
+  //
+  // A dropdown holds everybody. The type still does its job, as ORDER rather than a filter: people
+  // whose departments include it come first under a heading that names it, everyone else sits under
+  // "Everyone else" below. Assigning across departments is now one scroll instead of impossible.
+  const rosterGroups = useMemo(() => {
+    const inDept = roster.filter(p => p.departments?.some(x => x.toLowerCase().includes(dept)))
+    const ids = new Set(inDept.map(p => p.id))
+    const rest = roster.filter(p => !ids.has(p.id))
+    const byName = (a: Roster, b: Roster) => a.name.localeCompare(b.name)
+    return { inDept: inDept.slice().sort(byName), rest: rest.slice().sort(byName) }
+  }, [roster, dept])
+  const pickedPeople = useMemo(
+    () => picked.map(id => roster.find(p => p.id === id)).filter(Boolean) as Roster[],
+    [picked, roster])
+
   const missing = !unit ? 'Pick a unit' : !title.trim() ? 'Give it a title' : ''
   // Say whose row this came from, so a ＋ pressed on a person row is visibly about that person.
   const seededPerson = seedAssignee && picked.length ? roster.find(p => p.id === picked[0])?.name || seedAssignee : ''
@@ -487,15 +510,37 @@ export function AddTaskSheet({
 
         {/* ── WHO ───────────────────────────────────────────────────────────────────────────── */}
         <p className={cap + ' mt-3.5 mb-1.5'}>Who takes it (optional)</p>
-        <div className="flex flex-wrap gap-1.5">
-          {roster.filter(p => !p.departments?.length || p.departments.some(x => x.toLowerCase().includes(dept))).slice(0, 12).map(p => (
-            <button key={p.id} onClick={() => setPicked(s => s.includes(p.id) ? s.filter(x => x !== p.id) : [...s, p.id])}
-              className={'px-3 py-1.5 rounded-full border text-[12.5px] font-semibold ' + (picked.includes(p.id) ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line text-ink hover:border-ink/30')}>
-              {p.name}
-            </button>
-          ))}
-          {!roster.length && <span className="text-[11.5px] text-muted py-1.5">Loading the crew…</span>}
-        </div>
+        {/* The dropdown ADDS rather than replaces, and resets itself to the prompt — a task can
+            need two people (a turn with a helper, a tech and a supervisor), and the assign call
+            has always taken a list. Whoever is on it shows as a chip you can take off again. */}
+        <select value="" disabled={!roster.length}
+          onChange={e => { const id = Number(e.target.value); if (Number.isFinite(id) && id > 0) setPicked(s => s.includes(id) ? s : [...s, id]) }}
+          className={fld + ' w-full disabled:opacity-60'} aria-label="Assign to">
+          <option value="">{!roster.length ? 'Loading the crew…' : picked.length ? 'Add another person…' : 'Unassigned — pick someone'}</option>
+          {rosterGroups.inDept.length > 0 && (
+            <optgroup label={(DEPT_LABEL[dept] || dept) + ' crew'}>
+              {rosterGroups.inDept.map(p => <option key={p.id} value={p.id} disabled={picked.includes(p.id)}>{p.name}{picked.includes(p.id) ? ' — already on it' : ''}</option>)}
+            </optgroup>
+          )}
+          {rosterGroups.rest.length > 0 && (
+            <optgroup label="Everyone else">
+              {rosterGroups.rest.map(p => <option key={p.id} value={p.id} disabled={picked.includes(p.id)}>{p.name}{picked.includes(p.id) ? ' — already on it' : ''}</option>)}
+            </optgroup>
+          )}
+        </select>
+        {pickedPeople.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {pickedPeople.map(p => (
+              <span key={p.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-brand-600 text-white text-[12.5px] font-semibold">
+                {p.name}
+                <button type="button" aria-label={'Take ' + p.name + ' off this task'}
+                  onClick={() => setPicked(s => s.filter(x => x !== p.id))} className="opacity-80 hover:opacity-100">
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
 
         {tplId != null && (
           <p className="text-[11px] text-muted mt-2.5 inline-flex items-start gap-1.5">
