@@ -72,12 +72,19 @@ export type OpsDay = Awaited<ReturnType<typeof buildOpsDay>>
 export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?: boolean } = {}) {
   const db = supabaseAdmin()
   // Vendor buildings + the 4pm deadline are operator-editable (/users -> Ops presets).
-  const presets = await getOpsPresets()
   // THE TAXONOMY IS DECIDED HERE, ONCE. The board used to classify tasks in the browser from its
   // own copy of the rules; now the rules are editable, and two copies of an editable rule set is
   // two answers to the same question. The server labels every task and ships the taxonomy with
   // the payload, so the counters, the chips and the filter are reading one decision.
-  const taskCats = resolveCats(await getSetting<any>(TASK_CATS_KEY, null).catch(() => null))
+  //
+  // BOTH SETTINGS READS TOGETHER (2026-09-14, the tab-by-tab walk). These were two awaits in a
+  // row, and then the real query wave — three serial round trips before the board started reading
+  // anything, on the app's busiest page. Neither read depends on the other, so they go together.
+  const [presets, taskCatsRaw] = await Promise.all([
+    getOpsPresets(),
+    getSetting<any>(TASK_CATS_KEY, null).catch(() => null),
+  ])
+  const taskCats = resolveCats(taskCatsRaw)
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
   const UNTRACKED_RE = untrackedRegex(presets.vendorBuildings)
   const DEADLINE_MIN = presets.timing.deadlineMin
