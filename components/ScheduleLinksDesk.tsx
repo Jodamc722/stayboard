@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Copy, Check, ExternalLink, Loader2, Ban, Link2, MessageSquare, ChevronDown, Mail, KeyRound } from 'lucide-react'
 
-type Lnk = { id: string; code: string; market: string; label: string | null; passcode: string | null; created_at: string; revoked_at: string | null }
+type Lnk = { id: string; code: string; market: string; label: string | null; passcode: string | null; view_only?: boolean; created_at: string; revoked_at: string | null }
 type Sub = { id: string; link_code: string; market: string; week_start: string; week_end: string; submitted_by: string | null; note: string | null; snapshot: any[]; status: string; feedback: string | null; reviewed_at: string | null; emailed_at: string | null; created_at: string }
 
 const BTN = 'inline-flex items-center gap-1.5 rounded-xl font-bold text-[13px] min-h-[38px] px-3.5 disabled:opacity-50'
@@ -19,6 +19,7 @@ export function ScheduleLinksDesk() {
   const [err, setErr] = useState('')
   const [market, setMarket] = useState('Miami')
   const [passcode, setPasscode] = useState('')
+  const [kind, setKind] = useState<'team' | 'view'>('team')
   const [busy, setBusy] = useState(false)
   const load = async () => {
     try { const r = await fetch('/api/schedule/links', { cache: 'no-store' }); const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load'); setLinks(j.links); setSubs(j.submissions); setErr('') } catch (e: any) { setErr(String(e?.message || e)) }
@@ -44,9 +45,19 @@ export function ScheduleLinksDesk() {
         </div>
         <div className="mt-4 pt-3 border-t border-line flex items-center gap-2 flex-wrap">
           <select value={market} onChange={e => setMarket(e.target.value)} className={INPUT}>{['Miami', 'Broward', 'North', 'All'].map(m => <option key={m} value={m}>{m === 'All' ? 'All markets (ops review)' : m}</option>)}</select>
+          {/* TWO KINDS OF LINK, ONE TABLE (Jon, 2026-09-14: "a link by market area that just a view
+              of the schedule"). The team link is a working tool — assign the week, press Submit —
+              and is right for the two or three people who build it. The view link is what you send
+              to the twenty who only need to know where they are going: every control on the other
+              one is a chance to change the plan by accident on a phone, and there is no undo on a
+              schedule forty people have already read. */}
+          <select value={kind} onChange={e => setKind(e.target.value as any)} className={INPUT}>
+            <option value="team">Team link — they can assign and submit</option>
+            <option value="view">View only — they can see the schedule</option>
+          </select>
           <input value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="Passcode (optional)" className={INPUT + ' w-44'} />
-          <button disabled={busy} onClick={async () => { await post({ action: 'create', market, passcode }); setPasscode('') }} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} New {market === 'All' ? 'ops review' : market} link</button>
-          <span className="text-[12px] text-muted">A passcode is a second lock if the link gets forwarded; without one the link alone opens it.</span>
+          <button disabled={busy} onClick={async () => { await post({ action: 'create', market, passcode, viewOnly: kind === 'view' }); setPasscode('') }} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} New {market === 'All' ? 'all-markets' : market} {kind === 'view' ? 'view' : 'team'} link</button>
+          <span className="text-[12px] text-muted">A passcode is a second lock if the link gets forwarded; without one the link alone opens it. Which kind a link is is fixed when you make it — a saved link is a promise about what that page does.</span>
         </div>
       </section>
 
@@ -67,9 +78,13 @@ function LinkRow({ l, origin, onPasscode, onRevoke }: { l: Lnk; origin: string; 
   const [editing, setEditing] = useState(false)
   const [pc, setPc] = useState(l.passcode || '')
   const url = origin + '/scheduler/' + l.code
+  // A row that does not say which kind it is makes somebody open the link to find out — and the
+  // one they would open to check is the one they must not hand to the crew.
+  const viewOnly = l.view_only === true
   return (
     <div className="flex items-center gap-2 flex-wrap rounded-xl border border-line px-3 py-2">
       <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-ink text-white">{l.market}</span>
+      <span className={'text-[11px] font-bold uppercase px-2 py-0.5 rounded ' + (viewOnly ? 'bg-slate-100 text-slate-600' : 'bg-brand-50 text-brand-700')}>{viewOnly ? 'View only' : 'Team'}</span>
       <span className="text-[13px] font-semibold text-ink">{l.label || l.market + ' team schedule'}</span>
       <code className="text-[12px] text-muted truncate max-w-[340px]">{url}</code>
       {editing ? (

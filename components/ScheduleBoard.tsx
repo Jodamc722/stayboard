@@ -201,6 +201,20 @@ export function ScheduleBoard() {
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [pushing, setPushing] = useState(false)
   const [pushMsg, setPushMsg] = useState<string | null>(null)
+  // ── THE DAY SHEET (Jon, 2026-09-14: "a button where we can push the schedule to Slack in a JPEG
+  // format so that a team can see where they're cleaning each day") ──────────────────────────────
+  // `offerSheet` is set after a successful push. Jon asked whether it could just send itself once
+  // the schedule is pushed; it offers instead. A push is often the first of several — three markets,
+  // a late reassignment — and a sheet that posts itself on each one puts three contradictory
+  // pictures in the crew's channel within a minute. The offer costs one click and posts the version
+  // you meant.
+  const [sheetBusy, setSheetBusy] = useState<'' | 'download' | 'slack'>('')
+  // WHICH AREA THE SHEET IS FOR (Jon, 2026-09-14: "can we export by market area"). The board shows
+  // every market grouped; a crew in Broward does not want to scroll past Miami to find their four
+  // units, and a sheet posted to a market channel that carries another market's work is worse than
+  // no sheet. Defaults to all so the office still gets the whole day in one picture.
+  const [sheetMkt, setSheetMkt] = useState<string>('all')
+  const [offerSheet, setOfferSheet] = useState(false)
   const [blocking, setBlocking] = useState<Record<string, boolean>>({})
   const [blockStaged, setBlockStaged] = useState<Record<string, boolean>>({})
 const [taskAct, setTaskAct] = useState<Record<string, boolean>>({})
@@ -331,9 +345,47 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       if (!r.ok || !j) throw new Error((j && j.error) || 'Push failed.')
       setPushMsg(`Pushed ${j.pushed} clean${j.pushed === 1 ? '' : 's'} to Breezeway (assignment + door code + notes)${j.failed ? ` · ${j.failed} couldn't resolve a clean yet` : ''}.`)
       if (j.pushed) { const okKeys = new Set((j.results || []).filter((x: any) => x.ok).map((x: any) => `${x.listingId}__${x.date}`)); setSelected(prev => { const n = { ...prev }; for (const k of Object.keys(n)) if (okKeys.has(k)) delete n[k]; return n }) }
+      if (j.pushed) setOfferSheet(true)
     } catch (e: any) { setError(e.message || String(e)) } finally { setPushing(false) }
   }
 
+  const sheetQuery = () => new URLSearchParams({ date: (view === 'day' ? date : (data?.weekStart || date)) || '', market: sheetMkt }).toString()
+
+  async function downloadSheet() {
+    if (sheetBusy) return
+    setSheetBusy('download'); setError(null)
+    try {
+      const r = await fetch('/api/schedule/sheet?' + sheetQuery(), { cache: 'no-store' })
+      if (!r.ok) throw new Error('Could not build the sheet.')
+      const blob = await r.blob()
+      // Straight to disk. An <img> preview would be another screen to dismiss before the thing
+      // you actually wanted, which is the file.
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'housekeeping-' + ((view === 'day' ? date : data?.weekStart) || 'today') + (sheetMkt === 'all' ? '' : '-' + sheetMkt) + '.jpg'
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setSheetBusy('') }
+  }
+
+  async function postSheetToSlack() {
+    if (sheetBusy) return
+    if (!window.confirm('Post the ' + (sheetMkt === 'all' ? 'whole day' : sheetMkt) + ' sheet to the housekeeping Slack channel? Everyone in that channel will see it.')) return
+    setSheetBusy('slack'); setError(null); setPushMsg(null)
+    try {
+      const r = await fetch('/api/schedule/sheet?' + sheetQuery(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      const j = await r.json().catch(() => null)
+      if (!r.ok || !j || !j.ok) {
+        // Slack's own error word is more useful than ours: missing_scope means the bot needs
+        // files:write, channel_not_found usually means it was never invited to the room.
+        throw new Error((j && j.error) ? 'Slack: ' + j.error : 'Could not post to Slack.')
+      }
+      const c = j.counts || {}
+      setPushMsg('Day sheet posted to Slack — ' + (c.cleans ?? 0) + ' cleans'
+        + (c.unassigned ? ', ' + c.unassigned + ' still unassigned' : '') + '.')
+      setOfferSheet(false)
+    } catch (e: any) { setError(e.message || String(e)) } finally { setSheetBusy('') }
+  }
 
   function toggleBlockStage(c: Clean) {
     const k = keyOf(c)
@@ -502,12 +554,20 @@ async function pushBlocks() {
     } catch (e: any) { setError(e.message || String(e)) } finally { setBlocking({}) }
   }
   function exportCsv() {
+    // BY AREA TOO (Jon, 2026-09-14: "can we export by market area"). Uses the same picker as the
+    // day sheet, so the two exports on this page can never disagree about which area you asked for
+    // — and the filename says which one it is, because a folder of files all called
+    // turnover-schedule-2026-09-15.csv is a folder nobody can use.
+    const scoped = sheetMkt === 'all' ? rows : rows.filter(c => String(c.market || '').toLowerCase() === sheetMkt)
     const head = ['Building', 'Vendor', 'Unit', 'Bedrooms', 'Market', 'Date', 'Guest out', 'Check-out', 'Nights', 'Same-day turn', 'Door code', 'Cleaner']
-    const body = rows.map(c => { const e = effective(c); return [c.hub, c.vendor || '', c.unit, c.bedrooms ?? '', c.market, c.date, c.guestOut || '', c.checkOutTime || '11:00', c.nights ?? '', c.sameDayTurn ? 'YES' : '', c.doorCode || '', e.label || ''] })
+    const body = scoped.map(c => { const e = effective(c); return [c.hub, c.vendor || '', c.unit, c.bedrooms ?? '', c.market, c.date, c.guestOut || '', c.checkOutTime || '11:00', c.nights ?? '', c.sameDayTurn ? 'YES' : '', c.doorCode || '', e.label || ''] })
     const esc = (v: any) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
     const csv = [head, ...body].map(r => r.map(esc).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `turnover-schedule-${data?.weekStart || 'day'}.csv`; a.click(); URL.revokeObjectURL(a.href)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `turnover-schedule-${data?.weekStart || 'day'}${sheetMkt === 'all' ? '' : '-' + sheetMkt}.csv`
+    a.click(); URL.revokeObjectURL(a.href)
   }
 
   const rangeLabel = data ? (view === 'day' ? new Date(data.weekStart + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) : `${fmtDate(data.weekStart)} – ${fmtDate(data.weekEnd)}`) : ''
@@ -560,7 +620,7 @@ async function pushBlocks() {
           {data?.syncedAt && <span className="text-[11px] text-muted">Synced {agoLabel(data.syncedAt)}</span>}
           {data && view === 'day' && data.breezeway && (adding ? (<span className="inline-flex items-center gap-1.5"><input list="sched-units" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="Unit name..." className="text-[12px] border border-line rounded-lg px-2.5 py-1.5 outline-none w-44" /><datalist id="sched-units">{(data.units || []).map(u => <option key={u.id} value={u.name} />)}</datalist><button onClick={addClean} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add</button><button onClick={() => { setAdding(false); setAddUnit('') }} className="text-[12px] text-muted hover:text-ink">Cancel</button></span>) : (<button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Add a clean/task for any unit on this day">+ Add clean</button>))}
 
-{data && view === 'day' && (<div className="relative"><button onClick={() => setMoreOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="More actions">More ▾</button>{moreOpen && (<><div className="fixed inset-0 z-20" onClick={() => setMoreOpen(false)} /><div className="absolute right-0 mt-1 z-30 min-w-[180px] rounded-xl border border-line bg-white shadow-lg p-1 flex flex-col">{data.breezeway && <button onClick={() => { setMoreOpen(false); loadSuggestions() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-violet-50 text-violet-700">Audit ideas</button>}<button onClick={() => { setMoreOpen(false); exportCsv() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-app text-ink inline-flex items-center gap-1.5"><Download size={13} />Export CSV</button></div></>)}</div>)}
+{data && view === 'day' && (<div className="relative"><button onClick={() => setMoreOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="More actions">More ▾</button>{moreOpen && (<><div className="fixed inset-0 z-20" onClick={() => setMoreOpen(false)} /><div className="absolute right-0 mt-1 z-30 min-w-[180px] rounded-xl border border-line bg-white shadow-lg p-1 flex flex-col">{data.breezeway && <button onClick={() => { setMoreOpen(false); loadSuggestions() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-violet-50 text-violet-700">Audit ideas</button>}<button onClick={() => { setMoreOpen(false); exportCsv() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-app text-ink inline-flex items-center gap-1.5"><Download size={13} />Export CSV{sheetMkt === 'all' ? '' : ' · ' + sheetMkt}</button></div></>)}</div>)}
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
         </div>
       </div>
@@ -758,6 +818,40 @@ async function pushBlocks() {
           </div>
         </div>
       )}
+      {/* THE DAY SHEET. Two buttons, because they answer two different questions: "let me check it"
+          and "send it to the crew". Download first — the safe one is the one your hand lands on. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <select value={sheetMkt} onChange={e => setSheetMkt(e.target.value)} aria-label="Area for the day sheet"
+          className="rounded-xl border border-line bg-white px-2.5 py-2 text-[12.5px] font-semibold text-ink">
+          <option value="all">All areas</option>
+          {MARKETS.map(m => <option key={m} value={m.toLowerCase()}>{m}</option>)}
+        </select>
+        <button onClick={downloadSheet} disabled={!!sheetBusy}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12.5px] font-semibold text-ink hover:border-ink/30 disabled:opacity-50">
+          {sheetBusy === 'download' ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />} Download day sheet
+        </button>
+        <button onClick={postSheetToSlack} disabled={!!sheetBusy}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[12.5px] font-semibold hover:opacity-90 disabled:opacity-50">
+          {sheetBusy === 'slack' ? <RefreshCw size={13} className="animate-spin" /> : <MessageSquare size={13} />} Post to Slack
+        </button>
+        <span className="text-[11.5px] text-muted">
+          One picture per day: each cleaner, their units, the guest checkout, the size, and what is different about it.
+        </span>
+      </div>
+
+      {/* Raised only after a push actually landed — see the note where offerSheet is declared. */}
+      {offerSheet && (
+        <div className="rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-[13px] text-brand-900 flex items-center gap-2 flex-wrap">
+          <UploadCloud size={14} className="shrink-0" />
+          <span>Schedule pushed. Send the crew the updated day sheet?</span>
+          <button onClick={postSheetToSlack} disabled={!!sheetBusy}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-bold disabled:opacity-50">
+            {sheetBusy === 'slack' ? <RefreshCw size={12} className="animate-spin" /> : <MessageSquare size={12} />} Post to Slack
+          </button>
+          <button onClick={() => setOfferSheet(false)} className="text-[12px] font-semibold text-muted hover:text-ink">Not now</button>
+        </div>
+      )}
+
       {pushMsg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {pushMsg}</div>}
     </div>
   )

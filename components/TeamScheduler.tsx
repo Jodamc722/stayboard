@@ -12,7 +12,7 @@ type Clean = { listingId: string; unit: string; hub?: string; area?: string; mar
 type Day = { date: string; dow: string; cleans: Clean[] }
 type HK = { id: number; name: string; region: string | null }
 type Sub = { id: string; week_start: string; week_end: string; submitted_by: string | null; note: string | null; status: string; feedback: string | null; reviewed_at: string | null; created_at: string }
-type Data = { ok: true; link: { market: string; label: string }; weekStart: string; weekEnd: string; today: string; prev: string; next: string; days: Day[]; housekeepers: HK[]; teamIds: number[]; submissions: Sub[]; hidden?: { count: number; vendors: string[] }; plan?: Plan | null }
+type Data = { ok: true; link: { market: string; label: string; viewOnly?: boolean }; weekStart: string; weekEnd: string; today: string; prev: string; next: string; days: Day[]; housekeepers: HK[]; teamIds: number[]; submissions: Sub[]; hidden?: { count: number; vendors: string[] }; plan?: Plan | null }
 type Pick = { listingId: string; unit: string; date: string; cleanerId: number; cleanerName: string; why: string }
 type Load = { cleanerId: number; name: string; minutes: number; cleans: number; buildings: string[]; pct: number }
 type Plan = { days: { date: string; load: Load[]; picks: Pick[]; unplaced: { listingId: string; unit: string; why: string }[] }[]; picks: Pick[]; capacityMin: number; summary: string }
@@ -114,8 +114,18 @@ export function TeamScheduler({ code }: { code: string }) {
   if (err && !data) return <Frame title="Team schedule"><div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-[14px] text-rose-800 flex items-start gap-2"><AlertTriangle size={16} className="mt-0.5 shrink-0" />{err}</div></Frame>
   if (!data) return null
 
+  // READ-ONLY LINK (migration 084). Same code, same passcode, same revoke — the controls are simply
+  // not drawn, so this is the one you send to the twenty people who need to know where they are
+  // going rather than the two or three who build the week.
+  const viewOnly = data.link.viewOnly === true
+
   return (
     <Frame title={data.link.label}>
+      {viewOnly && (
+        <div className="mb-3 rounded-xl border border-line bg-white px-3.5 py-2.5 text-[12.5px] text-muted">
+          Where the team is cleaning. This link shows the schedule and cannot change it.
+        </div>
+      )}
       {/* week nav */}
       <div className="flex items-center gap-2 mb-3">
         <button onClick={() => load(data.prev)} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center" aria-label="Previous week"><ChevronLeft size={18} /></button>
@@ -180,8 +190,8 @@ export function TeamScheduler({ code }: { code: string }) {
             <span className="text-[12px] text-muted ml-auto">{day.cleans.length ? day.cleans.length + ' clean' + (day.cleans.length === 1 ? '' : 's') : 'no cleans'}</span>
           </div>
           {loadFor(day.date).length > 0 && <div className="px-3.5 py-1.5 border-b border-line flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px]">{loadFor(day.date).map(l => <span key={l.cleanerId} className={l.pct > 100 ? 'text-rose-700 font-semibold' : l.pct >= 75 ? 'text-emerald-700' : 'text-muted'}>{l.name.split(' ')[0]} <b>{hrs(l.minutes)}</b></span>)}</div>}
-          {day.cleans.length > 0 && <div className="divide-y divide-line">{day.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} ops={data.link.market === 'All'} onPick={() => setPicking(c)} />)}</div>}
-          {day.date === tomorrow && day.cleans.length > 0 && <div className="px-3.5 py-2 border-t border-line"><button onClick={() => setSubmitting({ date: day.date })} className={BTN + ' w-full bg-ink text-white min-h-[40px] text-[13px]'}><Send size={14} /> Submit tomorrow to Jon{day.cleans.filter(c => !(c.assignedIds || []).length).length ? ' · ' + day.cleans.filter(c => !(c.assignedIds || []).length).length + ' unassigned' : ''}</button></div>}
+          {day.cleans.length > 0 && <div className="divide-y divide-line">{day.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} ops={data.link.market === 'All'} onPick={() => { if (!viewOnly) setPicking(c) }} />)}</div>}
+          {!viewOnly && day.date === tomorrow && day.cleans.length > 0 && <div className="px-3.5 py-2 border-t border-line"><button onClick={() => setSubmitting({ date: day.date })} className={BTN + ' w-full bg-ink text-white min-h-[40px] text-[13px]'}><Send size={14} /> Submit tomorrow to Jon{day.cleans.filter(c => !(c.assignedIds || []).length).length ? ' · ' + day.cleans.filter(c => !(c.assignedIds || []).length).length + ' unassigned' : ''}</button></div>}
         </section>
       ))}
 
@@ -195,7 +205,7 @@ export function TeamScheduler({ code }: { code: string }) {
               <span className={'text-[13px] font-bold ' + (isUnassigned ? 'text-amber-900' : 'text-ink')}>{g.label}</span>
               <span className="text-[12px] text-muted ml-auto">{g.cleans.length} clean{g.cleans.length === 1 ? '' : 's'}{view !== 'cleaner' && open ? <span className="text-amber-700 font-semibold"> · {open} open</span> : null}{view === 'cleaner' && g.key ? ' · ' + new Set(g.cleans.map(c => c.date)).size + ' day' + (new Set(g.cleans.map(c => c.date)).size === 1 ? '' : 's') + ' · ' + hrs((data.plan?.days || []).reduce((s, d) => s + (d.load.find(l => l.name === g.key)?.minutes || 0), 0)) : ''}</span>
             </div>
-            <div className="divide-y divide-line">{g.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} showDate today={data.today} hideHub={view === 'building'} ops={data.link.market === 'All' && view !== 'market'} onPick={() => setPicking(c)} />)}</div>
+            <div className="divide-y divide-line">{g.cleans.map(c => <CleanRow key={c.listingId + c.date} c={c} showDate today={data.today} hideHub={view === 'building'} ops={data.link.market === 'All' && view !== 'market'} onPick={() => { if (!viewOnly) setPicking(c) }} />)}</div>
           </section>
         )
       })}
@@ -204,9 +214,16 @@ export function TeamScheduler({ code }: { code: string }) {
       {data.hidden && data.hidden.count > 0 && <p className="text-[11.5px] text-muted mb-2">{data.hidden.vendors.join(' & ')} {data.hidden.vendors.length === 1 ? 'is' : 'are'} cleaned by a vendor and not shown here ({data.hidden.count} this week).</p>}
 
       {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
-      <p className="text-[11.5px] text-muted mb-24">Names shown in purple are your proposals, not yet confirmed. Jon reviews and confirms from the Scheduler.</p>
+      <p className={'text-[11.5px] text-muted ' + (viewOnly ? 'mb-6' : 'mb-24')}>
+        {viewOnly
+          ? 'This is the schedule as it stands. It updates as the office changes it — reopen the link to see the latest.'
+          : 'Names shown in purple are your proposals, not yet confirmed. Jon reviews and confirms from the Scheduler.'}
+      </p>
 
-      {/* sticky submit */}
+      {/* STICKY SUBMIT — not on a view-only link. The controls are hidden here for the person
+          holding the phone; the server refuses the write regardless (see the public route), because
+          the link IS the credential and a read-only-ness that lives in the browser is not one. */}
+      {!viewOnly && (
       <div className="fixed inset-x-0 bottom-0 bg-app/95 backdrop-blur border-t border-line px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+10px)]">
         <div className="max-w-xl mx-auto">
           {tomorrowDay && tomorrowDay.cleans.length > 0 ? (
@@ -219,6 +236,7 @@ export function TeamScheduler({ code }: { code: string }) {
           )}
         </div>
       </div>
+      )}
 
       {picking && <CleanerSheet clean={picking} hks={data.housekeepers} teamIds={data.teamIds} onPick={hk => assign(picking, hk)} onClose={() => setPicking(null)} />}
       {submitting && (() => { const scoped = submitting.date ? all.filter(c => c.date === submitting.date) : all; return <SubmitSheet who={who} setWho={setWho} unassigned={scoped.filter(c => !(c.assignedIds || []).length).length} cleans={scoped.length} weekLabel={submitting.date ? fmtDay(submitting.date) + (submitting.date === tomorrow ? ' (tomorrow)' : '') : fmtDay(data.weekStart) + ' → ' + fmtDay(data.weekEnd)} result={submitted} busy={false} onSubmit={submit} onClose={() => { setSubmitting(null); setSubmitted(null) }} /> })()}
