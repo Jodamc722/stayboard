@@ -29,7 +29,12 @@ export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; t
     pageRows<any>((a, b) => db.from('guesty_reviews')
       .select('listing_id, guest_name, rating, created_at')
       .gte('created_at', since).order('id').range(a, b), 30),
-    pageRows<any>((a, b) => db.from('guest_profiles').select('*').order('id').range(a, b), 10),
+    // ORDER BY guest_key, NOT id. guest_profiles has no id column — its primary key IS guest_key
+    // (migration 043). Ordering by a column that does not exist makes PostgREST return an error,
+    // which supabase-js resolves rather than throws, so the read came back as zero profiles: no
+    // VIP flag, no tags, and the VIP segment silently empty. Caught 2026-09-14 only because
+    // pageRows reports an errored read as truncated and this route now names which one.
+    pageRows<any>((a, b) => db.from('guest_profiles').select('*').order('guest_key').range(a, b), 10),
     pageRows<any>((a, b) => db.from('guesty_listings').select('id, nickname, title, building, address_city').order('id').range(a, b), 3),
   ])
 
