@@ -126,13 +126,80 @@ export type ReservationLite = {
 export type ReviewLite = { listing_id?: string | null; guest_name?: string | null; rating?: any; created_at?: string | null }
 export type ProfileLite = { guest_key?: string | null; name?: string | null; email?: string | null; phone?: string | null; vip?: any; tags?: any; notes?: any }
 
+/** Days after checkout within which a review is still plausibly about that stay. */
+const REVIEW_WINDOW_DAYS = 45
+/** If two DIFFERENT guests left the same unit within this many days, attribution is a coin toss. */
+const AMBIGUOUS_DAYS = 2
+
+function daysBetween(a: string, b: string): number {
+  const ms = Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')
+  return Number.isFinite(ms) ? Math.round(ms / 86400000) : NaN
+}
+
+/**
+ * ATTACH REVIEWS TO THE PERSON WHO LEFT THEM.
+ *
+ * Guesty's review payload carries no email and no reservation id — only a listing, a date, and a
+ * reviewer name. The first version of this matched on listing + name, which was the safe rule and
+ * also, in this account, a dead one: guesty_reviews.guest_name is null on the rows we hold (the
+ * Reviews dashboard prints the literal word "Guest"), so every contact came back with zero reviews.
+ *
+ * So the stay is the join. A review published for a unit belongs to whoever most recently checked
+ * out of that unit before it appeared. Two guards keep that from inventing things:
+ *   - the review must fall within REVIEW_WINDOW_DAYS of the checkout, or it is nobody's;
+ *   - if a DIFFERENT guest also left that unit within AMBIGUOUS_DAYS of the best candidate, the
+ *     review is dropped rather than guessed at. A missing review count is a small wrong; telling
+ *     Jon that one guest reviewed another guest's stay is a bigger one.
+ * A name on the review, when there is one, still wins outright — it is direct evidence.
+ */
+function attachReviews(
+  m: Record<string, any>,
+  stayIx: Record<string, { key: string; nameKey: string; checkOut: string }[]>,
+  reviews: ReviewLite[],
+) {
+  for (const lid of Object.keys(stayIx)) stayIx[lid].sort((a, b) => a.checkOut < b.checkOut ? 1 : -1)
+
+  for (const rv of reviews) {
+    const lid = str(rv.listing_id)
+    const at = str(rv.created_at).slice(0, 10)
+    const stays = stayIx[lid]
+    if (!lid || !at || !stays || !stays.length) continue
+
+    let picked: string | null = null
+
+    const nk = nameKey(rv.guest_name)
+    if (nk) {
+      const byName = stays.filter(s => s.nameKey === nk)
+      if (byName.length) picked = byName[0].key
+    }
+
+    if (!picked) {
+      // stays are newest-first, so the first checkout at or before the review date is the nearest.
+      const before = stays.filter(s => s.checkOut <= at && daysBetween(s.checkOut, at) <= REVIEW_WINDOW_DAYS)
+      if (before.length) {
+        const best = before[0]
+        const rival = before.find(s => s.key !== best.key && daysBetween(s.checkOut, best.checkOut) <= AMBIGUOUS_DAYS)
+        if (!rival) picked = best.key
+      }
+    }
+
+    if (!picked) continue
+    const c = m[picked]
+    if (!c) continue
+    c.reviews += 1
+    const r = Number(rv.rating)
+    if (Number.isFinite(r) && r > 0) {
+      c._rated = (c._rated || 0) + 1
+      c._sum = (c._sum || 0) + r
+    }
+  }
+}
+
 /**
  * Fold reservations into contacts.
  *
- * Reviews are attached on LISTING + NAME, never on name alone. Guesty's review payload carries no
- * email and no reservation id — only who wrote it and which unit — so a portfolio-wide name match
- * would credit every "Maria Garcia" with every other Maria Garcia's review. Requiring that this
- * person actually stayed in that unit makes a collision need two coincidences instead of one.
+ * Reviews are attached by attachReviews() — see the note there for why the stay, not the name, is
+ * the join, and for the two guards that stop it inventing attributions.
  */
 export function buildContacts(opts: {
   reservations: ReservationLite[]
@@ -153,19 +220,10 @@ export function buildContacts(opts: {
     unitOf[str(l.id)] = { name, building: buildingOf(l.building, name), market: marketOf(l.building, l.address_city ?? l.city, name) }
   }
 
-  // listingId → nameKey → { count, sum }
-  const revIx: Record<string, Record<string, { n: number; sum: number; rated: number }>> = {}
-  for (const rv of reviews) {
-    const lid = str(rv.listing_id); const nk = nameKey(rv.guest_name)
-    if (!lid || !nk) continue
-    const byName = revIx[lid] = revIx[lid] || {}
-    const slot = byName[nk] = byName[nk] || { n: 0, sum: 0, rated: 0 }
-    slot.n += 1
-    const r = Number(rv.rating)
-    if (Number.isFinite(r) && r > 0) { slot.sum += r; slot.rated += 1 }
-  }
+  // Who stayed where, and when they left. This is what reviews get attached to — see attachReviews.
+  const stayIx: Record<string, { key: string; nameKey: string; checkOut: string }[]> = {}
 
-  type Acc = Contact & { _units: Set<string>; _buildings: Set<string>; _markets: Set<string>; _channels: Set<string>; _seenRev: Set<string> }
+  type Acc = Contact & { _units: Set<string>; _buildings: Set<string>; _markets: Set<string>; _channels: Set<string> }
   const m: Record<string, Acc> = {}
 
   for (const r of reservations) {
@@ -184,7 +242,7 @@ export function buildContacts(opts: {
         firstStay: '9999-99-99', lastStay: '', nextStay: null, inHouse: false,
         units: [], buildings: [], markets: [], lastUnit: '', lastBuilding: null,
         reviews: 0, reviewAvg: null, vip: false, tags: [], history: [],
-        _units: new Set(), _buildings: new Set(), _markets: new Set(), _channels: new Set(), _seenRev: new Set(),
+        _units: new Set(), _buildings: new Set(), _markets: new Set(), _channels: new Set(),
       } as Acc
     }
     // A longer name is a better name: "J Smith" on one booking and "Jonathan Smith" on the next.
@@ -225,18 +283,11 @@ export function buildContacts(opts: {
       c.history.push({ unit: u.name || 'Unit', building: u.building, market: u.market, checkIn: ci, checkOut: co, nights: Number(r.nights) || 0, value: Number(r.money_total) || 0, source: src, channel: chan, family: fam })
     }
 
-    // Reviews: only ones written for a unit this person actually stayed in, counted once.
-    const lid = str(r.listing_id); const nk = nameKey(rawName)
-    const hit = lid && nk ? (revIx[lid] || {})[nk] : null
-    if (hit && !c._seenRev.has(lid + '|' + nk)) {
-      c._seenRev.add(lid + '|' + nk)
-      c.reviews += hit.n
-      const prevRated = (c as any)._rated || 0
-      const prevSum = (c as any)._sum || 0
-      ;(c as any)._rated = prevRated + hit.rated
-      ;(c as any)._sum = prevSum + hit.sum
-    }
+    const lid = str(r.listing_id)
+    if (lid && co) (stayIx[lid] = stayIx[lid] || []).push({ key, nameKey: nameKey(rawName), checkOut: co })
   }
+
+  attachReviews(m, stayIx, reviews)
 
   const profBy: Record<string, ProfileLite> = {}
   for (const p of profiles) profBy[str(p.guest_key)] = p
@@ -245,7 +296,7 @@ export function buildContacts(opts: {
     const p = profBy[c.key]
     const rated = (c as any)._rated || 0
     const sum = (c as any)._sum || 0
-    const { _units, _buildings, _markets, _channels, _seenRev, ...rest } = c as any
+    const { _units, _buildings, _markets, _channels, ...rest } = c as any
     return {
       ...rest,
       units: Array.from(_units as Set<string>).slice(0, 12),
