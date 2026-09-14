@@ -19,15 +19,31 @@ export function LaborStrip() {
   useEffect(() => { try { if (localStorage.getItem(KEY) === '1') setOpen(true) } catch {} }, [])
   const toggle = () => setOpen(o => { try { localStorage.setItem(KEY, o ? '0' : '1') } catch {}; return !o })
 
+  // ASK FOR THE STRIP, NOT THE WHOLE LABOR BOARD (2026-09-14, the tab-by-tab walk).
+  //
+  // This called /api/labor/kpi?days=1 — a route that pages every Breezeway task and every Guesty
+  // reservation in the window, walks the listings table and runs the full labor-economics engine
+  // (maxDuration 60). Everything this strip renders comes from Homebase alone, and the strip
+  // starts COLLAPSED. So the heaviest endpoint in the app was being paid for on every load of
+  // Today in Ops and the Scheduler, by eight people, to print four numbers in a closed bar.
+  // `summary=1` returns the same `today` / `people` / `flags` shape off the Homebase reads only.
+  //
+  // AND ONLY WHILE SOMEONE IS LOOKING. The five-minute timer ran whether or not the tab was
+  // visible — a phone in a pocket kept re-running it all afternoon. The board next to it has
+  // checked visibilityState since the September audit; this never did.
   useEffect(() => {
     let alive = true
-    const load = () => fetch('/api/labor/kpi?days=1', { cache: 'no-store' })
-      .then(r => r.json())
-      .then(j => { if (!alive) return; if (j.ok) setD(j); else setErr(true) })
-      .catch(() => { if (alive) setErr(true) })
+    const load = () => {
+      if (document.visibilityState !== 'visible') return
+      fetch('/api/labor/kpi?days=1&summary=1', { cache: 'no-store' })
+        .then(r => r.json())
+        .then(j => { if (!alive) return; if (j.ok) setD(j); else setErr(true) })
+        .catch(() => { if (alive) setErr(true) })
+    }
     load()
     const iv = setInterval(load, 5 * 60 * 1000)
-    return () => { alive = false; clearInterval(iv) }
+    document.addEventListener('visibilitychange', load)
+    return () => { alive = false; clearInterval(iv); document.removeEventListener('visibilitychange', load) }
   }, [])
 
   if (err) return null

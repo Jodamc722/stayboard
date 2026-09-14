@@ -91,8 +91,12 @@ export function OpsV2() {
   // The capacity model prices the same day the board is showing — today or a planned date.
   const { data: cap } = useCachedFetch<CapData>(
     isToday ? '/api/capacity' : `/api/capacity?date=${date}`, { ttl: 5 * 60_000 })
-  const [roster, setRoster] = useState<Roster[]>([])
-  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  // THE ROSTER IS THE SAME LIST ALL DAY (2026-09-14, the tab-by-tab walk). This was an uncached
+  // `no-store` fetch fired on every mount, while every other read on this page goes through the
+  // 30s cache — and CapacityPanel on the Scheduler fired the identical request again on its own.
+  // Ten minutes, through the shared cache, so the second mount is free.
+  const { data: rosterRes } = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
+  const roster = useMemo<Roster[]>(() => (Array.isArray(rosterRes?.people) ? rosterRes!.people : []), [rosterRes])
   // FIVE MINUTES, PLUS THE MOMENT YOU LOOK AT IT AGAIN.
   // The interval alone meant a phone that had been in a pocket for forty minutes showed forty-minute
   // -old rows for up to five minutes more — on the one screen where a stale row is how a walk-in
@@ -222,8 +226,12 @@ export function CapacityPanel({ pager }: { pager?: boolean }) {
   const isToday = date === todayYmd
   const { data: cap, refresh } = useCachedFetch<CapData>(
     isToday ? '/api/capacity' : `/api/capacity?date=${date}`, { ttl: 5 * 60_000 })
-  const [roster, setRoster] = useState<Roster[]>([])
-  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setRoster(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  // THE ROSTER IS THE SAME LIST ALL DAY (2026-09-14, the tab-by-tab walk). This was an uncached
+  // `no-store` fetch fired on every mount, while every other read on this page goes through the
+  // 30s cache — and CapacityPanel on the Scheduler fired the identical request again on its own.
+  // Ten minutes, through the shared cache, so the second mount is free.
+  const { data: rosterRes } = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
+  const roster = useMemo<Roster[]>(() => (Array.isArray(rosterRes?.people) ? rosterRes!.people : []), [rosterRes])
   const strip = <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => { window.location.href = '/plan' }} />
   if (!pager) return strip
   return (
