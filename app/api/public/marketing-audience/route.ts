@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { MKT_COOKIE, marketingCookieValid } from '@/lib/shareAuth'
 import { pageRows } from '@/lib/db-page'
+import { getRestrictedChannels } from '@/lib/contacts-load'
 import { buildContacts, audienceSummary } from '@/lib/guest-contacts'
 
 export const dynamic = 'force-dynamic'
@@ -40,6 +41,8 @@ export async function GET(_req: NextRequest) {
     const today = ymdET(new Date())
     const since = ymdET(new Date(Date.now() - 730 * 86400000))
 
+    const restrictedChannels = await getRestrictedChannels()
+
     const [resPage, listPage] = await Promise.all([
       pageRows<any>((a, b) => db.from('guesty_reservations')
         .select('listing_id, guest_id, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, money_total')
@@ -50,7 +53,7 @@ export async function GET(_req: NextRequest) {
 
     const contacts = buildContacts({
       reservations: resPage.rows || [], listings: listPage.rows || [],
-      reviews: [], profiles: [], today,
+      reviews: [], profiles: [], today, restrictedChannels,
     })
 
     return NextResponse.json({
