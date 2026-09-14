@@ -32,7 +32,15 @@ export async function POST(req: NextRequest) {
       const market = MARKETS.includes(b.market) || b.market === 'All' ? b.market : null
       if (!market) return NextResponse.json({ ok: false, error: 'market must be Miami, Broward, North or All' }, { status: 400 })
       const code = randomBytes(6).toString('hex')
-      const { data, error } = await db.from('schedule_links').insert({ code, market, label: str(b.label).slice(0, 120) || (market === 'All' ? 'Ops schedule review · all markets' : market + ' team schedule'), passcode: str(b.passcode).slice(0, 40) || null, created_by: me }).select('*').single()
+      // VIEW-ONLY IS DECIDED AT CREATE AND NOT CHANGED AFTER (migration 084). A link the crew has
+      // saved to a home screen is a promise about what that page does; flipping a read-only link
+      // into an editable one later would quietly hand twenty people the ability to reassign the
+      // week. Make a second link instead — they cost nothing and revoke independently.
+      const viewOnly = b.viewOnly === true
+      const defaultLabel = market === 'All'
+        ? (viewOnly ? 'Schedule · all markets (view only)' : 'Ops schedule review · all markets')
+        : market + (viewOnly ? ' schedule (view only)' : ' team schedule')
+      const { data, error } = await db.from('schedule_links').insert({ code, market, label: str(b.label).slice(0, 120) || defaultLabel, passcode: str(b.passcode).slice(0, 40) || null, view_only: viewOnly, created_by: me }).select('*').single()
       if (error) throw new Error(error.message)
       return NextResponse.json({ ok: true, link: data, url: '/scheduler/' + code })
     }
