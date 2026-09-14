@@ -41,6 +41,7 @@ import { catOfTask, type TaskCat } from '@/lib/task-categories'
 import { personKey, nameMatches, bestSpelling } from '@/lib/person-name'
 import { SuggestionsProvider, UnitSuggestions, PersonSuggestions, useSuggestions } from '@/components/SuggestionsBand'
 import { AssignPanel } from '@/components/AssignPanel'
+import { type AddTaskSeed } from '@/components/AddTaskSheet'
 import { DayPlanPanel } from '@/components/DayPlanPanel'
 import { ReviewTab, ReviewCount } from '@/components/ReviewTab'
 import { DueCalendar, DueCount } from '@/components/DueCalendar'
@@ -438,9 +439,15 @@ type Row = {
 }
 
 function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
-  row: Row; roster: GRoster[]; mode: 'units' | 'people'; onRefresh: () => void; onAdd: (unit: string) => void
+  row: Row; roster: GRoster[]; mode: 'units' | 'people'; onRefresh: () => void; onAdd: (seed: AddTaskSeed) => void
   units: GUnit[]; staff?: GStaff | null
 }) {
+  // WHAT THIS ROW KNOWS (Jon, 2026-09-14: "add task should be in today in ops at the team level,
+  // unit level etc"). A unit row hands over the listing id — the answer, not a search term. A
+  // person row hands over the name, and the sheet ticks them if the roster match is unambiguous.
+  const addSeed: AddTaskSeed = mode === 'units'
+    ? { unit: row.title, listingId: row.listingId }
+    : { assigneeName: row.title }
   const [open, setOpen] = useState(false)
   const [comments, setComments] = useState<Record<string, { body: string; at: string } | null> | null>(null)
   const done = row.tasks.filter(t => t.done).length
@@ -569,19 +576,30 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
             : row.tasks.slice(0, 14).map(t => <TaskChip key={t.id} t={t} />)}
           {row.tasks.length > 14 && <span className="text-[11px] text-muted font-semibold">+{row.tasks.length - 14}</span>}
         </div>
-        {/* issues + gap — desktop keeps its own right-hand column */}
-        <div className="hidden lg:flex items-center gap-2 lg:justify-end">
+        {/* issues + gap + the ＋ — desktop keeps its own right-hand column; the ＋ rides along on
+            a phone too, because filing the task is the reason you opened the row. */}
+        <div className="order-5 ml-auto flex items-center gap-2 lg:order-none lg:ml-0 lg:justify-end">
           {row.issues.length > 0 && (
-            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1"
+            <span className="hidden lg:inline-flex text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 items-center gap-1"
               title={row.issues.map(i => i.text).join(' · ')}>
               <AlertTriangle size={10} />{row.issues.length}
             </span>
           )}
           {row.gapNights != null && (
-            <span className="text-[11px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">
+            <span className="hidden lg:inline text-[11px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">
               {row.gapNights}n
             </span>
           )}
+          {/* ONE TAP FROM THE ROW YOU ARE READING (2026-09-14). The Add button used to live inside
+              the opened row, so filing a task meant expanding first — on the unit axis only. This
+              sits on every row, on both axes, and stops the click from toggling the row open
+              underneath the sheet. */}
+          <button type="button" aria-label={mode === 'units' ? 'Add a task on ' + row.title : 'Give ' + row.title + ' a task'}
+            title={mode === 'units' ? 'Add a task on ' + row.title : 'Give ' + row.title + ' a task'}
+            onClick={e => { e.stopPropagation(); onAdd(addSeed) }}
+            className="shrink-0 w-7 h-7 rounded-lg border border-line bg-white text-muted hover:text-ink hover:border-ink/30 grid place-items-center">
+            <Plus size={13} />
+          </button>
         </div>
       </div>
 
@@ -638,12 +656,13 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
             ? <UnitSuggestions listingId={row.listingId} unit={row.title} />
             : <PersonSuggestions name={row.title} />}
           <div className="mt-2 flex items-center gap-2 flex-wrap">
-            {mode === 'units' && (
-              <button onClick={() => onAdd(row.title)}
-                className="text-[12px] font-bold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:border-ink/30 inline-flex items-center gap-1.5">
-                <Plus size={12} /> Add a task here
-              </button>
-            )}
+            {/* BOTH AXES (2026-09-14). This was units-only, so the person row — the one you are
+                looking at when you decide somebody has room for another job — had no way to file
+                it. Same button, and the sheet opens knowing which person you were reading. */}
+            <button onClick={() => onAdd(addSeed)}
+              className="text-[12px] font-bold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:border-ink/30 inline-flex items-center gap-1.5">
+              <Plus size={12} /> {mode === 'units' ? 'Add a task here' : 'Give ' + String(row.title).split(' ')[0] + ' a task'}
+            </button>
             {lastComment && (
               <span className="text-[11.5px] text-muted inline-flex items-start gap-1.5 min-w-0">
                 <MessageSquare size={12} className="mt-0.5 shrink-0" />
@@ -845,7 +864,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   loading?: boolean
   error?: string | null
   onRefresh: () => void
-  onAddTask: (unit: string) => void
+  onAddTask: (seed: AddTaskSeed) => void
   /** Which sheet the page has open — one at a time, owned by OpsV2. */
   openSheet: 'add' | 'plan' | null
   onSheet: (s: 'add' | 'plan' | null) => void

@@ -33,7 +33,7 @@ import { OpsGrid } from '@/components/OpsGrid'
 import { useModal } from '@/components/Modal'
 import { useCachedFetch } from '@/lib/swr'
 import { matchRoster } from '@/lib/roster-match'
-import { AddTaskSheet } from '@/components/AddTaskSheet'
+import { AddTaskSheet, type AddTaskSeed } from '@/components/AddTaskSheet'
 
 
 // ── types (mirrors of what the APIs actually send) ──────────────────────────────────────────────
@@ -134,11 +134,11 @@ export function OpsV2() {
 
   // null = closed; '' = open blank; a unit name = open with that unit pre-searched (the "+ Task"
   // button on a Needs-a-human row lands you one keystroke from filing, not five).
-  const [addFor, setAddForRaw] = useState<string | null>(null)
+  const [addFor, setAddForRaw] = useState<AddTaskSeed | null>(null)
   // ONE SHEET AT A TIME. `sheet` is the single owner of what is open over the board; opening one
   // closes the other rather than stacking on it.
   const [sheet, setSheet] = useState<'add' | 'plan' | null>(null)
-  const setAddFor = (v: string | null) => { setAddForRaw(v); setSheet(v === null ? null : 'add') }
+  const setAddFor = (v: AddTaskSeed | null) => { setAddForRaw(v); setSheet(v === null ? null : 'add') }
   const onSheet = (s: 'add' | 'plan' | null) => { setSheet(s); if (s !== 'add') setAddForRaw(null) }
 
   const glitches: Glitch[] = (gl && Array.isArray(gl.glitches)) ? gl.glitches : []
@@ -184,7 +184,7 @@ export function OpsV2() {
           <button onClick={() => setDate(d => shiftYmd(d, 1))} title="Next day"
             className="px-1.5 py-2 text-muted hover:text-ink hover:bg-app"><ChevronRight size={14} /></button>
         </div>
-        <button onClick={() => setAddFor('')}
+        <button onClick={() => setAddFor({})}
           className="shrink-0 mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 sm:px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
           <Plus size={14} /> Add task
         </button>
@@ -205,11 +205,16 @@ export function OpsV2() {
           Staffing tab it stands alone, in full, because staffing IS the question there. */}
       <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
           loading={loading} error={error ? String(error) : null}
-          onRefresh={refresh} onAddTask={u => setAddFor(u)} openSheet={sheet} onSheet={onSheet} boardDate={date} cap={cap || null}
+          onRefresh={refresh} onAddTask={seed => setAddFor(seed)} openSheet={sheet} onSheet={onSheet} boardDate={date} cap={cap || null}
           wantPeople={wantPeople} staffErr={staffErr ? String(staffErr) : null}
           aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={pick} compact />} />
 
-      {sheet === 'add' && addFor !== null && <AddTaskSheet roster={roster} initialQuery={addFor} boardDate={date} onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />}
+      {sheet === 'add' && addFor !== null && (
+        // Keyed on the seed so a ＋ on a different row remounts the sheet for THAT row rather than
+        // reopening on whatever the last one left behind.
+        <AddTaskSheet key={JSON.stringify(addFor)} roster={roster} seed={addFor} boardDate={date}
+          onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />
+      )}
     </div>
   )
 }

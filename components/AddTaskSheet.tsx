@@ -34,14 +34,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, X, Loader2, Users, CalendarDays, Search } from 'lucide-react'
 import { useModal } from '@/components/Modal'
 import { previewRows, type BriefIntel } from '@/lib/task-brief'
+import { matchRoster } from '@/lib/roster-match'
 
 export type Roster = { id: number; name: string; departments: string[] }
 type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null; status?: string | null }
 type BzTpl = { id: number; name: string; department: string; description: string }
 
-/** Open the sheet from anywhere. `unitQuery` pre-fills the unit search (a name, not an id). */
-export function openAddTask(unitQuery?: string) {
-  try { window.dispatchEvent(new CustomEvent('task:add', { detail: { q: unitQuery || '' } })) } catch { /* SSR */ }
+// WHAT THE CALLER ALREADY KNOWS (Jon, 2026-09-14: "add task should be in today in ops at the team
+// level, unit level etc"). A ＋ on a unit row knows the listing; a ＋ on a person row knows who is
+// standing there. Making somebody re-type either — on the screen that just showed it to them — is
+// the difference between filing the task and deciding to do it later.
+//
+// listingId beats unit text: the text goes through the search box and can miss or match two, while
+// the id is the answer. The text is kept as the label so the picker reads right before it resolves.
+export type AddTaskSeed = { unit?: string; listingId?: string; assigneeName?: string; date?: string }
+
+/** Open the sheet from anywhere, optionally pre-filled. A bare string still means the unit search. */
+export function openAddTask(seed?: AddTaskSeed | string) {
+  const detail: AddTaskSeed = typeof seed === 'string' ? { unit: seed } : (seed || {})
+  try { window.dispatchEvent(new CustomEvent('task:add', { detail })) } catch { /* SSR */ }
 }
 
 // The quick presets. These are OUR standing instructions for work that has no Breezeway template,
@@ -63,29 +74,32 @@ const todayYmd = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Ameri
 /** Mounted once, in the app shell. Listens for openAddTask() and renders the sheet when asked. */
 export function AddTaskHost() {
   const [open, setOpen] = useState(false)
-  const [seed, setSeed] = useState('')
+  const [seed, setSeed] = useState<AddTaskSeed>({})
   useEffect(() => {
-    const on = (e: any) => { setSeed(String(e?.detail?.q || '')); setOpen(true) }
+    const on = (e: any) => { setSeed((e?.detail || {}) as AddTaskSeed); setOpen(true) }
     window.addEventListener('task:add', on)
     return () => window.removeEventListener('task:add', on)
   }, [])
   if (!open) return null
-  return <AddTaskSheet initialQuery={seed} onClose={() => setOpen(false)} onDone={() => setOpen(false)} />
+  // Keyed on the seed so opening it again for a DIFFERENT unit remounts with that unit, rather
+  // than reopening on whatever the last one left behind.
+  return <AddTaskSheet key={JSON.stringify(seed)} seed={seed} onClose={() => setOpen(false)} onDone={() => setOpen(false)} />
 }
 
 export function AddTaskSheet({
-  roster: rosterProp, onClose, onDone, initialQuery, boardDate,
+  roster: rosterProp, onClose, onDone, initialQuery, boardDate, seed,
 }: {
   roster?: Roster[]
   onClose: () => void
   onDone: () => void
   initialQuery?: string
   boardDate?: string
+  seed?: AddTaskSeed
 }) {
   const [listings, setListings] = useState<Listing[]>([])
   const [unitsReady, setUnitsReady] = useState(false)
   const [unitsErr, setUnitsErr] = useState(false)
-  const [uq, setUq] = useState(initialQuery || '')
+  const [uq, setUq] = useState(seed?.unit || initialQuery || '')
   const [unit, setUnit] = useState<Listing | null>(null)
   const [tpl, setTpl] = useState('custom')
   const [bzTpls, setBzTpls] = useState<BzTpl[]>([])
@@ -94,7 +108,7 @@ export function AddTaskSheet({
   const [title, setTitle] = useState('')
   const [dept, setDept] = useState('maintenance')
   const [prio, setPrio] = useState('normal')
-  const [date, setDate] = useState(boardDate || todayYmd())
+  const [date, setDate] = useState(seed?.date || boardDate || todayYmd())
   const [desc, setDesc] = useState('')
   // TRUE until the person edits the box by hand. Switching template swaps the standing instruction
   // underneath them — which is right until they have written something, at which point the box is
@@ -129,6 +143,26 @@ export function AddTaskSheet({
     }
     setTimeout(() => boxRef.current?.focus(), 60)
   }, [rosterProp?.length])
+
+  // ── RESOLVE WHAT THE CALLER HANDED US ─────────────────────────────────────────────────────────
+  // The listing id is the answer; the unit text is only a search term, and on a board full of
+  // "OASIS - ROYAL PALM" names a search term can miss or match two. So when a ＋ on a unit row
+  // gives us the id, the picker skips straight past itself.
+  useEffect(() => {
+    if (!seed?.listingId || unit || !listings.length) return
+    const hit = listings.find(l => String(l.id) === String(seed.listingId))
+    if (hit) setUnit(hit)
+  }, [seed?.listingId, listings, unit])
+
+  // A ＋ on a person row means "this person". matchRoster is the app's one matcher — exact name,
+  // else a unique first name, else refuse: a guess that writes to Breezeway is worse than a chip
+  // that stays unticked, so an ambiguous name just leaves the picker for a human.
+  const seedAssignee = seed?.assigneeName
+  useEffect(() => {
+    if (!seedAssignee || !roster.length || picked.length) return
+    const m = matchRoster(roster as any, seedAssignee)
+    if (m.ok) setPicked([m.id])
+  }, [seedAssignee, roster, picked.length])
 
   useEffect(() => {
     if (!unit) { setIntel(null); return }
@@ -191,6 +225,8 @@ export function AddTaskSheet({
   }, [bzTpls, tplQ])
 
   const missing = !unit ? 'Pick a unit' : !title.trim() ? 'Give it a title' : ''
+  // Say whose row this came from, so a ＋ pressed on a person row is visibly about that person.
+  const seededPerson = seedAssignee && picked.length ? roster.find(p => p.id === picked[0])?.name || seedAssignee : ''
 
   const create = async () => {
     if (!unit || !title.trim() || busy) return
@@ -222,7 +258,9 @@ export function AddTaskSheet({
         className="bg-white rounded-none sm:rounded-2xl w-full max-w-xl min-h-dvh sm:min-h-0 p-4 pb-28 sm:pb-5 sm:p-5 shadow-2xl outline-none" onClick={e => e.stopPropagation()}>
 
         <div className="flex items-center gap-2 mb-3">
-          <h2 className="text-[16px] font-bold text-ink flex-1">Add a task</h2>
+          <h2 className="text-[16px] font-bold text-ink flex-1">
+            Add a task{seededPerson ? <span className="font-semibold text-muted text-[13.5px]"> · for {seededPerson}</span> : null}
+          </h2>
           <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink p-1"><X size={16} /></button>
         </div>
 
