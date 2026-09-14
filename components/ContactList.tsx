@@ -57,7 +57,7 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
 }
 
 export function ContactList() {
-  const [data, setData] = useState<{ contacts: Contact[]; summary: Summary; shown: number; truncated?: boolean } | null>(null)
+  const [data, setData] = useState<{ contacts: Contact[]; summary: Summary; shown: number; truncated?: boolean; shortReads?: string[] } | null>(null)
   const [busy, setBusy] = useState(true)
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
@@ -157,7 +157,8 @@ export function ContactList() {
 
       {data?.truncated ? (
         <p className="text-[12px] text-amber-800 font-semibold">
-          This read hit its page ceiling — the list is missing the oldest bookings. Tell Claude so the ceiling gets raised.
+          The {(data.shortReads || ['data']).join(' and ')} read came back short, so this list may be incomplete —
+          treat the counts as a floor. Worth telling Claude, with this line.
         </p>
       ) : null}
 
