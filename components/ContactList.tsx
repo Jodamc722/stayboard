@@ -8,13 +8,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, Download, Search, RefreshCw, Mail, MailX, Star, Repeat, Send,
-  CheckCircle2, AlertTriangle, Link2, Trash2, X,
+  CheckCircle2, AlertTriangle, Link2, Trash2, X, Ban,
 } from 'lucide-react'
 
 type Contact = {
   key: string; first: string; last: string; name: string
-  email: string | null; mail: 'mailable' | 'relay' | 'invalid' | 'none'; mailReason: string
-  phone: string | null
+  email: string | null; mail: 'mailable' | 'restricted' | 'relay' | 'invalid' | 'none'; mailReason: string
+  phone: string | null; restricted: boolean
   channel: string; family: string; channels: string[]; everDirect: boolean
   stays: number; nights: number; value: number
   firstStay: string; lastStay: string; nextStay: string | null; inHouse: boolean
@@ -24,9 +24,9 @@ type Contact = {
   vip: boolean; tags: string[]
 }
 type Summary = {
-  contacts: number; mailable: number; relay: number; noEmail: number; withPhone: number
+  contacts: number; mailable: number; restricted: number; relay: number; noEmail: number; withPhone: number
   repeat: number; everDirect: number
-  channels: { label: string; count: number }[]
+  channels: { label: string; count: number; mailable: number }[]
   buildings: { label: string; count: number }[]
 }
 type Mc = {
@@ -36,12 +36,17 @@ type Mc = {
 }
 
 const usd = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
+// TWO AXES, NOT ONE LIST (Jon, 2026-09-14: "better organize ... want to see by ota filter").
+// WHO they are is one question; WHETHER we may email them is another. Mixing "Airbnb" and
+// "can email" into a single row of chips made it impossible to ask "which Airbnb guests can I
+// email?" — the commonest question there is. Channel is its own row now.
 const SEGS = [
   { key: '', label: 'Everyone' },
   { key: 'mailable', label: 'Can email' },
-  { key: 'relay', label: 'OTA relay only' },
+  { key: 'restricted', label: 'Channel blocked' },
+  { key: 'relay', label: 'Relay address' },
+  { key: 'noemail', label: 'No email' },
   { key: 'direct', label: 'Booked direct' },
-  { key: 'ota', label: 'OTA guests' },
   { key: 'repeat', label: 'Repeat' },
   { key: 'vip', label: 'VIP' },
 ]
@@ -57,25 +62,27 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
 }
 
 export function ContactList() {
-  const [data, setData] = useState<{ contacts: Contact[]; summary: Summary; shown: number; truncated?: boolean; shortReads?: string[] } | null>(null)
+  const [data, setData] = useState<{ contacts: Contact[]; summary: Summary; shown: number; truncated?: boolean; shortReads?: string[]; restrictedChannels?: string[] } | null>(null)
   const [busy, setBusy] = useState(true)
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
   const [typed, setTyped] = useState('')
   const [seg, setSeg] = useState('')
+  const [chan, setChan] = useState('')
   const [mc, setMc] = useState<Mc | null>(null)
   const [showMc, setShowMc] = useState(false)
+  const [showRules, setShowRules] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
     try {
-      const r = await fetch('/api/contacts?q=' + encodeURIComponent(q) + '&seg=' + seg, { cache: 'no-store' })
+      const r = await fetch('/api/contacts?q=' + encodeURIComponent(q) + '&seg=' + seg + '&channel=' + encodeURIComponent(chan), { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.message || j?.error || 'Could not load the contacts.')
       setData(j)
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
-  }, [q, seg])
+  }, [q, seg, chan])
   useEffect(() => { load() }, [load])
   useEffect(() => {
     fetch('/api/integrations/mailchimp', { cache: 'no-store' })
@@ -87,8 +94,9 @@ export function ContactList() {
 
   const s = data?.summary
   const exportHref = useMemo(
-    () => '/api/contacts?format=csv&seg=' + seg + '&q=' + encodeURIComponent(q) + (seg === 'relay' ? '&all=1' : ''),
-    [seg, q])
+    () => '/api/contacts?format=csv&seg=' + seg + '&channel=' + encodeURIComponent(chan) + '&q=' + encodeURIComponent(q)
+      + (seg === 'relay' || seg === 'restricted' || seg === 'noemail' ? '&all=1' : ''),
+    [seg, q, chan])
 
   return (
     <div className="space-y-5">
@@ -98,22 +106,37 @@ export function ContactList() {
           <Stat label="Contacts" value={s.contacts.toLocaleString()} sub={s.withPhone.toLocaleString() + ' with a phone number'} />
           <Stat label="Can email" value={s.mailable.toLocaleString()} tone="text-emerald-700"
             sub={s.contacts ? Math.round((s.mailable / s.contacts) * 100) + '% of the list' : ''} />
-          <Stat label="OTA relay only" value={s.relay.toLocaleString()} tone="text-amber-700" sub="not mailable — see below" />
+          <Stat label="Cannot email" value={(s.restricted + s.relay + s.noEmail).toLocaleString()} tone="text-amber-700"
+            sub={[s.restricted ? s.restricted.toLocaleString() + ' channel-blocked' : '', s.relay ? s.relay.toLocaleString() + ' relay' : '', s.noEmail ? s.noEmail.toLocaleString() + ' no address' : ''].filter(Boolean).join(' · ')} />
           <Stat label="Repeat guests" value={s.repeat.toLocaleString()} sub={s.everDirect.toLocaleString() + ' have booked direct'} />
         </div>
       ) : null}
 
-      {/* why the relay number is what it is — said once, plainly, where the number is */}
-      {s && s.relay > 0 ? (
-        <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-3 flex items-start gap-2.5">
-          <AlertTriangle size={15} className="text-amber-600 mt-0.5 shrink-0" />
-          <p className="text-[12.5px] text-amber-900 leading-relaxed">
-            <span className="font-bold">{s.relay.toLocaleString()} guests only ever gave us a channel forwarding address</span>
-            {' '}— things like <span className="font-mono text-[11.5px]">a1b2c3@guest.airbnb.com</span>. They stop working when
-            the booking closes, they bounce, and marketing to them breaches the channel's terms. They stay here so the
-            front desk can look someone up, and they are never uploaded to Mailchimp. The way to convert one is to win
-            the direct booking.
-          </p>
+      {/* WHO IS OFF LIMITS, AND WHY — said once, next to the number it explains. Two different
+          reasons get two different sentences, because the fix is different for each. */}
+      {s && (s.relay > 0 || s.restricted > 0) ? (
+        <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-3 space-y-2">
+          {s.restricted > 0 ? (
+            <div className="flex items-start gap-2.5">
+              <Ban size={15} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-[12.5px] text-amber-900 leading-relaxed">
+                <span className="font-bold">{s.restricted.toLocaleString()} are blocked by their booking channel.</span>{' '}
+                {(data?.restrictedChannels || []).join(', ') || 'No channels'} forbid marketing to guests booked through
+                them, and they hand over a real address, so the address alone cannot tell you. These never reach
+                Mailchimp or the default CSV. A guest who later books direct is yours again and comes off this list.
+              </p>
+            </div>
+          ) : null}
+          {s.relay > 0 ? (
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle size={15} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-[12.5px] text-amber-900 leading-relaxed">
+                <span className="font-bold">{s.relay.toLocaleString()} only ever gave a channel forwarding address</span>
+                {' '}— <span className="font-mono text-[11.5px]">a1b2c3@guest.airbnb.com</span> and the like. They stop
+                working when the booking closes and they bounce. Kept here for front-desk lookup, never uploaded.
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -131,6 +154,10 @@ export function ContactList() {
           className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white text-[12.5px] font-bold">
           <Download size={13} /> Export CSV
         </a>
+        <button onClick={() => setShowRules(v => !v)}
+          className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl text-[12.5px] font-bold border border-line bg-white text-muted hover:text-ink">
+          <Ban size={13} /> Blocked channels
+        </button>
         <button onClick={() => setShowMc(v => !v)}
           className={'h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl text-[12.5px] font-bold border ' +
             (mc?.connected ? 'border-line bg-white text-ink' : 'border-line bg-white text-muted hover:text-ink')}>
@@ -143,15 +170,56 @@ export function ContactList() {
         </button>
       </div>
 
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {SEGS.map(x => (
-          <button key={x.key} onClick={() => setSeg(x.key)}
+      {/* WHERE THEY CAME FROM */}
+      <div>
+        <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted mb-1.5">Channel</p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button onClick={() => setChan('')}
             className={'text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
-              (seg === x.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/25')}>
-            {x.label}
+              (!chan ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/25')}>
+            All channels
           </button>
-        ))}
+          {(s?.channels || []).map(c => {
+            const blocked = (data?.restrictedChannels || []).some(r => r.toLowerCase() === c.label.toLowerCase())
+            return (
+              <button key={c.label} onClick={() => setChan(c.label === chan ? '' : c.label)}
+                title={blocked ? 'Blocked for marketing' : c.mailable.toLocaleString() + ' of these can be emailed'}
+                className={'text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition inline-flex items-center gap-1.5 ' +
+                  (chan === c.label ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/25')}>
+                {blocked ? <Ban size={11} className={chan === c.label ? 'text-white/70' : 'text-amber-600'} /> : null}
+                {c.label}
+                <span className={'tabular-nums font-bold ' + (chan === c.label ? 'text-white/70' : 'text-faint')}>
+                  {c.count.toLocaleString()}
+                </span>
+              </button>
+            )
+          })}
+        </div>
       </div>
+
+      {/* WHETHER WE MAY WRITE TO THEM */}
+      <div>
+        <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted mb-1.5">Show</p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {SEGS.map(x => (
+            <button key={x.key} onClick={() => setSeg(x.key)}
+              className={'text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
+                (seg === x.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/25')}>
+              {x.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {showRules ? (
+        <BlockedChannels
+          current={data?.restrictedChannels || []}
+          all={(s?.channels || []).map(c => c.label)}
+          summary={s || null}
+          onSaved={() => { setShowRules(false); load() }}
+          onClose={() => setShowRules(false)}
+        />
+      ) : null}
 
       {showMc ? <MailchimpPanel mc={mc} setMc={setMc} seg={seg} onClose={() => setShowMc(false)} /> : null}
 
@@ -204,6 +272,14 @@ function Row({ c }: { c: Contact }) {
         <p className="text-[12px] mt-0.5 flex items-center gap-1.5 flex-wrap">
           {c.mail === 'mailable' ? (
             <span className="inline-flex items-center gap-1 text-ink"><Mail size={11} className="text-emerald-600" />{c.email}</span>
+          ) : c.mail === 'restricted' ? (
+            // The address is fine — the channel is the problem. Saying "not mailable" next to a
+            // perfectly good Gmail address just reads as a bug, so this one says why itself.
+            <span title={c.mailReason} className="inline-flex items-center gap-1 text-muted">
+              <Ban size={11} className="text-amber-600" />
+              <span>{c.email}</span>
+              <span className="text-[10.5px] text-amber-700 font-semibold">{c.channel} — do not market</span>
+            </span>
           ) : c.email ? (
             <span title={c.mailReason} className="inline-flex items-center gap-1 text-muted">
               <MailX size={11} className="text-amber-600" />
@@ -235,6 +311,84 @@ function Row({ c }: { c: Contact }) {
           <Star size={10} className={c.reviews ? 'text-amber-500' : 'text-line'} />
           {c.reviews ? c.reviews + ' review' + (c.reviews === 1 ? '' : 's') + (c.reviewAvg ? ' · ' + c.reviewAvg : '') : 'no reviews'}
         </p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * WHICH CHANNELS WE MAY NOT MARKET TO — a setting, not a constant.
+ *
+ * Jon named Expedia. Airbnb and Booking.com carry the same restriction in their own terms and he
+ * may well add them; when he does it should be a tick box, not a deploy. The cost of each choice is
+ * shown next to it, because "block Airbnb" is a very different decision at 8,000 contacts than at 8.
+ */
+function BlockedChannels({ current, all, summary, onSaved, onClose }: {
+  current: string[]; all: string[]; summary: Summary | null; onSaved: () => void; onClose: () => void
+}) {
+  const [picked, setPicked] = useState<string[]>(current)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  // A channel already on the list must stay offerable even if nobody booked through it this window.
+  const options = Array.from(new Set(all.concat(current))).sort()
+  const mailableOf = (label: string) => (summary?.channels || []).find(c => c.label === label)?.mailable || 0
+
+  const save = async () => {
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/contacts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restrictedChannels: picked }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.message || j?.error || 'Could not save.')
+      onSaved()
+    } catch (e: any) { setErr(String(e?.message || e)); setBusy(false) }
+  }
+
+  return (
+    <div className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
+      <div className="px-4 py-3 border-b border-line flex items-center gap-2">
+        <Ban size={14} className="text-muted" />
+        <p className="text-[13.5px] font-bold text-ink">Channels we do not market to</p>
+        <button onClick={onClose} className="ml-auto text-muted hover:text-ink p-1 -m-1 rounded-lg hover:bg-app"><X size={15} /></button>
+      </div>
+      <div className="px-4 py-4 space-y-3">
+        <p className="text-[12.5px] text-muted leading-relaxed">
+          Tick a channel and every guest whose bookings came only through it stops being mailable — whatever their
+          address looks like. Anyone who has since booked direct is unaffected: that is a relationship you own.
+        </p>
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          {options.map(label => {
+            const on = picked.some(x => x.toLowerCase() === label.toLowerCase())
+            const cost = mailableOf(label)
+            return (
+              <label key={label}
+                className={'flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer transition ' +
+                  (on ? 'border-amber-300 bg-amber-50' : 'border-line bg-white hover:border-ink/25')}>
+                <input type="checkbox" checked={on} className="mt-0.5"
+                  onChange={e => setPicked(p => e.target.checked
+                    ? p.concat([label])
+                    : p.filter(x => x.toLowerCase() !== label.toLowerCase()))} />
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-semibold text-ink">{label}</span>
+                  <span className="block text-[11.5px] text-muted">
+                    {on
+                      ? 'Blocked' + (cost ? ' — was costing ' + cost.toLocaleString() + ' mailable contacts' : '')
+                      : cost.toLocaleString() + ' mailable contact' + (cost === 1 ? '' : 's') + ' would be blocked'}
+                  </span>
+                </span>
+              </label>
+            )
+          })}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={save} disabled={busy}
+            className="h-9 px-4 rounded-xl bg-ink text-white text-[12.5px] font-bold disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />} Save
+          </button>
+          {err ? <span className="text-[12.5px] font-semibold text-rose-700">{err}</span> : null}
+        </div>
       </div>
     </div>
   )
@@ -349,9 +503,10 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
 
             <div className="rounded-xl bg-app ring-1 ring-line px-3.5 py-3">
               <p className="text-[12px] text-muted leading-relaxed">
-                Pushing sends only the addresses marked <b>can email</b> — relays are filtered out here and again on the
-                server. Each contact goes up with first name, last name and phone, tagged with their booking channel,
-                stay count, building, market, VIP and your own tags.
+                Pushing sends only the addresses marked <b>can email</b>. Relays and channel-blocked guests are filtered
+                out here, again in the API and again in the Mailchimp client — three gates, because one that gets
+                refactored away is how a blocked address ends up in a campaign. Each contact goes up with first name,
+                last name and phone, tagged with their booking channel, stay count, building, market, VIP and your own tags.
                 {seg ? <> The current filter <b>{SEGS.find(x => x.key === seg)?.label}</b> is applied.</> : null}
               </p>
               <div className="flex gap-2 flex-wrap mt-2.5">
@@ -375,7 +530,10 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
                   {result.created || result.updated ? <> · {result.created.toLocaleString()} new · {result.updated.toLocaleString()} updated</> : null}
                   {result.failed ? <span className="text-rose-700"> · {result.failed.toLocaleString()} rejected</span> : null}
                 </p>
-                <p className="text-muted text-[11.5px]">{result.skippedNotMailable.toLocaleString()} held back — no usable address.</p>
+                <p className="text-muted text-[11.5px]">
+                  {result.skippedNotMailable.toLocaleString()} held back — no usable address.
+                  {result.skippedRestricted ? ' ' + result.skippedRestricted.toLocaleString() + ' held back by a channel rule.' : ''}
+                </p>
                 {(result.errors || []).slice(0, 5).map((e: any, i: number) => (
                   <p key={i} className="text-[11.5px] text-rose-700">{e.email}: {e.reason}</p>
                 ))}
