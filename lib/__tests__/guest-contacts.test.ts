@@ -7,7 +7,7 @@
 //
 // The second half guards the marketing share link. audienceSummary() is the ONLY contact data that
 // leaves the app on a public URL, and it must be counts and labels — never a name, address or phone.
-import { classifyEmail, splitName, buildContacts, audienceSummary } from '../guest-contacts'
+import { classifyEmail, splitName, buildContacts, audienceSummary, LOW_RATING_MAX } from '../guest-contacts'
 let fail = 0
 const eq = (label: string, got: any, want: any) => {
   const g = JSON.stringify(got), w = JSON.stringify(want)
@@ -156,6 +156,47 @@ eq('summary carries no address', /@/.test(blob), false)
 eq('summary carries no guest name', /Smith|Maria|Garcia|John/i.test(blob), false)
 eq('summary carries no phone', /555|\+1/.test(blob), false)
 eq('summary is counts and labels only', Object.values(s).every(v => typeof v === 'number' || Array.isArray(v)), true)
+
+// ── A BAD REVIEW STOPS THE MARKETING (Jon, 2026-09-15) ─────────────────────────────────────────
+// The test is the LOWEST rating, not the average, and it has to survive the review-attribution
+// rules: a review is attached to whoever last checked out of that unit inside the window.
+const lowListings = [{ id: 'L9', nickname: 'Nine', building: 'Eden', address_city: 'Miami' }]
+const lowRes = [
+  // Happy: two stays, two good reviews.
+  { listing_id: 'L9', guest_id: 'g1', guest_name: 'Happy Hannah', guest_email: 'hannah@gmail.com',
+    check_in: '2026-01-01', check_out: '2026-01-05', nights: 4, status: 'checked_out', source: 'Direct' },
+  // Mixed: loved three, hated one. Average is well over 3; the low is 2.
+  { listing_id: 'L9', guest_id: 'g2', guest_name: 'Mixed Mike', guest_email: 'mike@gmail.com',
+    check_in: '2026-03-01', check_out: '2026-03-05', nights: 4, status: 'checked_out', source: 'Direct' },
+  { listing_id: 'L9', guest_id: 'g2', guest_name: 'Mixed Mike', guest_email: 'mike@gmail.com',
+    check_in: '2026-05-01', check_out: '2026-05-05', nights: 4, status: 'checked_out', source: 'Direct' },
+  // Exactly on the line: a 3 is still a 3.
+  { listing_id: 'L9', guest_id: 'g3', guest_name: 'Borderline Bea', guest_email: 'bea@gmail.com',
+    check_in: '2026-07-01', check_out: '2026-07-05', nights: 4, status: 'checked_out', source: 'Direct' },
+]
+const lowRev = [
+  { listing_id: 'L9', guest_name: null, rating: 5, created_at: '2026-01-07' },
+  { listing_id: 'L9', guest_name: null, rating: 5, created_at: '2026-03-07' },
+  { listing_id: 'L9', guest_name: null, rating: 2, created_at: '2026-05-07' },
+  { listing_id: 'L9', guest_name: null, rating: 3, created_at: '2026-07-07' },
+]
+const lowCs = buildContacts({
+  reservations: lowRes as any, listings: lowListings as any, reviews: lowRev as any, profiles: [],
+  today: '2026-09-15',
+})
+const byMail = (e: string) => lowCs.find(c => c.email === e)!
+eq('the threshold is 3 stars', LOW_RATING_MAX, 3)
+eq('a happy guest is still marketable', byMail('hannah@gmail.com').unhappy, false)
+eq('a 5 leaves the low at 5', byMail('hannah@gmail.com').reviewLow, 5)
+eq('one bad stay out of two is enough', byMail('mike@gmail.com').unhappy, true)
+eq('the low is the low, not the average', byMail('mike@gmail.com').reviewLow, 2)
+eq('the average would have passed', (byMail('mike@gmail.com').reviewAvg || 0) > 3, true)
+eq('exactly 3 is excluded', byMail('bea@gmail.com').unhappy, true)
+eq('a guest with no review is not unhappy', lowCs.every(c => c.reviews > 0 || !c.unhappy), true)
+
+const lowSum = audienceSummary(lowCs)
+eq('summary counts the unhappy', lowSum.unhappy, 2)
+eq('will-email excludes them', lowSum.mailableAfterUnhappy, lowSum.mailable - 2)
 
 console.log(fail ? '\n' + fail + ' FAILED' : '\nall passed')
 process.exit(fail ? 1 : 0)
