@@ -134,7 +134,7 @@
     },
     {
       "path": "/api/cron/eve-audit",
-      "schedule": "25 * * * *"
+      "schedule": "25 12 * * *"
     },
     {
       "path": "/api/cron/maint-brief",
