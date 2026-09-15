@@ -12,7 +12,9 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   getProject, logEvent, gateProject, ownerApprovalEmail, toCents, LINK_KINDS, canSee, canEdit, toPerson,
   TASK_STATUSES, TASK_STATUS_LABEL, MEMBER_ROLES, FILES_BUCKET, prefsOf, settingsOf, describeRecurrence, type Viewer, type Member,
+  recountInvoiced, INVOICE_STATUSES, INVOICE_STATUS_LABEL, approvalCeiling, money,
 } from '@/lib/projects'
+import { saveVendor, slugVendor } from '@/lib/project-vendors'
 import { onAssigned, onAdded, onComment } from '@/lib/project-notify'
 
 export const dynamic = 'force-dynamic'
@@ -58,10 +60,41 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // Notifications are best-effort: a mail-table hiccup must never fail the edit that caused it.
     const tell = (p: Promise<any>) => p.catch(e => console.error('[projects] notify failed:', String(e?.message || e)))
 
-    // Keep the old single-assignee column honest: first assignee, or null.
+    // Keep the old single-assignee column honest: FIRST ASSIGNEE, or null. Collaborators never
+    // fill it — the legacy column means "who is doing this", and that is not what a collaborator is.
     const syncLegacyAssignee = async (taskId: string) => {
-      const { data } = await sb.from('project_task_assignees').select('display').eq('task_id', taskId).order('created_at').limit(1)
-      await sb.from('project_steps').update({ assignee: data && data[0] ? data[0].display : null }).eq('id', taskId)
+      const { data } = await sb.from('project_task_assignees').select('display,role').eq('task_id', taskId).order('created_at').limit(50)
+      const doer = ((data || []) as any[]).find(r => String(r.role || 'assignee') === 'assignee')
+      await sb.from('project_steps').update({ assignee: doer ? doer.display : null }).eq('id', taskId)
+    }
+
+    // ASSIGNEES AND COLLABORATORS ARE THE SAME TABLE, told apart by `role`. Writing them through
+    // one function is what stops the two lists drifting: a person moved from one to the other is
+    // one upsert, not a delete here and an insert there that can half-fail.
+    //
+    // `role` arrives with migration 087. If it is not there yet the write is retried without it,
+    // so a collaborator silently becomes an assignee rather than the whole save failing — the
+    // person still gets the task on their list, which is the part that matters.
+    const writePeople = async (taskId: string, list: any[], role: 'assignee' | 'collaborator') => {
+      const people = (Array.isArray(list) ? list : []).map((x: any) => toPerson(String(x))).filter((x: any) => x.display)
+      if (!people.length) return { people: [], error: null as string | null }
+      const rows = people.map((who: any) => ({ task_id: taskId, project_id: id, ...who, role }))
+      const { error } = await sb.from('project_task_assignees').upsert(rows, { onConflict: 'task_id,person_key' })
+      if (error) {
+        if (!/column|schema/i.test(error.message)) return { people, error: error.message }
+        const bare = rows.map(({ role: _r, ...rest }: any) => rest)
+        const retry = await sb.from('project_task_assignees').upsert(bare, { onConflict: 'task_id,person_key' })
+        if (retry.error) return { people, error: retry.error.message }
+      }
+      return { people, error: null as string | null }
+    }
+    const readPeople = async (taskId: string) => {
+      const { data } = await sb.from('project_task_assignees').select('*').eq('task_id', taskId)
+      const rows = (data || []) as any[]
+      return {
+        assignees: rows.filter(r => String(r.role || 'assignee') === 'assignee'),
+        collaborators: rows.filter(r => String(r.role || 'assignee') === 'collaborator'),
+      }
     }
     // Events name the task by title; one small read gives the title and the before-state.
     // A task counts as "in this project" when it lives here OR is homed here from another project
@@ -131,6 +164,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
 
       // ---- TASKS: the atom -----------------------------------------------------------
+      // ONE FORM, ONE TASK, ONE CALL (Jon, 2026-09-15: "it should be more of a form builder…
+      // create subtasks, create due dates, assign it to team members, have multiple collaborators").
+      //
+      // Everything the form collects is written here rather than by the browser firing six requests
+      // in a row. That matters for more than speed: a form that half-saves — the task exists, the
+      // subtasks do not — is worse than one that fails, because nobody can tell by looking. The
+      // parent row goes in first and everything after it attaches to a task that certainly exists;
+      // if an attachment fails, the task and the failure are BOTH reported, so the person knows
+      // exactly what to redo instead of typing it all again.
       case 'taskAdd': {
         const title = str(b.title)
         if (!title) return NextResponse.json({ error: 'title required' }, { status: 400 })
@@ -143,16 +185,54 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           sort: Number.isFinite(Number(b.sort)) ? Number(b.sort) : null,
         }).select('id').single()
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-        const people = (Array.isArray(b.assignees) ? b.assignees : []).map((x: any) => toPerson(String(x))).filter((x: any) => x.display)
-        if (people.length) {
-          const { error: e2 } = await sb.from('project_task_assignees').upsert(
-            people.map((who: any) => ({ task_id: data.id, project_id: id, ...who })), { onConflict: 'task_id,person_key' })
-          if (e2) return NextResponse.json({ error: e2.message }, { status: 500 })
-          await syncLegacyAssignee(data.id)
+        const taskId = String(data.id)
+        const partial: string[] = []
+
+        const A = await writePeople(taskId, b.assignees, 'assignee')
+        if (A.error) partial.push('the people it is assigned to (' + A.error + ')')
+        const C = await writePeople(taskId, b.collaborators, 'collaborator')
+        if (C.error) partial.push('the collaborators (' + C.error + ')')
+        if (A.people.length || C.people.length) await syncLegacyAssignee(taskId)
+
+        // SUBTASKS. Each is a child row with the same section, so a checklist typed into the form
+        // is indistinguishable from one built by hand afterwards. They inherit nothing else: a
+        // subtask with the parent's due date and assignees would be a lie on every line.
+        const subs = (Array.isArray(b.subtasks) ? b.subtasks : [])
+          .map((x: any) => (typeof x === 'string' ? { title: x } : x))
+          .map((x: any) => ({ title: str(x?.title).slice(0, 300), due_on: /^\d{4}-\d{2}-\d{2}$/.test(str(x?.due_on)) ? str(x.due_on) : null }))
+          .filter((x: any) => x.title)
+          .slice(0, 50)
+        if (subs.length) {
+          const { error: eSub } = await sb.from('project_steps').insert(subs.map((x: any, i: number) => ({
+            project_id: id, title: x.title, parent_id: taskId, status: 'todo',
+            section: str(b.section) || null, priority: 'normal', due_on: x.due_on, created_by: me, sort: i,
+          })))
+          if (eSub) partial.push(subs.length + ' subtask' + (subs.length === 1 ? '' : 's') + ' (' + eSub.message + ')')
         }
-        await logEvent(id, me, 'task_added', `added ${str(b.parentId) ? 'a subtask' : 'a task'}`, { task_id: data.id, task_title: title.slice(0, 300), who: people.map((x: any) => x.display) })
-        if (people.length) await tell(onAssigned(id, { id: data.id, title: title.slice(0, 300) }, people, me, members))
-        return NextResponse.json({ ok: true, taskId: data.id, project: await getProject(id) })
+
+        // CROSS-BOARD (Jon: "projects can be connected to other boards"). The task is homed into
+        // each project the creator can also edit — not copied. Somewhere they cannot edit is
+        // skipped and named, never silently dropped.
+        const homes = (Array.isArray(b.homes) ? b.homes : []).map((x: any) => str(x)).filter(Boolean).filter((x: string) => x !== id).slice(0, 10)
+        const homedInto: string[] = []
+        for (const target of homes) {
+          const g2 = await gateProject(target, viewer, 'edit')
+          if (!g2.ok) { partial.push('adding it to another board you are not on'); continue }
+          const { error: eH } = await sb.from('project_task_homes').upsert({ task_id: taskId, project_id: target, section: null, added_by: me }, { onConflict: 'task_id,project_id' })
+          if (eH) partial.push('adding it to another board (' + eH.message + ')'); else homedInto.push(target)
+        }
+
+        const who = [...A.people, ...C.people]
+        await logEvent(id, me, 'task_added', `added ${str(b.parentId) ? 'a subtask' : 'a task'}${subs.length ? ` with ${subs.length} subtask${subs.length === 1 ? '' : 's'}` : ''}`,
+          { task_id: taskId, task_title: title.slice(0, 300), who: who.map((x: any) => x.display) })
+        // Both kinds of person are told. A collaborator who is never notified is a name on a
+        // screen nobody looks at, which is not what being on a task means.
+        if (who.length) await tell(onAssigned(id, { id: taskId, title: title.slice(0, 300) }, who, me, members))
+        return NextResponse.json({
+          ok: true, taskId, homedInto,
+          partial: partial.length ? 'The task was created, but this did not save: ' + partial.join('; ') + '.' : null,
+          project: await getProject(id),
+        })
       }
       case 'taskSet': {
         const taskId = str(b.taskId)
@@ -179,26 +259,32 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           const { error } = await sb.from('project_steps').update(patch).eq('id', taskId)
           if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         }
-        // Assignees are replaced as a set, so the client never has to diff.
-        if (Array.isArray(b.assignees)) {
-          const people = b.assignees.map((x: any) => toPerson(String(x))).filter((x: any) => x.display)
-          const { data: prev } = await sb.from('project_task_assignees').select('person_key,display').eq('task_id', taskId)
-          await sb.from('project_task_assignees').delete().eq('task_id', taskId)
-          if (people.length) {
-            const { error: e2 } = await sb.from('project_task_assignees').upsert(
-              people.map((who: any) => ({ task_id: taskId, project_id: id, ...who })), { onConflict: 'task_id,person_key' })
-            if (e2) return NextResponse.json({ error: e2.message }, { status: 500 })
+        // Assignees and collaborators are each replaced as a SET, so the client never has to diff.
+        // Replacing one must not disturb the other, which is the whole reason this deletes by role
+        // rather than clearing the task: the old code deleted every row for the task, so saving the
+        // assignee list would have taken the collaborators with it.
+        for (const [field, role] of [['assignees', 'assignee'], ['collaborators', 'collaborator']] as const) {
+          if (!Array.isArray((b as any)[field])) continue
+          const people = (b as any)[field].map((x: any) => toPerson(String(x))).filter((x: any) => x.display)
+          const current = await readPeople(taskId)
+          const prev = role === 'assignee' ? current.assignees : current.collaborators
+          const keep = new Set(people.map((x: any) => x.person_key))
+          for (const gone of prev.filter((x: any) => !keep.has(x.person_key))) {
+            await sb.from('project_task_assignees').delete().eq('task_id', taskId).eq('person_key', gone.person_key)
           }
+          const W = await writePeople(taskId, (b as any)[field], role)
+          if (W.error) return NextResponse.json({ error: W.error }, { status: 500 })
           await syncLegacyAssignee(taskId)
-          const was = new Set(((prev || []) as any[]).map(x => x.person_key))
-          const now = new Set(people.map((x: any) => x.person_key))
-          const added = people.filter((x: any) => !was.has(x.person_key)).map((x: any) => x.display)
-          const dropped = ((prev || []) as any[]).filter(x => !now.has(x.person_key)).map(x => x.display)
+
+          const was = new Set(prev.map((x: any) => x.person_key))
+          const added = people.filter((x: any) => !was.has(x.person_key))
+          const dropped = prev.filter((x: any) => !keep.has(x.person_key)).map((x: any) => x.display)
+          const verb = role === 'assignee' ? 'assigned' : 'added as a collaborator'
           if (added.length) {
-            await logEvent(id, me, 'task_assigned', `assigned ${added.join(', ')}`, { task_id: taskId, task_title: before.title, who: added, to: 'added' })
-            await tell(onAssigned(id, { id: taskId, title: before.title }, people.filter((x: any) => !was.has(x.person_key)), me, members))
+            await logEvent(id, me, 'task_assigned', `${verb} ${added.map((x: any) => x.display).join(', ')}`, { task_id: taskId, task_title: before.title, who: added.map((x: any) => x.display), to: 'added', role })
+            await tell(onAssigned(id, { id: taskId, title: before.title }, added, me, members))
           }
-          if (dropped.length) await logEvent(id, me, 'task_assigned', `unassigned ${dropped.join(', ')}`, { task_id: taskId, task_title: before.title, who: dropped, to: 'removed' })
+          if (dropped.length) await logEvent(id, me, 'task_assigned', `removed ${dropped.join(', ')}`, { task_id: taskId, task_title: before.title, who: dropped, to: 'removed', role })
         }
         // The feed records what CHANGED, not what was saved. A blur that saved the same title is
         // not news.
@@ -330,6 +416,168 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         await logEvent(id, me, 'spend', `recorded spend ${amt > 0 ? '+' : ''}$${(amt / 100).toFixed(2)}${str(b.note) ? ' — ' + str(b.note) : ''}. Total now $${(next / 100).toFixed(2)}.`, { to: String(next) })
         break
+      }
+
+      // ---- INVOICES (Jon, 2026-09-15: "add invoices… pull from once you save a vendor") ------
+      // An invoice is money leaving the project with paper behind it: who billed us, how much,
+      // which invoice number, and the PDF. It hangs off the project always and off a task when the
+      // work was one task.
+      //
+      // WHY A SEPARATE NUMBER FROM `spent_cents`: spent_cents is typed in by a person and this
+      // code must never overwrite it. `invoiced_cents` is recomputed from approved and paid
+      // invoices after every write, and the page shows the two side by side. A quote is not money
+      // out and never counts.
+      case 'invoiceAdd': {
+        const amount = toCents(b.amount)
+        if (amount == null) return NextResponse.json({ error: 'How much is it for?' }, { status: 400 })
+        if (amount < 0) return NextResponse.json({ error: 'An invoice cannot be negative. Use a credit note as a separate line.' }, { status: 400 })
+        const status = INVOICE_STATUSES.includes(str(b.status) as any) ? str(b.status) : 'received'
+        // The task must belong to this project, or an invoice could be hung off somebody else's
+        // work by passing an id.
+        const taskId = str(b.taskId)
+        if (taskId && !(await taskRow(taskId))) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+
+        // SAVE THE VENDOR WHILE YOU ARE HERE. Jon asked for exactly this: the first invoice from a
+        // plumber is also how that plumber gets into the directory, phone number and all, so the
+        // second one is a pick from a list.
+        let vendorKey = str(b.vendorKey) || null
+        let vendorName = str(b.vendorName) || null
+        if (b.saveVendor && vendorName) {
+          const v = await saveVendor({
+            key: vendorKey || vendorName, label: vendorName,
+            contact_name: b.vendorContact, phone: b.vendorPhone, email: b.vendorEmail, trade: b.vendorTrade,
+          }, me)
+          if (v.ok) { vendorKey = v.vendor.key; vendorName = v.vendor.label }
+        }
+        if (vendorKey && !vendorName) vendorName = vendorKey
+
+        const { data: proj } = await sb.from('projects').select('settings').eq('id', id).maybeSingle()
+        const ceiling = approvalCeiling((proj as any)?.settings)
+        const needs = amount > ceiling && status !== 'quoted' && status !== 'void'
+
+        const row: any = {
+          project_id: id, task_id: taskId || null,
+          vendor_key: vendorKey, vendor_name: vendorName,
+          number: str(b.number).slice(0, 80) || null,
+          amount_cents: amount, status,
+          issued_on: /^\d{4}-\d{2}-\d{2}$/.test(str(b.issued_on)) ? str(b.issued_on) : null,
+          due_on: /^\d{4}-\d{2}-\d{2}$/.test(str(b.due_on)) ? str(b.due_on) : null,
+          note: str(b.note).slice(0, 1000) || null,
+          photo_id: str(b.photoId) || null,
+          needs_approval: needs, created_by: me,
+        }
+        // An invoice entered as already approved by the person entering it is only approved if it
+        // did not need approving. Nobody signs off their own over-ceiling invoice by picking a
+        // dropdown value.
+        if (status === 'approved' && !needs) { row.approved_by = me; row.approved_at = new Date().toISOString() }
+        if (status === 'approved' && needs) row.status = 'received'
+        if (status === 'paid') { row.paid_on = /^\d{4}-\d{2}-\d{2}$/.test(str(b.paid_on)) ? str(b.paid_on) : new Date().toISOString().slice(0, 10) }
+
+        const { data, error } = await sb.from('project_invoices').insert(row).select('id').single()
+        if (error) {
+          if (/relation|does not exist/i.test(error.message)) return NextResponse.json({ error: 'Invoices need migration 087 — run it in Supabase and this will work.' }, { status: 500 })
+          return NextResponse.json({ error: error.message }, { status: 500 })
+        }
+        await recountInvoiced(id)
+        await logEvent(id, me, 'spend', `logged a ${INVOICE_STATUS_LABEL[row.status as keyof typeof INVOICE_STATUS_LABEL].toLowerCase()} invoice for $${((amount) / 100).toFixed(2)}${vendorName ? ' from ' + vendorName : ''}${needs ? ' — waiting on approval' : ''}`,
+          { task_id: taskId || undefined, invoice_id: data.id, to: String(amount) })
+        return NextResponse.json({ ok: true, invoiceId: data.id, needsApproval: needs, project: await getProject(id) })
+      }
+
+      case 'invoiceSet': {
+        const invId = str(b.invoiceId)
+        const { data: cur } = await sb.from('project_invoices').select('*').eq('id', invId).eq('project_id', id).maybeSingle()
+        if (!cur) return NextResponse.json({ error: 'No such invoice.' }, { status: 404 })
+        const patch: any = {}
+        if (b.amount !== undefined) {
+          const amount = toCents(b.amount)
+          if (amount == null || amount < 0) return NextResponse.json({ error: 'That amount does not read as money.' }, { status: 400 })
+          patch.amount_cents = amount
+        }
+        if (b.number !== undefined) patch.number = str(b.number).slice(0, 80) || null
+        if (b.note !== undefined) patch.note = str(b.note).slice(0, 1000) || null
+        if (b.vendorKey !== undefined) patch.vendor_key = str(b.vendorKey) || null
+        if (b.vendorName !== undefined) patch.vendor_name = str(b.vendorName) || null
+        if (b.photoId !== undefined) patch.photo_id = str(b.photoId) || null
+        for (const f of ['issued_on', 'due_on', 'paid_on']) {
+          if ((b as any)[f] !== undefined) patch[f] = /^\d{4}-\d{2}-\d{2}$/.test(str((b as any)[f])) ? str((b as any)[f]) : null
+        }
+        if (b.status !== undefined) {
+          if (!INVOICE_STATUSES.includes(str(b.status) as any)) return NextResponse.json({ error: 'bad status' }, { status: 400 })
+          patch.status = str(b.status)
+          // Moving to paid stamps the day if nobody said which; moving off paid clears it, so a
+          // mistake corrected does not leave a payment date on an unpaid invoice.
+          if (patch.status === 'paid' && !patch.paid_on && !cur.paid_on) patch.paid_on = new Date().toISOString().slice(0, 10)
+          if (patch.status !== 'paid' && cur.status === 'paid' && b.paid_on === undefined) patch.paid_on = null
+        }
+        // The ceiling is re-tested against whatever the amount ENDS UP being, so editing $900 up to
+        // $9,000 puts it back in front of an approver instead of riding in on the old decision.
+        const finalAmount = patch.amount_cents ?? (Number(cur.amount_cents) || 0)
+        const finalStatus = patch.status ?? cur.status
+        const { data: proj } = await sb.from('projects').select('settings').eq('id', id).maybeSingle()
+        const ceiling = approvalCeiling((proj as any)?.settings)
+        const overNow = finalAmount > ceiling && finalStatus !== 'quoted' && finalStatus !== 'void'
+        if (overNow && patch.amount_cents != null && patch.amount_cents !== Number(cur.amount_cents)) {
+          patch.needs_approval = true; patch.approved_by = null; patch.approved_at = null
+          if (finalStatus === 'approved' || finalStatus === 'paid') patch.status = 'received'
+        } else if (!overNow) {
+          patch.needs_approval = false
+        }
+        if (!Object.keys(patch).length) return NextResponse.json({ error: 'Nothing to change.' }, { status: 400 })
+        const { error } = await sb.from('project_invoices').update(patch).eq('id', invId)
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        await recountInvoiced(id)
+        if (patch.status && patch.status !== cur.status) {
+          await logEvent(id, me, 'spend', `marked a $${((finalAmount) / 100).toFixed(2)} invoice ${INVOICE_STATUS_LABEL[patch.status as keyof typeof INVOICE_STATUS_LABEL].toLowerCase()}`, { invoice_id: invId, from: cur.status, to: patch.status })
+        }
+        break
+      }
+
+      // APPROVAL IS ITS OWN ACTION, not a status you can pick. It records WHO said yes and when,
+      // which a dropdown cannot, and it is the only route to 'approved' for an over-ceiling invoice.
+      case 'invoiceApprove': {
+        const invId = str(b.invoiceId)
+        const { data: cur } = await sb.from('project_invoices').select('*').eq('id', invId).eq('project_id', id).maybeSingle()
+        if (!cur) return NextResponse.json({ error: 'No such invoice.' }, { status: 404 })
+        // Over the ceiling, only a superadmin signs. Below it, anyone who can edit the project may
+        // — that is what setting a ceiling means.
+        const { data: proj } = await sb.from('projects').select('settings').eq('id', id).maybeSingle()
+        const ceiling = approvalCeiling((proj as any)?.settings)
+        const amount = Number(cur.amount_cents) || 0
+        if (amount > ceiling && !viewer.superadmin) {
+          return NextResponse.json({ error: `$${(amount / 100).toFixed(2)} is over the $${(ceiling / 100).toFixed(0)} limit on this project — an admin has to approve it.` }, { status: 403 })
+        }
+        const patch: any = { status: 'approved', needs_approval: false, approved_by: me, approved_at: new Date().toISOString() }
+        const { error } = await sb.from('project_invoices').update(patch).eq('id', invId)
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        await recountInvoiced(id)
+        await logEvent(id, me, 'spend', `approved a $${(amount / 100).toFixed(2)} invoice${cur.vendor_name ? ' from ' + cur.vendor_name : ''}`, { invoice_id: invId, to: 'approved' })
+        break
+      }
+
+      case 'invoiceDelete': {
+        const invId = str(b.invoiceId)
+        const { data: cur } = await sb.from('project_invoices').select('amount_cents,vendor_name,status').eq('id', invId).eq('project_id', id).maybeSingle()
+        if (!cur) return NextResponse.json({ error: 'No such invoice.' }, { status: 404 })
+        // A PAID invoice is a record of money that left. Voiding keeps the row and the history;
+        // deleting it would make the project's books quietly disagree with the bank.
+        if (cur.status === 'paid' && !viewer.superadmin) {
+          return NextResponse.json({ error: 'This one is already paid — mark it void instead, so the history still shows it.' }, { status: 400 })
+        }
+        const { error } = await sb.from('project_invoices').delete().eq('id', invId)
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        await recountInvoiced(id)
+        await logEvent(id, me, 'spend', `deleted a $${((Number(cur.amount_cents) || 0) / 100).toFixed(2)} invoice${cur.vendor_name ? ' from ' + cur.vendor_name : ''}`, { invoice_id: invId })
+        break
+      }
+
+      // ---- SAVING A VENDOR FROM THE FORM --------------------------------------------
+      // The directory is the app's one `vendors` table, shared with the ops boards — saving a
+      // plumber on a project saves them everywhere, which is the point of saving them at all.
+      case 'vendorSave': {
+        const r = await saveVendor(b.vendor || b, me)
+        if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 })
+        return NextResponse.json({ ok: true, vendor: r.vendor })
       }
 
       // ---- COMMENTS ----------------------------------------------------------------
