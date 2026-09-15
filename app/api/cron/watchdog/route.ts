@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { runSyncAlert } from '@/lib/slack-alerts'
-import { sendGmail } from '@/lib/gmail-send'
 
 export const dynamic = 'force-dynamic'
 // 2026-08-20: this was 30 — the LOWEST maxDuration of any cron in the app, set back when the
@@ -153,7 +152,8 @@ async function run(req: NextRequest) {
   const next: Record<string, { since: string; alertedAt: string }> = {}
   const nowIso = new Date().toISOString()
   const alerts: string[] = []
-  const emailAlerts: string[] = []
+  /** Quiet silent-feed findings for the System health tab: [key, label, line]. */
+  const quiet: { key: string; label: string; line: string }[] = []
   const recovered: string[] = []
   const report: any[] = []
 
@@ -173,29 +173,55 @@ async function run(req: NextRequest) {
       }
       // SILENT MUST NOT MEAN INVISIBLE (Jon, 2026-09-01: "don't see any Airbnb or VRBO in a
       // while — just want to make sure we are getting the review data"). These feeds were muted
-      // out of Slack on 2026-08-22 and that muting removed them from EVERYWHERE — the per-channel
-      // review pulse fired for Vrbo days before Jon asked, into a JSON response nobody reads. A
-      // quiet channel now sends ONE EMAIL per re-alert window (6h) to the owner instead: off
-      // Slack, but never off the record.
-      if (due && f.silent) {
-        emailAlerts.push(f.label + ' — quiet for ' + human(a.age) + ' (its own limit is ' + human(f.maxMin) + ').')
+      // out of Slack on 2026-08-22 and that muting removed them from EVERYWHERE.
+      //
+      // The fix then was an email every six hours. Jon, 2026-09-15: "let's kill the emails that
+      // are not briefs ... have a tab in the app that shares some of that performance." He is
+      // right — a repeating email about a data feed is a notification that trains you to archive
+      // it, and by the third one it has stopped being information. It goes to the System health
+      // tab instead, where it sits open until somebody actually deals with it, and where it is
+      // still there next week if nobody did. Off Slack, out of the inbox, still never off the
+      // record.
+      if (f.silent && (a.age == null || a.age > f.maxMin)) {
+        quiet.push({
+          key: f.key,
+          label: f.label,
+          line: f.label + ' — quiet for ' + human(a.age) + ' (its own limit is ' + human(f.maxMin) + ').',
+        })
       }
     } else if (prev && !f.silent) {
       recovered.push('*' + f.label + '* is running again (last run ' + human(a.age) + ' ago).')
     }
   }
 
-  if (emailAlerts.length) {
-    const esc = (x: any) => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    await sendGmail({
-      fromEmail: 'jon@stay-hospitality.com', to: ['jon@stay-hospitality.com'],
-      subject: '🔕 Quiet data feeds: ' + emailAlerts.length + ' need a look',
-      html: '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0b1220;max-width:640px">' +
-        '<p style="font-size:14px;line-height:1.6">These feeds are silent-by-design in Slack, but they have been quiet longer than their own normal rhythm allows:</p>' +
-        '<ul style="font-size:13px;line-height:1.8">' + emailAlerts.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>' +
-        '<p style="font-size:12px;color:#6b7280">Our sync is pulling everything Guesty has (checked on every run) — a quiet review channel almost always means the channel&rsquo;s connection INSIDE Guesty stopped delivering. Guesty &rarr; Integrations &rarr; that channel, or ask Guesty support what happened after the date above. This email repeats at most every 6 hours while the silence lasts.</p></div>',
-    }).catch(() => null)
-  }
+  // The findings, written where they can be seen and acted on. `ext:` marks them as owned by this
+  // cron rather than by runAudit, so the daily audit does not resolve them out from under us.
+  try {
+    const db = supabaseAdmin()
+    const nowStamp = new Date().toISOString()
+    if (quiet.length) {
+      await db.from('eve_audits').upsert(quiet.map(q => ({
+        id: 'ext:feed:' + q.key,
+        area: 'pipeline',
+        severity: 'warn',
+        title: q.label + ' has stopped arriving',
+        detail: q.line + ' Our sync pulls everything Guesty has on every run, so a quiet review channel'
+          + " almost always means that channel's connection INSIDE Guesty stopped delivering.",
+        fix: 'Guesty → Integrations → that channel, or ask Guesty support what happened after the date above.',
+        count: 1,
+        status: 'open',
+        last_seen_at: nowStamp,
+      })), { onConflict: 'id' })
+    }
+    // A feed that started talking again closes its own finding. Nothing else will.
+    const quietIds = new Set(quiet.map(q => 'ext:feed:' + q.key))
+    const allSilent = FEEDS.concat(perChannel.feeds).filter(f => f.silent).map(f => 'ext:feed:' + f.key)
+    const healed = allSilent.filter(id => !quietIds.has(id))
+    if (healed.length) {
+      await db.from('eve_audits').update({ status: 'resolved', resolved_at: nowStamp })
+        .in('id', healed).eq('status', 'open')
+    }
+  } catch { /* the watchdog must never fail on its own reporting */ }
 
   // Goes through the Slack outbox, not a raw webhook: it lands in the right channel, gets a copy
   // in the firehose, and shows in Command Center. This is the ONE alert that never waits for
