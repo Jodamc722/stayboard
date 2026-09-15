@@ -13,7 +13,7 @@ import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -156,7 +156,13 @@ export const SECTIONS: NavSection[] = [
     // Integrations and Custom Fields moved inside Users & admin → App settings (September audit,
     // pass 2). The section keeps its title because Shell appends the Users & admin row to it.
     title: 'Settings',
-    items: [],
+    items: [
+      // Where the standing audit reports now that it posts nothing to Slack and emails nobody
+      // (Jon, 2026-09-15). It has to be a real sidebar row: a page you can only reach by typing
+      // the URL is a page nobody checks, and the whole trade was "stop pushing this at me, I will
+      // come and look" — which only holds if there is somewhere obvious to look.
+      { to: '/system-health', label: 'System health', Icon: Activity },
+    ],
   },
 ]
 
