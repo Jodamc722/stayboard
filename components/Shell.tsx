@@ -61,6 +61,9 @@ export const SECTIONS: NavSection[] = [
       // Ordered by use (Jon, 2026-08-19: "all other tabs can be reorganized to make sense"):
       // the everyday verbs first, then field work, then the periodic audit/purchasing layer.
       { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
+      // The standing daily list (Jon, 2026-09-15). Directly under Today in Ops because the two are
+      // the same moment: what the day holds, and what has to happen in it regardless.
+      { to: '/checklist', label: 'Daily Checklist', Icon: ClipboardCheck },
       { to: '/schedule', label: 'Scheduler', Icon: CalendarRange },  // Jon 2026-08-19: his word for it
       { to: '/maintenance', label: 'Maintenance', Icon: Wrench },  // Jon 2026-08-20: "maintenance is
       // a big one, we don't always have a good grip" — the command view over W.O.s, tasks, glitches
