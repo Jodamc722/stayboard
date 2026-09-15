@@ -41,9 +41,20 @@ export async function GET(req: NextRequest) {
 
     // MY BOARD (Jon, 2026-09-09): every user has one. Its tasks are mine by definition, assigned or not.
     const board = await ensureMyBoard(email, myName).catch(() => null)
+    // select('*') so this keeps working before migration 087 adds `role`; a row without one is
+    // an assignee, which is what every row meant until collaborators existed.
     const { data: asg, error: aErr } = await sb.from('project_task_assignees')
-      .select('task_id,project_id').or(`email.eq.${email},person_key.in.(${keys.map(k => JSON.stringify(k)).join(',')})`).limit(2000)
+      .select('*').or(`email.eq.${email},person_key.in.(${keys.map(k => JSON.stringify(k)).join(',')})`).limit(2000)
     if (aErr) throw new Error(aErr.message)
+    // A COLLABORATOR'S TASK IS STILL ON MY LIST (Jon, 2026-09-15: "if collaborated it's assigned
+    // to my tasks"). It is not hidden and it is not a separate tab — it is labelled, so the list
+    // can still tell me what I owe from what I am only party to.
+    const roleByTask: Record<string, string> = {}
+    for (const a of ((asg || []) as any[])) {
+      const k = String(a.task_id)
+      // Assignee wins: being on the hook outranks being copied in, if somehow both are recorded.
+      if (roleByTask[k] !== 'assignee') roleByTask[k] = String(a.role || 'assignee')
+    }
     const own = board ? await sb.from('project_steps').select('id').eq('project_id', board.id).neq('status', 'done').limit(1000) : { data: [] as any[] }
     let taskIds = Array.from(new Set([
       ...((asg || []) as any[]).filter(a => !visible || visible.has(String(a.project_id))).map(a => String(a.task_id)),
@@ -85,6 +96,7 @@ export async function GET(req: NextRequest) {
         oneOnOne: pmap[String(r.project_id)]?.kind === 'one_on_one',
         mine: !!board && String(r.project_id) === board.id,
         where: where[String(r.project_id)] || null,
+        role: roleByTask[String(r.id)] === 'collaborator' ? 'collaborator' : 'assignee',
       }
       if (!item.due) groups.someday.push(item)
       else if (item.due < today) groups.overdue.push(item)
