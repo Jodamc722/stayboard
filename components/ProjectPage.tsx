@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
-import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, type BoardSettings, type Recurrence, type Accent } from '@/lib/projects-shared'
+import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -160,6 +160,13 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
   const [bzFocus, setBzFocus] = useState<string | null>(null)
   const pushTask = (taskId: string) => { setBzFocus(taskId); setOpenTask(taskId) }
 
+  // Everything the add row needs, built once. onOpenTask means a task created through the full
+  // form opens straight into its drawer — you land on the thing you just made, which is where you
+  // would have clicked anyway to attach an invoice or push it to Breezeway.
+  const add: AddProps = useMemo(
+    () => ({ roster, sections: sections.map(x => x.name), projectId: p.id, onOpenTask: setOpenTask }),
+    [roster, sections, p.id])
+
   const open = p.tasks.filter(t => t.status !== 'done').length
   const total = p.tasks.length
   const overdue = p.tasks.filter(t => t.status !== 'done' && t.due_on && t.due_on < today()).length
@@ -176,18 +183,31 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
           <span className={'w-11 h-11 rounded-2xl border grid place-items-center text-[22px] shrink-0 ' + accent.bar} aria-hidden>{iconOf(p)}</span>
           <div className="min-w-0 flex-1">
             <h1 className="text-[22px] sm:text-2xl font-bold text-ink tracking-tight leading-tight">{p.title}</h1>
+            {/* FACTS ON THE LEFT, CONTROLS ON THE RIGHT. This line used to carry both, and on a
+                fresh board it read "Members only · Idea · Does not repeat · 0 of 0 done" — four
+                items, three of them saying nothing had happened yet. Anything that is only true
+                by default now stays quiet, and the repeat control moved in with the other
+                controls where it belongs. */}
             <p className="text-[12.5px] text-muted mt-1 flex items-center gap-x-3 gap-y-1 flex-wrap">
               <span className="inline-flex items-center gap-1">
                 {p.private ? <Lock size={11} /> : <Unlock size={11} />}
                 {p.kind === 'personal' ? 'Your board — only you' : p.kind === 'one_on_one' ? 'One-on-one — private' : p.private ? 'Private — members only' : 'Members only'}
               </span>
               {p.kind !== 'personal' && <span>{STAGE_LABEL[p.stage as keyof typeof STAGE_LABEL] || p.stage}</span>}
-              <RecurChip p={p} canEdit={canEdit} act={act} busy={busy} />
               {p.due_on && <span className={overdue ? 'text-rose-600 font-semibold' : ''}>Due {nice(p.due_on)}</span>}
-              <span className="tabular-nums">{total - open} of {total} done{overdue ? ` · ${overdue} overdue` : ''}</span>
+              {total > 0 && (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-16 h-1.5 rounded-full bg-app overflow-hidden inline-block">
+                    <span className={'block h-full ' + accent.dot} style={{ width: Math.round(((total - open) / total) * 100) + '%' }} />
+                  </span>
+                  <span className="tabular-nums">{total - open} of {total} done</span>
+                </span>
+              )}
+              {overdue > 0 && <span className="text-rose-600 font-semibold tabular-nums">{overdue} overdue</span>}
             </p>
           </div>
           <div className="flex items-center gap-1.5">
+            <RecurChip p={p} canEdit={canEdit} act={act} busy={busy} />
             <Customize settings={settings} sections={sections.map(x => x.name)} canEdit={canEdit} act={act} busy={busy} />
             <MoreMenu p={p} canEdit={canEdit} act={act} busy={busy} />
           </div>
@@ -205,16 +225,21 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
         {err && <p className="mt-2 text-[12.5px] text-rose-700">{err}</p>}
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_300px] gap-4 items-start">
-        {/* ── TASKS ── */}
-        <div className="space-y-3">
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-4 items-start">
+        {/* ── TASKS ──
+            min-w-0 is load-bearing, not tidying. A grid column's default minimum is max-content,
+            so the board's horizontal scroller measured itself at the full width of every column
+            and pushed the whole page sideways: the People and About panels sat off the right edge
+            of the screen and the page scrolled horizontally to reach them. Capping the track's
+            minimum is what lets `overflow-x-auto` below actually scroll instead of overflowing. */}
+        <div className="space-y-3 min-w-0">
           {view === 'calendar' ? (
             <CalendarView tasks={p.tasks} onOpen={setOpenTask} accent={accent} hideDone={settings.hideDone} />
           ) : view === 'board' ? (
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
               {sections.map(sec => (
                 <SectionColumn key={sec.name || '__none'} name={sec.name} tasks={sec.tasks} canEdit={canEdit} busy={busy}
-                  openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent}
+                  openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent} add={add}
                   dragId={dragId} setDragId={setDragId} onMove={moveTask} onPush={pushTask} />
               ))}
               {canEdit && (
@@ -226,7 +251,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
           ) : (
             sections.map(sec => (
               <Section key={sec.name || '__none'} name={sec.name} tasks={sec.tasks} canEdit={canEdit} busy={busy}
-                openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent}
+                openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent} add={add}
                 dragId={dragId} setDragId={setDragId} onMove={moveTask} onPush={pushTask} />
             ))
           )}
@@ -242,6 +267,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
         {/* ── SIDE: people, files and what it is about ── */}
         <div className="space-y-3">
           <MembersPanel p={p} roster={roster} me={me} canEdit={canEdit} superadmin={superadmin} act={act} busy={busy} />
+          <InvoicesPanel p={p} canEdit={canEdit} busy={busy} act={act} superadmin={superadmin} />
           <LinksPanel p={p} canEdit={canEdit} act={act} busy={busy} />
           <FilesPanel p={p} canEdit={canEdit} act={act} busy={busy} upload={upload} onOpen={setOpenTask} />
         </div>
@@ -264,6 +290,9 @@ function findTask(list: Task[], id: string): Task | null {
 type Counts = Record<string, { comments: number; files: number }>
 type AccentCls = typeof ACCENT[keyof typeof ACCENT]
 type DragProps = { dragId: string | null; setDragId: (id: string | null) => void; onMove: (taskId: string, section: string, beforeId: string | null) => Promise<any>; onPush?: (taskId: string) => void }
+/** What the add row needs to offer the full form as well as the one-line box. Passed as one
+ *  object so a new field on the form does not mean threading a new prop through three components. */
+type AddProps = { roster: Roster; sections: string[]; projectId: string; onOpenTask?: (id: string) => void }
 
 // ── A SECTION HEADER YOU CAN RENAME OR REMOVE ─────────────────────────────────────────────────
 // Click the name to rename it; the × removes the section and drops its tasks to "no section".
@@ -301,9 +330,9 @@ function DropSlot({ active, onDrop, className }: { active: boolean; onDrop: () =
   )
 }
 
-function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove, onPush }: {
+function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove, onPush, add }: {
   name: string; tasks: Task[]; canEdit: boolean; busy: boolean; openId: string | null
-  onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls
+  onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls; add: AddProps
 } & DragProps) {
   const [collapsed, setCollapsed] = useState(false)
   const done = tasks.filter(t => t.status === 'done').length
@@ -328,7 +357,7 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
             </div>
           ))}
           <DropSlot active={dragging} onDrop={() => { if (dragId) { onMove(dragId, name, null); setDragId(null) } }} className="mx-3" />
-          {canEdit && <div className="border-t border-line"><QuickAdd section={name} act={act} busy={busy} /></div>}
+          {canEdit && <div className="border-t border-line"><QuickAdd section={name} act={act} busy={busy} {...add} /></div>}
         </div>
       )}
     </div>
@@ -338,9 +367,9 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
 // ── COLUMNS: the same sections side by side ───────────────────────────────────────────────────
 // A personal board reads better as To do / Doing / Done across the screen; a 1:1 as Wins /
 // Blockers / Follow-ups. Same data, same drawer, one preference. Cards drag between columns.
-function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove, onPush }: {
+function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove, onPush, add }: {
   name: string; tasks: Task[]; canEdit: boolean; busy: boolean; openId: string | null
-  onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls
+  onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls; add: AddProps
 } & DragProps) {
   const done = tasks.filter(t => t.status === 'done').length
   const dragging = !!dragId && canEdit
@@ -394,7 +423,7 @@ function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts
         <DropSlot active={dragging} onDrop={() => { if (dragId) { onMove(dragId, name, null); setDragId(null) } }} />
         {canEdit && (
           <div className="rounded-xl border border-dashed border-line bg-white/60">
-            <QuickAdd section={name} act={act} busy={busy} />
+            <QuickAdd section={name} act={act} busy={busy} {...add} />
           </div>
         )}
       </div>
@@ -539,11 +568,15 @@ function RecurChip({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean
   }
   return (
     <span className="relative inline-flex">
-      <button onClick={() => canEdit && setOpen(o => !o)} className={'inline-flex items-center gap-1 ' + (r ? 'text-ink font-semibold' : 'text-muted') + (canEdit ? ' hover:underline' : '')} title={r ? `Next on ${r.next_on}` : 'Make this repeat'}>
-        <Repeat size={11} />{r ? `${describeRecurrence(r)} · next ${nice(r.next_on)}` : (canEdit ? 'Does not repeat' : '')}
+      {/* Sits with Customize and the ⋯ menu, so it is styled like them. When nothing repeats it is
+          just the icon: "Does not repeat" was a sentence spent telling you nothing is happening. */}
+      <button onClick={() => canEdit && setOpen(o => !o)} disabled={!canEdit && !r}
+        className={'inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1 text-[12px] font-bold ' + (r ? 'text-ink' : 'text-muted hover:text-ink')}
+        title={r ? `${describeRecurrence(r)} · next on ${r.next_on}` : 'Make this repeat'}>
+        <Repeat size={13} />{r ? <span className="hidden sm:inline">{describeRecurrence(r)} · next {nice(r.next_on)}</span> : null}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1.5 w-[280px] rounded-2xl border border-line bg-white shadow-2xl p-3 space-y-2 text-[12.5px]">
+        <div className="absolute right-0 top-full z-50 mt-1.5 w-[280px] rounded-2xl border border-line bg-white shadow-2xl p-3 space-y-2 text-[12.5px]">
           <div className="flex gap-1.5">
             {(['week', '2weeks', 'month'] as const).map(v => (
               <button key={v} onClick={() => setEvery(v)} className={'rounded-lg px-2 py-1 border text-[12px] font-semibold ' + (every === v ? 'bg-ink text-white border-ink' : 'border-line text-muted hover:text-ink')}>{v === 'week' ? 'Weekly' : v === '2weeks' ? 'Every 2 wks' : 'Monthly'}</button>
@@ -651,9 +684,86 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, s
   )
 }
 
-// One text box, Enter to add, stays focused for the next one. Capturing a task is one keystroke.
-function QuickAdd({ section, act, busy, parentId }: { section: string; act: (b: any) => Promise<any>; busy: boolean; parentId?: string }) {
+// ── PEOPLE PICKER ─────────────────────────────────────────────────────────────────────────────
+// Chips plus a typeahead over the roster. One component for assignees, for collaborators and for
+// the new-task form, so the three never drift into behaving differently — which is exactly what
+// happened before, when the only picker lived inside the drawer and the add box had none at all.
+//
+// A name that is not on the roster is still accepted. Half the field team has no login, and
+// refusing to write "Luis" because Luis cannot be emailed would make the board wrong about who is
+// doing the work in order to be right about who can be notified.
+function PeoplePicker({ value, onChange, roster, disabled, placeholder, tone }: {
+  value: string[]; onChange: (next: string[]) => void; roster: Roster; disabled?: boolean; placeholder?: string
+  tone?: 'default' | 'soft'
+}) {
+  const [q, setQ] = useState('')
+  const has = (name: string) => value.some(v => v.toLowerCase() === name.toLowerCase())
+  const add = (name: string) => { const n = String(name || '').trim(); if (!n || has(n)) { setQ(''); return } onChange([...value, n]); setQ('') }
+  const drop = (name: string) => onChange(value.filter(v => v !== name))
+  const hits = q.trim().length >= 1
+    ? roster.filter(r => r.display.toLowerCase().includes(q.toLowerCase()) && !has(r.email || r.display) && !has(r.display)).slice(0, 6)
+    : []
+  const chip = tone === 'soft' ? 'bg-white border-line text-muted' : 'bg-app border-line text-ink'
+  return (
+    <div>
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {value.map(v => {
+            const r = roster.find(x => (x.email || '').toLowerCase() === v.toLowerCase() || x.display.toLowerCase() === v.toLowerCase())
+            return (
+              <span key={v} className={'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] ' + chip}>
+                {r?.display || v}
+                {r && !r.notifiable && <span className="text-muted" title="No login — can be named, not notified">·</span>}
+                {!disabled && <button type="button" onClick={() => drop(v)} className="text-muted hover:text-rose-600"><X size={10} /></button>}
+              </span>
+            )
+          })}
+        </div>
+      )}
+      {!disabled && (
+        <div className="relative">
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder={placeholder || 'Add a person…'}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); add(hits[0] ? (hits[0].email || hits[0].display) : q) }
+              if (e.key === 'Backspace' && !q && value.length) drop(value[value.length - 1])
+            }}
+            className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] focus:outline-none focus:border-ink" />
+          {hits.length > 0 && (
+            <div className="absolute z-20 left-0 right-0 mt-1 rounded-lg border border-line bg-white shadow-lg overflow-hidden">
+              {hits.map(r => (
+                <button type="button" key={r.email || r.display} onClick={() => add(r.email || r.display)}
+                  className="w-full text-left px-2.5 py-1.5 text-[12.5px] hover:bg-app flex items-center justify-between gap-2">
+                  <span>{r.display}</span>
+                  <span className="text-[10px] text-muted">{r.notifiable ? 'can be notified' : 'name only'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── ADDING A TASK ─────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-15: "when you create a board and you try and add a task, it has a type function.
+// It should be more of a form builder, kind of like the Glitch form."
+//
+// Both are kept, because they answer different moments. The one-line box is still there and still
+// takes Enter — capturing a thought mid-meeting should cost one keystroke. The form opens from the
+// same row, and everything that was previously only reachable AFTER the task existed (a due date,
+// who is on it, the checklist, the description, the photos) is reachable BEFORE it does.
+//
+// It saves in ONE request. A form that writes the task, then the people, then the subtasks can
+// half-succeed, and a half-saved task looks exactly like a whole one.
+function QuickAdd({ section, act, busy, parentId, roster, sections, projectId, onOpenTask }: {
+  section: string; act: (b: any) => Promise<any>; busy: boolean; parentId?: string
+  // Optional because the checklist box inside the task drawer is the one place the full form makes
+  // no sense: a subtask with its own subtasks and its own collaborators is a task, not a checkbox.
+  roster?: Roster; sections?: string[]; projectId?: string; onOpenTask?: (id: string) => void
+}) {
   const [v, setV] = useState('')
+  const [form, setForm] = useState(false)
   const ref = useRef<HTMLInputElement | null>(null)
   const go = async () => {
     const title = v.trim(); if (!title) return
@@ -662,12 +772,207 @@ function QuickAdd({ section, act, busy, parentId }: { section: string; act: (b: 
     ref.current?.focus()
   }
   return (
-    <div className="flex items-center gap-2.5 px-3 py-1.5" style={{ paddingLeft: parentId ? 34 : 12 }}>
-      <Plus size={13} className="text-muted shrink-0" />
-      <input ref={ref} value={v} onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') go() }}
-        placeholder={parentId ? 'Add a checklist item…' : 'Add a task…'} disabled={busy}
-        className="flex-1 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
+    <>
+      <div className="flex items-center gap-2.5 px-3 py-1.5 group/add" style={{ paddingLeft: parentId ? 34 : 12 }}>
+        <Plus size={13} className="text-muted shrink-0" />
+        <input ref={ref} value={v} onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') go() }}
+          placeholder={parentId ? 'Add a checklist item…' : 'Add a task…'} disabled={busy}
+          className="flex-1 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
+        {!parentId && projectId && (
+          <button type="button" onClick={() => setForm(true)} disabled={busy}
+            title="Open the full form — subtasks, people, due date, files"
+            className="shrink-0 text-[11px] font-bold text-muted hover:text-ink inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 py-0.5
+                       opacity-0 group-hover/add:opacity-100 focus:opacity-100 transition">
+            <SlidersHorizontal size={10} /> Details
+          </button>
+        )}
+      </div>
+      {form && projectId && (
+        <NewTaskModal section={section} sections={sections || []} roster={roster || []} busy={busy} projectId={projectId}
+          seed={v} onClose={() => setForm(false)} act={act} onOpenTask={onOpenTask} onDone={() => { setV(''); setForm(false) }} />
+      )}
+    </>
+  )
+}
+
+// Defined out here, NOT inside NewTaskModal. A component declared in another component's body is
+// a new type on every render, so React throws away the subtree and rebuilds it — which means the
+// description box loses focus after each character typed into it.
+function Row({ label, children, hint }: { label: string; children: any; hint?: string }) {
+  return (
+    <div className="grid grid-cols-[104px_1fr] gap-x-3 gap-y-1 items-start">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">{label}</span>
+      <div className="min-w-0">
+        {children}
+        {hint && <p className="text-[11px] text-muted mt-1">{hint}</p>}
+      </div>
     </div>
+  )
+}
+
+function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, seed, projectId, onOpenTask }: {
+  section: string; sections: string[]; roster: Roster; busy: boolean; projectId: string
+  act: (b: any) => Promise<any>; onClose: () => void; onDone: () => void; seed?: string
+  onOpenTask?: (id: string) => void
+}) {
+  const [title, setTitle] = useState(seed || '')
+  const [description, setDescription] = useState('')
+  const [sec, setSec] = useState(section || '')
+  const [due, setDue] = useState('')
+  const [priority, setPriority] = useState('normal')
+  const [assignees, setAssignees] = useState<string[]>([])
+  const [collaborators, setCollaborators] = useState<string[]>([])
+  // The checklist is edited as lines of text, not as a list of inputs with add buttons. Typing
+  // five subtasks should be five lines and four Returns.
+  const [subtasks, setSubtasks] = useState('')
+  const [files, setFiles] = useState<File[]>([])
+  const [homes, setHomes] = useState<string[]>([])
+  const [boards, setBoards] = useState<{ id: string; title: string; kind?: string }[]>([])
+  const [err, setErr] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const titleRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => { titleRef.current?.focus() }, [])
+  // CONNECTED BOARDS (Jon: "projects can be connected to other boards"). Only boards this person
+  // can edit are offered — the server checks again, but offering one you cannot use is a lie.
+  useEffect(() => {
+    fetch('/api/projects?archived=0', { cache: 'no-store' }).then(r => r.json())
+      .then(j => setBoards(((j?.projects || []) as any[]).filter(x => String(x.id) !== projectId).map(x => ({ id: String(x.id), title: String(x.title), kind: x.kind }))))
+      .catch(() => {})
+  }, [projectId])
+
+  const lines = subtasks.split('\n').map(x => x.trim()).filter(Boolean)
+  const submit = async () => {
+    const t = title.trim()
+    if (!t) { setErr('Give it a title.'); titleRef.current?.focus(); return }
+    setSaving(true); setErr(null)
+    const r = await act({
+      action: 'taskAdd', title: t, description: description.trim() || undefined,
+      section: sec || undefined, due_on: due || undefined, priority,
+      assignees, collaborators, subtasks: lines, homes,
+    })
+    if (!r) { setSaving(false); return }        // act() already showed why
+    // Files go up after the task exists, because they need its id. This is the one thing that
+    // cannot be part of the single write, so it is reported separately rather than pretended away.
+    if (files.length && r.taskId) {
+      const fd = new FormData()
+      for (const f of files) fd.append('file', f)
+      fd.append('taskId', r.taskId)
+      const up = await fetch('/api/projects/' + projectId + '/upload', { method: 'POST', body: fd })
+      if (!up.ok) { setErr('The task saved, but the files did not upload. Add them from the task.'); setSaving(false); return }
+    }
+    setSaving(false)
+    if (r.partial) { setErr(r.partial); return } // stay open so nothing typed is lost
+    onDone()
+    if (r.taskId && onOpenTask) onOpenTask(r.taskId)
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[60] bg-ink/35" onClick={() => !saving && onClose()} />
+      <div className="fixed z-[61] inset-x-0 bottom-0 sm:inset-0 sm:grid sm:place-items-center sm:p-4 pointer-events-none">
+        <div className="pointer-events-auto w-full sm:max-w-[620px] max-h-[92vh] sm:max-h-[86vh] bg-white border border-line
+                        rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+          onKeyDown={e => {
+            if (e.key === 'Escape' && !saving) onClose()
+            // Cmd/Ctrl+Enter saves from anywhere in the form, including the description box.
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit() }
+          }}>
+          <div className="px-4 py-3 border-b border-line flex items-center gap-2">
+            <Plus size={15} className="text-muted" />
+            <span className="text-[14px] font-bold text-ink flex-1">New task</span>
+            <button onClick={onClose} disabled={saving} className="text-muted hover:text-ink"><X size={16} /></button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-3.5 space-y-3.5">
+            <input ref={titleRef} value={title} onChange={e => setTitle(e.target.value)} placeholder="What needs doing?"
+              className="w-full text-[16px] font-bold text-ink bg-transparent px-1 -mx-1 py-1 rounded focus:outline-none focus:bg-app/60 placeholder:text-muted/60
+                         placeholder:font-semibold" />
+
+            <Row label="Assignees" hint={assignees.length ? undefined : 'Who has to do it. Leave empty and it sits on the board unowned.'}>
+              <PeoplePicker value={assignees} onChange={setAssignees} roster={roster} placeholder="Add a person…" />
+            </Row>
+
+            <Row label="Collaborators" hint="On the task, but not who you chase — reviewers, whoever is supplying the quote. It lands on their My Tasks too, labelled.">
+              <PeoplePicker value={collaborators} onChange={setCollaborators} roster={roster} tone="soft" placeholder="Anyone else who should see it…" />
+            </Row>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Row label="Due">
+                <input type="date" value={due} onChange={e => setDue(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]" />
+              </Row>
+              <Row label="Priority">
+                <select value={priority} onChange={e => setPriority(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
+                  {['low', 'normal', 'high', 'urgent'].map(x => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
+                </select>
+              </Row>
+            </div>
+
+            <Row label="Section">
+              <select value={sec} onChange={e => setSec(e.target.value)}
+                className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
+                <option value="">No section</option>
+                {sections.filter(Boolean).map(x => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </Row>
+
+            <Row label="Description">
+              <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
+                placeholder="What this is, what done looks like, anything the person doing it needs to know."
+                className="w-full rounded-lg border border-line bg-white px-2.5 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-ink" />
+            </Row>
+
+            <Row label="Subtasks" hint={lines.length ? lines.length + ' subtask' + (lines.length === 1 ? '' : 's') : 'One per line.'}>
+              <textarea value={subtasks} onChange={e => setSubtasks(e.target.value)} rows={3}
+                placeholder={'Order the parts\nBook the plumber\nWalk it with the owner'}
+                className="w-full rounded-lg border border-line bg-white px-2.5 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-ink" />
+            </Row>
+
+            <Row label="Photos & files" hint={files.length ? files.map(f => f.name).join(', ') : 'Quotes, before photos, a floor plan.'}>
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-muted hover:text-ink cursor-pointer">
+                  <Paperclip size={12} /> Attach
+                  <input type="file" multiple className="hidden" onChange={e => setFiles(Array.from(e.target.files || []))} />
+                </label>
+                {files.length > 0 && (
+                  <button type="button" onClick={() => setFiles([])} className="text-[11.5px] text-muted hover:text-rose-600">Clear</button>
+                )}
+              </div>
+            </Row>
+
+            {boards.length > 0 && (
+              <Row label="Also on" hint="The same task, shown on another board too — not a copy. Finish it in one place and it is finished in both.">
+                <div className="flex flex-wrap gap-1.5">
+                  {boards.slice(0, 12).map(bd => {
+                    const on = homes.includes(bd.id)
+                    return (
+                      <button type="button" key={bd.id} onClick={() => setHomes(on ? homes.filter(x => x !== bd.id) : [...homes, bd.id])}
+                        className={'rounded-full border px-2.5 py-1 text-[11.5px] font-semibold ' +
+                          (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>
+                        {bd.title}
+                      </button>
+                    )
+                  })}
+                </div>
+              </Row>
+            )}
+
+            {err && <p className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-2">{err}</p>}
+          </div>
+
+          <div className="px-4 py-3 border-t border-line flex items-center gap-2 bg-app/40">
+            <span className="text-[11px] text-muted flex-1">⌘↵ to save</span>
+            <button onClick={onClose} disabled={saving} className="rounded-lg border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-muted hover:text-ink">Cancel</button>
+            <button onClick={submit} disabled={saving || busy || !title.trim()}
+              className="rounded-lg bg-brand-600 text-white px-3.5 py-1.5 text-[12.5px] font-bold hover:bg-brand-700 disabled:opacity-40 inline-flex items-center gap-1.5">
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Add task
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -698,19 +1003,13 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
   const feed = useMemo(() => p.notes.filter(n => n.task_id === task.id).slice().reverse(), [p.notes, task.id])
   const [title, setTitle] = useState(task.title)
   const [desc, setDesc] = useState(task.description || '')
-  const [who, setWho] = useState('')
   useEffect(() => { setTitle(task.title); setDesc(task.description || '') }, [task.id, task.title, task.description])
 
   const set = (patch: any) => act({ action: 'taskSet', taskId: task.id, ...patch })
   const assignees = task.assignees
-  const addPerson = (name: string) => {
-    const n = name.trim(); if (!n) return
-    set({ assignees: [...assignees.map(a => a.email || a.display), n] }); setWho('')
-  }
-  const dropPerson = (a: Person) => set({ assignees: assignees.filter(x => x.person_key !== a.person_key).map(x => x.email || x.display) })
-  const suggestions = who.trim().length >= 1
-    ? roster.filter(r => r.display.toLowerCase().includes(who.toLowerCase()) && !assignees.some(a => a.person_key === (r.email || r.display).toLowerCase() || a.display === r.display)).slice(0, 6)
-    : []
+  // `collaborators` is empty on every task until migration 087 runs, which is the right answer
+  // rather than an error: before then nobody had been made one.
+  const collaborators = task.collaborators || []
   const late = task.status !== 'done' && !!task.due_on && task.due_on < today()
 
   return (
@@ -739,32 +1038,17 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
           <div className="grid grid-cols-[92px_1fr] gap-y-2.5 gap-x-3 items-start text-[13px]">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Assignees</span>
             <div>
-              <div className="flex flex-wrap gap-1.5 mb-1.5">
-                {assignees.map(a => (
-                  <span key={a.person_key} className="inline-flex items-center gap-1 rounded-full bg-app border border-line px-2 py-0.5 text-[12px]">
-                    {a.display}{!a.email && <span className="text-muted" title="No login — can be named, not notified">·</span>}
-                    {canEdit && <button onClick={() => dropPerson(a)} className="text-muted hover:text-rose-600"><X size={10} /></button>}
-                  </span>
-                ))}
-                {assignees.length === 0 && <span className="text-[12px] text-rose-600 font-semibold">Nobody yet</span>}
-              </div>
-              {canEdit && (
-                <div className="relative">
-                  <input value={who} onChange={e => setWho(e.target.value)} placeholder="Add a person…"
-                    onKeyDown={e => { if (e.key === 'Enter') addPerson(suggestions[0]?.email || suggestions[0]?.display || who) }}
-                    className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px]" />
-                  {suggestions.length > 0 && (
-                    <div className="absolute z-10 left-0 right-0 mt-1 rounded-lg border border-line bg-white shadow-lg overflow-hidden">
-                      {suggestions.map(r => (
-                        <button key={r.email || r.display} onClick={() => addPerson(r.email || r.display)}
-                          className="w-full text-left px-2.5 py-1.5 text-[12.5px] hover:bg-app flex items-center justify-between gap-2">
-                          <span>{r.display}</span>
-                          <span className="text-[10px] text-muted">{r.notifiable ? 'can be notified' : 'name only'}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              {assignees.length === 0 && <p className="text-[12px] text-rose-600 font-semibold mb-1.5">Nobody yet</p>}
+              <PeoplePicker value={assignees.map(a => a.email || a.display)} roster={roster} disabled={!canEdit}
+                onChange={next => set({ assignees: next })} placeholder="Add a person…" />
+            </div>
+
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Collaborators</span>
+            <div>
+              <PeoplePicker value={collaborators.map(a => a.email || a.display)} roster={roster} disabled={!canEdit} tone="soft"
+                onChange={next => set({ collaborators: next })} placeholder="Anyone else who should see it…" />
+              {collaborators.length === 0 && canEdit && (
+                <p className="text-[11px] text-muted mt-1">On the task but not on the hook. It still reaches their My Tasks.</p>
               )}
             </div>
 
@@ -799,6 +1083,11 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
 
           {/* what this task is about — the stay, the owner, the unit, the claim */}
           <TaskAttached task={task} p={p} canEdit={canEdit} busy={busy} act={act} />
+
+          {/* WHAT IT COST. On the task rather than only on the project, because "what did the water
+              heater cost" is a question about one task, and answering it from a project total is
+              arithmetic somebody has to do by hand. */}
+          <InvoicesPanel p={p} canEdit={canEdit} busy={busy} act={act} superadmin={superadmin} taskId={task.id} compact />
 
           {!task.parent_id && (
             <div>
@@ -1329,6 +1618,327 @@ function ActivityPanel({ p, me, nameOf, act, busy, onOpen, superadmin }: {
       </div>
       <div className="border-t border-line px-3 py-2">
         <Composer busy={busy} members={p.members} placeholder="Comment on the project… @ to mention" onSend={body => act({ action: 'comment', body })} />
+      </div>
+    </div>
+  )
+}
+
+// ── VENDORS AND INVOICES ──────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-15: "add invoices, pull from once you save a vendor, save that vendor, have their
+// phone number".
+//
+// The two are one flow on purpose. The first invoice from a plumber is also how that plumber gets
+// into the directory — you are already typing their name, so the form offers to keep it. Every
+// invoice after that is a pick from a list with the phone number attached.
+
+const dollars = (cents: number | null | undefined) => {
+  if (cents == null) return '—'
+  const c = Math.round(Number(cents))
+  // Whole dollars read cleaner without ".00"; anything else shows both digits, because "$1,234.5"
+  // is not how money is written.
+  const frac = c % 100 === 0 ? 0 : 2
+  return '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac })
+}
+
+const INV_CLS: Record<string, string> = {
+  quoted:   'bg-app text-muted ring-line',
+  received: 'bg-amber-50 text-amber-800 ring-amber-200',
+  approved: 'bg-sky-50 text-sky-800 ring-sky-200',
+  paid:     'bg-emerald-50 text-emerald-800 ring-emerald-200',
+  void:     'bg-app text-faint ring-line',
+}
+
+type VendorHit = VendorRecord & { coi?: { tone: 'bad' | 'warn' | 'ok'; label: string } | null }
+
+function useVendors() {
+  const [vendors, setVendors] = useState<VendorHit[]>([])
+  const load = useCallback(() => {
+    fetch('/api/projects/vendors', { cache: 'no-store' }).then(r => r.json())
+      .then(j => setVendors((j?.vendors || []) as VendorHit[])).catch(() => {})
+  }, [])
+  useEffect(() => { load() }, [load])
+  return { vendors, reload: load, setVendors }
+}
+
+// Pick a saved vendor, or type a new one and keep it. The "save this vendor" tick is ON by
+// default: a vendor typed once and not kept is a vendor typed again next month.
+function VendorPicker({ value, onChange, vendors, disabled }: {
+  value: { key: string | null; name: string; contact: string; phone: string; email: string; trade: string; save: boolean }
+  onChange: (v: any) => void
+  vendors: VendorHit[]; disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const chosen = value.key ? vendors.find(v => v.key === value.key) || null : null
+  const q = value.name.trim().toLowerCase()
+  const hits = q && !chosen
+    ? vendors.filter(v => v.label.toLowerCase().includes(q) || String(v.trade || '').toLowerCase().includes(q) || String(v.contact_name || '').toLowerCase().includes(q)).slice(0, 6)
+    : vendors.slice(0, 8)
+
+  if (chosen) {
+    return (
+      <div className="rounded-lg border border-line bg-app/50 px-2.5 py-2">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-bold text-ink truncate">{chosen.label}</p>
+            <p className="text-[11.5px] text-muted truncate">
+              {[chosen.trade, chosen.contact_name, chosen.phone].filter(Boolean).join(' · ') || 'No contact details saved'}
+            </p>
+            {chosen.coi && chosen.coi.tone !== 'ok' && (
+              <p className={'text-[11px] font-bold mt-0.5 ' + (chosen.coi.tone === 'bad' ? 'text-rose-700' : 'text-amber-700')}>{chosen.coi.label}</p>
+            )}
+          </div>
+          {!disabled && (
+            <button type="button" onClick={() => onChange({ ...value, key: null, name: '', contact: '', phone: '', email: '', trade: '' })}
+              className="text-muted hover:text-rose-600 shrink-0"><X size={12} /></button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="relative">
+        <input value={value.name} disabled={disabled}
+          onChange={e => { onChange({ ...value, name: e.target.value }); setOpen(true) }}
+          onFocus={() => setOpen(true)}
+          placeholder="Who billed us?"
+          className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] focus:outline-none focus:border-ink" />
+        {open && hits.length > 0 && (
+          <div className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-line bg-white shadow-lg overflow-hidden max-h-56 overflow-y-auto">
+            {hits.map(v => (
+              <button type="button" key={v.key} onClick={() => { onChange({ ...value, key: v.key, name: v.label, save: false }); setOpen(false) }}
+                className="w-full text-left px-2.5 py-1.5 hover:bg-app">
+                <span className="block text-[12.5px] text-ink font-semibold">{v.label}</span>
+                <span className="block text-[11px] text-muted truncate">{[v.trade, v.phone].filter(Boolean).join(' · ') || 'no details saved'}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* A NAME NOT IN THE LIST. Rather than making somebody leave and go to a settings page, the
+          details come with the invoice, and the vendor exists from then on. */}
+      {value.name.trim() && !chosen && !disabled && (
+        <div className="mt-1.5 rounded-lg border border-dashed border-line bg-app/40 p-2 space-y-1.5">
+          <label className="flex items-center gap-1.5 text-[11.5px] font-semibold text-ink">
+            <input type="checkbox" checked={value.save} onChange={e => onChange({ ...value, save: e.target.checked })} />
+            Save “{value.name.trim()}” so you can pick them next time
+          </label>
+          {value.save && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <input value={value.contact} onChange={e => onChange({ ...value, contact: e.target.value })} placeholder="Contact name"
+                className="rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
+              <input value={value.phone} onChange={e => onChange({ ...value, phone: e.target.value })} placeholder="Phone" inputMode="tel"
+                className="rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
+              <input value={value.email} onChange={e => onChange({ ...value, email: e.target.value })} placeholder="Email" inputMode="email"
+                className="rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
+              <select value={value.trade} onChange={e => onChange({ ...value, trade: e.target.value })}
+                className="rounded-md border border-line bg-white px-2 py-1 text-[12px]">
+                <option value="">Trade…</option>
+                {VENDOR_TRADES.map(t => <option key={t} value={t}>{t[0].toUpperCase() + t.slice(1)}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const blankVendor = () => ({ key: null as string | null, name: '', contact: '', phone: '', email: '', trade: '', save: true })
+
+function AddInvoice({ taskId, act, busy, vendors, onSaved, onClose, files }: {
+  taskId?: string | null; act: (b: any) => Promise<any>; busy: boolean
+  vendors: VendorHit[]; onSaved: () => void; onClose: () => void; files: ProjectFile[]
+}) {
+  const [vendor, setVendor] = useState(blankVendor())
+  const [amount, setAmount] = useState('')
+  const [number, setNumber] = useState('')
+  const [status, setStatus] = useState('received')
+  const [issued, setIssued] = useState('')
+  const [dueOn, setDueOn] = useState('')
+  const [photoId, setPhotoId] = useState('')
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const submit = async () => {
+    if (!amount.trim()) return
+    setSaving(true)
+    const r = await act({
+      action: 'invoiceAdd', taskId: taskId || undefined,
+      vendorKey: vendor.key || undefined, vendorName: vendor.name.trim() || undefined,
+      saveVendor: !vendor.key && vendor.save && !!vendor.name.trim(),
+      vendorContact: vendor.contact, vendorPhone: vendor.phone, vendorEmail: vendor.email, vendorTrade: vendor.trade,
+      amount, number, status, issued_on: issued, due_on: dueOn, note, photoId: photoId || undefined,
+    })
+    setSaving(false)
+    if (r) { onSaved(); onClose() }
+  }
+
+  return (
+    <div className="rounded-xl border border-line bg-app/40 p-2.5 space-y-2">
+      <VendorPicker value={vendor} onChange={setVendor} vendors={vendors} />
+      <div className="grid grid-cols-2 gap-2">
+        <input value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount" inputMode="decimal"
+          className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] font-semibold" />
+        <input value={number} onChange={e => setNumber(e.target.value)} placeholder="Invoice #"
+          className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px]" />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <select value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
+          {INVOICE_STATUSES.filter(x => x !== 'void').map(x => <option key={x} value={x}>{INVOICE_STATUS_LABEL[x]}</option>)}
+        </select>
+        <label className="inline-flex items-center gap-1.5 text-[11.5px] text-muted">
+          <span className="shrink-0">Due</span>
+          <input type="date" value={dueOn} onChange={e => setDueOn(e.target.value)} className="flex-1 min-w-0 rounded-lg border border-line bg-white px-2 py-1.5 text-[12px]" />
+        </label>
+      </div>
+      {/* The paperwork. Anything already uploaded to this project can be pointed at, so a quote
+          attached to the task last week becomes the invoice's file without uploading it twice. */}
+      {files.length > 0 && (
+        <select value={photoId} onChange={e => setPhotoId(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
+          <option value="">Attach a file already on this project…</option>
+          {files.slice(0, 40).map(f => <option key={f.id} value={f.id}>{f.name || 'file'}</option>)}
+        </select>
+      )}
+      <input value={note} onChange={e => setNote(e.target.value)} placeholder="What it was for"
+        className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px]" />
+      <div className="flex items-center gap-2">
+        <button onClick={onClose} className="text-[12px] font-semibold text-muted hover:text-ink">Cancel</button>
+        <button onClick={submit} disabled={saving || busy || !amount.trim()}
+          className="ml-auto rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-bold disabled:opacity-40 inline-flex items-center gap-1.5">
+          {saving ? <Loader2 size={12} className="animate-spin" /> : null} Log invoice
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function InvoiceRow({ inv, canEdit, busy, act, superadmin }: {
+  inv: Invoice; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any>; superadmin: boolean
+}) {
+  const waiting = inv.needs_approval && !inv.approved_at && inv.status !== 'void'
+  return (
+    <div className={'px-2.5 py-2 ' + (waiting ? 'bg-violet-50/60' : '')}>
+      <div className="flex items-baseline gap-2 min-w-0">
+        <span className="text-[12.5px] font-bold text-ink tabular-nums shrink-0">{dollars(inv.amount_cents)}</span>
+        <span className="text-[12px] text-muted truncate flex-1 min-w-0">{inv.vendor_name || 'No vendor'}</span>
+        <span className={'shrink-0 text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ring-1 ' + (INV_CLS[inv.status] || INV_CLS.received)}>
+          {INVOICE_STATUS_LABEL[inv.status]}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap mt-1 text-[11px] text-muted">
+        {inv.number && <span className="tabular-nums">#{inv.number}</span>}
+        {inv.due_on && inv.status !== 'paid' && <span className="tabular-nums">due {nice(inv.due_on)}</span>}
+        {inv.paid_on && <span className="tabular-nums">paid {nice(inv.paid_on)}</span>}
+        {inv.note && <span className="truncate max-w-[160px]">{inv.note}</span>}
+        {inv.file && <a href={inv.file.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 font-semibold hover:text-ink"><Paperclip size={10} />{inv.file.name || 'file'}</a>}
+      </div>
+      {waiting && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <span className="text-[11px] font-bold text-violet-700">Waiting on approval</span>
+          {canEdit && (
+            <button onClick={() => act({ action: 'invoiceApprove', invoiceId: inv.id })} disabled={busy}
+              className="rounded-md bg-violet-600 text-white px-2 py-0.5 text-[11px] font-bold hover:bg-violet-700 disabled:opacity-40">Approve</button>
+          )}
+        </div>
+      )}
+      {canEdit && !waiting && (
+        <div className="mt-1 flex items-center gap-2">
+          {inv.status === 'received' && <button onClick={() => act({ action: 'invoiceApprove', invoiceId: inv.id })} disabled={busy} className="text-[11px] font-semibold text-sky-700 hover:underline">Approve</button>}
+          {inv.status === 'approved' && <button onClick={() => act({ action: 'invoiceSet', invoiceId: inv.id, status: 'paid' })} disabled={busy} className="text-[11px] font-semibold text-emerald-700 hover:underline">Mark paid</button>}
+          {inv.status !== 'void' && inv.status !== 'paid' && <button onClick={() => act({ action: 'invoiceSet', invoiceId: inv.id, status: 'void' })} disabled={busy} className="text-[11px] text-muted hover:text-ink">Void</button>}
+          {(inv.status !== 'paid' || superadmin) && (
+            <button onClick={() => { if (confirm('Delete this invoice? The history keeps the event but the line goes.')) act({ action: 'invoiceDelete', invoiceId: inv.id }) }}
+              disabled={busy} className="ml-auto text-muted hover:text-rose-600"><Trash2 size={11} /></button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function InvoicesPanel({ p, canEdit, busy, act, superadmin, taskId, compact }: {
+  p: ProjectFull; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any>; superadmin: boolean
+  /** Set on the task drawer: only this task's invoices, and a new one lands on the task. */
+  taskId?: string; compact?: boolean
+}) {
+  const { vendors, reload } = useVendors()
+  const [adding, setAdding] = useState(false)
+  const all = p.invoices || []
+  const list = taskId ? all.filter(i => i.task_id === taskId) : all
+  const t = useMemo(() => invoiceTotals(list), [list])
+  const budget = (p as any).budget_cents as number | null
+  const otherSpend = Number((p as any).spent_cents || 0)
+  const files = useMemo(() => p.photos.filter(f => !taskId || f.task_id === taskId), [p.photos, taskId])
+
+  // Nothing logged and nothing to log: on a task, stay out of the way entirely.
+  if (compact && !list.length && !canEdit) return null
+
+  return (
+    <div className={compact ? '' : 'rounded-2xl border border-line bg-white overflow-hidden'}>
+      <div className={compact ? 'flex items-center gap-2 mb-1' : 'px-3 py-2 bg-app/60 border-b border-line flex items-center gap-2'}>
+        <FileText size={13} className="text-muted" />
+        <span className={compact ? 'text-[11px] font-semibold uppercase tracking-wider text-muted flex-1' : 'text-[12.5px] font-bold text-ink flex-1'}>
+          {compact ? 'Invoices' : 'Money'}
+        </span>
+        {t.awaiting > 0 && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-600 text-white">{t.awaiting} to approve</span>}
+        {canEdit && !adding && (
+          <button onClick={() => setAdding(true)} className="text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><Plus size={11} /> Invoice</button>
+        )}
+      </div>
+
+      <div className={compact ? 'space-y-1.5' : 'divide-y divide-line'}>
+        {/* THE THREE NUMBERS, only on the project. Budget is what was agreed, invoiced is what
+            vendors have billed and somebody approved, and "other" is the figure typed straight
+            into the project before invoices existed — shown rather than quietly folded in, because
+            the two were entered by different people meaning different things. */}
+        {!compact && (
+          <div className="px-3 py-2.5 grid grid-cols-3 gap-2 text-center">
+            {[['Budget', budget == null ? '—' : dollars(budget)], ['Invoiced', dollars(t.committed)], ['Other spend', otherSpend ? dollars(otherSpend) : '—']].map(([label, val]) => (
+              <div key={label} className="min-w-0">
+                <p className="text-[9.5px] font-bold uppercase tracking-wider text-muted truncate">{label}</p>
+                <p className="text-[14px] font-bold text-ink tabular-nums truncate">{val}</p>
+              </div>
+            ))}
+            {budget != null && budget > 0 && (
+              <div className="col-span-3">
+                <div className="h-1.5 rounded-full bg-app overflow-hidden">
+                  <div className={'h-full ' + ((t.committed + otherSpend) > budget ? 'bg-rose-500' : 'bg-emerald-500')}
+                    style={{ width: Math.min(100, Math.round(((t.committed + otherSpend) / budget) * 100)) + '%' }} />
+                </div>
+                <p className={'text-[11px] mt-1 ' + ((t.committed + otherSpend) > budget ? 'text-rose-700 font-semibold' : 'text-muted')}>
+                  {(t.committed + otherSpend) > budget
+                    ? dollars((t.committed + otherSpend) - budget) + ' over budget'
+                    : dollars(budget - (t.committed + otherSpend)) + ' left'}
+                  {t.quoted > 0 ? ` · ${dollars(t.quoted)} quoted, not committed` : ''}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {adding && (
+          <div className={compact ? '' : 'px-3 py-2'}>
+            <AddInvoice taskId={taskId} act={act} busy={busy} vendors={vendors} files={files}
+              onSaved={reload} onClose={() => setAdding(false)} />
+          </div>
+        )}
+
+        {list.length === 0 && !adding && (
+          <p className={(compact ? 'text-[11.5px] text-muted' : 'px-3 py-3 text-[12px] text-muted')}>
+            {canEdit ? 'No invoices yet. Log one when a vendor bills you.' : 'No invoices yet.'}
+          </p>
+        )}
+        {list.map(inv => (
+          <div key={inv.id} className={compact ? 'rounded-lg border border-line bg-white' : ''}>
+            <InvoiceRow inv={inv} canEdit={canEdit} busy={busy} act={act} superadmin={superadmin} />
+          </div>
+        ))}
+        {list.length > 0 && t.unpaid > 0 && (
+          <p className={(compact ? 'text-[11px] text-muted' : 'px-3 py-2 text-[11.5px] text-muted')}>{dollars(t.unpaid)} approved and not yet paid.</p>
+        )}
       </div>
     </div>
   )
