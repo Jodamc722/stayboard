@@ -22,10 +22,11 @@ import {
   Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity, Repeat, SlidersHorizontal, LayoutTemplate, LayoutList, Columns3, ArrowUp, ArrowDown, MoreHorizontal, Save,
   CalendarRange, ChevronLeft, GripVertical, ShieldAlert, Bug, Wrench, ExternalLink, ArrowRightCircle,
+  Truck, Megaphone, Clock, BadgeCheck, Copy,
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
-import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
+import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -233,6 +234,9 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
             of the screen and the page scrolled horizontally to reach them. Capping the track's
             minimum is what lets `overflow-x-auto` below actually scroll instead of overflowing. */}
         <div className="space-y-3 min-w-0">
+          {/* WHO IS AT OUR BUILDINGS THIS WEEK. Renders only when vendor visits are actually
+              booked, so every other kind of board is untouched by it. */}
+          <ArrivalsStrip p={p} tasks={p.tasks} busy={busy} act={act} onOpen={setOpenTask} canEdit={canEdit} />
           {view === 'calendar' ? (
             <CalendarView tasks={p.tasks} onOpen={setOpenTask} accent={accent} hideDone={settings.hideDone} />
           ) : view === 'board' ? (
@@ -400,6 +404,7 @@ function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts
                   </button>
                   <span className={'text-[12.5px] leading-snug flex-1 ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
                 </div>
+                {(t.vendor_name || t.visit_on) && <div className="mt-1 pl-6"><VisitLine t={t} compact /></div>}
                 {(t.assignees.length > 0 || t.due_on || t.subtasks.length > 0 || c) && (
                   <div className="mt-1.5 pl-6 flex items-center gap-2 flex-wrap text-[10.5px] text-muted">
                     {t.assignees.length > 0 && <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-brand-50 text-brand-700 text-[9px] font-bold inline-flex items-center justify-center">{t.assignees[0].display.slice(0, 1).toUpperCase()}</span><span className="truncate max-w-[110px]">{t.assignees.map(a => first(a.display)).join(', ')}</span></span>}
@@ -679,6 +684,9 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, s
         {t.priority === 'high' && <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">High</span>}
         {t.subtasks.length > 0 && <span className="text-[11px] text-muted tabular-nums shrink-0">{t.subtasks.filter(s => s.status === 'done').length}/{t.subtasks.length}</span>}
       </div>
+      {(t.vendor_name || t.visit_on) && (
+        <div className="px-3 pb-1.5" style={{ paddingLeft: 12 + depth * 22 + 26 }}><VisitLine t={t} /></div>
+      )}
       {t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} dragId={dragId} setDragId={setDragId} onMove={onMove} />)}
     </>
   )
@@ -828,6 +836,13 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
   // The checklist is edited as lines of text, not as a list of inputs with add buttons. Typing
   // five subtasks should be five lines and four Returns.
   const [subtasks, setSubtasks] = useState('')
+  // VENDOR, ON THE CREATE FORM. Jon's point is that the team should be able to say "our crew can't
+  // do this" at the moment they write it down, not after opening the task again.
+  const { vendors } = useVendors()
+  const [vendorKey, setVendorKey] = useState('')
+  const [visitOn, setVisitOn] = useState('')
+  const [visitWindow, setVisitWindow] = useState('')
+  const [estMinutes, setEstMinutes] = useState<number | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [homes, setHomes] = useState<string[]>([])
   const [boards, setBoards] = useState<{ id: string; title: string; kind?: string }[]>([])
@@ -853,6 +868,10 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
       action: 'taskAdd', title: t, description: description.trim() || undefined,
       section: sec || undefined, due_on: due || undefined, priority,
       assignees, collaborators, subtasks: lines, homes,
+      vendorKey: vendorKey || undefined,
+      vendorName: vendorKey ? (vendors.find(v => v.key === vendorKey)?.label || undefined) : undefined,
+      visit_on: visitOn || undefined, visit_window: visitWindow || undefined,
+      est_minutes: estMinutes ?? undefined,
     })
     if (!r) { setSaving(false); return }        // act() already showed why
     // Files go up after the task exists, because they need its id. This is the one thing that
@@ -919,6 +938,44 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
                 <option value="">No section</option>
                 {sections.filter(Boolean).map(x => <option key={x} value={x}>{x}</option>)}
               </select>
+            </Row>
+
+            {/* NEEDS A VENDOR. Collapsed to one line until it is used, so a board that never
+                touches vendors is not made heavier by a field it will never fill in. */}
+            <Row label="Vendor" hint={vendorKey ? 'Our team cannot close this one — the vendor is doing it.' : 'Only if our own team cannot do this job.'}>
+              <div className="space-y-2">
+                <select value={vendorKey} onChange={e => setVendorKey(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
+                  <option value="">Our team is doing it</option>
+                  {vendors.map(v => (
+                    <option key={v.key} value={v.key}>{v.label}{v.trade ? ' — ' + v.trade : ''}</option>
+                  ))}
+                </select>
+                {vendorKey && (
+                  <div className="grid grid-cols-[1fr_1fr] gap-2">
+                    <label className="block">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-0.5">Coming out</span>
+                      <input type="date" value={visitOn} onChange={e => setVisitOn(e.target.value)}
+                        className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]" />
+                    </label>
+                    <label className="block">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-0.5">Window</span>
+                      <input value={visitWindow} onChange={e => setVisitWindow(e.target.value)} placeholder="9–11am"
+                        className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]" />
+                    </label>
+                    <div className="col-span-2 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">Time on site</span>
+                      {[30, 60, 120, 240, 480].map(m => (
+                        <button type="button" key={m} onClick={() => setEstMinutes(estMinutes === m ? null : m)}
+                          className={'rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ' +
+                            (estMinutes === m ? 'bg-ink text-white border-ink' : 'border-line bg-white text-muted hover:text-ink')}>
+                          {estLabel(m)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </Row>
 
             <Row label="Description">
@@ -1013,6 +1070,7 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
   // `collaborators` is empty on every task until migration 087 runs, which is the right answer
   // rather than an error: before then nobody had been made one.
   const collaborators = task.collaborators || []
+  const { vendors: drawerVendors } = useVendors()
   const late = task.status !== 'done' && !!task.due_on && task.due_on < today()
 
   return (
@@ -1086,6 +1144,10 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
 
           {/* what this task is about — the stay, the owner, the unit, the claim */}
           <TaskAttached task={task} p={p} canEdit={canEdit} busy={busy} act={act} />
+
+          {/* WHO IS COMING. Above the money on purpose: the team's first question about a vendor
+              job is when somebody is turning up, not what it costs. */}
+          <VendorBox task={task} canEdit={canEdit} busy={busy} act={act} vendors={drawerVendors} />
 
           {/* WHAT IT COST. On the task rather than only on the project, because "what did the water
               heater cost" is a question about one task, and answering it from a project total is
@@ -1626,6 +1688,231 @@ function ActivityPanel({ p, me, nameOf, act, busy, onOpen, superadmin }: {
   )
 }
 
+// ── THE VENDOR JOB ────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-15: vendor work is "work that the vendor is required for, so that our team can just
+// know that there's certain work that our team can't complete that we need a vendor to fix."
+//
+// Everything below answers three questions and nothing else: who is coming, when, and does the
+// team know. The cost is the invoice panel's job and lives next to it, not inside it.
+
+const VISIT_CLS: Record<string, string> = {
+  today:  'bg-emerald-600 text-white',
+  soon:   'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
+  later:  'bg-app text-muted ring-1 ring-line',
+  missed: 'bg-rose-600 text-white',
+  done:   'bg-app text-faint ring-1 ring-line',
+}
+
+/** The one-line "who is coming and when", used on the card and at the top of the drawer. */
+function VisitLine({ t, compact }: { t: Task; compact?: boolean }) {
+  const v = visitState(t.visit_on, t.status, today())
+  if (!t.vendor_name && !v) return null
+  const mins = estLabel(t.est_minutes)
+  return (
+    <div className={'flex items-center gap-1.5 flex-wrap min-w-0 ' + (compact ? 'text-[10.5px]' : 'text-[11.5px]')}>
+      {t.vendor_name && (
+        <span className="inline-flex items-center gap-1 font-semibold text-ink min-w-0">
+          <Truck size={compact ? 10 : 11} className="text-muted shrink-0" />
+          <span className="truncate max-w-[140px]">{t.vendor_name}</span>
+        </span>
+      )}
+      {v && <span className={'shrink-0 font-bold px-1.5 py-0.5 rounded ' + VISIT_CLS[v.tone]}>{v.label}</span>}
+      {t.visit_window && <span className="text-muted shrink-0">{t.visit_window}</span>}
+      {mins && <span className="text-muted shrink-0 inline-flex items-center gap-0.5"><Clock size={9} />{mins}</span>}
+      {/* The team not knowing is a state worth seeing from the board, because the cost of missing
+          it is a vendor standing at a door nobody opens. */}
+      {needsTelling(t) && (
+        <span className="shrink-0 font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 ring-1 ring-amber-200 inline-flex items-center gap-0.5">
+          <Megaphone size={9} /> Team not told
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The arrivals strip at the top of a vendor board.
+ *
+ * This is the board's whole reason for existing in one row: who is at our buildings this week, and
+ * has anybody been told. It only renders when there is something to show, so a board with no
+ * scheduled visits does not carry an empty header explaining that it is empty.
+ */
+function ArrivalsStrip({ p, tasks, busy, act, onOpen, canEdit }: {
+  p: ProjectFull; tasks: Task[]; busy: boolean; act: (b: any) => Promise<any>; onOpen: (id: string) => void; canEdit: boolean
+}) {
+  const flat = useMemo(() => {
+    const out: Task[] = []
+    const walk = (list: Task[]) => { for (const t of list) { out.push(t); if (t.subtasks?.length) walk(t.subtasks) } }
+    walk(tasks); return out
+  }, [tasks])
+  const soon = useMemo(() => upcomingVisits(flat, today(), 14), [flat])
+  const untold = soon.filter(needsTelling).length
+  if (!soon.length) return null
+
+  return (
+    <div className="rounded-2xl border border-line bg-white overflow-hidden">
+      <div className="px-3 py-2 bg-app/60 border-b border-line flex items-center gap-2">
+        <Truck size={13} className="text-muted" />
+        <span className="text-[12.5px] font-bold text-ink flex-1">Coming out</span>
+        {untold > 0 && (
+          <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500 text-white">
+            {untold} not announced
+          </span>
+        )}
+        <span className="text-[11px] text-muted tabular-nums">next 14 days</span>
+      </div>
+      <div className="divide-y divide-line">
+        {soon.slice(0, 8).map(t => {
+          const v = visitState(t.visit_on, t.status, today())!
+          return (
+            <div key={t.id} className="px-3 py-2 flex items-center gap-2 min-w-0">
+              <button onClick={() => onOpen(t.id)} className="min-w-0 flex-1 text-left">
+                <p className="text-[12.5px] font-semibold text-ink truncate">{t.title}</p>
+                <VisitLine t={t} />
+              </button>
+              {canEdit && needsTelling(t) && (
+                <button onClick={() => act({ action: 'vendorNotifyTeam', taskId: t.id })} disabled={busy}
+                  title="Tell everyone on this board that they are coming"
+                  className="shrink-0 rounded-lg bg-ink text-white px-2 py-1 text-[11px] font-bold hover:bg-ink/85 disabled:opacity-40 inline-flex items-center gap-1">
+                  <Megaphone size={10} /> Tell the team
+                </button>
+              )}
+              {!needsTelling(t) && t.team_notified_for && (
+                <span className="shrink-0 text-[10.5px] text-emerald-700 font-semibold inline-flex items-center gap-0.5"><BadgeCheck size={11} /> Announced</span>
+              )}
+            </div>
+          )
+        })}
+        {soon.length > 8 && <p className="px-3 py-1.5 text-[11.5px] text-muted">and {soon.length - 8} more.</p>}
+      </div>
+    </div>
+  )
+}
+
+/** Who is coming, when, how long, and does it repeat — the whole vendor block in the drawer. */
+function VendorBox({ task, canEdit, busy, act, vendors }: {
+  task: Task; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any>; vendors: VendorHit[]
+}) {
+  const set = (patch: any) => act({ action: 'taskSet', taskId: task.id, ...patch })
+  const [open, setOpen] = useState(false)
+  const chosen = task.vendor_key ? vendors.find(v => v.key === task.vendor_key) : null
+  const v = visitState(task.visit_on, task.status, today())
+  const r = task.recurs
+
+  return (
+    <div className="rounded-lg border border-line bg-app/40 p-2.5 space-y-2">
+      <div className="flex items-center gap-1.5">
+        <Truck size={12} className="text-muted" />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted flex-1">Vendor</span>
+        {v && <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded ' + VISIT_CLS[v.tone]}>{v.label}</span>}
+      </div>
+
+      {/* WHO */}
+      {task.vendor_name ? (
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-bold text-ink truncate">{task.vendor_name}</p>
+            {chosen && (
+              <p className="text-[11.5px] text-muted truncate">
+                {[chosen.trade, chosen.phone].filter(Boolean).join(' · ') || 'No contact details saved'}
+              </p>
+            )}
+            {chosen?.coi && chosen.coi.tone !== 'ok' && (
+              <p className={'text-[11px] font-bold ' + (chosen.coi.tone === 'bad' ? 'text-rose-700' : 'text-amber-700')}>{chosen.coi.label}</p>
+            )}
+          </div>
+          {canEdit && <button onClick={() => set({ vendorKey: null, vendorName: null })} disabled={busy} className="text-muted hover:text-rose-600 shrink-0"><X size={12} /></button>}
+        </div>
+      ) : canEdit ? (
+        <div className="relative">
+          <button onClick={() => setOpen(o => !o)} className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] text-left text-muted hover:text-ink">
+            Who is doing this?
+          </button>
+          {open && (
+            <div className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-line bg-white shadow-lg max-h-56 overflow-y-auto">
+              {vendors.length === 0 && <p className="px-2.5 py-2 text-[11.5px] text-muted">No vendors saved yet — log an invoice and you can save one as you go.</p>}
+              {vendors.map(x => (
+                <button key={x.key} onClick={() => { set({ vendorKey: x.key, vendorName: x.label }); setOpen(false) }}
+                  className="w-full text-left px-2.5 py-1.5 hover:bg-app">
+                  <span className="block text-[12.5px] font-semibold text-ink">{x.label}</span>
+                  <span className="block text-[11px] text-muted truncate">{[x.trade, x.phone].filter(Boolean).join(' · ') || 'no details saved'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : <p className="text-[12px] text-muted">No vendor picked yet.</p>}
+
+      {/* WHEN. visit_on is the day they arrive; the task's own due date stays what it always was —
+          when the work should be finished. On a two-day job those are different days. */}
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-0.5">Coming out</span>
+          <input type="date" value={task.visit_on || ''} disabled={!canEdit || busy}
+            onChange={e => set({ visit_on: e.target.value || null })}
+            className="w-full rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
+        </label>
+        <label className="block">
+          <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-0.5">Window</span>
+          <input defaultValue={task.visit_window || ''} disabled={!canEdit || busy} placeholder="9–11am"
+            onBlur={e => { if ((e.target.value || null) !== (task.visit_window || null)) set({ visit_window: e.target.value }) }}
+            className="w-full rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
+        </label>
+      </div>
+
+      <label className="block">
+        <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-0.5">Time on site</span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {[30, 60, 120, 240, 480].map(m => (
+            <button key={m} onClick={() => canEdit && set({ est_minutes: task.est_minutes === m ? null : m })} disabled={!canEdit || busy}
+              className={'rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ' +
+                (task.est_minutes === m ? 'bg-ink text-white border-ink' : 'border-line bg-white text-muted hover:text-ink')}>
+              {estLabel(m)}
+            </button>
+          ))}
+        </div>
+      </label>
+
+      {/* TELL THE TEAM */}
+      {task.visit_on && canEdit && (
+        needsTelling(task) ? (
+          <button onClick={() => act({ action: 'vendorNotifyTeam', taskId: task.id })} disabled={busy}
+            className="w-full rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-bold hover:bg-ink/85 disabled:opacity-40 inline-flex items-center justify-center gap-1.5">
+            <Megaphone size={12} /> Tell the team they are coming
+          </button>
+        ) : (
+          <p className="text-[11.5px] text-emerald-700 font-semibold inline-flex items-center gap-1">
+            <BadgeCheck size={12} /> Team told about {shortDate(task.team_notified_for)}
+          </p>
+        )
+      )}
+
+      {/* DOES IT REPEAT — pest monthly, pool weekly, fire once a year. */}
+      <div className="pt-1.5 border-t border-line">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Repeat size={11} className="text-muted" />
+          <span className="text-[11px] text-muted">{r ? describeRecurrence(r) : 'Does not repeat'}</span>
+          {canEdit && (
+            <select value={r?.every || ''} disabled={busy}
+              onChange={e => {
+                const every = e.target.value
+                if (!every) return set({ recurs: null })
+                const from = task.visit_on || today()
+                const d = new Date(from + 'T12:00:00Z')
+                set({ recurs: { every, day: d.getUTCDate(), weekday: d.getUTCDay(), month: d.getUTCMonth() + 1, from } })
+              }}
+              className="ml-auto rounded-md border border-line bg-white px-1.5 py-0.5 text-[11.5px]">
+              <option value="">One-off</option>
+              {(['week', '2weeks', 'month', 'quarter', 'year'] as const).map(x => <option key={x} value={x}>{RECUR_LABEL[x]}</option>)}
+            </select>
+          )}
+        </div>
+        {r && <p className="text-[11px] text-muted mt-1">The next visit is booked when you mark this one done — never before, so an unfinished visit cannot pile up.</p>}
+      </div>
+    </div>
+  )
+}
+
 // ── VENDORS AND INVOICES ──────────────────────────────────────────────────────────────────────
 // Jon, 2026-09-15: "add invoices, pull from once you save a vendor, save that vendor, have their
 // phone number".
@@ -1838,14 +2125,9 @@ function InvoiceRow({ inv, canEdit, busy, act, superadmin }: {
         {inv.note && <span className="truncate max-w-[160px]">{inv.note}</span>}
         {inv.file && <a href={inv.file.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 font-semibold hover:text-ink"><Paperclip size={10} />{inv.file.name || 'file'}</a>}
       </div>
-      {waiting && (
-        <div className="mt-1.5 flex items-center gap-2">
-          <span className="text-[11px] font-bold text-violet-700">Waiting on approval</span>
-          {canEdit && (
-            <button onClick={() => act({ action: 'invoiceApprove', invoiceId: inv.id })} disabled={busy}
-              className="rounded-md bg-violet-600 text-white px-2 py-0.5 text-[11px] font-bold hover:bg-violet-700 disabled:opacity-40">Approve</button>
-          )}
-        </div>
+      {waiting && <ApprovalRow inv={inv} canEdit={canEdit} busy={busy} act={act} />}
+      {inv.approved_at && inv.approval_note && (
+        <p className="mt-1 text-[11px] text-muted italic">“{inv.approval_note}” — {String(inv.approved_by || '').split('@')[0]}</p>
       )}
       {canEdit && !waiting && (
         <div className="mt-1 flex items-center gap-2">
@@ -1856,6 +2138,88 @@ function InvoiceRow({ inv, canEdit, busy, act, superadmin }: {
             <button onClick={() => { if (confirm('Delete this invoice? The history keeps the event but the line goes.')) act({ action: 'invoiceDelete', invoiceId: inv.id }) }}
               disabled={busy} className="ml-auto text-muted hover:text-rose-600"><Trash2 size={11} /></button>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Over the limit, so somebody has to say yes — and say it somewhere it can be found again.
+ *
+ * Jon, 2026-09-15: "If it's over 300, it must be approved by the owner/general manager, and we can
+ * put that in writing." Two halves, and both matter:
+ *
+ *   ASK    — produces the email text, naming the amount, the vendor, the unit and what it is for.
+ *            Nothing is sent from here: it is copied into whatever the owner actually reads. The
+ *            asking is stamped on the invoice, so "waiting on a reply" is a state the board knows.
+ *   RECORD — approving takes the words they replied with. A tick box loses "fine, but not before
+ *            the 3rd", which is exactly the part somebody asks about three months later.
+ */
+function ApprovalRow({ inv, canEdit, busy, act }: { inv: Invoice; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any> }) {
+  const [mode, setMode] = useState<null | 'ask' | 'approve'>(null)
+  const [to, setTo] = useState('')
+  const [note, setNote] = useState('')
+  const [mail, setMail] = useState<{ subject: string; body: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+  const asked = inv.approval_requested_at
+
+  const ask = async () => {
+    const r = await act({ action: 'invoiceRequestApproval', invoiceId: inv.id, to })
+    if (r?.email) setMail(r.email)
+  }
+  const copy = async () => {
+    if (!mail) return
+    try { await navigator.clipboard.writeText(mail.subject + '\n\n' + mail.body); setCopied(true); setTimeout(() => setCopied(false), 2000) } catch { /* the text is on screen either way */ }
+  }
+
+  return (
+    <div className="mt-1.5 rounded-lg bg-violet-50 border border-violet-200 px-2 py-1.5 space-y-1.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] font-bold text-violet-800">
+          {asked ? `Asked ${inv.approval_requested_to || 'the owner/GM'} — waiting` : 'Over the limit — needs the owner or GM'}
+        </span>
+        {canEdit && (
+          <div className="ml-auto flex items-center gap-1.5">
+            <button onClick={() => setMode(mode === 'ask' ? null : 'ask')} disabled={busy}
+              className="rounded-md border border-violet-300 bg-white px-2 py-0.5 text-[11px] font-bold text-violet-800 hover:bg-violet-100 disabled:opacity-40">
+              {asked ? 'Ask again' : 'Ask for approval'}
+            </button>
+            <button onClick={() => setMode(mode === 'approve' ? null : 'approve')} disabled={busy}
+              className="rounded-md bg-violet-600 text-white px-2 py-0.5 text-[11px] font-bold hover:bg-violet-700 disabled:opacity-40">
+              They approved
+            </button>
+          </div>
+        )}
+      </div>
+
+      {mode === 'ask' && (
+        <div className="space-y-1.5">
+          <input value={to} onChange={e => setTo(e.target.value)} placeholder="Who are you asking? (name or email)"
+            className="w-full rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
+          <button onClick={ask} disabled={busy} className="rounded-md bg-ink text-white px-2 py-1 text-[11.5px] font-bold disabled:opacity-40">
+            Write the request
+          </button>
+          {mail && (
+            <div className="rounded-md border border-line bg-white p-2">
+              <p className="text-[11px] font-bold text-ink">{mail.subject}</p>
+              <pre className="mt-1 text-[11px] text-ink/80 whitespace-pre-wrap font-sans leading-relaxed">{mail.body}</pre>
+              <button onClick={copy} className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold text-muted hover:text-ink">
+                <Copy size={10} /> {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === 'approve' && (
+        <div className="space-y-1.5">
+          <input value={note} onChange={e => setNote(e.target.value)} placeholder="What did they say? (kept on the record)"
+            className="w-full rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
+          <button onClick={() => act({ action: 'invoiceApprove', invoiceId: inv.id, note })} disabled={busy}
+            className="rounded-md bg-violet-600 text-white px-2 py-1 text-[11.5px] font-bold disabled:opacity-40">
+            Record the approval
+          </button>
         </div>
       )}
     </div>
