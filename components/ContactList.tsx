@@ -20,12 +20,12 @@ type Contact = {
   firstStay: string; lastStay: string; nextStay: string | null; inHouse: boolean
   units: string[]; buildings: string[]; markets: string[]
   lastUnit: string; lastBuilding: string | null
-  reviews: number; reviewAvg: number | null
+  reviews: number; reviewAvg: number | null; reviewLow: number | null; unhappy: boolean
   vip: boolean; tags: string[]
 }
 type Summary = {
   contacts: number; mailable: number; restricted: number; relay: number; noEmail: number; withPhone: number
-  repeat: number; everDirect: number
+  repeat: number; everDirect: number; unhappy: number; mailableAfterUnhappy: number
   channels: { label: string; count: number; mailable: number }[]
   buildings: { label: string; count: number }[]
 }
@@ -49,6 +49,7 @@ const SEGS = [
   { key: 'direct', label: 'Booked direct' },
   { key: 'repeat', label: 'Repeat' },
   { key: 'vip', label: 'VIP' },
+  { key: 'unhappy', label: 'Left a low rating' },
 ]
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
@@ -78,10 +79,11 @@ export function ContactList() {
   const [showMc, setShowMc] = useState(false)
   const [showRules, setShowRules] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh?: boolean) => {
     setBusy(true); setErr('')
     try {
-      const r = await fetch('/api/contacts?q=' + encodeURIComponent(q) + '&seg=' + seg + '&channel=' + encodeURIComponent(chan), { cache: 'no-store' })
+      const r = await fetch('/api/contacts?q=' + encodeURIComponent(q) + '&seg=' + seg + '&channel=' + encodeURIComponent(chan)
+        + (fresh ? '&fresh=1' : ''), { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.message || j?.error || 'Could not load the contacts.')
       setData(j)
@@ -109,8 +111,9 @@ export function ContactList() {
       {s ? (
         <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4">
           <Stat label="Contacts" value={s.contacts.toLocaleString()} sub={s.withPhone.toLocaleString() + ' with a phone number'} />
-          <Stat label="Can email" value={s.mailable.toLocaleString()} tone="text-emerald-700"
-            sub={s.contacts ? Math.round((s.mailable / s.contacts) * 100) + '% of the list' : ''} />
+          <Stat label="Will email" value={(s.mailableAfterUnhappy ?? s.mailable).toLocaleString()} tone="text-emerald-700"
+            sub={(s.unhappy ? s.unhappy.toLocaleString() + ' more held back for a low rating' : '')
+              || (s.contacts ? Math.round((s.mailable / s.contacts) * 100) + '% of the list' : '')} />
           <Stat label="Cannot email" value={(s.restricted + s.relay + s.noEmail).toLocaleString()} tone="text-amber-700"
             sub={[s.restricted ? s.restricted.toLocaleString() + ' channel-blocked' : '', s.relay ? s.relay.toLocaleString() + ' relay' : '', s.noEmail ? s.noEmail.toLocaleString() + ' no address' : ''].filter(Boolean).join(' · ')} />
           <Stat label="Repeat guests" value={s.repeat.toLocaleString()} sub={s.everDirect.toLocaleString() + ' have booked direct'} />
@@ -119,8 +122,20 @@ export function ContactList() {
 
       {/* WHO IS OFF LIMITS, AND WHY — said once, next to the number it explains. Two different
           reasons get two different sentences, because the fix is different for each. */}
-      {s && (s.relay > 0 || s.restricted > 0) ? (
+      {s && (s.relay > 0 || s.restricted > 0 || s.unhappy > 0) ? (
         <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-3 space-y-2">
+          {s.unhappy > 0 ? (
+            <div className="flex items-start gap-2.5">
+              <Star size={15} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="min-w-0 text-[12.5px] text-amber-900 leading-relaxed">
+                <span className="font-bold">{s.unhappy.toLocaleString()} left us three stars or fewer.</span>{' '}
+                They are never included in a push or in the default export. The test is their <b>lowest</b> rating, not
+                their average — a guest who loved three stays and gave us a 2 for the fourth is exactly the person a
+                cheerful come-back-and-stay email lands worst with. Winning them back is a phone call, not a campaign.{' '}
+                <button onClick={() => setSeg('unhappy')} className="underline font-semibold">See who</button>
+              </p>
+            </div>
+          ) : null}
           {s.restricted > 0 ? (
             <div className="flex items-start gap-2.5">
               <Ban size={15} className="text-amber-600 mt-0.5 shrink-0" />
@@ -174,7 +189,7 @@ export function ContactList() {
           <Send size={13} /> Mailchimp
           {mc?.connected ? <CheckCircle2 size={12} className="text-emerald-600" /> : null}
         </button>
-        <button onClick={load} disabled={busy} aria-label="Refresh"
+        <button onClick={() => load(true)} disabled={busy} aria-label="Refresh"
           className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink disabled:opacity-40">
           <RefreshCw size={13} className={busy ? 'animate-spin' : ''} />
         </button>
@@ -526,6 +541,7 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
                 out here, again in the API and again in the Mailchimp client — three gates, because one that gets
                 refactored away is how a blocked address ends up in a campaign. Each contact goes up with first name,
                 last name and phone, tagged with their booking channel, stay count, building, market, VIP and your own tags.
+                Guests who left us three stars or fewer are never included.
                 {seg ? <> The current filter <b>{SEGS.find(x => x.key === seg)?.label}</b> is applied.</> : null}
               </p>
               <p className="text-[12px] text-muted leading-relaxed mt-1.5">
@@ -589,8 +605,19 @@ function SyncReport({ r, dry }: { r: any; dry: boolean }) {
         {r.audienceTotal ? r.audienceTotal.toLocaleString() + ' already in the audience. ' : 'this segment. '}
         {r.skippedNotMailable ? r.skippedNotMailable.toLocaleString() + ' have no usable address. ' : ''}
         {r.skippedRestricted ? r.skippedRestricted.toLocaleString() + ' are held back by a channel rule. ' : ''}
+        {r.skippedUnhappy ? r.skippedUnhappy.toLocaleString() + ' left us three stars or fewer and are never mailed. ' : ''}
         {r.skippedDuplicate ? r.skippedDuplicate.toLocaleString() + ' were the same address twice. ' : ''}
       </p>
+
+      {r.tagsStale ? (
+        <p className="text-[11.5px] text-muted leading-relaxed">
+          {dry
+            ? r.tagsStale.toLocaleString() + ' existing contacts have tags that no longer match — a guest who has gone from one stay to five still reads "Stays: 1" in Mailchimp. Pushing fixes them.'
+            : r.tagsRefreshed.toLocaleString() + ' contacts had their tags corrected'
+              + (r.tagsDeferred ? ', ' + r.tagsDeferred.toLocaleString() + ' left for the next push' : '')
+              + '. Only tags this app generates are ever changed — anything you added in Mailchimp is left alone.'}
+        </p>
+      ) : null}
 
       {held ? (
         <p className="text-[11.5px] text-muted leading-relaxed">
