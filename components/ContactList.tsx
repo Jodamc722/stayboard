@@ -429,6 +429,9 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
   const [err, setErr] = useState('')
   const [result, setResult] = useState<any>(null)
   const [dry, setDry] = useState(true)
+  // Push arms before it fires. One press used to be the whole ceremony for writing thousands of
+  // people into somebody else's mailing list.
+  const [armed, setArmed] = useState(false)
 
   const call = async (body: any, tag: string) => {
     setBusy(tag); setErr(''); setMsg('')
@@ -550,17 +553,41 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
                 how many are genuinely new before anything is sent — and anyone who unsubscribed, hard-bounced, or was
                 archived out of the audience on purpose is left exactly where they are.
               </p>
-              <div className="flex gap-2 flex-wrap mt-2.5">
+              {/* NAME THE DESTINATION NEXT TO THE BUTTON THAT WRITES TO IT (Jon, 2026-09-15).
+                  The audience was picked days ago and printed at the top of the panel, twelve lines
+                  away from Push. That is not where a person looks when they are about to press it.
+                  Stay Hospitality's connected audience was "Homeowners" — one press from putting
+                  seven thousand GUESTS into the owners' list, which has no undo worth the name.
+                  So the destination is stated on the button itself, and the button arms first. */}
+              <p className="text-[12px] text-ink leading-relaxed mt-2.5">
+                Destination: <b>{mc.audienceName}</b>
+                <span className="text-muted"> — wrong list? Disconnect above and reconnect to pick another.</span>
+              </p>
+              <div className="flex gap-2 flex-wrap mt-2">
                 <button disabled={!!busy}
-                  onClick={async () => { const j = await call({ op: 'sync', seg, dryRun: true }, 'dry'); if (j) { setResult(j.result); setDry(true); setMsg('Checked the audience — nothing was sent.') } }}
+                  onClick={async () => { setArmed(false); const j = await call({ op: 'sync', seg, dryRun: true }, 'dry'); if (j) { setResult(j.result); setDry(true); setMsg('Checked the audience — nothing was sent.') } }}
                   className="h-9 px-3.5 rounded-xl border border-line bg-white text-[12.5px] font-bold text-ink inline-flex items-center gap-1.5">
                   {busy === 'dry' ? <Loader2 size={13} className="animate-spin" /> : null} Check first
                 </button>
-                <button disabled={!!busy}
-                  onClick={async () => { const j = await call({ op: 'sync', seg }, 'sync'); if (j) { setResult(j.result); setDry(false); setMc(j.mailchimp); setMsg('Pushed to Mailchimp.') } }}
-                  className="h-9 px-4 rounded-xl bg-ink text-white text-[12.5px] font-bold disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
-                  {busy === 'sync' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Push to Mailchimp
-                </button>
+                {!armed ? (
+                  <button disabled={!!busy} onClick={() => setArmed(true)}
+                    className="h-9 px-4 rounded-xl bg-ink text-white text-[12.5px] font-bold disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
+                    <Send size={13} /> Push to Mailchimp
+                  </button>
+                ) : (
+                  <>
+                    <button disabled={!!busy}
+                      onClick={async () => { const j = await call({ op: 'sync', seg }, 'sync'); setArmed(false); if (j) { setResult(j.result); setDry(false); setMc(j.mailchimp); setMsg('Pushed to Mailchimp.') } }}
+                      className="h-9 px-4 rounded-xl bg-rose-600 text-white text-[12.5px] font-bold disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
+                      {busy === 'sync' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                      Yes — write into {mc.audienceName}
+                    </button>
+                    <button disabled={!!busy} onClick={() => setArmed(false)}
+                      className="h-9 px-3.5 rounded-xl border border-line bg-white text-[12.5px] font-bold text-muted hover:text-ink">
+                      Cancel
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
