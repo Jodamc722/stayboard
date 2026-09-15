@@ -9,7 +9,7 @@ export function channelOf(source?: string): Channel {
   const s = String(source || '').toLowerCase()
   if (/airbnb/.test(s)) return 'Airbnb'
   if (/vrbo|homeaway/.test(s)) return 'Vrbo'
-  if (/booking\.com/.test(s)) return 'Booking.com'
+  if (/booking\.com|bookingcom/.test(s)) return 'Booking.com'   // Guesty writes the channel as `bookingCom`
   if (/expedia|hotels\.com|travelocity|orbitz|egencia|marriott/.test(s)) return 'Expedia'
   if (/be-?api|website|direct|manual|owner/.test(s)) return 'Direct'
   return 'Other'

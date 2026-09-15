@@ -131,9 +131,15 @@ export async function recoveryUnits(db: any): Promise<Map<string, RecoveryUnit>>
   const out = new Map<string, RecoveryUnit>()
   for (const [listingId, revs] of Array.from(byListing.entries())) {
     revs.sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
+    // ONLY AN OTA REVIEW BURNS A UNIT (Jon, 2026-09-15: "the reviews we care most about are going
+    // to be Airbnb, Vrbo, Booking, or Expedia. Direct bookings, we don't need to do unit recovery").
+    // The point of recovery is to bury a bad public score under better ones, and a direct guest's
+    // rating is not published anywhere a future guest will read it — so it is worth hearing, but it
+    // is not worth a mandatory call. A direct review can no longer put a unit INTO recovery; it can
+    // still not clear one either, which is the same rule applied on both sides.
     const idx = revs.findIndex((r: any) => {
       const s = ratingToStars(r.rating)
-      return s != null && s <= LOW_STARS
+      return s != null && s <= LOW_STARS && RECOVERY_CHANNELS.indexOf(channelOf(r.channel)) >= 0
     })
     if (idx < 0) continue                       // no low review at all
     const since = revs.slice(0, idx)            // everything newer than the low one
@@ -152,6 +158,9 @@ export async function recoveryUnits(db: any): Promise<Map<string, RecoveryUnit>>
   }
   return out
 }
+
+/** The channels whose reviews are public enough to be worth a recovery call. */
+export const RECOVERY_CHANNELS = ['Airbnb', 'Vrbo', 'Booking.com', 'Expedia']
 
 export type StayGlitch = { id: string; overview: string; status: string; at: string }
 
@@ -280,11 +289,10 @@ export { ymdET }
 // by the end of the arrival day or it closes as incomplete, with a record. Every tier shares the
 // same window — 72 hours ahead through the arrival day (Jon, 2026-09-09) — the tier decides how
 // hard the miss counts, not when the call is due.
-//   lux      — Arya, Nomad, District 225. Jon's list, 2026-09-08. Deliberately NOT lib/segments'
-//              Lux tag (which also holds 17WEST, Elser, Amrit): that tag drives revenue segmenting,
-//              this one drives who gets a mandatory phone call, and Jon wants them different.
+//   lux      — the six luxury buildings: 17WEST, Arya, Elser, Nomad, District 225, Amrit. Jon's
+//              list, 2026-09-15, which is exactly lib/segments' Lux tag — so it is derived from it.
 //   recovery — the unit is waiting for a good review (see the top of this file)
-//   big      — $1,200+ or 10+ nights (Jon). Either trips it.
+//   big      — $1,000+ or 10+ nights (Jon, 2026-09-15). Either trips it.
 //   standard — everyone else: worth doing, not mandatory.
 // Order of precedence when several apply: LUX > recovery > big — "lux calls get priority" (Jon).
 // A lux unit in recovery keeps the lux tier and carries the recovery FLAG on top (`recovery` is
@@ -296,12 +304,20 @@ export { ymdET }
 // nightly close-out (app/api/cron/calls-closeout) then writes an `incomplete` row for anything left,
 // so the miss is a fact in guest_calls with a tier and a date — not a number that evaporates when
 // the row scrolls out of the window. That is what makes the scoreboard honest.
-import { buildingOf } from '@/lib/segments'
+import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
 import { isLiveStay } from '@/lib/stay-status'
 import { unstable_cache } from 'next/cache'
 
-export const CALL_LUX = ['Arya', 'Nomad', 'District 225']
-export const BIG_VALUE = 1200
+// LUXURY UNITS — must-call regardless of how big the booking is (Jon, 2026-09-15): 17 West, Arya,
+// Elser, Nomad, District 225, Amrit. That is EXACTLY the `lux` tag in lib/segments, so this list is
+// now derived from it rather than typed out again. It used to be a deliberately shorter, separate
+// list — the divergence is what Jon has just closed, and deriving it means the two can never drift
+// apart again: add a lux building to segments and it becomes a must-call on the same deploy.
+export const CALL_LUX = KNOWN_BUILDINGS.filter(b => b.lux).map(b => b.label)
+// "more than 10 days or $1,000 or more" (Jon, 2026-09-15; was $1,200). Nights stay at 10-or-more
+// rather than 11+: on a call list the cost of one extra call is a minute, and the cost of a missed
+// one is a luxury guest nobody spoke to.
+export const BIG_VALUE = 1000
 export const BIG_NIGHTS = 10
 
 export type Tier = 'recovery' | 'lux' | 'big' | 'standard'
