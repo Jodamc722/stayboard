@@ -108,7 +108,7 @@ function DayScore({ today, mandatoryDone, mandatoryOpen, otherDone, otherOpen, c
             <span className={`text-4xl font-bold tabular-nums leading-none ${mTot ? (mPct === 100 ? 'text-emerald-600' : 'text-rose-600') : 'text-ink'}`}>{mandatoryDone}<span className="text-2xl text-muted font-semibold"> / {mTot}</span></span>
             <span className={`text-sm font-bold ${mTot ? (mPct === 100 ? 'text-emerald-700' : 'text-rose-600') : 'text-muted'}`}>{mTot ? mPct + '%' : 'none due'}{mTot && mPct === 100 ? ' ✓' : ''}</span>
           </div>
-          <div className="text-[12px] text-muted mt-1.5">luxury · big booking · recovery unit{mandatoryOpen ? <span className="text-rose-600 font-semibold"> · {mandatoryOpen} still to call</span> : ''}</div>
+          <div className="text-[12px] text-muted mt-1.5">must call · unit recovery{mandatoryOpen ? <span className="text-rose-600 font-semibold"> · {mandatoryOpen} still to call</span> : ''}</div>
         </div>
         <div className="px-5 py-4">
           <div className="text-[11px] uppercase tracking-wider text-muted font-semibold inline-flex items-center gap-1.5"><PhoneCall size={12} className="text-brand-600" /> Other calls today <span className="normal-case tracking-normal font-medium">· completed</span></div>
@@ -417,8 +417,33 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
     for (const r of ordered) { if (!m.has(r.check_in)) m.set(r.check_in, []); m.get(r.check_in)!.push(r) }
     return m
   }
-  const welcomeByDay = groupByDay(duePending.filter(r => r.check_in >= today))
   const dayLabel = (d: string) => d === today ? 'Today — closes tonight' : d === nextDay(today) ? 'Tomorrow' : shortDay(d)
+
+  // THREE LANES, NOT ONE LIST (Jon, 2026-09-15: "make it more clear what calls need to be done. I
+  // would organize it by mandatory calls, unit recovery calls, and welcome calls").
+  //
+  // The lanes answer WHY a call exists, because that is what decides whether it can be skipped:
+  //   MUST CALL     — a luxury unit, or a big booking. 100% or the day is a miss.
+  //   UNIT RECOVERY — the unit is carrying a bad public review and is trying to bury it. Also 100%,
+  //                   but it is a different job with a different script, so it gets its own lane.
+  //   WELCOME       — everyone else. Worth doing, and not a failure if the day runs out.
+  //
+  // The lanes are a strict PARTITION — every card sits in exactly one, so the counts add up and the
+  // desk can trust them. A luxury stay that is ALSO in a recovering unit stays in Must call (Jon:
+  // "lux calls get priority") and keeps its recovery badge, and the recovery lane says how many of
+  // its units are being handled up there, so the recovery total is never quietly understated.
+  const laneOf = (r: Row) => r.tier === 'recovery' ? 'recovery' : (r.mandatory ? 'must' : 'welcome')
+  const due = duePending.filter(r => r.check_in >= today)
+  const LANES = [
+    { key: 'must', title: 'Must call', why: 'luxury units and big bookings — every one, today', must: true,
+      rows: due.filter(r => laneOf(r) === 'must') },
+    { key: 'recovery', title: 'Unit recovery', why: 'the unit is carrying a bad review — the call is the repair', must: true,
+      rows: due.filter(r => laneOf(r) === 'recovery') },
+    { key: 'welcome', title: 'Welcome calls', why: 'everyone else arriving — complete what you can', must: false,
+      rows: due.filter(r => laneOf(r) === 'welcome') },
+  ].filter(l => l.rows.length)
+  // Recovery units being handled in the Must-call lane, so that lane's header can own up to them.
+  const recoveryInMust = due.filter(r => laneOf(r) === 'must' && r.recovery).length
 
   const TABS = [
     { key: 'welcome' as const, label: 'Welcome calls', n: duePending.length },
@@ -478,17 +503,40 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
         duePending.length === 0 ? (
           <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">Nothing due. Everyone arriving today and in the next 72 hours has had their call. Nice.</div>
         ) : (
-          <div className="space-y-4">
-            {/* By day of arrival (Jon), today first, mandatory calls first inside each day. Today's
-                arrivals are the deadline — no call by tonight and the row closes as incomplete. */}
-            {Array.from(welcomeByDay.entries()).map(([d, xs]) => {
-              const m = xs.filter(r => r.mandatory).length
+          <div className="space-y-6">
+            {LANES.map(lane => {
+              const byDay = groupByDay(lane.rows)
+              const todayN = lane.rows.filter(r => r.check_in === today).length
               return (
-                <section key={d}>
-                  <h2 className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 flex items-center gap-2 ${d === today ? 'text-rose-700' : 'text-muted'}`}>
-                    {dayLabel(d)} — {xs.length}{m ? <span className="normal-case tracking-normal font-semibold text-rose-700">· {m} mandatory</span> : null}
-                  </h2>
-                  <WelcomeList rows={xs} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName }} />
+                <section key={lane.key}>
+                  <div className={'rounded-xl px-3.5 py-2.5 mb-2 border ' + (lane.must ? 'border-rose-200 bg-rose-50/70' : 'border-line bg-white')}>
+                    <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                      <h2 className={'text-[14px] font-bold ' + (lane.must ? 'text-rose-800' : 'text-ink')}>
+                        {lane.title}
+                        <span className="ml-2 text-[12px] font-semibold tabular-nums">{lane.rows.length}</span>
+                        {todayN ? <span className="ml-1.5 text-[12px] font-semibold">· {todayN} today</span> : null}
+                      </h2>
+                      <span className={'text-[11px] font-bold uppercase tracking-wider ' + (lane.must ? 'text-rose-700' : 'text-muted')}>
+                        {lane.must ? 'must be 100%' : 'complete what you can'}
+                      </span>
+                    </div>
+                    <div className={'text-[12px] mt-0.5 ' + (lane.must ? 'text-rose-900/80' : 'text-muted')}>
+                      {lane.why}
+                      {lane.key === 'recovery' && recoveryInMust
+                        ? <> · {recoveryInMust} more recovery unit{recoveryInMust === 1 ? '' : 's'} sit{recoveryInMust === 1 ? 's' : ''} in <b>Must call</b> above</>
+                        : null}
+                    </div>
+                  </div>
+                  {/* By day of arrival inside each lane (Jon), today first — today's arrivals are the
+                      deadline: no call by tonight and the row closes as incomplete. */}
+                  <div className="space-y-3">
+                    {Array.from(byDay.entries()).map(([d, xs]) => (
+                      <div key={d}>
+                        <h3 className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${d === today ? 'text-rose-700' : 'text-muted'}`}>{dayLabel(d)} — {xs.length}</h3>
+                        <WelcomeList rows={xs} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName }} />
+                      </div>
+                    ))}
+                  </div>
                 </section>
               )
             })}
