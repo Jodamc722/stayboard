@@ -773,16 +773,19 @@ function QuickAdd({ section, act, busy, parentId, roster, sections, projectId, o
   }
   return (
     <>
-      <div className="flex items-center gap-2.5 px-3 py-1.5 group/add" style={{ paddingLeft: parentId ? 34 : 12 }}>
+      <div className="flex items-center gap-2.5 px-3 py-1.5" style={{ paddingLeft: parentId ? 34 : 12 }}>
         <Plus size={13} className="text-muted shrink-0" />
         <input ref={ref} value={v} onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') go() }}
           placeholder={parentId ? 'Add a checklist item…' : 'Add a task…'} disabled={busy}
           className="flex-1 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
+        {/* ALWAYS VISIBLE, not revealed on hover. The form is the thing Jon asked for; putting its
+            only door behind a mouse-over hides it completely on a phone, where there is no hover
+            at all. It is quiet rather than hidden — it darkens on hover instead of appearing. */}
         {!parentId && projectId && (
           <button type="button" onClick={() => setForm(true)} disabled={busy}
             title="Open the full form — subtasks, people, due date, files"
-            className="shrink-0 text-[11px] font-bold text-muted hover:text-ink inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 py-0.5
-                       opacity-0 group-hover/add:opacity-100 focus:opacity-100 transition">
+            className="shrink-0 text-[11px] font-bold inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 transition
+                       border-line bg-white text-muted/80 hover:text-ink hover:border-ink/30">
             <SlidersHorizontal size={10} /> Details
           </button>
         )}
