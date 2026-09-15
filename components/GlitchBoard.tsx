@@ -559,7 +559,14 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
     setBusy(false)
   }
 
-  const recommended = rec ? Number(rec?.recommendation?.amount ?? rec?.provisional) : (Number(g.refund_recommended) || null)
+  // THE FIELD IS `recommendation.refund`. The first version read `recommendation.amount ?? provisional`
+  // — and `provisional` is a BOOLEAN ("this needs more facts"), so Number(true) rendered every
+  // recommendation as $1. It looked like a broken policy engine; it was a broken read.
+  const recommended = rec
+    ? (Number.isFinite(Number(rec?.recommendation?.refund)) ? Number(rec.recommendation.refund) : null)
+    : (Number.isFinite(Number(g.refund_recommended)) ? Number(g.refund_recommended) : null)
+  const isProvisional = !!(rec && rec.provisional)
+  const why: string[] = Array.isArray(rec?.recommendation?.reasoning) ? rec.recommendation.reasoning : []
 
   return (
     <div className="space-y-4">
@@ -592,8 +599,16 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
 
       <section className="rounded-xl ring-1 ring-line bg-app px-3.5 py-3">
         <p className="text-[11px] uppercase tracking-wider font-bold text-muted">What the policy suggests</p>
-        {recommended != null && Number.isFinite(recommended) ? (
-          <p className="text-[20px] font-bold text-ink tabular-nums leading-tight">{money(recommended)}</p>
+        {recommended != null ? (
+          <>
+            <p className="text-[20px] font-bold text-ink tabular-nums leading-tight">
+              {money(recommended)}
+              {rec?.recommendation?.pctOfStay ? <span className="text-[12px] font-semibold text-muted ml-1.5">{rec.recommendation.pctOfStay}% of the stay</span> : null}
+            </p>
+            {isProvisional ? (
+              <p className="text-[11.5px] font-bold text-amber-700">Provisional — it is missing facts, see below.</p>
+            ) : null}
+          </>
         ) : (
           <p className="text-[12.5px] text-muted mt-0.5">
             Runs the house framework over this case — severity, how fast it was fixed, what was offered
@@ -608,6 +623,11 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
               {(rec.questions || []).map((q: string, i: number) => <li key={i} className="text-[12px] text-amber-900">{q}</li>)}
             </ul>
           </div>
+        ) : null}
+        {why.length ? (
+          <ul className="list-disc pl-4 mt-2">
+            {why.map((line, i) => <li key={i} className="text-[12px] text-muted leading-relaxed">{line}</li>)}
+          </ul>
         ) : null}
         {rec?.classification ? (
           <p className="text-[11.5px] text-muted mt-1.5">
