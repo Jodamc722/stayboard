@@ -32,7 +32,7 @@ import Link from 'next/link'
 import {
   Sparkles, RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, Crown, AlertTriangle,
   MessageSquare, CheckCircle2, Star, Phone, ClipboardCheck, Undo2, Clock, Copy, Send, ChevronDown, ChevronRight,
-  Circle, CircleDot, Ban, Plus, ListChecks, Lock, MapPin, CalendarDays,
+  Circle, CircleDot, Ban, Plus, ListChecks, Lock, MapPin, CalendarDays, Truck,
 } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, NextAction, Handled } from '@/lib/command-day'
@@ -166,6 +166,10 @@ export function CommandCockpit() {
       <div className="lg:col-span-1 space-y-4 min-w-0">
         {/* Slack messages waiting for approval — renders nothing when the queue is empty. */}
         <SlackQueueCard />
+        {/* Who is at our buildings. Above My tasks on purpose: a vendor arriving this morning is
+            everybody's problem for the morning, and it is the thing the person covering for
+            somebody else has no other way of knowing. */}
+        <VendorVisitsCard />
         <MyTasksCard />
         <CompletedCard d={data} onChanged={reload} tick={tick} />
         <EveLine />
@@ -380,6 +384,72 @@ type Mine = { ok: boolean; today: string; total: number; groups: { overdue: Mine
 const MINE_ICON: Record<string, any> = { todo: Circle, doing: CircleDot, blocked: Ban, done: Check }
 const MINE_CLS: Record<string, string> = { todo: 'text-muted border-line hover:border-ink', doing: 'text-amber-600 border-amber-300 bg-amber-50', blocked: 'text-rose-600 border-rose-300 bg-rose-50', done: 'text-white bg-emerald-500 border-emerald-500' }
 const niceDay = (ymd: string | null) => { if (!ymd) return ''; try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd } }
+
+type VendorVisit = {
+  id: string; projectId: string; project: string; title: string; vendor: string | null
+  visit_on: string; window: string | null; est: string | null; where: string | null; owner: string | null
+  when: string; tone: 'today' | 'soon' | 'later' | 'missed' | 'done'; announced: boolean
+}
+
+const VISIT_TONE: Record<string, string> = {
+  today:  'bg-emerald-600 text-white',
+  soon:   'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
+  later:  'bg-app text-muted ring-1 ring-line',
+  missed: 'bg-rose-600 text-white',
+  done:   'bg-app text-faint ring-1 ring-line',
+}
+
+/**
+ * UPCOMING VENDOR VISITS, across every board this person can see.
+ *
+ * Jon, 2026-09-15: "if Carla is not working or Roberto is not working, the next person in charge
+ * can see upcoming vendor visits."
+ *
+ * That sentence is why this is on the Command Center and not only on the vendor board. Somebody
+ * covering a day off does not know which board to open; they open this page. Renders nothing at
+ * all when no vendor visits are booked, so every other morning is unchanged.
+ */
+function VendorVisitsCard() {
+  const { data, loading, error } = useCachedFetch<{ visits: VendorVisit[] }>('/api/projects/vendor-visits', { ttl: 120_000 })
+  if (error && /403|forbidden|not allowed|permission/i.test(error)) return null
+  const visits = data?.visits || []
+  if (!loading && visits.length === 0) return null      // no vendors booked: say nothing
+
+  const missed = visits.filter(v => v.tone === 'missed').length
+  const untold = visits.filter(v => !v.announced && v.tone !== 'missed').length
+
+  return (
+    <section className={CARD}>
+      <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
+        <Truck size={14} className="text-muted" />
+        <h2 className="text-[13.5px] font-bold text-ink">Vendors coming <span className="text-muted font-semibold tabular-nums">{visits.length}</span></h2>
+        {missed > 0 && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white">{missed} no-show</span>}
+        {untold > 0 && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500 text-white">{untold} unannounced</span>}
+      </div>
+      {loading && !data && <div className="px-4 py-3 text-[12.5px] text-muted flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Checking the boards…</div>}
+      <div className="divide-y divide-line">
+        {visits.slice(0, 8).map(v => (
+          <Link key={v.id} href={`/projects/${v.projectId}?task=${v.id}`} className="block px-4 py-2 hover:bg-app/60">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className="text-[12.5px] font-semibold text-ink truncate flex-1">{v.vendor || 'A vendor'}</span>
+              <span className={'shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ' + (VISIT_TONE[v.tone] || VISIT_TONE.later)}>{v.when}</span>
+            </div>
+            <p className="text-[11.5px] text-muted truncate">
+              {[v.where, v.title].filter(Boolean).join(' · ')}
+            </p>
+            <div className="flex items-center gap-2 flex-wrap text-[11px] text-muted mt-0.5">
+              {v.window && <span>{v.window}</span>}
+              {v.est && <span>{v.est} on site</span>}
+              {v.owner && <span>{String(v.owner).split(' ')[0]}</span>}
+              {!v.announced && v.tone !== 'missed' && <span className="font-bold text-amber-700">Team not told</span>}
+            </div>
+          </Link>
+        ))}
+        {visits.length > 8 && <p className="px-4 py-1.5 text-[11.5px] text-muted">and {visits.length - 8} more.</p>}
+      </div>
+    </section>
+  )
+}
 
 function MyTasksCard() {
   const { data, loading, error, refresh } = useCachedFetch<Mine>(MINE_URL, { ttl: 60_000 })

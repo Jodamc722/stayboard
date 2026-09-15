@@ -26,7 +26,7 @@ import {
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
-import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
+import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, isDoneSection, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -538,6 +538,16 @@ function Customize({ settings, sections, canEdit, act, busy }: {
           </div>
           <label className="flex items-center gap-2 text-[12.5px] text-ink">
             <input type="checkbox" checked={settings.hideDone} onChange={e => set({ hideDone: e.target.checked })} disabled={busy} /> Hide done tasks
+          </label>
+          {/* ON by default. Off is for a board where the section means something other than
+              progress — a 1:1 filed by topic, where moving a finished item to "Completed" would
+              take it out of the conversation it belongs to. */}
+          <label className="flex items-start gap-2 text-[12.5px] text-ink">
+            <input type="checkbox" checked={settings.moveDone} onChange={e => set({ moveDone: e.target.checked })} disabled={busy} className="mt-0.5" />
+            <span>
+              Move finished work to <span className="font-semibold">{doneSectionName(sections, settings)}</span>
+              <span className="block text-[11px] text-muted">Reopening a task puts it back where it was.</span>
+            </span>
           </label>
           {order.length > 1 && (
             <div>
@@ -1726,14 +1736,7 @@ function VisitLine({ t, compact }: { t: Task; compact?: boolean }) {
           <Megaphone size={9} /> Team not told
         </span>
       )}
-      {/* WHAT THE VENDOR SAID BACK. "Confirmed" is the difference between a date we wrote down and
-          a date somebody is actually turning up on, and it is the reason the link exists. */}
-      {t.vendor_confirmed_at && !t.done && (
-        <span className="shrink-0 font-bold text-emerald-700 inline-flex items-center gap-0.5"><BadgeCheck size={10} /> Confirmed</span>
-      )}
-      {t.vendor_proposed_on && (
-        <span className="shrink-0 font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">Asked for {shortDate(t.vendor_proposed_on)}</span>
-      )}
+
     </div>
   )
 }
@@ -1797,75 +1800,6 @@ function ArrivalsStrip({ p, tasks, busy, act, onOpen, canEdit }: {
   )
 }
 
-/**
- * The vendor's own job link.
- *
- * One permanent link per company, showing every job that is theirs across every board — not one
- * link per project. A pest contractor works six buildings; six links is six things to lose.
- *
- * Making a new link REPLACES the old one, which is how you revoke access when somebody leaves that
- * company. The button says so, because "Make a new link" quietly breaking the link you sent last
- * month is the kind of surprise that costs a morning.
- */
-function VendorLink({ vendorKey, busy, act }: { vendorKey: string; busy: boolean; act: (b: any) => Promise<any> }) {
-  const [token, setToken] = useState<string | null | undefined>(undefined)   // undefined = not looked yet
-  const [seen, setSeen] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [open, setOpen] = useState(false)
-
-  useEffect(() => {
-    if (!open || token !== undefined) return
-    act({ action: 'vendorLink', vendorKey, mode: 'get' }).then((r: any) => {
-      if (r) { setToken(r.token ?? null); setSeen(r.seen_at ?? null) }
-    })
-  }, [open, token, vendorKey, act])
-
-  const url = token ? `${typeof window !== 'undefined' ? window.location.origin : ''}/jobs/${token}` : ''
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000) } catch { /* the text is selectable anyway */ }
-  }
-
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} className="text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
-        <ExternalLink size={11} /> Their job link
-      </button>
-    )
-  }
-  return (
-    <div className="rounded-lg border border-line bg-white p-2 space-y-1.5">
-      <div className="flex items-center gap-1.5">
-        <ExternalLink size={11} className="text-muted" />
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted flex-1">Their job link</span>
-        <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={11} /></button>
-      </div>
-      {token === undefined && <p className="text-[11.5px] text-muted inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> Checking…</p>}
-      {token === null && (
-        <>
-          <p className="text-[11.5px] text-muted">No link yet. They will see every job that is theirs — and nothing else.</p>
-          <button onClick={async () => { const r = await act({ action: 'vendorLink', vendorKey }); if (r?.token) setToken(r.token) }} disabled={busy}
-            className="w-full rounded-md bg-ink text-white px-2 py-1 text-[11.5px] font-bold disabled:opacity-40">Make a link</button>
-        </>
-      )}
-      {token && (
-        <>
-          <p className="text-[11px] font-mono text-ink/70 break-all bg-app rounded px-1.5 py-1">{url}</p>
-          <div className="flex items-center gap-1.5">
-            <button onClick={copy} className="rounded-md border border-line bg-white px-2 py-0.5 text-[11px] font-bold text-muted hover:text-ink inline-flex items-center gap-1">
-              <Copy size={10} /> {copied ? 'Copied' : 'Copy'}
-            </button>
-            <button onClick={async () => { if (confirm('Make a new link? The one you sent them stops working.')) { const r = await act({ action: 'vendorLink', vendorKey }); if (r?.token) setToken(r.token) } }}
-              disabled={busy} className="text-[11px] text-muted hover:text-ink">New link</button>
-            <button onClick={async () => { if (confirm('Turn off their link? They lose access to every job.')) { await act({ action: 'vendorLink', vendorKey, mode: 'revoke' }); setToken(null) } }}
-              disabled={busy} className="ml-auto text-[11px] text-muted hover:text-rose-600">Turn off</button>
-          </div>
-          <p className="text-[11px] text-muted">{seen ? 'Last opened ' + ago(seen) : 'Not opened yet.'}</p>
-        </>
-      )}
-    </div>
-  )
-}
-
 /** Who is coming, when, how long, and does it repeat — the whole vendor block in the drawer. */
 function VendorBox({ task, canEdit, busy, act, vendors }: {
   task: Task; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any>; vendors: VendorHit[]
@@ -1920,10 +1854,6 @@ function VendorBox({ task, canEdit, busy, act, vendors }: {
         </div>
       ) : <p className="text-[12px] text-muted">No vendor picked yet.</p>}
 
-      {/* THEIR LINK. Sits with the vendor, not in a settings page, because the moment you want it
-          is the moment you are looking at a job you need them to do. */}
-      {task.vendor_key && canEdit && <VendorLink vendorKey={task.vendor_key} busy={busy} act={act} />}
-
       {/* WHEN. visit_on is the day they arrive; the task's own due date stays what it always was —
           when the work should be finished. On a two-day job those are different days. */}
       <div className="grid grid-cols-2 gap-2">
@@ -1953,23 +1883,6 @@ function VendorBox({ task, canEdit, busy, act, vendors }: {
           ))}
         </div>
       </label>
-
-      {/* THEY ASKED FOR A DIFFERENT DAY. Their request never moved our date; accepting it is a
-          decision somebody here makes, and it re-arms the "tell the team" notice because the day
-          everyone was told is no longer the day. */}
-      {task.vendor_proposed_on && canEdit && (
-        <div className="rounded-lg bg-amber-50 border border-amber-200 px-2 py-1.5">
-          <p className="text-[11.5px] font-bold text-amber-900">
-            {task.vendor_name || 'They'} asked for {shortDate(task.vendor_proposed_on)}
-          </p>
-          <div className="mt-1 flex items-center gap-2">
-            <button onClick={() => set({ visit_on: task.vendor_proposed_on })} disabled={busy}
-              className="rounded-md bg-ink text-white px-2 py-0.5 text-[11px] font-bold disabled:opacity-40">Move it</button>
-            <button onClick={() => set({ vendorClearProposal: true })} disabled={busy}
-              className="text-[11px] text-muted hover:text-ink">Keep {shortDate(task.visit_on)}</button>
-          </div>
-        </div>
-      )}
 
       {/* TELL THE TEAM */}
       {task.visit_on && canEdit && (
