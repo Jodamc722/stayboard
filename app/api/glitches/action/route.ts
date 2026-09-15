@@ -9,6 +9,16 @@ import { canDelete, trashRecord } from '@/lib/trash'
 import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
+
+/** Refunds at or under this need nobody's permission. Editable in app settings. */
+async function refundApprovalCap(): Promise<number> {
+  try {
+    const { getSetting } = await import('@/lib/app-settings')
+    const v = await getSetting<any>('glitch_refund_approval_cap', null)
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? n : 150
+  } catch { return 150 }
+}
 export const maxDuration = 30
 
 const STATUSES = ['pool', 'ops', 'guest_followup', 'refund', 'manager_review', 'incident', 'closed']
@@ -66,8 +76,25 @@ export async function POST(req: NextRequest) {
     if (action === 'move') {
       const status = str(b.status)
       if (STATUSES.indexOf(status) < 0) return NextResponse.json({ ok: false, error: 'Bad status.' }, { status: 400 })
-      const { error } = await db.from('glitches').update({ status, history: stamp('moved', { to: status }), updated_at: new Date().toISOString() }).eq('id', id)
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      // STAMP THE CLOSE (Jon, 2026-09-15: "track time of created, to glitch closed ... a KPI").
+      // Until migration 085 there was no closure time at all — closing a card only bumped
+      // updated_at, so "how long do guest issues take?" was unanswerable, and any later edit
+      // moved the only timestamp that existed. Reopening clears it, so a card that bounces back
+      // out of Closed is not silently counted as resolved.
+      const patch: Record<string, any> = { status, history: stamp('moved', { to: status }), updated_at: new Date().toISOString() }
+      if (status === 'closed') {
+        if (!g.closed_at) { patch.closed_at = new Date().toISOString(); patch.closed_at_estimated = false }
+      } else if (g.closed_at) {
+        patch.closed_at = null
+        patch.closed_at_estimated = false
+      }
+      let upd = await db.from('glitches').update(patch).eq('id', id)
+      // The columns arrive with migration 085. Until someone runs it, a move must still work.
+      if (upd.error && /column|schema/i.test(upd.error.message)) {
+        delete patch.closed_at; delete patch.closed_at_estimated
+        upd = await db.from('glitches').update(patch).eq('id', id)
+      }
+      if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
       return NextResponse.json({ ok: true, status })
     }
 
@@ -77,13 +104,27 @@ export async function POST(req: NextRequest) {
       const amount = Number(b.amount)
       if (!Number.isFinite(amount) || amount < 0) return NextResponse.json({ ok: false, error: 'A refund amount is required (0 is allowed for "declined").' }, { status: 400 })
       const note = str(b.note).slice(0, 300)
-      const { error } = await db.from('glitches').update({
+      // THE APPROVAL LINE (Jon, 2026-09-15). A flat cap for now — he wants it to grow into
+      // something that reads the reservation, the channel and the unit's review score, which is
+      // why it is a setting read at decision time rather than a constant compiled into the page.
+      const cap = await refundApprovalCap()
+      const needsApproval = amount > cap
+      const patch: Record<string, any> = {
         refund_approved: amount,
-        history: stamp('refund_logged', { amount, note: note || undefined }),
+        refund_note: note || null,
+        refund_needs_approval: needsApproval,
+        history: stamp('refund_logged', { amount, note: note || undefined, cap, needsApproval }),
         updated_at: new Date().toISOString(),
-      }).eq('id', id)
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-      return NextResponse.json({ ok: true, amount })
+      }
+      let upd = await db.from('glitches').update(patch).eq('id', id)
+      // Migration 085 adds refund_note and refund_needs_approval. Logging money must not depend on
+      // somebody having run it — fall back to the shape that has always existed.
+      if (upd.error && /column|schema/i.test(upd.error.message)) {
+        delete patch.refund_note; delete patch.refund_needs_approval
+        upd = await db.from('glitches').update(patch).eq('id', id)
+      }
+      if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, amount, needsApproval, cap })
     }
 
     if (action === 'update') {
@@ -202,7 +243,20 @@ export async function POST(req: NextRequest) {
       // Instantiate the built Breezeway "Guest Reported / Glitch -" TEMPLATE (id 356707) so pushed
       // tasks carry the template's checklist/settings.
       const GLITCH_TEMPLATE_ID = 356707
-      const payload: Record<string, any> = { template_id: GLITCH_TEMPLATE_ID, name: title, type_department: deptFor(category), type_priority: 'urgent', scheduled_date: ymd(new Date()), description: parts.join('\n'), home_id: homeId }
+      // THE FORM DECIDES THESE, NOT THIS FILE (Jon, 2026-09-15: the Breezeway task "should be
+      // easier to manage, assign, etc ... function like the today in ops add task form").
+      //
+      // Department, priority and date used to be fixed here: every glitch went out as `urgent`,
+      // scheduled for today, in whatever department the category implied — and the due date the
+      // card itself carried was never sent, so a job planned for Thursday arrived as a fire. The
+      // old behaviour is still the default; it is just no longer the only option.
+      const DEPTS = ['housekeeping', 'maintenance', 'safety', 'inspection']
+      const PRIOS = ['urgent', 'high', 'normal', 'low']
+      const dept = DEPTS.indexOf(str(b.department)) >= 0 ? str(b.department) : deptFor(category)
+      const prio = PRIOS.indexOf(str(b.priority)) >= 0 ? str(b.priority) : 'urgent'
+      const wantDate = /^\d{4}-\d{2}-\d{2}$/.test(str(b.scheduledDate)) ? str(b.scheduledDate)
+        : (/^\d{4}-\d{2}-\d{2}$/.test(str(g.due_date)) ? str(g.due_date) : ymd(new Date()))
+      const payload: Record<string, any> = { template_id: GLITCH_TEMPLATE_ID, name: title, type_department: dept, type_priority: prio, scheduled_date: wantDate, description: parts.join('\n'), home_id: homeId }
       let r = await createBreezewayTask(payload)
       if (!r.ok) {
         // some API versions reject template_id on create — retry without it rather than failing
@@ -212,14 +266,30 @@ export async function POST(req: NextRequest) {
       if (!r.ok || !r.data?.id) return NextResponse.json({ ok: false, error: 'Breezeway: ' + r.text.slice(0, 140) }, { status: 502 })
       const taskId = String(r.data.id)
       // optional assignee picked at push time
+      // ASSIGNMENT IS A SECOND CALL — Breezeway does not take assignees on create — and it used to
+      // be swallowed whole. A task could be created with nobody on it and the board would report a
+      // clean success, so the work sat unassigned while the card said it had been filed. The task
+      // still stands if this fails (it exists, it is just unassigned), but now we say so.
       const ids = (Array.isArray(b.assigneeIds) ? b.assigneeIds : []).map((x: any) => Number(x)).filter((x: any) => Number.isFinite(x))
-      if (ids.length) { try { await updateBreezewayTask(taskId, { assignments: ids }) } catch { /* assign best-effort */ } }
-      const patch: Record<string, any> = { breezeway_task_id: taskId, status: g.status === 'pool' ? 'ops' : g.status, history: stamp('pushed_to_breezeway', Number.isFinite(overrideHome) && overrideHome > 0 ? { taskId, homeId: overrideHome, property: str(b.homeName) || undefined } : { taskId }), updated_at: new Date().toISOString() }
+      let assignError = ''
+      let assignedName = ''
+      if (ids.length) {
+        try {
+          const ar = await updateBreezewayTask(taskId, { assignments: ids })
+          if (!ar.ok) assignError = 'Task created, but assigning it failed: ' + String(ar.text || '').slice(0, 120)
+          else assignedName = str(b.assigneeName)
+        } catch (e: any) {
+          assignError = 'Task created, but assigning it failed: ' + str(e?.message || e).slice(0, 120)
+        }
+      }
+      const patch: Record<string, any> = { breezeway_task_id: taskId, status: g.status === 'pool' ? 'ops' : g.status,
+        due_date: wantDate,
+        ...(assignedName ? { assignee: assignedName, assignee_person_id: ids[0] } : {}), history: stamp('pushed_to_breezeway', Number.isFinite(overrideHome) && overrideHome > 0 ? { taskId, homeId: overrideHome, property: str(b.homeName) || undefined } : { taskId }), updated_at: new Date().toISOString() }
       // The name-match earned a real listing link — keep it, so this glitch never needs matching again.
       if (!g.listing_id && refListing) patch.listing_id = refListing
       const { error } = await db.from('glitches').update(patch).eq('id', id)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-      return NextResponse.json({ ok: true, taskId, reportUrl: r.data.report_url || null })
+      return NextResponse.json({ ok: true, taskId, reportUrl: r.data.report_url || null, assignError: assignError || undefined, scheduledDate: wantDate })
     }
 
     if (action === 'checkTask') {
