@@ -187,6 +187,14 @@ export const OPEN_PREFIXES = [
   '/count/',
   // TEAM SCHEDULER LINK (Jon, 2026-09-03): one link per market; picks land in schedule_staged, Submit emails Jon.
   '/scheduler/',
+  // VENDOR JOB LIST (Jon, 2026-09-15). /jobs/<token> is a capability link like /walk and /audit:
+  // the token resolves to one vendor company, and every call re-checks it. Open because the people
+  // who need it — a plumber, a pest tech — have no Lighthouse account and never will.
+  // NOTE: no apostrophes anywhere in this array. scripts/check-tabs.mjs parses it as text by
+  // matching single-quoted strings, so one stray apostrophe in a comment swallows the entries
+  // after it and the build fails claiming a page is unregistered. It says so at the top of that
+  // file; this is what it looks like when you forget.
+  '/jobs/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
   // whether a code worked are field techs without logins, and a question only answerable by people
   // who were not at the door is a question that never gets a true answer. The token is the auth.

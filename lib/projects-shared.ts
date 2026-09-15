@@ -112,6 +112,9 @@ export type Task = {
   vendor_key?: string | null; vendor_name?: string | null
   visit_on?: string | null; visit_window?: string | null; est_minutes?: number | null
   team_notified_at?: string | null; team_notified_for?: string | null
+  /** Written back through the vendor's own link (089). vendor_proposed_on is a REQUEST — visit_on
+   *  is ours and never moves because a vendor typed something. */
+  vendor_confirmed_at?: string | null; vendor_proposed_on?: string | null; vendor_note?: string | null
   recurs?: Recurrence | null; recurred_from?: string | null
   /** Set when this task was sent to Breezeway; `breezeway` is the field task's live state (read-time). */
   breezeway_task_id?: string | null
