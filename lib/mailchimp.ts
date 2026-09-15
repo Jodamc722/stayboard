@@ -133,12 +133,98 @@ export function tagsFor(c: Contact): string[] {
   return Array.from(new Set(t.map(x => x.replace(/,/g, ' ').trim().slice(0, 100)).filter(Boolean))).slice(0, 25)
 }
 
+// ── WHAT IS ALREADY IN THE AUDIENCE ─────────────────────────────────────────────────────────────
+//
+// THE DUPLICATE QUESTION, ANSWERED PROPERLY (Jon, 2026-09-14: "make sure no duplicates are sent
+// over"). There are three different things people mean by that, and only one of them needed work.
+//
+//   1. The same address twice inside one push. Handled below by byEmail — and it has to be, because
+//      a repeated address makes Mailchimp reject the whole batch of 500, not just the one row.
+//   2. The same address on a second push next month. Cannot happen. A Mailchimp member is keyed by
+//      the MD5 of their lowercased email, so a second push of the same contact is an UPDATE. The
+//      audience is physically incapable of holding one address twice.
+//   3. Pushing somebody Mailchimp has already written off. THIS is the one that was missing, and
+//      it is the one that costs money and sending reputation:
+//        unsubscribed — they opted out. status_if_new already stops us re-subscribing them, but
+//                       there is nothing to gain by writing to the record either.
+//        cleaned      — the address hard-bounced. Re-sending it is how a sending reputation dies.
+//        archived     — somebody took them out of the audience ON PURPOSE. Archived members are not
+//                       returned by the default member read, so without the second read below a
+//                       push would quietly un-archive every contact ever cleared out, and bill for
+//                       them. That is the closest thing here to a real duplicate.
+//
+// So the audience is read before anything is sent. It costs one request per thousand members, and
+// it turns "trust me, nothing is duplicated" into a number on the screen before the button is
+// pressed.
+export type AudienceIndex = {
+  /** lowercased email -> Mailchimp status (subscribed | transactional | unsubscribed | cleaned | pending | archived) */
+  status: Map<string, string>
+  total: number
+  /** The read hit its ceiling or failed — treat the counts as a floor, not a fact. */
+  partial: boolean
+}
+
+const MEMBER_PAGE = 1000
+const MEMBER_PAGE_CAP = 60   // 60,000 members before we admit we only have part of the picture
+
+async function readMembers(conn: MailchimpConnection, index: AudienceIndex, archived: boolean) {
+  const base = '/lists/' + encodeURIComponent(conn.audienceId) + '/members'
+    + '?count=' + MEMBER_PAGE + '&fields=total_items,members.email_address,members.status'
+    + (archived ? '&status=archived' : '')
+  for (let page = 0; page < MEMBER_PAGE_CAP; page++) {
+    const r = await mc(conn, base + '&offset=' + page * MEMBER_PAGE)
+    if (!archived) index.total = Number(r?.total_items) || index.total
+    const rows: any[] = Array.isArray(r?.members) ? r.members : []
+    for (const m of rows) {
+      const e = String(m?.email_address || '').trim().toLowerCase()
+      // The archived pass must not overwrite a live status, and vice versa — first write wins for
+      // the live pass, and the archived pass only fills addresses the live pass never saw.
+      if (e && !index.status.has(e)) index.status.set(e, archived ? 'archived' : String(m?.status || ''))
+    }
+    if (rows.length < MEMBER_PAGE) return
+  }
+  index.partial = true
+}
+
+/** Read the whole audience — live members first, then the archived ones the default read hides. */
+export async function audienceIndex(conn: MailchimpConnection): Promise<AudienceIndex> {
+  const index: AudienceIndex = { status: new Map(), total: 0, partial: false }
+  await readMembers(conn, index, false)
+  await readMembers(conn, index, true)
+  return index
+}
+
 export type SyncResult = {
   attempted: number; created: number; updated: number; failed: number
   skippedNotMailable: number
   /** Held back by a CHANNEL rule rather than a bad address — Expedia and friends. */
   skippedRestricted: number
+  /** Dropped as a repeat of an address already in this same push. */
+  skippedDuplicate: number
+  // ── the preflight, filled in from audienceIndex() ──
+  /** Contacts Mailchimp has never seen. These are the only ones that add to the member count. */
+  willCreate: number
+  /** Contacts already in the audience. These are updated in place — never duplicated. */
+  alreadyInAudience: number
+  skippedUnsubscribed: number
+  skippedCleaned: number
+  skippedArchived: number
+  /** Members in the connected audience right now. */
+  audienceTotal: number
+  /** The audience read failed or was truncated — the numbers above are a floor. */
+  audiencePartial: boolean
   errors: { email: string; reason: string }[]
+}
+
+/** Merge fields we have nothing for are OMITTED, never sent empty. Sending FNAME:"" on a contact
+ *  Mailchimp already has a first name for would blank it — a push meant to enrich the audience
+ *  would quietly strip it instead. */
+function mergeFields(c: Contact): Record<string, string> {
+  const f: Record<string, string> = {}
+  if (c.first) f.FNAME = c.first
+  if (c.last) f.LNAME = c.last
+  if (c.phone) f.PHONE = c.phone
+  return f
 }
 
 /**
@@ -149,7 +235,13 @@ export type SyncResult = {
  * email. Losing the contact over a badly formatted phone field is the worse outcome.
  */
 export async function syncContacts(conn: MailchimpConnection, contacts: Contact[], opts?: { dryRun?: boolean }): Promise<SyncResult> {
-  const out: SyncResult = { attempted: 0, created: 0, updated: 0, failed: 0, skippedNotMailable: 0, skippedRestricted: 0, errors: [] }
+  const out: SyncResult = {
+    attempted: 0, created: 0, updated: 0, failed: 0,
+    skippedNotMailable: 0, skippedRestricted: 0, skippedDuplicate: 0,
+    willCreate: 0, alreadyInAudience: 0,
+    skippedUnsubscribed: 0, skippedCleaned: 0, skippedArchived: 0,
+    audienceTotal: 0, audiencePartial: false, errors: [],
+  }
 
   // The last gate, and it is deliberately redundant with the caller's. Anything that is not a real
   // address, or that a channel forbids us marketing to, stops here no matter who asked. The two are
@@ -162,8 +254,35 @@ export async function syncContacts(conn: MailchimpConnection, contacts: Contact[
   })
   // One row per address — a duplicate inside one batch makes Mailchimp reject the whole batch.
   const byEmail = new Map<string, Contact>()
-  for (const c of rows) if (!byEmail.has(c.email!)) byEmail.set(c.email!, c)
-  const list = Array.from(byEmail.values())
+  for (const c of rows) {
+    if (byEmail.has(c.email!)) { out.skippedDuplicate++; continue }
+    byEmail.set(c.email!, c)
+  }
+
+  // THE PREFLIGHT. If this read fails we do not abandon the push — we push without the skipping and
+  // say so, because a broken preflight is not a reason to leave the audience stale. status_if_new
+  // still protects anyone who unsubscribed.
+  let index: AudienceIndex | null = null
+  try {
+    index = await audienceIndex(conn)
+    out.audienceTotal = index.total
+    out.audiencePartial = index.partial
+  } catch (e: any) {
+    out.audiencePartial = true
+    out.errors.push({ email: 'audience read', reason: String(e?.message || e).slice(0, 200) })
+  }
+
+  const list: Contact[] = []
+  for (const c of Array.from(byEmail.values())) {
+    const state = index ? (index.status.get(c.email!) || '') : ''
+    // These three mean "leave this person where they are" — see the note above audienceIndex.
+    if (state === 'unsubscribed') { out.skippedUnsubscribed++; continue }
+    if (state === 'cleaned') { out.skippedCleaned++; continue }
+    if (state === 'archived') { out.skippedArchived++; continue }
+    if (state) out.alreadyInAudience++
+    else if (index) out.willCreate++
+    list.push(c)
+  }
   out.attempted = list.length
   if (opts?.dryRun || !list.length) return out
 
@@ -176,11 +295,7 @@ export async function syncContacts(conn: MailchimpConnection, contacts: Contact[
         email_address: c.email,
         email_type: 'html',
         status_if_new: statusIfNew,
-        merge_fields: {
-          FNAME: c.first || '',
-          LNAME: c.last || '',
-          PHONE: c.phone || '',
-        },
+        merge_fields: mergeFields(c),
         tags: tagsFor(c),
       })),
       update_existing: true,
