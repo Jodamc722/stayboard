@@ -4,8 +4,8 @@ import PolishButton from './PolishButton'
 // Pool → Ops → Guest Followup → Refund → Manager Review → Incident → Closed.
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
 // Breezeway task for the field, and move the card along the escalation path.
-import { useState, useEffect, useCallback } from 'react'
-import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2 } from 'lucide-react'
 import CommentThread from './CommentThread'
 import UnitCalendar from './UnitCalendar'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
@@ -23,6 +23,12 @@ type Glitch = {
   breezeway_task_id: string | null; photos: string[] | null; task_status: string | null; task_report_url?: string | null
   reservation_notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null
   due_date?: string | null; assignee?: string | null; assignee_person_id?: number | null; details?: string | null; progress?: number | null
+  // How it reached us and how the guest sounded — both feed the refund model (migration 060).
+  reported_via?: string | null; guest_tone?: string | null
+  // Migration 085: the advisor's number kept beside the human decision, and the approval state.
+  refund_recommended?: number | null; refund_reasoning?: any; refund_note?: string | null
+  refund_needs_approval?: boolean | null; refund_approved_by?: string | null; refund_approved_at?: string | null
+  closed_at?: string | null; closed_at_estimated?: boolean | null
   created_at: string
 }
 type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null; notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null; guestyUrl: string }
@@ -46,6 +52,30 @@ function dueState(due: string | null | undefined, closed: boolean): { label: str
   return { label: 'due ' + due.slice(5) + ' (' + days + 'd)', cls: 'bg-white text-muted border-line' }
 }
 
+// ── FOUR LANES, NOT SEVEN (Jon, 2026-09-15: "the way it looks is quite confusing") ─────────────
+//
+// The board had a lane each for Refund request, Manager review and Incident report. None of those
+// is a stage of WORK — they are facts about a card that is still somewhere in the process. A glitch
+// waiting on a refund decision is still with ops; filing it under "Refund request" moved it out of
+// the queue it actually belonged to and cost a whole column to say one word that now fits on the
+// card as a badge. Seven lanes also meant a sideways-scrolling board where five lanes were empty,
+// so the two real cards were never on screen together.
+//
+// So: four lanes for where the work is, badges for what is true about it. `statuses` keeps every
+// historical value readable — nothing in the database has to change for the board to make sense —
+// and `write` is the one status a drop into that lane records.
+export type Lane = { key: string; label: string; hint: string; write: string; statuses: string[] }
+export const LANES: Lane[] = [
+  { key: 'open',     label: 'Open',            hint: 'nobody has picked it up',     write: 'pool',            statuses: ['pool', ''] },
+  { key: 'ops',      label: 'With ops',        hint: 'being fixed',                 write: 'ops',             statuses: ['ops', 'incident'] },
+  { key: 'followup', label: 'Guest follow-up', hint: 'fixed, guest still owed a reply', write: 'guest_followup', statuses: ['guest_followup', 'refund', 'manager_review'] },
+  { key: 'closed',   label: 'Closed',          hint: 'done and answered',           write: 'closed',          statuses: ['closed', 'done', 'resolved'] },
+]
+export function laneOf(status: string | null | undefined): Lane {
+  const s = String(status || '')
+  return LANES.find(l => l.statuses.indexOf(s) >= 0) || LANES[0]
+}
+/** Kept for the legacy stage arrows and the progress fallback. */
 const COLS: { key: string; label: string }[] = [
   { key: 'pool', label: 'Glitch pool' },
   { key: 'ops', label: 'VR Ops' },
@@ -148,6 +178,9 @@ export function GlitchBoard() {
 
   const rows = market === 'all' ? glitches : glitches.filter(g => g.market === market)
   const markets = ['all', 'Miami', 'Broward', 'North', 'Vendor']
+  // The open card is looked up from the live list, not copied into state, so an edit or a refund
+  // refreshes what the sheet is showing without anyone having to close and reopen it.
+  const openGlitch = open ? glitches.find(g => g.id === open) || null : null
 
   if (loading && !glitches.length) return <div className="text-sm text-muted py-10 text-center">Loading glitch board…</div>
 
@@ -165,100 +198,493 @@ export function GlitchBoard() {
       {showTrash && <TrashDrawer kind="glitch" onRestored={load} onClose={() => setShowTrash(false)} />}
       {showNew && <NewGlitch onDone={() => { setShowNew(false); load() }} onCancel={() => setShowNew(false)} />}
 
-      {/* On a phone a 288px lane leaves a sliver of the next one showing and no way to land on a
-          lane cleanly. Below sm each lane is nearly the full screen and the strip snaps to it, so
-          swiping moves you one stage at a time and the page itself never travels sideways. */}
-      <div className="sm:hidden text-[11px] text-muted mb-1.5">{COLS.length} lanes &mdash; swipe sideways</div>
-      <div className="flex gap-3 overflow-x-auto pb-4 items-start snap-x snap-mandatory sm:snap-none scroll-pl-3 sm:scroll-pl-0 -mx-3 px-3 sm:mx-0 sm:px-0">
-        {COLS.map(col => {
-          const cards = rows.filter(g => g.status === col.key)
+      <GlitchKpis rows={rows} />
+
+      {/* FOUR LANES FIT. The old seven scrolled sideways on every screen, so the board could never
+          be read in one look — which is most of what "confusing" meant. On a phone the lanes still
+          snap one at a time; on a desktop they simply fit. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 items-start">
+        {LANES.map(lane => {
+          const cards = rows.filter(g => laneOf(g.status).key === lane.key)
           return (
-            <div key={col.key} className="w-[86vw] sm:w-72 shrink-0 snap-start sm:snap-align-none rounded-2xl bg-app/70 border border-line">
-              <div className="px-3 py-2 flex items-center gap-2 border-b border-line">
-                <span className="text-xs font-semibold uppercase tracking-wide text-ink">{col.label}</span>
-                <span className="text-[11px] font-semibold text-muted">{cards.length}</span>
+            <div key={lane.key} className="rounded-2xl bg-app/70 border border-line min-w-0">
+              <div className="px-3 py-2.5 border-b border-line">
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-ink">{lane.label}</span>
+                  <span className={'text-[11px] font-bold tabular-nums px-1.5 rounded ' + (cards.length ? 'bg-ink text-white' : 'text-faint')}>{cards.length}</span>
+                </div>
+                <p className="text-[10.5px] text-muted mt-0.5">{lane.hint}</p>
               </div>
-              <div className="p-2 space-y-2 min-h-[60px]" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) { act(id, { action: 'move', status: col.key }); if (col.key === 'refund') { setRefundFor(id); setOpen(id) } } }}>
-                {cards.map(g => {
-                  const ci = COLS.findIndex(c => c.key === g.status)
-                  const isOpen = open === g.id
-                  return (
-                    <div key={g.id} draggable onDragStart={e => e.dataTransfer.setData('text/plain', g.id)} className="rounded-xl border border-line bg-white shadow-soft cursor-grab active:cursor-grabbing">
-                      <button onClick={() => setOpen(isOpen ? '' : g.id)} className="w-full text-left px-3 py-2.5">
-                        <div className="text-sm font-semibold text-ink leading-snug">{g.guest_name ? g.guest_name + ' · ' : ''}{g.unit || 'No unit'}</div>
-                        <div className="text-xs text-muted mt-0.5 line-clamp-2">{g.overview}</div>
-                        <div className="flex items-center gap-1 flex-wrap mt-1.5">
-                          {g.glitch_type && g.glitch_type !== 'Glitch (Quality Issue)' && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white">{g.glitch_type}</span>}
-                          {g.category && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">{g.category.replace('Maintenance - ', '')}</span>}
-                          {g.market && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted border border-line">{g.market}</span>}
-                          {g.channel && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">{g.channel}</span>}
-                          {g.incident_date && <span className="text-[9px] text-muted">{fmtShort(g.incident_date)}</span>}
-                          {(g.photos || []).length > 0 && <span className="text-[9px] text-muted inline-flex items-center gap-0.5"><Camera size={9} />{(g.photos || []).length}</span>}
-                          {g.breezeway_task_id && <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + (g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-violet-50 text-violet-700 border-violet-200')}>{g.task_status === 'completed' ? 'Task completed' : g.task_status === 'in_progress' ? 'Task in progress' : 'Task not started'}</span>}
-                          {(g.refund_approved || 0) > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">Refund {money(g.refund_approved)}</span>}
-                          {g.status === 'refund' && !(Number(g.refund_approved) > 0) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white" title="This card is in Refund request but no amount has been logged yet">Refund not logged</span>}
-                          {(() => { const d = dueState(g.due_date, g.status === 'closed'); return d ? <span className={'text-[9px] font-bold px-1.5 py-0.5 rounded border ' + d.cls}>{d.label}</span> : null })()}
-                          {g.assignee && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 inline-flex items-center gap-0.5"><User2 size={8} />{g.assignee.split(' ')[0]}</span>}
-                        </div>
-                        {/* progress: follows the board stage unless someone sets it by hand */}
-                        <div className="mt-1.5 h-1 rounded-full bg-app overflow-hidden" title={progressOf(g) + '% — ' + (COLS.filter(x => x.key === g.status)[0] || { label: g.status }).label}>
-                          <div className={'h-full transition-all ' + (g.status === 'closed' ? 'bg-emerald-500' : progressOf(g) >= 65 ? 'bg-brand-500' : 'bg-amber-400')} style={{ width: progressOf(g) + '%' }} />
-                        </div>
-                      </button>
-                      {isOpen && (
-                        <div className="px-3 pb-2.5 border-t border-line pt-2 space-y-1.5">
-                          {(refundFor === g.id || (g.status === 'refund' && !(Number(g.refund_approved) > 0))) && (
-                            <RefundLogger id={g.id} total={g.reservation_total ?? null} onDone={amt => { setRefundFor(''); setGlitches(prev => prev.map(x => x.id === g.id ? { ...x, refund_approved: amt } : x)) }} />
-                          )}
-                          {g.check_in && <div className="text-[11px] text-muted">Stay {fmtShort(g.check_in)} &rarr; {fmtShort(g.check_out)}{g.reservation_total ? ' · ' + money(g.reservation_total) : ''}{g.guest_phone ? ' · ' + g.guest_phone : ''}{g.guest_email ? ' · ' + g.guest_email : ''}</div>}
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {g.reservation_id && <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-brand-600 hover:underline">Open reservation in Guesty ↗</a>}
-                            <SentimentChip s={g.sentiment} />
-                          </div>
-                          {g.reservation_notes && <div className="text-[11px] text-muted">Reservation notes: {g.reservation_notes.slice(0, 200)}</div>}
-                          {g.sentiment && g.sentiment.excerpt && <div className="text-[11px] text-muted">Guest said: &ldquo;{String(g.sentiment.excerpt).slice(0, 180)}&rdquo;</div>}
-                          {(g.photos || []).length > 0 && (
-                            <div className="flex gap-1 flex-wrap">{(g.photos || []).map((u, i) => <a key={i} href={glitchPhotoSrc(u)} target="_blank" rel="noreferrer"><img src={glitchPhotoSrc(u)} alt="" className="w-12 h-12 object-cover rounded border border-line" /></a>)}</div>
-                          )}
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {ci > 0 && <button onClick={() => act(g.id, { action: 'move', status: COLS[ci - 1].key })} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">&larr; {COLS[ci - 1].label}</button>}
-                            {ci < COLS.length - 1 && <button onClick={() => act(g.id, { action: 'move', status: COLS[ci + 1].key })} className="text-[11px] font-medium px-2 py-1 rounded-md border border-ink bg-ink text-white">{COLS[ci + 1].label} &rarr;</button>}
-                          </div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {!g.breezeway_task_id && <button onClick={() => setPanel(panel === g.id + ':push' ? '' : g.id + ':push')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100">Push to Breezeway</button>}
-                            <button onClick={() => setPanel(panel === g.id + ':edit' ? '' : g.id + ':edit')} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">Edit</button>
-                            {g.breezeway_task_id && <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer" className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white text-brand-600 hover:underline" title="Open the ADMIN task in Breezeway — edit, assign, modify, check">Admin task</a>}{g.task_report_url && <a href={g.task_report_url} target="_blank" rel="noreferrer" className="text-[11px] font-medium px-2 py-1 rounded-md border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" title="View the field report (read-only)">Report</a>}
-                            {g.breezeway_task_id && <button onClick={() => act(g.id, { action: 'checkTask' })} className="text-[11px] font-medium px-2 py-1 rounded-md border border-line bg-white hover:bg-app">Check status</button>}
-                            <DeleteButton title="Delete this glitch record. The Breezeway task, if any, stays." onDelete={async () => {
-                              try {
-                                const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, action: 'delete' }) })
-                                const j = await r.json()
-                                if (!r.ok || !j.ok) return j.error || 'Delete failed'
-                                setUndo({ trashId: String(j.trashId), label: String(j.label || 'glitch') })
-                                load()
-                                return null
-                              } catch (e: any) { return String(e?.message || e) }
-                            }} />
-                          </div>
-                          {panel === g.id + ':push' && <PushPanel g={g} people={people} onDone={() => { setPanel(''); load() }} act={act} />}
-                          {panel === g.id + ':edit' && <EditGlitch g={g} onDone={() => { setPanel(''); load() }} />}
-                          <GlitchManage g={g} people={people} onDone={load} />
-                          {/* One thread per glitch. When the glitch has a Breezeway task, the crew's
-                              Breezeway comments show here too and anything posted with Breezeway
-                              ticked lands in their app. */}
-                          <CommentThread type="glitch" id={g.id} label={(g.unit ? g.unit + ' \u2014 ' : '') + String(g.overview || 'glitch').split('\n')[0].slice(0, 60)} link="/glitches" taskId={g.breezeway_task_id || ''} reservationId={g.reservation_id || ''} />
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-                {cards.length === 0 && <div className="text-[11px] text-muted text-center py-4">Empty</div>}
+              <div className="p-2 space-y-2 min-h-[64px]"
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => {
+                  e.preventDefault()
+                  const id = e.dataTransfer.getData('text/plain')
+                  if (id) act(id, { action: 'move', status: lane.write })
+                }}>
+                {cards.map(g => (
+                  <GlitchCard key={g.id} g={g} onOpen={() => setOpen(g.id)} />
+                ))}
+                {cards.length === 0 && <p className="text-[11px] text-faint text-center py-5">Nothing here</p>}
               </div>
             </div>
           )
         })}
       </div>
+
+      {/* THE DETAIL IS A SHEET, NOT AN ACCORDION. Everything below used to unfold inside a 288px
+          lane: the refund logger, the stay, the photos, three panels and the comment thread, all
+          stacked in a column narrower than a phone. The card is a summary now and the whole record
+          opens in the same pop-up the New glitch form already uses. */}
+      {openGlitch && (
+        <GlitchDetail
+          g={openGlitch}
+          people={people}
+          onClose={() => { setOpen(''); setRefundFor('') }}
+          onChanged={load}
+          act={act}
+          openRefund={refundFor === openGlitch.id}
+          onDeleted={(trashId, label) => { setUndo({ trashId, label }); setOpen(''); load() }}
+        />
+      )}
+
       {undo && <UndoBar item={undo} onUndone={() => { setUndo(null); load() }} onDismiss={() => setUndo(null)} />}
+    </div>
+  )
+}
+
+// ── THE RECORD ──────────────────────────────────────────────────────────────────────────────────
+// One sheet, in the order somebody actually works it: what happened → who it happened to → what we
+// know about this unit → the job → the money → the conversation. Everything here used to unfold
+// inside the lane itself, which is why the board felt like it fell apart when you clicked a card.
+function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDeleted }: {
+  g: Glitch
+  people: { id: number; name: string; departments: string[] }[]
+  onClose: () => void
+  onChanged: () => void
+  act: (id: string, body: Record<string, any>, c?: string) => Promise<void>
+  openRefund: boolean
+  onDeleted: (trashId: string, label: string) => void
+}) {
+  const [tab, setTab] = useState<'work' | 'money' | 'talk'>('work')
+  const [panel, setPanel] = useState<'' | 'edit' | 'push'>('')
+  const lane = laneOf(g.status)
+  const refund = Number(g.refund_approved) || 0
+
+  const Tab = ({ k, label }: { k: 'work' | 'money' | 'talk'; label: string }) => (
+    <button onClick={() => setTab(k)}
+      className={'text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
+        (tab === k ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>
+      {label}
+    </button>
+  )
+
+  return (
+    <Sheet open onClose={onClose} wide
+      title={g.unit || 'Guest issue'}
+      subtitle={<span>{g.guest_name || 'Guest'}{g.category ? ' · ' + g.category : ''} · <span className="font-semibold">{lane.label}</span></span>}
+      footer={
+        <div className="flex items-center gap-2 flex-wrap">
+          {LANES.filter(l => l.key !== lane.key).map(l => (
+            <button key={l.key} onClick={() => act(g.id, { action: 'move', status: l.write })}
+              className={'text-[12px] font-semibold px-3 h-9 rounded-xl border ' +
+                (l.key === 'closed' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>
+              {l.key === 'closed' ? 'Close it' : 'Move to ' + l.label}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <DeleteButton title="Delete this glitch record. The Breezeway task, if any, stays." onDelete={async () => {
+            try {
+              const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, action: 'delete' }) })
+              const j = await r.json()
+              if (!r.ok || !j.ok) return j.error || 'Delete failed'
+              onDeleted(String(j.trashId), String(j.label || 'glitch'))
+              return null
+            } catch (e: any) { return String(e?.message || e) }
+          }} />
+        </div>
+      }>
+
+      <div className="flex items-center gap-1.5 flex-wrap mb-4">
+        <Tab k="work" label="The issue" />
+        <Tab k="money" label={refund > 0 ? 'Money · ' + money(refund) : 'Money'} />
+        <Tab k="talk" label="Comments" />
+      </div>
+
+      {tab === 'work' ? (
+        <div className="space-y-4">
+          <section>
+            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">What the guest said</p>
+            <p className="text-[13.5px] text-ink leading-relaxed whitespace-pre-wrap">{g.overview}</p>
+            {g.sentiment && g.sentiment.excerpt ? (
+              <p className="text-[12.5px] text-muted mt-2 border-l-2 border-line pl-3 italic">&ldquo;{String(g.sentiment.excerpt).slice(0, 300)}&rdquo;</p>
+            ) : null}
+            <div className="flex items-center gap-1.5 flex-wrap mt-2">
+              <SentimentChip s={g.sentiment} />
+              {g.reported_via ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">via {String(g.reported_via).replace(/_/g, ' ')}</span> : null}
+              {g.guest_tone ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">guest {g.guest_tone}</span> : null}
+              {g.incident_date ? <span className="text-[10px] text-muted">happened {fmtShort(g.incident_date)}</span> : null}
+            </div>
+          </section>
+
+          {(g.photos || []).length > 0 ? (
+            <section>
+              <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">Photos</p>
+              <div className="flex gap-1.5 flex-wrap">
+                {(g.photos || []).map((u, i) => (
+                  <a key={i} href={glitchPhotoSrc(u)} target="_blank" rel="noreferrer">
+                    <img src={glitchPhotoSrc(u)} alt="" className="w-20 h-20 object-cover rounded-lg border border-line" />
+                  </a>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          <section className="rounded-xl bg-app ring-1 ring-line px-3.5 py-3">
+            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">The stay</p>
+            <p className="text-[12.5px] text-ink">
+              {g.check_in ? fmtShort(g.check_in) + ' → ' + fmtShort(g.check_out) : 'No reservation linked'}
+              {g.reservation_total ? ' · ' + money(g.reservation_total) : ''}
+              {g.channel ? ' · ' + g.channel : ''}
+            </p>
+            <p className="text-[12px] text-muted mt-0.5">
+              {[g.guest_phone, g.guest_email].filter(Boolean).join(' · ') || 'No contact on file'}
+            </p>
+            {g.reservation_notes ? <p className="text-[12px] text-muted mt-1.5">Notes: {String(g.reservation_notes).slice(0, 300)}</p> : null}
+            {g.reservation_id ? (
+              <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer"
+                className="text-[12px] font-semibold text-brand-700 hover:underline mt-1.5 inline-block">Open in Guesty ↗</a>
+            ) : null}
+          </section>
+
+          <UnitSignals g={g} />
+
+          <section>
+            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">The Breezeway job</p>
+            {g.breezeway_task_id ? (
+              <div className="rounded-xl ring-1 ring-line bg-white px-3.5 py-3">
+                <p className="text-[12.5px] text-ink">
+                  <span className="font-semibold">{g.task_status === 'completed' ? 'Completed' : g.task_status === 'in_progress' ? 'In progress' : 'Not started'}</span>
+                  {g.assignee ? ' · ' + g.assignee : ' · nobody assigned'}
+                  {g.due_date ? ' · due ' + fmtShort(g.due_date) : ''}
+                </p>
+                <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                  <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer"
+                    className="text-[12px] font-semibold px-2.5 h-8 inline-flex items-center rounded-lg border border-line bg-white text-brand-700">Open in Breezeway ↗</a>
+                  {g.task_report_url ? <a href={g.task_report_url} target="_blank" rel="noreferrer" className="text-[12px] font-semibold px-2.5 h-8 inline-flex items-center rounded-lg border border-line bg-white">Field report</a> : null}
+                  <button onClick={() => act(g.id, { action: 'checkTask' })} className="text-[12px] font-semibold px-2.5 h-8 rounded-lg border border-line bg-white">Check status</button>
+                </div>
+                <div className="mt-2.5"><GlitchManage g={g} people={people} onDone={onChanged} /></div>
+              </div>
+            ) : (
+              <>
+                <p className="text-[12.5px] text-muted mb-2">Nothing has been filed for the crew yet.</p>
+                <button onClick={() => setPanel(panel === 'push' ? '' : 'push')}
+                  className="text-[12.5px] font-bold px-3.5 h-9 rounded-xl bg-ink text-white">Create the task</button>
+                {panel === 'push' ? <div className="mt-2"><PushPanel g={g} people={people} onDone={() => { setPanel(''); onChanged() }} act={act} /></div> : null}
+              </>
+            )}
+          </section>
+
+          <section>
+            <button onClick={() => setPanel(panel === 'edit' ? '' : 'edit')}
+              className="text-[12px] font-semibold px-2.5 h-8 rounded-lg border border-line bg-white text-muted hover:text-ink">
+              {panel === 'edit' ? 'Done editing' : 'Edit the details'}
+            </button>
+            {panel === 'edit' ? <div className="mt-2"><EditGlitch g={g} onDone={() => { setPanel(''); onChanged() }} /></div> : null}
+          </section>
+        </div>
+      ) : null}
+
+      {tab === 'money' ? <MoneyTab g={g} openRefund={openRefund} onChanged={onChanged} /> : null}
+
+      {tab === 'talk' ? (
+        <CommentThread type="glitch" id={g.id}
+          label={(g.unit ? g.unit + ' — ' : '') + String(g.overview || 'glitch').split('\n')[0].slice(0, 60)}
+          link="/glitches" taskId={g.breezeway_task_id || ''} reservationId={g.reservation_id || ''} />
+      ) : null}
+    </Sheet>
+  )
+}
+
+// ── THE TWO NUMBERS THAT SAY WHETHER THIS BOARD IS WORKING ──────────────────────────────────────
+// Jon, 2026-09-15: "track time of created, to glitch closed. thei should be a KPI. It should also
+// show refund provided as well."
+//
+// MEDIAN, NOT MEAN. One card left open over a holiday drags an average into uselessness, and the
+// number people then stop trusting. The median says what a typical issue actually takes.
+//
+// Rows closed before migration 085 have an ESTIMATED closure time (backfilled from updated_at),
+// and they are counted separately rather than silently mixed in — a measurement and a guess should
+// never be added together without saying so.
+function GlitchKpis({ rows }: { rows: Glitch[] }) {
+  const stat = useMemo(() => {
+    const hours: number[] = []
+    let estimated = 0
+    for (const g of rows) {
+      const closedAt = (g as any).closed_at
+      if (!closedAt || !g.created_at) continue
+      const h = (Date.parse(closedAt) - Date.parse(g.created_at)) / 3600000
+      if (!Number.isFinite(h) || h < 0) continue
+      if ((g as any).closed_at_estimated) { estimated++; continue }
+      hours.push(h)
+    }
+    hours.sort((a, b) => a - b)
+    const median = hours.length ? hours[Math.floor(hours.length / 2)] : null
+    const open = rows.filter(g => laneOf(g.status).key !== 'closed')
+    const oldest = open.reduce((acc: number, g) => {
+      const d = (Date.now() - Date.parse(g.created_at)) / 86400000
+      return Number.isFinite(d) && d > acc ? d : acc
+    }, 0)
+    const refunds = rows.map(g => Number(g.refund_approved) || 0).filter(n => n > 0)
+    return {
+      median, measured: hours.length, estimated,
+      open: open.length, oldest: Math.floor(oldest),
+      refundTotal: refunds.reduce((a, b) => a + b, 0),
+      refundCount: refunds.length,
+      awaitingApproval: rows.filter(g => (g as any).refund_needs_approval).length,
+    }
+  }, [rows])
+
+  const dur = (h: number) => h < 48 ? Math.round(h) + 'h' : Math.round(h / 24) + 'd'
+
+  const Tile = ({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) => (
+    <div className="min-w-0 rounded-2xl bg-white ring-1 ring-line px-4 py-3">
+      <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted">{label}</p>
+      <p className={'text-[20px] font-bold tabular-nums leading-tight mt-0.5 ' + (tone || 'text-ink')}>{value}</p>
+      {sub ? <p className="text-[11px] text-muted mt-0.5 break-words">{sub}</p> : null}
+    </div>
+  )
+
+  return (
+    <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4 mb-4">
+      <Tile label="Open now" value={String(stat.open)}
+        tone={stat.open ? 'text-ink' : 'text-emerald-700'}
+        sub={stat.open && stat.oldest > 0 ? 'oldest is ' + stat.oldest + ' day' + (stat.oldest === 1 ? '' : 's') + ' old' : 'nothing outstanding'} />
+      <Tile label="Typical time to close"
+        value={stat.median != null ? dur(stat.median) : '—'}
+        sub={stat.median != null
+          ? 'median of ' + stat.measured + ' closed' + (stat.estimated ? ' · ' + stat.estimated + ' older ones estimated' : '')
+          : (stat.estimated ? stat.estimated + ' closed before we timed them' : 'nothing closed yet')} />
+      <Tile label="Refunds given" value={stat.refundTotal ? money(stat.refundTotal) || '—' : '$0'}
+        tone={stat.refundTotal ? 'text-emerald-700' : 'text-ink'}
+        sub={stat.refundCount ? 'across ' + stat.refundCount + ' issue' + (stat.refundCount === 1 ? '' : 's') : 'none logged'} />
+      <Tile label="Waiting on approval" value={String(stat.awaitingApproval)}
+        tone={stat.awaitingApproval ? 'text-violet-700' : 'text-ink'}
+        sub={stat.awaitingApproval ? 'over the cap, unsigned' : 'nothing pending'} />
+    </div>
+  )
+}
+
+// ── WHAT WE KNOW ABOUT THIS UNIT ────────────────────────────────────────────────────────────────
+// Jon, 2026-09-15: flags that "help us determine how we respond to that particular unit".
+// Shown beside the issue, not behind a click, because it changes the answer.
+function UnitSignals({ g }: { g: Glitch }) {
+  const [d, setD] = useState<any>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    let dead = false
+    fetch('/api/glitches/signals?id=' + encodeURIComponent(g.id), { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (dead) return; if (j.ok) setD(j); else setErr(String(j.error || '')) })
+      .catch(e => { if (!dead) setErr(String(e?.message || e)) })
+    return () => { dead = true }
+  }, [g.id])
+
+  if (err) return null
+  if (!d) return (
+    <section className="rounded-xl bg-app ring-1 ring-line px-3.5 py-3">
+      <p className="text-[11px] uppercase tracking-wider font-bold text-muted">This unit</p>
+      <p className="text-[12px] text-muted mt-1"><Loader2 size={11} className="animate-spin inline mr-1" /> Checking its reviews and history…</p>
+    </section>
+  )
+
+  const TONE: Record<string, string> = {
+    bad: 'bg-rose-50 ring-rose-200 text-rose-900',
+    warn: 'bg-amber-50 ring-amber-200 text-amber-900',
+    good: 'bg-emerald-50 ring-emerald-200 text-emerald-900',
+  }
+  return (
+    <section className="rounded-xl bg-app ring-1 ring-line px-3.5 py-3">
+      <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">This unit</p>
+      <p className="text-[12.5px] text-ink">
+        {d.unitAvg != null
+          ? <>Rated <span className="font-bold">{d.unitAvg}★</span> over {d.reviewCount} review{d.reviewCount === 1 ? '' : 's'}
+              {d.portfolioAvg != null ? <span className="text-muted"> · portfolio {d.portfolioAvg}★</span> : null}</>
+          : <span className="text-muted">{d.hasListing ? 'No reviews on this unit yet.' : 'No listing linked, so no review history.'}</span>}
+      </p>
+      {d.lastReview ? (
+        <p className="text-[12px] text-muted mt-0.5">
+          Last review {d.lastReview.rating ? d.lastReview.rating + '★' : ''} on {d.lastReview.at}
+          {d.lastReview.channel ? ' · ' + d.lastReview.channel : ''}
+        </p>
+      ) : null}
+      {(d.flags || []).length ? (
+        <div className="space-y-1.5 mt-2.5">
+          {(d.flags || []).map((f: any) => (
+            <div key={f.key} className={'rounded-lg ring-1 px-2.5 py-2 ' + (TONE[f.tone] || TONE.warn)}>
+              <p className="text-[12px] font-bold">{f.label}</p>
+              <p className="text-[11.5px] opacity-90">{f.detail}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[12px] text-muted mt-2">Nothing on this unit argues for special treatment.</p>
+      )}
+    </section>
+  )
+}
+
+// ── THE MONEY ───────────────────────────────────────────────────────────────────────────────────
+// Two numbers that must never be confused: what the model RECOMMENDS and what a person DECIDED.
+// They sit side by side on purpose — the gap between them, across many cards, is the only way to
+// find out whether the policy matches what the team actually does.
+function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean; onChanged: () => void }) {
+  const [rec, setRec] = useState<any>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [showLog, setShowLog] = useState(openRefund)
+  const refund = Number(g.refund_approved) || 0
+
+  const ask = async () => {
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/glitches/advise', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.message || j?.error || 'Could not work out a recommendation.')
+      setRec(j)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+
+  const recommended = rec ? Number(rec?.recommendation?.amount ?? rec?.provisional) : (Number(g.refund_recommended) || null)
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl ring-1 ring-line bg-white px-3.5 py-3">
+        <p className="text-[11px] uppercase tracking-wider font-bold text-muted">What we actually gave</p>
+        {refund > 0 ? (
+          <>
+            <p className="text-[24px] font-bold text-emerald-700 tabular-nums leading-tight">{money(refund)}</p>
+            {g.reservation_total ? (
+              <p className="text-[12px] text-muted">{Math.round((refund / Number(g.reservation_total)) * 100)}% of the {money(g.reservation_total)} stay</p>
+            ) : null}
+            {g.refund_note ? <p className="text-[12px] text-muted mt-1">{g.refund_note}</p> : null}
+            {g.refund_needs_approval ? (
+              <p className="text-[12px] font-bold text-violet-700 mt-1.5">Waiting on a manager to sign this off.</p>
+            ) : null}
+          </>
+        ) : (
+          <p className="text-[13px] text-muted mt-0.5">Nothing logged yet. Zero is a real answer — log it as declined so the question stops coming back.</p>
+        )}
+        <button onClick={() => setShowLog(v => !v)}
+          className="mt-2 text-[12.5px] font-bold px-3 h-9 rounded-xl border border-line bg-white text-ink">
+          {refund > 0 ? 'Change it' : 'Log a refund'}
+        </button>
+        {showLog ? (
+          <div className="mt-2">
+            <RefundLogger id={g.id} total={g.reservation_total ?? null} onDone={() => { setShowLog(false); onChanged() }} />
+          </div>
+        ) : null}
+      </section>
+
+      <section className="rounded-xl ring-1 ring-line bg-app px-3.5 py-3">
+        <p className="text-[11px] uppercase tracking-wider font-bold text-muted">What the policy suggests</p>
+        {recommended != null && Number.isFinite(recommended) ? (
+          <p className="text-[20px] font-bold text-ink tabular-nums leading-tight">{money(recommended)}</p>
+        ) : (
+          <p className="text-[12.5px] text-muted mt-0.5">
+            Runs the house framework over this case — severity, how fast it was fixed, what was offered
+            instead, and the channel. Advice only; nothing is saved until you log it above.
+          </p>
+        )}
+        {rec?.summary ? <p className="text-[12.5px] text-ink mt-1.5 leading-relaxed">{rec.summary}</p> : null}
+        {(rec?.questions || []).length ? (
+          <div className="mt-2">
+            <p className="text-[11.5px] font-bold text-amber-800">It needs to know:</p>
+            <ul className="list-disc pl-4">
+              {(rec.questions || []).map((q: string, i: number) => <li key={i} className="text-[12px] text-amber-900">{q}</li>)}
+            </ul>
+          </div>
+        ) : null}
+        {rec?.classification ? (
+          <p className="text-[11.5px] text-muted mt-1.5">
+            {[rec.classification.category, rec.classification.severity, rec.stay?.channel,
+              rec.stay?.nights ? rec.stay.nights + ' nights' : '',
+              rec.stay?.nightlyRate ? money(rec.stay.nightlyRate) + '/night' : '',
+              rec.confidence ? rec.confidence + ' confidence' : ''].filter(Boolean).join(' · ')}
+          </p>
+        ) : null}
+        <button onClick={ask} disabled={busy}
+          className="mt-2 text-[12.5px] font-bold px-3 h-9 rounded-xl bg-ink text-white disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
+          {busy ? <Loader2 size={13} className="animate-spin" /> : null}
+          {rec ? 'Ask again' : 'Work out a recommendation'}
+        </button>
+        {err ? <p className="text-[12px] font-semibold text-rose-700 mt-1.5">{err}</p> : null}
+      </section>
+    </div>
+  )
+}
+
+// ── THE CARD ────────────────────────────────────────────────────────────────────────────────────
+// A card answers four questions and stops: which unit, what happened, who holds it, what it cost.
+//
+// What came off it, and why. The old card carried up to ten chips — market, channel, category,
+// date, photo count, task status, refund, due, assignee, type — plus a progress bar. Market and
+// channel are already filters; the photo count is visible the moment you open it; and the progress
+// bar encoded the lane the card was sitting in, so it told you the one thing the column heading
+// had already said. Ten equally-loud chips is the same as none: nothing stands out, so everything
+// has to be read.
+function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
+  const refund = Number(g.refund_approved) || 0
+  const owedRefund = String(g.status) === 'refund' && !refund
+  const incident = g.glitch_type && g.glitch_type !== 'Glitch (Quality Issue)'
+  const due = dueState(g.due_date, String(g.status) === 'closed')
+  return (
+    <div draggable onDragStart={e => e.dataTransfer.setData('text/plain', g.id)}
+      className="rounded-xl border border-line bg-white shadow-soft cursor-grab active:cursor-grabbing">
+      <button onClick={onOpen} className="w-full text-left px-3 py-2.5 min-w-0">
+        {incident ? (
+          <span className="inline-block mb-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white">{g.glitch_type}</span>
+        ) : null}
+        {/* Market rides on the top line with the unit (Jon, 2026-09-15). It is how the board is
+            navigated — a Broward supervisor scanning for their own work should not have to read
+            the unit name and translate it. Muted, so it labels without competing. */}
+        <div className="flex items-baseline gap-2 min-w-0">
+          <p className="text-[13.5px] font-bold text-ink leading-snug truncate flex-1 min-w-0">{g.unit || 'No unit'}</p>
+          {g.market ? (
+            <span className="shrink-0 text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">{g.market}</span>
+          ) : null}
+        </div>
+        <p className="text-[11.5px] text-muted truncate">
+          {g.guest_name || 'Guest'}{g.category ? ' · ' + g.category.replace(/^(Maintenance|Cleanliness) - /, '') : ''}
+        </p>
+        <p className="text-[12px] text-ink/70 mt-1 line-clamp-2 leading-snug">{g.overview}</p>
+
+        <div className="flex items-center gap-1 flex-wrap mt-2">
+          {g.breezeway_task_id ? (
+            <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded ' +
+              (g.task_status === 'completed' ? 'bg-emerald-100 text-emerald-700'
+                : g.task_status === 'in_progress' ? 'bg-sky-100 text-sky-700'
+                : 'bg-app text-muted ring-1 ring-line')}>
+              {g.task_status === 'completed' ? 'Task done' : g.task_status === 'in_progress' ? 'Task running' : 'Task not started'}
+            </span>
+          ) : (
+            <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">No task yet</span>
+          )}
+          {refund > 0 ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">Refunded {money(refund)}</span> : null}
+          {owedRefund ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">Refund not logged</span> : null}
+          {(g as any).refund_needs_approval ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-violet-600 text-white">Needs approval</span> : null}
+          {due ? <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded border ' + due.cls}>{due.label}</span> : null}
+          {g.assignee ? (
+            <span className="text-[9.5px] font-semibold text-muted inline-flex items-center gap-0.5 ml-auto">
+              <User2 size={9} />{g.assignee.split(' ')[0]}
+            </span>
+          ) : null}
+        </div>
+      </button>
     </div>
   )
 }
@@ -537,40 +963,139 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
 // Push panel — issue text uses the Breezeway template naming ("Guest Reported / Glitch - <issue>")
 // and an assignee can be picked right here. Pushes are URGENT: guest glitches are priority field issues.
 function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number; name: string; departments: string[] }[]; onDone: () => void; act: (id: string, body: Record<string, any>, c?: string) => Promise<void> }) {
-  const [issue, setIssue] = useState((g.overview || '').split('\n')[0].slice(0, 70))
-  const [assignee, setAssignee] = useState('')
+  // THE BREEZEWAY JOB, AS A FORM (Jon, 2026-09-15: "should function like the today in ops add task
+  // form but use the glitch guest template").
+  //
+  // The old panel asked for a title, an optional assignee and a property, then the SERVER decided
+  // everything that actually matters to a crew: department from the category, priority always
+  // urgent, date always today — and it ignored the due date already on the card. So a glitch you
+  // had scheduled for Thursday arrived in Breezeway as a fire, and there was no way to say "this
+  // is a normal-priority housekeeping job for tomorrow" without opening Breezeway and redoing it.
+  //
+  // Same four decisions as the Today-in-Ops sheet — what, who, when, how urgent — with the glitch
+  // guest template and the description block already attached by the server.
+  const firstLine = (g.overview || '').split('\n')[0].slice(0, 70)
+  const [issue, setIssue] = useState(firstLine)
+  const [assignee, setAssignee] = useState(g.assignee || '')
+  const [dept, setDept] = useState('')
+  const [prio, setPrio] = useState('urgent')
+  const [date, setDate] = useState(() => {
+    if (g.due_date && /^\d{4}-\d{2}-\d{2}$/.test(g.due_date)) return g.due_date
+    return todayET()
+  })
   const [busy, setBusy] = useState(false)
-  // Breezeway property override — building-level glitches (e.g. "Rustic Exterior") get pushed
-  // to the BUILDING property instead of the guest's unit. Default: the unit.
+  const [err, setErr] = useState('')
+
+  // Building-level glitches ("Rustic Exterior") file against the BUILDING, not the guest's unit.
   const [prop, setProp] = useState('')
   const [props, setProps] = useState<{ id: number; name: string }[]>([])
   useEffect(() => { fetch('/api/glitches/properties', { cache: 'no-store' }).then(r => r.json()).then(j => setProps(Array.isArray(j.properties) ? j.properties : [])).catch(() => {}) }, [])
   const pickedProp = props.find(x => x.name === prop.trim()) || null
+
+  // The department Breezeway will get if nobody overrides it — shown, not hidden, so the person
+  // filing can see the guess and correct it.
+  const impliedDept = /cleanliness/i.test(String(g.category || '')) ? 'housekeeping'
+    : /safety|security/i.test(String(g.category || '')) ? 'safety' : 'maintenance'
+  const cleanName = (v: string) => v.trim().replace(/\s*\([^)]*\)\s*$/, '')
+  const person = people.find(x => x.name === cleanName(assignee)) || null
+  const blocked = !issue.trim() ? 'Give the task a title.'
+    : (assignee.trim() && !person) ? 'That name is not on the Breezeway roster.'
+    : (prop.trim() && !pickedProp) ? 'That property is not in Breezeway.'
+    : ''
+
   const doPush = async () => {
-    setBusy(true)
-    const nm = assignee.trim().replace(/\s*\([^)]*\)\s*$/, '')
-    const p = people.find(x => x.name === nm)
-    const body: Record<string, any> = { action: 'push', issue: issue.trim(), assigneeIds: p ? [p.id] : [] }
+    setBusy(true); setErr('')
+    const body: Record<string, any> = {
+      action: 'push',
+      issue: issue.trim(),
+      assigneeIds: person ? [person.id] : [],
+      assigneeName: person ? person.name : '',
+      department: dept || impliedDept,
+      priority: prio,
+      scheduledDate: date,
+    }
     if (pickedProp) { body.homeId = pickedProp.id; body.homeName = pickedProp.name }
-    await act(g.id, body)
-    setBusy(false); onDone()
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, ...body }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) { setErr(String(j?.message || j?.error || 'Breezeway refused the task.')); setBusy(false); return }
+      // A task that exists but could not be assigned is a half-success, and saying so is the point.
+      if (j.assignError) { setErr(String(j.assignError)); setBusy(false); return }
+      setBusy(false); onDone()
+    } catch (e: any) { setErr(String(e?.message || e)); setBusy(false) }
   }
+
+  const Lbl = ({ children }: { children: any }) => (
+    <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted mb-1">{children}</p>
+  )
+  const field = 'w-full h-9 px-2.5 rounded-xl border border-line bg-white text-base sm:text-[13px] focus:outline-none focus:ring-2 focus:ring-brand-200'
+
   return (
-    <div className="mt-1.5 rounded-lg border border-violet-200 bg-violet-50/50 p-2 space-y-1.5">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">Push to Breezeway (urgent)</div>
-      <div className="text-[11px] text-muted">Task: <span className="text-ink">Guest Reported / Glitch - {issue || '…'}</span></div>
-      <input value={issue} onChange={e => setIssue(e.target.value)} placeholder="Short issue (e.g. Hot water issue.)" className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
-      <input list="glitch-board-ppl" value={assignee} onChange={e => setAssignee(e.target.value)} placeholder="Assignee (optional)…" className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
-      <input list="glitch-board-props" value={prop} onChange={e => setProp(e.target.value)} placeholder={'Property: ' + (g.unit || 'unit') + ' (default) — type to push to a building, e.g. Rustic Exterior'} className={'w-full text-xs border rounded px-2 py-1.5 bg-white ' + (prop && !pickedProp ? 'border-amber-300' : 'border-line')} />
-      {pickedProp && <div className="text-[10px] text-violet-700">Task will file under <span className="font-semibold">{pickedProp.name}</span> instead of the unit.</div>}
+    <div className="rounded-xl ring-1 ring-line bg-white p-3.5 space-y-3">
+      <div>
+        <Lbl>Task title</Lbl>
+        <input value={issue} onChange={e => setIssue(e.target.value)} className={field}
+          placeholder="What the crew needs to do" />
+        <p className="text-[11px] text-muted mt-1">
+          Files as <span className="text-ink font-medium">Guest Reported / Glitch - {issue || '…'}</span>, on the glitch guest template.
+        </p>
+      </div>
+
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <div>
+          <Lbl>Assign to</Lbl>
+          <input list="glitch-board-ppl" value={assignee} onChange={e => setAssignee(e.target.value)}
+            className={field} placeholder="Nobody yet" />
+        </div>
+        <div>
+          <Lbl>Scheduled for</Lbl>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} className={field} />
+        </div>
+        <div>
+          <Lbl>Department</Lbl>
+          <select value={dept} onChange={e => setDept(e.target.value)} className={field}>
+            <option value="">From the category — {impliedDept}</option>
+            <option value="maintenance">Maintenance</option>
+            <option value="housekeeping">Housekeeping</option>
+            <option value="safety">Safety</option>
+            <option value="inspection">Inspection</option>
+          </select>
+        </div>
+        <div>
+          <Lbl>Priority</Lbl>
+          <select value={prio} onChange={e => setPrio(e.target.value)} className={field}>
+            <option value="urgent">Urgent</option>
+            <option value="high">High</option>
+            <option value="normal">Normal</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <Lbl>File against</Lbl>
+        <input list="glitch-board-props" value={prop} onChange={e => setProp(e.target.value)}
+          className={field + (prop && !pickedProp ? ' border-amber-300' : '')}
+          placeholder={(g.unit || 'the unit') + ' — type a building to file there instead'} />
+        {pickedProp ? <p className="text-[11px] text-violet-700 mt-1">Filing under <span className="font-semibold">{pickedProp.name}</span> rather than the unit.</p> : null}
+      </div>
+
       <datalist id="glitch-board-ppl">{people.map(p => <option key={p.id} value={p.name + (p.departments && p.departments.length ? ' (' + p.departments.join('/') + ')' : '')} />)}</datalist>
       <datalist id="glitch-board-props">{props.map(x => <option key={x.id} value={x.name} />)}</datalist>
-      <button onClick={doPush} disabled={busy || !issue.trim()} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-violet-600 text-white disabled:opacity-40">{busy ? 'Pushing…' : 'Create task'}</button>
+
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <button onClick={doPush} disabled={busy || !!blocked}
+          className="text-[12.5px] font-bold px-4 h-9 rounded-xl bg-ink text-white disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
+          {busy ? <Loader2 size={13} className="animate-spin" /> : null} Create the task
+        </button>
+        {/* A disabled button always says why. */}
+        {blocked ? <span className="text-[11.5px] font-semibold text-amber-700">{blocked}</span> : null}
+        {err ? <span className="text-[11.5px] font-semibold text-rose-700">{err}</span> : null}
+      </div>
     </div>
   )
 }
 
-// Edit panel — every field editable after creation.
 function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
   const [f, setF] = useState({
     glitchType: g.glitch_type || TYPES[0], category: g.category || '', incidentDate: g.incident_date || '',
