@@ -10,6 +10,7 @@ export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
   progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO, canSee, canEdit, toPerson,
+  type Invoice, INVOICE_STATUSES, INVOICE_COUNTS,
 } from './projects-shared'
 
 export async function getCategories(): Promise<{ key: string; label: string; color: string; sort: number }[]> {
@@ -71,22 +72,79 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
     sb.from('project_photos').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(500),
     sb.from('project_notes').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(1000),
     sb.from('project_members').select('*').eq('project_id', id).order('created_at'),
-    sb.from('project_task_assignees').select('task_id,person_key,display,email').eq('project_id', id),
+    // `role` arrives with migration 087. Selecting it before the migration runs would make the
+    // whole project 500 on a column that does not exist yet, so it is read separately and a
+    // missing column simply means every row is what it always was: an assignee.
+    sb.from('project_task_assignees').select('task_id,person_key,display,email,role').eq('project_id', id),
   ])
-  for (const r of [links, steps, photos, notes, members, asg]) if (r.error) throw new Error('project read failed: ' + r.error.message)
+  for (const r of [links, steps, photos, notes, members]) if (r.error) throw new Error('project read failed: ' + r.error.message)
+  let asgRows = (asg.data || []) as any[]
+  if (asg.error) {
+    if (!/column|schema/i.test(asg.error.message)) throw new Error('project read failed: ' + asg.error.message)
+    const retry = await sb.from('project_task_assignees').select('task_id,person_key,display,email').eq('project_id', id)
+    if (retry.error) throw new Error('project read failed: ' + retry.error.message)
+    asgRows = (retry.data || []) as any[]
+  }
   const L = (links.data || []) as any[]
   const homed = await homedTasks(id)
   const S = [...((steps.data || []) as any[]), ...homed.rows]
   const byTask: Record<string, Person[]> = {}
-  for (const a of [...((asg.data || []) as any[]), ...homed.asg]) (byTask[a.task_id] = byTask[a.task_id] || []).push({ person_key: a.person_key, display: a.display, email: a.email })
-  await Promise.all([enrichLinks(L), syncBreezeway(S)])
+  const collabByTask: Record<string, Person[]> = {}
+  for (const a of [...asgRows, ...homed.asg]) {
+    const who = { person_key: a.person_key, display: a.display, email: a.email }
+    const bucket = String(a.role || 'assignee') === 'collaborator' ? collabByTask : byTask
+    ;(bucket[a.task_id] = bucket[a.task_id] || []).push(who)
+  }
+  const [, , invoices] = await Promise.all([enrichLinks(L), syncBreezeway(S), getInvoices(id)])
+  const files = await signFiles(photos.data || [])
+  // The invoice carries its own paperwork so the panel never has to hunt the files list for it.
+  const byFile: Record<string, any> = {}
+  for (const f of files) byFile[String(f.id)] = f
+  for (const inv of invoices) {
+    const f = inv.photo_id ? byFile[String(inv.photo_id)] : null
+    inv.file = f ? { id: f.id, name: f.name, url: f.url, mime: f.mime } : null
+  }
   return {
     ...(p as any),
-    links: L, steps: S, photos: await signFiles(photos.data || []), notes: notes.data || [],
+    links: L, steps: S, photos: files, notes: notes.data || [],
     members: (members.data || []) as Member[],
-    tasks: nestTasks(S, byTask),
+    tasks: nestTasks(S, byTask, collabByTask),
+    invoices,
     progress: progressOf(L.filter(l => !l.task_id), S), health: healthOf(p as any, S),
   }
+}
+
+// ---------------------------------------------------------------- invoices
+// FAIL-OPEN, like every other table that arrived after the page did: until migration 087 runs the
+// project simply has no invoices. It must not take the project page down, because the page is how
+// people would find out anything is wrong.
+export async function getInvoices(projectId: string): Promise<Invoice[]> {
+  try {
+    const { data, error } = await supabaseAdmin()
+      .from('project_invoices').select('*').eq('project_id', projectId)
+      .order('created_at', { ascending: false }).limit(500)
+    if (error) return []
+    return ((data || []) as any[]).map(r => ({
+      ...r,
+      amount_cents: Number(r.amount_cents) || 0,
+      needs_approval: !!r.needs_approval,
+      status: INVOICE_STATUSES.includes(r.status) ? r.status : 'received',
+    })) as Invoice[]
+  } catch { return [] }
+}
+
+/** Keep projects.invoiced_cents honest after any invoice write. Approved and paid only — a quote
+ *  is not money out. Never touches spent_cents: that number was typed by a person. */
+export async function recountInvoiced(projectId: string): Promise<void> {
+  try {
+    const sb = supabaseAdmin()
+    const { data, error } = await sb.from('project_invoices').select('amount_cents,status').eq('project_id', projectId).limit(1000)
+    if (error) return
+    const total = ((data || []) as any[])
+      .filter(r => INVOICE_COUNTS.includes(String(r.status) as any))
+      .reduce((n, r) => n + (Number(r.amount_cents) || 0), 0)
+    await sb.from('projects').update({ invoiced_cents: total }).eq('id', projectId)
+  } catch { /* the number is recomputed on the next write */ }
 }
 
 // ---------------------------------------------------------------- my board
@@ -125,7 +183,9 @@ async function homedTasks(projectId: string): Promise<{ rows: any[]; asg: any[] 
   const ids = homes.map((h: any) => String(h.task_id))
   const [tasks, asg] = await Promise.all([
     soft(sb.from('project_steps').select('*').in('id', ids)),
-    soft(sb.from('project_task_assignees').select('task_id,person_key,display,email').in('task_id', ids)),
+    // select('*') rather than naming `role`: a homed task must keep working before 087 runs,
+    // and a star select cannot fail on a column that is not there yet.
+    soft(sb.from('project_task_assignees').select('*').in('task_id', ids)),
   ])
   const by = Object.fromEntries(homes.map((h: any) => [String(h.task_id), h]))
   const rows = ((tasks || []) as any[]).map(t => ({ ...t, section: by[t.id]?.section ?? null, sort: by[t.id]?.sort ?? null, parent_id: null, home_project_id: t.project_id, homed: true }))
@@ -268,7 +328,11 @@ export async function addNote(projectId: string, body: string, author: string | 
 
 /** An activity event: what somebody did, with enough structure for the feed to link the task. */
 export async function logEvent(projectId: string, who: string | null, type: EventType, body: string,
-  meta: { task_id?: string; task_title?: string; from?: string | null; to?: string | null; who?: string[]; name?: string } = {}) {
+  meta: { task_id?: string; task_title?: string; from?: string | null; to?: string | null; who?: string[]; name?: string
+        /** Which kind of person changed, when the event is about assignees. */
+        role?: string
+        /** The invoice an event is about, so the feed can link straight to it. */
+        invoice_id?: string } = {}) {
   await addNote(projectId, body, who, 'event', false, { taskId: meta.task_id || null, meta: { type, ...meta } })
 }
 

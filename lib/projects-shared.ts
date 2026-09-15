@@ -100,6 +100,9 @@ export type Task = {
   /** Kept in sync with the first assignee for old readers; never the source of truth. */
   assignee: string | null
   assignees: Person[]
+  /** On the task, but not who you chase when it is late — reviewers, the person supplying the
+   *  quote, the owner who wants to know. Same table as assignees, different role. */
+  collaborators: Person[]
   subtasks: Task[]
   /** Set on a task shown here from another project (multi-homed). */
   homed?: boolean; home_project_id?: string; home_project_title?: string
@@ -139,6 +142,70 @@ export const fmtBytes = (n: number | null | undefined) => {
   if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB'
   return (b / 1024 / 1024).toFixed(1) + ' MB'
 }
+// ── VENDORS AND INVOICES (Wave 5) ────────────────────────────────────────────────────────────────
+// The vendor is the app's existing `vendors` row (migration 062) with the contact fields 087 added.
+// It is shared with the ops boards on purpose: saving a plumber here is saving them everywhere.
+// Named VendorRecord, not Vendor, because lib/staffing already exports a Vendor — the narrower
+// classification view of THIS SAME ROW. Two names for one table is worth it to stop a file
+// importing both and silently getting the one without a phone number on it.
+export type VendorRecord = {
+  key: string; label: string
+  contact_name: string | null; phone: string | null; email: string | null
+  trade: string | null; buildings: string[]
+  rate_cents: number | null; rate_unit: string | null; billing: string | null; terms?: string | null
+  address: string | null; notes: string | null
+  w9_on_file: boolean; coi_expires: string | null
+  active: boolean; sort: number
+}
+
+export const VENDOR_TRADES = [
+  'general', 'plumbing', 'electrical', 'hvac', 'appliance', 'cleaning', 'pest',
+  'flooring', 'paint', 'locks', 'pool', 'landscaping', 'roofing', 'furniture', 'other',
+] as const
+
+export const RATE_UNITS = ['hour', 'job', 'visit', 'month'] as const
+
+export type InvoiceStatus = 'quoted' | 'received' | 'approved' | 'paid' | 'void'
+export const INVOICE_STATUSES: InvoiceStatus[] = ['quoted', 'received', 'approved', 'paid', 'void']
+export const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
+  quoted: 'Quoted', received: 'Received', approved: 'Approved', paid: 'Paid', void: 'Void',
+}
+/** Only these two are money actually committed. A quote is a maybe and a void never happened. */
+export const INVOICE_COUNTS: InvoiceStatus[] = ['approved', 'paid']
+
+export type Invoice = {
+  id: string; project_id: string; task_id: string | null
+  vendor_key: string | null; vendor_name: string | null
+  number: string | null; amount_cents: number; status: InvoiceStatus
+  issued_on: string | null; due_on: string | null; paid_on: string | null
+  note: string | null; photo_id: string | null
+  needs_approval: boolean; approved_by: string | null; approved_at: string | null
+  created_by: string | null; created_at: string; updated_at: string
+  /** Stamped at read time from the attached project_photos row, so the UI never re-signs a URL. */
+  file?: { id: string; name: string | null; url: string; mime: string | null } | null
+}
+
+/** Over this, an invoice waits for someone to approve it. A project can set its own in settings —
+ *  a $400 ceiling is right for a unit refresh and wrong for a building onboarding. */
+export const INVOICE_APPROVAL_CENTS = 100_000
+export const approvalCeiling = (settings: any): number => {
+  const n = Number(settings?.invoiceApprovalCents)
+  return Number.isFinite(n) && n >= 0 ? n : INVOICE_APPROVAL_CENTS
+}
+
+/** What the project has actually committed, and what is still waiting on a yes. One pass. */
+export function invoiceTotals(invoices: Invoice[]) {
+  let committed = 0, quoted = 0, unpaid = 0, awaiting = 0, awaitingCents = 0
+  for (const i of invoices || []) {
+    const cents = Number(i.amount_cents) || 0
+    if (i.status === 'quoted') quoted += cents
+    if (INVOICE_COUNTS.includes(i.status)) committed += cents
+    if (i.status === 'approved') unpaid += cents
+    if (i.needs_approval && !i.approved_at && i.status !== 'void') { awaiting++; awaitingCents += cents }
+  }
+  return { committed, quoted, unpaid, awaiting, awaitingCents, count: (invoices || []).length }
+}
+
 /** "just now", "4m", "3h", "2d", else a short date. Feeds read better in relative time. */
 export const ago = (iso: string, now = Date.now()) => {
   const t = new Date(iso).getTime()
@@ -299,6 +366,7 @@ export type ProjectFull = Project & {
   links: any[]; steps: any[]; photos: ProjectFile[]; notes: Note[]
   members: Member[]
   tasks: Task[]
+  invoices: Invoice[]
   progress: ReturnType<typeof progressOf>; health: ReturnType<typeof healthOf>
 }
 
@@ -345,11 +413,11 @@ export function toPerson(raw: string): Person {
 }
 
 /** Nest flat task rows: top-level tasks carry their subtasks. Order within a level is sort, then created. */
-export function nestTasks(rows: any[], assigneesByTask: Record<string, Person[]>): Task[] {
+export function nestTasks(rows: any[], assigneesByTask: Record<string, Person[]>, collaboratorsByTask: Record<string, Person[]> = {}): Task[] {
   const byId: Record<string, Task> = {}
   const order = (a: any, b: any) => (a.sort ?? 1e9) - (b.sort ?? 1e9) || String(a.created_at).localeCompare(String(b.created_at))
   for (const r of rows) {
-    byId[r.id] = { ...r, status: TASK_STATUSES.includes(r.status) ? r.status : (r.done ? 'done' : 'todo'), assignees: assigneesByTask[r.id] || [], subtasks: [] }
+    byId[r.id] = { ...r, status: TASK_STATUSES.includes(r.status) ? r.status : (r.done ? 'done' : 'todo'), assignees: assigneesByTask[r.id] || [], collaborators: collaboratorsByTask[r.id] || [], subtasks: [] }
   }
   const top: Task[] = []
   for (const r of rows.slice().sort(order)) {
