@@ -96,6 +96,28 @@ async function mc(conn: { apiKey: string; dc: string }, path: string, init?: Req
   return json
 }
 
+/**
+ * Run `fn` over `items` with at most `limit` in flight.
+ *
+ * Mailchimp allows ten simultaneous connections per key and the whole push has to finish inside the
+ * route's sixty-second budget. Reading a 7,500-member audience one page at a time is eight round
+ * trips in series for no reason; so is posting sixteen batches of five hundred. Nothing here shares
+ * state between workers beyond appending to counters, so order does not matter.
+ */
+async function pool<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  const worker = async () => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      out[i] = await fn(items[i], i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker))
+  return out
+}
+
 /** Verify a key and list the audiences it can reach — the connect screen's first call. */
 export async function probe(apiKey: string): Promise<{ accountName: string; dc: string; audiences: { id: string; name: string; members: number }[] }> {
   const dc = dcFromKey(apiKey)
@@ -156,9 +178,10 @@ export function tagsFor(c: Contact): string[] {
 // So the audience is read before anything is sent. It costs one request per thousand members, and
 // it turns "trust me, nothing is duplicated" into a number on the screen before the button is
 // pressed.
+export type AudienceMember = { status: string; tags: string[] }
 export type AudienceIndex = {
-  /** lowercased email -> Mailchimp status (subscribed | transactional | unsubscribed | cleaned | pending | archived) */
-  status: Map<string, string>
+  /** lowercased email -> what Mailchimp holds (subscribed | transactional | unsubscribed | cleaned | pending | archived) */
+  members: Map<string, AudienceMember>
   total: number
   /** The read hit its ceiling or failed — treat the counts as a floor, not a fact. */
   partial: boolean
@@ -166,39 +189,84 @@ export type AudienceIndex = {
 
 const MEMBER_PAGE = 1000
 const MEMBER_PAGE_CAP = 60   // 60,000 members before we admit we only have part of the picture
+const FIELDS = 'total_items,members.email_address,members.status,members.tags'
+
+function absorb(index: AudienceIndex, rows: any[], archived: boolean) {
+  for (const m of rows) {
+    const e = String(m?.email_address || '').trim().toLowerCase()
+    // The archived pass must not overwrite a live status: first write wins.
+    if (!e || index.members.has(e)) continue
+    const tags = Array.isArray(m?.tags) ? m.tags.map((t: any) => String(t?.name || t || '')).filter(Boolean) : []
+    index.members.set(e, { status: archived ? 'archived' : String(m?.status || ''), tags })
+  }
+}
 
 async function readMembers(conn: MailchimpConnection, index: AudienceIndex, archived: boolean) {
   const base = '/lists/' + encodeURIComponent(conn.audienceId) + '/members'
-    + '?count=' + MEMBER_PAGE + '&fields=total_items,members.email_address,members.status'
-    + (archived ? '&status=archived' : '')
-  for (let page = 0; page < MEMBER_PAGE_CAP; page++) {
-    const r = await mc(conn, base + '&offset=' + page * MEMBER_PAGE)
-    if (!archived) index.total = Number(r?.total_items) || index.total
-    const rows: any[] = Array.isArray(r?.members) ? r.members : []
-    for (const m of rows) {
-      const e = String(m?.email_address || '').trim().toLowerCase()
-      // The archived pass must not overwrite a live status, and vice versa — first write wins for
-      // the live pass, and the archived pass only fills addresses the live pass never saw.
-      if (e && !index.status.has(e)) index.status.set(e, archived ? 'archived' : String(m?.status || ''))
-    }
-    if (rows.length < MEMBER_PAGE) return
-  }
-  index.partial = true
+    + '?count=' + MEMBER_PAGE + '&fields=' + FIELDS + (archived ? '&status=archived' : '')
+  // Page one tells us how many there are; the rest go out together rather than in a queue.
+  const first = await mc(conn, base + '&offset=0')
+  const firstRows: any[] = Array.isArray(first?.members) ? first.members : []
+  absorb(index, firstRows, archived)
+  const total = Number(first?.total_items) || firstRows.length
+  if (!archived) index.total = total
+  if (firstRows.length < MEMBER_PAGE) return
+
+  const pages = Math.min(Math.ceil(total / MEMBER_PAGE), MEMBER_PAGE_CAP)
+  if (Math.ceil(total / MEMBER_PAGE) > MEMBER_PAGE_CAP) index.partial = true
+  const offsets: number[] = []
+  for (let p = 1; p < pages; p++) offsets.push(p * MEMBER_PAGE)
+  const batches = await pool(offsets, 5, off => mc(conn, base + '&offset=' + off))
+  for (const r of batches) absorb(index, Array.isArray(r?.members) ? r.members : [], archived)
 }
 
 /** Read the whole audience — live members first, then the archived ones the default read hides. */
 export async function audienceIndex(conn: MailchimpConnection): Promise<AudienceIndex> {
-  const index: AudienceIndex = { status: new Map(), total: 0, partial: false }
+  const index: AudienceIndex = { members: new Map(), total: 0, partial: false }
   await readMembers(conn, index, false)
   await readMembers(conn, index, true)
   return index
 }
+
+// ── TAGS GO STALE, AND STALE TAGS ARE WHAT BREAK SEGMENTS ───────────────────────────────────────
+//
+// The batch endpoint's `tags` array is applied when a member is CREATED. On a member that already
+// exists it is, at best, not something to rely on — which means a guest who has gone from one stay
+// to five keeps the tag "Stays: 1" forever and quietly falls out of the repeat-guest segment.
+//
+// The cheap fix is to notice. We already read every member to answer the duplicate question, so we
+// read their tags at the same time and compare. Almost always nothing has changed and nothing is
+// sent; when something has, only that member gets a second call.
+//
+// WE ONLY RETIRE TAGS WE OWN. A tag Jon typed in Mailchimp by hand looks exactly like one of ours
+// to the API, and deleting somebody's segmentation because our list did not happen to contain it
+// would be unforgivable. So a tag comes OFF only if it matches a shape this file generates.
+const MANAGED_PREFIXES = ['Channel: ', 'Building: ', 'Market: ', 'Stays: ']
+const MANAGED_EXACT = new Set(['Repeat guest', 'Has booked direct', 'OTA guest', 'VIP', 'Has left a review'])
+function isManagedTag(name: string): boolean {
+  return MANAGED_EXACT.has(name) || MANAGED_PREFIXES.some(p => name.startsWith(p))
+}
+
+/** What would have to change on an existing member for their tags to be right. */
+function tagDelta(current: string[], desired: string[]): { name: string; status: 'active' | 'inactive' }[] {
+  const have = new Set(current)
+  const want = new Set(desired)
+  const ops: { name: string; status: 'active' | 'inactive' }[] = []
+  for (const n of desired) if (!have.has(n)) ops.push({ name: n, status: 'active' })
+  for (const n of current) if (isManagedTag(n) && !want.has(n)) ops.push({ name: n, status: 'inactive' })
+  return ops
+}
+
+/** Past this many in one run we stop and say so, rather than running the route out of time. */
+const TAG_REFRESH_CAP = 400
 
 export type SyncResult = {
   attempted: number; created: number; updated: number; failed: number
   skippedNotMailable: number
   /** Held back by a CHANNEL rule rather than a bad address — Expedia and friends. */
   skippedRestricted: number
+  /** Held back because they left us 3 stars or fewer. */
+  skippedUnhappy: number
   /** Dropped as a repeat of an address already in this same push. */
   skippedDuplicate: number
   // ── the preflight, filled in from audienceIndex() ──
@@ -209,6 +277,12 @@ export type SyncResult = {
   skippedUnsubscribed: number
   skippedCleaned: number
   skippedArchived: number
+  /** Existing members whose tags no longer match what Lighthouse knows. */
+  tagsStale: number
+  /** How many of those we actually corrected this run. */
+  tagsRefreshed: number
+  /** Left for next time because we hit TAG_REFRESH_CAP. */
+  tagsDeferred: number
   /** Members in the connected audience right now. */
   audienceTotal: number
   /** The audience read failed or was truncated — the numbers above are a floor. */
@@ -237,19 +311,22 @@ function mergeFields(c: Contact): Record<string, string> {
 export async function syncContacts(conn: MailchimpConnection, contacts: Contact[], opts?: { dryRun?: boolean }): Promise<SyncResult> {
   const out: SyncResult = {
     attempted: 0, created: 0, updated: 0, failed: 0,
-    skippedNotMailable: 0, skippedRestricted: 0, skippedDuplicate: 0,
+    skippedNotMailable: 0, skippedRestricted: 0, skippedUnhappy: 0, skippedDuplicate: 0,
     willCreate: 0, alreadyInAudience: 0,
     skippedUnsubscribed: 0, skippedCleaned: 0, skippedArchived: 0,
+    tagsStale: 0, tagsRefreshed: 0, tagsDeferred: 0,
     audienceTotal: 0, audiencePartial: false, errors: [],
   }
 
   // The last gate, and it is deliberately redundant with the caller's. Anything that is not a real
-  // address, or that a channel forbids us marketing to, stops here no matter who asked. The two are
-  // counted separately because they mean different things: one is a dead mailbox, the other is a
-  // live person we are contractually not allowed to email.
+  // address, or that a channel forbids us marketing to, or that belongs to a guest who told us they
+  // had a bad stay, stops here no matter who asked. They are counted separately because they mean
+  // different things: a dead mailbox, a contractual block, and a person we have decided not to sell
+  // to. Only the last one is a choice, and it is Jon's.
   const rows = contacts.filter(c => {
     if (c.mail === 'restricted') { out.skippedRestricted++; return false }
     if (c.mail !== 'mailable' || !c.email) { out.skippedNotMailable++; return false }
+    if (c.unhappy) { out.skippedUnhappy++; return false }
     return true
   })
   // One row per address — a duplicate inside one batch makes Mailchimp reject the whole batch.
@@ -273,23 +350,31 @@ export async function syncContacts(conn: MailchimpConnection, contacts: Contact[
   }
 
   const list: Contact[] = []
+  const retag: { email: string; ops: { name: string; status: 'active' | 'inactive' }[] }[] = []
   for (const c of Array.from(byEmail.values())) {
-    const state = index ? (index.status.get(c.email!) || '') : ''
+    const held = index ? index.members.get(c.email!) : undefined
+    const state = held?.status || ''
     // These three mean "leave this person where they are" — see the note above audienceIndex.
     if (state === 'unsubscribed') { out.skippedUnsubscribed++; continue }
     if (state === 'cleaned') { out.skippedCleaned++; continue }
     if (state === 'archived') { out.skippedArchived++; continue }
-    if (state) out.alreadyInAudience++
-    else if (index) out.willCreate++
+    if (held) {
+      out.alreadyInAudience++
+      const ops = tagDelta(held.tags, tagsFor(c))
+      if (ops.length) { out.tagsStale++; retag.push({ email: c.email!, ops }) }
+    } else if (index) out.willCreate++
     list.push(c)
   }
   out.attempted = list.length
-  if (opts?.dryRun || !list.length) return out
+  if (opts?.dryRun) { out.tagsDeferred = out.tagsStale; return out }
+  if (!list.length) return out
 
   const statusIfNew = conn.consentConfirmed ? 'subscribed' : 'transactional'
 
-  for (let i = 0; i < list.length; i += 500) {
-    const slice = list.slice(i, i + 500)
+  const slices: Contact[][] = []
+  for (let i = 0; i < list.length; i += 500) slices.push(list.slice(i, i + 500))
+
+  await pool(slices, 3, async slice => {
     const body = {
       members: slice.map(c => ({
         email_address: c.email,
@@ -315,7 +400,24 @@ export async function syncContacts(conn: MailchimpConnection, contacts: Contact[
       out.failed += slice.length
       out.errors.push({ email: slice.length + ' contacts', reason: String(e?.message || e).slice(0, 200) })
     }
-  }
+  })
+
+  // Now the members whose tags had drifted. This is the only per-contact call in the whole push and
+  // it fires for nobody on a steady-state run — on a first sync after months it might be a few
+  // hundred, which is why it is capped and reports what it left behind.
+  const doNow = retag.slice(0, TAG_REFRESH_CAP)
+  out.tagsDeferred = retag.length - doNow.length
+  await pool(doNow, 5, async r => {
+    try {
+      await mc(conn, '/lists/' + encodeURIComponent(conn.audienceId) + '/members/' + memberHash(r.email) + '/tags',
+        { method: 'POST', body: JSON.stringify({ tags: r.ops }) })
+      out.tagsRefreshed++
+    } catch (e: any) {
+      // A tag that would not update is not worth failing the push over — the contact is correct.
+      if (out.errors.length < 25) out.errors.push({ email: r.email, reason: 'tags: ' + String(e?.message || e).slice(0, 120) })
+    }
+  })
+
   return out
 }
 

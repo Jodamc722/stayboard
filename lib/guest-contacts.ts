@@ -122,9 +122,25 @@ export type Contact = {
   units: string[]; buildings: string[]; markets: string[]
   lastUnit: string; lastBuilding: string | null
   reviews: number; reviewAvg: number | null
+  /** The WORST rating they have ever left us. An average hides it; a 5 and a 2 are not a 3.5. */
+  reviewLow: number | null
+  /** They left us a low rating. Never marketed to — see LOW_RATING_MAX. */
+  unhappy: boolean
   vip: boolean; tags: string[]
   history: Stay[]
 }
+
+// DO NOT MARKET TO SOMEONE WHO TOLD YOU THEY HAD A BAD STAY (Jon, 2026-09-15: "filter out guests
+// that leave 1- or 2-star or 3-star ratings").
+//
+// Guesty stores ratings on a 0.5-to-5 scale in half steps, so "3 stars or below" is `<= 3` and
+// catches 0.5, 1, 1.5, 2, 2.5 and 3. Over the last two years that is 675 of 3,900 reviews.
+//
+// The test is their LOWEST rating, not their average. A guest who stayed four times, loved three of
+// them and gave us a 2 for the fourth averages well over 3 — and is exactly the person for whom a
+// cheerful "come back and stay with us!" lands worst. One bad experience is enough to stop mailing;
+// winning them back is a phone call from a human, not a campaign.
+export const LOW_RATING_MAX = 3
 
 export type ListingLite = { id: string; nickname?: string | null; title?: string | null; building?: string | null; address_city?: string | null; city?: string | null }
 export type ReservationLite = {
@@ -201,6 +217,7 @@ function attachReviews(
     if (Number.isFinite(r) && r > 0) {
       c._rated = (c._rated || 0) + 1
       c._sum = (c._sum || 0) + r
+      c._low = c._low == null ? r : Math.min(c._low, r)
     }
   }
 }
@@ -254,7 +271,7 @@ export function buildContacts(opts: {
         stays: 0, nights: 0, value: 0,
         firstStay: '9999-99-99', lastStay: '', nextStay: null, inHouse: false,
         units: [], buildings: [], markets: [], lastUnit: '', lastBuilding: null,
-        reviews: 0, reviewAvg: null, vip: false, tags: [], history: [],
+        reviews: 0, reviewAvg: null, reviewLow: null, unhappy: false, vip: false, tags: [], history: [],
         _units: new Set(), _buildings: new Set(), _markets: new Set(), _channels: new Set(),
       } as Acc
     }
@@ -322,9 +339,10 @@ export function buildContacts(opts: {
     const p = profBy[c.key]
     const rated = (c as any)._rated || 0
     const sum = (c as any)._sum || 0
+    const low = (c as any)._low ?? null
     // _rated/_sum are the running total behind reviewAvg. They are accumulator state, not contact
     // data, and were riding out through ...rest into the API response — strip them here.
-    const { _units, _buildings, _markets, _channels, _rated, _sum, ...rest } = c as any
+    const { _units, _buildings, _markets, _channels, _rated, _sum, _low, ...rest } = c as any
     return {
       ...rest,
       units: Array.from(_units as Set<string>).slice(0, 12),
@@ -333,6 +351,8 @@ export function buildContacts(opts: {
       channels: Array.from(_channels as Set<string>).sort(),
       firstStay: c.firstStay === '9999-99-99' ? '' : c.firstStay,
       reviewAvg: rated ? Math.round((sum / rated) * 10) / 10 : null,
+      reviewLow: low,
+      unhappy: low != null && low <= LOW_RATING_MAX,
       vip: !!(p && p.vip),
       tags: Array.isArray(p && p.tags) ? (p!.tags as any[]).map(t => str(t)).filter(Boolean).slice(0, 12) : [],
     } as Contact
@@ -351,7 +371,7 @@ export function buildContacts(opts: {
       channel: 'Added by hand', family: 'direct', channels: [], everDirect: false,
       stays: 0, nights: 0, value: 0, firstStay: '', lastStay: '', nextStay: null, inHouse: false,
       units: [], buildings: [], markets: [], lastUnit: '', lastBuilding: null,
-      reviews: 0, reviewAvg: null,
+      reviews: 0, reviewAvg: null, reviewLow: null, unhappy: false,
       vip: !!p.vip, tags: Array.isArray(p.tags) ? (p.tags as any[]).map(t => str(t)).filter(Boolean).slice(0, 12) : [],
       history: [],
     })
@@ -367,7 +387,11 @@ export function audienceSummary(contacts: Contact[]) {
   const byBuilding: Record<string, number> = {}
   const mailableByChannel: Record<string, number> = {}
   let mailable = 0, relay = 0, noEmail = 0, withPhone = 0, repeat = 0, everDirect = 0, restricted = 0
+  // Contacts we COULD email and are choosing not to, because of what they told us about their stay.
+  let unhappy = 0, mailableAfterUnhappy = 0
   for (const c of contacts) {
+    if (c.unhappy) unhappy++
+    if (c.mail === 'mailable' && !c.unhappy) mailableAfterUnhappy++
     if (c.mail === 'mailable') mailable++
     else if (c.mail === 'restricted') restricted++
     else if (c.mail === 'relay') relay++
@@ -391,6 +415,7 @@ export function audienceSummary(contacts: Contact[]) {
   return {
     contacts: contacts.length,
     mailable, restricted, relay, noEmail, withPhone, repeat, everDirect,
+    unhappy, mailableAfterUnhappy,
     channels: top(byChannel, 12, mailableByChannel) as { label: string; count: number; mailable: number }[],
     buildings: top(byBuilding, 12) as { label: string; count: number }[],
   }

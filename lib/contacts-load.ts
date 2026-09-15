@@ -21,13 +21,63 @@ export async function getRestrictedChannels(): Promise<string[]> {
 
 export async function setRestrictedChannels(list: string[], actor: string) {
   const clean = Array.from(new Set((list || []).map(x => String(x || '').trim()).filter(Boolean))).slice(0, 20)
+  // The channel rule is baked into every contact's `mail` state, so changing it makes every cached
+  // snapshot wrong. Drop it here rather than waiting out the TTL — the whole point of the setting is
+  // that the effect is visible immediately.
+  invalidateContacts()
   return setSetting(RESTRICTED_KEY, clean, actor)
 }
 
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
+export type ContactSnapshot = { contacts: Contact[]; today: string; truncated: boolean; shortReads: string[]; restrictedChannels: string[] }
+
+// ── WHY THIS IS CACHED ──────────────────────────────────────────────────────────────────────────
+//
+// readContacts() below is about twenty SEQUENTIAL PostgREST pages: two years of reservations is
+// fourteen pages on its own, and PostgREST caps every page at a thousand rows, so there is no way
+// to ask for it in one go. That read is fine once. The problem is that it was happening on every
+// keystroke-debounced search, every segment chip, every channel filter and every Mailchimp push —
+// clicking "Repeat guests" re-read 13,414 reservations to answer a question about rows already in
+// memory a second earlier.
+//
+// So: one snapshot, five minutes, shared by every caller in the instance. Marketing contacts are
+// not a live number — a guest who checked in during those five minutes is not someone you were
+// about to email — and anything that genuinely needs the newest read passes { fresh: true }.
+//
+// A SHORT READ IS NOT CACHED FOR LONG. If pageRows reported truncated, something was wrong (a
+// statement timeout, an expired key, a renamed column), and pinning that result for five minutes
+// would turn a blip into a quarter-hour of wrong numbers. Those are held for thirty seconds — long
+// enough to stop a retry storm, short enough to heal on its own.
+const TTL_OK_MS = 5 * 60_000
+const TTL_SHORT_MS = 30_000
+
+let cached: { at: number; days: number; snap: ContactSnapshot } | null = null
+let inflight: { days: number; p: Promise<ContactSnapshot> } | null = null
+
+/** Forget the snapshot. Called when a setting that changes what a contact IS has been written. */
+export function invalidateContacts() { cached = null }
+
 /** Two years of stays, the reviews to match against them, and the profile layer. */
-export async function loadContacts(days = 730): Promise<{ contacts: Contact[]; today: string; truncated: boolean; shortReads: string[]; restrictedChannels: string[] }> {
+export async function loadContacts(days = 730, opts?: { fresh?: boolean }): Promise<ContactSnapshot> {
+  const now = Date.now()
+  if (!opts?.fresh && cached && cached.days === days) {
+    const ttl = cached.snap.truncated ? TTL_SHORT_MS : TTL_OK_MS
+    if (now - cached.at < ttl) return cached.snap
+  }
+  // Two people opening /contacts at once should cost one read, not two. Only the cached path shares
+  // the in-flight promise — an explicit { fresh: true } always goes and gets its own.
+  if (!opts?.fresh && inflight && inflight.days === days) return inflight.p
+
+  const p = readContacts(days).then(
+    snap => { cached = { at: Date.now(), days, snap }; if (inflight?.p === p) inflight = null; return snap },
+    e => { if (inflight?.p === p) inflight = null; throw e },
+  )
+  if (!opts?.fresh) inflight = { days, p }
+  return p
+}
+
+async function readContacts(days: number): Promise<ContactSnapshot> {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const since = ymdET(new Date(Date.now() - days * 86400000))
