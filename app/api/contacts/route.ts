@@ -51,16 +51,19 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams
   const q = str(sp.get('q')).trim().toLowerCase()
-  const seg = str(sp.get('seg')).trim()          // mailable | restricted | relay | direct | repeat | vip | noemail
+  const seg = str(sp.get('seg')).trim()          // mailable | restricted | relay | direct | repeat | vip | noemail | unhappy
   const chan = str(sp.get('channel')).trim()    // exact channel label, e.g. "Expedia Group"
   const wantCsv = str(sp.get('format')) === 'csv'
+  // The snapshot is cached for five minutes (lib/contacts-load). The Refresh button asks for a real
+  // read; a filter chip does not, because filtering is a question about rows we already have.
+  const wantFresh = str(sp.get('fresh')) === '1'
 
   let all: Contact[]
   let truncated = false
   let shortReads: string[] = []
   let restrictedChannels: string[] = []
   try {
-    const r = await loadContacts()
+    const r = await loadContacts(730, { fresh: wantFresh })
     all = r.contacts
     truncated = r.truncated
     shortReads = r.shortReads
@@ -78,6 +81,7 @@ export async function GET(req: NextRequest) {
     : seg === 'ota' ? c.family === 'ota'
     : seg === 'repeat' ? c.stays >= 2
     : seg === 'vip' ? c.vip
+    : seg === 'unhappy' ? c.unhappy
     : true
   // Channel filter is a SEPARATE axis from the segment, so "Airbnb" + "can email" is one question.
   const inChannel = (c: Contact) => !chan || c.channel === chan
@@ -88,15 +92,20 @@ export async function GET(req: NextRequest) {
     // The export defaults to what you may actually mail — which excludes channel-restricted
     // contacts as well as relays, because a CSV is exactly how a blocked address ends up pasted
     // into a campaign tool by hand. ?all=1 gives everything, clearly labelled, for a support lookup.
-    const rows = str(sp.get('all')) === '1' ? picked : picked.filter(c => c.mail === 'mailable')
+    // The default export is what you may actually mail, which now also excludes guests who left us
+    // three stars or fewer — a CSV is exactly how one of them ends up pasted into a campaign tool.
+    // ?all=1 gives everything, clearly labelled, for a support lookup.
+    const rows = str(sp.get('all')) === '1' ? picked : picked.filter(c => c.mail === 'mailable' && !c.unhappy)
     const head = ['First name', 'Last name', 'Email', 'Mailable', 'Why not', 'Phone', 'Last channel', 'Every channel',
       'Booked direct before', 'Stays', 'Nights', 'Lifetime value', 'First stay', 'Last stay', 'Next stay',
-      'Last unit', 'Last building', 'All units', 'Reviews left', 'Average rating', 'VIP', 'Tags']
+      'Last unit', 'Last building', 'All units', 'Reviews left', 'Average rating', 'Lowest rating',
+      'Left a low rating', 'VIP', 'Tags']
     const body = rows.map(c => [
       c.first, c.last, c.email || '', c.mail === 'mailable' ? 'yes' : 'no', c.mail === 'mailable' ? '' : c.mailReason,
       c.phone || '', c.channel, c.channels.join(' | '), c.everDirect ? 'yes' : 'no',
       c.stays, c.nights, Math.round(c.value), c.firstStay, c.lastStay, c.nextStay || '',
-      c.lastUnit, c.lastBuilding || '', c.units.join(' | '), c.reviews, c.reviewAvg ?? '', c.vip ? 'yes' : 'no', c.tags.join(' | '),
+      c.lastUnit, c.lastBuilding || '', c.units.join(' | '), c.reviews, c.reviewAvg ?? '', c.reviewLow ?? '',
+      c.unhappy ? 'yes' : 'no', c.vip ? 'yes' : 'no', c.tags.join(' | '),
     ])
     const name = 'contacts-' + ymdET(new Date()) + (seg ? '-' + seg : '') + '.csv'
     return new NextResponse('﻿' + csv([head, ...body]), {
