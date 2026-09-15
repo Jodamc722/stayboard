@@ -25,6 +25,8 @@ type Glitch = {
   due_date?: string | null; assignee?: string | null; assignee_person_id?: number | null; details?: string | null; progress?: number | null
   // How it reached us and how the guest sounded — both feed the refund model (migration 060).
   reported_via?: string | null; guest_tone?: string | null
+  // Migration 086 — how this issue is treated, independent of any Breezeway task.
+  priority?: string | null
   // Migration 085: the advisor's number kept beside the human decision, and the approval state.
   refund_recommended?: number | null; refund_reasoning?: any; refund_note?: string | null
   refund_needs_approval?: boolean | null; refund_approved_by?: string | null; refund_approved_at?: string | null
@@ -91,6 +93,41 @@ const CATS = [
   'Maintenance - Electrical', 'Maintenance - Building/Common Areas', 'Maintenance - Appliances',
   'Cleanliness - Inadequate Cleaning', 'Pests/Bed Bugs', 'Safety/Security Concern', 'Parking/Vehicle', 'Other',
 ]
+// THE TRADE, NOT THE CATEGORY (Jon, 2026-09-15: "should show, pest or plumbing").
+//
+// The category was already on the card, but as prose sharing a line with the guest's name —
+// "Maintenance - Plumbing" reads as a filing label. What a coordinator needs at a glance is WHO
+// they are sending: a plumber, an exterminator, a housekeeper. Same field, said as the job, and
+// coloured so a column can be sorted by eye without reading it.
+function tradeOf(category: string | null | undefined): { label: string; cls: string } | null {
+  const c = String(category || '')
+  if (!c) return null
+  if (/pest|bed\s*bug/i.test(c))   return { label: 'Pest',       cls: 'bg-lime-50 text-lime-800 ring-lime-200' }
+  if (/plumb/i.test(c))            return { label: 'Plumbing',   cls: 'bg-sky-50 text-sky-800 ring-sky-200' }
+  if (/hvac|temperature/i.test(c)) return { label: 'HVAC',       cls: 'bg-cyan-50 text-cyan-800 ring-cyan-200' }
+  if (/water\s*heater/i.test(c))   return { label: 'Hot water',  cls: 'bg-cyan-50 text-cyan-800 ring-cyan-200' }
+  if (/electric/i.test(c))         return { label: 'Electrical', cls: 'bg-amber-50 text-amber-800 ring-amber-200' }
+  if (/applian/i.test(c))          return { label: 'Appliance',  cls: 'bg-violet-50 text-violet-800 ring-violet-200' }
+  if (/clean/i.test(c))            return { label: 'Cleaning',   cls: 'bg-teal-50 text-teal-800 ring-teal-200' }
+  if (/safety|security/i.test(c))  return { label: 'Safety',     cls: 'bg-rose-50 text-rose-800 ring-rose-200' }
+  if (/parking|vehicle/i.test(c))  return { label: 'Parking',    cls: 'bg-app text-muted ring-line' }
+  if (/building|common/i.test(c))  return { label: 'Building',   cls: 'bg-app text-muted ring-line' }
+  // Anything unmapped still says something rather than nothing — minus the filing prefix.
+  const short = c.replace(/^(Maintenance|Cleanliness)\s*-\s*/i, '').trim()
+  return short && !/^other$/i.test(short) ? { label: short, cls: 'bg-app text-muted ring-line' } : null
+}
+
+/** Is the guest in the unit right now? That is what decides whether a job can be scheduled today. */
+function stayState(checkIn: string | null | undefined, checkOut: string | null | undefined): { now: boolean; label: string } {
+  const ci = String(checkIn || '').slice(0, 10)
+  const co = String(checkOut || '').slice(0, 10)
+  const today = todayET()
+  if (!ci) return { now: false, label: '' }
+  if (ci > today) return { now: false, label: 'Arrives' }
+  if (co && co <= today) return { now: false, label: 'Checked out' }
+  return { now: true, label: 'In house' }
+}
+
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso || ''; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
 function money(n: number | null) { return n == null ? null : '$' + Math.round(n).toLocaleString() }
 function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
@@ -313,6 +350,23 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
 
       {tab === 'work' ? (
         <div className="space-y-4">
+          {/* HOW LOUD IS THIS — settable before any task exists, which is when triage happens. */}
+          <section className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] uppercase tracking-wider font-bold text-muted">Priority</span>
+            {[['urgent', 'Urgent'], ['high', 'High'], ['normal', 'Normal'], ['low', 'Low']].map(([k, label]) => {
+              const on = String(g.priority || 'urgent').toLowerCase() === k
+              return (
+                <button key={k} onClick={() => act(g.id, { action: 'priority', priority: k })}
+                  className={'text-[12px] font-bold px-2.5 h-8 rounded-xl border transition ' +
+                    (on
+                      ? (k === 'urgent' ? 'bg-rose-600 text-white border-rose-600' : 'bg-ink text-white border-ink')
+                      : 'bg-white text-muted border-line hover:text-ink')}>
+                  {label}
+                </button>
+              )
+            })}
+          </section>
+
           <section>
             <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">What the guest said</p>
             <p className="text-[13.5px] text-ink leading-relaxed whitespace-pre-wrap">{g.overview}</p>
@@ -668,29 +722,50 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
   const refund = Number(g.refund_approved) || 0
   const owedRefund = String(g.status) === 'refund' && !refund
   const incident = g.glitch_type && g.glitch_type !== 'Glitch (Quality Issue)'
-  const due = dueState(g.due_date, String(g.status) === 'closed')
+  const closed = String(g.status) === 'closed'
+  const due = dueState(g.due_date, closed)
+  const urgent = String(g.priority || '').toLowerCase() === 'urgent' && !closed
+  const trade = tradeOf(g.category)
+  const stay = stayState(g.check_in, g.check_out)
+
   return (
     <div draggable onDragStart={e => e.dataTransfer.setData('text/plain', g.id)}
-      className="rounded-xl border border-line bg-white shadow-soft cursor-grab active:cursor-grabbing">
+      className={'rounded-xl border bg-white shadow-soft cursor-grab active:cursor-grabbing ' +
+        (urgent ? 'border-rose-300' : 'border-line')}>
       <button onClick={onOpen} className="w-full text-left px-3 py-2.5 min-w-0">
-        {incident ? (
-          <span className="inline-block mb-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white">{g.glitch_type}</span>
-        ) : null}
-        {/* Market rides on the top line with the unit (Jon, 2026-09-15). It is how the board is
-            navigated — a Broward supervisor scanning for their own work should not have to read
-            the unit name and translate it. Muted, so it labels without competing. */}
+        {/* WHERE. Unit is what ops navigates by; market is how they filter. */}
         <div className="flex items-baseline gap-2 min-w-0">
           <p className="text-[13.5px] font-bold text-ink leading-snug truncate flex-1 min-w-0">{g.unit || 'No unit'}</p>
           {g.market ? (
             <span className="shrink-0 text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">{g.market}</span>
           ) : null}
         </div>
-        <p className="text-[11.5px] text-muted truncate">
-          {g.guest_name || 'Guest'}{g.category ? ' · ' + g.category.replace(/^(Maintenance|Cleanliness) - /, '') : ''}
-        </p>
+        <p className="text-[11.5px] text-muted truncate">{g.guest_name || 'Guest'}</p>
+
+        {/* CAN I ACT ON THIS TODAY? (Jon, 2026-09-15: "should show check in and checkout date".)
+            A guest in the unit tonight is a different job from a unit that emptied last week, and
+            that was only discoverable by opening the card. "In house" is the answer; the dates are
+            the evidence behind it. */}
+        {g.check_in ? (
+          <p className="text-[11.5px] mt-1 flex items-center gap-1.5 min-w-0">
+            <CalendarDays size={11} className={stay.now ? 'text-emerald-600 shrink-0' : 'text-muted shrink-0'} />
+            <span className={stay.now ? 'font-semibold text-emerald-700 shrink-0' : 'text-muted shrink-0'}>{stay.label}</span>
+            <span className="text-faint truncate">{fmtShort(g.check_in)} → {fmtShort(g.check_out)}</span>
+          </p>
+        ) : null}
+
         <p className="text-[12px] text-ink/70 mt-1 line-clamp-2 leading-snug">{g.overview}</p>
 
+        {/* WHO DO I SEND, AND HOW LOUD IS IT. Urgent is red and first because it is the only thing
+            here that changes the ORDER work gets done in. */}
         <div className="flex items-center gap-1 flex-wrap mt-2">
+          {urgent ? (
+            <span className="text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white">Urgent</span>
+          ) : null}
+          {incident ? (
+            <span className="text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 ring-1 ring-rose-200">{g.glitch_type}</span>
+          ) : null}
+          {trade ? <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded ring-1 ' + trade.cls}>{trade.label}</span> : null}
           {g.breezeway_task_id ? (
             <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded ' +
               (g.task_status === 'completed' ? 'bg-emerald-100 text-emerald-700'
@@ -1005,7 +1080,9 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
   const [issue, setIssue] = useState(firstLine)
   const [assignee, setAssignee] = useState(g.assignee || '')
   const [dept, setDept] = useState('')
-  const [prio, setPrio] = useState('urgent')
+  // Priority is the GLITCH's, not the form's (migration 086). Whatever gets filed is written back,
+  // so the card and Breezeway cannot disagree about how urgent this is.
+  const [prio, setPrio] = useState(String(g.priority || 'urgent'))
   const [date, setDate] = useState(() => {
     if (g.due_date && /^\d{4}-\d{2}-\d{2}$/.test(g.due_date)) return g.due_date
     return todayET()
@@ -1013,10 +1090,35 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  // Building-level glitches ("Rustic Exterior") file against the BUILDING, not the guest's unit.
+  // THE UNIT FILLS ITSELF IN (Jon, 2026-09-15: "it should auto populate the unit in breezeway when
+  // creating a task"). The box used to sit EMPTY with the unit name as grey placeholder text. The
+  // server did resolve the unit behind the scenes, so it worked — but an empty required-looking
+  // field reads as something you forgot, and there was no way to see WHICH Breezeway property you
+  // were about to file against until the task already existed. Now it is filled from the glitch's
+  // own listing the moment the property list arrives, and typing a building over it is the
+  // deliberate override rather than the only way to put anything there at all.
   const [prop, setProp] = useState('')
   const [props, setProps] = useState<{ id: number; name: string }[]>([])
-  useEffect(() => { fetch('/api/glitches/properties', { cache: 'no-store' }).then(r => r.json()).then(j => setProps(Array.isArray(j.properties) ? j.properties : [])).catch(() => {}) }, [])
+  const [autoFilled, setAutoFilled] = useState(false)
+  useEffect(() => {
+    let dead = false
+    fetch('/api/glitches/properties', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => {
+        if (dead) return
+        const list: { id: number; name: string }[] = Array.isArray(j.properties) ? j.properties : []
+        setProps(list)
+        // Exact name first; then a unique case-insensitive match. Never guess between two.
+        const want = String(g.unit || '').trim()
+        if (!want) return
+        const exact = list.find(x => x.name === want)
+        if (exact) { setProp(exact.name); setAutoFilled(true); return }
+        const ci = list.filter(x => x.name.toLowerCase() === want.toLowerCase())
+        if (ci.length === 1) { setProp(ci[0].name); setAutoFilled(true) }
+      })
+      .catch(() => {})
+    return () => { dead = true }
+  }, [g.unit])
   const pickedProp = props.find(x => x.name === prop.trim()) || null
 
   // The department Breezeway will get if nobody overrides it — shown, not hidden, so the person
@@ -1101,10 +1203,18 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
 
       <div>
         <Lbl>File against</Lbl>
-        <input list="glitch-board-props" value={prop} onChange={e => setProp(e.target.value)}
+        <input list="glitch-board-props" value={prop} onChange={e => { setProp(e.target.value); setAutoFilled(false) }}
           className={field + (prop && !pickedProp ? ' border-amber-300' : '')}
           placeholder={(g.unit || 'the unit') + ' — type a building to file there instead'} />
-        {pickedProp ? <p className="text-[11px] text-violet-700 mt-1">Filing under <span className="font-semibold">{pickedProp.name}</span> rather than the unit.</p> : null}
+        {prop && !pickedProp ? (
+          <p className="text-[11px] text-amber-700 mt-1">No Breezeway property by that name.</p>
+        ) : autoFilled && pickedProp ? (
+          <p className="text-[11px] text-muted mt-1">The guest&rsquo;s unit, filled in for you. Type a building to file there instead.</p>
+        ) : pickedProp ? (
+          <p className="text-[11px] text-violet-700 mt-1">Filing under <span className="font-semibold">{pickedProp.name}</span>.</p>
+        ) : (
+          <p className="text-[11px] text-muted mt-1">Not matched to a Breezeway property &mdash; the server will resolve it from the unit.</p>
+        )}
       </div>
 
       <datalist id="glitch-board-ppl">{people.map(p => <option key={p.id} value={p.name + (p.departments && p.departments.length ? ' (' + p.departments.join('/') + ')' : '')} />)}</datalist>
