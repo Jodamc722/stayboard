@@ -147,6 +147,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         v.est_minutes = Number.isFinite(n) && n > 0 ? Math.min(60 * 24 * 30, Math.round(n)) : null
       }
       if (b.recurs !== undefined) v.recurs = normaliseRecurs(b.recurs)
+      // Turning down a date the vendor asked for. Their request goes; our date was never touched.
+      if (b.vendorClearProposal) v.vendor_proposed_on = null
+      // Moving OUR date clears both of their answers: a confirmation is a confirmation of a
+      // specific day, and keeping it against a new day would be a tick next to something untrue.
+      if (b.visit_on !== undefined) { v.vendor_confirmed_at = null; v.vendor_proposed_on = null }
       return v
     }
     // Until 088 runs these columns are not there. A vendor job saved on the old schema keeps its
@@ -728,6 +733,27 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         await recountInvoiced(id)
         await logEvent(id, me, 'spend', `deleted a $${((Number(cur.amount_cents) || 0) / 100).toFixed(2)} invoice${cur.vendor_name ? ' from ' + cur.vendor_name : ''}`, { invoice_id: invId })
         break
+      }
+
+      // ---- THE VENDOR'S OWN LINK ----------------------------------------------------
+      // One permanent link per vendor company, not per project — a pest contractor works across
+      // six buildings and should not need six links. Minting again REPLACES the old token, which
+      // is how a link is revoked when somebody leaves that company.
+      case 'vendorLink': {
+        const key = str(b.vendorKey)
+        if (!key) return NextResponse.json({ error: 'Which vendor?' }, { status: 400 })
+        const { mintVendorToken, revokeVendorToken, vendorToken } = await import('@/lib/vendor-portal')
+        if (str(b.mode) === 'revoke') {
+          const ok = await revokeVendorToken(key)
+          if (!ok) return NextResponse.json({ error: 'Could not revoke that link.' }, { status: 500 })
+          await logEvent(id, me, 'task_moved', `revoked the job link for ${key}`, {})
+          return NextResponse.json({ ok: true, token: null })
+        }
+        if (str(b.mode) === 'get') return NextResponse.json({ ok: true, ...(await vendorToken(key)) })
+        const token = await mintVendorToken(key, me)
+        if (!token) return NextResponse.json({ error: 'Could not make a link — vendor links need migration 089.' }, { status: 500 })
+        await logEvent(id, me, 'task_moved', `made a job link for ${key}`, {})
+        return NextResponse.json({ ok: true, token })
       }
 
       // ---- SAVING A VENDOR FROM THE FORM --------------------------------------------
