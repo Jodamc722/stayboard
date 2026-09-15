@@ -14,7 +14,10 @@
 //             below is a placeholder until the console confirms it — treat it as at-least-Opus.
 //   opus    — Opus 4.8. Deepest reasoning. $5 in / $25 out per million tokens.
 //   sonnet  — Sonnet 5. Newer generation, very strong, 2.5x cheaper than Opus. $2 / $10.
-//   sonnet-prev — Sonnet 4.6. What most of the app ran on before 2026-09-09. $3 / $15.
+//   sonnet-prev — Sonnet 4.6. What most of the app ran on before 2026-09-09. $3 / $15. NOTHING
+//             defaults here any more: Sonnet 5 is both newer and cheaper ($2/$10), so every task
+//             that sat on 4.6 moved up and down at the same time. Kept as an option only because
+//             an account that cannot see Sonnet 5 falls back to it.
 //   haiku   — Haiku 4.5. Fast and cheap for classification and short answers. $1 / $5.
 //
 // RULE FOR CHOOSING: put the money where a miss has a cost. A flagged guest, a review reply, the
@@ -59,13 +62,26 @@ export type AiTask = {
 
 export const AI_TASKS: AiTask[] = [
   // ── Eve ──
-  { key: 'eve', title: 'Eve — chat & Telegram', group: 'Eve', def: 'opus',
+  // THE COST PASS OF 2026-09-15. Eve was the Anthropic bill, and not because she is used a lot —
+  // she is used about four times a day and averages 2.6 turns. She was the bill because each call
+  // is roughly 100,000 tokens (tool schemas, the atlas, memories, tool results) and it was ALL
+  // paying Opus list price.
+  //
+  // The reason the prompt cache was not saving us: it lives for five minutes. Four conversations
+  // spread across a working day means nearly every call is a cache MISS, writing a fresh 100k
+  // prefix at full price and never reading it back. Caching is a real win inside one conversation
+  // and does nothing at all between them, which is exactly the pattern Eve has.
+  //
+  // So the lever is price per token, not calls and not turns. Sonnet 5 is $2/$10 against Opus
+  // 4.8's $5/$25 for the same 100k — and orchestrating tools and summarising what they return is
+  // what Sonnet is good at. Reverse it in Users & admin in ten seconds if her judgement slips.
+  { key: 'eve', title: 'Eve — chat & Telegram', group: 'Eve', def: 'sonnet',
     what: 'Answers questions by reasoning across up to sixteen tool calls: reservations, tasks, money, Slack, the web.',
-    matters: 'Jon and the managers act on what she says. Prompt caching keeps the big model affordable here.' },
-  { key: 'eve-vision', title: 'Eve — reading photos', group: 'Eve', def: 'sonnet-prev',
+    matters: 'Jon and the managers act on what she says. Every call is large, so the tier is where the money is.' },
+  { key: 'eve-vision', title: 'Eve — reading photos', group: 'Eve', def: 'sonnet',
     what: 'Looks at unit photos and describes condition, damage, staging.',
     matters: 'Feeds inspection notes; a wrong read sends a cleaner back for nothing.' },
-  { key: 'learn', title: 'Eve — nightly learning pass', group: 'Background', def: 'sonnet-prev', background: true,
+  { key: 'learn', title: 'Eve — nightly learning pass', group: 'Background', def: 'sonnet', background: true,
     what: 'Summarises 30 days of guest messages and reviews into FAQs and complaint themes.',
     matters: 'Shapes what Eve knows tomorrow. Runs once a night.' },
   // ── Guests ──
@@ -81,14 +97,14 @@ export const AI_TASKS: AiTask[] = [
   { key: 'guidebook', title: 'Guidebooks — write & revise', group: 'Guests', def: 'opus',
     what: 'Writes and rewrites building guidebooks; suggests local recommendations.',
     matters: 'Guests read these on arrival. Long-form, published.' },
-  { key: 'guide-activations', title: 'Guide activation emails', group: 'Background', def: 'sonnet-prev', background: true,
+  { key: 'guide-activations', title: 'Guide activation emails', group: 'Background', def: 'sonnet', background: true,
     what: 'Drafts the daily guide-activation message. Once a day.',
     matters: 'Guest-facing, but short and templated.' },
   // ── Listings & reports ──
   { key: 'listing-copy', title: 'Listing copy & photos', group: 'Listings & reports', def: 'opus',
     what: 'Rewrites titles, descriptions and amenities; scores and captions photos for the optimizer.',
     matters: 'This is the listing. Ranking and conversion follow the words.' },
-  { key: 'photos', title: 'Photo captions, focus, enhance prompts', group: 'Listings & reports', def: 'sonnet-prev',
+  { key: 'photos', title: 'Photo captions, focus, enhance prompts', group: 'Listings & reports', def: 'sonnet',
     what: 'Short captions, focal-point picks and enhance instructions per photo.',
     matters: 'Cosmetic; a weak caption is fixed in a click.' },
   { key: 'reports', title: 'Owner reports', group: 'Listings & reports', def: 'opus',
@@ -104,7 +120,7 @@ export const AI_TASKS: AiTask[] = [
   { key: 'audit', title: 'Audits & walkthroughs', group: 'Operations', def: 'opus',
     what: 'Organises audit findings, suggests items, analyses walkthrough photos and notes.',
     matters: 'Becomes the punch list a crew works from.' },
-  { key: 'onboard', title: 'Onboarding — rooms to inventory', group: 'Operations', def: 'sonnet-prev',
+  { key: 'onboard', title: 'Onboarding — rooms to inventory', group: 'Operations', def: 'sonnet',
     what: 'Turns room answers and photos into the inventory list for a new unit.',
     matters: 'Seeds a unit\'s inventory; errors are caught on the desk before ordering.' },
   { key: 'orders', title: 'Orders — brief & estimate', group: 'Operations', def: 'opus',
