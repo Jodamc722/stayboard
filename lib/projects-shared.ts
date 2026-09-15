@@ -112,9 +112,6 @@ export type Task = {
   vendor_key?: string | null; vendor_name?: string | null
   visit_on?: string | null; visit_window?: string | null; est_minutes?: number | null
   team_notified_at?: string | null; team_notified_for?: string | null
-  /** Written back through the vendor's own link (089). vendor_proposed_on is a REQUEST — visit_on
-   *  is ours and never moves because a vendor typed something. */
-  vendor_confirmed_at?: string | null; vendor_proposed_on?: string | null; vendor_note?: string | null
   recurs?: Recurrence | null; recurred_from?: string | null
   /** Set when this task was sent to Breezeway; `breezeway` is the field task's live state (read-time). */
   breezeway_task_id?: string | null
@@ -406,13 +403,40 @@ export type BoardSettings = {
   icon: string                        // emoji
   hideDone: boolean
   sectionOrder: string[]              // explicit order; unknown sections follow in first-used order
+  /** Finished work moves to its own section. ON by default (Jon, 2026-09-15). */
+  moveDone: boolean
+  /** What that section is called. Ignored when the board already has one of DONE_NAMES. */
+  doneSection: string
 }
-export const DEFAULT_SETTINGS: BoardSettings = { view: 'list', accent: 'indigo', icon: '📋', hideDone: false, sectionOrder: [] }
+export const DEFAULT_SETTINGS: BoardSettings = { view: 'list', accent: 'indigo', icon: '📋', hideDone: false, sectionOrder: [], moveDone: true, doneSection: 'Completed' }
+
+// Sections that already mean "finished". A board that has one of these uses it rather than growing
+// a second, near-identical column beside it — "Done" and "Completed" side by side is the kind of
+// small mess that makes people stop trusting a board.
+export const DONE_NAMES = ['completed', 'complete', 'done', 'finished', 'closed']
+
+/**
+ * Which section finished work belongs in, for THIS board.
+ *
+ * Prefers a section the board already has, matched case-insensitively, so an existing "Done"
+ * column keeps being the done column. Falls back to the configured name.
+ */
+export function doneSectionName(sections: string[], settings: BoardSettings): string {
+  const existing = (sections || []).find(x => DONE_NAMES.includes(String(x || '').trim().toLowerCase()))
+  return existing || settings.doneSection || 'Completed'
+}
+/** True when this section is the board's finished pile — used to leave it out of "where next". */
+export const isDoneSection = (name: string | null | undefined) =>
+  DONE_NAMES.includes(String(name || '').trim().toLowerCase())
 export const settingsOf = (raw: any): BoardSettings => ({
   view: raw?.view === 'board' ? 'board' : raw?.view === 'calendar' ? 'calendar' : 'list',
   accent: (ACCENTS as readonly string[]).includes(raw?.accent) ? raw.accent : 'indigo',
   icon: typeof raw?.icon === 'string' && raw.icon.trim() ? String(raw.icon).trim().slice(0, 4) : '📋',
   hideDone: raw?.hideDone === true,
+  // Default ON: a board where finished work stays in the middle of the list is a board you have to
+  // read past to find what is left. Opting out is a choice, not the starting point.
+  moveDone: raw?.moveDone !== false,
+  doneSection: typeof raw?.doneSection === 'string' && raw.doneSection.trim() ? String(raw.doneSection).trim().slice(0, 60) : 'Completed',
   sectionOrder: Array.isArray(raw?.sectionOrder) ? raw.sectionOrder.map(String).slice(0, 50) : [],
 })
 /** The face of a project: its icon, falling back by kind so an old row still has one. */

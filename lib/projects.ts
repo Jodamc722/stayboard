@@ -10,7 +10,7 @@ export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
   progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO, canSee, canEdit, toPerson,
-  type Invoice, INVOICE_STATUSES, INVOICE_COUNTS, nextOccurrence,
+  type Invoice, INVOICE_STATUSES, INVOICE_COUNTS, nextOccurrence, doneSectionName, isDoneSection, settingsOf,
 } from './projects-shared'
 
 export async function getCategories(): Promise<{ key: string; label: string; color: string; sort: number }[]> {
@@ -145,6 +145,79 @@ export async function recountInvoiced(projectId: string): Promise<void> {
       .reduce((n, r) => n + (Number(r.amount_cents) || 0), 0)
     await sb.from('projects').update({ invoiced_cents: total }).eq('id', projectId)
   } catch { /* the number is recomputed on the next write */ }
+}
+
+// ---------------------------------------------------------------- finished work moves aside
+/**
+ * Completing a task files it under the board's finished section; reopening puts it back.
+ *
+ * Jon, 2026-09-15: "have a default: when a task is completed, it moves to a completed section in
+ * the project."
+ *
+ * Three decisions worth stating, because each has an obvious wrong version:
+ *
+ *   • IT REMEMBERS WHERE THE TASK CAME FROM (section_before_done). Ticking a task by accident and
+ *     unticking it must not strand it. On a vendor board the section IS the lifecycle stage, so
+ *     forgetting means the job silently changes state.
+ *   • SUBTASKS DO NOT MOVE. A checklist item belongs under its parent; filing it somewhere else
+ *     would tear the checklist in half the moment somebody ticked one line of it.
+ *   • A TASK ALREADY IN THE FINISHED SECTION IS LEFT ALONE, so nothing is recorded as having come
+ *     from "Completed" and reopening returns it to no section rather than back to the pile.
+ *
+ * Returns the section it moved to (or restored to), or null when nothing moved. Best-effort: the
+ * tidy-up must never fail the completion that caused it — a task that is done and in the wrong
+ * column is a far smaller problem than a tick that would not save.
+ */
+export async function fileCompletedTask(
+  taskId: string, projectId: string, nowDone: boolean,
+): Promise<{ section: string | null; moved: boolean }> {
+  try {
+    const sb = supabaseAdmin()
+    const { data: t } = await sb.from('project_steps').select('id,section,parent_id,section_before_done').eq('id', taskId).maybeSingle()
+    if (!t) return { section: null, moved: false }
+    if ((t as any).parent_id) return { section: null, moved: false }          // checklist items stay put
+
+    const { data: p } = await sb.from('projects').select('settings').eq('id', projectId).maybeSingle()
+    const settings = settingsOf((p as any)?.settings)
+    if (!settings.moveDone) return { section: null, moved: false }
+
+    if (nowDone) {
+      const from = (t as any).section ?? null
+      if (isDoneSection(from)) return { section: from, moved: false }
+      // Every section the board currently knows about, so an existing "Done" column wins over
+      // creating a second one beside it.
+      const { data: rows } = await sb.from('project_steps').select('section').eq('project_id', projectId).limit(1000)
+      const known = Array.from(new Set([
+        ...settings.sectionOrder,
+        ...((rows || []) as any[]).map(r => r.section).filter(Boolean),
+      ].map(String)))
+      const target = doneSectionName(known, settings)
+      const { error } = await sb.from('project_steps').update({ section: target, section_before_done: from }).eq('id', taskId)
+      if (error) return { section: null, moved: false }
+      await ensureSectionLast(projectId, target, settings)
+      return { section: target, moved: true }
+    }
+
+    // Reopening. Back where it was; null is a real answer and means "no section", which is
+    // different from "we do not know".
+    const back = (t as any).section_before_done ?? null
+    if (!isDoneSection((t as any).section)) return { section: null, moved: false }
+    const { error } = await sb.from('project_steps').update({ section: back, section_before_done: null }).eq('id', taskId)
+    if (error) return { section: null, moved: false }
+    return { section: back, moved: true }
+  } catch { return { section: null, moved: false } }
+}
+
+/** Keep the finished section in the board order, and keep it LAST — it is where work goes to rest. */
+async function ensureSectionLast(projectId: string, name: string, settings: { sectionOrder: string[] }) {
+  try {
+    const sb = supabaseAdmin()
+    const order = (settings.sectionOrder || []).map(String)
+    const next = [...order.filter(x => x !== name), name]
+    if (order.length === next.length && order[order.length - 1] === name) return
+    const { data: p } = await sb.from('projects').select('settings').eq('id', projectId).maybeSingle()
+    await sb.from('projects').update({ settings: { ...((p as any)?.settings || {}), sectionOrder: next } }).eq('id', projectId)
+  } catch { /* the section still renders; only its position is unsaved */ }
 }
 
 // ---------------------------------------------------------------- recurring vendor work
