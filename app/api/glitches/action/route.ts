@@ -98,6 +98,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, status })
     }
 
+    // PRIORITY WITHOUT A TASK. Marking something urgent should not require filing a Breezeway job
+    // first — the triage decision comes before the work order, not after it.
+    if (action === 'priority') {
+      const PRIOS_EDIT = ['urgent', 'high', 'normal', 'low']
+      const want = str(b.priority)
+      if (PRIOS_EDIT.indexOf(want) < 0) return NextResponse.json({ ok: false, error: 'Unknown priority.' }, { status: 400 })
+      const { error } = await db.from('glitches')
+        .update({ priority: want, history: stamp('priority', { to: want }), updated_at: new Date().toISOString() })
+        .eq('id', id)
+      if (error) {
+        const hint = /column|schema/i.test(error.message) ? ' — run migration 086 in Supabase first.' : ''
+        return NextResponse.json({ ok: false, error: error.message.slice(0, 200) + hint }, { status: 500 })
+      }
+      return NextResponse.json({ ok: true, priority: want })
+    }
+
     if (action === 'refund') {
       // LOG THE REFUND where the decision happens. A card used to be droppable into the Refund
       // column with nothing recorded — the money then lived nowhere but someone's memory.
@@ -284,11 +300,21 @@ export async function POST(req: NextRequest) {
       }
       const patch: Record<string, any> = { breezeway_task_id: taskId, status: g.status === 'pool' ? 'ops' : g.status,
         due_date: wantDate,
+        // What was actually filed becomes what the card says (migration 086). Priority used to be
+        // chosen here and forgotten a moment later, so the board could never show which issues
+        // jump the queue — the one thing you want to know without opening a card.
+        priority: prio,
         ...(assignedName ? { assignee: assignedName, assignee_person_id: ids[0] } : {}), history: stamp('pushed_to_breezeway', Number.isFinite(overrideHome) && overrideHome > 0 ? { taskId, homeId: overrideHome, property: str(b.homeName) || undefined } : { taskId }), updated_at: new Date().toISOString() }
       // The name-match earned a real listing link — keep it, so this glitch never needs matching again.
       if (!g.listing_id && refListing) patch.listing_id = refListing
-      const { error } = await db.from('glitches').update(patch).eq('id', id)
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      let pu = await db.from('glitches').update(patch).eq('id', id)
+      // priority arrives with migration 086. A task that reached Breezeway must not be reported as
+      // a failure because our own column is not there yet.
+      if (pu.error && /column|schema/i.test(pu.error.message)) {
+        delete patch.priority
+        pu = await db.from('glitches').update(patch).eq('id', id)
+      }
+      if (pu.error) return NextResponse.json({ ok: false, error: pu.error.message }, { status: 500 })
       return NextResponse.json({ ok: true, taskId, reportUrl: r.data.report_url || null, assignError: assignError || undefined, scheduledDate: wantDate })
     }
 
