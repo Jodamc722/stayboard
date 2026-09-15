@@ -689,7 +689,35 @@ async function pushBlocks() {
         <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Loading the schedule&hellip;</div>
       ) : data && view === 'day' ? (
         <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start pb-16">
-          <WorkingRail date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
+          {/* THE ROSTER, THEN THE SHEET (Jon, 2026-09-15: "can we add this right below the second
+              photo"). The day sheet belonged under the Working card, not at the foot of the page:
+              you send the crew the picture straight after you have settled who is on today, and at
+              the bottom it sat below a hundred rows of cleans where nobody scrolled to it. */}
+          <div className="space-y-3 order-2 lg:order-1">
+            <WorkingRail date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
+
+            {/* A 280px column, so the controls stack rather than fighting for one line. Download
+                first: the safe one is the one your hand lands on, and Post goes to the whole crew. */}
+            <div className="rounded-2xl border border-line bg-white p-3">
+              <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">Day sheet</p>
+              <p className="text-[11.5px] text-muted mt-1 leading-snug">
+                One picture: each cleaner, their units, the guest checkout, the size, and what is different about it.
+              </p>
+              <select value={sheetMkt} onChange={e => setSheetMkt(e.target.value)} aria-label="Area for the day sheet"
+                className="w-full mt-2.5 rounded-xl border border-line bg-white px-2.5 py-2 text-[12.5px] font-semibold text-ink">
+                <option value="all">All areas</option>
+                {MARKETS.map(m => <option key={m} value={m.toLowerCase()}>{m}</option>)}
+              </select>
+              <button onClick={downloadSheet} disabled={!!sheetBusy}
+                className="w-full mt-2 inline-flex items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12.5px] font-semibold text-ink hover:border-ink/30 disabled:opacity-50">
+                {sheetBusy === 'download' ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />} Download day sheet
+              </button>
+              <button onClick={postSheetToSlack} disabled={!!sheetBusy}
+                className="w-full mt-2 inline-flex items-center justify-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[12.5px] font-semibold hover:opacity-90 disabled:opacity-50">
+                {sheetBusy === 'slack' ? <RefreshCw size={13} className="animate-spin" /> : <MessageSquare size={13} />} Post to Slack
+              </button>
+            </div>
+          </div>
           {/* On a phone the roster rail is a 480px-tall scroller sitting between you and the cleans.
               The cleans are why you opened the page, so they come first; desktop keeps the rail left. */}
           <div className="space-y-2 min-w-0 order-1 lg:order-2">
@@ -818,27 +846,6 @@ async function pushBlocks() {
           </div>
         </div>
       )}
-      {/* THE DAY SHEET. Two buttons, because they answer two different questions: "let me check it"
-          and "send it to the crew". Download first — the safe one is the one your hand lands on. */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <select value={sheetMkt} onChange={e => setSheetMkt(e.target.value)} aria-label="Area for the day sheet"
-          className="rounded-xl border border-line bg-white px-2.5 py-2 text-[12.5px] font-semibold text-ink">
-          <option value="all">All areas</option>
-          {MARKETS.map(m => <option key={m} value={m.toLowerCase()}>{m}</option>)}
-        </select>
-        <button onClick={downloadSheet} disabled={!!sheetBusy}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12.5px] font-semibold text-ink hover:border-ink/30 disabled:opacity-50">
-          {sheetBusy === 'download' ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />} Download day sheet
-        </button>
-        <button onClick={postSheetToSlack} disabled={!!sheetBusy}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[12.5px] font-semibold hover:opacity-90 disabled:opacity-50">
-          {sheetBusy === 'slack' ? <RefreshCw size={13} className="animate-spin" /> : <MessageSquare size={13} />} Post to Slack
-        </button>
-        <span className="text-[11.5px] text-muted">
-          One picture per day: each cleaner, their units, the guest checkout, the size, and what is different about it.
-        </span>
-      </div>
-
       {/* Raised only after a push actually landed — see the note where offerSheet is declared. */}
       {offerSheet && (
         <div className="rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-[13px] text-brand-900 flex items-center gap-2 flex-wrap">
