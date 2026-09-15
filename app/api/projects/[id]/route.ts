@@ -12,7 +12,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   getProject, logEvent, gateProject, ownerApprovalEmail, toCents, LINK_KINDS, canSee, canEdit, toPerson,
   TASK_STATUSES, TASK_STATUS_LABEL, MEMBER_ROLES, FILES_BUCKET, prefsOf, settingsOf, describeRecurrence, type Viewer, type Member,
-  recountInvoiced, INVOICE_STATUSES, INVOICE_STATUS_LABEL, approvalCeiling, money,
+  recountInvoiced, INVOICE_STATUSES, INVOICE_STATUS_LABEL, approvalCeiling, money, rollRecurringVendorJob,
+  nextOccurrence, todayISO, estLabel, shortDate, vendorApprovalEmail,
 } from '@/lib/projects'
 import { saveVendor, slugVendor } from '@/lib/project-vendors'
 import { onAssigned, onAdded, onComment } from '@/lib/project-notify'
@@ -21,6 +22,27 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const str = (v: any) => (typeof v === 'string' ? v.trim() : '')
+
+/**
+ * A repeating vendor job — pest monthly, pool weekly, fire once a year.
+ *
+ * Null is a real answer and means "stop repeating", so this returns null rather than throwing on
+ * anything it does not recognise. next_on is computed here and never taken from the caller: a
+ * browser that sent its own next date could put a job on a clock that does not match the rule it
+ * claims to follow, and then nobody could explain why it fires when it does.
+ */
+function normaliseRecurs(v: any): any {
+  if (!v || typeof v !== 'object') return null
+  const every = String(v.every || '')
+  if (!['week', '2weeks', 'month', 'quarter', 'year'].includes(every)) return null
+  const r: any = { every }
+  if (every === 'week' || every === '2weeks') r.weekday = Math.min(6, Math.max(0, Number(v.weekday ?? 1)))
+  else r.day = Math.min(28, Math.max(1, Number(v.day ?? 1)))
+  if (every === 'year') r.month = Math.min(12, Math.max(1, Number(v.month ?? 1)))
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(v.from || '')) ? String(v.from) : todayISO()
+  r.next_on = nextOccurrence(r, from)
+  return r
+}
 
 // A NON-MEMBER GETS 404, NOT 403. A 403 says "this exists and you may not see it", which for a
 // private one-on-one is itself a leak — it confirms the project is there. The response for "not a
@@ -108,6 +130,35 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return { ...(data as any), section: home.section ?? null, homed: true } as { id: string; title: string; status: string; due_on: string | null; section: string | null; project_id: string; homed?: boolean }
     }
     const first = (s: string | null | undefined) => String(s || '').split(/[\s@]/)[0]
+    const ymd = (v: any) => (/^\d{4}-\d{2}-\d{2}$/.test(str(v)) ? str(v) : null)
+
+    // ---- VENDOR FIELDS (migration 088) -----------------------------------------
+    // Built once and applied through applyVendor, so the create path and the edit path can never
+    // disagree about what a vendor job is. Only keys the caller actually sent are included: a form
+    // that shows the vendor but not the time window must not blank the window.
+    const vendorPatch = (b: any): Record<string, any> => {
+      const v: Record<string, any> = {}
+      if (b.vendorKey !== undefined) v.vendor_key = str(b.vendorKey) || null
+      if (b.vendorName !== undefined) v.vendor_name = str(b.vendorName).slice(0, 200) || null
+      if (b.visit_on !== undefined) v.visit_on = ymd(b.visit_on)
+      if (b.visit_window !== undefined) v.visit_window = str(b.visit_window).slice(0, 60) || null
+      if (b.est_minutes !== undefined) {
+        const n = Number(b.est_minutes)
+        v.est_minutes = Number.isFinite(n) && n > 0 ? Math.min(60 * 24 * 30, Math.round(n)) : null
+      }
+      if (b.recurs !== undefined) v.recurs = normaliseRecurs(b.recurs)
+      return v
+    }
+    // Until 088 runs these columns are not there. A vendor job saved on the old schema keeps its
+    // title, unit and people — it simply has no vendor on it yet — rather than the whole save
+    // failing on a column nobody has added. Returns what could not be written, so the caller can say so.
+    const applyVendor = async (taskId: string, patch: Record<string, any>): Promise<string | null> => {
+      if (!Object.keys(patch).length) return null
+      const { error } = await sb.from('project_steps').update(patch).eq('id', taskId)
+      if (!error) return null
+      if (!/column|schema/i.test(error.message)) return error.message
+      return 'the vendor, visit date and estimate (run migration 088 in Supabase and they will save)'
+    }
 
     switch (action) {
       // ---- MEMBERS: who is on this project, and therefore who can see it ---------
@@ -188,6 +239,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         const taskId = String(data.id)
         const partial: string[] = []
 
+        const vErr = await applyVendor(taskId, vendorPatch(b))
+        if (vErr) partial.push(vErr)
+
         const A = await writePeople(taskId, b.assignees, 'assignee')
         if (A.error) partial.push('the people it is assigned to (' + A.error + ')')
         const C = await writePeople(taskId, b.collaborators, 'collaborator')
@@ -258,6 +312,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (Object.keys(patch).length) {
           const { error } = await sb.from('project_steps').update(patch).eq('id', taskId)
           if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        }
+        const vErr = await applyVendor(taskId, vendorPatch(b))
+        if (vErr) return NextResponse.json({ error: 'Saved, except ' + vErr + '.' }, { status: 500 })
+
+        // A VISIT DATE THAT MOVES UN-TELLS THE TEAM. They were told Tuesday; it is now Thursday,
+        // and everyone who heard the first message still believes Tuesday. Clearing the stamp puts
+        // the job back in the "tell the team" state rather than leaving a stale all-clear.
+        if (b.visit_on !== undefined) {
+          const { data: cur } = await sb.from('project_steps').select('visit_on,team_notified_for').eq('id', taskId).maybeSingle()
+          const told = String((cur as any)?.team_notified_for || '').slice(0, 10)
+          const now = String((cur as any)?.visit_on || '').slice(0, 10)
+          if (told && told !== now) {
+            await sb.from('project_steps').update({ team_notified_at: null, team_notified_for: null }).eq('id', taskId).then(() => {}, () => {})
+          }
+        }
+
+        // FINISHING A REPEATING JOB BOOKS THE NEXT ONE. Deliberately here and not on a nightly
+        // cron: work that nobody completed must not quietly breed twelve copies of itself while
+        // the first one still sits open. The clock only advances when the last visit actually happened.
+        if (patch.status === 'done' && before.status !== 'done') {
+          const nxt = await rollRecurringVendorJob(taskId, id, me)
+          if (nxt) await logEvent(id, me, 'task_added', `next visit booked for ${shortDate(nxt.visit_on)}`, { task_id: nxt.id, task_title: before.title })
         }
         // Assignees and collaborators are each replaced as a SET, so the client never has to diff.
         // Replacing one must not disturb the other, which is the whole reason this deletes by role
@@ -418,6 +494,82 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         break
       }
 
+      // ---- TELLING THE TEAM A VENDOR IS COMING -------------------------------------
+      // Jon, 2026-09-15: "Making sure the team is aware that they're arriving."
+      //
+      // The notice goes to everyone on the board, not only whoever the job is assigned to. A vendor
+      // at the door is the building's problem for the morning: the person who needs to know is
+      // whoever is standing there, and that is rarely the person the job was filed under.
+      case 'vendorNotifyTeam': {
+        const t = await taskRow(str(b.taskId))
+        if (!t) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const { data: job } = await sb.from('project_steps')
+          .select('title,visit_on,visit_window,est_minutes,vendor_name,vendor_key').eq('id', t.id).maybeSingle()
+        const visit = String((job as any)?.visit_on || '').slice(0, 10)
+        if (!visit) return NextResponse.json({ error: 'Set the date they are coming out first — there is nothing to tell the team yet.' }, { status: 400 })
+
+        const vendor = String((job as any)?.vendor_name || '') || 'A vendor'
+        const window = String((job as any)?.visit_window || '')
+        const mins = estLabel((job as any)?.est_minutes)
+        const where = ((await sb.from('project_links').select('kind,label').eq('task_id', t.id).in('kind', ['listing', 'building']).limit(1)).data || [])[0]
+        const place = where ? ' at ' + String((where as any).label || '') : ''
+        const line = `${vendor} is coming${place} on ${shortDate(visit)}${window ? ', ' + window : ''}${mins ? ` (about ${mins} on site)` : ''} — ${t.title}`
+
+        // Everyone on the board with a login. A member with no email is on the roster but has no
+        // inbox; they are reached by the board itself, not by this.
+        const rows = members.filter(m => m.email).map(m => ({
+          project_id: id, task_id: t.id, email: String(m.email).toLowerCase(), type: 'vendor_visit', actor: me,
+          title: line, url: `/projects/${id}?task=${t.id}`,
+          // One notice per PERSON per job per visit date. The email has to be in the key because
+          // dedupe_key is unique across the whole table — without it these rows collide with each
+          // other and exactly one member of the team gets told a vendor is coming.
+          // Pressing the button twice does not send twice; moving the date to a new day is
+          // genuinely new news and gets through.
+          dedupe_key: `vendor_visit:${t.id}:${visit}:${String(m.email).toLowerCase()}`,
+        }))
+        if (rows.length) {
+          const { error } = await sb.from('project_notifications').upsert(rows, { onConflict: 'dedupe_key', ignoreDuplicates: true })
+          if (error && !/duplicate/i.test(error.message)) return NextResponse.json({ error: error.message }, { status: 500 })
+        }
+        await sb.from('project_steps').update({ team_notified_at: new Date().toISOString(), team_notified_for: visit }).eq('id', t.id)
+          .then(() => {}, () => {})
+        // In the feed as well as the inbox: somebody reading the job later needs to see that the
+        // team was told, without going hunting through notification tables.
+        await logEvent(id, me, 'task_moved', `told the team — ${line}`, { task_id: t.id, task_title: t.title })
+        return NextResponse.json({ ok: true, told: rows.length, message: line, project: await getProject(id) })
+      }
+
+      // ---- ASKING FOR APPROVAL OVER $300, IN WRITING -------------------------------
+      // Jon: "If it's over 300, it must be approved by the owner/general manager, and we can put
+      // that in writing." This produces the writing. It does not send anything by itself — the
+      // text comes back for a person to send and to keep, and the asking is stamped on the invoice
+      // so the board can show what is out waiting on a reply rather than just "unapproved".
+      case 'invoiceRequestApproval': {
+        const invId = str(b.invoiceId)
+        const { data: inv } = await sb.from('project_invoices').select('*').eq('id', invId).eq('project_id', id).maybeSingle()
+        if (!inv) return NextResponse.json({ error: 'No such invoice.' }, { status: 404 })
+        const to = str(b.to)
+        const { data: proj } = await sb.from('projects').select('title,building,market,settings,owner_name').eq('id', id).maybeSingle()
+        let jobTitle = '', unit = ''
+        if (inv.task_id) {
+          const { data: tk } = await sb.from('project_steps').select('title').eq('id', inv.task_id).maybeSingle()
+          jobTitle = String((tk as any)?.title || '')
+          const l = ((await sb.from('project_links').select('label').eq('task_id', inv.task_id).in('kind', ['listing', 'building']).limit(1)).data || [])[0]
+          unit = String((l as any)?.label || '')
+        }
+        const mail = vendorApprovalEmail({
+          amountCents: Number(inv.amount_cents) || 0,
+          vendor: inv.vendor_name, jobTitle, unit: unit || (proj as any)?.building || (proj as any)?.market,
+          number: inv.number, note: inv.note, ceiling: approvalCeiling((proj as any)?.settings),
+          board: String((proj as any)?.title || 'a project'), fromName: first(me),
+        })
+        await sb.from('project_invoices').update({
+          approval_requested_to: to || null, approval_requested_at: new Date().toISOString(), needs_approval: true,
+        }).eq('id', invId).then(() => {}, () => {})
+        await logEvent(id, me, 'spend', `asked ${to || 'the owner/GM'} to approve $${((Number(inv.amount_cents) || 0) / 100).toFixed(2)}${inv.vendor_name ? ' to ' + inv.vendor_name : ''}`, { invoice_id: invId, task_id: inv.task_id || undefined })
+        return NextResponse.json({ ok: true, email: mail, project: await getProject(id) })
+      }
+
       // ---- INVOICES (Jon, 2026-09-15: "add invoices… pull from once you save a vendor") ------
       // An invoice is money leaving the project with paper behind it: who billed us, how much,
       // which invoice number, and the PDF. It hangs off the project always and off a task when the
@@ -548,7 +700,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           return NextResponse.json({ error: `$${(amount / 100).toFixed(2)} is over the $${(ceiling / 100).toFixed(0)} limit on this project — an admin has to approve it.` }, { status: 403 })
         }
         const patch: any = { status: 'approved', needs_approval: false, approved_by: me, approved_at: new Date().toISOString() }
-        const { error } = await sb.from('project_invoices').update(patch).eq('id', invId)
+        // What they said when they said yes — "ok but get it done before the 3rd" is the half of an
+        // approval that a tick box throws away, and the half somebody asks about later.
+        if (str(b.note)) patch.approval_note = str(b.note).slice(0, 1000)
+        let { error } = await sb.from('project_invoices').update(patch).eq('id', invId)
+        if (error && /column|schema/i.test(error.message)) {
+          delete patch.approval_note
+          ;({ error } = await sb.from('project_invoices').update(patch).eq('id', invId))
+        }
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         await recountInvoiced(id)
         await logEvent(id, me, 'spend', `approved a $${(amount / 100).toFixed(2)} invoice${cur.vendor_name ? ' from ' + cur.vendor_name : ''}`, { invoice_id: invId, to: 'approved' })
