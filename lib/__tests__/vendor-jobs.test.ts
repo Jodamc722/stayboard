@@ -4,7 +4,7 @@
 // a visit nobody was told about, a visit that quietly never happened, and a recurring job that
 // books itself twelve times while the first one sits open.
 // Run: npx tsx lib/__tests__/vendor-jobs.test.ts
-import { visitState, needsTelling, upcomingVisits, estLabel, nextOccurrence, describeRecurrence, INVOICE_APPROVAL_CENTS, approvalCeiling } from '../projects-shared'
+import { visitState, needsTelling, upcomingVisits, estLabel, nextOccurrence, describeRecurrence, INVOICE_APPROVAL_CENTS, approvalCeiling, doneSectionName, isDoneSection, settingsOf } from '../projects-shared'
 
 let failed = 0
 const eq = (why: string, got: any, want: any) => { if (got !== want) { console.log(`FAIL ${why}: got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`); failed++ } }
@@ -89,6 +89,33 @@ eq('$299 is fine',         29_900 > approvalCeiling(null), false)
 eq('$300 exactly is fine', 30_000 > approvalCeiling(null), false)   // "over 300", not "300 or more"
 eq('$300.01 needs a yes',  30_001 > approvalCeiling(null), true)
 eq('a board may differ',   approvalCeiling({ invoiceApprovalCents: 100_000 }), 100_000)
+
+// ── WHERE FINISHED WORK GOES ────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-15: "have a default: when a task is completed, it moves to a completed section."
+{
+  const S = (raw: any = null) => settingsOf(raw)
+  eq('on by default',        S().moveDone, true)
+  eq('can be turned off',    S({ moveDone: false }).moveDone, false)
+  eq('default name',         S().doneSection, 'Completed')
+
+  // A board that already has a finished column uses it. Growing a second, near-identical column
+  // beside an existing "Done" is the kind of small mess that makes people stop trusting a board.
+  eq('reuses Done',          doneSectionName(['To do', 'Doing', 'Done'], S()), 'Done')
+  eq('reuses Completed',     doneSectionName(['Vendor Follow Up', 'Projects', 'Completed'], S()), 'Completed')
+  eq('case insensitive',     doneSectionName(['open', 'DONE'], S()), 'DONE')
+  eq('matches Finished',     doneSectionName(['Scope', 'Finished'], S()), 'Finished')
+  eq('otherwise the default', doneSectionName(['Scope', 'Work'], S()), 'Completed')
+  eq('honours a custom name', doneSectionName(['Scope'], S({ doneSection: 'Archive' })), 'Archive')
+  eq('no sections at all',   doneSectionName([], S()), 'Completed')
+
+  eq('Done is a done section',      isDoneSection('Done'), true)
+  eq('Completed is too',            isDoneSection('completed'), true)
+  eq('padding does not matter',     isDoneSection('  Closed '), true)
+  eq('Doing is NOT done',           isDoneSection('Doing'), false)
+  eq('Scheduled is NOT done',       isDoneSection('Scheduled'), false)
+  eq('no section is not done',      isDoneSection(null), false)
+  eq('empty is not done',           isDoneSection(''), false)
+}
 
 console.log(failed ? `\n${failed} FAILED` : '\nAll vendor job checks passed.')
 process.exit(failed ? 1 : 0)
