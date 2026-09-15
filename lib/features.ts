@@ -86,6 +86,10 @@ export const FEATURES: Feature[] = [
   // Health Score is a view on /buildings since 2026-09-03 (/buildings?v=health); /health redirects
   // there. The KEY stays so every role's setting still decides who sees the tab.
   { key: 'health',        label: 'Health Score',      path: '/health', group: 'Portfolio' },
+  // Lighthouse checking itself. Under Settings rather than Portfolio: it is about the app, not the
+  // buildings, and the whole point of moving it off Slack and out of email was to stop app-health
+  // noise landing where operational information lives.
+  { key: 'system-health', label: 'System health',      path: '/system-health', group: 'Settings' },
   // Building Patterns (2026-08-06, Jon): recurring complaint themes per building — prevention layer.
   { key: 'patterns',      label: 'Building Patterns', path: '/patterns', group: 'Portfolio' },
   { key: 'revenue',       label: 'Revenue',           path: '/revenue', group: 'Money' },
