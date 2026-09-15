@@ -609,6 +609,13 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
               <p className="text-[11.5px] font-bold text-amber-700">Provisional — it is missing facts, see below.</p>
             ) : null}
           </>
+        ) : rec ? (
+          // It RAN and deliberately withheld a number. Saying so is the point: a blank where a
+          // figure should be reads as a broken feature, when what actually happened is the policy
+          // refusing to guess. The questions below are the price of an answer.
+          <p className="text-[12.5px] font-semibold text-amber-800 mt-0.5">
+            No number yet — the policy will not guess. Answer the questions below and ask again.
+          </p>
         ) : (
           <p className="text-[12.5px] text-muted mt-0.5">
             Runs the house framework over this case — severity, how fast it was fixed, what was offered
