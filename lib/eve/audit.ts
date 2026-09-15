@@ -598,8 +598,18 @@ export async function runAudit(): Promise<AuditRun> {
   }
 
   // THE TAB CLOSES ITSELF. Anything open that this run did not find is fixed.
+  //
+  // EXCEPT what this run does not own. Other subsystems write findings to the same table — the
+  // watchdog's quiet-feed alerts are the first, moved off email on 2026-09-15 — and they run on
+  // their own schedule with their own idea of when a thing is fixed. Reaping them here would make
+  // a genuine alert vanish within a day of appearing, which is a worse failure than a stale row:
+  // the whole point of the tab is that a quiet feed stays visible until somebody deals with it.
+  // Anything prefixed `ext:` closes itself.
   const stillIds = new Set(rows.map(r => r.id))
-  const toResolve = prevRows.filter(r => (r.status === 'open' || r.status === 'snoozed') && !stillIds.has(String(r.id))).map(r => String(r.id))
+  const toResolve = prevRows
+    .filter(r => (r.status === 'open' || r.status === 'snoozed') && !stillIds.has(String(r.id)))
+    .filter(r => !String(r.id).startsWith('ext:'))
+    .map(r => String(r.id))
   if (toResolve.length) {
     for (let i = 0; i < toResolve.length; i += 100) {
       await safe(db.from('eve_audits').update({ status: 'resolved', resolved_at: now }).in('id', toResolve.slice(i, i + 100)), null)

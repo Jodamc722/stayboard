@@ -238,10 +238,19 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       //      means turn N pays full price only for what turn N-1 added.
       // Opening a new domain changes the tool list, which invalidates the cache for that one turn.
       // That is fine: a write costs 25% over list once, and every turn after it reads again.
-      const blocks = buildSystemBlocks({ headline, memories: appAtlas() + '\n\n' + renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel })
+      // THE ATLAS IS STATIC, SO IT GOES IN THE CACHED HALF (2026-09-15). appAtlas() is memoised and
+      // derived from the feature and tool registries — byte-identical for the life of the process —
+      // and it was being glued onto `memories`, which lands in the UNCACHED block. Every turn paid
+      // list price to re-send a string that had not changed since the deploy.
+      const blocks = buildSystemBlocks({ headline, atlas: appAtlas(), memories: renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel })
+      // TWO BREAKPOINTS, NOT ONE. `stable` survives between conversations while the five-minute
+      // window holds; `dynamic` (memories, headline, who is asking) is constant within ONE
+      // conversation and different in the next, so it earns its own entry rather than riding free
+      // on the first or being re-sent whole. Three of the four allowed breakpoints are now in use —
+      // these two plus the rolling one on the newest message.
       const system: any[] = [
         { type: 'text', text: blocks.stable, cache_control: { type: 'ephemeral' } },
-        { type: 'text', text: blocks.dynamic },
+        { type: 'text', text: blocks.dynamic, cache_control: { type: 'ephemeral' } },
       ]
       // Keep the SAME tools array across the whole conversation. If a resume request drops a server
       // tool the API is still waiting on, it 400s with "but no web_search tool was provided".

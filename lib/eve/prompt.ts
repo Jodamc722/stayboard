@@ -99,6 +99,12 @@ YOU DO NOT ACT. You cannot create tasks, send messages, move money or change rec
 
 export type PromptParts = {
   headline: any
+  /**
+   * The app atlas — every page and tool domain, derived from the registries and memoised. It is
+   * the same string for the life of the process, which is why it belongs in the STABLE block: it
+   * was being concatenated onto `memories` and therefore re-sent, uncached, on every single turn.
+   */
+  atlas?: string
   memories: string
   openDomains: string[]
   voice: string
@@ -121,6 +127,21 @@ export type PromptParts = {
 // domains are open right now, memories, the headline. The stable block is read from cache at a
 // tenth of the price on every turn after the first (and across questions inside the five-minute
 // window); the dynamic block is small. Same words reach the model, in a slightly different order.
+/**
+ * TWO BLOCKS, AND THE LINE BETWEEN THEM IS A PRICE.
+ *
+ * `stable` is everything identical from one request to the next — the persona, the rules, the tool
+ * catalogue, the app atlas, the operating model. It carries the cache breakpoint, so on a second
+ * turn it is re-read at a tenth of list price instead of re-sent at full.
+ *
+ * `dynamic` is what genuinely differs: who is asking, their voice notes, which domains are open,
+ * Eve's recalled memories and the headline snapshot. It is cached too, but as its own second
+ * breakpoint, because it is stable WITHIN one conversation and not across two.
+ *
+ * The rule when adding anything here: if it does not change between two consecutive requests, it
+ * goes in `stable`. Putting a fixed string in `dynamic` means paying full price for it on every
+ * turn forever, which is exactly what the atlas was doing.
+ */
 export function buildSystemBlocks(p: PromptParts): { stable: string; dynamic: string } {
   const openList = p.openDomains.length ? p.openDomains.join(', ') : 'none yet'
   const closed = DOMAIN_KEYS.filter(k => p.openDomains.indexOf(k) < 0)
@@ -135,6 +156,8 @@ Full map of what lives where:
 ${toolCatalogue()}
 
 Do not tell the user you are "opening a domain" or narrate your tool calls. Just go and get the answer.
+
+${p.atlas || ''}
 
 ${RULES}
 
