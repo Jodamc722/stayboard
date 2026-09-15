@@ -1,17 +1,23 @@
-// The standing audit, on a schedule. Runs the checks, updates the tab, and — only when something
-// NEW went wrong — says so in Slack.
+// The standing audit, once a day. Runs the checks and updates the tab. It no longer says anything
+// in Slack (Jon, 2026-09-15: "kill those and have a tab in the app").
 //
-// THE RESTRAINT IS THE FEATURE. It posts newly-opened findings, never the whole open list. An alert
-// that repeats every two hours trains people to mute the channel, and a muted channel is worse than
-// no channel because everyone believes they are covered. Once a day it also posts a short roll-up
-// so a quiet week still gets confirmed as quiet rather than merely silent.
+// IT USED TO POST, AND THE RESTRAINT WAS MEANT TO BE THE FEATURE: newly-opened findings only, never
+// the whole open list, because an alert that repeats trains people to mute the channel. That was the
+// right instinct applied to the wrong medium. This is the app auditing ITSELF — sync freshness,
+// unanswered reviews, guests stuck in the pipeline — and none of it is information the field crew in
+// #vr-ops can act on. It was pushing app-health noise into the channels where operational
+// information lives, which is the same way a channel gets muted, just slower.
+//
+// So it reports to /system-health, where a finding stays open until somebody deals with it and is
+// still there next week if nobody did. That is strictly better than an alert nobody can act on:
+// nothing expires, nothing scrolls away, and the count is visible whenever you go looking.
+//
+// It also drops from hourly to once a day. The checks read sync timestamps, review backlogs and
+// pipeline counts — things that move on the scale of days. Twenty-four runs a day to notice a
+// thing that changes weekly was never buying anything. Run it by hand from the tab when you have
+// just fixed something and want to know whether it took.
 import { NextRequest, NextResponse } from 'next/server'
-import { runAudit, listAudits } from '@/lib/eve/audit'
-import { getApprovalsChannel } from '@/lib/eve/approvals'
-import { postToChannel } from '@/lib/slack'
-import { getSlackRules, broadcastAllowed } from '@/lib/slack-rules'
-import { getSetting, setSetting } from '@/lib/app-settings'
-import { todayET } from '@/lib/eve/ctx'
+import { runAudit } from '@/lib/eve/audit'
 import { eveGate } from '../../agent/route'
 import { recordRun } from '@/lib/automation-runs'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
@@ -22,8 +28,6 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) { return run(req) }
 export async function GET(req: NextRequest) { return run(req) }
 
-const ICON: Record<string, string> = { critical: '🔴', warn: '🟠', info: '⚪️' }
-const ROLLUP_KEY = 'eve_audit_last_rollup'
 
 async function run(req: NextRequest) {
   // AUTH (fixed 2026-08-26). This used to be: bearer-or-a-logged-in-session. With CRON_SECRET
@@ -50,51 +54,10 @@ async function run(req: NextRequest) {
   const quiet = sp.get('quiet') === '1'
   const res = await runAudit()
 
-  let posted: string | null = null
-  // MAY THIS POST? (2026-08-27) This route used to write to Slack with nothing to stop it — no
-  // event key, no switch, not listed anywhere a person could turn it off. It had never actually
-  // run because of the auth bug, so nobody found out until the auth was fixed and it began posting
-  // nine findings every 45 minutes. The audit itself still runs and still fills the tab; only the
-  // broadcast is gated, and now it answers to the same allow-list as every other alert.
-  const rules = await getSlackRules()
-  const mayPost = broadcastAllowed(rules, 'eve_audit')
-  if (!quiet && mayPost) {
-    const ch = await getApprovalsChannel()
-    const loud = res.opened.filter(f => f.severity !== 'info')
-    // The daily roll-up fires on the FIRST run after 7am Eastern, tracked by date rather than by
-    // matching an hour. Matching an hour looks tidier and breaks twice a year: an every-other-hour
-    // UTC schedule lines up with 7am ET in winter and misses it entirely all summer.
-    const hourET = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date()))
-    const today = todayET()
-    const lastRollup = await getSetting<string>(ROLLUP_KEY, '')
-    const rollup = hourET >= 7 && lastRollup !== today
-
-    if (ch && (loud.length || rollup)) {
-      const lines: string[] = []
-      if (loud.length) {
-        lines.push(`*${loud.length} new issue${loud.length === 1 ? '' : 's'} found*`)
-        for (const f of loud.slice(0, 8)) {
-          lines.push(`${ICON[f.severity] || '•'} *${f.title}*\n${f.detail.slice(0, 240)}\n_→ ${f.fix.slice(0, 160)}_`)
-        }
-        if (loud.length > 8) lines.push(`…and ${loud.length - 8} more.`)
-      }
-      if (rollup) {
-        const open = await listAudits({ status: 'open', limit: 200 })
-        const crit = open.filter(x => x.severity === 'critical').length
-        const warn = open.filter(x => x.severity === 'warn').length
-        lines.push(open.length
-          ? `*On the tab this morning:* ${crit} critical, ${warn} warnings, ${open.length - crit - warn} info.`
-            + (crit ? `\nOldest critical: ${open.filter(x => x.severity === 'critical')[0]?.title} — open ${open.filter(x => x.severity === 'critical')[0]?.ageDays} day(s).` : '')
-          : '*Nothing on the tab.* Every feed is current, nobody is waiting on a reply past six hours, and no arrival is missing a clean.')
-        if (res.resolved.length) lines.push(`_${res.resolved.length} item(s) closed themselves since the last run._`)
-      }
-      const text = '🔎 *Eve audit*\n\n' + lines.join('\n\n')
-      const r = await postToChannel(ch.id, text)
-      posted = r.ok ? '#' + ch.name : `failed: ${r.error}`
-      if (rollup && r.ok) await setSetting(ROLLUP_KEY, today, 'eve-audit')
-    }
-  }
+  // NO SLACK. The findings live on /system-health. `posted` stays in the response shape so the
+  // automation-runs record and anything reading this endpoint keep the same contract.
+  const posted: string | null = null
 
   recordRun({ name: 'eve-audit', ok: true, itemCount: (res as any)?.open?.length ?? (res as any)?.found ?? undefined, detail: { posted, resolved: (res as any)?.resolved?.length } })
-  return NextResponse.json({ ...res, ranBy: viaCron ? 'cron' : 'admin', posted, slack: mayPost ? 'allowed' : 'muted (Settings → Slack alerts & rules)' })
+  return NextResponse.json({ ...res, ranBy: viaCron ? 'cron' : 'admin', posted, reportsTo: '/system-health' })
 }
