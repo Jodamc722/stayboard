@@ -10,7 +10,7 @@ export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
   progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO, canSee, canEdit, toPerson,
-  type Invoice, INVOICE_STATUSES, INVOICE_COUNTS,
+  type Invoice, INVOICE_STATUSES, INVOICE_COUNTS, nextOccurrence,
 } from './projects-shared'
 
 export async function getCategories(): Promise<{ key: string; label: string; color: string; sort: number }[]> {
@@ -145,6 +145,117 @@ export async function recountInvoiced(projectId: string): Promise<void> {
       .reduce((n, r) => n + (Number(r.amount_cents) || 0), 0)
     await sb.from('projects').update({ invoiced_cents: total }).eq('id', projectId)
   } catch { /* the number is recomputed on the next write */ }
+}
+
+// ---------------------------------------------------------------- recurring vendor work
+/**
+ * Finish a repeating vendor job and the next visit books itself.
+ *
+ * Jon, 2026-09-15: vendor work "could be reoccurring things like pest control that we can build
+ * into the system." This is that, and the design choice worth defending is WHEN it runs: on
+ * completion, not on a nightly clock.
+ *
+ * A clock would mean pest control appearing on the first of every month whether or not last
+ * month's visit ever happened, and by March the board carries three open pest jobs and nobody
+ * trusts any of them. Rolling on completion means exactly one open visit at a time, and a job
+ * sitting unfinished is itself the signal that the vendor has not been.
+ *
+ * The new job carries the vendor, the unit and the description forward, and nothing about the last
+ * visit: no invoice, no photos, no notification stamp. Those belong to the visit that happened.
+ */
+export async function rollRecurringVendorJob(taskId: string, projectId: string, by: string): Promise<{ id: string; visit_on: string } | null> {
+  try {
+    const sb = supabaseAdmin()
+    const { data: t, error } = await sb.from('project_steps').select('*').eq('id', taskId).maybeSingle()
+    if (error || !t) return null
+    const r = (t as any).recurs
+    if (!r || !r.every) return null
+
+    // Count from the visit that just happened, so a visit done three days late does not drag the
+    // whole cadence three days later for ever.
+    const from = String((t as any).visit_on || todayISO()).slice(0, 10)
+    const next = nextOccurrence(r, from)
+
+    const { data: made, error: e2 } = await sb.from('project_steps').insert({
+      project_id: (t as any).project_id, title: (t as any).title, description: (t as any).description,
+      status: 'todo', section: (t as any).section, parent_id: null,
+      priority: (t as any).priority || 'normal',
+      // due_on trails the visit by the same gap the last one had, so a job that was always "finish
+      // within a week of the visit" keeps that shape instead of losing its deadline.
+      due_on: dueOffsetFrom(t as any, next),
+      vendor_key: (t as any).vendor_key, vendor_name: (t as any).vendor_name,
+      visit_on: next, visit_window: (t as any).visit_window, est_minutes: (t as any).est_minutes,
+      recurs: { ...r, next_on: next },
+      recurred_from: taskId,
+      created_by: by, sort: (t as any).sort,
+    }).select('id').single()
+    if (e2 || !made) return null
+
+    // The unit comes with it. A pest visit that forgot which building it was for would be worse
+    // than no visit on the board at all.
+    const { data: links } = await sb.from('project_links').select('kind,ref_id,label').eq('task_id', taskId)
+    if (links && links.length) {
+      await sb.from('project_links').insert(((links || []) as any[]).map(l => ({
+        project_id: projectId, task_id: made.id, kind: l.kind, ref_id: l.ref_id, label: l.label,
+      }))).then(() => {}, () => {})
+    }
+    // The same people, so the next visit is not unowned.
+    const { data: asg } = await sb.from('project_task_assignees').select('*').eq('task_id', taskId)
+    if (asg && asg.length) {
+      await sb.from('project_task_assignees').insert(((asg || []) as any[]).map(a => ({
+        task_id: made.id, project_id: projectId, person_key: a.person_key, display: a.display, email: a.email,
+        ...(a.role !== undefined ? { role: a.role } : {}),
+      }))).then(() => {}, () => {})
+    }
+    // The finished one stops repeating — the schedule moved to its successor. Without this, editing
+    // an old visit back to open and closing it again would book a second next visit.
+    await sb.from('project_steps').update({ recurs: null }).eq('id', taskId)
+    return { id: String(made.id), visit_on: next }
+  } catch { return null }
+}
+
+/** Keep the gap between the visit and the deadline that the last one had; null if it had none. */
+function dueOffsetFrom(t: { visit_on?: string | null; due_on?: string | null }, nextVisit: string): string | null {
+  const v = String(t.visit_on || '').slice(0, 10)
+  const d = String(t.due_on || '').slice(0, 10)
+  if (!v || !d) return null
+  const gap = Math.round((Date.parse(d + 'T12:00:00Z') - Date.parse(v + 'T12:00:00Z')) / 86400000)
+  if (!Number.isFinite(gap) || gap < 0) return null
+  return new Date(Date.parse(nextVisit + 'T12:00:00Z') + gap * 86400000).toISOString().slice(0, 10)
+}
+
+// ---------------------------------------------------------------- approval in writing
+/**
+ * The email that asks the owner or GM to approve a vendor cost.
+ *
+ * Jon, 2026-09-15: "If it's over 300, it must be approved by the owner/general manager, and we can
+ * put that in writing." The writing is the point. It names the amount, the vendor, the unit and
+ * what the money is for, because an approval that just says "$480, ok?" is not something anybody
+ * can stand behind later when the owner asks what they agreed to.
+ */
+export function vendorApprovalEmail(o: {
+  amountCents: number; vendor?: string | null; jobTitle?: string | null; unit?: string | null
+  number?: string | null; note?: string | null; ceiling: number; board: string; fromName?: string
+}) {
+  const fmt = (c: number) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const where = o.unit ? ` at ${o.unit}` : ''
+  const subject = `Approval needed — ${fmt(o.amountCents)}${o.vendor ? ' to ' + o.vendor : ''}${where}`
+  const lines: string[] = []
+  lines.push('Hi,')
+  lines.push('')
+  lines.push(`We need a vendor for ${o.jobTitle ? '“' + o.jobTitle + '”' : 'work'}${where}, and the cost is above the ${fmt(o.ceiling)} limit, so it needs your approval before we book it.`)
+  lines.push('')
+  lines.push(`  Amount:  ${fmt(o.amountCents)}`)
+  if (o.vendor) lines.push(`  Vendor:  ${o.vendor}`)
+  if (o.unit) lines.push(`  Where:   ${o.unit}`)
+  if (o.number) lines.push(`  Ref:     ${o.number}`)
+  if (o.note) { lines.push(''); lines.push(`  For: ${o.note}`) }
+  lines.push('')
+  lines.push('This is work our own team cannot complete. Reply to approve and we will schedule it; happy to talk it through or get a second quote if you would rather.')
+  lines.push('')
+  lines.push('Thank you,')
+  lines.push(o.fromName || 'Stay Hospitality')
+  return { subject, body: lines.join('\n') }
 }
 
 // ---------------------------------------------------------------- my board

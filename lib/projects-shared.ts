@@ -106,6 +106,13 @@ export type Task = {
   subtasks: Task[]
   /** Set on a task shown here from another project (multi-homed). */
   homed?: boolean; home_project_id?: string; home_project_title?: string
+  // ── VENDOR-MANAGED WORK ────────────────────────────────────────────────────────────────────
+  // Set when our own crew cannot close this and an outside vendor is required. visit_on is when
+  // they ARRIVE; due_on stays what it always was — when the work is expected to be finished.
+  vendor_key?: string | null; vendor_name?: string | null
+  visit_on?: string | null; visit_window?: string | null; est_minutes?: number | null
+  team_notified_at?: string | null; team_notified_for?: string | null
+  recurs?: Recurrence | null; recurred_from?: string | null
   /** Set when this task was sent to Breezeway; `breezeway` is the field task's live state (read-time). */
   breezeway_task_id?: string | null
   breezeway?: { status: string; tone: 'open' | 'done' | 'bad'; assignee?: string | null; date?: string | null; reportUrl?: string | null } | null
@@ -180,14 +187,92 @@ export type Invoice = {
   issued_on: string | null; due_on: string | null; paid_on: string | null
   note: string | null; photo_id: string | null
   needs_approval: boolean; approved_by: string | null; approved_at: string | null
+  /** The asking and the words, so an approval is a record and not a boolean. */
+  approval_requested_to: string | null; approval_requested_at: string | null; approval_note: string | null
   created_by: string | null; created_at: string; updated_at: string
   /** Stamped at read time from the attached project_photos row, so the UI never re-signs a URL. */
   file?: { id: string; name: string | null; url: string; mime: string | null } | null
 }
 
-/** Over this, an invoice waits for someone to approve it. A project can set its own in settings —
- *  a $400 ceiling is right for a unit refresh and wrong for a building onboarding. */
-export const INVOICE_APPROVAL_CENTS = 100_000
+// ── VENDOR JOBS ──────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-15: a vendor job is "work that the vendor is required for, so that our team can
+// just know that there's certain work that our team can't complete that we need a vendor to fix".
+//
+// Three questions, and the board exists to answer them at a glance:
+//   • Who is coming?      vendor_name
+//   • When?               visit_on, visit_window
+//   • Does the team know?  team_notified_for
+
+/** How long they will be on site, written the way a person would say it. */
+export const estLabel = (minutes: number | null | undefined): string | null => {
+  const m = Number(minutes)
+  if (!Number.isFinite(m) || m <= 0) return null
+  if (m < 60) return m + ' min'
+  const h = m / 60
+  return (Number.isInteger(h) ? String(h) : h.toFixed(1)) + (h === 1 ? ' hr' : ' hrs')
+}
+
+export type VisitState = { label: string; tone: 'today' | 'soon' | 'later' | 'missed' | 'done'; days: number }
+
+/**
+ * What the arrival date means this morning.
+ *
+ * "Missed" is the one that earns its place. A vendor visit whose date has passed with the job still
+ * open is not merely late — it usually means they did not turn up and nobody noticed, which is the
+ * exact failure this board exists to catch. It reads differently from an overdue task.
+ */
+export function visitState(visitOn: string | null | undefined, status: string, today: string): VisitState | null {
+  if (!visitOn) return null
+  const days = Math.round((Date.parse(String(visitOn).slice(0, 10) + 'T12:00:00Z') - Date.parse(today + 'T12:00:00Z')) / 86400000)
+  if (status === 'done') return { label: 'Visited ' + shortDate(visitOn), tone: 'done', days }
+  if (days < 0) return { label: days === -1 ? 'Was due yesterday' : `${-days} days ago, no result`, tone: 'missed', days }
+  if (days === 0) return { label: 'Arriving today', tone: 'today', days }
+  if (days === 1) return { label: 'Arriving tomorrow', tone: 'soon', days }
+  if (days <= 7) return { label: `Arriving in ${days} days`, tone: 'soon', days }
+  return { label: 'Arriving ' + shortDate(visitOn), tone: 'later', days }
+}
+
+/** "Sep 22" — the spelling used on cards, where the year is noise. */
+export function shortDate(ymd: string | null | undefined): string {
+  if (!ymd) return ''
+  const d = new Date(String(ymd).slice(0, 10) + 'T12:00:00Z')
+  return Number.isNaN(d.getTime()) ? String(ymd) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+/**
+ * Does the crew still need telling?
+ *
+ * Yes when there is a visit date and either nobody has been told, or they were told about a
+ * DIFFERENT date. That second case is the one worth having: a visit moved from Tuesday to Thursday
+ * after the team was told is more dangerous than one nobody has mentioned at all, because everybody
+ * believes they already know.
+ */
+export function needsTelling(t: { visit_on?: string | null; team_notified_for?: string | null; status?: string }): boolean {
+  if (!t.visit_on || t.status === 'done') return false
+  return String(t.team_notified_for || '').slice(0, 10) !== String(t.visit_on).slice(0, 10)
+}
+
+/** Every vendor visit worth looking at, soonest first — what the board's arrivals strip reads. */
+export function upcomingVisits<T extends { visit_on?: string | null; status?: string }>(tasks: T[], today: string, withinDays = 14): T[] {
+  return tasks
+    .filter(t => t.visit_on && t.status !== 'done')
+    .filter(t => {
+      const days = Math.round((Date.parse(String(t.visit_on).slice(0, 10) + 'T12:00:00Z') - Date.parse(today + 'T12:00:00Z')) / 86400000)
+      return days >= -30 && days <= withinDays     // a month back, so a missed visit stays visible
+    })
+    .sort((a, b) => String(a.visit_on).localeCompare(String(b.visit_on)))
+}
+
+/**
+ * Over this, an invoice waits for the owner or general manager to say yes.
+ *
+ * Jon, 2026-09-15: "If it's over 300, it must be approved by the owner/general manager, and we can
+ * put that in writing." $300 is the house rule, so it is the app default rather than something
+ * every board has to be told. A board can still set its own in settings.invoiceApprovalCents — a
+ * building onboarding sensibly runs looser than a unit refresh — but nobody has to configure
+ * anything for the rule to hold.
+ */
+export const INVOICE_APPROVAL_CENTS = 30_000
 export const approvalCeiling = (settings: any): number => {
   const n = Number(settings?.invoiceApprovalCents)
   return Number.isFinite(n) && n >= 0 ? n : INVOICE_APPROVAL_CENTS
@@ -237,23 +322,38 @@ export type Template = {
 
 /** How often a project re-creates itself. Lives on the LATEST instance of a series only. */
 export type Recurrence = {
-  every: 'week' | '2weeks' | 'month'
+  // quarter and year exist for VENDOR work, which runs on longer clocks than a one-on-one does:
+  // pool weekly, pest monthly, HVAC quarterly, fire and life-safety once a year.
+  every: 'week' | '2weeks' | 'month' | 'quarter' | 'year'
   weekday?: number                     // 0=Sun … 6=Sat, for week / 2weeks
-  day?: number                         // 1..28, for month
+  day?: number                         // 1..28, for month / quarter / year
+  month?: number                       // 1..12, for year
   next_on: string                      // YYYY-MM-DD — the morning the next instance is made
   carry?: boolean                      // open tasks roll into the next instance (default true)
 }
-export const RECUR_LABEL: Record<Recurrence['every'], string> = { week: 'Weekly', '2weeks': 'Every 2 weeks', month: 'Monthly' }
+export const RECUR_LABEL: Record<Recurrence['every'], string> = { week: 'Weekly', '2weeks': 'Every 2 weeks', month: 'Monthly', quarter: 'Quarterly', year: 'Yearly' }
 export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 /** The next occurrence strictly after `from` (YYYY-MM-DD), by the rule. Pure; tested. */
-export function nextOccurrence(r: { every: Recurrence['every']; weekday?: number; day?: number }, from: string): string {
+export function nextOccurrence(r: { every: Recurrence['every']; weekday?: number; day?: number; month?: number }, from: string): string {
   const d = new Date(from + 'T12:00:00Z')
   const ymd = (x: Date) => x.toISOString().slice(0, 10)
-  if (r.every === 'month') {
+  if (r.every === 'year') {
+    // Clamped to 28 like monthly, so a yearly job set for the 31st does not disappear in February
+    // if somebody later edits it to run monthly.
+    const day = Math.min(28, Math.max(1, Number(r.day || 1)))
+    const mon = Math.min(12, Math.max(1, Number(r.month || 1))) - 1
+    const cand = new Date(Date.UTC(d.getUTCFullYear(), mon, day, 12))
+    if (cand <= d) cand.setUTCFullYear(cand.getUTCFullYear() + 1)
+    return ymd(cand)
+  }
+  if (r.every === 'month' || r.every === 'quarter') {
+    const step = r.every === 'quarter' ? 3 : 1
     const day = Math.min(28, Math.max(1, Number(r.day || 1)))
     const cand = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), day, 12))
-    if (cand <= d) cand.setUTCMonth(cand.getUTCMonth() + 1)
+    // Step until it is strictly after `from`. A quarterly job advanced from its own last date moves
+    // three months, not to next month's same day.
+    while (cand <= d) cand.setUTCMonth(cand.getUTCMonth() + step)
     return ymd(cand)
   }
   const wd = Math.min(6, Math.max(0, Number(r.weekday ?? 1)))
@@ -265,9 +365,14 @@ export function nextOccurrence(r: { every: Recurrence['every']; weekday?: number
   d.setUTCDate(d.getUTCDate() + delta)
   return ymd(d)
 }
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+const ordinal = (n: number) => n + (['st', 'nd', 'rd'][(n - 1)] || 'th')
 export function describeRecurrence(r: Recurrence | null | undefined): string {
   if (!r) return ''
-  const when = r.every === 'month' ? `on the ${r.day || 1}${['st', 'nd', 'rd'][((r.day || 1) - 1)] || 'th'}` : `on ${WEEKDAYS[r.weekday ?? 1]}`
+  if (r.every === 'year') return `Yearly in ${MONTHS[Math.min(12, Math.max(1, r.month || 1)) - 1]}`
+  const when = (r.every === 'month' || r.every === 'quarter')
+    ? `on the ${ordinal(r.day || 1)}`
+    : `on ${WEEKDAYS[r.weekday ?? 1]}`
   return `${RECUR_LABEL[r.every]} ${when}`
 }
 

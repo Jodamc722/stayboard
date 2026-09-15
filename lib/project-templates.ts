@@ -82,6 +82,31 @@ export const BUILT_IN: Template[] = [
     ],
   },
   {
+    // VENDOR-MANAGED WORK (Jon, 2026-09-15). The standing board for everything our own crew cannot
+    // close — a plumber, a pest contract, an elevator inspection.
+    //
+    // THE SECTIONS ARE THE LIFECYCLE, which is why this template has no status field of its own.
+    // A job moves left to right and its column IS its state: nobody has to keep a dropdown and a
+    // column agreeing with each other. The order is the order the questions actually arrive in —
+    // do we need a vendor at all, what will it cost and who said yes, when are they coming, did
+    // they come and what did they charge.
+    key: 'vendor_work', label: 'Vendor-managed activities', kind: 'project', category: 'vendor', builtIn: true, icon: '🧰', accent: 'teal',
+    blurb: 'Work our team cannot do: who is coming, when, and what it cost. Over $300 waits for an approval in writing.',
+    summary: 'Work that needs an outside vendor. Each job carries the vendor, the day they come out, how long they need, and the invoice.',
+    settings: { view: 'board', accent: 'teal', icon: '🧰' },
+    sections: [
+      { name: 'Needs a vendor', tasks: [
+        T('Example — describe the problem and attach the unit', {
+          description: 'Put anything here our own team cannot close. Attach the unit under ATTACHED so the vendor knows where to go, then pick a vendor and a date on the job itself.\n\nDelete this example once the board is live.',
+          checklist: ['What is wrong', 'Which unit', 'Anything the vendor needs to know to quote it'],
+        }),
+      ] },
+      { name: 'Quote & approval', tasks: [] },
+      { name: 'Scheduled', tasks: [] },
+      { name: 'Done', tasks: [] },
+    ],
+  },
+  {
     key: 'personal', label: 'My board', kind: 'personal', category: 'internal', builtIn: true, icon: '🔒', accent: 'emerald',
     blurb: 'A private board only you can see. Arrange it however you like.',
     summary: null as any,
