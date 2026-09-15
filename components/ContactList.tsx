@@ -413,6 +413,7 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [result, setResult] = useState<any>(null)
+  const [dry, setDry] = useState(true)
 
   const call = async (body: any, tag: string) => {
     setBusy(tag); setErr(''); setMsg('')
@@ -527,42 +528,92 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
                 last name and phone, tagged with their booking channel, stay count, building, market, VIP and your own tags.
                 {seg ? <> The current filter <b>{SEGS.find(x => x.key === seg)?.label}</b> is applied.</> : null}
               </p>
+              <p className="text-[12px] text-muted leading-relaxed mt-1.5">
+                <b>Nobody can be added twice.</b> Mailchimp keys a contact by their email address, so a second push
+                updates the person rather than duplicating them. <b>Check first</b> reads the audience and tells you
+                how many are genuinely new before anything is sent — and anyone who unsubscribed, hard-bounced, or was
+                archived out of the audience on purpose is left exactly where they are.
+              </p>
               <div className="flex gap-2 flex-wrap mt-2.5">
                 <button disabled={!!busy}
-                  onClick={async () => { const j = await call({ op: 'sync', seg, dryRun: true }, 'dry'); if (j) { setResult(j.result); setMsg('Dry run — nothing was sent.') } }}
+                  onClick={async () => { const j = await call({ op: 'sync', seg, dryRun: true }, 'dry'); if (j) { setResult(j.result); setDry(true); setMsg('Checked the audience — nothing was sent.') } }}
                   className="h-9 px-3.5 rounded-xl border border-line bg-white text-[12.5px] font-bold text-ink inline-flex items-center gap-1.5">
-                  {busy === 'dry' ? <Loader2 size={13} className="animate-spin" /> : null} Count first
+                  {busy === 'dry' ? <Loader2 size={13} className="animate-spin" /> : null} Check first
                 </button>
                 <button disabled={!!busy}
-                  onClick={async () => { const j = await call({ op: 'sync', seg }, 'sync'); if (j) { setResult(j.result); setMc(j.mailchimp); setMsg('Pushed to Mailchimp.') } }}
+                  onClick={async () => { const j = await call({ op: 'sync', seg }, 'sync'); if (j) { setResult(j.result); setDry(false); setMc(j.mailchimp); setMsg('Pushed to Mailchimp.') } }}
                   className="h-9 px-4 rounded-xl bg-ink text-white text-[12.5px] font-bold disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
                   {busy === 'sync' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Push to Mailchimp
                 </button>
               </div>
             </div>
 
-            {result ? (
-              <div className="text-[12.5px] text-ink space-y-1">
-                <p>
-                  <b>{result.attempted.toLocaleString()}</b> mailable contacts
-                  {result.created || result.updated ? <> · {result.created.toLocaleString()} new · {result.updated.toLocaleString()} updated</> : null}
-                  {result.failed ? <span className="text-rose-700"> · {result.failed.toLocaleString()} rejected</span> : null}
-                </p>
-                <p className="text-muted text-[11.5px]">
-                  {result.skippedNotMailable.toLocaleString()} held back — no usable address.
-                  {result.skippedRestricted ? ' ' + result.skippedRestricted.toLocaleString() + ' held back by a channel rule.' : ''}
-                </p>
-                {(result.errors || []).slice(0, 5).map((e: any, i: number) => (
-                  <p key={i} className="text-[11.5px] text-rose-700">{e.email}: {e.reason}</p>
-                ))}
-              </div>
-            ) : null}
+            {result ? <SyncReport r={result} dry={dry} /> : null}
           </>
         )}
 
         {msg ? <p className="text-[12.5px] font-semibold text-emerald-700">{msg}</p> : null}
         {err ? <p className="text-[12.5px] font-semibold text-rose-700">{err}</p> : null}
       </div>
+    </div>
+  )
+}
+
+/**
+ * WHAT THE PUSH IS ABOUT TO DO, OR JUST DID.
+ *
+ * The old version printed one number — how many contacts were mailable — which answered a question
+ * nobody was asking. The question is "am I about to make a mess of my audience", and that has three
+ * parts: how many are new (this is the only line that changes what Mailchimp bills), how many are
+ * already there (updated in place, never duplicated), and who we deliberately did not touch.
+ */
+function SyncReport({ r, dry }: { r: any; dry: boolean }) {
+  const held = (r.skippedUnsubscribed || 0) + (r.skippedCleaned || 0) + (r.skippedArchived || 0)
+  const Stat = ({ n, label, tone }: { n: number; label: string; tone?: string }) => (
+    <div className="flex-1 min-w-[92px]">
+      <p className={'text-[17px] font-bold leading-none ' + (tone || 'text-ink')}>{n.toLocaleString()}</p>
+      <p className="text-[11px] text-muted mt-1 leading-tight">{label}</p>
+    </div>
+  )
+  return (
+    <div className="rounded-xl bg-white ring-1 ring-line px-3.5 py-3 space-y-2.5">
+      <div className="flex gap-3 flex-wrap">
+        <Stat n={r.willCreate || 0} label={dry ? 'new to the audience' : 'were new'} tone="text-emerald-700" />
+        <Stat n={r.alreadyInAudience || 0} label={dry ? 'already there — updated, not duplicated' : 'updated in place'} />
+        <Stat n={held} label="left alone — opted out, bounced or archived" tone={held ? 'text-amber-700' : undefined} />
+        {!dry && r.failed ? <Stat n={r.failed} label="rejected by Mailchimp" tone="text-rose-700" /> : null}
+      </div>
+
+      <p className="text-[11.5px] text-muted leading-relaxed">
+        {r.attempted.toLocaleString()} {dry ? 'contacts would be sent' : 'contacts sent'} out of{' '}
+        {r.audienceTotal ? r.audienceTotal.toLocaleString() + ' already in the audience. ' : 'this segment. '}
+        {r.skippedNotMailable ? r.skippedNotMailable.toLocaleString() + ' have no usable address. ' : ''}
+        {r.skippedRestricted ? r.skippedRestricted.toLocaleString() + ' are held back by a channel rule. ' : ''}
+        {r.skippedDuplicate ? r.skippedDuplicate.toLocaleString() + ' were the same address twice. ' : ''}
+      </p>
+
+      {held ? (
+        <p className="text-[11.5px] text-muted leading-relaxed">
+          Left alone:{' '}
+          {[
+            r.skippedUnsubscribed ? r.skippedUnsubscribed.toLocaleString() + ' unsubscribed' : '',
+            r.skippedCleaned ? r.skippedCleaned.toLocaleString() + ' hard-bounced' : '',
+            r.skippedArchived ? r.skippedArchived.toLocaleString() + ' archived out of the audience' : '',
+          ].filter(Boolean).join(' · ')}. Pushing an archived contact back is the one thing here that really does
+          add a contact you did not ask for, so it never happens.
+        </p>
+      ) : null}
+
+      {r.audiencePartial ? (
+        <p className="text-[11.5px] font-semibold text-amber-800 leading-relaxed">
+          The audience read did not complete, so the numbers above are a floor. Nothing is duplicated either way —
+          Mailchimp still matches on the email address — but a contact who unsubscribed may have been written to.
+        </p>
+      ) : null}
+
+      {(r.errors || []).slice(0, 5).map((e: any, i: number) => (
+        <p key={i} className="text-[11.5px] text-rose-700">{e.email}: {e.reason}</p>
+      ))}
     </div>
   )
 }
