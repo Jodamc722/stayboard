@@ -39,7 +39,21 @@ export async function POST(req: NextRequest) {
 
     // WHO IS THIS? Token first — a vendor has no session and must still be able to post.
     let uploader = 'vendor', viaShare = false
-    if (token) {
+    let taskId = String(form.get('taskId') || '').trim()
+    // A VENDOR'S OWN LINK (089). Different token, same upload path: the job proves both which
+    // project the photo belongs to and that this vendor is allowed to add one, so a job id sent
+    // with a valid token still has to be a job that vendor actually holds.
+    const vendorToken = String(form.get('vendorToken') || '').trim()
+    if (vendorToken) {
+      const { getVendorByToken, vendorJobFor } = await import('@/lib/vendor-portal')
+      const v = await getVendorByToken(vendorToken)
+      if (!v) return NextResponse.json({ error: 'This link is no longer valid.' }, { status: 403 })
+      const job = await vendorJobFor(v.key, taskId)
+      if (!job) return NextResponse.json({ error: 'That job is not on your list.' }, { status: 404 })
+      projectId = job.project_id
+      uploader = v.label || 'vendor'
+      viaShare = true
+    } else if (token) {
       const p = await getProjectByToken(token)
       if (!p) return NextResponse.json({ error: 'This link is no longer valid.' }, { status: 403 })
       projectId = p.id
@@ -65,14 +79,22 @@ export async function POST(req: NextRequest) {
     if (upErr) return NextResponse.json({ error: 'upload failed: ' + upErr.message }, { status: 500 })
     const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(key)
 
-    const { data, error } = await sb.from('project_photos').insert({
+    const row: any = {
       project_id: projectId, url: pub.publicUrl, caption: caption || null,
       phase: (PHOTO_PHASES as readonly string[]).includes(phase) ? phase : 'during',
       uploaded_by: uploader, via_share: viaShare,
-    }).select('*').maybeSingle()
+    }
+    // Pin it to the job when we know which one — a proof-of-work photo that is not on the job it
+    // proves is just a photo in a pile.
+    if (taskId) row.task_id = taskId
+    let { data, error } = await sb.from('project_photos').insert(row).select('*').maybeSingle()
+    if (error && taskId && /column|schema/i.test(error.message)) {
+      delete row.task_id
+      ;({ data, error } = await sb.from('project_photos').insert(row).select('*').maybeSingle())
+    }
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    await addNote(projectId, `Photo added${caption ? ' — ' + caption : ''} (${phase}) by ${uploader}.`, uploader, 'event', viaShare)
+    await addNote(projectId, `Photo added${caption ? ' — ' + caption : ''} (${phase}) by ${uploader}.`, uploader, 'event', viaShare, { taskId: taskId || null })
     return NextResponse.json({ ok: true, photo: data })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e).slice(0, 300) }, { status: 500 })
