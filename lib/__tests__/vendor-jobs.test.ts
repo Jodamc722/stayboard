@@ -51,10 +51,7 @@ eq('timestamp vs date',        needsTelling({ visit_on: '2026-09-18', team_notif
     { id: 'e', visit_on: '2026-12-01', status: 'todo' },   // beyond the window
     { id: 'f', visit_on: null, status: 'todo' },
   ]
-  // upcomingVisits is typed by the fields it READS (visit_on, status), so the returned rows do not
-  // carry `id` in the type even though they are the very objects passed in. Reading it back is what
-  // makes this test legible, so the cast goes here rather than widening the function's signature.
-  const up = upcomingVisits(tasks as any, TODAY, 14).map((t: any) => t.id)
+  const up = upcomingVisits(tasks, TODAY, 14).map(t => t.id)
   eq('soonest first, missed kept', JSON.stringify(up), JSON.stringify(['c', 'b', 'a']))
   eq('done is not upcoming',       up.includes('d'), false)
   eq('far future is not upcoming', up.includes('e'), false)
