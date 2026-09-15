@@ -39,21 +39,8 @@ export async function POST(req: NextRequest) {
 
     // WHO IS THIS? Token first — a vendor has no session and must still be able to post.
     let uploader = 'vendor', viaShare = false
-    let taskId = String(form.get('taskId') || '').trim()
-    // A VENDOR'S OWN LINK (089). Different token, same upload path: the job proves both which
-    // project the photo belongs to and that this vendor is allowed to add one, so a job id sent
-    // with a valid token still has to be a job that vendor actually holds.
-    const vendorToken = String(form.get('vendorToken') || '').trim()
-    if (vendorToken) {
-      const { getVendorByToken, vendorJobFor } = await import('@/lib/vendor-portal')
-      const v = await getVendorByToken(vendorToken)
-      if (!v) return NextResponse.json({ error: 'This link is no longer valid.' }, { status: 403 })
-      const job = await vendorJobFor(v.key, taskId)
-      if (!job) return NextResponse.json({ error: 'That job is not on your list.' }, { status: 404 })
-      projectId = job.project_id
-      uploader = v.label || 'vendor'
-      viaShare = true
-    } else if (token) {
+    const taskId = String(form.get('taskId') || '').trim()
+    if (token) {
       const p = await getProjectByToken(token)
       if (!p) return NextResponse.json({ error: 'This link is no longer valid.' }, { status: 403 })
       projectId = p.id
