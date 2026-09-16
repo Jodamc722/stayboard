@@ -2070,9 +2070,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <div key={pi}>
                         {p.photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.photo} alt="" style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 14, marginBottom: 14 }} />
+                          <img src={p.photo} alt="" style={{ width: '100%', height: 168, objectFit: 'cover', objectPosition: 'top center', borderRadius: 12, marginBottom: 13 }} />
                         ) : (
-                          <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 14, marginBottom: 14, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 600 }}>
+                          <div style={{ width: '100%', height: 168, borderRadius: 12, marginBottom: 13, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 600 }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
@@ -2100,6 +2100,22 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     ))}
                   </div>
                 </div>
+                {/* The shared inbox, as the backstop behind the four names rather than a fifth
+                    face. A slide that promises "you are not handed to an inbox" cannot then put
+                    the inbox in the line-up. */}
+                {(sec('team').support && (sec('team').support.email || edit)) ? (
+                  <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid ' + t.rule, display: 'flex', alignItems: 'baseline', gap: 18 }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, whiteSpace: 'nowrap' }}>
+                      <Ed v={sec('team').support.label || ''} set={v => patch('team.support.label', v)} edit={edit} />
+                    </span>
+                    <a href={'mailto:' + String(sec('team').support.email || '')} className="onb-link" style={{ fontSize: 13.5, color: t.accent, whiteSpace: 'nowrap' }}>
+                      <Ed v={sec('team').support.email || ''} set={v => patch('team.support.email', v)} edit={edit} />
+                    </a>
+                    <span style={{ fontSize: 12.5, color: t.muted, lineHeight: 1.5 }}>
+                      <Ed v={sec('team').support.note || ''} set={v => patch('team.support.note', v)} edit={edit} multiline />
+                    </span>
+                  </div>
+                ) : null}
                 <Foot label="The team" />
               </div>
             </Slide>
