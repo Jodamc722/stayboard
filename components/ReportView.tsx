@@ -1580,10 +1580,16 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           font-family: inherit; color: ${t.body}; resize: vertical; }
         .sb-slide .onb-copy { font-size: 14.5px; line-height: 1.7; }
         .sb-slide .onb-live { font-size: 15px; }
-        .sb-present .sb-slide { border-radius: 0; border: 0; box-shadow: none;
-          width: min(100vw, calc(100vh * 16 / 9)); }
+        .sb-present { background: ${blend(t.bg, t.ink, darkGround ? 0.10 : 0.16)} !important; }
+        .sb-present .sb-slide { border-radius: 14px; border: 0;
+          box-shadow: 0 40px 90px -40px rgba(0,0,0,0.55);
+          width: min(92vw, calc(84vh * 16 / 9)); }
         @supports (height: 100dvh) {
-          .sb-present .sb-slide { width: min(100vw, calc(100dvh * 16 / 9)); }
+          .sb-present .sb-slide { width: min(92vw, calc(84dvh * 16 / 9)); }
+        }
+        /* A phone in portrait has no room to give away, so there the slide keeps the full width. */
+        @media (max-width: 700px) {
+          .sb-present .sb-slide { width: min(100vw, calc(100vh * 16 / 9)); border-radius: 0; }
         }
         /* The cover is the first thing an owner sees and the only slide that is allowed to be
            loud. It fills the glass when presenting and stays a tall card when read as a page. */
@@ -1906,7 +1912,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           const sec = (k: string) => (c[k] || {})
           const hid = (k: string) => isHidden(k) || !c[k] || typeof c[k] !== 'object'
           const pool: string[] = Array.isArray(c.photoPool) ? c.photoPool : []
-          const pic = (n: number) => (pool.length ? pool[n % pool.length] : '')
+          // Section photography starts past the frames the listing slides use as their own
+          // heroes, so the same room does not turn up on the cover, the welcome and the gallery.
+          const heroCount = Math.min(pool.length - 1, ((sec('listings').items || []).length || 0) + 1)
+          const pic = (n: number) => (pool.length ? pool[(n + Math.max(0, heroCount)) % pool.length] : '')
 
           // Ink on a dark slide. Two of these in the deck, and they are what stop thirteen
           // cream rectangles reading as a single long beige afternoon.
@@ -2039,7 +2048,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <div style={{ position: 'absolute', inset: 0 }}>
                 <Half src={String(sec('welcome').photo || pic(0))} side="right" />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 540 }} className="flex flex-col">
-                  <div className="flex-1 min-h-0">
+                  <div className="flex-1 min-h-0 flex flex-col justify-center">
                     <Title k="welcome" />
                     <p style={{ marginTop: 26, fontSize: 18, lineHeight: 1.7, color: t.body, maxWidth: '44ch', whiteSpace: 'pre-line' }}>
                       <Ed v={sec('welcome').body || ''} set={v => patch('welcome.body', v)} edit={edit} multiline />
@@ -2089,15 +2098,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <Slide nav="The team" warn={edit} ground={GROUND.light}>
               <div className="flex flex-col h-full">
                 <Title k="team" />
-                <div className="flex-1 min-h-0 flex items-start" style={{ marginTop: 26 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 26, width: '100%' }}>
+                <div className="flex-1 min-h-0 flex items-start" style={{ marginTop: 22, overflow: 'hidden' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 24, width: '100%' }}>
                     {(sec('team').people || []).slice(0, 4).map((p: Any, pi: number) => (
                       <div key={pi}>
                         {p.photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.photo} alt="" style={{ width: '100%', height: 168, objectFit: 'cover', objectPosition: 'top center', borderRadius: 12, marginBottom: 13 }} />
+                          <img src={p.photo} alt="" style={{ width: '100%', height: 132, objectFit: 'cover', objectPosition: 'top center', borderRadius: 12, marginBottom: 12 }} />
                         ) : (
-                          <div style={{ width: '100%', height: 168, borderRadius: 12, marginBottom: 13, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 600 }}>
+                          <div style={{ width: '100%', height: 132, borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 600 }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
@@ -2107,7 +2116,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         <p style={{ fontSize: 12.5, color: t.accent, marginTop: 2 }}>
                           <Ed v={p.role || ''} set={v => patch('team.people.' + pi + '.role', v)} edit={edit} />
                         </p>
-                        <p style={{ fontSize: 13, lineHeight: 1.55, color: t.muted, marginTop: 9 }}>
+                        <p style={{
+                          fontSize: 12.5, lineHeight: 1.5, color: t.muted, marginTop: 8,
+                          display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        } as Any}>
                           <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do&hellip;" />
                         </p>
                         {/* CONTACT ON THE CARD (Jon, 2026-09-16: "Contact info"). The whole
@@ -2257,7 +2270,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     ))}
                     {pics.length === 0 ? <div style={{ gridColumn: 'span 3', gridRow: 'span 2', background: t.chip }} /> : null}
                   </div>
-                  <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 210, background: 'linear-gradient(180deg, rgba(8,11,16,0) 0%, rgba(8,11,16,0.78) 58%, rgba(8,11,16,0.93) 100%)' }} />
+                  <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 260, background: 'linear-gradient(180deg, rgba(8,11,16,0) 0%, rgba(8,11,16,0.55) 34%, rgba(8,11,16,0.88) 70%, rgba(8,11,16,0.96) 100%)' }} />
                   <div style={{ position: 'absolute', left: 64, right: 64, bottom: 40 }}>
                     <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 14 }} />
                     <div className="flex items-end justify-between" style={{ gap: 30 }}>
@@ -2271,8 +2284,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
                               style={{
                                 fontSize: 12.5, fontWeight: 500, color: D.ink, whiteSpace: 'nowrap',
-                                border: '1px solid ' + D.rule, borderRadius: 999, padding: '6px 14px',
-                                textDecoration: 'none',
+                                border: '1px solid rgba(255,255,255,0.34)', borderRadius: 999, padding: '6px 14px',
+                                textDecoration: 'none', background: 'rgba(8,11,16,0.42)',
+                                backdropFilter: 'blur(6px)',
                               }}>{k.name} &#8599;</a>
                           ))}
                         </div>
