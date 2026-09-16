@@ -62,15 +62,15 @@ type Cached = { hash: string; at: string; model: string; verdict: FocusVerdict; 
 // One build per market at a time per instance: the badge and the tab mount together and would
 // otherwise both miss the cold cache and both pay for the model.
 const inflight = new Map<string, Promise<FocusResult>>()
-export function buildOpsFocus(market: string, opts: { refresh?: boolean; date?: string; cachedOnly?: boolean } = {}): Promise<FocusResult> {
-  const k = market + '|' + (opts.date || '') + (opts.refresh ? '!' : '') + (opts.cachedOnly ? '?' : '')
+export function buildOpsFocus(market: string, opts: { refresh?: boolean; date?: string; cachedOnly?: boolean; investigate?: boolean } = {}): Promise<FocusResult> {
+  const k = market + '|' + (opts.date || '') + (opts.refresh ? '!' : '') + (opts.cachedOnly ? '?' : '') + (opts.investigate ? '*' : '')
   const cur = inflight.get(k); if (cur) return cur
   const p = buildOpsFocusNow(market, opts).finally(() => inflight.delete(k))
   inflight.set(k, p)
   return p
 }
 
-async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?: string; cachedOnly?: boolean } = {}): Promise<FocusResult> {
+async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?: string; cachedOnly?: boolean; investigate?: boolean } = {}): Promise<FocusResult> {
   // The day being planned, which is not always today: the pager moves and the verdict must move
   // with it, or a coordinator planning tomorrow reads today's answer (2026-09-09 audit).
   const today = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.date || '')) ? String(opts.date) : ymd(new Date())
@@ -86,7 +86,9 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?
   const cached = (await getSetting<Record<string, Cached>>(OPS_FOCUS_KEY, {})) || {}
   const early = cached[cacheKeyEarly]
   const age = early ? Date.now() - Date.parse(early.at) : Infinity
-  if (!opts.refresh && early && age < FRESH_MS) {
+  // An investigate run wants a MODEL answer; a twenty-minute-old engine ranking is not one.
+  const earlyServes = early && (!opts.investigate || early.model !== 'engine')
+  if (!opts.refresh && earlyServes && early && age < FRESH_MS) {
     return { ok: true, today, market, verdict: early.verdict, candidates: early.candidates, model: early.model, at: early.at, cached: true }
   }
 
@@ -150,7 +152,10 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?
   const cacheKey = today + '|' + market
   const all = cached
   const hit = all[cacheKey]
-  if (!opts.refresh && hit && hit.hash === hash && Date.now() - Date.parse(hit.at) < TTL_MS) {
+  // Same board, same answer — including for a scheduled investigate, which is the point: four runs
+  // a day is a ceiling on how often the model may be asked, not a promise to ask it four times.
+  if (!opts.refresh && hit && hit.hash === hash && Date.now() - Date.parse(hit.at) < TTL_MS
+      && (!opts.investigate || hit.model !== 'engine')) {
     return { ok: true, today, market, verdict: hit.verdict, candidates: hit.candidates, model: hit.model, at: hit.at, cached: true }
   }
 
@@ -167,10 +172,13 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?
   // and gives the same board the same answer twice — which the model could not, and which is worth
   // more on a planning screen than the nuance that was lost.
   //
-  // Fable is now the INVESTIGATE button: `refresh=1` is the only way it runs. Jon, 2026-09-16 —
-  // "ok with maybe adding a button to have fable investigate if needed", and it stays on the top
-  // tier when it does run, because an on-demand second opinion is worth the good model.
-  if (!opts.refresh) {
+  // Fable runs two ways, and only two. `refresh=1` is the Investigate button. `investigate` is the
+  // scheduled pass — 7am, noon, 3pm and 8pm Eastern (app/api/cron/ops-focus) — chosen by Jon on
+  // 2026-09-16 because those are the four moments the day actually changes shape: before the crew
+  // leaves, at the midday check, when the afternoon is still salvageable, and after close-out.
+  // It stays on the top tier when it runs; a handful of considered calls a day is affordable in a
+  // way that one per page load never was.
+  if (!opts.refresh && !opts.investigate) {
     const verdict = rankFocus(today, sugs, waiting, groups, crew)
     const at = new Date().toISOString()
     // Stored so the badge's cachedOnly read has something, and so Investigate has a baseline to
