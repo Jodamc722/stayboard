@@ -23,7 +23,7 @@ import {
   Send, Settings2, ShieldAlert, ShieldCheck, StickyNote, X,
 } from 'lucide-react'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'cleaning_fee'
 type Severity = 'high' | 'review' | 'info'
 // 'clear' = the engine found nothing and no human decision is needed. It is computed, never saved,
 // and never counted as completed work — see the ladder in lib/owner-audit.ts.
@@ -38,6 +38,7 @@ type Rules = {
   passthruLo: number; passthruHi: number
   commTolerance: number
   offBookingMin: number
+  cleaningPeerMin: number
   enabled: Record<FlagType, boolean>
 }
 type PrepItem = {
@@ -110,6 +111,7 @@ const FLAG_LABEL: Record<FlagType, string> = {
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through', no_reservation: 'No res match',
   commission_off: 'Commission off', off_booking: 'No booking behind it',
   empty_statement: 'Empty statement', owner_stay: 'Owner / F&F stay',
+  cleaning_fee: 'No cleaning fee',
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
@@ -123,6 +125,7 @@ const FLAG_HELP: Record<FlagType, string> = {
   off_booking: 'Money on the statement with no booking behind it — management fees, owner charges, one-off adjustments.',
   empty_statement: 'A statement was generated with no line items at all — usually a listing that is not mapped to the owner.',
   owner_stay: 'Owner stays and friends & family stays. Discounted by design, never a pricing error — flagged so each one is confirmed as authorised and its costs land correctly.',
+  cleaning_fee: 'Every reservation should collect a cleaning fee, and the fee is judged by what it NETS to — one that was charged and refunded counts as none. Where a unit has charged nobody all month the listing is the finding, flagged once on its earliest stay instead of once per booking.',
 }
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
@@ -1372,6 +1375,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 onChange={e => setRulesDraft(rd => rd ? { ...rd, offBookingMin: Number(e.target.value) } : rd)}
                 className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
               <div className="text-[10px] text-muted mt-0.5">Owner charges, and money on bookings with no room revenue, from this size up.</div>
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Cleaning fee — stays before a unit “normally charges”</label>
+              <input type="number" min={1} max={20} step={1} value={rulesDraft.cleaningPeerMin}
+                onChange={e => setRulesDraft(rd => rd ? { ...rd, cleaningPeerMin: Number(e.target.value) } : rd)}
+                className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+              <div className="text-[10px] text-muted mt-0.5">A $0 cleaning fee is only called a gap once the unit has charged at least this many other stays in the month. Below it the stay is raised for a look, not as a finding.</div>
             </div>
           </div>
           <div className="grid sm:grid-cols-2 gap-1.5 max-w-2xl">
