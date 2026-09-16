@@ -46,7 +46,8 @@ export type FocusResult = {
   ok: true
   today: string
   market: string
-  verdict: FocusVerdict
+  /** null only on a cachedOnly read with nothing stored — the badge renders nothing and spends nothing. */
+  verdict: FocusVerdict | null
   /** The candidate set the verdict was made from — the client renders rows from its own reads and uses these ids. */
   candidates: { suggestions: number; waiting: number; duplicates: number }
   model: string
@@ -66,15 +67,15 @@ type Cached = { hash: string; at: string; model: string; verdict: FocusVerdict; 
 // One build per market at a time per instance: the badge and the tab mount together and would
 // otherwise both miss the cold cache and both pay for the model.
 const inflight = new Map<string, Promise<FocusResult>>()
-export function buildOpsFocus(market: string, opts: { refresh?: boolean; date?: string } = {}): Promise<FocusResult> {
-  const k = market + '|' + (opts.date || '') + (opts.refresh ? '!' : '')
+export function buildOpsFocus(market: string, opts: { refresh?: boolean; date?: string; cachedOnly?: boolean } = {}): Promise<FocusResult> {
+  const k = market + '|' + (opts.date || '') + (opts.refresh ? '!' : '') + (opts.cachedOnly ? '?' : '')
   const cur = inflight.get(k); if (cur) return cur
   const p = buildOpsFocusNow(market, opts).finally(() => inflight.delete(k))
   inflight.set(k, p)
   return p
 }
 
-async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?: string } = {}): Promise<FocusResult> {
+async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?: string; cachedOnly?: boolean } = {}): Promise<FocusResult> {
   // The day being planned, which is not always today: the pager moves and the verdict must move
   // with it, or a coordinator planning tomorrow reads today's answer (2026-09-09 audit).
   const today = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.date || '')) ? String(opts.date) : ymd(new Date())
@@ -92,6 +93,22 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?
   const age = early ? Date.now() - Date.parse(early.at) : Infinity
   if (!opts.refresh && early && age < FRESH_MS) {
     return { ok: true, today, market, verdict: early.verdict, candidates: early.candidates, model: early.model, at: early.at, cached: true }
+  }
+
+  // CACHE-ONLY: ANSWER OR DON'T, BUT NEVER SPEND (Jon, 2026-09-16).
+  //
+  // The Focus tab carries a number badge, and that badge mounts on EVERY board view — including
+  // Units, which is where people spend the day. Between FRESH_MS and the TTL the code below rebuilds
+  // all five engines just to compute a hash, and on a miss it calls a Fable-tier model. So looking
+  // at the board at all could cost a top-tier model call to paint a digit on a tab nobody clicked.
+  //
+  // A badge is a hint. A hint that is sometimes absent is fine; a hint that costs money every time
+  // the page loads is not. Callers that only want to decorate a tab pass cachedOnly and get the
+  // stored verdict at any age, or nothing. Opening the tab itself still asks properly.
+  if (opts.cachedOnly) {
+    return early
+      ? { ok: true, today, market, verdict: early.verdict, candidates: early.candidates, model: early.model, at: early.at, cached: true }
+      : { ok: true, today, market, verdict: null, candidates: { suggestions: 0, waiting: 0, duplicates: 0 }, model: 'none', at: '', cached: true }
   }
 
   // ── the same scope the Review tab reads ──
