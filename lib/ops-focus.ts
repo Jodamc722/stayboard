@@ -28,20 +28,16 @@ import { buildOpsDay } from './ops-day'
 import { anthropicMessages } from './anthropic-call'
 import { modelPairFor } from './ai-models'
 import { createHash } from 'crypto'
+import { rankFocus, dupId, MAX_FOCUS, type FocusPick, type FocusVerdict } from './ops-focus-rank'
+
+export type { FocusPick, FocusVerdict } from './ops-focus-rank'
+export { dupId, MAX_FOCUS } from './ops-focus-rank'
 
 export const OPS_FOCUS_KEY = 'ops_focus'
 const TTL_MS = 2 * 60 * 60 * 1000
 /** Under this age the stored verdict is served without reading the engines at all. */
 const FRESH_MS = 20 * 60 * 1000
-const MAX_FOCUS = 6
 
-export type FocusPick = { id: string; reason: string; do: 'add' | 'move' | 'cancel' }
-export type FocusVerdict = {
-  headline: string
-  focus: FocusPick[]
-  review: { id: string; note: string }[]
-  parked: string
-}
 export type FocusResult = {
   ok: true
   today: string
@@ -60,8 +56,7 @@ export type FocusResult = {
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 const shiftDay = (d: string, n: number) => ymd(new Date(Date.parse(d + 'T12:00:00Z') + n * 86400000))
 const str = (v: any) => String(v ?? '').trim()
-export const dupId = (g: DupGroup) => 'dup:' + g.listingId + '|' + g.date + '|' + g.key
-
+export 
 type Cached = { hash: string; at: string; model: string; verdict: FocusVerdict; candidates: FocusResult['candidates'] }
 
 // One build per market at a time per instance: the badge and the tab mount together and would
@@ -165,7 +160,27 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?
     return { ok: true, today, market, verdict, candidates, model: 'none', at: new Date().toISOString(), cached: false }
   }
 
-  // ── the ask ──
+  // ── THE DEFAULT PATH IS CODE (2026-09-16) ────────────────────────────────────────────────────
+  //
+  // rankFocus scores the same candidates from the same fields the prompt below was quoting at the
+  // model, and reuses the sentences the engines already wrote. It costs nothing, answers instantly,
+  // and gives the same board the same answer twice — which the model could not, and which is worth
+  // more on a planning screen than the nuance that was lost.
+  //
+  // Fable is now the INVESTIGATE button: `refresh=1` is the only way it runs. Jon, 2026-09-16 —
+  // "ok with maybe adding a button to have fable investigate if needed", and it stays on the top
+  // tier when it does run, because an on-demand second opinion is worth the good model.
+  if (!opts.refresh) {
+    const verdict = rankFocus(today, sugs, waiting, groups, crew)
+    const at = new Date().toISOString()
+    // Stored so the badge's cachedOnly read has something, and so Investigate has a baseline to
+    // replace rather than a blank.
+    all[cacheKey] = { at, hash, verdict, candidates, model: 'engine' }
+    await setSetting(OPS_FOCUS_KEY, all, 'ops-focus')
+    return { ok: true, today, market, verdict, candidates, model: 'engine', at, cached: false }
+  }
+
+  // ── the ask (Investigate only) ──
   const day = run.day
   const lines: string[] = []
   lines.push(`DAY ${today} · market ${market} · ${day.openCleans} departure cleans still open · ${day.cleaners} cleaners · load ${day.load}/cleaner · ${day.heavy ? 'HEAVY turn day' : 'normal day'} · engine cap for new jobs today: ${day.cap}${day.verdict ? ' · ' + day.verdict : ''}`)
@@ -285,6 +300,7 @@ function parseVerdict(text: string): FocusVerdict | null {
     }
   } catch { return null }
 }
+
 
 /** The engines' own order, when the model cannot answer — labelled as such, never passed off as a judgement. */
 function fallbackVerdict(today: string, market: string, sugs: Suggestion[], waiting: ReviewItem[], groups: DupGroup[], candidates: FocusResult['candidates'], why: string): FocusResult {
