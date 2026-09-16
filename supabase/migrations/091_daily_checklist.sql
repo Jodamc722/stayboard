@@ -65,8 +65,12 @@ create index if not exists daily_checklist_ticks_day_idx on daily_checklist_tick
 
 create or replace function daily_checklist_items_touch() returns trigger language plpgsql as $$
 begin new.updated_at := now(); return new; end $$;
+-- The drop and the create must name the SAME trigger, or the second run of this file fails with
+-- "trigger already exists" — which is exactly the moment somebody is re-running it because the
+-- first attempt went wrong. `_trg` matches project_invoices_touch_trg.
 drop trigger if exists daily_checklist_items_touch_trg on daily_checklist_items;
-create trigger daily_checklist_items_touch before update on daily_checklist_items
+drop trigger if exists daily_checklist_items_touch     on daily_checklist_items;
+create trigger daily_checklist_items_touch_trg before update on daily_checklist_items
   for each row execute function daily_checklist_items_touch();
 
 -- Service role only, like every other operational table. The browser goes through the API, which
