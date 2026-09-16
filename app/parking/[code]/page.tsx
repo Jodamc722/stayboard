@@ -23,9 +23,11 @@
 //    the vendor doesn't work weekends." Whether parking was actually paid for is a badge on the
 //    row, not a filter on the list — it is the office's signal, not the vendor's instruction.
 //
-// 3. THE SPARE DRAWER IS A FIRST-CLASS THING. "They're going to provide a couple of extra codes
-//    just in case for the weekends." So the pool has its own card with its own count, and it warns
-//    when it is running low — a pool nobody tops up is a pool that is empty the Saturday it matters.
+// 3. NO SPARE DRAWER ON THIS PAGE (Jon, 2026-09-16: "remove this section"). The pool was built for
+//    the weekend case and it was the busiest thing on a page whose whole job is "which stays have
+//    no code" — a card, a stat tile and a per-row alternative, all for an exception. The server
+//    side is untouched: the upload route still takes spare=1 and the assign route still binds one,
+//    so bringing the drawer back is UI, not a rebuild.
 //
 // 4. THE GUESTY MAPPING IS VISIBLE. An uploaded code that never reached the reservation is the
 //    quiet failure on this page, so a permit that has not been written shows it on the row rather
@@ -55,9 +57,6 @@ type Board = {
 
 const PASS_KEY = 'pk_pass'
 const WHO_KEY = 'pk_who'
-/** Below this the pool cannot cover a weekend, which is the only reason it exists. */
-const POOL_LOW = 3
-
 type TabKey = 'need' | 'done' | 'all'
 
 const fmtDate = (iso: string) => {
@@ -118,12 +117,12 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState<TabKey>('need')
   const [qr, setQr] = useState<{ url: string; row: Row; mime: string | null } | null>(null)
-  /** null = closed; a Row = upload for that stay; 'spare' = a code for the drawer. */
-  const [upload, _setUpload] = useState<Row | 'spare' | null>(null)
+  /** null = closed; a Row = the upload sheet for that stay. */
+  const [upload, _setUpload] = useState<Row | null>(null)
   // OPENING A SHEET CLEARS THE PAGE ERROR. `err` is page-wide — a failed "view code" on unit 401
   // would otherwise greet the vendor inside unit 512's upload sheet, in a red box, attached to an
   // upload nobody has attempted yet.
-  const setUpload = useCallback((v: Row | 'spare' | null) => { if (v) { setErr(''); setNote('') } _setUpload(v) }, [])
+  const setUpload = useCallback((v: Row | null) => { if (v) { setErr(''); setNote('') } _setUpload(v) }, [])
   const [note, setNote] = useState<string>('')
   const passRef = useRef('')
 
@@ -176,14 +175,14 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
   }, [d, tab])
 
   // ── upload ────────────────────────────────────────────────────────────────────────────────────
-  const send = async (file: File, label: string, row: Row | null) => {
+  const send = async (file: File, label: string, row: Row) => {
     if (!who.trim()) { setErr('Add your name first — we need to know who sent the code.'); return }
     setBusy(true); setErr(''); setNote('')
     try {
       const fd = new FormData()
       fd.set('who', who.trim()); fd.set('file', file)
       if (label.trim()) fd.set('label', label.trim())
-      if (row) fd.set('reservationId', row.reservationId); else fd.set('spare', '1')
+      fd.set('reservationId', row.reservationId)
       // The passcode is a header, not a form field, so the server can check it before it buffers
       // the file. It is still never in the URL.
       const r = await fetch('/api/public/parking/' + code + '/upload', {
@@ -195,9 +194,7 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
       // point of not letting Guesty fail an upload — but "saved" on its own would read as "the
       // guest can get this", which is only true once it is on the booking.
       const mapped = j.guesty ? (j.guesty.ok ? '' : ' Not on the reservation in Guesty yet — we will retry.') : ''
-      setNote((row
-        ? (j.replaced ? 'Replaced the code on ' + row.unit + '.' : 'Code saved for ' + row.unit + '.')
-        : 'Spare code added to the pool.') + mapped)
+      setNote((j.replaced ? 'Replaced the code on ' + row.unit + '.' : 'Code saved for ' + row.unit + '.') + mapped)
       setUpload(null)
       await load()
     } catch (e: any) { setErr(String(e?.message || e)) }
@@ -211,19 +208,6 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
     setBusy(false)
     if (j && j.ok && j.url) setQr({ url: j.url, row, mime: j.mime || null })
     else setErr((j && j.error) || 'Could not open that code.')
-  }
-
-  const useSpare = async (row: Row) => {
-    const spare = d?.pool.items[0]
-    if (!spare) return
-    setBusy(true); setErr(''); setNote('')
-    const { j } = await post('/assign', { permitId: spare.id, reservationId: row.reservationId })
-    setBusy(false)
-    if (j && j.ok) {
-      const mapped = j.guesty && !j.guesty.ok ? ' Not on the reservation in Guesty yet — we will retry.' : ''
-      setNote('Spare code assigned to ' + row.unit + '. ' + j.left + ' left in the pool.' + mapped)
-      await load()
-    } else setErr((j && j.error) || 'Could not assign that spare.')
   }
 
   // ── locked ────────────────────────────────────────────────────────────────────────────────────
@@ -255,7 +239,6 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
     )
   }
 
-  const poolLow = d.pool.spare < POOL_LOW
   // The tab count has to be the length of the list behind it, not a number computed server-side
   // over a slightly different set.
   const needN = d.rows.filter(r => !r.permit && !leavingToday(r)).length
@@ -298,10 +281,9 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
               </button>
             </div>
 
-            <div className='grid grid-cols-3 gap-2 mt-4'>
+            <div className='grid grid-cols-2 gap-2 mt-4'>
               <Stat label='Needed' value={needN} tone={needN ? 'hot' : 'ok'} />
               <Stat label='Sent' value={d.counts.withPermit} note={'of ' + d.counts.stays} />
-              <Stat label='Spares' value={d.pool.spare} tone={poolLow ? 'warn' : 'ok'} note={poolLow ? 'running low' : 'in the drawer'} />
             </div>
           </div>
         </div>
@@ -335,26 +317,6 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
           </div>
         )}
         {err && !upload && <div className='text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 mb-3'>{err}</div>}
-
-        {/* THE SPARE DRAWER. Jon: the vendor does not work weekends, so a few unassigned codes sit
-            here and the office binds one when a late booking lands. */}
-        <div className={'rounded-2xl border bg-white shadow-sm p-4 mb-4 ' + (poolLow ? 'border-amber-300' : 'border-neutral-200')}>
-          <div className='flex items-center justify-between gap-2'>
-            <div className='text-sm font-bold'>Spare codes</div>
-            <span className={'text-xs font-semibold px-2 py-0.5 rounded-full ' + (poolLow ? 'bg-amber-100 text-amber-800' : 'bg-neutral-100 text-neutral-600')}>
-              {d.pool.spare} in the drawer
-            </span>
-          </div>
-          <p className='text-xs text-neutral-500 mt-1.5 leading-relaxed'>
-            {poolLow
-              ? 'Running low. These are what cover a guest who books on a Saturday — a few in hand means nobody waits for Monday.'
-              : 'Held for last-minute bookings when you are not working. The office assigns one and it stops being spare.'}
-          </p>
-          <button onClick={() => setUpload('spare')}
-            className='mt-3 w-full text-sm font-semibold px-3 py-2 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50'>
-            Add a spare code
-          </button>
-        </div>
 
         <div className='sticky top-0 z-10 -mx-1 px-1 py-1 bg-neutral-100 flex gap-1 mb-4 overflow-x-auto'>
           <div className='flex gap-1 w-full bg-white border border-neutral-200 rounded-xl p-1 shadow-sm'>
@@ -419,12 +381,6 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
                               </span>
                             )}
                           </div>
-                        )}
-                        {!r.permit && d.canAssign && d.pool.spare > 0 && !leavingToday(r) && (
-                          <button onClick={() => useSpare(r)} disabled={busy}
-                            className='mt-2 text-xs font-semibold text-neutral-600 underline underline-offset-2 disabled:opacity-40'>
-                            Use a spare instead
-                          </button>
                         )}
                       </div>
 
@@ -495,32 +451,25 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
           <div className='bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90dvh] sm:max-h-[90vh] overflow-y-auto' onClick={e => e.stopPropagation()}>
             <div className='flex items-center justify-between px-5 py-4 border-b border-neutral-100 sticky top-0 bg-white rounded-t-2xl'>
               <div className='font-bold'>
-                {upload === 'spare' ? 'Add a spare code' : (upload.permit ? 'Replace the code' : 'Send a QR code')}
+                {upload.permit ? 'Replace the code' : 'Send a QR code'}
               </div>
               <button onClick={() => setUpload(null)} aria-label='Close' className='text-neutral-400 hover:text-neutral-700 text-xl leading-none'>×</button>
             </div>
             <div className='p-5'>
-              {upload !== 'spare' && (
-                <div className='text-sm mb-3'>
-                  <div className='font-semibold'>{upload.unit}</div>
-                  <div className='text-neutral-500 text-xs mt-0.5'>
-                    {fmtDate(upload.checkIn)} → {fmtDate(upload.checkOut)} · {upload.guest}
-                  </div>
+              <div className='text-sm mb-3'>
+                <div className='font-semibold'>{upload.unit}</div>
+                <div className='text-neutral-500 text-xs mt-0.5'>
+                  {fmtDate(upload.checkIn)} → {fmtDate(upload.checkOut)} · {upload.guest}
                 </div>
-              )}
-              {upload === 'spare' && (
-                <p className='text-sm text-neutral-600 mb-3'>
-                  Not tied to a stay. The office assigns it when a late booking lands.
-                </p>
-              )}
-              {/* Re-keyed on the pool size so a successful upload gives a fresh, empty control —
+              </div>
+              {/* Re-keyed on the permit so a successful replace gives a fresh, empty control —
                   otherwise the file stayed selected and one more tap filed a duplicate code. */}
               <Upload
-                key={(upload === 'spare' ? 'spare-' + d.pool.spare : upload.reservationId + '-' + (upload.permit?.id || 'new'))}
-                id={upload === 'spare' ? 'spare' : upload.reservationId}
+                key={upload.reservationId + '-' + (upload.permit?.id || 'new')}
+                id={upload.reservationId}
                 busy={busy}
-                onSend={(f, l) => send(f, l, upload === 'spare' ? null : upload)}
-                cta={upload === 'spare' ? 'Add to the drawer' : (upload.permit ? 'Replace the code' : 'Send this code')}
+                onSend={(f, l) => send(f, l, upload)}
+                cta={upload.permit ? 'Replace the code' : 'Send this code'}
               />
               {err && <div className='text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-3'>{err}</div>}
             </div>
