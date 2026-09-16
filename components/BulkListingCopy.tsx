@@ -9,26 +9,35 @@
 // The layout follows the section list Jon sent — a label column on the left, the text on the right,
 // one row per section — so it reads like the place the copy actually lives instead of a form.
 import { useEffect, useMemo, useState } from 'react'
-import { Check, X, Sparkles, AlertTriangle, RefreshCw, Loader2, PencilLine, Building2 } from 'lucide-react'
+import { Check, X, Sparkles, AlertTriangle, RefreshCw, Loader2, PencilLine, Building2, MessageSquarePlus } from 'lucide-react'
 
 type SectionKey = 'access' | 'neighborhood' | 'transit' | 'notes'
-type Section = { key: SectionKey; label: string; scope: 'property' | 'portfolio'; hint: string; rows: number; max: number }
+type Section = { key: SectionKey; label: string; scopes: ('property' | 'portfolio')[]; hint: string; rows: number; max: number }
 type Unit = { id: string; name: string; building: string; current: Partial<Record<SectionKey, string>> }
 type Property = { building: string; units: number; blank: number; variants: number; sample: string }
 type Res = { id: string; name: string; ok: boolean; error?: string }
 
 // Mirrors lib/listing-copy-bulk. Kept literal here so the panel renders before any fetch resolves.
 const SECTIONS: Section[] = [
-  { key: 'access', label: 'Guest access', scope: 'property', rows: 5, max: 2000, hint: 'Lobby entry, fob or code, elevator, which floors, amenity access — the parts every unit shares.' },
-  { key: 'neighborhood', label: 'Neighborhood', scope: 'property', rows: 6, max: 2000, hint: 'The block: what is walkable, what the area is actually like, the beach or the water if there is one.' },
-  { key: 'transit', label: 'Getting around', scope: 'property', rows: 5, max: 2000, hint: 'Rideshare pickup, parking, transit, the airport run, what you can reach on foot.' },
-  { key: 'notes', label: 'Other notes', scope: 'portfolio', rows: 5, max: 2000, hint: 'House boilerplate that reads the same everywhere.' },
+  { key: 'access', label: 'Guest access', scopes: ['property'], rows: 5, max: 2000, hint: 'Lobby entry, fob or code, elevator, which floors, amenity access — the parts every unit shares.' },
+  { key: 'neighborhood', label: 'Neighborhood', scopes: ['property'], rows: 6, max: 2000, hint: 'The block: what is walkable, what the area is actually like, the beach or the water if there is one.' },
+  { key: 'transit', label: 'Getting around', scopes: ['property'], rows: 5, max: 2000, hint: 'Rideshare pickup, parking, transit, the airport run, what you can reach on foot.' },
+  // Both levels: a property can have its own note, and the house can have boilerplate.
+  { key: 'notes', label: 'Other notes', scopes: ['property', 'portfolio'], rows: 5, max: 2000, hint: 'Anything else a guest should know. Drafted from what the listings already say.' },
 ]
 
 const CHUNK = 50   // the API caps a single call; a portfolio push is sent in batches
 
+// What a person would actually type into a prompt box for each section, so it is not left blank.
+const PROMPT_HINT: Record<SectionKey, string> = {
+  access: 'e.g. the fob is collected at the front desk, not the lockbox…',
+  neighborhood: 'e.g. lead with the water, we get a lot of families…',
+  transit: 'e.g. rideshare now picks up on the 15th Ave side…',
+  notes: 'e.g. keep it short, mention the no-parties rule…',
+}
+
 export function BulkListingCopy({ scope, building }: { scope: 'property' | 'portfolio'; building?: string }) {
-  const sections = useMemo(() => SECTIONS.filter(s => s.scope === scope), [scope])
+  const sections = useMemo(() => SECTIONS.filter(s => s.scopes.indexOf(scope) >= 0), [scope])
 
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -39,6 +48,8 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
   const [sel, setSel] = useState<Set<string>>(new Set())        // unit ids (property) or building names (portfolio)
   const [saveStandard, setSaveStandard] = useState(true)
   const [steer, setSteer] = useState('')
+  const [prompts, setPrompts] = useState<Partial<Record<SectionKey, string>>>({})
+  const [showPrompt, setShowPrompt] = useState<Partial<Record<SectionKey, boolean>>>({})
   const [drafting, setDrafting] = useState<SectionKey | 'all' | null>(null)
   const [rationale, setRationale] = useState('')
   const [confirming, setConfirming] = useState(false)
@@ -65,7 +76,7 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
         setStandard(std)
         // Pre-fill from the property's saved standard so editing starts from what was approved.
         const seed: Partial<Record<SectionKey, string>> = {}
-        for (const s of SECTIONS) if (s.scope === 'property' && std[s.key]) seed[s.key] = String(std[s.key])
+        for (const s of SECTIONS) if (std[s.key]) seed[s.key] = String(std[s.key])
         if (Object.keys(seed).length) setText(seed)
       }
     }).catch(e => setErr(String(e?.message || e))).finally(() => setLoading(false))
@@ -91,7 +102,7 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
   // Which units have drifted off the property's approved text.
   const drift = useMemo(() => {
     if (scope !== 'property') return 0
-    const keys = SECTIONS.filter(s => s.scope === 'property' && (standard[s.key] || '').trim())
+    const keys = SECTIONS.filter(s => s.scopes.indexOf('property') >= 0 && (standard[s.key] || '').trim())
     if (!keys.length) return 0
     return units.filter(u => keys.some(s => (u.current?.[s.key] || '').trim() !== String(standard[s.key]).trim())).length
   }, [scope, units, standard])
@@ -108,7 +119,11 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
       const want = which === 'all' ? sections.map(s => s.key) : [which]
       const r = await fetch('/api/listing-copy/draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ building: scope === 'property' ? building : '', sections: want, instruction: steer }),
+        body: JSON.stringify({
+          scope, building: scope === 'property' ? building : '',
+          sections: want, instruction: steer,
+          prompts: which === 'all' ? prompts : (prompts[which] ? { [which]: prompts[which] } : {}),
+        }),
       })
       const d = await r.json()
       if (!r.ok || d?.error) throw new Error(d?.error || `HTTP ${r.status}`)
@@ -183,7 +198,7 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
       <p className="text-[11px] text-muted mb-3 max-w-2xl">
         {scope === 'portfolio'
           ? 'Other notes is house boilerplate, so it is written across whole properties. Guest access, Neighborhood and Getting around describe one building and are edited on that property’s page.'
-          : 'These three describe the building, not the unit — one lobby, one block, one set of directions. They can only be set a property at a time.'}
+          : 'Guest access, Neighborhood and Getting around describe the building, not the unit — one lobby, one block, one set of directions — so they can only be set a property at a time. Other notes can be set here for this property, or across properties from the Properties page.'}
       </p>
 
       {results ? (
@@ -240,12 +255,27 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
                   <div className="sm:w-40 shrink-0 mb-1.5 sm:mb-0">
                     <div className="text-[11px] font-bold uppercase tracking-wider text-ink/70">{s.label}</div>
                     <div className="text-[10px] text-muted mt-0.5 hidden sm:block">{s.hint}</div>
-                    <button onClick={() => draft(s.key)} disabled={!!drafting}
-                      className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:underline disabled:opacity-50">
-                      {drafting === s.key ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />} Draft
-                    </button>
+                    <div className="flex items-center gap-2.5 mt-1.5">
+                      <button onClick={() => draft(s.key)} disabled={!!drafting}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:underline disabled:opacity-50">
+                        {drafting === s.key ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />} Draft
+                      </button>
+                      <button onClick={() => setShowPrompt(x => ({ ...x, [s.key]: !x[s.key] }))}
+                        className={`inline-flex items-center gap-1 text-[11px] ${prompts[s.key] ? 'text-ink font-semibold' : 'text-muted'} hover:underline`}>
+                        <MessageSquarePlus size={11} /> Prompt{prompts[s.key] ? ' ·' : ''}
+                      </button>
+                    </div>
                   </div>
                   <div className="flex-1 min-w-0">
+                    {/* PER-SECTION PROMPT. One shared box is not enough when the sections are this
+                        different — "mention the new garage" belongs to Getting around and nowhere
+                        else, and a shared box leaks it into Neighborhood. */}
+                    {(showPrompt[s.key] || prompts[s.key]) && (
+                      <input
+                        value={prompts[s.key] || ''} onChange={e => setPrompts(x => ({ ...x, [s.key]: e.target.value }))}
+                        placeholder={PROMPT_HINT[s.key]}
+                        className="w-full mb-1.5 px-2.5 py-1.5 text-[12px] rounded-lg border border-dashed border-brand-200 bg-brand-50/40 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                    )}
                     <textarea
                       value={v} rows={s.rows} onChange={e => setText(t => ({ ...t, [s.key]: e.target.value }))}
                       placeholder="Leave blank to leave this section untouched."
