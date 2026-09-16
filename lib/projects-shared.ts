@@ -430,8 +430,13 @@ export type ViewPrefs = {
   hideActivity: boolean
   /** Which columns the list view shows, in order. */
   columns: ListColumn[]
-  /** Is the right-hand rail open? Board view ignores this and closes it — see ProjectPage. */
-  railOpen: boolean
+  /**
+   * Is the right-hand rail open? THREE STATES, and the third is the point: null means "never
+   * chosen", which lets the default differ by view — open beside a list, closed beside a board,
+   * where 300px costs a whole column. Once the person clicks the toggle it is true or false and
+   * their choice holds everywhere.
+   */
+  railOpen: boolean | null
 }
 
 /** The cards down the right-hand side. Named so a preference can point at one. */
@@ -467,7 +472,7 @@ export const DEFAULT_COLUMNS: ListColumn[] = ['assignee', 'due', 'priority']
 export const columnTemplate = (cols: ListColumn[]) =>
   ['minmax(0,1fr)', ...cols.map(c => COLUMN_WIDTH[c] + 'px')].join(' ')
 
-export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'list', hideDone: false, hidePanels: [], hideActivity: false, columns: DEFAULT_COLUMNS.slice(), railOpen: true }
+export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'list', hideDone: false, hidePanels: [], hideActivity: false, columns: DEFAULT_COLUMNS.slice(), railOpen: null }
 
 export const viewPrefsOf = (raw: any): ViewPrefs => ({
   view: raw?.view === 'board' ? 'board' : raw?.view === 'calendar' ? 'calendar' : 'list',
@@ -479,7 +484,7 @@ export const viewPrefsOf = (raw: any): ViewPrefs => ({
   columns: Array.isArray(raw?.columns)
     ? (raw.columns as any[]).map(String).filter((c): c is ListColumn => (LIST_COLUMNS as readonly string[]).includes(c))
     : DEFAULT_COLUMNS.slice(),
-  railOpen: raw?.railOpen !== false,
+  railOpen: raw?.railOpen === true ? true : raw?.railOpen === false ? false : null,
 })
 
 /**
