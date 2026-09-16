@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
+import { CANVAS, TYPE } from '@/lib/deck'
 
 type Any = any
 // Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
@@ -711,14 +712,16 @@ function LiveText({ v, set, live, single, t, cls, ro }: { v: string; set: (s: st
 //
 // This is deliberately the same primitive the owner reports will move onto next, which is why
 // it takes only children and a nav label and knows nothing about onboarding.
-const SLIDE_W = 1120
-const SLIDE_H = 630
+const SLIDE_W = CANVAS.w
+const SLIDE_H = CANVAS.h
 
-function Slide({ nav, children, pad, bleed }: {
-  nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean
+function Slide({ nav, children, pad, bleed, warn }: {
+  nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean; warn?: boolean
 }) {
   const box = useRef<HTMLDivElement>(null)
+  const canvas = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(0)
+  const [spill, setSpill] = useState(0)
   useEffect(() => {
     const el = box.current
     if (!el) return
@@ -731,11 +734,27 @@ function Slide({ nav, children, pad, bleed }: {
     try { ro = new ResizeObserver(fit); ro.observe(el) } catch { window.addEventListener('resize', fit) }
     return () => { if (ro) ro.disconnect(); else window.removeEventListener('resize', fit) }
   }, [])
+  // Measured after paint, and again whenever the content changes, because the content here is
+  // editable — a paragraph typed on the call is exactly when a slide starts overflowing.
+  useEffect(() => {
+    const c = canvas.current
+    if (!c) return
+    const measure = () => {
+      const inner = c.firstElementChild as HTMLElement | null
+      setSpill(inner ? Math.max(0, Math.round(inner.scrollHeight - SLIDE_H)) : 0)
+    }
+    measure()
+    const id = setTimeout(measure, 400)
+    let mo: Any = null
+    try { mo = new MutationObserver(measure); mo.observe(c, { subtree: true, childList: true, characterData: true }) } catch {}
+    return () => { clearTimeout(id); if (mo) mo.disconnect() }
+  })
   return (
     <div ref={box} className="sb-slide" data-nav={nav || undefined}>
       {/* Until the first measurement lands, scale 0 would flash a collapsed slide; hold it
           invisible for that one frame instead. */}
       <div
+        ref={canvas}
         className="sb-slide-canvas"
         style={{
           width: SLIDE_W, height: SLIDE_H, transform: 'scale(' + (scale || 1) + ')',
@@ -744,6 +763,14 @@ function Slide({ nav, children, pad, bleed }: {
       >
         {children}
       </div>
+      {warn && spill > 8 ? (
+        <div className="sb-noprint" style={{
+          position: 'absolute', left: 12, bottom: 12, zIndex: 5, borderRadius: 999,
+          padding: '5px 11px', fontSize: 11, fontWeight: 600, background: '#C9A227', color: '#fff',
+        }}>
+          {spill}px past the edge &mdash; trim this slide
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1938,8 +1965,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <div>
               <div style={{ width: 30, height: 2, background: dark ? D.ink : t.accent, marginBottom: 18 }} />
               <h2 style={{
-                fontSize: 40, lineHeight: 1.12, letterSpacing: '-0.022em', fontWeight: 600,
-                color: dark ? D.ink : t.ink, maxWidth: '17ch', margin: 0,
+                fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track,
+                fontWeight: 600, color: dark ? D.ink : t.ink, maxWidth: '17ch', margin: 0,
               }}>
                 <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
@@ -1983,7 +2010,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 1 · WELCOME — split, photo bleeding right ──────────────────────
           if (!hid('welcome')) slides.push({ key: 'welcome', ai: true, node: (
-            <Slide nav="Welcome" bleed>
+            <Slide nav="Welcome" warn={edit} bleed>
               <div style={{ position: 'absolute', inset: 0 }}>
                 <Half src={String(sec('welcome').photo || pic(0))} side="right" />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 540 }} className="flex flex-col">
@@ -2007,7 +2034,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 2 · AGENDA — two columns ───────────────────────────────────────
           if (!hid('agenda')) slides.push({ key: 'agenda', node: (
-            <Slide nav="Agenda">
+            <Slide nav="Agenda" warn={edit}>
               <div className="flex flex-col h-full">
                 <Title k="agenda" sub={false} />
                 <div className="flex-1 min-h-0" style={{ marginTop: 30 }}>
@@ -2034,7 +2061,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 3 · THE TEAM — four up, with the contact details on the card ───
           if (!hid('team')) slides.push({ key: 'team', node: (
-            <Slide nav="The team">
+            <Slide nav="The team" warn={edit}>
               <div className="flex flex-col h-full">
                 <Title k="team" />
                 <div className="flex-1 min-h-0 flex items-start" style={{ marginTop: 26 }}>
@@ -2080,7 +2107,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 4 · ABOUT STAY — the dark brand slide ──────────────────────────
           if (!hid('overview')) slides.push({ key: 'overview', ai: true, node: (
-            <Slide nav="About Stay" bleed>
+            <Slide nav="About Stay" warn={edit} bleed>
               <div style={{ position: 'absolute', inset: 0, background: t.band }}>
                 <Half src={String(sec('overview').photo || pic(4))} side="right" />
                 <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 452, background: 'linear-gradient(90deg, ' + t.band + ' 0%, rgba(0,0,0,0) 42%)' }} />
@@ -2125,7 +2152,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // wall does the rest. No logo files: wordmarks we do not have licences for would look
           // worse than clean type, and type is what the rest of this deck is made of.
           if (!hid('channels')) slides.push({ key: 'channels', ai: true, node: (
-            <Slide nav="Where it sells">
+            <Slide nav="Where it sells" warn={edit}>
               <div className="flex flex-col h-full">
                 <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', columnGap: 52 }} className="flex-1 min-h-0">
                   <div>
@@ -2169,7 +2196,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             items.forEach((L: Any, li: number) => {
               const pics: string[] = (L.photos || []).slice(0, 5)
               slides.push({ key: 'listings', node: (
-                <Slide nav={String(L.name || 'Unit')} bleed>
+                <Slide nav={String(L.name || 'Unit')} warn={edit} bleed>
                   <div style={{ position: 'absolute', inset: 0 }}>
                     <Half src={pics[0] || ''} side="left" />
                     <div style={{ position: 'absolute', top: 64, bottom: 44, right: 64, left: 516 }} className="flex flex-col">
@@ -2201,7 +2228,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               ) })
 
               slides.push({ key: 'listings', node: (
-                <Slide nav={String(L.name || 'Unit') + ' — copy'}>
+                <Slide nav={String(L.name || 'Unit') + ' — copy'} warn={edit}>
                   <div className="flex flex-col h-full">
                     <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
                     <p style={{ fontSize: 12.5, color: t.muted }}>{L.name}&nbsp;&nbsp;·&nbsp;&nbsp;the words a guest reads</p>
@@ -2234,7 +2261,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             })
 
             if ((sec('listings').asks || []).length) slides.push({ key: 'listings', node: (
-              <Slide nav="Listing — questions">
+              <Slide nav="Listing — questions" warn={edit}>
                 <div className="flex flex-col h-full">
                   <Title k="listings" />
                   <div className="flex-1 min-h-0" style={{ overflowY: 'auto' }}><Asks k="listings" /></div>
@@ -2246,7 +2273,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 6 · THE OWNER PORTAL ───────────────────────────────────────────
           if (!hid('guesty')) slides.push({ key: 'guesty', ai: true, node: (
-            <Slide nav="Owner portal" bleed>
+            <Slide nav="Owner portal" warn={edit} bleed>
               <div style={{ position: 'absolute', inset: 0 }}>
                 <Half src={(sec('guesty').shots || [])[0] || String(sec('guesty').photo || pic(9))} side="right" />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 556 }} className="flex flex-col">
@@ -2281,18 +2308,6 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         </div>
                       </div>
                     </div>
-                    <div style={{ marginTop: 22 }}>
-                      {(sec('guesty').items || []).slice(0, 4).map((it: Any, ii: number) => (
-                        <div key={ii} style={{ display: 'grid', gridTemplateColumns: '150px 1fr', columnGap: 18, padding: '10px 0', borderTop: '1px solid ' + t.rule }}>
-                          <p style={{ fontSize: 13, fontWeight: 600, color: t.sub }}>
-                            <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
-                          </p>
-                          <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body }}>
-                            <Ed v={it.v || ''} set={v => patch('guesty.items.' + ii + '.v', v)} edit={edit} multiline />
-                          </p>
-                        </div>
-                      ))}
-                    </div>
                   </div>
                   <Foot label="Owner portal" />
                 </div>
@@ -2300,12 +2315,42 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             </Slide>
           ) })
 
-          // A SECOND PORTAL SLIDE WHEN WE HAVE THE SCREENSHOTS (Jon, 2026-09-16: "the Guesty
+          // WHAT YOU CAN ACTUALLY DO IN THERE, on its own slide. It used to sit under the
+          // address and pushed that slide 39px past the bottom edge, which is precisely the
+          // failure Jon named — "sometimes all the items don't fit on one page". Four things
+          // an owner can do is a slide's worth of idea on its own.
+          if (!hid('guesty') && (sec('guesty').items || []).length) slides.push({ key: 'guesty', node: (
+            <Slide nav="Portal — what you can do" warn={edit}>
+              <div className="flex flex-col h-full">
+                <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
+                <p style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink, lineHeight: 1.2 }}>
+                  What you can do in there
+                </p>
+                <div className="flex-1 min-h-0 flex items-center">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '26px 44px', width: '100%' }}>
+                    {(sec('guesty').items || []).slice(0, 4).map((it: Any, ii: number) => (
+                      <div key={ii} style={{ paddingTop: 16, borderTop: '1px solid ' + t.rule }}>
+                        <p style={{ fontSize: 16, fontWeight: 600, color: t.ink }}>
+                          <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
+                        </p>
+                        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: t.muted, marginTop: 7 }}>
+                          <Ed v={it.v || ''} set={v => patch('guesty.items.' + ii + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <Foot label="Owner portal" />
+              </div>
+            </Slide>
+          ) })
+
+          // A THIRD PORTAL SLIDE WHEN WE HAVE THE SCREENSHOTS (Jon, 2026-09-16: "the Guesty
           // owner portal should show what it looks like here"). Telling an owner they have a
           // portal is worth very little; showing them the screen they will log into is worth
           // the whole section. Shots live on the house template, so they are captured once.
           if (!hid('guesty') && (sec('guesty').shots || []).length > 1) slides.push({ key: 'guesty', node: (
-            <Slide nav="Portal — a look inside">
+            <Slide nav="Portal — a look inside" warn={edit}>
               <div className="flex flex-col h-full">
                 <div className="flex items-baseline justify-between">
                   <div>
@@ -2328,7 +2373,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // ── 7 · STATEMENTS — the worked month, then the three rules ────────
           if (!hid('statement')) {
             slides.push({ key: 'statement', node: (
-              <Slide nav="Statements">
+              <Slide nav="Statements" warn={edit}>
                 <div className="flex flex-col h-full">
                   <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', columnGap: 46 }} className="flex-1 min-h-0">
                     <div>
@@ -2362,7 +2407,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             ) })
 
             if ((sec('statement').highlights || []).length) slides.push({ key: 'statement', node: (
-              <Slide nav="What we charge" bleed>
+              <Slide nav="What we charge" warn={edit} bleed>
                 <div style={{ position: 'absolute', inset: 0, background: t.band, padding: 64 }} className="flex flex-col">
                   <div className="flex-1 min-h-0 flex flex-col justify-center">
                     <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 20 }} />
@@ -2390,7 +2435,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── the off-by-default sections, one slide each ────────────────────
           const RowSlide = ({ k, label, rows, kw }: { k: string; label: string; rows: Any[]; kw?: number }) => (
-            <Slide nav={label}>
+            <Slide nav={label} warn={edit}>
               <div className="flex flex-col h-full">
                 <Title k={k} />
                 <div className="flex-1 min-h-0" style={{ marginTop: 22, overflowY: 'auto' }}>
@@ -2414,7 +2459,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               rows && rows.length
                 ? <RowSlide k={x.k} label={x.label} rows={rows} />
                 : (
-                  <Slide nav={x.label}>
+                  <Slide nav={x.label} warn={edit}>
                     <div className="flex flex-col h-full">
                       <Title k={x.k} />
                       <div className="flex-1 min-h-0" style={{ marginTop: 20, overflowY: 'auto' }}>
@@ -2432,7 +2477,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 8 · OTHER NOTES ───────────────────────────────────────────────
           if (!hid('notes')) slides.push({ key: 'notes', node: (
-            <Slide nav="Other notes">
+            <Slide nav="Other notes" warn={edit}>
               <div className="flex flex-col h-full">
                 <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', columnGap: 46 }} className="flex-1 min-h-0">
                   <div><Title k="notes" /></div>
