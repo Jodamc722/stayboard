@@ -18,6 +18,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { ListingOptimizer } from '@/components/ListingOptimizer'
+import { otaLinksFrom } from '@/lib/ota-links'
 import { PhotoOrganizer } from '@/components/PhotoOrganizer'
 import { HeroCollage } from '@/components/HeroCollage'
 import { ListingReviews } from '@/components/ListingReviews'
@@ -109,14 +110,10 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const lastOpt = lastOptimizedOf(listing)
   const lastOptimized = lastOpt.date ? lastOpt.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null
 
-  // Direct links to the live listing on each OTA, built from the Guesty channel integrations.
-  const ints = Array.isArray(raw.integrations) ? raw.integrations : []
-  const channelObj = (n: string) => { for (const it of ints) if (it?.[n]) return it[n]; return null }
-  const otaLinks: { name: string; url: string }[] = []
-  const ab = channelObj('airbnb2') || channelObj('airbnb')
-  if (ab?.id) otaLinks.push({ name: 'Airbnb', url: `https://www.airbnb.com/rooms/${ab.id}` })
-  const vr = channelObj('homeaway') || channelObj('vrbo')
-  if (vr?.id) otaLinks.push({ name: 'Vrbo', url: `https://www.vrbo.com/${vr.id}` })
+  // Direct links to the live listing on each OTA — see lib/ota-links for why this reads
+  // externalUrl and matches 'homeaway2', not 'homeaway'. Vrbo and Booking.com never rendered here
+  // before 2026-09-16: the Vrbo lookup missed the platform key, and Booking was absent entirely.
+  const otaLinks = otaLinksFrom(raw)
 
   // Reviews first — they feed the Optimize Score's review signal.
   const { data: revRows } = await sb
