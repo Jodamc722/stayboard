@@ -175,6 +175,10 @@
     {
       "path": "/api/cron/slack-watch?digest=0",
       "schedule": "20 17 * * *"
+    },
+    {
+      "path": "/api/cron/trash-sweep",
+      "schedule": "40 8 * * *"
     }
   ]
 }
