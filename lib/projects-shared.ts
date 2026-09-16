@@ -410,6 +410,54 @@ export type BoardSettings = {
 }
 export const DEFAULT_SETTINGS: BoardSettings = { view: 'list', accent: 'indigo', icon: '📋', hideDone: false, sectionOrder: [], moveDone: true, doneSection: 'Completed' }
 
+// ── MY VIEW OF THIS BOARD ───────────────────────────────────────────────────────────────────────
+//
+// Two different things were living in one settings row. A board's ICON, ACCENT, SECTION ORDER and
+// where finished work goes describe the board itself — change them and you have changed the board,
+// correctly, for everyone. But VIEW MODE and HIDE-DONE describe one person reading it, and sharing
+// those means Karla switching to Board view switches Jon too.
+//
+// So the personal half moves to project_view_prefs, keyed by email. BoardSettings keeps the shared
+// half. Nothing about who can see or edit the WORK changes — this is only about display.
+export type ViewPrefs = {
+  /** Sections stacked, sections as columns, or tasks on a month. Mine, not the board's. */
+  view: 'list' | 'board' | 'calendar'
+  /** Finished work out of my way. Mine — somebody else may want to see it. */
+  hideDone: boolean
+  /** Rail panels I never want to see on this board, whatever they contain. */
+  hidePanels: RailPanel[]
+  /** Collapse the activity feed until I ask for it. */
+  hideActivity: boolean
+}
+
+/** The cards down the right-hand side. Named so a preference can point at one. */
+export const RAIL_PANELS = ['people', 'money', 'about', 'files'] as const
+export type RailPanel = typeof RAIL_PANELS[number]
+export const RAIL_LABEL: Record<RailPanel, string> = { people: 'People', money: 'Money', about: 'About', files: 'Files' }
+
+export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'list', hideDone: false, hidePanels: [], hideActivity: false }
+
+export const viewPrefsOf = (raw: any): ViewPrefs => ({
+  view: raw?.view === 'board' ? 'board' : raw?.view === 'calendar' ? 'calendar' : 'list',
+  hideDone: raw?.hideDone === true,
+  hidePanels: Array.isArray(raw?.hidePanels)
+    ? (raw.hidePanels as any[]).map(String).filter((k): k is RailPanel => (RAIL_PANELS as readonly string[]).includes(k))
+    : [],
+  hideActivity: raw?.hideActivity === true,
+})
+
+/**
+ * Falling back to the board's own settings matters for the first read: everyone who used this board
+ * before today has a view saved on the project, and losing it on deploy would look like a bug even
+ * though nothing broke. So an absent personal preference inherits the shared one, once, and the
+ * moment the person changes anything it becomes theirs.
+ */
+export const viewPrefsFor = (raw: any, boardSettings: BoardSettings): ViewPrefs => {
+  const has = raw && typeof raw === 'object' && Object.keys(raw).length > 0
+  if (has) return viewPrefsOf(raw)
+  return { ...DEFAULT_VIEW_PREFS, view: boardSettings.view, hideDone: boardSettings.hideDone }
+}
+
 // Sections that already mean "finished". A board that has one of these uses it rather than growing
 // a second, near-identical column beside it — "Done" and "Completed" side by side is the kind of
 // small mess that makes people stop trusting a board.

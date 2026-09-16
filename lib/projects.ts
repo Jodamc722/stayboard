@@ -10,7 +10,7 @@ export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
   progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO, canSee, canEdit, toPerson,
-  type Invoice, INVOICE_STATUSES, INVOICE_COUNTS, nextOccurrence, doneSectionName, isDoneSection, settingsOf,
+  type Invoice, INVOICE_STATUSES, INVOICE_COUNTS, nextOccurrence, doneSectionName, isDoneSection, settingsOf, viewPrefsOf,
 } from './projects-shared'
 
 export async function getCategories(): Promise<{ key: string; label: string; color: string; sort: number }[]> {
@@ -57,6 +57,39 @@ export async function listProjects(opts: { archived?: boolean; category?: string
       health: healthOf(p, byS[p.id] || []),
     }))
   } catch { return [] }
+}
+
+/**
+ * One person's display choices for one board. Missing is normal and means "never customised" —
+ * the caller falls back to the board's own settings so nothing looks reset on the first load.
+ */
+export async function getViewPrefs(projectId: string, email: string | null | undefined): Promise<any> {
+  const e = String(email || '').trim().toLowerCase()
+  if (!e) return null
+  try {
+    const { data } = await supabaseAdmin().from('project_view_prefs')
+      .select('prefs').eq('project_id', projectId).eq('email', e).maybeSingle()
+    return (data as any)?.prefs ?? null
+  } catch {
+    // The table is new. A board that renders with shared defaults is a far better failure than a
+    // board that does not render, so this never throws.
+    return null
+  }
+}
+
+export async function saveViewPrefs(projectId: string, email: string | null | undefined, patch: any): Promise<{ ok: boolean; prefs?: any; error?: string }> {
+  const e = String(email || '').trim().toLowerCase()
+  if (!e) return { ok: false, error: 'no email on session' }
+  try {
+    const sb = supabaseAdmin()
+    const cur = await getViewPrefs(projectId, e)
+    // Merge, so a page that only knows about `view` cannot wipe which panels I hid.
+    const next = viewPrefsOf({ ...(cur || {}), ...(patch || {}) })
+    const { error } = await sb.from('project_view_prefs')
+      .upsert({ project_id: projectId, email: e, prefs: next, updated_at: new Date().toISOString() }, { onConflict: 'project_id,email' })
+    if (error) return { ok: false, error: error.message }
+    return { ok: true, prefs: next }
+  } catch (err: any) { return { ok: false, error: String(err?.message || err).slice(0, 200) } }
 }
 
 export async function getProject(id: string): Promise<ProjectFull | null> {
