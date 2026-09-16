@@ -165,6 +165,12 @@ export const AUTOMATIONS: AutomationDef[] = [
     what: 'The arrivals-and-departures email for the Salato front desk.', configKey: 'salato_daily', enabledPath: 'enabled',
     recipientPaths: ['recipients'], defaultOff: true, settingsPath: '/users → Settings → Morning brief', receipt: 'email_log' },
 
+  // ---- The only job whose purpose is to destroy data -------------------------------------------
+  { key: 'trash-sweep', label: 'Trash sweep', area: 'ops', path: '/api/cron/trash-sweep',
+    what: 'Once a day, removes for good the things that have sat in the trash past their 60 days. Anything somebody restored is left alone — that row is history now, not a countdown.', receipt: 'automation_runs',
+    settingsPath: '/projects → Trash',
+    notes: 'Reads the rows before deleting them so the receipt names what went, not just how many. Caps at 500 a run. Needs migration 093.' },
+
   // ---- Event-driven ----------------------------------------------------------------------------
   { key: 'breezeway-webhook', label: 'Breezeway webhook', area: 'ops', trigger: 'webhook', path: '/api/breezeway/webhook',
     what: 'Breezeway calls us the moment a task changes; we re-fetch the task rather than trusting the payload.', receipt: 'none' },
