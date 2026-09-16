@@ -16,6 +16,10 @@ export { BANDS, BAND_LABEL, minutesOf, clockLabel, opsNow, isLate, progressOf, t
 export type ChecklistItem = {
   id: string; title: string; detail: string | null
   band: Band; by_time: string | null; owner_role: string | null
+  /** In-app path the row links to, so an item points at the tab where the work happens. */
+  link: string | null
+  /** Name of a live count the app can answer for this item (lib/checklist-signals). */
+  signal: string | null
   sort: number | null; active: boolean
 }
 export type ChecklistRow = ChecklistItem & {
@@ -55,6 +59,8 @@ export async function todayList(at: Date = new Date()): Promise<{ day: string; c
         id: String(i.id), title: String(i.title || ''), detail: i.detail ?? null,
         band: (BANDS as readonly string[]).includes(i.band) ? i.band : 'morning',
         by_time: i.by_time ?? null, owner_role: i.owner_role ?? null,
+        // Absent until the link/signal columns land; an older row is simply a row with no link.
+        link: i.link ?? null, signal: i.signal ?? null,
         sort: i.sort == null ? null : Number(i.sort), active: i.active !== false,
         done: !!tick, done_at: tick?.done_at ?? null, done_by: tick?.done_by ?? null, note: tick?.note ?? null,
         late: isLate(i.by_time, !!tick, minutes),

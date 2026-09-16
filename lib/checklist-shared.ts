@@ -58,3 +58,52 @@ export function progressOf<T extends { done: boolean; late: boolean; in_minutes:
     .sort((a, b) => (a.in_minutes as number) - (b.in_minutes as number))[0] || null
   return { total, done, late, pct: total ? Math.round((done / total) * 100) : 0, next }
 }
+
+// ── SIGNALS: the live number next to an item ────────────────────────────────────────────────────
+//
+// Jon, 2026-09-16: "Have part of the checklist eve questions" — and the day before: "you could
+// click on it, and it'll push you to the tab with the glitches and claims to be managed."
+//
+// An item may name a `signal`, and the list then carries a count beside it. "Answer one of Eve's
+// questions · 45 waiting" is a different instruction from a checkbox with the same words on it,
+// because the checkbox makes you go and look before you know whether there is anything to do.
+//
+// THE WORDING LIVES HERE, next to `isLate`, for the same reason `isLate` does: the page and the
+// API must not each keep their own copy. The server owns the NUMBER (lib/checklist-signals, which
+// is server-only because it counts rows); this file owns what the number reads like.
+//
+// AN UNKNOWN KEY IS SILENT, NEVER FATAL. The standing list is edited in the browser, so a manager
+// can type a signal this build has never heard of. That item shows no chip and still works.
+export type SignalMeta = {
+  /** Where the work is actually done — always an in-app path. */
+  link: string
+  /** What the chip reads, given the count. */
+  label: (n: number) => string
+  /** What the editor calls it. */
+  title: string
+}
+
+export const SIGNAL_META: Record<string, SignalMeta> = {
+  eve_questions: {
+    link: '/command', title: "Eve's open questions",
+    label: n => (n > 0 ? `${n} waiting` : 'none waiting'),
+  },
+  open_glitches: {
+    link: '/glitches', title: 'Open glitches',
+    label: n => (n > 0 ? `${n} open` : 'all clear'),
+  },
+}
+
+export const SIGNAL_KEYS = Object.keys(SIGNAL_META)
+
+/** The chip text for one row, or '' when there is nothing worth printing. */
+export function signalLabel(key: string | null | undefined, n: number | null | undefined): string {
+  if (!key || n == null) return ''
+  const meta = SIGNAL_META[key]
+  return meta ? meta.label(n) : ''
+}
+
+/** Where a signalled item sends you when it has no link of its own. */
+export function signalLink(key: string | null | undefined): string | null {
+  return key && SIGNAL_META[key] ? SIGNAL_META[key].link : null
+}
