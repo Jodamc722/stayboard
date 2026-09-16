@@ -22,6 +22,7 @@ import { paceStatus, paceGuidance } from '@/lib/pacing'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
+import { withoutCollages } from '@/lib/photo-filter'
 import { getStaff } from '@/lib/staffing'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
@@ -258,7 +259,15 @@ export async function POST(req: NextRequest) {
     // the backend"). Which means this branch no longer needs the reviews, the optimize score, or
     // the amenity diff it was computing — the owner's document is the photos, the links and
     // the copy, and the amenity work goes back to being an internal job on the unit page.
-    const cards: ListingCard[] = rows.map(l => listingCardFrom(l))
+    // NO COLLAGES ON A SLIDE (Jon, 2026-09-16). Guesty's picture array mixes real photographs
+    // with marketing collages the manager uploaded; on a listing thumbnail that is fine, on the
+    // cover of an owner's deck it lands as a four-up contact sheet under their name. Checked
+    // here, once, rather than in the renderer — the deck should never see one.
+    const cleaned = await Promise.all(rows.map(async l => ({
+      ...l,
+      pictures: await withoutCollages(Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : []),
+    })))
+    const cards: ListingCard[] = cleaned.map(l => listingCardFrom(l))
       .sort((a, b) => a.name.localeCompare(b.name))
 
     // Facts about the unit itself. The onboarding WALK is the better source when one exists —
@@ -323,7 +332,7 @@ export async function POST(req: NextRequest) {
       unitLine,
       unitFacts,
       bedrooms: first.bedrooms != null ? Number(first.bedrooms) : null,
-      heroImage: heroImageUrl || (Array.isArray(first.pictures) && first.pictures[0] ? String(first.pictures[0]) : null),
+      heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
     })
 
     const code0 = makeCode()
