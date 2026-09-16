@@ -39,7 +39,15 @@ export type BulkSectionKey = 'access' | 'neighborhood' | 'transit' | 'notes'
 export type BulkSection = {
   key: BulkSectionKey
   label: string                 // the words on the screen, matching Guesty's own section list
-  scope: BulkScope
+  /**
+   * The levels this section may be bulk edited from. Three of them describe a building and are
+   * property-only. Other notes is editable at BOTH — Jon, 2026-09-16: "make sure that 'Other things
+   * to note' is on that list too, because right now I only see three." A property can have its own
+   * note (the pool is closed through November) and the house can have boilerplate that reads the
+   * same everywhere; neither cancels the other, so the section belongs at both levels and the level
+   * you are standing on decides which listings it reaches.
+   */
+  scopes: BulkScope[]
   hint: string
   rows: number
   max: number
@@ -49,28 +57,29 @@ export type BulkSection = {
 // the same as what they see in Guesty.
 export const BULK_SECTIONS: BulkSection[] = [
   {
-    key: 'access', label: 'Guest access', scope: 'property', rows: 5, max: 2000,
+    key: 'access', label: 'Guest access', scopes: ['property'], rows: 5, max: 2000,
     hint: 'Lobby entry, fob or code, elevator, which floors, amenity access — the parts every unit in the building shares.',
   },
   {
-    key: 'neighborhood', label: 'Neighborhood', scope: 'property', rows: 6, max: 2000,
+    key: 'neighborhood', label: 'Neighborhood', scopes: ['property'], rows: 6, max: 2000,
     hint: 'The block: what is walkable, what the area is actually like, the beach or the water if there is one.',
   },
   {
-    key: 'transit', label: 'Getting around', scope: 'property', rows: 5, max: 2000,
+    key: 'transit', label: 'Getting around', scopes: ['property'], rows: 5, max: 2000,
     hint: 'Rideshare pickup, parking, transit, the airport run, what you can reach on foot.',
   },
   {
-    key: 'notes', label: 'Other notes', scope: 'portfolio', rows: 5, max: 2000,
-    hint: 'House boilerplate that reads the same everywhere — the line you would otherwise paste into every listing by hand.',
+    key: 'notes', label: 'Other notes', scopes: ['property', 'portfolio'], rows: 5, max: 2000,
+    hint: 'Anything else a guest should know. Set it for one property, or across properties when it reads the same everywhere.',
   },
 ]
 
 const BY_KEY = new Map(BULK_SECTIONS.map(s => [s.key, s]))
 
 export function sectionOf(key: string): BulkSection | null { return BY_KEY.get(key as BulkSectionKey) || null }
-export function scopeOf(key: string): BulkScope | null { return BY_KEY.get(key as BulkSectionKey)?.scope || null }
-export function sectionsForScope(scope: BulkScope): BulkSection[] { return BULK_SECTIONS.filter(s => s.scope === scope) }
+export function scopesOf(key: string): BulkScope[] { return BY_KEY.get(key as BulkSectionKey)?.scopes || [] }
+export function allowedAt(key: string, scope: BulkScope): boolean { return scopesOf(key).indexOf(scope) >= 0 }
+export function sectionsForScope(scope: BulkScope): BulkSection[] { return BULK_SECTIONS.filter(s => allowedAt(s.key, scope)) }
 
 /** One listing as the picker sees it: what it is, where it is, and what it says today. */
 export type CopyTarget = {
@@ -140,6 +149,7 @@ export function scopeError(
   sectionKeys: string[],
   targets: CopyTarget[],
   rosterByBuilding: Record<string, number>,
+  scope: BulkScope = 'property',
 ): string | null {
   if (!targets.length) return 'Nothing selected.'
   // Name the bad key back rather than saying "no section" — a caller that sent 'title' has a bug
@@ -149,29 +159,35 @@ export function scopeError(
   const keys = sectionKeys.filter(k => BY_KEY.has(k as BulkSectionKey)) as BulkSectionKey[]
   if (!keys.length) return 'No editable section named.'
 
+  // A section that does not live at this level is refused by name. Guest access, Neighborhood and
+  // Getting around describe one building; there is no honest way to write them across the portfolio.
+  const wrongLevel = keys.filter(k => !allowedAt(k, scope))
+  if (wrongLevel.length) {
+    return wrongLevel.map(k => BY_KEY.get(k)!.label).join(', ')
+      + (wrongLevel.length === 1 ? ' can' : ' can')
+      + ' only be set one property at a time — open the property and edit it there.'
+  }
+
   const buildings = Array.from(new Set(targets.map(t => norm(t.building))))
   if (buildings.some(b => !b)) return 'Some selected listings have no property set, so they cannot be bulk edited. Set the building in Guesty first.'
 
-  const wantsProperty = keys.some(k => BY_KEY.get(k)!.scope === 'property')
-  const wantsPortfolio = keys.some(k => BY_KEY.get(k)!.scope === 'portfolio')
-
-  // Guest access / Neighborhood / Getting around describe one building. Writing them across two at
-  // once would mean claiming one lobby is the other's.
-  if (wantsProperty && buildings.length > 1) {
-    const labels = keys.filter(k => BY_KEY.get(k)!.scope === 'property').map(k => BY_KEY.get(k)!.label).join(', ')
-    return labels + ' can only be set one property at a time — this selection spans ' + buildings.length + ' properties.'
+  if (scope === 'property') {
+    // One building at a time. Inside it you pick units freely — that is the level where picking
+    // units is offered.
+    if (buildings.length > 1) {
+      return 'A property edit reaches one property — this selection spans ' + buildings.length + '.'
+    }
+    return null
   }
 
-  // Other notes goes wide, but the unit of selection up there is the property. A partial building
-  // means somebody picked units, which is the thing that is not offered at portfolio level.
-  if (wantsPortfolio && !wantsProperty) {
-    for (const b of buildings) {
-      const have = targets.filter(t => norm(t.building) === b).length
-      const roster = rosterByBuilding[b]
-      if (typeof roster === 'number' && have < roster) {
-        return 'At the portfolio level whole properties are selected, not individual units — ' + b
-          + ' has ' + roster + ' listings and only ' + have + ' are selected.'
-      }
+  // Portfolio. The unit of selection up here is the property, so a partial building means somebody
+  // picked units, which is the thing that is not offered at this level.
+  for (const b of buildings) {
+    const have = targets.filter(t => norm(t.building) === b).length
+    const roster = rosterByBuilding[b]
+    if (typeof roster === 'number' && have < roster) {
+      return 'At the portfolio level whole properties are selected, not individual units — ' + b
+        + ' has ' + roster + ' listings and only ' + have + ' are selected.'
     }
   }
   return null
