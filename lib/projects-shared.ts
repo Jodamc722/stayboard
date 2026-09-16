@@ -428,6 +428,10 @@ export type ViewPrefs = {
   hidePanels: RailPanel[]
   /** Collapse the activity feed until I ask for it. */
   hideActivity: boolean
+  /** Which columns the list view shows, in order. */
+  columns: ListColumn[]
+  /** Is the right-hand rail open? Board view ignores this and closes it — see ProjectPage. */
+  railOpen: boolean
 }
 
 /** The cards down the right-hand side. Named so a preference can point at one. */
@@ -435,7 +439,35 @@ export const RAIL_PANELS = ['people', 'money', 'about', 'files'] as const
 export type RailPanel = typeof RAIL_PANELS[number]
 export const RAIL_LABEL: Record<RailPanel, string> = { people: 'People', money: 'Money', about: 'About', files: 'Files' }
 
-export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'list', hideDone: false, hidePanels: [], hideActivity: false }
+/**
+ * THE COLUMNS IN LIST VIEW, Asana-style (Jon, 2026-09-16: "the ability to show columns like in
+ * asana, task title, Due Date, Owner, etc").
+ *
+ * The old list was a flex row where every field floated right at its natural width, so the due
+ * date on one row sat under the assignee on the next and nothing lined up. Reading down a column —
+ * which is the entire reason to want columns — was impossible. These are fixed widths, shared by
+ * the header and every row in every section, so a glance down the page actually answers "what is
+ * due this week" and "what is on Karla".
+ *
+ * Title is not in the list because it is not optional: it is the row.
+ */
+export const LIST_COLUMNS = ['assignee', 'due', 'priority', 'status', 'subtasks', 'activity'] as const
+export type ListColumn = typeof LIST_COLUMNS[number]
+export const COLUMN_LABEL: Record<ListColumn, string> = {
+  assignee: 'Owner', due: 'Due date', priority: 'Priority', status: 'Status', subtasks: 'Subtasks', activity: 'Activity',
+}
+/** Fixed px, so the header and the rows cannot drift apart. */
+export const COLUMN_WIDTH: Record<ListColumn, number> = {
+  assignee: 150, due: 116, priority: 92, status: 104, subtasks: 78, activity: 82,
+}
+/** What a board shows before anyone chooses: who and when, the two questions people actually ask. */
+export const DEFAULT_COLUMNS: ListColumn[] = ['assignee', 'due', 'priority']
+
+/** The CSS grid template for a row or the header. Title takes what is left. */
+export const columnTemplate = (cols: ListColumn[]) =>
+  ['minmax(0,1fr)', ...cols.map(c => COLUMN_WIDTH[c] + 'px')].join(' ')
+
+export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'list', hideDone: false, hidePanels: [], hideActivity: false, columns: DEFAULT_COLUMNS.slice(), railOpen: true }
 
 export const viewPrefsOf = (raw: any): ViewPrefs => ({
   view: raw?.view === 'board' ? 'board' : raw?.view === 'calendar' ? 'calendar' : 'list',
@@ -444,6 +476,10 @@ export const viewPrefsOf = (raw: any): ViewPrefs => ({
     ? (raw.hidePanels as any[]).map(String).filter((k): k is RailPanel => (RAIL_PANELS as readonly string[]).includes(k))
     : [],
   hideActivity: raw?.hideActivity === true,
+  columns: Array.isArray(raw?.columns)
+    ? (raw.columns as any[]).map(String).filter((c): c is ListColumn => (LIST_COLUMNS as readonly string[]).includes(c))
+    : DEFAULT_COLUMNS.slice(),
+  railOpen: raw?.railOpen !== false,
 })
 
 /**
