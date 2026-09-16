@@ -819,6 +819,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [photoUrl, setPhotoUrl] = useState('')
   const [amenityMsg, setAmenityMsg] = useState<Record<string, string>>({})
   const [copyMsg, setCopyMsg] = useState<Record<string, string>>({})
+  // OPTIMIZE FROM WHERE THE COPY IS READ (Jon, 2026-09-16: "make sure we have prompt or use AI
+  // to optimize listing, from there"). /api/optimize-listing already writes to the house rules
+  // and the honesty block; this is a caller, not a second optimizer. It PROPOSES — the draft
+  // lands in the slide, Jon reads it aloud, and Push to Guesty is still a separate decision.
+  const [opt, setOpt] = useState<{ id: string; li: number; name: string } | null>(null)
+  const [optInstr, setOptInstr] = useState('')
+  const [optBusy, setOptBusy] = useState(false)
+  const [optMsg, setOptMsg] = useState('')
   const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
   const [manualLine, setManualLine] = useState('')
   const [manualCat, setManualCat] = useState('')
@@ -1622,6 +1630,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .sb-pick > span { opacity: 0; transition: opacity .13s ease; }
         .sb-pick:hover > span { opacity: 1; }
         .sb-pick:hover { box-shadow: inset 0 0 0 2px ${t.accent}; }
+        /* Lists inside a slide scroll on their own and do not hand the wheel back to the page
+           halfway through, which is what made the amenity list feel like it was stuck. */
+        .onb-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+          scrollbar-color: ${t.cardBorder} transparent; }
+        .onb-scroll::-webkit-scrollbar { width: 7px; }
+        .onb-scroll::-webkit-scrollbar-thumb { background: ${t.cardBorder}; border-radius: 4px; }
+        .onb-scroll::-webkit-scrollbar-track { background: transparent; }
         .sb-navbar { scrollbar-width: none; }
         .sb-navbar::-webkit-scrollbar { display: none; }
         .sb-report .onb-sec { padding-bottom: 0.5rem; }
@@ -1823,6 +1838,62 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           </div>
           )}
         </>
+      )}
+
+      {opt && (
+        <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5"
+          style={{ background: 'rgba(10,14,20,0.66)' }}
+          onClick={() => { if (!optBusy) { setOpt(null); setOptMsg(''); setOptInstr('') } }}>
+          <div onClick={e => e.stopPropagation()} className="rounded-2xl w-full max-w-xl p-5"
+            style={{ background: t.card, border: '1px solid ' + t.cardBorder }}>
+            <p className="text-[15px] font-semibold" style={{ color: t.ink }}>Optimize this listing</p>
+            <p className="text-[13px] mt-1" style={{ color: t.muted }}>
+              {opt.name} &mdash; writes a new title and description to the house rules. It fills the slide; pushing to Guesty stays a separate click.
+            </p>
+            <textarea
+              value={optInstr}
+              onChange={e => setOptInstr(e.target.value)}
+              rows={3}
+              placeholder="Anything to steer it? e.g. lead with the balcony, this is a business traveller unit, drop the pool mention…"
+              className="mt-3 w-full rounded-lg px-3 py-2 text-[13px]"
+              style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}
+            />
+            {optMsg ? <p className="mt-2 text-[12.5px]" style={{ color: /could not|error|failed/i.test(optMsg) ? t.gold : t.sub }}>{optMsg}</p> : null}
+            <div className="mt-3 flex items-center gap-2 justify-end">
+              <button disabled={optBusy} onClick={() => { setOpt(null); setOptMsg(''); setOptInstr('') }}
+                className="rounded-lg px-3.5 py-2 text-[13px] font-semibold" style={{ color: t.sub }}>Cancel</button>
+              <button
+                disabled={optBusy}
+                onClick={async () => {
+                  setOptBusy(true); setOptMsg('Writing\u2026 this takes up to a minute.')
+                  try {
+                    const r = await fetch('/api/optimize-listing', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ listingId: opt.id, instruction: optInstr.trim() || undefined }),
+                    })
+                    const d = await r.json().catch(() => ({}))
+                    if (!r.ok || !d?.proposed) { setOptMsg(d?.error || 'Could not optimize this listing.'); setOptBusy(false); return }
+                    mutate(dr => {
+                      const it = dr.listings.items[opt.li]
+                      if (d.proposed.title) it.title = String(d.proposed.title)
+                      if (d.proposed.summary) it.summary = String(d.proposed.summary)
+                      if (d.proposed.space) it.space = String(d.proposed.space)
+                    })
+                    answerChanged()
+                    setOptBusy(false)
+                    setOpt(null); setOptInstr('')
+                    setCopyMsg(m => ({ ...m, [opt.id]: 'Draft written \u2014 read it, then push.' }))
+                  } catch {
+                    setOptMsg('Could not reach the optimizer.'); setOptBusy(false)
+                  }
+                }}
+                className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-50"
+                style={{ background: t.ink, color: t.bg }}>
+                {optBusy ? 'Writing\u2026' : 'Write a new draft'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {photoPick && (
@@ -2434,7 +2505,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         <p style={{ fontSize: 12, color: t.muted }}>{L.name}</p>
                       </div>
                       {canEdit ? (
-                        <div style={{ textAlign: 'right' }}>
+                        <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <button
                             onClick={async () => {
                               const id = String(L.id)
@@ -2456,6 +2527,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             }}
                             style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '8px 16px', background: t.ink, color: t.bg, whiteSpace: 'nowrap' }}>
                             {copyMsg[String(L.id)] === 'busy' ? 'Pushing\u2026' : 'Push to Guesty'}
+                          </button>
+                          <button
+                            onClick={() => { setOptMsg(''); setOptInstr(''); setOpt({ id: String(L.id), li, name: String(L.name || 'this unit') }) }}
+                            style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '8px 16px', marginRight: 8, background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink, whiteSpace: 'nowrap' }}>
+                            Optimize with AI
                           </button>
                           <p style={{ fontSize: 11.5, marginTop: 7, maxWidth: 230, color: copyMsg[String(L.id)] === 'ok' ? t.good : t.gold }}>
                             {copyMsg[String(L.id)] === 'ok'
@@ -2497,7 +2573,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>{F.l}</span>
                             <span style={{ fontSize: 12, color: t.muted, marginLeft: 10 }}>{F.hint}</span>
                           </div>
-                          <div className="min-h-0" style={{ overflowY: 'auto', flex: 1 }}>
+                          <div className="min-h-0 onb-scroll" style={{ flex: 1 }}>
                             <LiveText
                               v={String(L[F.f] || '')} live={canEdit} t={t}
                               ro="" cls="onb-copy"
@@ -2519,6 +2595,20 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             // suggestion exists sits under it, because "add a coffee maker" lands very
             // differently from "add a coffee maker — it is in 88% of the studios you compete
             // with". No score anywhere near it.
+            // The families that actually collide in Guesty's catalogue. Matched on the name, so
+            // a new variant of an existing family is covered without touching this list.
+            const FAMILIES = [
+              'pool', 'hot tub', 'jacuzzi', 'parking', 'garage', 'wifi', 'internet', 'kitchen',
+              'gym', 'fitness', 'washer', 'dryer', 'air conditioning', 'heating', 'tv',
+              'balcony', 'terrace', 'patio', 'grill', 'bbq', 'elevator', 'crib', 'workspace',
+              'beach', 'waterfront', 'coffee', 'dishwasher', 'pet', 'smoking', 'sauna',
+            ]
+            const familyOf = (name: string): string => {
+              const n = String(name || '').toLowerCase()
+              for (const f of FAMILIES) if (n.indexOf(f) >= 0) return f
+              return ''
+            }
+
             const toggleAmenity = (li: number, name: string) => {
               mutate(d => {
                 const list: string[] = Array.isArray(d.listings.items[li].amenities) ? d.listings.items[li].amenities : []
@@ -2545,7 +2635,17 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
             items.forEach((L: Any, li: number) => {
               const have: string[] = Array.isArray(L.amenities) ? L.amenities : []
-              const missing: Any[] = (L.amenitySuggest || []).filter((sg: Any) => have.indexOf(sg.name) < 0)
+              const claimed = new Set(have.map(familyOf).filter(Boolean))
+              const seen = new Set<string>()
+              const missing: Any[] = (L.amenitySuggest || []).filter((sg: Any) => {
+                if (have.indexOf(sg.name) >= 0) return false
+                const fam = familyOf(sg.name)
+                if (!fam) return true
+                // already covered by something on the listing, or by an earlier suggestion
+                if (claimed.has(fam) || seen.has(fam)) return false
+                seen.add(fam)
+                return true
+              })
               if (!have.length && !missing.length) return
               slides.push({ key: 'listings', node: (
                 <Slide nav={String(L.name || 'Unit') + ' \u2014 amenities'} warn={edit} ground={GROUND.tint}>
@@ -2578,7 +2678,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>On the listing</span>
                           <span className="tabular-nums" style={{ fontSize: 12, color: t.muted, marginLeft: 9 }}>{have.length}</span>
                         </div>
-                        <div className="min-h-0" style={{ overflowY: 'auto', flex: 1 }}>
+                        <div className="min-h-0 onb-scroll" style={{ flex: 1 }}>
                           <div className="flex flex-wrap" style={{ gap: 6 }}>
                             {have.map((a: string) => (
                               <span key={a}
@@ -2601,8 +2701,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>Worth adding</span>
                           <span className="tabular-nums" style={{ fontSize: 12, color: t.muted, marginLeft: 9 }}>{missing.length}</span>
                         </div>
-                        <div className="min-h-0" style={{ overflowY: 'auto', flex: 1 }}>
-                          {missing.slice(0, 10).map((sg: Any) => (
+                        <div className="min-h-0 onb-scroll" style={{ flex: 1 }}>
+                          {missing.map((sg: Any) => (
                             <div key={sg.name}
                               onClick={canEdit ? () => toggleAmenity(li, sg.name) : undefined}
                               style={{ padding: '9px 0', borderBottom: '1px solid ' + t.rule, cursor: canEdit ? 'pointer' : 'default' }}>
@@ -2653,25 +2753,36 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </div>
                     <div>
                       {/* the year, as a curve */}
-                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 7, height: 188 }}>
-                        {(sec('season').months || []).map((m: Any, mi: number) => {
-                          const lvl = Number(m.level)
-                          const peak = lvl >= 3
-                          return (
-                            <div key={mi} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9 }}>
-                              <div style={{
-                                width: '100%', borderRadius: '4px 4px 0 0',
-                                height: Math.max(10, (lvl + 1) * 44),
-                                background: peak ? D.ink : 'rgba(255,255,255,' + (lvl >= 2 ? 0.42 : 0.18) + ')',
-                              }} />
-                              <span style={{ fontSize: 11, color: peak ? D.ink : D.muted }}>{m.m}</span>
+                      {(() => {
+                        const ms: Any[] = sec('season').months || []
+                        const max = Math.max(1, ...ms.map((m: Any) => Number(m.level) || 0))
+                        const low = Math.min(...ms.map((m: Any) => Number(m.level) || 0))
+                        const H = 188
+                        return (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 7, height: H }}>
+                              {ms.map((m: Any, mi: number) => {
+                                const lvl = Number(m.level) || 0
+                                const peak = lvl === max
+                                const floor = lvl === low
+                                return (
+                                  <div key={mi} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9 }}>
+                                    <div style={{
+                                      width: '100%', borderRadius: '4px 4px 0 0',
+                                      height: Math.max(8, Math.round((lvl / max) * (H - 26))),
+                                      background: peak ? D.ink : floor ? hexA(t.accent, 0.85) : 'rgba(255,255,255,' + (0.16 + (lvl / max) * 0.34) + ')',
+                                    }} />
+                                    <span style={{ fontSize: 11, color: peak || floor ? D.ink : D.muted }}>{m.m}</span>
+                                  </div>
+                                )
+                              })}
                             </div>
-                          )
-                        })}
-                      </div>
-                      <p style={{ fontSize: 12.5, color: D.muted, marginTop: 16 }}>
-                        Peak months in white. Shape of the market, not a forecast for your unit.
-                      </p>
+                            <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.muted, marginTop: 14 }}>
+                              <Ed v={sec('season').lowNote || ''} set={v => patch('season.lowNote', v)} edit={edit} multiline />
+                            </p>
+                          </>
+                        )
+                      })()}
                     </div>
                   </div>
                   <p style={{ fontSize: 14.5, lineHeight: 1.65, color: D.body, marginTop: 30, maxWidth: '78ch' }}>
@@ -2882,46 +2993,82 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 7 · STATEMENTS — the worked month, then the three rules ────────
           if (!hid('statement')) {
+            // ── THE STATEMENT, IN ITS ISSUED SHAPE ────────────────────────
+            // Modelled on a real August statement Jon supplied: the performance strip, the
+            // category summary, and the navy "Payment due to owner" row that closes it. Live
+            // text throughout rather than a picture of a document (Jon: "make it viewable and
+            // interactive, not just a JPEG") — so a figure can be changed on the call and the
+            // owner can see it is the same document they will receive, not a mock-up.
             slides.push({ key: 'statement', node: (
               <Slide nav="Statements" warn={edit} ground={GROUND.light}>
-                {/* AN EXCERPT, NOT THE DOCUMENT (Jon, 2026-09-16: "make the owner statement
-                    better — show only parts of it"). The old slide tried to reproduce a whole
-                    statement: four ledger lines, a net, and a five-column itemised charge table,
-                    on one 630px canvas. Nobody reads a table on a call. Four lines decide what
-                    an owner is paid, so four lines is the slide, and the itemisation gets its
-                    own page for the owners who ask — and some always do. */}
                 <div className="flex flex-col h-full">
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 430px', columnGap: 52 }} className="flex-1 min-h-0">
-                    <div className="flex flex-col justify-center">
-                      <Title k="statement" />
-                      <p style={{ fontSize: 15, lineHeight: 1.7, color: t.body, marginTop: 22, maxWidth: '40ch' }}>
-                        <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
+                  <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
+                    <div>
+                      <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
+                      <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>
+                        <Ed v={sec('statement').headline || ''} set={v => patch('statement.headline', v)} edit={edit} />
                       </p>
                     </div>
-                    <div className="flex flex-col justify-center">
-                      <div style={{ borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder }}>
-                        <div style={{ padding: '14px 22px', background: t.chip }}>
-                          <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink }}>{sec('statement').unitLabel}</p>
-                          <p style={{ fontSize: 12, color: t.muted, marginTop: 2 }}>{sec('statement').period}</p>
-                        </div>
-                        <div style={{ padding: '8px 22px 14px', background: t.card }}>
-                          {(sec('statement').lines || []).map((ln: Any, i: number) => (
-                            <div key={i} className="flex justify-between" style={{ gap: 18, padding: '11px 0', borderBottom: '1px solid ' + t.rule }}>
-                              <span style={{ fontSize: 14, color: t.body }}>{ln.k}</span>
-                              <span className="tabular-nums" style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <div style={{ background: t.band, padding: '18px 22px' }}>
-                          <div className="flex justify-between items-baseline" style={{ gap: 18 }}>
-                            <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.72)' }}>Net to you</span>
-                            <span className="tabular-nums" style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.025em', color: '#fff' }}>{sec('statement').net}</span>
-                          </div>
-                          <p style={{ fontSize: 12, marginTop: 5, color: 'rgba(255,255,255,0.58)' }}>{sec('statement').paid}</p>
-                        </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>{sec('statement').unitLabel}</p>
+                      <p style={{ fontSize: 12, color: t.muted, marginTop: 2 }}>{sec('statement').period}</p>
+                    </div>
+                  </div>
+
+                  {/* the performance strip */}
+                  <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: t.cardBorder, border: '1px solid ' + t.cardBorder, borderRadius: 10, overflow: 'hidden' }}>
+                    {(sec('statement').kpis || []).map((k: Any, i: number) => (
+                      <div key={i} style={{ background: t.card, padding: '13px 16px' }}>
+                        <p style={{ fontSize: 11.5, color: t.muted }}>
+                          <Ed v={k.k || ''} set={v => patch('statement.kpis.' + i + '.k', v)} edit={edit} />
+                        </p>
+                        <p className="tabular-nums" style={{ fontSize: 21, fontWeight: 600, color: t.ink, marginTop: 3, letterSpacing: '-0.02em' }}>
+                          <Ed v={k.v || ''} set={v => patch('statement.kpis.' + i + '.v', v)} edit={edit} />
+                        </p>
                       </div>
-                      <p style={{ fontSize: 12, color: t.muted, marginTop: 12 }}>
-                        An excerpt. Your real statement carries every line, itemised.
+                    ))}
+                  </div>
+
+                  {/* the category summary */}
+                  <div className="flex-1 min-h-0" style={{ marginTop: 18, display: 'grid', gridTemplateColumns: '1.15fr 1fr', columnGap: 44 }}>
+                    <div className="min-h-0 flex flex-col">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: t.chip, borderRadius: '6px 6px 0 0' }}>
+                        <span style={{ fontSize: 11.5, color: t.sub }}>Category</span>
+                        <span style={{ fontSize: 11.5, color: t.sub }}>Monthly amount</span>
+                      </div>
+                      <div className="min-h-0 onb-scroll">
+                        {(sec('statement').summary || []).map((ln: Any, i: number) => (
+                          <div key={i} style={{
+                            display: 'flex', justifyContent: 'space-between', gap: 16,
+                            padding: '8px 12px', borderBottom: '1px solid ' + t.rule,
+                            borderTop: ln.rule ? '1px solid ' + t.ink : undefined,
+                          }}>
+                            <span style={{ fontSize: 13, color: ln.rule ? t.ink : t.body, fontWeight: ln.rule ? 600 : 400 }}>
+                              <Ed v={ln.k || ''} set={v => patch('statement.summary.' + i + '.k', v)} edit={edit} />
+                            </span>
+                            <span className="tabular-nums" style={{ fontSize: 13, fontWeight: ln.rule ? 600 : 500, whiteSpace: 'nowrap', color: ln.neg ? t.gold : t.ink }}>
+                              <Ed v={ln.v || ''} set={v => patch('statement.summary.' + i + '.v', v)} edit={edit} />
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      {/* the row the whole document exists to produce */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '13px 14px', background: t.band, borderRadius: '0 0 6px 6px' }}>
+                        <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.78)' }}>
+                          <Ed v={(sec('statement').due || {}).k || ''} set={v => patch('statement.due.k', v)} edit={edit} />
+                        </span>
+                        <span className="tabular-nums" style={{ fontSize: 22, fontWeight: 600, color: '#fff', letterSpacing: '-0.02em' }}>
+                          <Ed v={(sec('statement').due || {}).v || ''} set={v => patch('statement.due.v', v)} edit={edit} />
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col justify-center">
+                      <p style={{ fontSize: 14.5, lineHeight: 1.7, color: t.body }}>
+                        <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
+                      </p>
+                      <p style={{ fontSize: 12, color: t.muted, marginTop: 16 }}>
+                        Example figures. Your statement carries every booking and every charge, itemised.
                       </p>
                     </div>
                   </div>
@@ -2930,38 +3077,48 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               </Slide>
             ) })
 
-            // The itemisation, for the owners who ask — and some always do.
-            if ((sec('statement').charges || []).length) slides.push({ key: 'statement', node: (
-              <Slide nav="Charges, itemised" warn={edit} ground={GROUND.tint}>
+            // ── THE DETAIL — every line traces to a booking ────────────────
+            if ((sec('statement').reservations || []).length) slides.push({ key: 'statement', node: (
+              <Slide nav="Statement detail" warn={edit} ground={GROUND.tint}>
                 <div className="flex flex-col h-full">
-                  <div style={{ width: 30, height: 2, background: brass, marginBottom: 16 }} />
-                  <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>
-                    Every charge traces to a job
-                  </p>
-                  <p style={{ fontSize: 14, color: t.muted, marginTop: 8 }}>
-                    The {sec('statement').chargesTotal} owner charge above, in full \u2014 with the date, the work and who did it.
-                  </p>
-                  <div className="flex-1 min-h-0 flex items-center">
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr>{['Date', 'Work', 'Labor', 'Materials', 'Total'].map((h, i) => (
-                          <th key={h} style={{ fontSize: 11.5, fontWeight: 500, color: t.muted, padding: '0 14px 9px 0', borderBottom: '1px solid ' + t.rule, textAlign: i >= 2 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
-                        ))}</tr>
-                      </thead>
-                      <tbody>
-                        {(sec('statement').charges || []).map((ch: Any, i: number) => (
-                          <tr key={i}>
-                            <td style={{ fontSize: 13.5, color: t.muted, padding: '14px 14px 14px 0', borderBottom: '1px solid ' + t.rule, whiteSpace: 'nowrap', verticalAlign: 'top' }}>{ch.date}</td>
-                            <td style={{ fontSize: 13.5, color: t.body, padding: '14px 14px 14px 0', borderBottom: '1px solid ' + t.rule, verticalAlign: 'top' }}>
-                              {ch.work}<small style={{ display: 'block', fontSize: 12, marginTop: 3, color: t.muted }}>{ch.who}</small>
-                            </td>
-                            <td className="tabular-nums" style={{ fontSize: 13.5, color: t.body, padding: '14px 14px 14px 0', borderBottom: '1px solid ' + t.rule, textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{ch.labor}</td>
-                            <td className="tabular-nums" style={{ fontSize: 13.5, color: t.body, padding: '14px 14px 14px 0', borderBottom: '1px solid ' + t.rule, textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{ch.materials}</td>
-                            <td className="tabular-nums" style={{ fontSize: 13.5, color: t.ink, fontWeight: 600, padding: '14px 0', borderBottom: '1px solid ' + t.rule, textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{ch.total}</td>
-                          </tr>
+                  <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
+                    <div>
+                      <div style={{ width: 30, height: 2, background: brass, marginBottom: 14 }} />
+                      <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>Every line traces to a booking</p>
+                    </div>
+                    <p style={{ fontSize: 12.5, color: t.muted }}>{sec('statement').unitLabel}</p>
+                  </div>
+
+                  <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 18 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr 150px 92px', gap: 12, padding: '0 0 7px', borderBottom: '1px solid ' + t.rule }}>
+                      {['Date', 'Description', 'Category', 'Amount'].map((h, i) => (
+                        <span key={h} style={{ fontSize: 11, color: t.muted, textAlign: i === 3 ? 'right' : 'left' }}>{h}</span>
+                      ))}
+                    </div>
+                    {(sec('statement').reservations || []).map((r: Any, ri: number) => (
+                      <div key={ri} style={{ marginTop: 12 }}>
+                        <div className="flex items-baseline justify-between" style={{ gap: 14, marginBottom: 4 }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>{r.guest}</span>
+                          <span style={{ fontSize: 11.5, color: t.muted }}>{r.stay}</span>
+                        </div>
+                        {(r.lines || []).map((ln: Any, li2: number) => (
+                          <div key={li2} style={{ display: 'grid', gridTemplateColumns: '64px 1fr 150px 92px', gap: 12, padding: '5px 0', borderBottom: '1px solid ' + t.rule }}>
+                            <span style={{ fontSize: 11.5, color: t.muted }}>{ln.date}</span>
+                            <span style={{ fontSize: 12, color: t.body }}>{ln.desc}</span>
+                            <span style={{ fontSize: 11.5, color: t.muted }}>{ln.cat}</span>
+                            <span className="tabular-nums" style={{ fontSize: 12, textAlign: 'right', color: ln.neg ? t.gold : t.ink }}>{ln.amt}</span>
+                          </div>
                         ))}
-                      </tbody>
-                    </table>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 92px', gap: 12, padding: '5px 0' }}>
+                          <span />
+                          <span className="tabular-nums" style={{ fontSize: 12.5, fontWeight: 600, textAlign: 'right', color: t.ink }}>{r.total}</span>
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', marginTop: 8, background: t.chip, borderRadius: 6 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>{(sec('statement').propertyIncome || {}).k}</span>
+                      <span className="tabular-nums" style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>{(sec('statement').propertyIncome || {}).v}</span>
+                    </div>
                   </div>
                   <Foot label="Owner statements" />
                 </div>
@@ -3043,7 +3200,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <div className="flex flex-col h-full">
                 <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', columnGap: 46 }} className="flex-1 min-h-0">
                   <div><Title k="notes" /></div>
-                  <div className="min-h-0" style={{ overflowY: 'auto' }}>
+                  <div className="min-h-0 onb-scroll">
                     <LiveText
                       v={String(sec('notes').body || '')}
                       live={canEdit} t={t} ro="" cls="onb-copy"
