@@ -72,3 +72,35 @@ export const DARK_BUDGET = 2
 export function footerRight(wordmark: string, n: number): string {
   return wordmark + ' · ' + String(n).padStart(2, '0')
 }
+
+/**
+ * SLIDE TONES — what stops a deck reading as one long beige afternoon.
+ *
+ * Jon, 2026-09-16: "some of the other slides are just very generic… add more color… it needs to
+ * feel more premium." Fifteen slides on one flat cream is the single biggest reason a deck reads
+ * as a template. Premium hospitality decks are not more colourful — they are more *layered*:
+ * the same small palette, laid on three grounds, in a deliberate order.
+ *
+ *   light — bone. The default. Reading slides.
+ *   tint  — bone pulled a few percent toward the ink. Carries lists and supporting material,
+ *           and separates two reading slides that would otherwise run together.
+ *   dark  — the navy ground. Punctuation only: the brand slide and the money slide.
+ *
+ * The rule is rhythm, not decoration: never two darks in a row, never more than two lights
+ * before a change. Tone is assigned per slide in the deck definition, so the running order can
+ * be read at a glance and re-tuned in one place.
+ */
+export type SlideTone = 'light' | 'tint' | 'dark'
+
+/** Blend two hex colours. `amt` is how much of `b` lands in `a`. */
+export function blend(a: string, b: string, amt: number): string {
+  const hex = (h: string) => {
+    const x = h.replace('#', '')
+    const n = parseInt(x.length === 3 ? x.split('').map(c => c + c).join('') : x.slice(0, 6), 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  }
+  const [r1, g1, b1] = hex(a)
+  const [r2, g2, b2] = hex(b)
+  const m = (p: number, q: number) => Math.round(p + (q - p) * Math.max(0, Math.min(1, amt)))
+  return '#' + [m(r1, r2), m(g1, g2), m(b1, b2)].map(v => v.toString(16).padStart(2, '0')).join('')
+}
