@@ -24,6 +24,7 @@
 // Sign convention, same as lib/owner-statements: ledger amounts are signed from the PM's side,
 // so every figure here is flipped to read as OWNER money — positive = money to the owner.
 import 'server-only'
+import { lengthFactors, expectedForLength, lengthNote, type LengthFactors } from './owner-audit-rate'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting } from './app-settings'
 import { MONTH_LABEL, money } from './owner-statements'
@@ -960,10 +961,22 @@ export async function buildAudit(month: string): Promise<AuditData> {
 
   const items: AuditItem[] = []
   const prep: PrepItem[] = []
+  // HOW MUCH THIS COMPANY DISCOUNTS FOR LENGTH, measured from the month's own book (see
+  // lib/owner-audit-rate for why this is one portfolio-wide number and not another cohort axis).
+  // Short stays get a factor of 1, so nothing about the existing behaviour moves for them.
+  const lenFactors: LengthFactors = lengthFactors(
+    pres.filter(p => p.avgRate != null && p.avgRate > 0 && p.totalNights > 0)
+      .map(p => ({ nights: p.totalNights, nightly: p.avgRate as number })),
+  )
+
   for (const pre of pres) {
     const { g, res, bestListing, checkIn, checkOut, totalNights, monthNights, splitMonth, net, rate, avgRate, mixWeekday, mixWeekend, leadDays } = pre
     const bench = g.resCode ? benchOf(pre) : null
-    const benchPct = bench && avgRate != null && avgRate > 0 && bench.perNight > 0 ? Math.round((avgRate / bench.perNight) * 100) : null
+    // THE COHORT IS A SHORT-STAY NUMBER. It is built from every night in the building, and those
+    // are overwhelmingly short stays — so comparing a monthly booking to it raw was comparing a
+    // month to a weekend. Discount the expectation to this stay's band before taking the ratio.
+    const expPerNight = bench ? expectedForLength(bench.perNight, totalNights, lenFactors) : 0
+    const benchPct = bench && avgRate != null && avgRate > 0 && expPerNight > 0 ? Math.round((avgRate / expPerNight) * 100) : null
 
     // Owner stays and friends & family: tagged from Guesty tags, source and guest name.
     // Their discounts are by design — they stay visible but never read as pricing errors.
@@ -1079,10 +1092,11 @@ export async function buildAudit(month: string): Promise<AuditData> {
           flags.push({
             type: 'low_rate', severity: lrSev, amount: avgRate,
             detail: 'Whole-stay average $' + avgRate.toFixed(2) + '/night is ' + benchPct + '% of the expected ≈$'
-              + bench.perNight.toFixed(0) + '/night for a ' + stayTxt + ', per the ' + bench.label
+              + expPerNight.toFixed(0) + '/night for a ' + stayTxt + ', per the ' + bench.label
               + ' (midweek ≈$' + bench.wdAvg.toFixed(0) + '/n · weekend ≈$' + bench.weAvg.toFixed(0) + '/n, this + last month'
               + (bench.prevAvg != null ? '; last month blended $' + bench.prevAvg.toFixed(0) + '/n' : '') + ')'
-              + (lastMin ? '. Booked ' + leadDays + 'd before check-in — still short even with the last-minute bar of ' + effPct + '%.' : '.') + lrTagNote,
+              + (lastMin ? '. Booked ' + leadDays + 'd before check-in — still short even with the last-minute bar of ' + effPct + '%.' : '.')
+              + lengthNote(totalNights, lenFactors) + lrTagNote,
           })
         }
       }
