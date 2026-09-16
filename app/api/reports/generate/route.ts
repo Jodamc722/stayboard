@@ -305,6 +305,15 @@ export async function POST(req: NextRequest) {
     unitFacts.unshift({ k: 'Units in this onboarding', v: String(cards.length) })
     if (market) unitFacts.push({ k: 'Market', v: market })
 
+    // The owner's own contact details, from the Guesty owner record that holds these units.
+    // Whatever Guesty has is the starting point; the call is where it gets corrected.
+    let ownerEmail = '', ownerPhone = '', ownerFullName = ''
+    try {
+      const { data: ow } = await db0.from('guesty_owners').select('full_name, email, phone, listing_ids').limit(2000)
+      const hit = ((ow || []) as any[]).find(o => (Array.isArray(o.listing_ids) ? o.listing_ids : []).some((x: any) => ids0.indexOf(String(x)) >= 0))
+      if (hit) { ownerEmail = str(hit.email); ownerPhone = str(hit.phone); ownerFullName = str(hit.full_name) }
+    } catch { /* the section renders empty and gets filled in on the call */ }
+
     const tpl = await getOnboardingTemplate()
     // No team saved in settings yet: fall back to the live roster so the section is never empty
     // on the first run. Once Jon writes the cards once, the saved ones win.
@@ -324,7 +333,9 @@ export async function POST(req: NextRequest) {
       scopeLabel,
       asOf,
       market,
-      ownerName: str(body?.ownerName),
+      ownerName: str(body?.ownerName) || ownerFullName,
+      ownerEmail,
+      ownerPhone,
       goLive: str(body?.goLive),
       cards,
       unitLine,
