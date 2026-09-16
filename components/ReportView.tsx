@@ -10,6 +10,7 @@ import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, P
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
+import { CHANNEL_MARKS } from '@/lib/channel-marks'
 
 type Any = any
 // Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
@@ -1581,6 +1582,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           border: 1px solid transparent; border-radius: 8px; padding: 4px 8px; margin-left: -8px;
           font-family: inherit; color: ${t.body}; resize: vertical; }
         .sb-slide .onb-copy { font-size: 14.5px; line-height: 1.7; }
+        /* The listing title is a headline on its slide, so it is set like one — display face,
+           not the 15px form field it used to be. */
+        .sb-slide .onb-title-live { width: 100%; background: transparent; border: 1px solid transparent;
+          border-radius: 8px; padding: 2px 8px; margin-left: -8px; color: ${t.ink};
+          font-size: 30px; line-height: 1.2; letter-spacing: -0.02em;
+          font-family: ${fontPair.display || 'inherit'}; }
+        .sb-slide p.onb-title-live { padding: 2px 0; margin-left: 0; }
         .sb-slide .onb-live { font-size: 15px; }
         /* Only a deck gets the inset treatment; a scrolling report keeps its own background. */
         .sb-present-deck { background: ${blend(t.bg, t.ink, darkGround ? 0.10 : 0.14)} !important; }
@@ -2302,54 +2310,39 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // wall does the rest. No logo files: wordmarks we do not have licences for would look
           // worse than clean type, and type is what the rest of this deck is made of.
           if (!hid('channels')) slides.push({ key: 'channels', ai: true, node: (
-            <Slide nav="Where it sells" warn={edit} ground={GROUND.tint}>
-              <div className="flex flex-col h-full">
-                <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', columnGap: 52 }} className="flex-1 min-h-0">
-                  <div>
-                    <Title k="channels" sub={false} rule={brass} narrow />
-                    <p style={{ marginTop: 20, fontSize: 15, lineHeight: 1.7, color: t.body, maxWidth: '40ch', whiteSpace: 'pre-line' }}>
-                      <Ed v={sec('channels').body || ''} set={v => patch('channels.body', v)} edit={edit} multiline />
-                    </p>
+            <Slide nav="Where it sells" warn={edit} ground={GROUND.dark} bleed>
+              {/* BIG PICTURE, NOT AN INVENTORY (Jon, 2026-09-16: "prefer not list them all,
+                  more big picture"). The old version was two columns of wordmarks and a tail of
+                  sixteen more names — a directory. The argument is the count and the fact that
+                  it is ONE calendar; the marks are there to be recognised in a glance, not
+                  read. Six of them, one ink, on the brand ground. */}
+              <div style={{ position: 'absolute', inset: 0, background: t.band, padding: 64 }} className="flex flex-col">
+                <div className="flex-1 min-h-0 flex flex-col justify-center">
+                  <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 22 }} />
+                  <div className="flex items-end" style={{ gap: 26 }}>
+                    <span style={{ fontSize: 96, fontWeight: 600, letterSpacing: '-0.045em', color: D.ink, lineHeight: 0.86 }}>
+                      <Ed v={sec('channels').count || ''} set={v => patch('channels.count', v)} edit={edit} />
+                    </span>
+                    <span style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em', color: D.ink, lineHeight: 1.2, paddingBottom: 6, maxWidth: '16ch' }}>
+                      channels.<br />One calendar.
+                    </span>
                   </div>
-                  <div className="min-h-0 flex flex-col">
-                    <div className="flex items-baseline" style={{ gap: 14 }}>
-                      <span style={{ fontSize: 64, fontWeight: 600, letterSpacing: '-0.04em', color: t.accent, lineHeight: 1 }}>
-                        <Ed v={sec('channels').count || ''} set={v => patch('channels.count', v)} edit={edit} />
-                      </span>
-                      <span style={{ fontSize: 15, color: t.muted }}>channels, one calendar</span>
-                    </div>
-                    {/* Real artwork when we have licensed files, a wordmark wall when we do
-                        not. Greyscaled either way: eight brand palettes at full saturation is
-                        a sticker sheet, not a slide. */}
-                    {(sec('channels').logos || []).length > 0 ? (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '22px 26px', marginTop: 28, alignItems: 'center' }}>
-                        {(sec('channels').logos || []).slice(0, 8).map((lg: Any, i: number) => (
-                          <div key={i} style={{ height: 34, display: 'flex', alignItems: 'center' }}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={lg.url} alt={lg.name} style={{ maxHeight: 30, maxWidth: '100%', width: 'auto', objectFit: 'contain', filter: 'grayscale(1)', opacity: 0.78 }} />
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', columnGap: 30, marginTop: 26 }}>
-                        {(sec('channels').primary || []).slice(0, 8).map((n: string, i: number) => (
-                          <div key={i} style={{ padding: '13px 0', borderTop: '1px solid ' + t.rule }}>
-                            <span style={{ fontSize: 16.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em' }}>
-                              <Ed v={n} set={v => patch('channels.primary.' + i, v)} edit={edit} />
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div style={{ marginTop: 22, paddingTop: 16, borderTop: '1px solid ' + t.rule }}>
-                      <p style={{ fontSize: 11.5, color: t.muted, marginBottom: 9 }}>and the rest of the network</p>
-                      <p style={{ fontSize: 13, lineHeight: 1.9, color: t.sub }}>
-                        {(sec('channels').more || []).join('  ·  ')}
-                      </p>
-                    </div>
+                  <p style={{ marginTop: 26, fontSize: 16.5, lineHeight: 1.65, color: D.body, maxWidth: '58ch' }}>
+                    <Ed v={sec('channels').subtitle || ''} set={v => patch('channels.subtitle', v)} edit={edit} multiline />
+                  </p>
+
+                  <div style={{ marginTop: 40, paddingTop: 30, borderTop: '1px solid ' + D.rule, display: 'flex', alignItems: 'center', gap: 52, flexWrap: 'wrap' }}>
+                    {CHANNEL_MARKS.map(m => (
+                      <svg key={m.name} role="img" aria-label={m.name} viewBox="0 0 24 24"
+                        style={{ height: 30, width: 'auto', fill: 'rgba(255,255,255,0.88)', flex: '0 0 auto' }}>
+                        <title>{m.name}</title>
+                        <path d={m.d} />
+                      </svg>
+                    ))}
+                    <span style={{ fontSize: 14, color: D.muted }}>+ Vrbo, Blueground, Whimstay and the rest</span>
                   </div>
                 </div>
-                <Foot label="Where it sells" />
+                <Foot label="Where it sells" dark />
               </div>
             </Slide>
           ) })
@@ -2419,31 +2412,61 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               ) })
 
               slides.push({ key: 'listings', node: (
-                <Slide nav={String(L.name || 'Unit') + ' — copy'} warn={edit} ground={GROUND.light}>
+                <Slide nav={String(L.name || 'Unit') + ' \u2014 copy'} warn={edit} ground={GROUND.light}>
+                  {/* THE COPY SLIDE WAS THE PLAINEST THING IN THE DECK (Jon, 2026-09-16: "the
+                      listing description slide looks so plain and formatted poorly"). It was
+                      three grey labels stacked over three grey paragraphs in one column — a
+                      form, not a slide. What an owner is being shown is the thing a guest reads,
+                      so it is set like a listing page: the title as a headline in the display
+                      face with its character budget beside it, then the two descriptions in two
+                      columns so neither runs to twenty lines, each under a hairline. Still live
+                      to edit; the labels stop shouting and the words do the work. */}
                   <div className="flex flex-col h-full">
-                    <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
-                    <p style={{ fontSize: 12.5, color: t.muted }}>{L.name}&nbsp;&nbsp;·&nbsp;&nbsp;the words a guest reads</p>
-                    <div className="flex-1 min-h-0" style={{ marginTop: 18, overflowY: 'auto' }}>
-                      {[{ f: 'title', l: 'Listing title', cap: 50 }, { f: 'summary', l: 'Summary' }, { f: 'space', l: 'The space' }].map(F => {
-                        const val = String(L[F.f] || '')
-                        const over = !!F.cap && val.length > F.cap
-                        return (
-                          <div key={F.f} style={{ marginBottom: 22 }}>
-                            <p style={{ fontSize: 12, color: t.muted, marginBottom: 6 }}>
-                              {F.l}{over ? <span style={{ color: t.gold }}>{' · ' + val.length + ' of ' + F.cap}</span> : null}
-                            </p>
-                            {F.f === 'title' ? (
-                              <LiveText v={val} live={canEdit} t={t} single
-                                ro="" cls="onb-live"
-                                set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
-                            ) : (
-                              <LiveText v={val} live={canEdit} t={t}
-                                ro="" cls="onb-copy"
-                                set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
-                            )}
+                    <div className="flex items-baseline justify-between" style={{ gap: 28 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
+                        <p style={{ fontSize: 12, color: t.muted }}>{L.name}</p>
+                      </div>
+                      <p style={{ fontSize: 12, color: t.muted, whiteSpace: 'nowrap' }}>The words a guest reads</p>
+                    </div>
+
+                    {/* the headline, at headline size */}
+                    <div style={{ marginTop: 18 }}>
+                      <LiveText
+                        v={String(L.title || '')} live={canEdit} t={t} single
+                        ro="" cls="onb-title-live"
+                        set={v => { patch('listings.items.' + li + '.title', v); answerChanged() }} />
+                      <div className="flex items-center" style={{ gap: 10, marginTop: 8 }}>
+                        <div style={{ flex: 1, height: 3, borderRadius: 2, background: t.rule, overflow: 'hidden' }}>
+                          <div style={{
+                            width: Math.min(100, Math.round((String(L.title || '').length / 50) * 100)) + '%',
+                            height: '100%',
+                            background: String(L.title || '').length > 50 ? t.gold : t.accent,
+                          }} />
+                        </div>
+                        <span className="tabular-nums" style={{ fontSize: 11.5, color: String(L.title || '').length > 50 ? t.gold : t.muted, whiteSpace: 'nowrap' }}>
+                          {String(L.title || '').length} / 50 characters
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* the two descriptions, side by side so neither becomes a wall */}
+                    <div className="flex-1 min-h-0" style={{ marginTop: 26, display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 46 }}>
+                      {[{ f: 'summary', l: 'Summary', hint: 'The paragraph above the fold.' },
+                        { f: 'space', l: 'The space', hint: 'The room-by-room walkthrough.' }].map(F => (
+                        <div key={F.f} className="min-h-0 flex flex-col">
+                          <div style={{ paddingBottom: 9, borderBottom: '1px solid ' + t.ink, marginBottom: 14 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>{F.l}</span>
+                            <span style={{ fontSize: 12, color: t.muted, marginLeft: 10 }}>{F.hint}</span>
                           </div>
-                        )
-                      })}
+                          <div className="min-h-0" style={{ overflowY: 'auto', flex: 1 }}>
+                            <LiveText
+                              v={String(L[F.f] || '')} live={canEdit} t={t}
+                              ro="" cls="onb-copy"
+                              set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
+                          </div>
+                        </div>
+                      ))}
                     </div>
                     <Foot label="Your listing" />
                   </div>
@@ -2507,55 +2530,93 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             </Slide>
           ) })
 
-          // WHAT YOU CAN ACTUALLY DO IN THERE, on its own slide. It used to sit under the
-          // address and pushed that slide 39px past the bottom edge, which is precisely the
-          // failure Jon named — "sometimes all the items don't fit on one page". Four things
-          // an owner can do is a slide's worth of idea on its own.
-          if (!hid('guesty') && (sec('guesty').items || []).length) slides.push({ key: 'guesty', node: (
-            <Slide nav="Portal — what you can do" warn={edit} ground={GROUND.light}>
+          // WHAT THE PORTAL ACTUALLY LOOKS LIKE (Jon, 2026-09-16: "can we show a preview of
+          // the owner portal on that page, what they can see"). Telling an owner they have a
+          // portal is worth very little. Real screenshots are best and drop straight in the
+          // moment they exist on the template; until then this is a drawing of the thing —
+          // clearly our own styling, labelled as a preview, never passed off as a screenshot —
+          // showing the four screens they will actually land on.
+          if (!hid('guesty')) slides.push({ key: 'guesty', node: (
+            <Slide nav="Portal — a look inside" warn={edit} ground={GROUND.light}>
               <div className="flex flex-col h-full">
-                <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
-                <p style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink, lineHeight: 1.2 }}>
-                  What you can do in there
-                </p>
-                <div className="flex-1 min-h-0 flex items-center">
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '26px 44px', width: '100%' }}>
-                    {(sec('guesty').items || []).slice(0, 4).map((it: Any, ii: number) => (
-                      <div key={ii} style={{ paddingTop: 16, borderTop: '1px solid ' + t.rule }}>
-                        <p style={{ fontSize: 16, fontWeight: 600, color: t.ink }}>
-                          <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
-                        </p>
-                        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: t.muted, marginTop: 7 }}>
-                          <Ed v={it.v || ''} set={v => patch('guesty.items.' + ii + '.v', v)} edit={edit} multiline />
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <Foot label="Owner portal" />
-              </div>
-            </Slide>
-          ) })
-
-          // A THIRD PORTAL SLIDE WHEN WE HAVE THE SCREENSHOTS (Jon, 2026-09-16: "the Guesty
-          // owner portal should show what it looks like here"). Telling an owner they have a
-          // portal is worth very little; showing them the screen they will log into is worth
-          // the whole section. Shots live on the house template, so they are captured once.
-          if (!hid('guesty') && (sec('guesty').shots || []).length > 1) slides.push({ key: 'guesty', node: (
-            <Slide nav="Portal — a look inside" warn={edit}>
-              <div className="flex flex-col h-full">
-                <div className="flex items-baseline justify-between">
+                <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
                   <div>
                     <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
-                    <p style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink }}>This is what you will see</p>
+                    <p style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink, lineHeight: 1.2 }}>
+                      What you will see when you log in
+                    </p>
                   </div>
-                  <p style={{ fontSize: 12.5, color: t.muted }}>{String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '')}</p>
+                  <p style={{ fontSize: 12.5, color: t.muted, whiteSpace: 'nowrap' }}>
+                    {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '')}
+                  </p>
                 </div>
-                <div className="flex-1 min-h-0" style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16 }}>
-                  {(sec('guesty').shots || []).slice(1, 3).map((src: string, si: number) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img key={si} src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', borderRadius: 12, border: '1px solid ' + t.cardBorder }} />
-                  ))}
+
+                <div className="flex-1 min-h-0" style={{ marginTop: 22 }}>
+                  {(sec('guesty').shots || []).length > 1 ? (
+                    <div style={{ height: '100%', display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16 }}>
+                      {(sec('guesty').shots || []).slice(1, 3).map((src: string, si: number) => (
+                        <Pick key={si} title={'Portal screenshot ' + (si + 2)} cur={src}
+                          set={u => patch('guesty.shots.' + (si + 1), u)}
+                          style={{ width: '100%', height: '100%', borderRadius: 12, border: '1px solid ' + t.cardBorder }} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ height: '100%', display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 20 }}>
+                      {/* the window */}
+                      <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid ' + t.cardBorder, background: t.card, display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 14px', background: t.chip, borderBottom: '1px solid ' + t.rule }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 999, background: t.rule }} />
+                          <span style={{ width: 8, height: 8, borderRadius: 999, background: t.rule }} />
+                          <span style={{ width: 8, height: 8, borderRadius: 999, background: t.rule }} />
+                          <span style={{ fontSize: 11, color: t.muted, marginLeft: 10 }}>
+                            {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '')}
+                          </span>
+                        </div>
+                        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '116px 1fr', minHeight: 0 }}>
+                          <div style={{ borderRight: '1px solid ' + t.rule, padding: '14px 12px' }}>
+                            {['Calendar', 'Reservations', 'Statements', 'Documents'].map((n, i) => (
+                              <p key={n} style={{
+                                fontSize: 11.5, padding: '7px 9px', borderRadius: 6, marginBottom: 3,
+                                color: i === 0 ? t.bg : t.sub, background: i === 0 ? t.band : 'transparent',
+                              }}>{n}</p>
+                            ))}
+                          </div>
+                          <div style={{ padding: 14, minHeight: 0 }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 3 }}>
+                              {Array.from({ length: 28 }).map((_x, i) => {
+                                const booked = [3,4,5,9,10,11,12,16,17,18,22,23,24,25,26].indexOf(i) >= 0
+                                return <div key={i} style={{ height: 19, borderRadius: 3, background: booked ? hexA(t.accent, 0.5) : t.chip }} />
+                              })}
+                            </div>
+                            <div style={{ display: 'flex', gap: 16, marginTop: 13 }}>
+                              <span style={{ fontSize: 10.5, color: t.muted }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: hexA(t.accent, 0.5), marginRight: 5 }} />Booked</span>
+                              <span style={{ fontSize: 10.5, color: t.muted }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: t.chip, marginRight: 5 }} />Open</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* what each screen gives them */}
+                      <div className="flex flex-col justify-center">
+                        {(sec('guesty').items || []).slice(0, 4).map((it: Any, ii: number) => (
+                          <div key={ii} style={{ padding: '11px 0', borderTop: ii === 0 ? 'none' : '1px solid ' + t.rule }}>
+                            <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
+                              <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
+                            </p>
+                            <p style={{
+                              fontSize: 12.5, lineHeight: 1.5, color: t.muted, marginTop: 3,
+                              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                            } as Any}>
+                              <Ed v={it.v || ''} set={v => patch('guesty.items.' + ii + '.v', v)} edit={edit} multiline />
+                            </p>
+                          </div>
+                        ))}
+                        <p style={{ fontSize: 11, color: t.muted, marginTop: 14, fontStyle: 'italic' }}>
+                          Illustration of the portal layout &mdash; not a screenshot.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <Foot label="Owner portal" />
               </div>
