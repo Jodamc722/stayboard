@@ -342,6 +342,12 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
         </div>
 
         {/* ── SIDE: people, money, what it is about, files ──
+            Closed means GONE, not moved. With the grid at one column the rail simply became a
+            second row under the board — full-width cards where a narrow column used to be, which
+            is more of it, not less. The toggle in the header brings it back. */}
+        {railOpen && (
+        <>
+        {/*
             A PANEL WITH NOTHING IN IT DOES NOT GET A CARD. On a board created five minutes ago all
             four of these rendered at full height, each explaining its own emptiness — four headers,
             four borders and about four hundred pixels of prose saying "no invoices yet", "nothing
@@ -371,6 +377,8 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
 
       {current && (
