@@ -93,7 +93,16 @@ export type OnboardingContent = {
     shots: string[]
   }>
   tech: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }>
-  team: Sec<{ headline: string; subtitle: string; people: { name: string; role: string; blurb: string; photo?: string | null; phone?: string; email?: string }[] }>
+  team: Sec<{
+    headline: string; subtitle: string
+    people: { name: string; role: string; blurb: string; photo?: string | null; phone?: string; email?: string }[]
+    /**
+     * THE SHARED INBOX, PRESENTED AS WHAT IT IS (Jon, 2026-09-16). It sits under the four faces
+     * rather than beside them as a fifth card: this slide's whole promise is that the owner gets
+     * people, so the inbox has to read as the backstop behind them, not as one of them.
+     */
+    support: { label: string; note: string; email: string }
+  }>
   comms: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }>
   money: Sec<{ headline: string; subtitle: string; body: string; rules: KV[]; examples: { title: string; lines: KV[]; total: string; verdict: string; tone: 'ok' | 'hold' }[]; asks: Ask[] }>
   statement: Sec<{
@@ -151,6 +160,9 @@ export type OnboardingTemplate = {
   seasonBody: string
   seasonNote: string
   team: { name: string; role: string; blurb: string; photo?: string | null; market?: string; phone?: string; email?: string }[]
+  supportLabel: string
+  supportNote: string
+  supportEmail: string
   commsBody: string
   commsRows: KV[]
   portalItems: KV[]
@@ -236,9 +248,15 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   team: [
     { name: 'Jonathan', role: 'General Manager', blurb: 'Runs Stay Hospitality day to day. On your onboarding call, and the person to call when something matters more than a ticket.', photo: null, phone: '', email: '' },
     { name: 'Roberto Chiriboga', role: 'Operations Manager', blurb: 'Owns what happens in the unit \u2014 turnovers, inspections and the maintenance calendar. Your day-to-day answer.', photo: null, phone: '', email: '' },
-    { name: 'Karla Valle', role: 'Guest Care', blurb: 'Answers your guests, from the booking question to the 11pm one. Most of what she handles never needs to reach you.', photo: null, phone: '', email: '' },
-    { name: 'Bernadette', role: 'Owner Relations', blurb: 'Your statements, your payouts and your reporting. The person to ask about any line on a statement.', photo: null, phone: '', email: '' },
+    { name: 'Karla Valle', role: 'Field Coordinator', blurb: 'Coordinates what happens on the ground \u2014 turnovers, inspections and the daily schedule across every unit.', photo: null, phone: '', email: '' },
+    // "Administration and team support" is the job; "Administration Lead" is the title, because
+    // a card that lists two functions reads as someone who does neither.
+    { name: 'Bernadette', role: 'Administration Lead', blurb: 'Owner paperwork, statements and payouts, and keeping the field team scheduled and supplied.', photo: null, phone: '', email: '' },
   ],
+
+  supportLabel: 'Support team',
+  supportNote: 'Anything that is not urgent, anything you would rather put in writing, and anything you want a record of. Watched every business day.',
+  supportEmail: 'support@stay-hospitality.com',
 
   commsBody:
     'Guest messaging runs through Guesty and it does not touch you. Booking confirmations, check-in instructions, door codes, mid-stay questions, the 11pm "how does the thermostat work" — all of it is handled, most of it automatically, the rest by our coordination team.',
@@ -380,6 +398,9 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     // The one list whose empty state is meaningful: no team saved yet means we fall back to the
     // live staff roster at generate time rather than printing nobody.
     team: Array.isArray(stored.team) ? stored.team : D.team,
+    supportLabel: str(stored.supportLabel, D.supportLabel),
+    supportNote: str(stored.supportNote, D.supportNote),
+    supportEmail: str(stored.supportEmail, D.supportEmail),
     commsBody: str(stored.commsBody, D.commsBody),
     commsRows: arr(stored.commsRows, D.commsRows),
     portalItems: arr(stored.portalItems, D.portalItems),
@@ -586,6 +607,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       subtitle: 'Four people, named, with direct lines. You are not handed to an inbox.',
       people: t.team.filter(p => !p.market || !i.market || String(p.market).toLowerCase() === String(i.market).toLowerCase())
         .map(p => ({ name: p.name, role: p.role, blurb: p.blurb, photo: p.photo || null, phone: p.phone || '', email: p.email || '' })),
+      support: { label: t.supportLabel, note: t.supportNote, email: t.supportEmail },
     },
     comms: {
       headline: 'How guests reach us, and how you reach us',
