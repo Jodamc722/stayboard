@@ -99,6 +99,8 @@ export type OnboardingContent = {
     note: string
     /** What can and cannot reach this statement. Folded in from the old billables section. */
     rules: KV[]
+    /** The three the owner will actually remember. Said out loud; the rules are the small print. */
+    highlights: KV[]
   }>
   checklist: Sec<{ headline: string; subtitle: string; rows: { item: string; who: string; by: string }[] }>
   nextup: Sec<{ headline: string; subtitle: string; rows: KV[] }>
@@ -203,7 +205,16 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   seasonNote:
     'Shape only — this is the market’s year, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
 
-  team: [],
+  // THE FOUR PEOPLE AN OWNER MEETS (Jon, 2026-09-16: "the about the team should be Roberto,
+  // Karla, Jonathan (me) and Bernadette"). Written once here rather than pulled from the staff
+  // roster: the roster is a payroll list of 58 and it was seeding the deck with whoever happened
+  // to sort first. Edit these four in settings and every future deck follows.
+  team: [
+    { name: 'Jonathan', role: 'Founder', blurb: 'Runs Stay Hospitality. On your onboarding call, and the person to call when something matters more than a ticket.', photo: null, phone: '', email: '' },
+    { name: 'Roberto Chiriboga', role: 'Operations Manager', blurb: 'Owns what happens in the unit \u2014 turnovers, inspections and the maintenance calendar. Your day-to-day answer.', photo: null, phone: '', email: '' },
+    { name: 'Karla Valle', role: 'Guest Care', blurb: 'Answers your guests, from the booking question to the 11pm one. Most of what she handles never needs to reach you.', photo: null, phone: '', email: '' },
+    { name: 'Bernadette', role: 'Owner Relations', blurb: 'Your statements, your payouts and your reporting. The person to ask about any line on a statement.', photo: null, phone: '', email: '' },
+  ],
 
   commsBody:
     'Guest messaging runs through Guesty and it does not touch you. Booking confirmations, check-in instructions, door codes, mid-stay questions, the 11pm "how does the thermostat work" — all of it is handled, most of it automatically, the rest by our coordination team.',
@@ -533,9 +544,8 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       asks: asks('season'),
     },
     team: {
-      photo: pic(6),
-      headline: 'The people who will actually be in your unit',
-      subtitle: 'You are not handed to an inbox.',
+      headline: 'Meet the team',
+      subtitle: 'Four people, named, with direct lines. You are not handed to an inbox.',
       people: t.team.filter(p => !p.market || !i.market || String(p.market).toLowerCase() === String(i.market).toLowerCase())
         .map(p => ({ name: p.name, role: p.role, blurb: p.blurb, photo: p.photo || null, phone: p.phone || '', email: p.email || '' })),
     },
@@ -612,6 +622,11 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       chargesTotal: money2(chargeTotal),
       also: t.statementAlso,
       rules,
+      highlights: [
+        { k: 'Departure cleans', v: 'Never billed to you. The guest\u2019s cleaning fee pays for the turnover.' },
+        { k: `Labor ${money0(rate)}/hr, parts at cost`, v: 'The technician\u2019s actual clock. No markup, no trip charge.' },
+        { k: `Anything over ${money0(limit)}`, v: 'Goes to you first, with photos and options. Nothing is bought without your yes.' },
+      ],
       note: `Labor is ${money0(rate)} an hour on the technician’s actual clock. Materials are at cost. Nothing on this line is a markup, a trip charge, or a management fee by another name — the ${t.mgmtPct}% above is the only fee we take.`,
     },
     checklist: {
