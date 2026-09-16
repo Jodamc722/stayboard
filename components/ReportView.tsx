@@ -3016,13 +3016,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </div>
 
                   {/* the performance strip */}
-                  <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: t.cardBorder, border: '1px solid ' + t.cardBorder, borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: t.cardBorder, border: '1px solid ' + t.cardBorder, borderRadius: 10, overflow: 'hidden' }}>
                     {(sec('statement').kpis || []).map((k: Any, i: number) => (
-                      <div key={i} style={{ background: t.card, padding: '13px 16px' }}>
+                      <div key={i} style={{ background: t.card, padding: '10px 16px' }}>
                         <p style={{ fontSize: 11.5, color: t.muted }}>
                           <Ed v={k.k || ''} set={v => patch('statement.kpis.' + i + '.k', v)} edit={edit} />
                         </p>
-                        <p className="tabular-nums" style={{ fontSize: 21, fontWeight: 600, color: t.ink, marginTop: 3, letterSpacing: '-0.02em' }}>
+                        <p className="tabular-nums" style={{ fontSize: 19, fontWeight: 600, color: t.ink, marginTop: 2, letterSpacing: '-0.02em' }}>
                           <Ed v={k.v || ''} set={v => patch('statement.kpis.' + i + '.v', v)} edit={edit} />
                         </p>
                       </div>
@@ -3030,30 +3030,30 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </div>
 
                   {/* the category summary */}
-                  <div className="flex-1 min-h-0" style={{ marginTop: 18, display: 'grid', gridTemplateColumns: '1.15fr 1fr', columnGap: 44 }}>
+                  <div className="flex-1 min-h-0" style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1.15fr 1fr', columnGap: 44 }}>
                     <div className="min-h-0 flex flex-col">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: t.chip, borderRadius: '6px 6px 0 0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: t.chip, borderRadius: '6px 6px 0 0' }}>
                         <span style={{ fontSize: 11.5, color: t.sub }}>Category</span>
                         <span style={{ fontSize: 11.5, color: t.sub }}>Monthly amount</span>
                       </div>
-                      <div className="min-h-0 onb-scroll">
+                      <div>
                         {(sec('statement').summary || []).map((ln: Any, i: number) => (
                           <div key={i} style={{
                             display: 'flex', justifyContent: 'space-between', gap: 16,
-                            padding: '8px 12px', borderBottom: '1px solid ' + t.rule,
+                            padding: '5px 12px', borderBottom: '1px solid ' + t.rule,
                             borderTop: ln.rule ? '1px solid ' + t.ink : undefined,
                           }}>
-                            <span style={{ fontSize: 13, color: ln.rule ? t.ink : t.body, fontWeight: ln.rule ? 600 : 400 }}>
+                            <span style={{ fontSize: 12.5, color: ln.rule ? t.ink : t.body, fontWeight: ln.rule ? 600 : 400 }}>
                               <Ed v={ln.k || ''} set={v => patch('statement.summary.' + i + '.k', v)} edit={edit} />
                             </span>
-                            <span className="tabular-nums" style={{ fontSize: 13, fontWeight: ln.rule ? 600 : 500, whiteSpace: 'nowrap', color: ln.neg ? t.gold : t.ink }}>
+                            <span className="tabular-nums" style={{ fontSize: 12.5, fontWeight: ln.rule ? 600 : 500, whiteSpace: 'nowrap', color: ln.neg ? t.gold : t.ink }}>
                               <Ed v={ln.v || ''} set={v => patch('statement.summary.' + i + '.v', v)} edit={edit} />
                             </span>
                           </div>
                         ))}
                       </div>
                       {/* the row the whole document exists to produce */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '13px 14px', background: t.band, borderRadius: '0 0 6px 6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '11px 14px', marginTop: 'auto', background: t.band, borderRadius: '0 0 6px 6px' }}>
                         <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.78)' }}>
                           <Ed v={(sec('statement').due || {}).k || ''} set={v => patch('statement.due.k', v)} edit={edit} />
                         </span>
