@@ -442,7 +442,8 @@ export function listingCardFrom(l: any): ListingCard {
   const pub = raw.publicDescription || raw.publicDescriptions || {}
   const pics: string[] = Array.isArray(l.pictures) ? l.pictures.filter(Boolean) : []
   const bits = [
-    l.bedrooms != null ? `${l.bedrooms} BR` : null,
+    // "0 BR" is not a thing an owner calls their unit.
+    l.bedrooms != null ? (Number(l.bedrooms) === 0 ? 'Studio' : `${l.bedrooms} BR`) : null,
     l.bathrooms != null ? `${l.bathrooms} BA` : null,
     l.max_occupancy != null ? `sleeps ${l.max_occupancy}` : null,
   ].filter(Boolean)
