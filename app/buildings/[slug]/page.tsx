@@ -10,6 +10,7 @@ import { Shell } from '@/components/Shell'
 import { BulkAmenityPanel } from '@/components/BulkAmenityPanel'
 import { BulkPolicyPanel } from '@/components/BulkPolicyPanel'
 import { BulkPhotoPanel } from '@/components/BulkPhotoPanel'
+import { BulkListingCopy } from '@/components/BulkListingCopy'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon, Sparkles, MessageSquare } from 'lucide-react'
 import { ratingToStars } from '@/lib/optimize-score'
@@ -113,7 +114,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
         )}
       </header>
 
-      <div className="mb-5 flex flex-wrap gap-2"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /><BulkPolicyPanel units={bulkUnits} /><BulkPhotoPanel units={bulkUnits} /></div>
+      <div className="mb-5 flex flex-wrap gap-2"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /><BulkPolicyPanel units={bulkUnits} /><BulkPhotoPanel units={bulkUnits} /><BulkListingCopy scope="property" building={buildingName} /></div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {scored.map(({ l, dead, score, suggestions, mustFix }) => {
