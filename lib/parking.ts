@@ -25,15 +25,68 @@
 // not have to be born attached to a stay: an unassigned one sits in the pool until somebody binds
 // it. Claiming is a conditional UPDATE, so two people cannot take the same code — see claimSpare.
 import 'server-only'
+import { randomBytes } from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
 import { buildingOf, marketOf } from './segments'
 import { pageRows } from './db-page'
 import { isLiveStay } from './stay-status'
+import { getSetting } from './app-settings'
+import { getToken } from './guesty'
+import { writeCustomFields } from './guesty-custom-fields'
+import { guestyFieldId, fieldIdHelp } from './guesty-field-id'
 
 const TZ = 'America/New_York'
 export const PARKING_BUCKET = 'parking-qr'
 /** A QR opens a gate, so the read is short — long enough to render, not to pass around. */
 export const QR_SIGNED_SECONDS = 300
+
+// ── THE PERMIT'S OWN ADDRESS ────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-16: "Once the QR code is uploaded, we need to find a way to map that QR code to the
+// reservation in Guesty."
+//
+// The thing written onto the booking is /permit/<token>, never the image and never a signed URL.
+// A signed URL lives five minutes; a reservation lives weeks, so a field holding one would hold a
+// dead link by the time anybody opened it. The token resolves to a fresh signed read on each open
+// and stops resolving the moment the permit is voided — which is what makes a replaced code
+// actually replaced rather than two live credentials for one gate.
+//
+// It is NOT the permit's uuid. That id is what the vendor's page passes around on a machine a
+// garage office shares; a capability that ends up in a guest's confirmation should not be the same
+// string that authorises the vendor UI.
+const newToken = () => randomBytes(32).toString('hex')
+const TOKEN_RE = /^[a-f0-9]{64}$/i
+
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+export const permitUrl = (token: string) => APP_URL + '/permit/' + token
+
+/**
+ * WHICH GUESTY FIELD THE LINK GOES IN. A name or the field's own 24-hex id — see guesty-field-id
+ * for why the id is the escape hatch. Stored in app_settings so it is changed without a deploy,
+ * and defaulted to the label somebody would naturally create in Guesty.
+ */
+export const PARKING_CFG_KEY = 'parking_cfg'
+export type ParkingCfg = { customFieldName: string; writeToGuesty: boolean }
+export const PARKING_CFG_DEFAULTS: ParkingCfg = { customFieldName: 'Parking QR', writeToGuesty: true }
+/**
+ * Read in the order somebody can actually change it: the stored setting, then the environment
+ * variable, then the label a person would naturally create in Guesty.
+ *
+ * THE ENV VAR IS NOT DECORATION. There is no settings screen for this yet, so without it the only
+ * way to point the feature at a different field would be hand-inserting a row into app_settings —
+ * and the advice the failure message gives ("paste the field's own ID") would name a box that does
+ * not exist in the product. PARKING_QR_FIELD is a box that does exist: Vercel, one value, no
+ * deploy of ours required.
+ */
+export const PARKING_FIELD_ENV = 'PARKING_QR_FIELD'
+export async function getParkingCfg(): Promise<ParkingCfg> {
+  const s = await getSetting<any>(PARKING_CFG_KEY, null)
+  const env = String(process.env[PARKING_FIELD_ENV] || '').trim()
+  return {
+    customFieldName: (typeof s?.customFieldName === 'string' && s.customFieldName.trim())
+      || env || PARKING_CFG_DEFAULTS.customFieldName,
+    writeToGuesty: s?.writeToGuesty === false ? false : true,
+  }
+}
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
@@ -188,7 +241,12 @@ export type ParkingRow = {
   inHouse: boolean
   /** The folio line, or null. BOOKED — not a statement that the guest has settled it. */
   parkingBooked: number | null
-  permit: { id: string; label: string | null; uploadedAt: string; uploadedBy: string | null; wasSpare: boolean } | null
+  permit: {
+    id: string; label: string | null; uploadedAt: string; uploadedBy: string | null; wasSpare: boolean
+    /** Written onto the reservation in Guesty — the mapping Jon asked for, and whether it landed. */
+    inGuesty: boolean
+    guestyError: string | null
+  } | null
 }
 
 export type ParkingBoard = {
@@ -200,7 +258,7 @@ export type ParkingBoard = {
   windowDays: number
   guestNames: boolean
   rows: ParkingRow[]
-  counts: { stays: number; withPermit: number; needPermit: number; parkingBooked: number }
+  counts: { stays: number; withPermit: number; needPermit: number; parkingBooked: number; inGuesty: number }
   pool: { spare: number; items: { id: string; label: string | null; uploadedAt: string }[] }
   /**
    * A SHORT READ IS NOT AN EMPTY DAY. pageRows reports truncation AND treats a query error as
@@ -280,6 +338,8 @@ export async function buildParkingBoard(link: ParkingLink): Promise<ParkingBoard
         id: str(p.id), label: p.label ? str(p.label) : null,
         uploadedAt: str(p.uploaded_at), uploadedBy: p.uploaded_by ? str(p.uploaded_by) : null,
         wasSpare: !!p.assigned_at && str(p.assigned_at) !== str(p.uploaded_at),
+        inGuesty: !!p.guesty_written_at,
+        guestyError: p.guesty_error ? str(p.guesty_error) : null,
       } : null,
     }
   })
@@ -299,6 +359,7 @@ export async function buildParkingBoard(link: ParkingLink): Promise<ParkingBoard
       withPermit: rows.filter(r => !!r.permit).length,
       needPermit: rows.filter(r => !r.permit).length,
       parkingBooked: rows.filter(r => r.parkingBooked != null).length,
+      inGuesty: rows.filter(r => !!r.permit?.inGuesty).length,
     },
     pool: {
       spare: (spareRows || []).length,
@@ -368,7 +429,7 @@ export async function attachPermit(inp: AttachInput): Promise<{ ok: true; id: st
   }
 
   const now = new Date().toISOString()
-  const { data, error } = await db.from('parking_permits').insert({
+  const row: Record<string, any> = {
     building: inp.building,
     reservation_id: inp.stay ? inp.stay.reservationId : null,
     listing_id: inp.stay ? inp.stay.listingId : null,
@@ -376,6 +437,7 @@ export async function attachPermit(inp: AttachInput): Promise<{ ok: true; id: st
     check_in: inp.stay ? inp.stay.checkIn : null,
     check_out: inp.stay ? inp.stay.checkOut : null,
     storage_path: path,
+    permit_token: newToken(),
     mime: inp.mime,
     bytes: inp.bytes.length,
     label: inp.label,
@@ -385,7 +447,19 @@ export async function attachPermit(inp: AttachInput): Promise<{ ok: true; id: st
     uploaded_at: now,
     assigned_at: inp.stay ? now : null,
     assigned_by: inp.stay ? inp.who : null,
-  }).select('id').limit(1)
+  }
+  let { data, error } = await db.from('parking_permits').insert(row).select('id').limit(1)
+
+  // MIGRATION 094 MAY NOT HAVE RUN YET. Migrations here are applied by hand, so a deploy can land
+  // on a Friday and the SQL on a Monday — and `permit_token` is in the INSERT column list, not a
+  // tolerant read, so PostgREST would reject every upload in between with an unactionable "Could
+  // not save that code". The QR is the thing that matters; the token can be minted on the next
+  // write. So one retry without it, and only for that one error.
+  if (error && /permit_token/i.test(String(error.message || '') + String((error as any).details || ''))) {
+    delete row.permit_token
+    const again = await db.from('parking_permits').insert(row).select('id').limit(1)
+    data = again.data; error = again.error
+  }
 
   if (error) {
     // No orphans, in either direction: the bytes go, and any permit we voted off the island comes
@@ -536,3 +610,212 @@ export async function tooManyWrong(code: string, ip: string | null): Promise<boo
 }
 
 export const LOCKOUT_MINUTES = WRONG_WINDOW_MIN
+
+// ── MAPPING THE CODE BACK ONTO THE RESERVATION IN GUESTY ────────────────────────────────────────
+// Jon, 2026-09-16: "Once the QR code is uploaded, we need to find a way to map that QR code to the
+// reservation in Guesty."
+//
+// Which makes the permit visible where the rest of the company already works. The guest's
+// confirmation template can carry the merge tag; the reservation page shows the link; the
+// send-on-payment rule, when it is built, has something to send.
+//
+// THREE THINGS THIS DELIBERATELY DOES:
+//
+// 1. IT NEVER FAILS THE UPLOAD. A Guesty outage, a rate limit, a field nobody created yet — none
+//    of those should lose a QR the vendor has in their hand right now. The bytes are already
+//    stored; the write is recorded as pending and retried.
+// 2. IT LEAVES A TRACE EITHER WAY. `guesty_written_at` or `guesty_error`, always one of them. A
+//    write that fails silently is a reservation missing its code, discovered by a guest at a gate.
+// 3. IT GOES THROUGH writeCustomFields. Guesty's PUT REPLACES the whole custom-field array — that
+//    is not a theory, it wiped an Elser confirmation number on 2026-07-31. Never write the field
+//    array directly from here.
+
+export type PermitWrite = { ok: boolean; note: string; url?: string }
+
+/**
+ * A HARD CEILING ON HOW LONG THE VENDOR WAITS FOR GUESTY.
+ *
+ * "The upload must never fail because of Guesty" was only true for guesty ERRORS. Slowness is the
+ * common shape — a degraded or rate-limited API answers late, not never — and none of the fetches
+ * on this path carry a timeout, so a stalled connection would sit there until the platform killed
+ * the function at 60 seconds. The vendor then got a bare 504 with no JSON body, read it as "the
+ * upload failed", and tapped again — which voids the permit they just made and mints a third
+ * token, while the reservation may still point at the first.
+ *
+ * So the write gets a few seconds and then we stop waiting for it. The permit is already stored,
+ * the row is still unstamped, and the hourly retry is exactly the thing that finishes the job. The
+ * abandoned attempt is harmless if it lands late: the write is idempotent.
+ */
+export async function writePermitToGuestyWithin(permitId: string, budgetMs = 8000): Promise<PermitWrite> {
+  let timer: any = null
+  try {
+    return await Promise.race([
+      writePermitToGuesty(permitId),
+      new Promise<PermitWrite>(resolve => {
+        timer = setTimeout(() => resolve({ ok: false, note: 'Guesty did not answer in time; it will be retried.' }), budgetMs)
+      }),
+    ])
+  } catch (e: any) {
+    return { ok: false, note: String(e?.message || e).slice(0, 140) }
+  } finally { if (timer) clearTimeout(timer) }
+}
+
+/**
+ * Write one assigned permit's stable URL onto its reservation. Idempotent: the same permit written
+ * twice puts the same URL in the same field.
+ */
+export async function writePermitToGuesty(permitId: string): Promise<PermitWrite> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('parking_permits')
+    .select('id,reservation_id,permit_token,status,guesty_tries').eq('id', permitId).limit(1)
+  const p = (data || [])[0] as any
+  if (!p) return { ok: false, note: 'permit not found' }
+  if (str(p.status) !== 'assigned' || !p.reservation_id) return { ok: false, note: 'not bound to a stay' }
+
+  // A row from before migration 094, or a backfill that did not run. Mint one rather than refuse —
+  // the mapping is the point of the exercise.
+  let token = str(p.permit_token)
+  if (!TOKEN_RE.test(token)) {
+    token = newToken()
+    const { error } = await db.from('parking_permits').update({ permit_token: token }).eq('id', p.id)
+    if (error) return { ok: false, note: 'could not mint a permit token' }
+  }
+  const url = permitUrl(token)
+
+  // EVERY EXIT LEAVES A MARK. An early return that stamps nothing is a row that stays pending
+  // forever with no reason recorded — it keeps its place in the retry queue, and the board tells
+  // the vendor "not on the reservation yet" while saying nothing about why.
+  const tries = Number(p.guesty_tries) || 0
+  const stamp = async (fields: Record<string, any>) => {
+    try { await db.from('parking_permits').update(fields).eq('id', p.id) } catch { /* the caller already has the answer */ }
+  }
+  const fail = async (note: string, extra?: Record<string, any>): Promise<PermitWrite> => {
+    await stamp({ guesty_error: note.slice(0, 400), guesty_written_at: null, guesty_tries: tries + 1, ...(extra || {}) })
+    return { ok: false, note, url }
+  }
+
+  const cfg = await getParkingCfg()
+  if (!cfg.writeToGuesty) return await fail('writing permits to Guesty is switched off in settings')
+
+  const fieldId = await guestyFieldId(cfg.customFieldName)
+  if (!fieldId) return await fail(fieldIdHelp(cfg.customFieldName, 'the ' + PARKING_FIELD_ENV + ' environment variable'))
+
+  let token2 = ''
+  try { token2 = await getToken() } catch (e: any) {
+    return await fail('Guesty token: ' + String(e?.message || e).slice(0, 100))
+  }
+
+  const r = await writeCustomFields(str(p.reservation_id), token2, [{ fieldId, value: url }])
+  if (!r.ok) return await fail(r.note || 'write failed', { guesty_field_id: fieldId })
+  await stamp({ guesty_written_at: new Date().toISOString(), guesty_error: null, guesty_field_id: fieldId })
+  // Mirror the merged array so the reservation drawer in Lighthouse shows it without waiting for
+  // the next Guesty sync. Cosmetic — a failure here changes nothing that matters.
+  try { await db.from('guesty_reservations').update({ custom_fields: r.fields }).eq('id', str(p.reservation_id)) } catch { /* cosmetic */ }
+  return { ok: true, note: 'written to "' + cfg.customFieldName + '"', url }
+}
+
+// ── /permit/<token> — WHAT THE RESERVATION ACTUALLY POINTS AT ───────────────────────────────────
+// No passcode: this is the link a GUEST follows out of their confirmation, and a guest has no
+// credential to give. The token is the whole capability, which is why it is 64 hex characters and
+// why it stops resolving the moment the permit is voided — a replaced code is replaced, not a
+// second live credential for the same gate.
+
+export type PermitView = {
+  unit: string | null
+  checkIn: string | null
+  checkOut: string | null
+  mime: string | null
+  isPdf: boolean
+}
+
+/** The permit behind a token, or null — void, unknown and malformed all answer the same way. */
+export async function permitByToken(token: string): Promise<{ id: string; storage_path: string; mime: string | null; sourceCode: string | null; view: PermitView } | null> {
+  const t = String(token || '')
+  if (!TOKEN_RE.test(t)) return null
+  const db = supabaseAdmin()
+  const { data } = await db.from('parking_permits')
+    .select('id,storage_path,mime,status,unit,check_in,check_out,reservation_id,source_code').eq('permit_token', t).limit(1)
+  let p = (data || [])[0] as any
+  if (!p) return null
+
+  // A REPLACED CODE FOLLOWS THE STAY, NOT THE FILE.
+  //
+  // Replacing a permit voids the old row and mints a new token, and the new URL only reaches the
+  // reservation once the Guesty write lands — which can be an hour later, or never if Guesty is
+  // refusing us. In that window the guest's confirmation still points at the old token, and a flat
+  // "voided means gone" would answer them with "this pass is no longer available" while a perfectly
+  // good code sat on their stay. So a retired token resolves to whatever is live for the SAME
+  // reservation: the person holding it was given it for that stay, and that stay is what they get.
+  // With nothing live it still says nothing — a stay with no permit has no pass to show.
+  if (str(p.status) !== 'assigned' && p.reservation_id) {
+    const { data: live } = await db.from('parking_permits')
+      .select('id,storage_path,mime,status,unit,check_in,check_out,reservation_id,source_code')
+      .eq('reservation_id', str(p.reservation_id)).eq('status', 'assigned').limit(1)
+    p = (live || [])[0] as any
+  }
+  // A spare has an image but no stay, so its token addresses nothing anyone should be sent to.
+  if (!p || str(p.status) !== 'assigned') return null
+  const mime = p.mime ? str(p.mime) : null
+  return {
+    id: str(p.id),
+    storage_path: str(p.storage_path),
+    mime,
+    sourceCode: p.source_code ? str(p.source_code) : null,
+    view: {
+      unit: p.unit ? str(p.unit) : null,
+      checkIn: p.check_in ? str(p.check_in).slice(0, 10) : null,
+      checkOut: p.check_out ? str(p.check_out).slice(0, 10) : null,
+      mime,
+      isPdf: mime === 'application/pdf',
+    },
+  }
+}
+
+/** A fresh short-lived read for a token that has already been resolved. */
+export async function signedForPath(storagePath: string): Promise<string | null> {
+  const signed = await supabaseAdmin().storage.from(PARKING_BUCKET)
+    .createSignedUrl(storagePath, QR_SIGNED_SECONDS)
+  return signed.data?.signedUrl || null
+}
+
+/**
+ * RETRY THE WRITES THAT DID NOT LAND.
+ *
+ * The upload route is forbidden from failing over Guesty — the vendor has the code in their hand
+ * and losing it to a rate limit would be the worst trade on that page. The price of that choice is
+ * that something has to come back for the ones that did not land, otherwise "we will retry" is a
+ * sentence the page has no right to say.
+ *
+ * Only stays that have not ended yet: a permit for last Tuesday is history, and retrying it burns
+ * Guesty calls the arrivals need. Small batch on purpose — each write is a GET and a PUT against an
+ * API that has answered 429 before.
+ */
+export const GUESTY_MAX_TRIES = 8
+export async function retryPendingGuestyWrites(limit = 20): Promise<{ tried: number; ok: number; errors: string[] }> {
+  const out = { tried: 0, ok: 0, errors: [] as string[] }
+  // Switched off in settings means switched off here too — otherwise the batch spends every slot
+  // on rows it is going to refuse, hour after hour.
+  const cfg = await getParkingCfg()
+  if (!cfg.writeToGuesty) return out
+  const today = ymdET(new Date())
+  const { data } = await supabaseAdmin().from('parking_permits')
+    .select('id,unit,check_in')
+    .eq('status', 'assigned').not('reservation_id', 'is', null).is('guesty_written_at', null)
+    .gte('check_out', today)
+    // GIVE UP EVENTUALLY. A reservation cancelled in Guesty can never be written to; without this
+    // it holds a slot in every batch until its check-out passes, and the permits behind it in
+    // check_in order are never retried at all.
+    .lt('guesty_tries', GUESTY_MAX_TRIES)
+    .order('check_in').limit(Math.max(1, Math.min(50, limit)))
+  for (const p of ((data || []) as any[])) {
+    out.tried++
+    try {
+      const r = await writePermitToGuesty(str(p.id))
+      if (r.ok) out.ok++
+      else if (out.errors.length < 5) out.errors.push(str(p.unit) + ': ' + r.note)
+    } catch (e: any) {
+      if (out.errors.length < 5) out.errors.push(str(p.unit) + ': ' + String(e?.message || e).slice(0, 120))
+    }
+  }
+  return out
+}

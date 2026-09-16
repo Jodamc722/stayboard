@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { parkingGate } from '@/lib/parking-gate'
 import { requireLevel } from '@/lib/access'
-import { buildParkingBoard, claimSpare, logParking } from '@/lib/parking'
+import { buildParkingBoard, claimSpare, logParking, writePermitToGuestyWithin } from '@/lib/parking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -49,7 +49,15 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   })
   if (!res.ok) return NextResponse.json({ ok: false, error: res.error }, { status: 409 })
 
+  // A spare becomes a real permit the moment it lands on a stay, so this is where it gets its
+  // address on the booking — the same write the vendor's upload does, for the same reason.
+  const guesty = await writePermitToGuestyWithin(res.id)
+
   await logParking({ code: gate.link.code, action: 'assign', ip: gate.ip,
-    detail: 'spare ' + permitId + ' -> ' + reservationId + ' · ' + row.unit + ' · by ' + who })
-  return NextResponse.json({ ok: true, id: res.id, left: Math.max(0, board.pool.spare - 1) })
+    detail: 'spare ' + permitId + ' -> ' + reservationId + ' · ' + row.unit + ' · by ' + who
+      + (guesty.ok ? ' · mapped in Guesty' : ' · Guesty write pending: ' + guesty.note) })
+  return NextResponse.json({
+    ok: true, id: res.id, left: Math.max(0, board.pool.spare - 1),
+    guesty: { ok: guesty.ok, note: guesty.note },
+  })
 }

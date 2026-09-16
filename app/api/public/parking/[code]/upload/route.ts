@@ -23,7 +23,7 @@
 // drop for anybody holding the passcode.
 import { NextRequest, NextResponse } from 'next/server'
 import { parkingGate } from '@/lib/parking-gate'
-import { buildParkingBoard, attachPermit, logParking, sniffMime, uploadsInLastHour, UPLOADS_PER_HOUR } from '@/lib/parking'
+import { buildParkingBoard, attachPermit, logParking, sniffMime, uploadsInLastHour, UPLOADS_PER_HOUR, writePermitToGuestyWithin } from '@/lib/parking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -101,9 +101,24 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   })
   if (!res.ok) return NextResponse.json({ ok: false, error: res.error }, { status: 500 })
 
+  // MAP IT ONTO THE BOOKING (Jon: "we need to find a way to map that QR code to the reservation in
+  // Guesty"). Deliberately AFTER the permit is safely stored and deliberately not able to fail the
+  // upload: the vendor has the code in their hand now, and losing it because Guesty is rate-limited
+  // would be the worst trade on this page. A failure is recorded on the row and retried later, and
+  // the vendor is told plainly rather than shown a success that was only half true.
+  let guesty: { ok: boolean; note: string } | null = null
+  if (!spare) {
+    guesty = await writePermitToGuestyWithin(res.id)
+  }
+
   await logParking({
     code: gate.link.code, action: 'upload', ip: gate.ip,
-    detail: (spare ? 'spare' : 'stay ' + reservationId + ' · ' + (stay?.unit || '')) + ' · by ' + who + (res.replaced ? ' · replaced an earlier permit' : ''),
+    detail: (spare ? 'spare' : 'stay ' + reservationId + ' · ' + (stay?.unit || '')) + ' · by ' + who
+      + (res.replaced ? ' · replaced an earlier permit' : '')
+      + (guesty ? (guesty.ok ? ' · mapped in Guesty' : ' · Guesty write pending: ' + guesty.note) : ''),
   })
-  return NextResponse.json({ ok: true, id: res.id, replaced: res.replaced, spare })
+  return NextResponse.json({
+    ok: true, id: res.id, replaced: res.replaced, spare,
+    guesty: guesty ? { ok: guesty.ok, note: guesty.note } : null,
+  })
 }

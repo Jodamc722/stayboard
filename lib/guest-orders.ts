@@ -23,8 +23,9 @@ import { pageRows } from './db-page'
 import { randomBytes } from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting } from './app-settings'
-import { getToken, syncCustomFields } from './guesty'
+import { getToken } from './guesty'
 import { writeCustomFields } from './guesty-custom-fields'
+import { guestyFieldId, fieldIdHelp } from './guesty-field-id'
 import { buildingOf, marketOf, KNOWN_BUILDINGS, MARKETS } from './segments'
 import { listPaymentMethods, pickChargeable, createInvoiceItems, deleteInvoiceItem, chargeSavedCard, recordExternalPayment } from './guesty-payments'
 import { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson } from './breezeway'
@@ -816,46 +817,20 @@ export function linkUrl(code: string, cfg: GuestOrdersCfg, origin?: string | nul
   return base + '/order/' + code
 }
 
-let _fieldCache: { id: string | null; name: string; at: number } | null = null
-/** The Guesty RESERVATION custom field id for "Order form" (re-syncs the field list once if missing). */
 /**
- * The Guesty custom field the link is written into.
+ * The Guesty RESERVATION custom field the order link is written into.
  *
- * TAKES A NAME **OR THE FIELD'S OWN ID**. Resolving by name needs `guesty_custom_fields`, and that
- * mirror is filled from the account custom-fields endpoint — which has been empty before (the
- * definitions are nested in the account payload) and on 2026-08-25 answered **429 Too Many
- * Requests** on every attempt, recording a misleading "shape may have changed" and leaving the
- * whole feature unable to find a field that exists. An id pasted from Guesty skips all of that:
- * no mirror, no lookup, no rate limit. Guesty ids are 24 hex characters.
+ * The lookup itself now lives in lib/guesty-field-id — the parking permits write a URL onto a
+ * booking the same way, and one resolver means one set of rules about mirrors, merge-tag slugs,
+ * reservation-vs-listing targets and the 429 the field list has answered before. This stays as the
+ * name this file has always called it.
  */
-const FIELD_ID_RE = /^[a-f0-9]{24}$/i
-export async function orderFormFieldId(name: string): Promise<string | null> {
-  const direct = String(name || '').trim()
-  if (FIELD_ID_RE.test(direct)) return direct
-  if (_fieldCache && _fieldCache.name === name && Date.now() - _fieldCache.at < 10 * 60_000 && _fieldCache.id) return _fieldCache.id
-  const db = supabaseAdmin()
-  // Match the LABEL or the MERGE-TAG SLUG, so both "Guest Order Form1" and the tag Jon actually
-  // pastes into Guesty templates — {{guest_order_form1}} — find the same field. A reservation-target
-  // field always wins: the link belongs on the booking, never on the listing.
-  const bare = direct.replace(/^\{\{|\}\}$/g, '').trim()
-  const find = async () => {
-    const { data } = await db.from('guesty_custom_fields').select('id,name,slug,target').or(
-      ['name.ilike.' + bare, 'slug.ilike.' + bare].join(','),
-    ).limit(20)
-    const rows = (data || []) as any[]
-    const res = rows.find(r => /reserv/i.test(String(r.target || ''))) || rows[0]
-    return res ? String(res.id) : null
-  }
-  let id = await find()
-  if (!id) { try { await syncCustomFields() } catch { /* offline: stays null */ } id = await find() }
-  _fieldCache = { id, name, at: Date.now() }
-  return id
-}
+export const orderFormFieldId = guestyFieldId
 
 /** Write the link into the reservation's "Order form" custom field. Idempotent. */
 export async function writeLinkToGuesty(link: LinkRow, cfg: GuestOrdersCfg): Promise<{ ok: boolean; note: string }> {
   const fieldId = await orderFormFieldId(cfg.customFieldName)
-  if (!fieldId) return { ok: false, note: 'Guesty reservation custom field "' + cfg.customFieldName + '" could not be resolved. Either it does not exist (Guesty → Settings → Custom fields → Reservation), or Guesty is rate-limiting the field list. Fastest fix: paste the field\'s own ID (24 hex characters, from its URL in Guesty) into "Custom field name" — that skips the lookup entirely.' }
+  if (!fieldId) return { ok: false, note: fieldIdHelp(cfg.customFieldName) }
   let token = ''
   try { token = await getToken() } catch (e: any) { return { ok: false, note: 'Guesty token: ' + String(e?.message || e).slice(0, 80) } }
   const url = linkUrl(link.code, cfg)

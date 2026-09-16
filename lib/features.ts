@@ -203,6 +203,11 @@ export const OPEN_PREFIXES = [
   // server-side in /api/public/parking. Open here because a garage has no Lighthouse account; a
   // signed-in user skips the passcode and gets the assign-a-spare control the vendor never sees.
   '/parking/',
+  // THE GUEST SIDE OF A PARKING PERMIT (Jon, 2026-09-16). /permit/<token> is the stable address
+  // written onto the reservation in Guesty, so a guest opens it straight out of their confirmation
+  // with no credential of any kind. The 64-character token is the capability and it stops
+  // resolving the moment the permit is voided.
+  '/permit/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
   // whether a code worked are field techs without logins, and a question only answerable by people
   // who were not at the door is a question that never gets a true answer. The token is the auth.
