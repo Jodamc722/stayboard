@@ -16,6 +16,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase-server'
+import { getAccess } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { OA_COOKIE, auditCookieValid } from '@/lib/shareAuth'
 import { appendReservationNote } from '@/lib/claim-note'
@@ -28,10 +30,27 @@ export const dynamic = 'force-dynamic'
 // 300s: the 'sync' action sweeps a whole month of statement line items out of Guesty.
 export const maxDuration = 300
 
+// BEING SIGNED IN IS NOT THE SAME AS BEING ALLOWED (fixed 2026-09-16).
+//
+// This used to return internal:true for ANY authenticated Supabase user. The page is admin/owner
+// only — migration 024 sets owner-audit 'off' for every other role — but that gate lives in
+// middleware, and middleware deliberately does not cover /api (middleware.ts:146). So the page was
+// locked and the door beside it was open: any signed-in Lighthouse account, a cleaner or a CS
+// agent, could GET /api/owner-audit and read every owner's statements, payouts and commissions.
+//
+// The level check belongs here, next to the data, not in a routing layer that excludes this path.
 async function whoAmI(): Promise<{ ok: boolean; internal: boolean; email: string }> {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (user) return { ok: true, internal: true, email: String(user.email || '') }
+  if (user) {
+    const access = await getAccess()
+    // Same key the sidebar and middleware use, so one role change moves both.
+    if (access.allowed && atLeast(access.levels['owner-audit'], 'view')) {
+      return { ok: true, internal: true, email: String(user.email || '') }
+    }
+    // Signed in, but not for this. Fall through rather than returning early: a person can hold a
+    // valid share cookie and a login that does not carry the feature.
+  }
   const shared = await auditCookieValid(cookies().get(OA_COOKIE)?.value)
   return { ok: shared, internal: false, email: '' }
 }
@@ -103,6 +122,10 @@ export async function POST(req: NextRequest) {
   // breakouts done on the reservation) map back into the app immediately, instead of
   // waiting for the incremental sync to notice them.
   if (action === 'prep-recheck') {
+    // INTERNAL ONLY (2026-09-16). This spends Guesty API budget, one live pull per reservation, up
+    // to 120 at a time — and it was the one action with no internal check, so a share-link reviewer
+    // could run the account's rate limit down from a page they only have a password for.
+    if (!who.internal) return NextResponse.json({ ok: false, error: 'Re-checking against Guesty is for signed-in staff.' }, { status: 403 })
     const ids = Array.isArray(body.reservationIds) ? body.reservationIds.map((x: any) => String(x || '')).filter(Boolean).slice(0, 120) : []
     if (!ids.length) return NextResponse.json({ ok: false, error: 'reservationIds required' }, { status: 400 })
     try {
