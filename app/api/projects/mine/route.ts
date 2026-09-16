@@ -70,6 +70,16 @@ export async function GET(req: NextRequest) {
     const rows = (tasks || []) as any[]
     if (!rows.length) return NextResponse.json({ ok: true, today, groups: empty(), total: 0, board })
 
+    // A SUBTASK NEEDS ITS PARENT'S NAME. "Which unit" is a perfectly good subtask under "Vendor
+    // visit for 1418/2" and a meaningless line on its own — and My Tasks is exactly where it is
+    // seen on its own. One extra read, only when the list actually contains subtasks.
+    const parentIds = Array.from(new Set(rows.map(r => r.parent_id).filter(Boolean).map(String)))
+    const parentTitle: Record<string, string> = {}
+    if (parentIds.length) {
+      const { data: parents } = await sb.from('project_steps').select('id,title').in('id', parentIds.slice(0, 500))
+      for (const x of ((parents || []) as any[])) parentTitle[String(x.id)] = String(x.title || '')
+    }
+
     const pids = Array.from(new Set(rows.map(r => String(r.project_id))))
     const [{ data: projs }, { data: links }] = await Promise.all([
       sb.from('projects').select('id,title,kind,private,stage').in('id', pids),
@@ -92,6 +102,7 @@ export async function GET(req: NextRequest) {
         id: String(r.id), projectId: String(r.project_id), title: String(r.title),
         status: String(r.status), due: r.due_on ? String(r.due_on).slice(0, 10) : null,
         priority: String(r.priority || 'normal'), section: r.section || null, subtask: !!r.parent_id,
+        parent: r.parent_id ? (parentTitle[String(r.parent_id)] || null) : null,
         project: pmap[String(r.project_id)]?.title || 'Project',
         oneOnOne: pmap[String(r.project_id)]?.kind === 'one_on_one',
         mine: !!board && String(r.project_id) === board.id,
