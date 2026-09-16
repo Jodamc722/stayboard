@@ -28,6 +28,7 @@ import { buildMaintBrief } from '@/lib/maint-email'
 import type { MaintMarket } from '@/lib/maint-brief'
 import { sendGmail } from '@/lib/gmail-send'
 import { asLang, type BriefLang } from '@/lib/brief-lang'
+import { cronAllowed } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -49,6 +50,15 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const preview = String(sp.get('preview') || '')
   const test = sp.get('test') === '1'
+  // WHO IS ALLOWED TO SET THIS OFF. An unqualified GET here is the REAL SEND, not a preview, and
+  // until 2026-09-16 it had no auth of any kind: anyone who knew the URL could trigger the
+  // maintenance brief to every market from a browser, as many times as they liked. preview/test already required a session; the send
+  // path required nothing. It now takes the cron bearer, which Vercel puts on every scheduled call
+  // (this job is in vercel.json), while preview and test keep their session check below.
+  {
+    const gate = cronAllowed(req)
+    if (!gate.ok && !(preview || test)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   let me: string | null = null
   try {
     const supabase = createClient()
