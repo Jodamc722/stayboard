@@ -26,7 +26,7 @@ import { sectionRules, bannedRule } from '@/lib/listing-ai'
 import { modelFor } from '@/lib/ai-models'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { pageRows } from '@/lib/db-page'
-import { norm, sectionOf, type BulkSectionKey } from '@/lib/listing-copy-bulk'
+import { norm, sectionOf, allowedAt, type BulkSectionKey, type BulkScope } from '@/lib/listing-copy-bulk'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -53,10 +53,21 @@ export async function POST(req: NextRequest) {
     ? body.sections.filter((k: any) => !!sectionOf(k))
     : []
   const steer = norm(body?.instruction).slice(0, 600)
+  // PER-SECTION PROMPTS. Jon, 2026-09-16: "Have a prompt feature, too." One box for the whole draft
+  // is not enough when the sections are this different — "mention the new garage" belongs to Getting
+  // around and nowhere else, and pasting it into a shared box makes it leak into Neighborhood.
+  const perSection: Partial<Record<BulkSectionKey, string>> = {}
+  if (body?.prompts && typeof body.prompts === 'object') {
+    for (const [k, v] of Object.entries(body.prompts)) {
+      if (sectionOf(k) && typeof v === 'string' && norm(v)) perSection[k as BulkSectionKey] = norm(v).slice(0, 600)
+    }
+  }
   if (!want.length) return NextResponse.json({ error: 'Name at least one section to draft.' }, { status: 400 })
 
-  const portfolioOnly = want.every(k => sectionOf(k)!.scope === 'portfolio')
-  if (!building && !portfolioOnly) return NextResponse.json({ error: 'building required' }, { status: 400 })
+  const scope: BulkScope = body?.scope === 'portfolio' ? 'portfolio' : 'property'
+  const wrong = want.filter(k => !allowedAt(k, scope))
+  if (wrong.length) return NextResponse.json({ error: wrong.map(k => sectionOf(k)!.label).join(', ') + ' can only be drafted for one property at a time.' }, { status: 400 })
+  if (!building && scope === 'property') return NextResponse.json({ error: 'building required' }, { status: 400 })
 
   const sb = supabaseAdmin()
   const cfg = await loadListingAi()
@@ -64,6 +75,7 @@ export async function POST(req: NextRequest) {
   // What this property's units say today — the draft is a consolidation of these, not a replacement.
   let existing: { name: string; text: Partial<Record<BulkSectionKey, string>> }[] = []
   let facts = ''
+  let place = ''     // WHERE THIS BUILDING ACTUALLY IS
   if (building) {
     const { rows } = await pageRows<any>((a, b) => sb.from('guesty_listings')
       .select('id, title, nickname, building, status, raw').order('id').range(a, b), 12)
@@ -77,7 +89,7 @@ export async function POST(req: NextRequest) {
     const scored = units.map((u: any) => {
       const p = (u.raw?.publicDescription && typeof u.raw.publicDescription === 'object') ? u.raw.publicDescription : {}
       const text: Partial<Record<BulkSectionKey, string>> = {}
-      for (const k of want) if (sectionOf(k)!.scope === 'property') text[k] = norm(p[k])
+      for (const k of want) text[k] = norm(p[k])
       const filled = Object.values(text).filter(Boolean).length
       return { name: String(u.nickname || u.title || u.id), text, filled }
     }).sort((a, b) => b.filled - a.filled)
@@ -85,15 +97,59 @@ export async function POST(req: NextRequest) {
 
     const f = await buildingFactsFor({ building: units[0].building, nickname: units[0].nickname, title: units[0].title })
     facts = factsPrompt(f)
+
+    // THE ADDRESS, WHICH IS THE POINT OF THESE TWO SECTIONS. Jon, 2026-09-16: "Getting around should
+    // be able to generate it based on location. Location: same thing."
+    //
+    // The verified building facts in lib/building-facts only exist for buildings somebody has
+    // written a guide for — most have none, and those are exactly the properties sitting blank.
+    // Guesty knows where every one of them is, so the address goes in every time and a model that
+    // knows Fort Lauderdale can say something true about the block without inventing a café.
+    // Addresses are agreed across the units of a building; the one the most units share wins, so a
+    // single mistyped unit cannot move the whole property.
+    const tally: Record<string, { n: number; a: any }> = {}
+    for (const u of units) {
+      const a = (u.raw?.address && typeof u.raw.address === 'object') ? u.raw.address : null
+      const k = norm(a?.full || a?.street || '')
+      if (!k) continue
+      if (tally[k]) tally[k].n++; else tally[k] = { n: 1, a }
+    }
+    const best = Object.values(tally).sort((x, y) => y.n - x.n)[0]?.a
+    if (best) {
+      const L: string[] = ['WHERE THIS PROPERTY IS']
+      const full = norm(best.full)
+      if (full) L.push('- Address: ' + full)
+      else {
+        const bits = [norm(best.street), norm(best.city), norm(best.state), norm(best.zipcode || best.zip)].filter(Boolean)
+        if (bits.length) L.push('- Address: ' + bits.join(', '))
+      }
+      const nb = norm(best.neighborhood)
+      if (nb) L.push('- Neighbourhood as Guesty has it: ' + nb)
+      const lat = Number(best.lat), lng = Number(best.lng)
+      if (Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng)) L.push('- Coordinates: ' + lat.toFixed(5) + ', ' + lng.toFixed(5))
+      L.push('You may use general, durable knowledge of this area — the kind of neighbourhood it is, which')
+      L.push('way the water or the highway lies, that an airport is a drive rather than a walk. You may NOT')
+      L.push('name a specific business, quote a distance in minutes or blocks, or claim a transit stop exists')
+      L.push('unless it appears in the verified facts or in what the units already say. A guest checks these')
+      L.push('on arrival, and a confident invented detail is worse than a plain true sentence.')
+      place = L.join('\n')
+    }
   }
 
   const specs = want.map(k => {
     const s = sectionOf(k)!
     const c = (cfg.sections as any)[k]
-    return `- "${k}" (${s.label}): ${s.hint}${c ? ' ' + sectionRules(c) : ''} Hard limit ${s.max} characters.`
+    const ask = perSection[k] ? ` THE PERSON ASKED, FOR THIS SECTION ONLY: ${perSection[k]}` : ''
+    const how = k === 'notes'
+      // Jon: "Other things to note could be kind of generic, based on what's currently there."
+      ? ' Build it from what the listings already say. Keep it general and durable — the things that stay true next season — and leave out anything tied to one unit or one date.'
+      : (k === 'transit' || k === 'neighborhood')
+        ? ' Work from where this property actually is, plus the verified facts and what the units already say.'
+        : ''
+    return `- "${k}" (${s.label}): ${s.hint}${how}${c ? ' ' + sectionRules(c) : ''} Hard limit ${s.max} characters.${ask}`
   }).join('\n')
 
-  const scopeNote = portfolioOnly
+  const scopeNote = scope === 'portfolio'
     ? `This text goes on EVERY listing in the portfolio, across different buildings and neighbourhoods. Write nothing that is true of only one building, one city or one unit — no addresses, no distances, no building names, no bed counts. If you cannot say it about every property we manage, leave it out.`
     : `This text goes on EVERY unit in ${building} and on no other property. Write about the BUILDING and its block — the lobby, the entry, the elevator, the street, the walk, the parking, the transit. Never describe a particular unit: no floor numbers, no bed counts, no views from a specific line, nothing that is true of 2201 and false of 2202. A guest in any unit in this building must read it and find it accurate.`
 
@@ -116,6 +172,7 @@ Return ONLY JSON: {${want.map(k => `"${k}":"..."`).join(',')},"rationale":"one o
 
   const USER = [
     building ? `PROPERTY: ${building} (${existing.length ? existing.length + ' units sampled' : 'no existing text found'})` : 'SCOPE: the whole portfolio',
+    place ? '\n' + place : '',
     facts ? '\n' + facts : '',
     existing.length ? '\nWHAT THE UNITS SAY TODAY:\n' + existing.map(u =>
       `· ${u.name}\n` + want.filter(k => u.text[k]).map(k => `  [${sectionOf(k)!.label}] ${u.text[k]}`).join('\n')).join('\n\n') : '',
@@ -152,6 +209,7 @@ Return ONLY JSON: {${want.map(k => `"${k}":"..."`).join(',')},"rationale":"one o
       rationale: norm(parsed.rationale),
       sampled: existing.length,
       grounded: !!facts,
+      located: !!place,
     })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })
