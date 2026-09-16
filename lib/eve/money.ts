@@ -74,7 +74,7 @@ export const MONEY_TOOLS: EveTool[] = [
 
   {
     name: 'owner_audit_flags',
-    description: 'The owner-statement audit for a month: every reservation and line item that looks wrong, with a flag type (low_rate, commission_off, negative, orphan_reimb, refund, zero_rev, passthru, no_reservation, off_booking, empty_statement, owner_stay) and a severity (high|review|info). Use for "is anything wrong with last month\'s statements" or to explain a specific owner\'s variance. Month is YYYY-MM.',
+    description: 'The owner-statement audit for a month: every reservation and line item that looks wrong, with a flag type (low_rate, commission_off, negative, orphan_reimb, refund, zero_rev, passthru, no_reservation, off_booking, empty_statement, owner_stay, cleaning_fee) and a severity (high|review|info). Use for "is anything wrong with last month\'s statements" or to explain a specific owner\'s variance. Month is YYYY-MM.',
     input_schema: obj({ month: S.str, severity: S.str, flag: S.str, owner: S.str, limit: S.num }),
     money: true,
     run: async (input, ctx) => {
