@@ -229,19 +229,45 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-// Archive, not delete. A project carries budget, approval and photos — the audit trail outlives
-// anyone's interest in tidying the board.
+/**
+ * TWO DIFFERENT THINGS PEOPLE MEAN BY "GET RID OF IT", and they need different buttons.
+ *
+ *   ARCHIVE  — finished, off my board, still here. Nothing is lost, nothing is on a clock, and it
+ *              comes back with one click. This is what most tidying actually wants.
+ *   DELETE   — gone from the app, photographed into the trash, and removed for good after 60 days
+ *              (Jon, 2026-09-16). Until then Restore brings back the board AND its tasks, people,
+ *              comments, invoices and files, because a project is a tree and restoring only the
+ *              row would hand somebody back an empty board and call it a restore.
+ *
+ * Both are the owner's or an admin's to do. Note the permission is NOT requireLevel('projects',
+ * 'full') any more: that asked whether you are powerful in the app, when the question Jon posed is
+ * whether this project is yours. A project owner with ordinary edit rights may bin their own board;
+ * an app admin may bin anyone's; nobody else may bin anything.
+ */
 export async function DELETE(req: NextRequest) {
-  const g = await requireLevel('projects', 'full')
+  const g = await requireLevel('projects', 'edit')
   if (!g.ok) return g.res
   try {
     const b = await req.json().catch(() => ({}))
     const id = str(b.id)
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
-    const { error } = await supabaseAdmin().from('projects').update({ archived: true }).eq('id', id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    await addNote(id, `Archived by ${g.access.email || 'someone'}.`, g.access.email, 'event')
-    return NextResponse.json({ ok: true })
+
+    const { canDeleteProject, trashRecord } = await import('@/lib/trash')
+    const who = await canDeleteProject(id)
+    if (!who.ok) return NextResponse.json({ error: who.reason }, { status: 403 })
+
+    // Default stays ARCHIVE, so an old caller that does not know about delete cannot start
+    // destroying boards by upgrading.
+    if (str(b.mode) !== 'delete') {
+      const { error } = await supabaseAdmin().from('projects').update({ archived: true }).eq('id', id)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      await addNote(id, `Archived by ${g.access.email || 'someone'}.`, g.access.email, 'event')
+      return NextResponse.json({ ok: true, archived: true })
+    }
+
+    const r = await trashRecord(supabaseAdmin(), 'project', id, who.email)
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 500 })
+    return NextResponse.json({ ok: true, deleted: true, trashId: r.trashId, label: r.label })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
