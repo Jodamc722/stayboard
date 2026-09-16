@@ -1972,7 +1972,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           const CORE: { k: string; label: string }[] = [
             { k: 'welcome', label: 'Welcome' },
             { k: 'agenda', label: 'Agenda' },
-            { k: 'team', label: 'The team' },
+            { k: 'team', label: 'Your team' },
             { k: 'overview', label: 'About Stay Hospitality' },
             { k: 'channels', label: 'Where it sells' },
             { k: 'listings', label: 'Your listing' },
@@ -2149,7 +2149,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 3 · THE TEAM — four up, with the contact details on the card ───
           if (!hid('team')) slides.push({ key: 'team', node: (
-            <Slide nav="The team" warn={edit} ground={GROUND.light}>
+            <Slide nav="Your team" warn={edit} ground={GROUND.light}>
               <div className="flex flex-col h-full">
                 <Title k="team" />
                 <div className="flex-1 min-h-0 flex items-start" style={{ marginTop: 22, overflow: 'hidden' }}>
@@ -2214,7 +2214,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </span>
                   </div>
                 ) : null}
-                <Foot label="The team" />
+                <Foot label="Your team" />
               </div>
             </Slide>
           ) })
