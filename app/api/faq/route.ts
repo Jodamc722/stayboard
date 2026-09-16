@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { otaLinksFrom } from '@/lib/ota-links'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -61,12 +62,9 @@ export async function GET(req: NextRequest) {
   const lrow = lr.data && lr.data[0]
   const listing = lrow ? { id: String(lrow.id), name: lrow.nickname || lrow.title || 'Unit', building: lrow.building || '' } : { id: listingId, name: 'Unit', building: '' }
   const rawL: any = lrow ? lrow.raw : null
-  const ints = rawL && Array.isArray(rawL.integrations) ? rawL.integrations : []
-  const chan = (n: string) => { for (const it of ints) if (it && it[n]) return it[n]; return null }
-  const otaLinks: { name: string; url: string }[] = []
-  const ab = chan('airbnb2') || chan('airbnb'); if (ab && ab.id) otaLinks.push({ name: 'Airbnb', url: 'https://www.airbnb.com/rooms/' + ab.id })
-  const vr = chan('homeaway') || chan('vrbo'); if (vr && vr.id) otaLinks.push({ name: 'Vrbo', url: 'https://www.vrbo.com/' + vr.id })
-  const bk = chan('bookingCom') || chan('booking'); if (bk && bk.id) otaLinks.push({ name: 'Booking.com', url: 'https://www.booking.com/hotel/' + bk.id })
+  // One implementation, shared with the listing page. The old version here built a Booking.com
+  // URL from the channel id, which is never a valid Booking URL (theirs are slugs).
+  const otaLinks = otaLinksFrom(rawL)
   const cfMap: Record<string, string> = {}
   for (const f of (cfr.data || [])) cfMap[String((f as any).id)] = String((f as any).display_name || (f as any).name || '')
   const factList = lrow ? facts(lrow.raw, cfMap) : []
