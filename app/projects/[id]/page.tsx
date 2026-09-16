@@ -10,7 +10,7 @@ import { redirect } from 'next/navigation'
 import { Suspense } from 'react'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { atLeast } from '@/lib/features'
-import { getProject, canSee, canEdit } from '@/lib/projects'
+import { getProject, canSee, canEdit, getViewPrefs } from '@/lib/projects'
 import { ProjectPage } from '@/components/ProjectPage'
 
 export const dynamic = 'force-dynamic'
@@ -26,6 +26,10 @@ export default async function OneProject({ params }: { params: { id: string } })
   const viewer = { email: access.email, superadmin: isSuperadmin(access.email) }
   if (!p || !canSee(p.members, viewer, p.kind)) redirect('/projects')
 
+  // How THIS person reads THIS board. Null until they change something, in which case the page
+  // falls back to the board's own settings — see viewPrefsFor.
+  const viewPrefs = await getViewPrefs(params.id, access.email)
+
   return (
     <>
       {/* useSearchParams (the ?task= deep link) wants a Suspense boundary above it. */}
@@ -36,6 +40,7 @@ export default async function OneProject({ params }: { params: { id: string } })
         canEdit={atLeast(level, 'edit') && canEdit(p.members, viewer, p.kind)}
         canFull={atLeast(level, 'full')}
         superadmin={viewer.superadmin}
+        viewPrefs={viewPrefs}
       />
       </Suspense>
     </>
