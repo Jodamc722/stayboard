@@ -3053,7 +3053,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         ))}
                       </div>
                       {/* the row the whole document exists to produce */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '11px 14px', marginTop: 'auto', background: t.band, borderRadius: '0 0 6px 6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '11px 14px', background: t.band, borderRadius: '0 0 6px 6px' }}>
                         <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.78)' }}>
                           <Ed v={(sec('statement').due || {}).k || ''} set={v => patch('statement.due.k', v)} edit={edit} />
                         </span>
