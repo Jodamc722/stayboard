@@ -99,6 +99,26 @@ export async function listQuestions(status = 'open', limit = 60): Promise<EveQue
 }
 
 /**
+ * Just the number, for the badge and the Command Center card.
+ *
+ * WHY A COUNT AND NOT listQuestions().length. This is read on every Command Center load and on every
+ * page render that draws the sidebar. Pulling 60 full rows — question text, why, evidence JSON — to
+ * print one digit is the kind of waste that only shows up on the bill. `head: true` asks PostgREST
+ * for the count and no rows at all.
+ *
+ * Returns 0 rather than throwing when the table is missing, so a Lighthouse that has not run the Eve
+ * migrations shows no badge instead of a broken page.
+ */
+export async function countOpenQuestions(): Promise<number> {
+  try {
+    const { count, error } = await supabaseAdmin()
+      .from('eve_questions').select('id', { count: 'exact', head: true }).eq('status', 'open')
+    if (error) return 0
+    return Number(count || 0)
+  } catch { return 0 }
+}
+
+/**
  * An answer becomes a memory. Weight 8 because a person said it, and source 'jon' so nothing Eve
  * infers later can quietly overwrite it.
  */

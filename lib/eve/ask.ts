@@ -55,6 +55,13 @@ export type AskSettings = {
   /** Lighthouse emails that get the batch. Empty = every approved Telegram contact who may use Eve. */
   recipients: string[]
   includeFindings: boolean
+  /**
+   * Questions no longer ride Telegram. Jon answers them in the Eve tab, where the queue has always
+   * lived — a question is a piece of work, and work belongs somewhere you can come back to, not in a
+   * chat thread that scrolls. Defaults to false; set it true in app_settings.eve_ask to bring the
+   * old behaviour back. The inbound half still works either way, so anything already sent out on
+   * Telegram can still be answered there.
+   */
   includeQuestions: boolean
   /** Give up on an item after this many deliveries with no reply. */
   giveUpAfter: number
@@ -65,7 +72,7 @@ const DEFAULTS: AskSettings = {
   maxPerDay: 3,
   recipients: [],
   includeFindings: true,
-  includeQuestions: true,
+  includeQuestions: false,
   giveUpAfter: 3,
 }
 
