@@ -814,6 +814,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [busy, setBusy] = useState('')
   const [attachMsg, setAttachMsg] = useState('')
   const [picker, setPicker] = useState(false)
+  const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void } | null>(null)
+  const [photoUrl, setPhotoUrl] = useState('')
   const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
   const [manualLine, setManualLine] = useState('')
   const [manualCat, setManualCat] = useState('')
@@ -1600,6 +1602,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .onb-more > summary::before { content: '+ '; }
         .onb-more[open] > summary::before { content: '– '; }
         @media (max-width: 860px) { .onb-team { grid-template-columns: 1fr 1fr !important; } }
+        .sb-pick > span { opacity: 0; transition: opacity .13s ease; }
+        .sb-pick:hover > span { opacity: 1; }
+        .sb-pick:hover { box-shadow: inset 0 0 0 2px ${t.accent}; }
         .sb-navbar { scrollbar-width: none; }
         .sb-navbar::-webkit-scrollbar { display: none; }
         .sb-report .onb-sec { padding-bottom: 0.5rem; }
@@ -1781,6 +1786,41 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         </>
       )}
 
+      {photoPick && (
+        <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5"
+          style={{ background: 'rgba(10,14,20,0.66)' }}
+          onClick={() => { setPhotoPick(null); setPhotoUrl('') }}>
+          <div onClick={e => e.stopPropagation()} className="rounded-2xl w-full max-w-3xl max-h-[86vh] overflow-auto p-5"
+            style={{ background: t.card, border: '1px solid ' + t.cardBorder }}>
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <p className="text-[15px] font-semibold" style={{ color: t.ink }}>{photoPick.title}</p>
+              <button onClick={() => { setPhotoPick(null); setPhotoUrl('') }} className="rounded-full p-1.5" style={{ color: t.sub }}><X size={16} /></button>
+            </div>
+            <div className="flex gap-2 mb-4">
+              <input value={photoUrl} onChange={e => setPhotoUrl(e.target.value)} placeholder="Or paste an image URL — a headshot, a portal screenshot…"
+                className="flex-1 rounded-lg px-3 py-2 text-[13px]" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+              <button disabled={!photoUrl.trim()}
+                onClick={() => { photoPick.set(photoUrl.trim()); answerChanged(); setPhotoPick(null); setPhotoUrl('') }}
+                className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40"
+                style={{ background: t.ink, color: t.bg }}>Use</button>
+            </div>
+            <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))' }}>
+              {(Array.isArray(c.photoPool) ? c.photoPool : []).map((src: string, i: number) => (
+                <button key={i} onClick={() => { photoPick.set(src); answerChanged(); setPhotoPick(null); setPhotoUrl('') }}
+                  className="relative rounded-lg overflow-hidden" style={{ aspectRatio: '4 / 3', border: '2px solid ' + (src === photoPick.cur ? t.accent : 'transparent') }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                </button>
+              ))}
+            </div>
+            {photoPick.cur ? (
+              <button onClick={() => { photoPick.set(''); answerChanged(); setPhotoPick(null) }}
+                className="mt-4 text-[12.5px] font-semibold" style={{ color: t.accent }}>Clear this photo</button>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       <div ref={scrollRef} onScroll={onPresentScroll} className={present ? 'sb-present' : ('sb-report ' + (isOnboarding ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
 
         {/* ---------- COVER ---------- */}
@@ -1829,22 +1869,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   uploaded first — for this owner it is a four-up amenity collage, which is the
                   one thing a cover must not be. Same cycler the sections have, so the cover is
                   chosen in the room in two clicks. */}
-              {canEdit && (() => {
-                const cpool: string[] = Array.isArray(c.photoPool) ? c.photoPool : []
-                if (!cpool.length) return null
-                const cur = String(hero.heroImage || '')
-                const step = (d: number) => {
-                  const ix = cpool.indexOf(cur)
-                  patch('hero.heroImage', cpool[(ix + d + cpool.length + (ix < 0 ? 1 : 0)) % cpool.length])
-                  answerChanged()
-                }
-                return (
-                  <div className="sb-noprint absolute bottom-4 right-4 flex items-center gap-1.5">
-                    <button onClick={() => step(-1)} className="rounded-full px-2.5 py-1.5 text-[11px] font-semibold shadow" style={{ background: 'rgba(255,255,255,0.92)', color: '#111' }}>&#8592;</button>
-                    <button onClick={() => step(1)} className="rounded-full px-3 py-1.5 text-[11px] font-semibold shadow" style={{ background: 'rgba(255,255,255,0.92)', color: '#111' }}>Change cover photo</button>
-                  </div>
-                )
-              })()}
+              {canEdit && (
+                <button
+                  onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Cover photo', cur: String(hero.heroImage || ''), set: u => patch('hero.heroImage', u) }) }}
+                  className="sb-noprint absolute bottom-4 right-4 rounded-full px-3.5 py-2 text-[11.5px] font-semibold shadow"
+                  style={{ background: 'rgba(255,255,255,0.94)', color: '#111' }}>
+                  Change cover photo
+                </button>
+              )}
             </div>
           </header>
         ) : (
@@ -2013,15 +2045,42 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           )
 
           // A photograph that holds half the composition and bleeds off the slide edge.
-          const Half = ({ src, side }: { src: string; side: 'left' | 'right' }) => (
-            <div style={{
-              position: 'absolute', top: 0, bottom: 0, width: 452,
-              [side]: 0, background: t.chip, overflow: 'hidden',
-            } as Any}>
-              {src ? (
+          const Half = ({ src, side, title, set }: {
+            src: string; side: 'left' | 'right'; title?: string; set?: (u: string) => void
+          }) => (
+            <Pick
+              title={title || 'Choose a photo'}
+              cur={src}
+              set={set || (() => {})}
+              style={{ position: 'absolute', top: 0, bottom: 0, width: 452, [side]: 0, background: t.chip } as Any}
+            />
+          )
+
+          // Any image in the deck, with the picker hung off it in edit mode. `Edit photo` only
+          // appears for the team; everywhere else the whole frame is the target, because on a
+          // gallery slide a button per frame would be five buttons on five photographs.
+          const Pick = ({ title, cur, set, style, cover }: {
+            title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean
+          }) => (
+            <div style={{ position: 'relative', overflow: 'hidden', ...(style || {}) }}>
+              {cur ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              ) : null}
+                <img src={cur} alt="" style={{ width: '100%', height: '100%', objectFit: cover === false ? 'contain' : 'cover' }} />
+              ) : (
+                <div style={{ width: '100%', height: '100%', background: t.chip }} />
+              )}
+              {canEdit && (
+                <button
+                  onClick={() => { setPhotoUrl(''); setPhotoPick({ title, cur, set }) }}
+                  className="sb-noprint sb-pick"
+                  title="Change this photo"
+                  style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
+                  <span style={{
+                    position: 'absolute', bottom: 10, right: 10, fontSize: 11, fontWeight: 600,
+                    padding: '5px 11px', borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111',
+                  }}>Change</span>
+                </button>
+              )}
             </div>
           )
 
@@ -2046,7 +2105,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           if (!hid('welcome')) slides.push({ key: 'welcome', ai: true, node: (
             <Slide nav="Welcome" warn={edit} bleed ground={GROUND.light}>
               <div style={{ position: 'absolute', inset: 0 }}>
-                <Half src={String(sec('welcome').photo || pic(0))} side="right" />
+                <Half src={String(sec('welcome').photo || pic(0))} side="right"
+                  title="Welcome slide photo" set={u => patch('welcome.photo', u)} />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 540 }} className="flex flex-col">
                   <div className="flex-1 min-h-0 flex flex-col justify-center">
                     <Title k="welcome" />
@@ -2056,12 +2116,6 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </div>
                   <Foot label="Welcome" />
                 </div>
-                {edit && (
-                  <button onClick={() => patch('welcome.photo', pool[(pool.indexOf(String(sec('welcome').photo || '')) + 1) % Math.max(1, pool.length)])}
-                    className="sb-noprint" style={{ position: 'absolute', bottom: 16, right: 16, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.92)', color: '#111' }}>
-                    Change photo
-                  </button>
-                )}
               </div>
             </Slide>
           ) })
@@ -2103,10 +2157,16 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     {(sec('team').people || []).slice(0, 4).map((p: Any, pi: number) => (
                       <div key={pi}>
                         {p.photo ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.photo} alt="" style={{ width: '100%', height: 132, objectFit: 'cover', objectPosition: 'top center', borderRadius: 12, marginBottom: 12 }} />
+                          <Pick
+                            title={'Headshot \u2014 ' + String(p.name || '')}
+                            cur={String(p.photo)}
+                            set={u => patch('team.people.' + pi + '.photo', u)}
+                            style={{ width: '100%', height: 132, borderRadius: 12, marginBottom: 12 }}
+                          />
                         ) : (
-                          <div style={{ width: '100%', height: 132, borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 600 }}>
+                          <div
+                            onClick={canEdit ? () => { setPhotoUrl(''); setPhotoPick({ title: 'Headshot \u2014 ' + String(p.name || ''), cur: '', set: u => patch('team.people.' + pi + '.photo', u) }) } : undefined}
+                            style={{ width: '100%', height: 132, borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 600, cursor: canEdit ? 'pointer' : 'default' }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
@@ -2163,7 +2223,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           if (!hid('overview')) slides.push({ key: 'overview', ai: true, node: (
             <Slide nav="About Stay" warn={edit} bleed>
               <div style={{ position: 'absolute', inset: 0, background: t.band }}>
-                <Half src={String(sec('overview').photo || pic(4))} side="right" />
+                <Half src={String(sec('overview').photo || pic(4))} side="right"
+                  title="About Stay photo" set={u => patch('overview.photo', u)} />
                 <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 452, background: 'linear-gradient(90deg, ' + t.band + ' 0%, rgba(0,0,0,0) 42%)' }} />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 560 }} className="flex flex-col">
                   <div className="flex-1 min-h-0">
@@ -2261,14 +2322,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       panel over it. It reads like the top of a listing page, which is exactly
                       what is being reviewed. */}
                   <div style={{ position: 'absolute', inset: 0, display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 3, background: t.cardBorder }}>
-                    {pics.slice(0, 5).map((src: string, pi: number) => (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img key={pi} src={src} alt="" style={{
-                        width: '100%', height: '100%', objectFit: 'cover',
-                        gridRow: pi === 0 ? 'span 2' : undefined,
-                      }} />
+                    {[0, 1, 2, 3, 4].map(pi => (
+                      <Pick
+                        key={pi}
+                        title={'Frame ' + (pi + 1) + ' \u2014 ' + String(L.name || 'unit')}
+                        cur={String(pics[pi] || '')}
+                        set={u => patch('listings.items.' + li + '.photos.' + pi, u)}
+                        style={{ width: '100%', height: '100%', gridRow: pi === 0 ? 'span 2' : undefined }}
+                      />
                     ))}
-                    {pics.length === 0 ? <div style={{ gridColumn: 'span 3', gridRow: 'span 2', background: t.chip }} /> : null}
                   </div>
                   <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 260, background: 'linear-gradient(180deg, rgba(8,11,16,0) 0%, rgba(8,11,16,0.55) 34%, rgba(8,11,16,0.88) 70%, rgba(8,11,16,0.96) 100%)' }} />
                   <div style={{ position: 'absolute', left: 64, right: 64, bottom: 40 }}>
@@ -2352,7 +2414,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           if (!hid('guesty')) slides.push({ key: 'guesty', ai: true, node: (
             <Slide nav="Owner portal" warn={edit} bleed ground={GROUND.tint}>
               <div style={{ position: 'absolute', inset: 0 }}>
-                <Half src={(sec('guesty').shots || [])[0] || String(sec('guesty').photo || pic(9))} side="right" />
+                <Half src={(sec('guesty').shots || [])[0] || String(sec('guesty').photo || pic(9))} side="right"
+                  title="Owner portal screenshot" set={u => patch('guesty.photo', u)} />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 556 }} className="flex flex-col">
                   <div className="flex-1 min-h-0">
                     <Title k="guesty" sub={false} />
