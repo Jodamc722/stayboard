@@ -1288,7 +1288,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const projects = c.projects || {}
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
   const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim()))
-  const onboardingSectionKeys = ['welcome', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season', 'portal', 'money', 'statement', 'team', 'comms', 'checklist', 'nextup', 'open']
+  const onboardingSectionKeys = ['welcome', 'contact', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season', 'portal', 'money', 'statement', 'team', 'comms', 'checklist', 'nextup', 'open']
   const onboardingListingSlides = isOnboarding && !isHidden('listings')
     ? (Array.isArray((c.listings || {}).items) ? (c.listings as Any).items.length : 0)
     : 0
@@ -1660,7 +1660,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         {isOnboarding && (() => {
           const sec = (k: string) => (c[k] || {})
           const secs: { k: string; label: string }[] = [
-            { k: 'welcome', label: 'Welcome' }, { k: 'agenda', label: 'Agenda' },
+            { k: 'welcome', label: 'Welcome' }, { k: 'contact', label: 'Your details' },
+            { k: 'agenda', label: 'Agenda' },
             { k: 'listings', label: 'Your listings' }, { k: 'unit', label: 'Your unit' },
             { k: 'strategy', label: 'Goals & strategy' }, { k: 'ramp', label: 'The ramp' },
             { k: 'season', label: 'Seasonality' }, { k: 'guesty', label: 'Guesty' },
@@ -1939,6 +1940,57 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   )}
                   <Shot k="welcome" />
                   <Note k="welcome" />
+                </div>
+              </SectionShell>
+
+              {/* ---------- YOUR DETAILS ---------- */}
+              <SectionShell id="contact" title="Your details" hidden={isHidden('contact')} edit={edit} onToggle={() => toggleSection('contact')}>
+                <div className="onb-sec">
+                  <Head k="contact" label="Your details" />
+                  {/* Live fields, not edit-mode fields: these get corrected out loud in the first
+                      two minutes of the call, and they save themselves like the answers do. */}
+                  <div className="mt-8 grid gap-x-10 gap-y-6" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(248px,1fr))' }}>
+                    {[
+                      { f: 'name', l: 'Name' },
+                      { f: 'email', l: 'Email' },
+                      { f: 'phone', l: 'Phone' },
+                      { f: 'preferred', l: 'Preferred contact', ph: 'Text · call · email' },
+                      { f: 'bestTime', l: 'Best time to reach you', ph: 'Mornings ET, weekdays…' },
+                      { f: 'second', l: 'Anyone else on communications', ph: 'Spouse, accountant, attorney' },
+                    ].map(F => (
+                      <div key={F.f}>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] mb-1" style={{ color: t.muted }}>{F.l}</p>
+                        {canEdit ? (
+                          <input
+                            value={String(sec('contact')[F.f] || '')}
+                            onChange={e => { patch('contact.' + F.f, e.target.value); answerChanged() }}
+                            placeholder={F.ph || '\u2014'}
+                            className="onb-ask w-full text-[16px] pb-1.5"
+                            style={{ background: 'transparent', border: 0, borderBottom: '1px ' + (String(sec('contact')[F.f] || '').trim() ? 'solid ' + t.rule : 'dashed ' + t.rule), color: t.ink, fontFamily: 'inherit' }}
+                          />
+                        ) : (
+                          <p className="text-[16px]" style={{ color: String(sec('contact')[F.f] || '').trim() ? t.ink : t.muted }}>
+                            {String(sec('contact')[F.f] || '') || '\u2014'}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {sec('contact').fromGuesty ? (
+                    <p className="mt-5 text-[12.5px]" style={{ color: t.muted }}>
+                      Name, email and phone came from your Guesty owner record. Anything you change here is what we will use.
+                    </p>
+                  ) : (
+                    <p className="mt-5 text-[12.5px]" style={{ color: t.gold }}>
+                      Guesty has no contact details on file for this owner &mdash; these are the ones we will work from.
+                    </p>
+                  )}
+                  <div className="mt-7">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] mb-1.5" style={{ color: t.muted }}>Notes</p>
+                    <LiveText v={String(sec('contact').notes || '')} live={canEdit} t={t}
+                      set={v => { patch('contact.notes', v); answerChanged() }} />
+                  </div>
+                  <Asks k="contact" />
                 </div>
               </SectionShell>
 
