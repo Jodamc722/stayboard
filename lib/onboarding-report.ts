@@ -43,6 +43,9 @@ export type ListingCard = {
   space: string
 }
 
+/** Any section can carry one of the owner's own listing photos and a free note. */
+export type Sec<T> = T & { photo?: string; note?: string }
+
 export type OnboardingContent = {
   meta: {
     kind: 'onboarding'
@@ -51,18 +54,24 @@ export type OnboardingContent = {
     generatedAt: string
     listingIds: string[]
     market: string
+    /** The mark on the cover and on every presented slide. Image when we have one, else the wordmark. */
+    logoUrl: string
+    wordmark: string
   }
   hero: { eyebrow: string; title: string; headline: string; preparedFor: string; dateLabel: string; heroImage: string | null }
-  unit: { headline: string; subtitle: string; body: string; facts: KV[]; asks: Ask[] }
-  listings: { headline: string; subtitle: string; items: ListingCard[]; asks: Ask[] }
-  strategy: { headline: string; subtitle: string; body: string; asks: Ask[] }
-  ramp: { headline: string; subtitle: string; bands: KV[]; note: string; asks: Ask[] }
-  season: { headline: string; subtitle: string; body: string; months: { m: string; level: number }[]; note: string; asks: Ask[] }
-  team: { headline: string; subtitle: string; people: { name: string; role: string; blurb: string; photo?: string | null }[] }
-  comms: { headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }
-  portal: { headline: string; subtitle: string; body: string; items: KV[] }
-  money: { headline: string; subtitle: string; body: string; rules: KV[]; examples: { title: string; lines: KV[]; total: string; verdict: string; tone: 'ok' | 'hold' }[]; asks: Ask[] }
-  statement: {
+  welcome: Sec<{ headline: string; subtitle: string; body: string; stats: KV[] }>
+  agenda: Sec<{ headline: string; subtitle: string; items: KV[] }>
+  unit: Sec<{ headline: string; subtitle: string; body: string; facts: KV[]; asks: Ask[] }>
+  listings: Sec<{ headline: string; subtitle: string; items: ListingCard[]; asks: Ask[] }>
+  strategy: Sec<{ headline: string; subtitle: string; body: string; asks: Ask[] }>
+  ramp: Sec<{ headline: string; subtitle: string; bands: KV[]; note: string; asks: Ask[] }>
+  season: Sec<{ headline: string; subtitle: string; body: string; months: { m: string; level: number }[]; note: string; asks: Ask[] }>
+  guesty: Sec<{ headline: string; subtitle: string; body: string; items: KV[] }>
+  tech: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }>
+  team: Sec<{ headline: string; subtitle: string; people: { name: string; role: string; blurb: string; photo?: string | null; phone?: string; email?: string }[] }>
+  comms: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }>
+  money: Sec<{ headline: string; subtitle: string; body: string; rules: KV[]; examples: { title: string; lines: KV[]; total: string; verdict: string; tone: 'ok' | 'hold' }[]; asks: Ask[] }>
+  statement: Sec<{
     headline: string; subtitle: string; unitLabel: string; period: string
     lines: { k: string; sub: string; v: string; neg?: boolean }[]
     net: string; paid: string
@@ -70,10 +79,12 @@ export type OnboardingContent = {
     chargesTotal: string
     also: KV[]
     note: string
-  }
-  checklist: { headline: string; subtitle: string; rows: { item: string; who: string; by: string }[] }
-  nextup: { headline: string; subtitle: string; rows: KV[] }
-  open: { headline: string; subtitle: string }
+  }>
+  checklist: Sec<{ headline: string; subtitle: string; rows: { item: string; who: string; by: string }[] }>
+  nextup: Sec<{ headline: string; subtitle: string; rows: KV[] }>
+  open: Sec<{ headline: string; subtitle: string }>
+  /** Every photo on the owner's listings, so any section can pick one without another fetch. */
+  photoPool: string[]
   custom?: { id: string; eyebrow: string; title: string; body: string }[]
   omit: string[]
 }
@@ -87,15 +98,23 @@ export type OnboardingTemplate = {
   /** Pre-approval ceiling shown to the owner. Mirrors lib/approval DEFAULT_LIMITS.default. */
   approvalLimit: number
   mgmtPct: number
+  /** A real logo when Jon has artwork; until then the wordmark below is the mark. */
+  logoUrl: string
+  wordmark: string
+  companyStats: KV[]
+  welcomeBody: string
+  agenda: KV[]
   strategyBody: string
   rampBands: KV[]
   rampNote: string
   seasonBody: string
   seasonNote: string
-  team: { name: string; role: string; blurb: string; photo?: string | null; market?: string }[]
+  team: { name: string; role: string; blurb: string; photo?: string | null; market?: string; phone?: string; email?: string }[]
   commsBody: string
   commsRows: KV[]
   portalItems: KV[]
+  guestyBody: string
+  techRows: KV[]
   moneyBody: string
   moneyRules: KV[]
   statementAlso: KV[]
@@ -107,6 +126,28 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   laborRate: 40,
   approvalLimit: 250,
   mgmtPct: 20,
+
+  logoUrl: '',
+  wordmark: 'STAY HOSPITALITY',
+  companyStats: [
+    { k: 'Markets', v: 'Miami & Broward' },
+    { k: 'Units managed', v: '230+' },
+    { k: 'Channels', v: 'Airbnb · Vrbo · Booking.com' },
+    { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
+  ],
+
+  welcomeBody:
+    'Welcome to Stay Hospitality. This document is the call itself — we fill it in together as we talk, and it stays yours afterwards as the record of what we agreed.\n\n' +
+    'We will go through your listing the way a guest sees it, agree what we are optimizing for, walk through how money reaches you, and introduce the people who will actually be in your unit. Anything we do not get to stays on the last page as an open item, so nothing quietly falls off.',
+
+  agenda: [
+    { k: 'Your listings', v: 'We open the live listing on every channel, score it, and fix the weak parts while you watch.' },
+    { k: 'Goals & strategy', v: 'Who the unit is for, and the one trade-off every pricing decision comes from.' },
+    { k: 'The first 90 days', v: 'What a brand-new listing actually does, and why month one is bought rather than earned.' },
+    { k: 'Your portal & statements', v: 'Where you see performance, approve spend, and read what you were paid.' },
+    { k: 'How billables work', v: 'What we charge, what we never charge, and what needs your yes first.' },
+    { k: 'Your team', v: 'Names, faces and direct numbers — not a shared inbox.' },
+  ],
 
   strategyBody:
     'Every pricing decision downstream comes from one trade-off: rate or occupancy. A unit can run high-rate and sit emptier, or run a shade under the market and stay full. Both work. They do not work at the same time, and pretending otherwise is how a unit ends up mediocre at both.\n\n' +
@@ -138,7 +179,20 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
     { k: 'Your channel', v: 'You get a direct line to your operations manager, not a shared inbox. Anything that will cost you money reaches you before it happens, not after.' },
   ],
 
+  guestyBody:
+    'We run on Guesty — the same platform the largest operators in this market use. It holds every reservation, every channel connection, every message and every statement in one place, which is why the numbers you see from us reconcile rather than being retyped from a spreadsheet.\n\n' +
+    'For you, the part that matters is the owner portal: your own login, your live calendar, and your statements the moment they are issued.',
+
+  techRows: [
+    { k: 'Smart lock', v: 'A code generated per stay that expires at checkout. No keys handed over, no code shared between guests, and we can let a technician in without you driving over.' },
+    { k: 'Wi-Fi', v: 'In the unit\u2019s name, on a network we can reset remotely. The password rides in the guidebook rather than on a sticky note.' },
+    { k: 'Thermostat', v: 'Set back automatically between stays so you are not cooling an empty unit, and pre-cooled before a guest lands.' },
+    { k: 'Noise monitoring', v: 'Decibel-only, no recording, in the living area. It tells us a party is starting before a neighbour or the HOA does.' },
+    { k: 'Guidebook', v: 'A digital guide for the unit \u2014 check-in, Wi-Fi, appliances, local picks. Cuts the "how does this work" messages by more than half.' },
+  ],
+
   portalItems: [
+    { k: 'The Guesty owner portal', v: 'Your live calendar, reservations and statements, straight from the system we run on. We set your login up during onboarding.' },
     { k: 'Your monthly report', v: 'Occupancy, rate, revenue, what we did, what guests said, what is booked ahead. One link, always the same link.' },
     { k: 'Your order sheet', v: 'Anything we want to buy for the unit, with photos, the reason, price options, and four buttons: approve, I will supply it, not now, no.' },
     { k: 'Your statement', v: 'Rental, less commission, less anything billed that month, equals what hits your account. Every billed line traces to a job with a date and a photo.' },
@@ -189,6 +243,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
       { id: 'l2', q: 'What does this unit have that the building’s other listings do not?', hint: 'The line that earns the booking. Owners usually know it and nobody ever asks.' },
     ],
     strategy: [
+      { id: 's0', q: 'What does a good first year look like to you?', hint: 'The number, or the feeling. Both are useful and they are rarely the same.' },
       { id: 's1', q: 'Who is this unit for?', hint: 'Families · couples · business · snowbirds · long stays' },
       { id: 's2', q: 'If we can only have one — higher rate, or higher occupancy?' },
       { id: 's3', q: 'Minimum stay floor?', hint: 'Shorter fills faster and turns more; longer protects the unit.' },
@@ -202,6 +257,10 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
     season: [
       { id: 'e1', q: 'Any dates you already know you are blocking this season?' },
       { id: 'e2', q: 'Any renovation, special assessment or HOA work coming?' },
+    ],
+    tech: [
+      { id: 't1', q: 'Is there anything already installed we should keep or work around?', hint: 'An HOA lock standard, a Ring, a Nest you like, a mesh network.' },
+      { id: 't2', q: 'Anything you would rather we did not put in?' },
     ],
     comms: [
       { id: 'c1', q: 'Best number and email — and how fast do you want to hear from us?' },
@@ -228,6 +287,13 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     laborRate: num(stored.laborRate, D.laborRate),
     approvalLimit: num(stored.approvalLimit, D.approvalLimit),
     mgmtPct: num(stored.mgmtPct, D.mgmtPct),
+    logoUrl: typeof stored.logoUrl === 'string' ? stored.logoUrl : D.logoUrl,
+    wordmark: str(stored.wordmark, D.wordmark),
+    companyStats: arr(stored.companyStats, D.companyStats),
+    guestyBody: str(stored.guestyBody, D.guestyBody),
+    techRows: arr(stored.techRows, D.techRows),
+    welcomeBody: str(stored.welcomeBody, D.welcomeBody),
+    agenda: arr(stored.agenda, D.agenda),
     strategyBody: str(stored.strategyBody, D.strategyBody),
     rampBands: arr(stored.rampBands, D.rampBands),
     rampNote: str(stored.rampNote, D.rampNote),
@@ -318,6 +384,13 @@ export type BuildInput = {
  */
 export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): OnboardingContent {
   const asks = (k: string): Ask[] => (t.asks[k] || []).map(a => ({ ...a, a: '' }))
+  // THE OWNER'S OWN UNIT, THROUGHOUT (Jon, 2026-09-16: "use their listing, especially if we have
+  // photos of the listing throughout the presentation"). Sections draw from the pool in rotation
+  // so a deck about their property actually looks like their property; each one is swappable in
+  // the editor afterwards.
+  const pool: string[] = []
+  for (const cd of i.cards) for (const ph of cd.photos) if (pool.indexOf(ph) < 0) pool.push(ph)
+  const pic = (n: number): string => (pool.length ? pool[n % pool.length] : '')
   const rate = t.laborRate
   const limit = t.approvalLimit
 
@@ -347,6 +420,8 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       generatedAt: new Date().toISOString(),
       listingIds: i.cards.map(c => c.id),
       market: i.market,
+      logoUrl: t.logoUrl,
+      wordmark: t.wordmark,
     },
     hero: {
       eyebrow: 'STAY HOSPITALITY',
@@ -356,7 +431,21 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       dateLabel: 'OWNER ONBOARDING',
       heroImage: i.heroImage,
     },
+    welcome: {
+      headline: 'Welcome to Stay Hospitality',
+      subtitle: 'Who we are, and how this call works.',
+      body: t.welcomeBody,
+      stats: t.companyStats,
+      photo: pic(0),
+    },
+    agenda: {
+      headline: 'What we will cover',
+      subtitle: 'In this order.',
+      items: t.agenda,
+      photo: pic(1),
+    },
     unit: {
+      photo: pic(3),
       headline: 'What we found when we walked it',
       subtitle: i.unitLine || '',
       body: 'We walked the unit against our furnishing standard and photographed every room. Here is what is there, and what a unit of this shape still needs before it can take a guest.',
@@ -370,7 +459,8 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       asks: asks('listings'),
     },
     strategy: {
-      headline: 'Who this unit is for, and what we optimize',
+      photo: pic(2),
+      headline: 'Your goals, and what we optimize for',
       subtitle: 'One trade-off decides everything downstream.',
       body: t.strategyBody,
       asks: asks('strategy'),
@@ -391,10 +481,11 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       asks: asks('season'),
     },
     team: {
+      photo: pic(6),
       headline: 'The people who will actually be in your unit',
       subtitle: 'You are not handed to an inbox.',
       people: t.team.filter(p => !p.market || !i.market || String(p.market).toLowerCase() === String(i.market).toLowerCase())
-        .map(p => ({ name: p.name, role: p.role, blurb: p.blurb, photo: p.photo || null })),
+        .map(p => ({ name: p.name, role: p.role, blurb: p.blurb, photo: p.photo || null, phone: p.phone || '', email: p.email || '' })),
     },
     comms: {
       headline: 'How guests reach us, and how you reach us',
@@ -403,11 +494,20 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       rows: t.commsRows,
       asks: asks('comms'),
     },
-    portal: {
-      headline: 'Three things arrive, and nothing else',
-      subtitle: 'No dashboard to check.',
-      body: 'We do not give you a dashboard to check. We send you three things, each with a job, and you should be able to ignore us the rest of the time.',
+    guesty: {
+      headline: 'The system we run on',
+      subtitle: 'Guesty, and the owner portal inside it that belongs to you.',
+      body: t.guestyBody,
       items: t.portalItems,
+      photo: pic(4),
+    },
+    tech: {
+      headline: 'The technology in your unit',
+      subtitle: 'Installed once, so the unit can be run without anyone standing in it.',
+      body: 'Every unit we manage runs on the same small stack. It is what lets us give a guest a working door code at 11pm, cool the unit before they land, and know about a problem before they message us about it.',
+      rows: t.techRows,
+      asks: asks('tech'),
+      photo: pic(5),
     },
     money: {
       headline: 'How maintenance and billables actually work',
@@ -475,6 +575,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       headline: 'What we did not get to',
       subtitle: 'Anything left blank above collects here. This is the agenda for the follow-up call.',
     },
+    photoPool: pool,
     custom: [],
     omit: [],
   }
@@ -482,6 +583,6 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
 
 /** Every section key an onboarding report can hide, in render order. */
 export const ONBOARDING_SECTIONS = [
-  'unit', 'listings', 'strategy', 'ramp', 'season', 'team',
-  'comms', 'portal', 'money', 'statement', 'checklist', 'nextup', 'open',
+  'welcome', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season',
+  'guesty', 'tech', 'money', 'statement', 'team', 'comms', 'checklist', 'nextup', 'open',
 ] as const
