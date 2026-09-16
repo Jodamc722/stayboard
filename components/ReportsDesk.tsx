@@ -67,7 +67,14 @@ export function ReportsDesk() {
   // a building-scoped report showed them their neighbours' numbers next to their own, and titled
   // the cover after a building instead of after them. Owner is now the default; building stays
   // for the cases where the report really is about a whole property.
-  const [scopeMode, setScopeMode] = useState<'owner' | 'building'>('owner')
+  // Three ways to say who a document is about. UNIT matters most for onboarding (Jon,
+  // 2026-09-16: "also have create by unit, multiple select") — a new owner usually arrives with
+  // one unit, not a building and not a portfolio, and picking their building would put their
+  // neighbours' units in their welcome deck.
+  const [scopeMode, setScopeMode] = useState<'owner' | 'building' | 'unit'>('owner')
+  const [units, setUnits] = useState<{ id: string; name: string; building: string }[]>([])
+  const [pickedUnits, setPickedUnits] = useState<string[]>([])
+  const [unitQ, setUnitQ] = useState('')
   const [owners, setOwners] = useState<{ id: string; name: string; units: number; listingIds: string[] }[]>([])
   const [pickedOwners, setPickedOwners] = useState<string[]>([])
   const [ownerQ, setOwnerQ] = useState('')
@@ -159,6 +166,13 @@ export function ReportsDesk() {
     fetch('/api/reports/budgets?owners=1').then(r => r.json()).then(d => {
       if (Array.isArray(d?.owners)) setOwners(d.owners)
     }).catch(() => {})
+    fetch('/api/listings?slim=1').then(r => r.json()).then(d => {
+      const rows: any[] = Array.isArray(d?.results) ? d.results : []
+      setUnits(rows
+        .filter(l => ['inactive', 'disabled', 'archived', 'deleted'].indexOf(String(l.status || '').toLowerCase()) < 0)
+        .map(l => ({ id: String(l.id), name: String(l.nickname || l.title || l.id), building: String(l.building || '') }))
+        .sort((a, b) => a.name.localeCompare(b.name)))
+    }).catch(() => {})
   }, [])
 
   // Statements follow the property selection. Anything whose period sits inside the report
@@ -170,13 +184,34 @@ export function ReportsDesk() {
   const ownerRows = owners.filter(o => pickedOwners.indexOf(o.id) >= 0)
   const ownerListingIds = Array.from(new Set(ownerRows.flatMap(o => o.listingIds)))
   const ownerLabel = ownerRows.map(o => o.name).join(' + ')
-  const scopeReady = scopeMode === 'owner' ? ownerRows.length > 0 : picked.length > 0
-  const pickedKey = scopeMode === 'owner' ? ownerListingIds.join(',') : picked.join(',')
+  // PICKING AN OWNER SELECTS THEIR PROPERTIES (Jon, 2026-09-16: "when I pick my owner, it should
+  // select their properties"). Their units come on as a set you can see and then trim — an owner
+  // with eight units often wants a document about three of them.
+  const ownerKey = pickedOwners.join(',')
+  useEffect(() => {
+    if (scopeMode !== 'owner') return
+    const ids = Array.from(new Set(owners.filter(o => pickedOwners.indexOf(o.id) >= 0).flatMap(o => o.listingIds)))
+    setPickedUnits(ids)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerKey, scopeMode, owners.length])
+
+  const unitRows = units.filter(u => pickedUnits.indexOf(u.id) >= 0)
+  // Two units read better as their names; a dozen read better as a count.
+  const unitLabel = unitRows.length <= 2
+    ? unitRows.map(u => u.name).join(' + ')
+    : unitRows.length + ' units'
+  const scopeIds = scopeMode === 'owner'
+    ? (pickedUnits.length ? pickedUnits : ownerListingIds)
+    : scopeMode === 'unit' ? pickedUnits : []
+  const scopeLabel = scopeMode === 'owner' ? ownerLabel : scopeMode === 'unit' ? unitLabel : ''
+  const byIds = scopeMode === 'owner' || scopeMode === 'unit'
+  const scopeReady = byIds ? scopeIds.length > 0 : picked.length > 0
+  const pickedKey = byIds ? scopeIds.join(',') : picked.join(',')
   useEffect(() => {
     if (!pickedKey) { setStmtList([]); setStmtPicked([]); return }
     let cancelled = false
     setStmtLoading(true)
-    fetch('/api/reports/statements?' + (scopeMode === 'owner' ? 'listingIds=' : 'buildings=') + encodeURIComponent(pickedKey))
+    fetch('/api/reports/statements?' + (byIds ? 'listingIds=' : 'buildings=') + encodeURIComponent(pickedKey))
       .then(r => r.json())
       .then(d => {
         if (cancelled) return
@@ -207,7 +242,10 @@ export function ReportsDesk() {
   }
 
   async function generate() {
-    if (!picked.length) { setMsg('Pick at least one property.'); return }
+    if (!scopeReady) {
+      setMsg(scopeMode === 'owner' ? 'Pick an owner.' : scopeMode === 'unit' ? 'Pick at least one unit.' : 'Pick at least one property.')
+      return
+    }
     setGenerating(true)
     setMsg(kind === 'projection' ? 'Building the projection report… (~5s)'
       : kind === 'onboarding' ? 'Building the onboarding presentation… (~10s)'
@@ -218,8 +256,8 @@ export function ReportsDesk() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           kind,
-          ...(scopeMode === 'owner'
-            ? { listingIds: ownerListingIds, scopeLabel: ownerLabel }
+          ...(byIds
+            ? { listingIds: scopeIds, scopeLabel }
             : { buildings: picked }),
           periodStart, periodEnd,
           ownerName: ownerName || undefined,
@@ -322,6 +360,10 @@ export function ReportsDesk() {
                     className={'px-3 py-1 text-[12px] font-semibold ' + (scopeMode === 'owner' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                     An owner
                   </button>
+                  <button onClick={() => setScopeMode('unit')}
+                    className={'px-3 py-1 text-[12px] font-semibold ' + (scopeMode === 'unit' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                    Specific units
+                  </button>
                   <button onClick={() => setScopeMode('building')}
                     className={'px-3 py-1 text-[12px] font-semibold ' + (scopeMode === 'building' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                     A building
@@ -353,8 +395,69 @@ export function ReportsDesk() {
                     {!owners.length && <span className="text-sm text-muted italic">Loading owners…</span>}
                   </div>
                   {ownerRows.length > 0 && (
+                    <div className="mt-3 rounded-xl border border-line bg-app/40 p-3">
+                      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                        <p className="text-[11px] uppercase tracking-wider text-muted font-semibold">
+                          Their properties · {scopeIds.length} of {ownerListingIds.length} selected
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => setPickedUnits(ownerListingIds)} className="text-[12px] font-semibold text-muted hover:text-ink">Select all</button>
+                          <button onClick={() => setPickedUnits([])} className="text-[12px] font-semibold text-muted hover:text-ink">Clear</button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto">
+                        {ownerListingIds.map(id => {
+                          const u = units.find(x => x.id === id)
+                          const on = pickedUnits.indexOf(id) >= 0
+                          return (
+                            <button key={id}
+                              onClick={() => setPickedUnits(p => on ? p.filter(x => x !== id) : [...p, id])}
+                              className={'rounded-full px-3 py-1.5 text-[12.5px] font-semibold border transition-colors ' + (on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:border-brand-300')}>
+                              {u ? u.name : id}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <p className="mt-2 text-[12px] text-muted">
+                        <b className="text-ink">{ownerLabel}</b> — the document is titled for them and covers the units ticked above.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : scopeMode === 'unit' ? (
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                    <input
+                      value={unitQ} onChange={e => setUnitQ(e.target.value)}
+                      placeholder={units.length ? 'Search ' + units.length + ' units…' : 'Loading units…'}
+                      className="w-full max-w-sm rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink"
+                    />
+                    {pickedUnits.length > 0 && (
+                      <button onClick={() => setPickedUnits([])} className="text-[12px] font-semibold text-muted hover:text-ink">Clear {pickedUnits.length}</button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2 max-h-56 overflow-y-auto">
+                    {units
+                      .filter(u => {
+                        const q = unitQ.trim().toLowerCase()
+                        return !q || u.name.toLowerCase().indexOf(q) >= 0 || u.building.toLowerCase().indexOf(q) >= 0
+                      })
+                      .slice(0, 120)
+                      .map(u => {
+                        const on = pickedUnits.indexOf(u.id) >= 0
+                        return (
+                          <button key={u.id}
+                            onClick={() => setPickedUnits(p => on ? p.filter(x => x !== u.id) : [...p, u.id])}
+                            className={'rounded-full px-3 py-1.5 text-[12.5px] font-semibold border transition-colors ' + (on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-ink border-line hover:border-brand-300')}>
+                            {u.name}
+                          </button>
+                        )
+                      })}
+                    {!units.length && <span className="text-sm text-muted italic">Loading units…</span>}
+                  </div>
+                  {unitRows.length > 0 && (
                     <p className="mt-2 text-[12px] text-muted">
-                      <b className="text-ink">{ownerLabel}</b> · {ownerListingIds.length} unit{ownerListingIds.length === 1 ? '' : 's'} — the report is titled for them, and covers only their units.
+                      <b className="text-ink">{unitLabel}</b> — the document covers these units and nothing else.
                     </p>
                   )}
                 </div>
