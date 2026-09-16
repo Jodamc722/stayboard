@@ -34,6 +34,7 @@ import { getShifts } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { computeYesterdayLabor } from '@/lib/labor-daily'
+import { cronAllowed } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -84,6 +85,15 @@ export async function GET(req: NextRequest) {
   const preview = sp.get('preview') === '1'
   const test = sp.get('test') === '1'
   const force = sp.get('force') === '1'
+  // WHO IS ALLOWED TO SET THIS OFF. An unqualified GET here is the REAL SEND, not a preview, and
+  // until 2026-09-16 it had no auth of any kind: anyone who knew the URL could trigger the daily
+  // labor email, payroll figures and all, from a browser, as many times as they liked. preview/test already required a session; the send
+  // path required nothing. It now takes the cron bearer, which Vercel puts on every scheduled call
+  // (this job is in vercel.json), while preview and test keep their session check below.
+  {
+    const gate = cronAllowed(req)
+    if (!gate.ok && !(preview || test)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   try {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
