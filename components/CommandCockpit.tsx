@@ -611,6 +611,7 @@ function EveQuestionsCard() {
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState(0)
+  const [all, setAll] = useState(false)
 
   useEffect(() => {
     if (count > 0 && qs === null) {
@@ -640,6 +641,10 @@ function EveQuestionsCard() {
   if (!count) return null
   const live = qs || []
   if (qs && live.length === 0 && filed === 0) return null
+  // She has forty-five of these saved up, and forty-five rows is not a card, it is a page. The list
+  // comes back ordered by how many times each has come up, so the top few are the ones that have
+  // actually cost somebody something. The rest are one tap away.
+  const shown = all ? live : live.slice(0, 4)
 
   return (
     <section className={CARD}>
@@ -665,7 +670,7 @@ function EveQuestionsCard() {
             Everything else she knows she worked out from records. These are the things only a person can tell her — your
             answer becomes a memory with your name on it, and outranks anything she concluded herself.
           </p>
-          {live.map(q => (
+          {shown.map(q => (
             <div key={q.id} className="rounded-xl border border-line bg-app px-3 py-2.5">
               <p className="text-[13px] font-semibold text-ink">{q.question}</p>
               {q.why && <p className="text-[12px] text-muted mt-0.5">Why she is asking: {q.why}</p>}
@@ -690,6 +695,13 @@ function EveQuestionsCard() {
             </div>
           ))}
         </div>
+      )}
+
+      {live.length > shown.length && (
+        <button onClick={() => setAll(true)}
+          className="w-full px-4 py-2 border-t border-line text-[12.5px] font-semibold text-muted hover:text-ink text-left">
+          Show the other {live.length - shown.length}
+        </button>
       )}
 
       {filed > 0 && (
