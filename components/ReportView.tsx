@@ -817,6 +817,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [picker, setPicker] = useState(false)
   const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void } | null>(null)
   const [photoUrl, setPhotoUrl] = useState('')
+  const [amenityMsg, setAmenityMsg] = useState<Record<string, string>>({})
+  const [copyMsg, setCopyMsg] = useState<Record<string, string>>({})
   const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
   const [manualLine, setManualLine] = useState('')
   const [manualCat, setManualCat] = useState('')
@@ -2013,13 +2015,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             { k: 'overview', label: 'About Stay Hospitality' },
             { k: 'channels', label: 'Where it sells' },
             { k: 'listings', label: 'Your listing' },
+            { k: 'season', label: 'The season' },
+            { k: 'ramp', label: 'The first 90 days' },
             { k: 'guesty', label: 'Owner portal' },
             { k: 'statement', label: 'Owner statements' },
             { k: 'notes', label: 'Other notes' },
           ]
           const EXTRA: { k: string; label: string }[] = [
             { k: 'unit', label: 'Your unit' }, { k: 'strategy', label: 'Goals & strategy' },
-            { k: 'ramp', label: 'The ramp' }, { k: 'season', label: 'Seasonality' },
             { k: 'tech', label: 'Your tech' }, { k: 'money', label: 'Billables' },
             { k: 'comms', label: 'Communication' }, { k: 'checklist', label: 'Still to do' },
             { k: 'nextup', label: 'What happens next' },
@@ -2425,12 +2428,44 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       columns so neither runs to twenty lines, each under a hairline. Still live
                       to edit; the labels stop shouting and the words do the work. */}
                   <div className="flex flex-col h-full">
-                    <div className="flex items-baseline justify-between" style={{ gap: 28 }}>
+                    <div className="flex items-start justify-between" style={{ gap: 28 }}>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
                         <p style={{ fontSize: 12, color: t.muted }}>{L.name}</p>
                       </div>
-                      <p style={{ fontSize: 12, color: t.muted, whiteSpace: 'nowrap' }}>The words a guest reads</p>
+                      {canEdit ? (
+                        <div style={{ textAlign: 'right' }}>
+                          <button
+                            onClick={async () => {
+                              const id = String(L.id)
+                              setCopyMsg(m => ({ ...m, [id]: 'busy' }))
+                              try {
+                                const r = await fetch('/api/listing-content', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    listingId: id,
+                                    title: String(L.title || ''),
+                                    publicDescription: { summary: String(L.summary || ''), space: String(L.space || '') },
+                                  }),
+                                })
+                                const d = await r.json().catch(() => ({}))
+                                setCopyMsg(m => ({ ...m, [id]: (d?.ok || r.ok) ? 'ok' : (d?.error || 'Could not push.') }))
+                              } catch {
+                                setCopyMsg(m => ({ ...m, [id]: 'Could not push \u2014 check your connection.' }))
+                              }
+                            }}
+                            style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '8px 16px', background: t.ink, color: t.bg, whiteSpace: 'nowrap' }}>
+                            {copyMsg[String(L.id)] === 'busy' ? 'Pushing\u2026' : 'Push to Guesty'}
+                          </button>
+                          <p style={{ fontSize: 11.5, marginTop: 7, maxWidth: 230, color: copyMsg[String(L.id)] === 'ok' ? t.good : t.gold }}>
+                            {copyMsg[String(L.id)] === 'ok'
+                              ? 'Pushed. The channels pick it up on their own schedule.'
+                              : (copyMsg[String(L.id)] && copyMsg[String(L.id)] !== 'busy' ? copyMsg[String(L.id)] : '')}
+                          </p>
+                        </div>
+                      ) : (
+                        <p style={{ fontSize: 12, color: t.muted, whiteSpace: 'nowrap' }}>The words a guest reads</p>
+                      )}
                     </div>
 
                     {/* the headline, at headline size */}
@@ -2477,6 +2512,116 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               ) })
             })
 
+            // ── AMENITIES, ONE UNIT PER SLIDE ─────────────────────────────
+            // What the listing claims, and what a unit of this shape is still missing. Both
+            // lists are live: tap either side to move an amenity across, then push the whole
+            // set to Guesty and the channels pick it up on their own schedule. The reason a
+            // suggestion exists sits under it, because "add a coffee maker" lands very
+            // differently from "add a coffee maker — it is in 88% of the studios you compete
+            // with". No score anywhere near it.
+            const toggleAmenity = (li: number, name: string) => {
+              mutate(d => {
+                const list: string[] = Array.isArray(d.listings.items[li].amenities) ? d.listings.items[li].amenities : []
+                const ix = list.indexOf(name)
+                if (ix >= 0) list.splice(ix, 1); else list.push(name)
+                list.sort((a: string, b: string) => a.localeCompare(b))
+                d.listings.items[li].amenities = list
+              })
+              answerChanged()
+            }
+            const pushAmenities = async (id: string, list: string[]) => {
+              setAmenityMsg(m => ({ ...m, [id]: 'busy' }))
+              try {
+                const r = await fetch('/api/listing-amenities', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ listingId: id, amenities: list }),
+                })
+                const d = await r.json()
+                setAmenityMsg(m => ({ ...m, [id]: (d?.ok || r.ok) ? 'ok' : (d?.error || 'Could not push \u2014 try from the unit page.') }))
+              } catch {
+                setAmenityMsg(m => ({ ...m, [id]: 'Could not push \u2014 check your connection.' }))
+              }
+            }
+
+            items.forEach((L: Any, li: number) => {
+              const have: string[] = Array.isArray(L.amenities) ? L.amenities : []
+              const missing: Any[] = (L.amenitySuggest || []).filter((sg: Any) => have.indexOf(sg.name) < 0)
+              if (!have.length && !missing.length) return
+              slides.push({ key: 'listings', node: (
+                <Slide nav={String(L.name || 'Unit') + ' \u2014 amenities'} warn={edit} ground={GROUND.tint}>
+                  <div className="flex flex-col h-full">
+                    <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
+                      <div>
+                        <div style={{ width: 30, height: 2, background: brass, marginBottom: 14 }} />
+                        <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>What the listing says it has</p>
+                        <p style={{ fontSize: 13, color: t.muted, marginTop: 7 }}>{L.name}</p>
+                      </div>
+                      {canEdit && (
+                        <div style={{ textAlign: 'right' }}>
+                          <button onClick={() => pushAmenities(L.id, have)}
+                            style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '8px 16px', background: t.ink, color: t.bg, whiteSpace: 'nowrap' }}>
+                            {amenityMsg[L.id] === 'busy' ? 'Pushing\u2026' : 'Push to Guesty'}
+                          </button>
+                          {amenityMsg[L.id] && amenityMsg[L.id] !== 'busy' && (
+                            <p style={{ fontSize: 11.5, marginTop: 7, maxWidth: 210, color: amenityMsg[L.id] === 'ok' ? t.good : t.gold }}>
+                              {amenityMsg[L.id] === 'ok' ? 'Pushed. The channels pick it up on their own schedule.' : amenityMsg[L.id]}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-h-0" style={{ marginTop: 22, display: 'grid', gridTemplateColumns: '1.25fr 1fr', columnGap: 40 }}>
+                      {/* on the listing */}
+                      <div className="min-h-0 flex flex-col">
+                        <div style={{ paddingBottom: 9, borderBottom: '1px solid ' + t.ink, marginBottom: 13 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>On the listing</span>
+                          <span className="tabular-nums" style={{ fontSize: 12, color: t.muted, marginLeft: 9 }}>{have.length}</span>
+                        </div>
+                        <div className="min-h-0" style={{ overflowY: 'auto', flex: 1 }}>
+                          <div className="flex flex-wrap" style={{ gap: 6 }}>
+                            {have.map((a: string) => (
+                              <span key={a}
+                                onClick={canEdit ? () => toggleAmenity(li, a) : undefined}
+                                title={canEdit ? 'Remove from the listing' : undefined}
+                                style={{
+                                  fontSize: 12, borderRadius: 999, padding: '5px 11px',
+                                  background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink,
+                                  cursor: canEdit ? 'pointer' : 'default',
+                                }}>{a}</span>
+                            ))}
+                            {!have.length && <span style={{ fontSize: 13, color: t.muted }}>Nothing listed yet.</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* recommended, not on it */}
+                      <div className="min-h-0 flex flex-col">
+                        <div style={{ paddingBottom: 9, borderBottom: '1px solid ' + brass, marginBottom: 13 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>Worth adding</span>
+                          <span className="tabular-nums" style={{ fontSize: 12, color: t.muted, marginLeft: 9 }}>{missing.length}</span>
+                        </div>
+                        <div className="min-h-0" style={{ overflowY: 'auto', flex: 1 }}>
+                          {missing.slice(0, 10).map((sg: Any) => (
+                            <div key={sg.name}
+                              onClick={canEdit ? () => toggleAmenity(li, sg.name) : undefined}
+                              style={{ padding: '9px 0', borderBottom: '1px solid ' + t.rule, cursor: canEdit ? 'pointer' : 'default' }}>
+                              <p style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>
+                                {canEdit ? <span style={{ color: brass, marginRight: 6 }}>+</span> : null}{sg.name}
+                              </p>
+                              {sg.reason ? <p style={{ fontSize: 11.5, lineHeight: 1.45, color: t.muted, marginTop: 2 }}>{sg.reason}</p> : null}
+                            </div>
+                          ))}
+                          {!missing.length && <p style={{ fontSize: 13, color: t.good }}>Nothing obvious missing.</p>}
+                        </div>
+                      </div>
+                    </div>
+                    <Foot label="Your listing" />
+                  </div>
+                </Slide>
+              ) })
+            })
+
             if ((sec('listings').asks || []).length) slides.push({ key: 'listings', node: (
               <Slide nav="Listing — questions" warn={edit}>
                 <div className="flex flex-col h-full">
@@ -2487,6 +2632,104 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               </Slide>
             ) })
           }
+
+          // ── THE SEASON — the shape of the year, as a share and a curve ─────
+          // No dollar figure anywhere (Jon: "not actual numbers"). A number we invented today
+          // is the number an owner holds us to in April, and their unit has no history yet. The
+          // share and the shape are true of the market and safe to put in front of them.
+          if (!hid('season')) slides.push({ key: 'season', ai: true, node: (
+            <Slide nav="The season" warn={edit} ground={GROUND.dark} bleed>
+              <div style={{ position: 'absolute', inset: 0, background: t.band, padding: 64 }} className="flex flex-col">
+                <div className="flex-1 min-h-0 flex flex-col justify-center">
+                  <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 20 }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', columnGap: 52, alignItems: 'center' }}>
+                    <div>
+                      <p style={{ fontSize: 84, fontWeight: 600, letterSpacing: '-0.045em', color: D.ink, lineHeight: 0.9 }}>
+                        <Ed v={sec('season').peakShare || ''} set={v => patch('season.peakShare', v)} edit={edit} />
+                      </p>
+                      <p style={{ fontSize: 15.5, lineHeight: 1.5, color: D.body, marginTop: 14, maxWidth: '26ch' }}>
+                        <Ed v={sec('season').peakLabel || ''} set={v => patch('season.peakLabel', v)} edit={edit} multiline />
+                      </p>
+                    </div>
+                    <div>
+                      {/* the year, as a curve */}
+                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 7, height: 188 }}>
+                        {(sec('season').months || []).map((m: Any, mi: number) => {
+                          const lvl = Number(m.level)
+                          const peak = lvl >= 3
+                          return (
+                            <div key={mi} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9 }}>
+                              <div style={{
+                                width: '100%', borderRadius: '4px 4px 0 0',
+                                height: Math.max(10, (lvl + 1) * 44),
+                                background: peak ? D.ink : 'rgba(255,255,255,' + (lvl >= 2 ? 0.42 : 0.18) + ')',
+                              }} />
+                              <span style={{ fontSize: 11, color: peak ? D.ink : D.muted }}>{m.m}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <p style={{ fontSize: 12.5, color: D.muted, marginTop: 16 }}>
+                        Peak months in white. Shape of the market, not a forecast for your unit.
+                      </p>
+                    </div>
+                  </div>
+                  <p style={{ fontSize: 14.5, lineHeight: 1.65, color: D.body, marginTop: 30, maxWidth: '78ch' }}>
+                    <Ed v={sec('season').body || ''} set={v => patch('season.body', v)} edit={edit} multiline />
+                  </p>
+                </div>
+                <Foot label="The season" dark />
+              </div>
+            </Slide>
+          ) })
+
+          // ── THE RAMP — why month one is bought, not earned ─────────────────
+          if (!hid('ramp')) slides.push({ key: 'ramp', ai: true, node: (
+            <Slide nav="The first 90 days" warn={edit} ground={GROUND.light}>
+              <div className="flex flex-col h-full">
+                <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
+                <p className="onb-h" style={{ fontSize: 34, color: t.ink, lineHeight: 1.15, maxWidth: '22ch' }}>
+                  <Ed v={sec('ramp').headline || ''} set={v => patch('ramp.headline', v)} edit={edit} multiline />
+                </p>
+                <p style={{ fontSize: 15, color: t.muted, marginTop: 10, maxWidth: '62ch' }}>
+                  <Ed v={sec('ramp').subtitle || ''} set={v => patch('ramp.subtitle', v)} edit={edit} multiline />
+                </p>
+
+                <div className="flex-1 min-h-0 flex flex-col justify-center">
+                  {/* a rising track: placement, reviews and rate all climb together */}
+                  <div style={{ position: 'relative', height: 86, marginBottom: 6 }}>
+                    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, background: t.rule }} />
+                    {[0, 1, 2].map(i => (
+                      <div key={i} style={{
+                        position: 'absolute', bottom: 0, left: (i * 33.3) + '%', width: '31%',
+                        height: 24 + i * 28, borderRadius: '6px 6px 0 0',
+                        background: i === 2 ? t.accent : hexA(t.accent, i === 1 ? 0.45 : 0.2),
+                      }} />
+                    ))}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 26 }}>
+                    {(sec('ramp').bands || []).slice(0, 3).map((b: Any, i: number) => (
+                      <div key={i} style={{ paddingTop: 14, borderTop: '1px solid ' + t.ink }}>
+                        <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
+                          <Ed v={b.k || ''} set={v => patch('ramp.bands.' + i + '.k', v)} edit={edit} />
+                        </p>
+                        <p style={{
+                          fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 7,
+                          display: '-webkit-box', WebkitLineClamp: 5, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                        } as Any}>
+                          <Ed v={b.v || ''} set={v => patch('ramp.bands.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 24, paddingLeft: 16, borderLeft: '2px solid ' + t.accent, maxWidth: '76ch' }}>
+                    <Ed v={sec('ramp').note || ''} set={v => patch('ramp.note', v)} edit={edit} multiline />
+                  </p>
+                </div>
+                <Foot label="The first 90 days" />
+              </div>
+            </Slide>
+          ) })
 
           // ── 6 · THE OWNER PORTAL ───────────────────────────────────────────
           if (!hid('guesty')) slides.push({ key: 'guesty', ai: true, node: (
