@@ -65,6 +65,14 @@ export type OnboardingContent = {
   }
   hero: { eyebrow: string; title: string; headline: string; preparedFor: string; dateLabel: string; heroImage: string | null }
   welcome: Sec<{ headline: string; subtitle: string; body: string; stats: KV[] }>
+  /** Who we call, on what, and how they want to hear from us. Seeded from Guesty, edited here. */
+  contact: Sec<{
+    headline: string; subtitle: string
+    name: string; email: string; phone: string
+    preferred: string; bestTime: string; second: string; notes: string
+    fromGuesty: boolean
+    asks: Ask[]
+  }>
   agenda: Sec<{ headline: string; subtitle: string; items: KV[] }>
   unit: Sec<{ headline: string; subtitle: string; body: string; facts: KV[]; asks: Ask[] }>
   listings: Sec<{ headline: string; subtitle: string; items: ListingCard[]; asks: Ask[] }>
@@ -263,6 +271,10 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
       { id: 'e1', q: 'Any dates you already know you are blocking this season?' },
       { id: 'e2', q: 'Any renovation, special assessment or HOA work coming?' },
     ],
+    contact: [
+      { id: 'k1', q: 'How do you want us to reach you?', hint: 'Text, call, email \u2014 and whether that changes when it is urgent.' },
+      { id: 'k2', q: 'Every guest issue, or only the ones that cost money?', hint: 'Most owners want the second. Some want everything for the first month.' },
+    ],
     tech: [
       { id: 't1', q: 'Is there anything already installed we should keep or work around?', hint: 'An HOA lock standard, a Ring, a Nest you like, a mesh network.' },
       { id: 't2', q: 'Anything you would rather we did not put in?' },
@@ -370,6 +382,9 @@ export function listingCardFrom(l: any, amenities: string[], amenitySuggest: { n
 }
 
 export type BuildInput = {
+  /** Straight off guesty_owners when we have the row — the owner corrects it on the call. */
+  ownerEmail?: string
+  ownerPhone?: string
   scopeLabel: string
   asOf: string
   market: string
@@ -444,6 +459,19 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       body: t.welcomeBody,
       stats: t.companyStats,
       photo: pic(0),
+    },
+    contact: {
+      headline: 'How we reach you',
+      subtitle: 'Pulled from Guesty where we have it. Correct anything that is wrong.',
+      name: i.ownerName || i.scopeLabel,
+      email: i.ownerEmail || '',
+      phone: i.ownerPhone || '',
+      preferred: '',
+      bestTime: '',
+      second: '',
+      notes: '',
+      fromGuesty: !!(i.ownerEmail || i.ownerPhone),
+      asks: asks('contact'),
     },
     agenda: {
       headline: 'What we will cover',
@@ -590,6 +618,6 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
 
 /** Every section key an onboarding report can hide, in render order. */
 export const ONBOARDING_SECTIONS = [
-  'welcome', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season',
+  'welcome', 'contact', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season',
   'guesty', 'tech', 'money', 'statement', 'team', 'comms', 'checklist', 'nextup', 'open',
 ] as const
