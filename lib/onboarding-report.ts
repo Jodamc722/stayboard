@@ -74,7 +74,17 @@ export type OnboardingContent = {
    * single most under-sold thing we do: an owner who self-managed was on one channel, and the
    * reason we can price for occupancy at all is that the same calendar is live on thirty.
    */
-  channels: Sec<{ headline: string; subtitle: string; body: string; primary: string[]; more: string[]; count: string }>
+  channels: Sec<{
+    headline: string; subtitle: string; body: string
+    primary: string[]; more: string[]; count: string
+    /**
+     * CHANNEL LOGOS ARE OTHER COMPANIES' TRADEMARKS. We do not draw them, and an approximation
+     * would look worse than type does — so the slide ships as a wordmark wall and renders real
+     * artwork the moment someone drops official partner/press-kit files in here. Each entry is
+     * a name and an image URL; the slide greyscales them so eight brand palettes do not fight.
+     */
+    logos: { name: string; url: string }[]
+  }>
   unit: Sec<{ headline: string; subtitle: string; body: string; facts: KV[]; asks: Ask[] }>
   listings: Sec<{ headline: string; subtitle: string; items: ListingCard[]; asks: Ask[] }>
   strategy: Sec<{ headline: string; subtitle: string; body: string; asks: Ask[] }>
@@ -149,6 +159,7 @@ export type OnboardingTemplate = {
   /** The long tail, set small underneath — it is the count that does the persuading. */
   channelsMore: string[]
   channelsCount: string
+  channelsLogos: { name: string; url: string }[]
   agenda: KV[]
   /** The house's one Owners Portal address. Guesty allows exactly one per account. */
   portalUrl: string
@@ -184,7 +195,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   wordmark: 'STAY HOSPITALITY',
   companyStats: [
     { k: 'Markets', v: 'Miami & Broward' },
-    { k: 'Units managed', v: '230+' },
+    { k: 'Units managed', v: '400+' },
     { k: 'Channels', v: 'Airbnb · Vrbo · Booking.com' },
     { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
   ],
@@ -205,13 +216,17 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   channelsBody:
     'Your calendar is one calendar. We publish it to every channel that matters and reconcile the bookings back into a single place, which is the only reason a unit can be priced for occupancy without ever being double-booked.\n\n' +
     'Most owners arrive on one channel. Being on thirty is what turns a slow Tuesday in September into a booking.',
-  channelsPrimary: ['Airbnb', 'Vrbo', 'Booking.com', 'Expedia', 'Marriott Homes & Villas', 'Blueground'],
+  channelsPrimary: [
+    'Airbnb', 'Vrbo', 'Booking.com', 'Expedia',
+    'Hotels.com', 'Marriott Homes & Villas', 'Blueground', 'Whimstay',
+  ],
   channelsMore: [
-    'Expedia partner network', 'Hotels.com', 'Orbitz', 'Travelocity', 'Wotif', 'ebookers',
+    'Expedia partner network', 'Orbitz', 'Travelocity', 'Wotif', 'ebookers',
     'Agoda', 'Trip.com', 'Google Vacation Rentals', 'HomeToGo', 'Holidu', 'Hometogo partners',
     'Whimstay', 'Houfy', 'Plum Guide', 'Corporate & relocation partners',
   ],
   channelsCount: '30+',
+  channelsLogos: [],
 
   agenda: [
     { k: 'Your listings', v: 'We open the live listing on every channel, score it, and fix the weak parts while you watch.' },
@@ -384,6 +399,7 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     channelsPrimary: arr(stored.channelsPrimary, D.channelsPrimary),
     channelsMore: arr(stored.channelsMore, D.channelsMore),
     channelsCount: str(stored.channelsCount, D.channelsCount),
+    channelsLogos: Array.isArray(stored.channelsLogos) ? stored.channelsLogos : D.channelsLogos,
     portalUrl: str(stored.portalUrl, D.portalUrl),
     // An empty shot list is a real state (no screenshots uploaded yet), so it is kept as saved.
     portalShots: Array.isArray(stored.portalShots) ? stored.portalShots : D.portalShots,
@@ -571,6 +587,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       primary: t.channelsPrimary,
       more: t.channelsMore,
       count: t.channelsCount,
+      logos: t.channelsLogos,
       photo: pic(11),
     },
     // 6 ── REVIEW THE LISTING. The photos a guest meets, the live links, and the words —
