@@ -612,15 +612,16 @@ function EveQuestionsCard() {
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState(0)
   const [all, setAll] = useState(false)
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
-    if (count > 0 && qs === null) {
+    if (open && qs === null) {
       fetch('/api/eve/questions')
         .then(r => r.json())
         .then(r => setQs(Array.isArray(r?.questions) ? r.questions : []))
         .catch(() => setQs([]))
     }
-  }, [count, qs])
+  }, [open, qs])
 
   async function act(id: string, op: 'answer' | 'dismiss') {
     setBusy(id)
@@ -641,6 +642,7 @@ function EveQuestionsCard() {
   if (!count) return null
   const live = qs || []
   if (qs && live.length === 0 && filed === 0) return null
+  const left = qs ? live.length : count
   // She has forty-five of these saved up, and forty-five rows is not a card, it is a page. The list
   // comes back ordered by how many times each has come up, so the top few are the ones that have
   // actually cost somebody something. The rest are one tap away.
@@ -648,23 +650,22 @@ function EveQuestionsCard() {
 
   return (
     <section className={CARD}>
-      <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="w-full px-4 py-2.5 border-b border-line flex items-center gap-2 text-left">
         <HelpCircle size={14} className="text-muted" />
         <h2 className="text-[13.5px] font-bold text-ink">
-          Eve is asking you <span className="text-muted font-semibold tabular-nums">{live.length || count}</span>
+          Eve is asking you <span className="text-muted font-semibold tabular-nums">{left}</span>
         </h2>
-        <a href="/users?tab=settings&panel=eve" className="ml-auto text-[11.5px] font-semibold text-muted hover:text-ink">
-          Memory
-        </a>
-      </div>
+        {open ? <ChevronDown size={14} className="ml-auto text-muted" /> : <ChevronRight size={14} className="ml-auto text-muted" />}
+      </button>
 
-      {qs === null && (
+      {open && qs === null && (
         <div className="px-4 py-3 text-[12.5px] text-muted flex items-center gap-2">
           <Loader2 size={12} className="animate-spin" /> Getting them&hellip;
         </div>
       )}
 
-      {live.length > 0 && (
+      {open && live.length > 0 && (
         <div className="px-4 py-3 space-y-2.5">
           <p className="text-[11.5px] text-muted">
             Everything else she knows she worked out from records. These are the things only a person can tell her — your
@@ -697,7 +698,7 @@ function EveQuestionsCard() {
         </div>
       )}
 
-      {live.length > shown.length && (
+      {open && live.length > shown.length && (
         <button onClick={() => setAll(true)}
           className="w-full px-4 py-2 border-t border-line text-[12.5px] font-semibold text-muted hover:text-ink text-left">
           Show the other {live.length - shown.length}
