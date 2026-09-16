@@ -1,6 +1,6 @@
 // What Eve does not know: read the open questions, answer one, or dismiss it.
 import { NextRequest, NextResponse } from 'next/server'
-import { listQuestions, answerQuestion, dismissQuestion, generateQuestions } from '@/lib/eve/questions'
+import { listQuestions, answerQuestion, dismissQuestion, generateQuestions, countOpenQuestions } from '@/lib/eve/questions'
 import { eveGate } from '../../agent/route'
 
 export const dynamic = 'force-dynamic'
@@ -10,6 +10,8 @@ export async function GET(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
   const sp = new URL(req.url).searchParams
+  // ?count=1 — the badge and the Command Center card. One digit, no rows.
+  if (sp.get('count')) return NextResponse.json({ ok: true, count: await countOpenQuestions() })
   return NextResponse.json({ ok: true, questions: await listQuestions(sp.get('status') || 'open') })
 }
 
