@@ -604,8 +604,8 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       asks: asks('season'),
     },
     team: {
-      headline: 'Meet the team',
-      subtitle: 'Four people, named, with direct lines. You are not handed to an inbox.',
+      headline: 'Meet your team',
+      subtitle: 'The four people who run your unit, and the inbox behind them.',
       people: t.team.filter(p => !p.market || !i.market || String(p.market).toLowerCase() === String(i.market).toLowerCase())
         .map(p => ({ name: p.name, role: p.role, blurb: p.blurb, photo: p.photo || null, phone: p.phone || '', email: p.email || '' })),
       support: { label: t.supportLabel, note: t.supportNote, email: t.supportEmail },
