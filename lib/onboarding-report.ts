@@ -68,6 +68,13 @@ export type OnboardingContent = {
   agenda: Sec<{ headline: string; subtitle: string; items: KV[] }>
   /** 4 — who Stay Hospitality is. The stats live here now, not on the greeting. */
   overview: Sec<{ headline: string; subtitle: string; body: string; stats: KV[] }>
+  /**
+   * 5 — WHERE THE UNIT ACTUALLY SELLS (Jon, 2026-09-16: "OTAs were on: 30+ OTAs, Airbnb, Vrbo,
+   * Booking.com, Expedia, Marriott, Blueground, Expedia and Expedia's partners"). This is the
+   * single most under-sold thing we do: an owner who self-managed was on one channel, and the
+   * reason we can price for occupancy at all is that the same calendar is live on thirty.
+   */
+  channels: Sec<{ headline: string; subtitle: string; body: string; primary: string[]; more: string[]; count: string }>
   unit: Sec<{ headline: string; subtitle: string; body: string; facts: KV[]; asks: Ask[] }>
   listings: Sec<{ headline: string; subtitle: string; items: ListingCard[]; asks: Ask[] }>
   strategy: Sec<{ headline: string; subtitle: string; body: string; asks: Ask[] }>
@@ -127,6 +134,12 @@ export type OnboardingTemplate = {
   companyStats: KV[]
   welcomeBody: string
   overviewBody: string
+  channelsBody: string
+  /** The names an owner recognises, shown as a wall. */
+  channelsPrimary: string[]
+  /** The long tail, set small underneath — it is the count that does the persuading. */
+  channelsMore: string[]
+  channelsCount: string
   agenda: KV[]
   /** The house's one Owners Portal address. Guesty allows exactly one per account. */
   portalUrl: string
@@ -176,6 +189,17 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   portalUrl: 'https://stay.guestyowners.com',
   portalShots: [],
+
+  channelsBody:
+    'Your calendar is one calendar. We publish it to every channel that matters and reconcile the bookings back into a single place, which is the only reason a unit can be priced for occupancy without ever being double-booked.\n\n' +
+    'Most owners arrive on one channel. Being on thirty is what turns a slow Tuesday in September into a booking.',
+  channelsPrimary: ['Airbnb', 'Vrbo', 'Booking.com', 'Expedia', 'Marriott Homes & Villas', 'Blueground'],
+  channelsMore: [
+    'Expedia partner network', 'Hotels.com', 'Orbitz', 'Travelocity', 'Wotif', 'ebookers',
+    'Agoda', 'Trip.com', 'Google Vacation Rentals', 'HomeToGo', 'Holidu', 'Hometogo partners',
+    'Whimstay', 'Houfy', 'Plum Guide', 'Corporate & relocation partners',
+  ],
+  channelsCount: '30+',
 
   agenda: [
     { k: 'Your listings', v: 'We open the live listing on every channel, score it, and fix the weak parts while you watch.' },
@@ -338,6 +362,10 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     companyStats: arr(stored.companyStats, D.companyStats),
     guestyBody: str(stored.guestyBody, D.guestyBody),
     overviewBody: str(stored.overviewBody, D.overviewBody),
+    channelsBody: str(stored.channelsBody, D.channelsBody),
+    channelsPrimary: arr(stored.channelsPrimary, D.channelsPrimary),
+    channelsMore: arr(stored.channelsMore, D.channelsMore),
+    channelsCount: str(stored.channelsCount, D.channelsCount),
     portalUrl: str(stored.portalUrl, D.portalUrl),
     // An empty shot list is a real state (no screenshots uploaded yet), so it is kept as saved.
     portalShots: Array.isArray(stored.portalShots) ? stored.portalShots : D.portalShots,
@@ -513,7 +541,17 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       facts: i.unitFacts,
       asks: asks('unit'),
     },
-    // 5 ── REVIEW THE LISTING. The photos a guest meets, the live links, and the words —
+    // 5 ── WHERE IT SELLS. The breadth slide: the six names they know, then the count.
+    channels: {
+      headline: 'Your calendar, live on thirty channels',
+      subtitle: 'One calendar, published everywhere, reconciled back to one place.',
+      body: t.channelsBody,
+      primary: t.channelsPrimary,
+      more: t.channelsMore,
+      count: t.channelsCount,
+      photo: pic(11),
+    },
+    // 6 ── REVIEW THE LISTING. The photos a guest meets, the live links, and the words —
     // which are the part an owner can actually improve in the room.
     listings: {
       headline: 'Your listing, the way a guest meets it',
@@ -665,7 +703,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
 
 /** The eight sections a generated onboarding shows, in render order. */
 export const ONBOARDING_CORE = [
-  'welcome', 'agenda', 'team', 'overview', 'listings', 'guesty', 'statement', 'notes',
+  'welcome', 'agenda', 'team', 'overview', 'channels', 'listings', 'guesty', 'statement', 'notes',
 ] as const
 
 /** Built, kept, and hidden by default. Switched on per owner from the editing toolbar. */
@@ -675,6 +713,6 @@ export const ONBOARDING_EXTRA = [
 
 /** Every section key an onboarding report can hide, in render order. */
 export const ONBOARDING_SECTIONS = [
-  'welcome', 'agenda', 'team', 'overview', 'listings', 'unit', 'strategy', 'ramp', 'season',
-  'guesty', 'tech', 'money', 'statement', 'comms', 'checklist', 'nextup', 'notes',
+  'welcome', 'agenda', 'team', 'overview', 'channels', 'listings', 'unit', 'strategy', 'ramp',
+  'season', 'guesty', 'tech', 'money', 'statement', 'comms', 'checklist', 'nextup', 'notes',
 ] as const
