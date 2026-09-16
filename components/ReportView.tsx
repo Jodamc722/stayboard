@@ -219,7 +219,7 @@ function usdP(n: Any): string {
   return (v < 0 ? '−$' : '$') + Math.round(Math.abs(v)).toLocaleString('en-US')
 }
 
-function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
+function buildPptx(P: Any, c: Any, t: Any, heroData: string | null, logoData?: string | null): Any {
   const pptx = new P()
   pptx.layout = 'LAYOUT_WIDE'
   const BG = cx(t.bg, 'FFFFFF'), INK = cx(t.ink, '111827'), BODY = cx(t.body, '41586e'), SUB = cx(t.sub, '6b7c8d')
@@ -240,12 +240,14 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null): Any {
   // hero — full-width photo, big title
   const s1 = pptx.addSlide()
   s1.background = { color: BG }
-  s1.addText(String(hero.eyebrow || ''), { x: 0.6, y: 0.7, w: 12.13, h: 0.3, align: 'center', fontSize: 12, bold: true, color: ACC, charSpacing: 4 })
-  s1.addText(String(hero.dateLabel || 'OWNER REVIEW'), { x: 0.6, y: 1.06, w: 12.13, h: 0.3, align: 'center', fontSize: 11, bold: true, color: GOLD, charSpacing: 4 })
-  s1.addText(String(hero.title || ''), { x: 0.6, y: 1.4, w: 12.13, h: 1.1, align: 'center', fontSize: 52, bold: true, color: INK })
-  s1.addText(String(hero.headline || ''), { x: 1.6, y: 2.62, w: 10.13, h: 0.7, align: 'center', fontSize: 16, color: BODY })
-  if (heroData) s1.addImage({ data: heroData, x: 0.6, y: 3.5, w: 12.13, h: 3.2, sizing: { type: 'cover', w: 12.13, h: 3.2 } })
-  else s1.addShape('roundRect', { x: 0.6, y: 3.5, w: 12.13, h: 3.2, fill: { color: CHIP }, rectRadius: 0.06 })
+  // The mark leads the exported deck the same way it leads the page.
+  if (logoData) s1.addImage({ data: logoData, x: 5.56, y: 0.5, w: 2.2, h: 0.93, sizing: { type: 'contain', w: 2.2, h: 0.93 } })
+  else s1.addText(String(hero.eyebrow || ''), { x: 0.6, y: 0.7, w: 12.13, h: 0.3, align: 'center', fontSize: 12, bold: true, color: ACC, charSpacing: 4 })
+  s1.addText(String(hero.dateLabel || 'OWNER REVIEW'), { x: 0.6, y: logoData ? 1.52 : 1.06, w: 12.13, h: 0.3, align: 'center', fontSize: 11, bold: true, color: GOLD, charSpacing: 4 })
+  s1.addText(String(hero.title || ''), { x: 0.6, y: logoData ? 1.86 : 1.4, w: 12.13, h: 1.1, align: 'center', fontSize: 52, bold: true, color: INK })
+  s1.addText(String(hero.headline || ''), { x: 1.6, y: logoData ? 3.05 : 2.62, w: 10.13, h: 0.7, align: 'center', fontSize: 16, color: BODY })
+  if (heroData) s1.addImage({ data: heroData, x: 0.6, y: logoData ? 3.86 : 3.5, w: 12.13, h: logoData ? 2.85 : 3.2, sizing: { type: 'cover', w: 12.13, h: 3.2 } })
+  else s1.addShape('roundRect', { x: 0.6, y: logoData ? 3.86 : 3.5, w: 12.13, h: logoData ? 2.85 : 3.2, fill: { color: CHIP }, rectRadius: 0.06 })
   s1.addText(String(hero.preparedFor || '') + '  ·  STAY HOSPITALITY', { x: 0.6, y: 6.88, w: 12.13, h: 0.3, align: 'center', fontSize: 9, bold: true, color: MUT, charSpacing: 2 })
 
   // snapshot
@@ -926,6 +928,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   cRef.current = c
   const askTimer = useRef<Any>(null)
   const [askSaved, setAskSaved] = useState(false)
+  const [amenityMsg, setAmenityMsg] = useState<Record<string, string>>({})
   function answerChanged() {
     if (!canEdit) return
     if (askTimer.current) clearTimeout(askTimer.current)
@@ -1107,7 +1110,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     const h = c.hero || {}
     let heroData: string | null = null
     if (h.heroImage) heroData = await fetchImageDataUrl(h.heroImage)
-    return buildPptx((window as Any).PptxGenJS, c, t, heroData)
+    const logoData = await fetchImageDataUrl(mark.logo).catch(() => null)
+    return buildPptx((window as Any).PptxGenJS, c, t, heroData, logoData)
   }
   async function downloadPptx() {
     if (busy) return
@@ -1260,7 +1264,23 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   // actually clears it from the reviews already out there. Older projection reports predate
   // meta.kind, so their hero label stands in for it.
   const isOnboarding = String((c.meta || {}).kind || '') === 'onboarding'
-  const mark = { logo: String((c.meta || {}).logoUrl || ''), word: String((c.meta || {}).wordmark || 'STAY HOSPITALITY') }
+  // THE MARK, ON EVERY OWNER-FACING REPORT (Jon, 2026-09-16: "here our logo, brand all our owner
+  // facing reports"). One asset in /public, used by the review, the projection and the onboarding
+  // alike; a report can still override it from its own content. The file is black ink on
+  // transparency, so on the dark themes it is inverted to white rather than swapped for a second
+  // asset that would then have to be kept in step.
+  const darkGround = (() => {
+    const h = String(t.bg || '#ffffff').replace('#', '')
+    if (h.length < 6) return false
+    const n = parseInt(h.slice(0, 6), 16)
+    const lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255
+    return lum < 0.45
+  })()
+  const mark = {
+    logo: String((c.meta || {}).logoUrl || '/stay-logo.png'),
+    word: String((c.meta || {}).wordmark || 'STAY HOSPITALITY'),
+    style: (darkGround ? { filter: 'invert(1) brightness(1.9)' } : undefined) as Any,
+  }
   const isProjectionReport = String((c.meta || {}).kind || '') === 'projection'
     || /SEASON PROJECTION/i.test(String((c.hero || {}).dateLabel || ''))
   const projection = isProjectionReport ? (c.projection || null) : null
@@ -1269,8 +1289,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
   const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim()))
   const onboardingSectionKeys = ['welcome', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season', 'portal', 'money', 'statement', 'team', 'comms', 'checklist', 'nextup', 'open']
+  const onboardingListingSlides = isOnboarding && !isHidden('listings')
+    ? (Array.isArray((c.listings || {}).items) ? (c.listings as Any).items.length : 0)
+    : 0
   const presentCount = isOnboarding
-    ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + customSecs.length
+    ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + onboardingListingSlides + customSecs.length
     : ((['hero', 'snapshot',
     (c.pacing ? 'pacing' : null),
     (plan ? 'plan' : null),
@@ -1503,16 +1526,16 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .sb-present > section > *, .sb-present > header > * { max-width: 1080px; width: 100%; margin-left: auto; margin-right: auto; }
         .sb-present > section > * > .pt-12 { padding-top: 0 !important; }
         .sb-present .onb-sec { padding-top: 0 !important; }
-        .sb-present header img { height: 58vh !important; max-height: 58vh !important; width: 100%; object-fit: cover; border-radius: 18px; }
+        .sb-present header img { height: auto !important; max-height: 42vh !important; width: 100%; object-fit: cover; border-radius: 18px; }
         .sb-present img { object-fit: cover; }
       `}</style>
 
       {/* Presenting an onboarding: the mark sits on every slide, top-left, quietly. */}
-      {present && isOnboarding && (
+      {present && (
         <div className="sb-noprint fixed top-5 left-6 z-[55] pointer-events-none">
           {mark.logo ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={mark.logo} alt={mark.word} style={{ height: 24, width: 'auto', objectFit: 'contain', opacity: 0.9 }} />
+            <img src={mark.logo} alt={mark.word} style={{ height: 22, width: 'auto', objectFit: 'contain', opacity: 0.75, ...(mark.style || {}) }} />
           ) : (
             <span className="text-[9.5px] font-bold" style={{ color: t.muted, letterSpacing: '0.36em' }}>{mark.word}</span>
           )}
@@ -1600,13 +1623,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               house template, otherwise the letterspaced wordmark this company's owner-facing
               documents already use. Set logoUrl in the onboarding template and it swaps here,
               on every presented slide, and on nothing else. */}
-          {isOnboarding && (mark.logo ? (
+          {mark.logo ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={mark.logo} alt={mark.word} className="mx-auto mb-7" style={{ height: 40, width: 'auto', objectFit: 'contain' }} />
+            <img src={mark.logo} alt={mark.word} className="mx-auto mb-8" style={{ height: 46, width: 'auto', objectFit: 'contain', ...(mark.style || {}) }} />
           ) : (
-            <p className="mb-7 text-[12px] font-bold" style={{ color: t.ink, letterSpacing: '0.42em' }}>{mark.word}</p>
-          ))}
-          <Eyebrow>{hero.eyebrow || ''}</Eyebrow>
+            <p className="mb-8 text-[12px] font-bold" style={{ color: t.ink, letterSpacing: '0.42em' }}>{mark.word}</p>
+          )}
+          {(hero.eyebrow || edit) ? <Eyebrow>{hero.eyebrow || ''}</Eyebrow> : null}
           <p className="mt-5 text-[12px] font-bold uppercase tracking-[0.3em]" style={{ color: t.gold }}>
             <Ed v={hero.dateLabel || 'OWNER REVIEW'} set={v => patch('hero.dateLabel', v)} edit={edit} />
           </p>
@@ -1759,6 +1782,140 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             )
           }
 
+          const toggleAmenity = (li: number, name: string) => {
+            mutate(d => {
+              const list: string[] = Array.isArray(d.listings.items[li].amenities) ? d.listings.items[li].amenities : []
+              const i = list.indexOf(name)
+              if (i >= 0) list.splice(i, 1); else list.push(name)
+              list.sort((a, b) => a.localeCompare(b))
+              d.listings.items[li].amenities = list
+            })
+            answerChanged()
+          }
+          const pushAmenities = async (id: string, list: string[]) => {
+            setAmenityMsg(m => ({ ...m, [id]: 'busy' }))
+            try {
+              const r = await fetch('/api/listing-amenities', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ listingId: id, amenities: list }),
+              })
+              const d = await r.json()
+              setAmenityMsg(m => ({ ...m, [id]: d?.ok || r.ok ? 'ok' : (d?.error || 'Could not push — try from the unit page.') }))
+            } catch {
+              setAmenityMsg(m => ({ ...m, [id]: 'Could not push — check your connection.' }))
+            }
+          }
+
+          const ListingBlock = ({ L, li }: { L: Any; li: number }) => (
+                      <div key={L.id || li}>
+                        {/* name, channels and score on one line — the unit's identity, once */}
+                        <div className="flex items-end justify-between gap-5 flex-wrap pb-3.5 border-b" style={{ borderColor: t.ink }}>
+                          <div className="min-w-0">
+                            <p className="text-[21px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>{L.name}</p>
+                            <p className="text-[13px] mt-1" style={{ color: t.sub }}>{L.sub}</p>
+                          </div>
+                        </div>
+
+                        {(L.links || []).length > 0 && (
+                          <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-3.5">
+                            {(L.links || []).map((k: Any) => (
+                              <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
+                                className="text-[12.5px] font-semibold onb-link" style={{ color: t.accent }}>{k.name} &#8599;</a>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* the first five, in the order a guest meets them */}
+                        {(L.photos || []).length > 0 && (
+                          <div className="onb-shots mt-5 grid gap-2" style={{ gridTemplateColumns: '1.55fr 1fr 1fr' }}>
+                            {(L.photos || []).slice(0, 5).map((src: string, pi: number) => (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img key={pi} src={src} alt="" className="w-full object-cover rounded-xl"
+                                style={{ gridRow: pi === 0 ? 'span 2' : undefined, aspectRatio: pi === 0 ? '4 / 3.3' : '4 / 3' }} />
+                            ))}
+                          </div>
+                        )}
+
+                        {/* AMENITIES, TICKED OFF IN THE ROOM (Jon, 2026-09-16: "you can have
+                            amenity list selected and amenities to select to ensure it all
+                            pushed"). What the listing claims today is on; the ones underneath are
+                            what it is missing and what that costs. Tap to add, then push — it
+                            writes the whole list to Guesty and the channels pick it up. */}
+                        <div className="mt-7">
+                          <div className="flex items-baseline justify-between gap-4 flex-wrap mb-3">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>
+                              Amenities &middot; {(L.amenities || []).length} on the listing
+                            </p>
+                            {canEdit && (
+                              <button onClick={() => pushAmenities(L.id, L.amenities || [])}
+                                className="text-[11.5px] font-bold rounded-full px-3 py-1"
+                                style={{ background: t.accent, color: t.bg }}>
+                                {amenityMsg[L.id] === 'busy' ? 'Pushing…' : 'Push to Guesty'}
+                              </button>
+                            )}
+                          </div>
+                          {amenityMsg[L.id] && amenityMsg[L.id] !== 'busy' && (
+                            <p className="text-[12px] mb-2.5 font-semibold" style={{ color: amenityMsg[L.id] === 'ok' ? t.good : t.gold }}>
+                              {amenityMsg[L.id] === 'ok' ? 'Pushed — the channels pick it up on their own schedule.' : amenityMsg[L.id]}
+                            </p>
+                          )}
+                          <div className="flex flex-wrap gap-1.5">
+                            {(L.amenities || []).map((a: string) => (
+                              <span key={a}
+                                onClick={canEdit ? () => toggleAmenity(li, a) : undefined}
+                                className="text-[12px] rounded-full px-2.5 py-1"
+                                style={{ background: t.chip, color: t.ink, cursor: canEdit ? 'pointer' : 'default' }}>
+                                {a}
+                              </span>
+                            ))}
+                            {!(L.amenities || []).length && <span className="text-[13px]" style={{ color: t.muted }}>None listed yet.</span>}
+                          </div>
+                          {(L.amenitySuggest || []).length > 0 && (
+                            <div className="mt-4">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.gold }}>
+                                Missing &mdash; tap to add
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {(L.amenitySuggest || [])
+                                  .filter((sg: Any) => (L.amenities || []).indexOf(sg.name) < 0)
+                                  .map((sg: Any) => (
+                                    <span key={sg.name}
+                                      title={sg.reason}
+                                      onClick={canEdit ? () => toggleAmenity(li, sg.name) : undefined}
+                                      className="text-[12px] rounded-full px-2.5 py-1"
+                                      style={{ border: '1px dashed ' + t.gold, color: t.gold, cursor: canEdit ? 'pointer' : 'default' }}>
+                                      + {sg.name}
+                                    </span>
+                                  ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* THE COPY, EDITABLE WITHOUT ENTERING EDIT MODE (Jon, 2026-09-16: "make
+                            that cleaner and editable in view mode"). You are reading this listing
+                            aloud with the owner; stopping to flip a toolbar toggle is exactly the
+                            friction that stops it getting fixed. Saves itself, like the answers. */}
+                        <div className="mt-7 flex flex-col gap-5">
+                          {[{ f: 'title', l: 'Title', cap: 50 }, { f: 'summary', l: 'Summary' }, { f: 'space', l: 'The space' }].map(F => (
+                            <div key={F.f}>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-1.5 flex justify-between gap-3" style={{ color: t.muted }}>
+                                <span>{F.l}</span>
+                                {F.cap ? <span style={{ color: String(L[F.f] || '').length > F.cap ? t.gold : t.muted }}>{String(L[F.f] || '').length} / {F.cap}</span> : null}
+                              </p>
+                              <LiveText
+                                v={String(L[F.f] || '')}
+                                live={canEdit}
+                                t={t}
+                                single={F.f === 'title'}
+                                set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+          )
+
           return (
             <>
               {/* ---------- WELCOME ---------- */}
@@ -1813,87 +1970,30 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <SectionShell id="listings" title="Your listings" hidden={isHidden('listings')} edit={edit} onToggle={() => toggleSection('listings')}>
                 <div className="onb-sec">
                   <Head k="listings" label="Your listings" />
-                  <div className="mt-9 flex flex-col gap-12">
-                    {(sec('listings').items || []).map((L: Any, li: number) => (
-                      <div key={L.id || li}>
-                        {/* name, channels and score on one line — the unit's identity, once */}
-                        <div className="flex items-end justify-between gap-5 flex-wrap pb-3.5 border-b" style={{ borderColor: t.ink }}>
-                          <div className="min-w-0">
-                            <p className="text-[21px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>{L.name}</p>
-                            <p className="text-[13px] mt-1" style={{ color: t.sub }}>{L.sub}</p>
-                          </div>
-                          {L.score != null && (
-                            <div className="text-right shrink-0">
-                              <span className="text-[30px] font-black leading-none tabular-nums" style={{ color: t.accent }}>{L.score}</span>
-                              <span className="text-[10px] font-bold uppercase tracking-[0.14em] ml-2" style={{ color: t.muted }}>score</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {(L.links || []).length > 0 && (
-                          <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-3.5">
-                            {(L.links || []).map((k: Any) => (
-                              <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
-                                className="text-[12.5px] font-semibold onb-link" style={{ color: t.accent }}>{k.name} &#8599;</a>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* the first five, in the order a guest meets them */}
-                        {(L.photos || []).length > 0 && (
-                          <div className="onb-shots mt-5 grid gap-2" style={{ gridTemplateColumns: '1.55fr 1fr 1fr' }}>
-                            {(L.photos || []).slice(0, 5).map((src: string, pi: number) => (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img key={pi} src={src} alt="" className="w-full object-cover rounded-xl"
-                                style={{ gridRow: pi === 0 ? 'span 2' : undefined, aspectRatio: pi === 0 ? '4 / 3.3' : '4 / 3' }} />
-                            ))}
-                          </div>
-                        )}
-
-                        {(L.parts || []).length > 0 && (
-                          <div className="mt-6 grid gap-x-9 gap-y-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))' }}>
-                            {(L.parts || []).map((b: Any, bi: number) => (
-                              <div key={bi} className="flex items-center gap-3">
-                                <span className="text-[12.5px] shrink-0" style={{ color: t.sub, minWidth: 108 }}>{b.k}</span>
-                                <span className="flex-1 rounded-full overflow-hidden" style={{ height: 4, background: t.trackBg }}>
-                                  <span className="block h-full rounded-full" style={{ width: Math.max(0, Math.min(100, b.v)) + '%', background: b.v < 60 ? t.gold : t.accent }} />
-                                </span>
-                                <span className="text-[12px] tabular-nums w-7 text-right" style={{ color: b.v < 60 ? t.gold : t.sub }}>{b.v}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* THE COPY, EDITABLE WITHOUT ENTERING EDIT MODE (Jon, 2026-09-16: "make
-                            that cleaner and editable in view mode"). You are reading this listing
-                            aloud with the owner; stopping to flip a toolbar toggle is exactly the
-                            friction that stops it getting fixed. Saves itself, like the answers. */}
-                        <div className="mt-7 flex flex-col gap-5">
-                          {[{ f: 'title', l: 'Title', cap: 50 }, { f: 'summary', l: 'Summary' }, { f: 'space', l: 'The space' }].map(F => (
-                            <div key={F.f}>
-                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-1.5 flex justify-between gap-3" style={{ color: t.muted }}>
-                                <span>{F.l}</span>
-                                {F.cap ? <span style={{ color: String(L[F.f] || '').length > F.cap ? t.gold : t.muted }}>{String(L[F.f] || '').length} / {F.cap}</span> : null}
-                              </p>
-                              <LiveText
-                                v={String(L[F.f] || '')}
-                                live={canEdit}
-                                t={t}
-                                single={F.f === 'title'}
-                                set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {/* ONE UNIT PER SLIDE WHEN PRESENTING (Jon, 2026-09-16: "present mode moves
+                      seamlessly through the sections without cutting anything off"). Six units
+                      stacked in one section made a single 8,000px slide — technically scrollable,
+                      useless to present from. On the page they stay together; on a call each unit
+                      gets the screen to itself. */}
+                  {!present && (
+                    <div className="mt-9 flex flex-col gap-12">
+                      {(sec('listings').items || []).map((L: Any, li: number) => (
+                        <ListingBlock key={L.id || li} L={L} li={li} />
+                      ))}
+                    </div>
+                  )}
                   <p className="mt-7 text-[13px] leading-relaxed" style={{ color: t.muted, maxWidth: '62ch' }}>
                     Edit the copy here as we talk &mdash; it saves itself. Pushing it live to the channels happens from the unit page in the dashboard, which is the one place that writes to Guesty.
                   </p>
                   <Asks k="listings" />
                 </div>
               </SectionShell>
+
+              {present && !isHidden('listings') && (sec('listings').items || []).map((L: Any, li: number) => (
+                <section key={'pres-' + (L.id || li)}>
+                  <div className="onb-sec"><ListingBlock L={L} li={li} /></div>
+                </section>
+              ))}
 
               {/* ---------- YOUR UNIT ---------- */}
               <SectionShell id="unit" title="Your unit" hidden={isHidden('unit')} edit={edit} onToggle={() => toggleSection('unit')} onAi={() => openAi('unit')}>
@@ -3418,7 +3518,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         )}
 
         {/* footer */}
-        <footer className="mt-16 pt-6 border-t text-center" style={{ borderColor: t.rule }}>
+        <footer className="mt-16 pt-8 border-t text-center" style={{ borderColor: t.rule }}>
+          {mark.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={mark.logo} alt={mark.word} className="mx-auto mb-4" style={{ height: 22, width: 'auto', objectFit: 'contain', opacity: 0.55, ...(mark.style || {}) }} />
+          ) : null}
           <p className="text-[10px] uppercase tracking-[0.22em] font-semibold" style={{ color: t.footA }}>{footer}</p>
           <p className="text-[10px] mt-1" style={{ color: t.footB }}>Prepared by Stay Hospitality</p>
         </footer>
