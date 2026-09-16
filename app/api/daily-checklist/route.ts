@@ -11,17 +11,34 @@ import { requireLevel, isSuperadmin } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { todayList, setTick, pruneOldTicks, progressOf, BANDS } from '@/lib/daily-checklist'
+import { countSignals, signalLink } from '@/lib/checklist-signals'
 
 export const dynamic = 'force-dynamic'
 
 const str = (v: any) => (typeof v === 'string' ? v.trim() : '')
 
+/**
+ * An item's link goes in the page's own href, so it may only ever be an in-app path. Anything else
+ * — an absolute URL, a protocol-relative one, a javascript: — is dropped rather than corrected: the
+ * standing list is edited in the browser, and a checklist row is not a place to be sending people
+ * off-site.
+ */
+function cleanLink(v: any): string | null {
+  const s = str(v)
+  if (!s) return null
+  if (!s.startsWith('/') || s.startsWith('//')) return null
+  return s.slice(0, 200)
+}
+
 export async function GET() {
   const g = await requireLevel('checklist', 'view')
   if (!g.ok) return g.res
   const { day, clock, rows } = await todayList()
+  // Only the signals this list actually names, and a failure of any one of them costs a number,
+  // never the list.
+  const signals = await countSignals(rows.map(r => r.signal || '')).catch(() => ({}))
   return NextResponse.json({
-    ok: true, day, clock, rows, progress: progressOf(rows),
+    ok: true, day, clock, rows, signals, progress: progressOf(rows),
     // What this person may do, so the page does not offer buttons that will be refused.
     canTick: atLeast(g.access.levels['checklist'], 'edit'),
     canManage: atLeast(g.access.levels['checklist'], 'full') || isSuperadmin(String(g.access.email || '')),
@@ -60,11 +77,15 @@ export async function POST(req: NextRequest) {
           band: (BANDS as readonly string[]).includes(str(b.band)) ? str(b.band) : 'morning',
           by_time: /^\d{1,2}:\d{2}$/.test(str(b.by_time)) ? str(b.by_time) : null,
           owner_role: str(b.owner_role).slice(0, 60) || null,
+          link: cleanLink(b.link) ?? signalLink(str(b.signal)),
+          signal: str(b.signal).slice(0, 60) || null,
           sort: Number.isFinite(Number(b.sort)) ? Number(b.sort) : null,
           created_by: email,
         })
         if (error) {
-          if (/relation|does not exist/i.test(error.message)) return NextResponse.json({ error: 'The checklist needs migration 091 — run it in Supabase and this will work.' }, { status: 500 })
+          // `column` as well as `relation`: the link and signal fields arrived after the first
+          // draft of 091, so a half-migrated database says the column is missing, not the table.
+          if (/relation|column|does not exist|schema cache/i.test(error.message)) return NextResponse.json({ error: 'The checklist needs migration 091 — run it in Supabase and this will work.' }, { status: 500 })
           return NextResponse.json({ error: error.message }, { status: 500 })
         }
         break
@@ -79,6 +100,8 @@ export async function POST(req: NextRequest) {
         if (b.band !== undefined && (BANDS as readonly string[]).includes(str(b.band))) patch.band = str(b.band)
         if (b.by_time !== undefined) patch.by_time = /^\d{1,2}:\d{2}$/.test(str(b.by_time)) ? str(b.by_time) : null
         if (b.owner_role !== undefined) patch.owner_role = str(b.owner_role).slice(0, 60) || null
+        if (b.link !== undefined) patch.link = cleanLink(b.link)
+        if (b.signal !== undefined) patch.signal = str(b.signal).slice(0, 60) || null
         if (b.sort !== undefined && Number.isFinite(Number(b.sort))) patch.sort = Number(b.sort)
         if (b.active !== undefined) patch.active = !!b.active
         if (!Object.keys(patch).length) return NextResponse.json({ error: 'Nothing to change.' }, { status: 400 })
@@ -101,7 +124,8 @@ export async function POST(req: NextRequest) {
     }
 
     const { day, clock, rows } = await todayList()
-    return NextResponse.json({ ok: true, day, clock, rows, progress: progressOf(rows) })
+    const signals = await countSignals(rows.map(r => r.signal || '')).catch(() => ({}))
+    return NextResponse.json({ ok: true, day, clock, rows, signals, progress: progressOf(rows) })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
