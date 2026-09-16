@@ -34,8 +34,13 @@ export type ListingCard = {
   id: string
   name: string
   sub: string
-  score: number | null
-  parts: { k: string; v: number }[]
+  // NO SCORE IN FRONT OF AN OWNER (Jon, 2026-09-16: "remove the scoring on the listing, that's
+  // not something owners need to see"). Our optimize score is an internal instrument — an owner
+  // reads "71" as a grade on their property rather than as our to-do list. What IS useful to them
+  // is the amenity list: what the listing claims today, and what it is missing, ticked off live
+  // and pushed to Guesty in the room.
+  amenities: string[]
+  amenitySuggest: { name: string; reason: string }[]
   links: OtaLink[]
   photos: string[]
   title: string
@@ -338,7 +343,7 @@ function benchmarkLine(market: string, bedrooms: number | null): string {
 }
 
 /** One listing, read for review: the live channel links, the first five photos, the copy. */
-export function listingCardFrom(l: any, score: number | null, parts: { k: string; v: number }[]): ListingCard {
+export function listingCardFrom(l: any, amenities: string[], amenitySuggest: { name: string; reason: string }[]): ListingCard {
   const raw = l && l.raw ? l.raw : {}
   const pub = raw.publicDescription || raw.publicDescriptions || {}
   const pics: string[] = Array.isArray(l.pictures) ? l.pictures.filter(Boolean) : []
@@ -352,8 +357,8 @@ export function listingCardFrom(l: any, score: number | null, parts: { k: string
     id: String(l.id),
     name: String(l.nickname || l.title || 'Unit'),
     sub: [bits.join(' · '), links.length ? `live on ${links.length} channel${links.length === 1 ? '' : 's'}` : 'not yet live'].filter(Boolean).join(' · '),
-    score,
-    parts,
+    amenities,
+    amenitySuggest,
     links,
     // THE FIRST FIVE, IN ORDER (Jon, 2026-09-16). Nobody scrolls past these on a phone, which is
     // why photos carry 18% of the optimize score on their own.
@@ -424,7 +429,9 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       wordmark: t.wordmark,
     },
     hero: {
-      eyebrow: 'STAY HOSPITALITY',
+      // The wordmark above the title already carries the brand; a second line saying the same
+      // thing was the first thing on the cover and it read as a mistake.
+      eyebrow: '',
       title: i.scopeLabel,
       headline: 'Everything we agree today, before your first guest.',
       preparedFor: i.ownerName ? 'Prepared for ' + i.ownerName : 'Prepared for the owners of ' + i.scopeLabel,
