@@ -35,6 +35,30 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, buildings: names })
   }
 
+  // THE OWNER PICKER (Jon, 2026-09-16: "owner reports need to be by owner, not building").
+  // A report addressed to an owner has to be SCOPED to that owner: they may hold four units
+  // spread across three buildings, or six of the forty units in one. Picking the building sent
+  // them a report about their neighbours' performance alongside their own.
+  if (sp.get('owners')) {
+    const [{ data: owners }, { data: listings }] = await Promise.all([
+      db.from('guesty_owners').select('id, full_name, listing_ids').limit(2000),
+      db.from('guesty_listings').select('id, status').limit(3000),
+    ])
+    const live = new Set(
+      ((listings || []) as any[])
+        .filter(l => ['inactive', 'disabled', 'archived', 'deleted'].indexOf(String(l.status || '').toLowerCase()) < 0)
+        .map(l => String(l.id))
+    )
+    const out = ((owners || []) as any[]).map(o => {
+      const ids = (Array.isArray(o.listing_ids) ? o.listing_ids : []).map(String).filter((x: string) => live.has(x))
+      return { id: String(o.id), name: String(o.full_name || 'Unnamed owner'), units: ids.length, listingIds: ids }
+    })
+      // An owner with no live units cannot be reported on, so they are not offered.
+      .filter(o => o.units > 0)
+      .sort((a, b) => b.units - a.units || a.name.localeCompare(b.name))
+    return NextResponse.json({ ok: true, owners: out })
+  }
+
   const building = sp.get('building') || ''
   const year = Number(sp.get('year') || new Date().getFullYear())
   if (!building) return NextResponse.json({ error: 'building required' }, { status: 400 })
