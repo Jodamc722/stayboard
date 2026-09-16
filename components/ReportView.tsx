@@ -140,8 +140,14 @@ const THEMES: Record<string, Any> = {
 // every number stay in the system sans (numbers in a display serif drift out of column alignment).
 // Loaded from Google Fonts only when a non-default pairing is picked, so the default report ships
 // exactly the bytes it shipped yesterday.
-const FONT_PAIRS: Record<string, { label: string; display: string; href: string }> = {
+const FONT_PAIRS: Record<string, { label: string; display: string; href: string; body?: string }> = {
   modern: { label: 'Modern', display: '', href: '' },
+  stay: {
+    label: 'Stay',
+    display: "'Instrument Serif', Georgia, 'Times New Roman', serif",
+    body: "'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    href: 'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap',
+  },
   editorial: {
     label: 'Editorial',
     display: "'Fraunces', Georgia, 'Times New Roman', serif",
@@ -695,6 +701,53 @@ function LiveText({ v, set, live, single, t, cls, ro }: { v: string; set: (s: st
     : <textarea {...common} rows={Math.max(2, Math.min(9, Math.ceil((v.length || 1) / 68) + 1))} style={{ ...common.style, resize: 'vertical' }} />
 }
 
+// ── THE SLIDE ────────────────────────────────────────────────────────────────
+// PowerPoint, in the app (Jon, 2026-09-16: "make it look like a power point but in my app
+// format"). A deck is not a document that snaps — it is a fixed canvas that everything is
+// composed onto. So every slide is authored at exactly 1120×630 and then scaled to whatever
+// box it is dropped into: ~1:1 when the deck is read as a page, 1.7× on a shared screen. One
+// composition, identical proportions everywhere, and nothing reflows between the version Jon
+// builds and the version the owner sees on the call.
+//
+// This is deliberately the same primitive the owner reports will move onto next, which is why
+// it takes only children and a nav label and knows nothing about onboarding.
+const SLIDE_W = 1120
+const SLIDE_H = 630
+
+function Slide({ nav, children, pad, bleed }: {
+  nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean
+}) {
+  const box = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(0)
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const fit = () => {
+      const w = el.clientWidth
+      if (w > 0) setScale(w / SLIDE_W)
+    }
+    fit()
+    let ro: Any = null
+    try { ro = new ResizeObserver(fit); ro.observe(el) } catch { window.addEventListener('resize', fit) }
+    return () => { if (ro) ro.disconnect(); else window.removeEventListener('resize', fit) }
+  }, [])
+  return (
+    <div ref={box} className="sb-slide" data-nav={nav || undefined}>
+      {/* Until the first measurement lands, scale 0 would flash a collapsed slide; hold it
+          invisible for that one frame instead. */}
+      <div
+        className="sb-slide-canvas"
+        style={{
+          width: SLIDE_W, height: SLIDE_H, transform: 'scale(' + (scale || 1) + ')',
+          opacity: scale ? 1 : 0, padding: bleed ? 0 : (pad == null ? 64 : pad),
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return <p className="text-[11px] font-bold uppercase tracking-[0.28em]" style={{ color: 'var(--t-accent)' }}>{children}</p>
 }
@@ -712,7 +765,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   // pace chips, bars, buttons, the PPTX export — inherits it with no further plumbing.
   const styleCfg: Any = (c && c.style) || {}
   const accentOv: string = /^#[0-9a-fA-F]{6}$/.test(String(styleCfg.accent || '')) ? String(styleCfg.accent) : ''
-  const fontKey: string = FONT_PAIRS[styleCfg.font] ? styleCfg.font : 'modern'
+  const fontKey: string = FONT_PAIRS[styleCfg.font] ? styleCfg.font
+    : (String(((c || {}).meta || {}).kind || '') === 'onboarding' ? 'stay' : 'modern')
   const fontPair = FONT_PAIRS[fontKey]
   const t = {
     ...THEMES[themeKey],
@@ -1476,6 +1530,32 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         /* The onboarding document breathes more than a report: it is read one section at a time,
            out loud, on a call. */
         .onb-sec { padding-top: 5.5rem; }
+
+        /* ── THE SLIDE ──────────────────────────────────────────────────
+           Read as a page, a deck is a stack of cards with a little lift under each — that
+           shadow is what says "slide" before a single word is read. Presented, the same card
+           loses its edges and fills the glass. Identical composition either way, because the
+           canvas inside is always 1120×630 and only the scale changes. */
+        .sb-slide { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden;
+          border-radius: 16px; background: ${t.card}; border: 1px solid ${t.cardBorder};
+          box-shadow: 0 22px 46px -30px rgba(0,0,0,0.42), 0 2px 6px -3px rgba(0,0,0,0.10); }
+        .sb-slide-canvas { position: absolute; top: 0; left: 0; transform-origin: top left;
+          box-sizing: border-box; }
+        .sb-deck > section { margin-top: 26px !important; border-top: 0 !important; }
+        .sb-deck > section:first-of-type { margin-top: 0 !important; }
+        .sb-deck > header { padding-bottom: 26px !important; }
+        /* Inside a slide the app's utility resets do not apply, so the two live-editing fields
+           carry their own type rather than inheriting a 15px default from a class. */
+        .sb-slide .onb-live, .sb-slide .onb-copy { width: 100%; background: transparent;
+          border: 1px solid transparent; border-radius: 8px; padding: 4px 8px; margin-left: -8px;
+          font-family: inherit; color: ${t.body}; resize: vertical; }
+        .sb-slide .onb-copy { font-size: 14.5px; line-height: 1.7; }
+        .sb-slide .onb-live { font-size: 15px; }
+        .sb-present .sb-slide { border-radius: 0; border: 0; box-shadow: none;
+          width: min(100vw, calc(100vh * 16 / 9)); }
+        @supports (height: 100dvh) {
+          .sb-present .sb-slide { width: min(100vw, calc(100dvh * 16 / 9)); }
+        }
         /* The cover is the first thing an owner sees and the only slide that is allowed to be
            loud. It fills the glass when presenting and stays a tall card when read as a page. */
         .onb-cover { min-height: 460px; }
@@ -1509,6 +1589,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           font-family: ${fontPair.display}; letter-spacing: -0.01em; font-weight: 700;
         }
         .sb-report h1, .sb-present h1 { font-weight: 900; }` : ''}
+        ${(fontPair as Any).body ? `
+        .sb-report, .sb-present { font-family: ${(fontPair as Any).body}; }
+        /* A high-contrast serif carries its weight through shape, not stroke — asking for 700
+           of a 400-weight face is what makes browsers synthesise a smeared fake bold. */
+        .sb-report h1, .sb-report h2, .sb-present h1, .sb-present h2 { font-weight: 400 !important; letter-spacing: -0.015em; }` : ''}
         /* Numbers align down a column everywhere — tables, stat rows, statements. */
         .sb-report, .sb-present { font-variant-numeric: tabular-nums; }
         /* A printed / PDF'd share page gets the report, not the chrome. */
@@ -1524,7 +1609,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
            fit and lets the tall ones scroll like a page. */
         .sb-present { position: fixed; inset: 0; height: 100vh; width: 100vw; overflow-y: scroll; scroll-snap-type: y proximity; scroll-behavior: smooth; z-index: 40; background: ${t.bg}; -ms-overflow-style: none; scrollbar-width: none; }
         .sb-present::-webkit-scrollbar { display: none; }
-        .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; scroll-snap-stop: normal; padding: 6vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
+        .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; scroll-snap-align: start; scroll-snap-stop: normal; padding: 6vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
+        /* A slide brings its own 16:9 frame, so the presenter padding would only shrink it. */
+        .sb-present > section:has(.sb-slide) { padding: 0 !important; }
         /* A slide taller than the glass stops centring — otherwise its first line sits above the
            top edge with nothing to scroll back to. */
         .sb-present > section > * { max-height: none; }
@@ -1659,7 +1746,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         </>
       )}
 
-      <div ref={scrollRef} onScroll={onPresentScroll} className={present ? 'sb-present' : 'sb-report max-w-4xl mx-auto px-5 sm:px-8 pb-20'}>
+      <div ref={scrollRef} onScroll={onPresentScroll} className={present ? 'sb-present' : ('sb-report ' + (isOnboarding ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
 
         {/* ---------- COVER ---------- */}
         {/* AN ONBOARDING OPENS ON THEIR PROPERTY, NOT ON OUR LOGO. The review report's cover — a
@@ -1763,44 +1850,53 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         )}
 
 
-        {/* ═══════════ OWNER ONBOARDING — the welcome presentation ═══════════
-            A different document on the same rails: same row, same share link, same editor,
-            themes, PPTX and Present mode. Sections come from lib/onboarding-report, which merges
-            the house template (settings) with this owner's facts at generate time.
+        {/* ═══════════ OWNER ONBOARDING — the deck ═══════════
+            AUDIT, 2026-09-16. Jon: "make it look like a power point but in my app format…
+            needs to look amazing." What was wrong was never the type sizes:
 
-            EIGHT SECTIONS, AND NO INTAKE (Jon, 2026-09-16: "1. Agenda: Welcome to Stay
-            Hospitality with a picture 2. What we're going to cover 3. Meet the team 4. Overview
-            of Stay Hospitality 5. Review listing 6. Guesty owner portal with photos, etc.
-            7. Guesty owner statements 8. Other notes").
+            1. IT WAS A DOCUMENT, NOT A DECK. Sections were stacked divs that happened to snap.
+               Nothing was composed, because there was no canvas to compose onto. Now every
+               slide is authored at 1120×630 and scaled to its container, so the thing Jon
+               builds on the page IS the thing the owner sees on the call, proportion for
+               proportion.
+            2. THIRTEEN SLIDES, ONE SHAPE. Every section was a left-aligned single column.
+               A deck needs rhythm: full-bleed, split, grid, panel, and at least one dark slide
+               to punctuate. There are now six layouts and two dark slides.
+            3. PHOTOGRAPHS WERE DECORATION. They sat in 21:9 bands between paragraphs. On a
+               slide a photograph either bleeds off an edge or holds half the composition —
+               it is the argument, not the garnish. It is the owner's own property.
+            4. NO FURNITURE. Real decks have a footer, a section mark and a slide number. That
+               one detail carries more "this is a real deck" than any amount of type tuning.
+            5. NO MEASURE DISCIPLINE. Body copy ran to 62 characters at essay length. Slide
+               copy is 46–52 characters and stops.
 
-            AND IT IS A DECK, NOT A DOCUMENT (Jon, 2026-09-16: "looks noisy and loud… think
-            visual, think flow, think functionality"). Three rules hold this layout up:
-
-            1. ONE IDEA PER SECTION, AND THE PICTURE CARRIES IT. The owner's own photographs are
-               the most persuasive thing we have — it is their property, and they are proud of it.
-               They lead; the words follow at reading size.
-            2. INK IS EARNED. The old version shouted eight times: a tracked uppercase eyebrow, a
-               38px black headline and a subtitle, on every section, plus accent-coloured labels
-               on every field. Now there is one quiet line, one heading at a normal weight, and
-               the accent is reserved for things you can click.
-            3. THE PRESENTER HAS TO BE ABLE TO DRIVE IT. An owner interrupts to ask how they get
-               paid; scrolling past four sections to find it is what makes a deck feel amateur.
-               Every section carries data-nav, and present mode turns that into a named jump. */}
+            Phones: a 16:9 canvas on a portrait phone is inherently ~5× too small, which is why
+            every deck tool renders slides small there and lets you rotate or pinch. Same here,
+            with a rotate hint. Jon presents from a desktop; the owner reads on one. */}
         {isOnboarding && (() => {
           const sec = (k: string) => (c[k] || {})
-          // A DECK GENERATED BEFORE THIS RESTRUCTURE HAS NO `overview` AND NO `notes`, and its
-          // `omit` is empty, so every retired section would come back. Treating a missing section
-          // object as hidden means the old drafts still read straight instead of printing empty
-          // headings; regenerating gives them the full eight.
           const hid = (k: string) => isHidden(k) || !c[k] || typeof c[k] !== 'object'
+          const pool: string[] = Array.isArray(c.photoPool) ? c.photoPool : []
+          const pic = (n: number) => (pool.length ? pool[n % pool.length] : '')
+
+          // Ink on a dark slide. Two of these in the deck, and they are what stop thirteen
+          // cream rectangles reading as a single long beige afternoon.
+          const D = {
+            ink: '#ffffff',
+            body: 'rgba(255,255,255,0.86)',
+            muted: 'rgba(255,255,255,0.56)',
+            rule: 'rgba(255,255,255,0.22)',
+          }
+
           const CORE: { k: string; label: string }[] = [
             { k: 'welcome', label: 'Welcome' },
-            { k: 'agenda', label: 'What we will cover' },
-            { k: 'team', label: 'Meet the team' },
+            { k: 'agenda', label: 'Agenda' },
+            { k: 'team', label: 'The team' },
             { k: 'overview', label: 'About Stay Hospitality' },
+            { k: 'channels', label: 'Where it sells' },
             { k: 'listings', label: 'Your listing' },
-            { k: 'guesty', label: 'Your owner portal' },
-            { k: 'statement', label: 'Your statements' },
+            { k: 'guesty', label: 'Owner portal' },
+            { k: 'statement', label: 'Owner statements' },
             { k: 'notes', label: 'Other notes' },
           ]
           const EXTRA: { k: string; label: string }[] = [
@@ -1819,114 +1915,52 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           }
           const answered = askSecs.reduce((n, x) => n + (hid(x.k) ? 0 : (sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
           const totalAsks = answered + open.length
-          const extraOn = EXTRA.filter(x => !hid(x.k))
-          const running = CORE.filter(x => !hid(x.k))
-            .concat(extraOn.filter(x => ['unit', 'strategy', 'ramp', 'season', 'tech'].indexOf(x.k) >= 0))
-          const numOf = (k: string) => {
-            const i = running.findIndex(x => x.k === k)
-            return i < 0 ? '' : String(i + 1).padStart(2, '0')
+
+          // ── slide furniture ────────────────────────────────────────────────
+          let pageNo = 0
+          const Foot = ({ label, dark }: { label: string; dark?: boolean }) => {
+            pageNo += 1
+            const n = pageNo
+            return (
+              <div className="flex items-baseline justify-between pt-4" style={{ borderTop: '1px solid ' + (dark ? D.rule : t.rule) }}>
+                <span style={{ fontSize: 11.5, letterSpacing: '0.08em', color: dark ? D.muted : t.muted }}>{label}</span>
+                <span style={{ fontSize: 11.5, letterSpacing: '0.16em', color: dark ? D.muted : t.muted }}>
+                  {String(mark.word || 'STAY HOSPITALITY')}&nbsp;&nbsp;·&nbsp;&nbsp;{String(n).padStart(2, '0')}
+                </span>
+              </div>
+            )
           }
 
-          // ONE QUIET LINE, ONE HEADING. No rule, no accent, no uppercase.
-          const Head = ({ k, label }: { k: string; label: string }) => (
-            <div className="onb-head">
-              <p className="text-[12px] font-medium tabular-nums" style={{ color: t.muted }}>
-                {(() => {
-                  const n = numOf(k)
-                  const h = String(sec(k).headline || '').toLowerCase()
-                  const l = label.toLowerCase()
-                  // "03  Meet the team" directly above "Meet the team" is the page saying the
-                  // same thing twice in two sizes — exactly the noise this pass removes.
-                  const dupe = !!h && (h.indexOf(l) >= 0 || l.indexOf(h) >= 0)
-                  return n ? (dupe ? n : n + '\u2003' + label) : (dupe ? '' : label)
-                })()}
-              </p>
-              <h2 className="mt-4 text-[26px] sm:text-[31px] font-semibold tracking-[-0.018em] leading-[1.16]" style={{ color: t.ink, maxWidth: '22ch' }}>
+          // Title block. An accent hairline sits under the eyebrow — the one place the brand
+          // colour appears on a light slide, which is what makes it read as a mark rather than
+          // as decoration sprayed across every label.
+          const Title = ({ k, dark, sub }: { k: string; dark?: boolean; sub?: boolean }) => (
+            <div>
+              <div style={{ width: 30, height: 2, background: dark ? D.ink : t.accent, marginBottom: 18 }} />
+              <h2 style={{
+                fontSize: 40, lineHeight: 1.12, letterSpacing: '-0.022em', fontWeight: 600,
+                color: dark ? D.ink : t.ink, maxWidth: '17ch', margin: 0,
+              }}>
                 <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
-              {(sec(k).subtitle || edit) ? (
-                <p className="mt-3 text-[15px] leading-[1.6]" style={{ color: t.muted, maxWidth: '56ch' }}>
+              {sub !== false && (sec(k).subtitle || edit) ? (
+                <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: dark ? D.muted : t.muted, maxWidth: '50ch' }}>
                   <Ed v={sec(k).subtitle || ''} set={v => patch(k + '.subtitle', v)} edit={edit} multiline />
                 </p>
               ) : null}
             </div>
           )
 
-          const pool: string[] = Array.isArray(c.photoPool) ? c.photoPool : []
-          const Shot = ({ k, ratio }: { k: string; ratio?: string }) => {
-            const cur = String(sec(k).photo || '')
-            if (!cur && !edit) return null
-            const step = (d: number) => {
-              if (!pool.length) return
-              const i = pool.indexOf(cur)
-              patch(k + '.photo', pool[(i + d + pool.length + (i < 0 ? 1 : 0)) % pool.length])
-            }
-            return (
-              <div className="onb-shot relative mt-9">
-                {cur ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={cur} alt="" className="w-full object-cover rounded-2xl" style={{ aspectRatio: ratio || '21 / 9' }} />
-                ) : (
-                  <div className="w-full rounded-2xl flex items-center justify-center text-[12px]" style={{ aspectRatio: ratio || '21 / 9', background: t.chip, color: t.muted }}>
-                    No photo on this section
-                  </div>
-                )}
-                {edit && (
-                  <div className="sb-noprint absolute bottom-3 right-3 flex items-center gap-1.5">
-                    <button onClick={() => step(-1)} className="rounded-full px-2 py-1 text-[11px] font-semibold shadow" style={{ background: t.card, color: t.ink }}>&#8592;</button>
-                    <button onClick={() => step(1)} className="rounded-full px-2.5 py-1 text-[11px] font-semibold shadow" style={{ background: t.card, color: t.ink }}>
-                      {cur ? 'Next photo' : 'Add photo'}
-                    </button>
-                    {cur && <button onClick={() => patch(k + '.photo', '')} className="rounded-full px-2 py-1 text-[11px] font-semibold shadow" style={{ background: t.card, color: t.accent }}>Clear</button>}
-                  </div>
-                )}
-              </div>
-            )
-          }
-
-          // A strip of their own rooms, used where a section needs air rather than another photo
-          // the size of a billboard. Offset so it never repeats the section's own Shot.
-          const Strip = ({ from, n }: { from: number; n: number }) => {
-            if (pool.length < n) return null
-            const pics = Array.from({ length: n }, (_x, i) => pool[(from + i) % pool.length])
-            return (
-              <div className="onb-strip mt-9 grid gap-2.5" style={{ gridTemplateColumns: 'repeat(' + n + ',1fr)' }}>
-                {pics.map((src, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img key={i} src={src} alt="" className="w-full object-cover rounded-xl" style={{ aspectRatio: '4 / 3' }} />
-                ))}
-              </div>
-            )
-          }
-
-          const Note = ({ k }: { k: string }) => {
-            const has = !!String(sec(k).note || '').trim()
-            if (!has && !canEdit) return null
-            return (
-              <div className="mt-9 pl-5" style={{ borderLeft: '2px solid ' + (has ? t.rule : t.chip) }}>
-                <p className="text-[12px] mb-1.5" style={{ color: t.muted }}>Notes</p>
-                <LiveText v={String(sec(k).note || '')} live={canEdit} t={t}
-                  set={v => { patch(k + '.note', v); answerChanged() }} />
-              </div>
-            )
-          }
-
-          const Body = ({ k, field }: { k: string; field?: string }) => (
-            <p className="mt-8 text-[16px] leading-[1.75] whitespace-pre-line" style={{ color: t.body, maxWidth: '62ch' }}>
-              <Ed v={sec(k)[field || 'body'] || ''} set={v => patch(k + '.' + (field || 'body'), v)} edit={edit} multiline />
-            </p>
-          )
-
-          // Label/value pairs. The label is a quiet semibold, not a tracked capital — twelve of
-          // those in a column is the single loudest thing a page can do.
-          const Rows = ({ rows, kw }: { rows: Any[]; kw?: string }) => (
-            <div className="mt-8">
-              {(rows || []).map((r: Any, i: number) => (
-                <div key={i} className="onb-row grid gap-x-8 gap-y-1.5 py-4 border-t" style={{ borderColor: t.rule, gridTemplateColumns: (kw || '190px') + ' 1fr' }}>
-                  <div className="text-[13.5px] font-semibold pt-px" style={{ color: t.sub }}>{r.k}</div>
-                  <div className="text-[15px] leading-[1.7]" style={{ color: t.body }}>{r.v}</div>
-                </div>
-              ))}
+          // A photograph that holds half the composition and bleeds off the slide edge.
+          const Half = ({ src, side }: { src: string; side: 'left' | 'right' }) => (
+            <div style={{
+              position: 'absolute', top: 0, bottom: 0, width: 452,
+              [side]: 0, background: t.chip, overflow: 'hidden',
+            } as Any}>
+              {src ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : null}
             </div>
           )
 
@@ -1934,9 +1968,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             const as: Any[] = Array.isArray(sec(k).asks) ? sec(k).asks : []
             if (!as.length) return null
             return (
-              <div className="mt-12 pt-8 border-t" style={{ borderColor: t.rule }}>
-                <p className="text-[12px] mb-5" style={{ color: t.muted }}>On the call</p>
-                <div className="flex flex-col gap-5">
+              <div style={{ marginTop: 26 }}>
+                <p style={{ fontSize: 12, color: t.muted, marginBottom: 14 }}>On the call</p>
+                <div className="flex flex-col" style={{ gap: 14 }}>
                   {as.map((a: Any, i: number) => (
                     <AskBlock key={a.id || i} ask={a} live={canEdit} t={t} set={v => setAnswer(k, i, v)} />
                   ))}
@@ -1945,602 +1979,529 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             )
           }
 
-          /* THE LISTING SLIDE. A guest meets this property as a photograph and then as a
-             sentence, in that order, so that is the order it is reviewed in: one large frame,
-             a strip of the rest, then the words at reading size with a quiet label above each.
-             The words stay editable without entering edit mode — you fix a line while you are
-             reading it out loud, which is the only moment anyone ever actually fixes it. */
-          const COPY = [
-            { f: 'title', l: 'Listing title', cap: 50 },
-            { f: 'summary', l: 'Summary' },
-            { f: 'space', l: 'The space' },
-          ]
+          const slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
 
-          const ListingBlock = ({ L, li }: { L: Any; li: number }) => {
-            const pics: string[] = (L.photos || []).slice(0, 5)
-            return (
-              <div key={L.id || li}>
-                <div className="flex items-end justify-between gap-6 flex-wrap">
-                  <div className="min-w-0">
-                    <p className="text-[18px] font-semibold tracking-[-0.01em]" style={{ color: t.ink }}>{L.name}</p>
-                    <p className="text-[13px] mt-1" style={{ color: t.muted }}>{L.sub}</p>
+          // ── 1 · WELCOME — split, photo bleeding right ──────────────────────
+          if (!hid('welcome')) slides.push({ key: 'welcome', ai: true, node: (
+            <Slide nav="Welcome" bleed>
+              <div style={{ position: 'absolute', inset: 0 }}>
+                <Half src={String(sec('welcome').photo || pic(0))} side="right" />
+                <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 540 }} className="flex flex-col">
+                  <div className="flex-1 min-h-0">
+                    <Title k="welcome" />
+                    <p style={{ marginTop: 26, fontSize: 18, lineHeight: 1.7, color: t.body, maxWidth: '44ch', whiteSpace: 'pre-line' }}>
+                      <Ed v={sec('welcome').body || ''} set={v => patch('welcome.body', v)} edit={edit} multiline />
+                    </p>
                   </div>
-                  {(L.links || []).length > 0 && (
-                    <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                      {(L.links || []).map((k: Any) => (
-                        <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
-                          className="text-[13px] font-medium onb-link" style={{ color: t.accent }}>{k.name} &#8599;</a>
-                      ))}
-                    </div>
-                  )}
+                  <Foot label="Welcome" />
                 </div>
-
-                {pics.length > 0 && (
-                  <>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={pics[0]} alt="" className="onb-lead mt-5 w-full object-cover rounded-2xl" style={{ aspectRatio: '16 / 9' }} />
-                    {pics.length > 1 && (
-                      <div className="onb-strip mt-2.5 grid gap-2.5" style={{ gridTemplateColumns: 'repeat(' + Math.min(4, pics.length - 1) + ',1fr)' }}>
-                        {pics.slice(1, 5).map((src: string, pi: number) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img key={pi} src={src} alt="" className="w-full object-cover rounded-xl" style={{ aspectRatio: '4 / 3' }} />
-                        ))}
-                      </div>
-                    )}
-                  </>
+                {edit && (
+                  <button onClick={() => patch('welcome.photo', pool[(pool.indexOf(String(sec('welcome').photo || '')) + 1) % Math.max(1, pool.length)])}
+                    className="sb-noprint" style={{ position: 'absolute', bottom: 16, right: 16, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.92)', color: '#111' }}>
+                    Change photo
+                  </button>
                 )}
-
-                <div className="mt-10 flex flex-col gap-8">
-                  {COPY.map(F => {
-                    const val = String(L[F.f] || '')
-                    const over = !!F.cap && val.length > F.cap
-                    return (
-                      <div key={F.f}>
-                        <p className="text-[12px] mb-2" style={{ color: t.muted }}>
-                          {F.l}{over ? <span style={{ color: t.gold }}>{' · ' + val.length + ' of ' + F.cap + ' characters'}</span> : null}
-                        </p>
-                        {F.f === 'title' ? (
-                          <LiveText v={val} live={canEdit} t={t} single
-                            ro="text-[19px] sm:text-[21px] font-medium leading-[1.3]"
-                            cls="onb-live w-full text-[19px] sm:text-[21px] font-medium leading-[1.3] rounded-lg px-3 py-1.5 -mx-3"
-                            set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
-                        ) : (
-                          <LiveText v={val} live={canEdit} t={t}
-                            ro="text-[16px] leading-[1.8] whitespace-pre-line"
-                            cls="onb-copy w-full text-[16px] leading-[1.8] rounded-lg px-3 py-2 -mx-3"
-                            set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
               </div>
-            )
-          }
+            </Slide>
+          ) })
 
-          return (
-            <>
-              {/* ---------- 1 · WELCOME ---------- */}
-              <SectionShell id="welcome" title="Welcome" hidden={hid('welcome')} edit={edit} onToggle={() => toggleSection('welcome')} onAi={() => openAi('welcome')}>
-                <div className="onb-sec" data-nav="Welcome">
-                  <Head k="welcome" label="Welcome" />
-                  <p className="mt-8 text-[18px] leading-[1.65] whitespace-pre-line" style={{ color: t.body, maxWidth: '50ch' }}>
-                    <Ed v={sec('welcome').body || ''} set={v => patch('welcome.body', v)} edit={edit} multiline />
-                  </p>
-                  <Shot k="welcome" ratio="16 / 9" />
-                  <Note k="welcome" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- 2 · WHAT WE WILL COVER ---------- */}
-              {/* Two columns on a wide screen: eight agenda lines in one narrow column is a
-                  scroll, and an agenda you have to scroll is not an agenda. */}
-              <SectionShell id="agenda" title="What we will cover" hidden={hid('agenda')} edit={edit} onToggle={() => toggleSection('agenda')}>
-                <div className="onb-sec" data-nav="Agenda">
-                  <Head k="agenda" label="What we will cover" />
-                  <div className="onb-agenda mt-9 grid gap-x-12 gap-y-0" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))' }}>
-                    {(sec('agenda').items || []).map((it: Any, i: number) => (
-                      <div key={i} className="grid gap-x-5 py-4 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '26px 1fr' }}>
-                        <span className="text-[12px] tabular-nums" style={{ color: t.muted }}>{String(i + 1).padStart(2, '0')}</span>
+          // ── 2 · AGENDA — two columns ───────────────────────────────────────
+          if (!hid('agenda')) slides.push({ key: 'agenda', node: (
+            <Slide nav="Agenda">
+              <div className="flex flex-col h-full">
+                <Title k="agenda" sub={false} />
+                <div className="flex-1 min-h-0" style={{ marginTop: 30 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 52, rowGap: 0 }}>
+                    {(sec('agenda').items || []).slice(0, 8).map((it: Any, i: number) => (
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '30px 1fr', columnGap: 14, padding: '14px 0', borderTop: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                        <span style={{ fontSize: 12.5, color: t.accent, fontWeight: 600 }}>{String(i + 1).padStart(2, '0')}</span>
                         <div>
-                          <p className="text-[15.5px] font-semibold" style={{ color: t.ink }}>
+                          <p style={{ fontSize: 16, fontWeight: 600, color: t.ink, lineHeight: 1.35 }}>
                             <Ed v={it.k || ''} set={v => patch('agenda.items.' + i + '.k', v)} edit={edit} />
                           </p>
-                          <p className="text-[14px] mt-1 leading-[1.6]" style={{ color: t.muted }}>
+                          <p style={{ fontSize: 13.5, marginTop: 4, lineHeight: 1.55, color: t.muted }}>
                             <Ed v={it.v || ''} set={v => patch('agenda.items.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
                       </div>
                     ))}
                   </div>
-                  {edit && (
-                    <button onClick={() => mutate(d => { d.agenda.items = Array.isArray(d.agenda.items) ? d.agenda.items : []; d.agenda.items.push({ k: 'New line', v: '' }) })}
-                      className="mt-6 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
-                      style={{ background: t.card, border: '1px dashed ' + t.cardBorder, color: t.sub }}>
-                      <Plus size={12} /> Add a line
-                    </button>
-                  )}
-                  <Note k="agenda" />
                 </div>
-              </SectionShell>
+                <Foot label="Agenda" />
+              </div>
+            </Slide>
+          ) })
 
-              {/* ---------- 3 · MEET THE TEAM ---------- */}
-              {/* Four people, four faces, four direct lines. Not a directory — the point of this
-                  slide is that the owner leaves the call able to picture who walks into the unit. */}
-              <SectionShell id="team" title="Meet the team" hidden={hid('team')} edit={edit} onToggle={() => toggleSection('team')}>
-                <div className="onb-sec" data-nav="The team">
-                  <Head k="team" label="Meet the team" />
-                  <div className="onb-team mt-10 grid gap-x-9 gap-y-10" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
-                    {(sec('team').people || []).map((p: Any, pi: number) => (
+          // ── 3 · THE TEAM — four up, with the contact details on the card ───
+          if (!hid('team')) slides.push({ key: 'team', node: (
+            <Slide nav="The team">
+              <div className="flex flex-col h-full">
+                <Title k="team" />
+                <div className="flex-1 min-h-0 flex items-start" style={{ marginTop: 26 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 26, width: '100%' }}>
+                    {(sec('team').people || []).slice(0, 4).map((p: Any, pi: number) => (
                       <div key={pi}>
                         {p.photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.photo} alt="" className="rounded-2xl object-cover mb-4 w-full" style={{ aspectRatio: '1 / 1' }} />
+                          <img src={p.photo} alt="" style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 14, marginBottom: 14 }} />
                         ) : (
-                          <div className="rounded-full mb-4 flex items-center justify-center text-[15px] font-semibold"
-                            style={{ width: 46, height: 46, background: t.chip, color: t.sub }}>
+                          <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 14, marginBottom: 14, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 600 }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
-                        <p className="text-[16px] font-semibold tracking-[-0.01em]" style={{ color: t.ink }}>
+                        <p style={{ fontSize: 16, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em' }}>
                           <Ed v={p.name || ''} set={v => patch('team.people.' + pi + '.name', v)} edit={edit} />
                         </p>
-                        <p className="text-[13px] mt-0.5 mb-2.5" style={{ color: t.muted }}>
+                        <p style={{ fontSize: 12.5, color: t.accent, marginTop: 2 }}>
                           <Ed v={p.role || ''} set={v => patch('team.people.' + pi + '.role', v)} edit={edit} />
                         </p>
-                        <p className="text-[14px] leading-[1.65]" style={{ color: t.body }}>
-                          <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do for this owner&hellip;" />
+                        <p style={{ fontSize: 13, lineHeight: 1.55, color: t.muted, marginTop: 9 }}>
+                          <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do&hellip;" />
                         </p>
-                        {(p.phone || p.email || edit) && (
-                          <div className="mt-2.5 flex flex-col gap-0.5 text-[13px]" style={{ color: t.sub }}>
-                            {(p.phone || edit) && <span><Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" /></span>}
-                            {(p.email || edit) && <span><Ed v={p.email || ''} set={v => patch('team.people.' + pi + '.email', v)} edit={edit} placeholder="Email" /></span>}
-                          </div>
-                        )}
-                        {edit && (
-                          <button onClick={() => mutate(d => { d.team.people.splice(pi, 1) })} className="mt-2 text-[11px] font-semibold" style={{ color: t.accent }}>Remove</button>
-                        )}
+                        {/* CONTACT ON THE CARD (Jon, 2026-09-16: "Contact info"). The whole
+                            promise of this slide is that the owner leaves with a number, not
+                            an inbox — so the number is on the slide, not in a footnote. */}
+                        <div style={{ marginTop: 11, paddingTop: 10, borderTop: '1px solid ' + t.rule }}>
+                          <p style={{ fontSize: 12.5, color: t.ink }}>
+                            <Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" />
+                          </p>
+                          <p style={{ fontSize: 12.5, color: t.muted, marginTop: 2, wordBreak: 'break-all' }}>
+                            <Ed v={p.email || ''} set={v => patch('team.people.' + pi + '.email', v)} edit={edit} placeholder="Email" />
+                          </p>
+                        </div>
                       </div>
                     ))}
                   </div>
-                  {edit && (
-                    <button
-                      onClick={() => mutate(d => { d.team.people = Array.isArray(d.team.people) ? d.team.people : []; d.team.people.push({ name: 'Name', role: 'Role', blurb: '', photo: null, phone: '', email: '' }) })}
-                      className="mt-7 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
-                      style={{ background: t.card, border: '1px dashed ' + t.cardBorder, color: t.sub }}>
-                      <Plus size={12} /> Add person
-                    </button>
-                  )}
-                  <Note k="team" />
                 </div>
-              </SectionShell>
+                <Foot label="The team" />
+              </div>
+            </Slide>
+          ) })
 
-              {/* ---------- 4 · ABOUT STAY HOSPITALITY ---------- */}
-              {/* One sentence at speaking size, one paragraph under it, four numbers on a
-                  hairline. That is the whole slide — a company overview that runs longer than
-                  this is about us, and the owner did not come to hear about us. */}
-              <SectionShell id="overview" title="About Stay Hospitality" hidden={hid('overview')} edit={edit} onToggle={() => toggleSection('overview')} onAi={() => openAi('overview')}>
-                <div className="onb-sec" data-nav="About Stay">
-                  <Head k="overview" label="About Stay Hospitality" />
-                  {(() => {
-                    const full = String(sec('overview').body || '')
-                    const cut = full.indexOf('\n\n')
-                    const lead = cut > 0 ? full.slice(0, cut) : full
-                    const rest = cut > 0 ? full.slice(cut + 2) : ''
-                    if (edit) return <Body k="overview" />
-                    return (
-                      <>
-                        <p className="mt-8 text-[19px] sm:text-[20px] leading-[1.6] whitespace-pre-line" style={{ color: t.body, maxWidth: '46ch' }}>{lead}</p>
-                        {rest ? (
-                          <p className="mt-5 text-[15.5px] leading-[1.75] whitespace-pre-line" style={{ color: t.muted, maxWidth: '58ch' }}>{rest}</p>
-                        ) : null}
-                      </>
-                    )
-                  })()}
-                  {(sec('overview').stats || []).length > 0 && (
-                    <div className="mt-11 pt-9 grid gap-y-8 gap-x-10 border-t" style={{ borderColor: t.rule, gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))' }}>
-                      {(sec('overview').stats || []).map((f: Any, i: number) => (
+          // ── 4 · ABOUT STAY — the dark brand slide ──────────────────────────
+          if (!hid('overview')) slides.push({ key: 'overview', ai: true, node: (
+            <Slide nav="About Stay" bleed>
+              <div style={{ position: 'absolute', inset: 0, background: t.band }}>
+                <Half src={String(sec('overview').photo || pic(4))} side="right" />
+                <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 452, background: 'linear-gradient(90deg, ' + t.band + ' 0%, rgba(0,0,0,0) 42%)' }} />
+                <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 560 }} className="flex flex-col">
+                  <div className="flex-1 min-h-0">
+                    <Title k="overview" dark sub={false} />
+                    {(() => {
+                      const full = String(sec('overview').body || '')
+                      const cut = full.indexOf('\n\n')
+                      const lead = cut > 0 ? full.slice(0, cut) : full
+                      if (edit) {
+                        return (
+                          <p style={{ marginTop: 22, fontSize: 16, lineHeight: 1.6, color: D.body, whiteSpace: 'pre-line' }}>
+                            <Ed v={full} set={v => patch('overview.body', v)} edit={edit} multiline />
+                          </p>
+                        )
+                      }
+                      return <p style={{ marginTop: 22, fontSize: 19, lineHeight: 1.6, color: D.body, maxWidth: '42ch' }}>{lead}</p>
+                    })()}
+                    <div style={{ marginTop: 34, paddingTop: 22, borderTop: '1px solid ' + D.rule, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '20px 34px' }}>
+                      {(sec('overview').stats || []).slice(0, 4).map((f: Any, i: number) => (
                         <div key={i}>
-                          <p className="text-[18px] sm:text-[19px] font-semibold tracking-[-0.015em] leading-[1.3]" style={{ color: t.ink }}>
+                          <p style={{ fontSize: 21, fontWeight: 600, color: D.ink, letterSpacing: '-0.015em', lineHeight: 1.25 }}>
                             <Ed v={f.v || ''} set={v => patch('overview.stats.' + i + '.v', v)} edit={edit} multiline />
                           </p>
-                          <p className="text-[12.5px] mt-1.5" style={{ color: t.muted }}>
+                          <p style={{ fontSize: 12, color: D.muted, marginTop: 4 }}>
                             <Ed v={f.k || ''} set={v => patch('overview.stats.' + i + '.k', v)} edit={edit} />
                           </p>
                         </div>
                       ))}
                     </div>
-                  )}
-                  <Strip from={7} n={3} />
-                  <Note k="overview" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- 5 · YOUR LISTING ---------- */}
-              <SectionShell id="listings" title="Your listing" hidden={hid('listings')} edit={edit} onToggle={() => toggleSection('listings')}>
-                <div className="onb-sec" data-nav="Your listing">
-                  <Head k="listings" label="Your listing" />
-                  {/* ONE UNIT PER SLIDE WHEN PRESENTING. Six units stacked in one section made a
-                      single 8,000px slide — technically scrollable, useless to present from. On
-                      the page they stay together; on a call each unit gets the screen to itself. */}
-                  {!present && (
-                    <div className="mt-10 flex flex-col gap-16">
-                      {(sec('listings').items || []).map((L: Any, li: number) => (
-                        <ListingBlock key={L.id || li} L={L} li={li} />
-                      ))}
-                    </div>
-                  )}
-                  <p className="mt-10 text-[13px] leading-[1.7]" style={{ color: t.muted, maxWidth: '60ch' }}>
-                    The copy above is live &mdash; edit it as we read it and it saves itself. Pushing it out to the channels, and setting amenities, happens on the unit page in the dashboard.
-                  </p>
-                  <Asks k="listings" />
-                </div>
-              </SectionShell>
-
-              {present && !hid('listings') && (sec('listings').items || []).map((L: Any, li: number) => (
-                <section key={'pres-' + (L.id || li)}>
-                  <div className="onb-sec" data-nav={String(L.name || 'Unit')}><ListingBlock L={L} li={li} /></div>
-                </section>
-              ))}
-
-              {/* ---------- 6 · YOUR OWNER PORTAL ---------- */}
-              {/* THE ADDRESS IS A HOUSE SETTING, THE LOGIN IS THEIRS. Guesty does not expose a
-                  per-owner portal URL — an account gets exactly one `<name>.guestyowners.com`
-                  and every owner signs into it with their own email. So the link is the house's,
-                  seeded from the onboarding template and correctable here, and the line that IS
-                  theirs is the email it belongs to. No box around it: on a call this is one
-                  address read out loud, not a form. */}
-              <SectionShell id="guesty" title="Your owner portal" hidden={hid('guesty')} edit={edit} onToggle={() => toggleSection('guesty')} onAi={() => openAi('guesty')}>
-                <div className="onb-sec" data-nav="Owner portal">
-                  <Head k="guesty" label="Your owner portal" />
-                  <div className="mt-9 pt-8 border-t" style={{ borderColor: t.ink }}>
-                    {canEdit ? (
-                      <input
-                        value={String(sec('guesty').portalUrl || '')}
-                        onChange={e => { patch('guesty.portalUrl', e.target.value); answerChanged() }}
-                        placeholder="https://your-name.guestyowners.com"
-                        className="onb-live w-full text-[22px] sm:text-[27px] font-medium tracking-[-0.02em] rounded-lg px-3 py-1.5 -mx-3"
-                        style={{ color: t.accent, background: 'transparent', border: '1px solid transparent', fontFamily: 'inherit' }}
-                      />
-                    ) : (
-                      <a href={String(sec('guesty').portalUrl || '#')} target="_blank" rel="noopener noreferrer"
-                        className="onb-link block text-[22px] sm:text-[27px] font-medium tracking-[-0.02em] break-words"
-                        style={{ color: t.accent }}>
-                        {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '') || 'Portal address to be set'}
-                      </a>
-                    )}
-                    <div className="mt-6 grid gap-x-12 gap-y-5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))' }}>
-                      <div>
-                        <p className="text-[12px]" style={{ color: t.muted }}>You sign in as</p>
-                        <p className="text-[15.5px] mt-1 break-words" style={{ color: t.ink }}>
-                          <Ed v={String(sec('guesty').loginEmail || '')} set={v => patch('guesty.loginEmail', v)} edit={edit} placeholder="owner@email.com" />
-                          {!String(sec('guesty').loginEmail || '') && !edit ? <span style={{ color: t.gold }}>the email we set up on this call</span> : null}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[12px]" style={{ color: t.muted }}>Password</p>
-                        <p className="text-[15.5px] mt-1" style={{ color: t.body }}>You set it from the invite email. We never hold it.</p>
-                      </div>
-                    </div>
                   </div>
-                  <Body k="guesty" />
-                  <Rows rows={sec('guesty').items || []} kw="190px" />
-                  {/* Portal screenshots from the template, so every owner sees the same tour
-                      without anyone re-uploading them. */}
-                  {(sec('guesty').shots || []).length > 0 && (
-                    <div className="mt-10 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
-                      {(sec('guesty').shots || []).map((src: string, si: number) => (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img key={si} src={src} alt="" className="w-full object-cover rounded-xl" style={{ border: '1px solid ' + t.cardBorder }} />
-                      ))}
-                    </div>
-                  )}
-                  <Shot k="guesty" />
-                  <Note k="guesty" />
+                  <Foot label="About Stay Hospitality" dark />
                 </div>
-              </SectionShell>
+              </div>
+            </Slide>
+          ) })
 
-              {/* ---------- 7 · YOUR STATEMENTS ---------- */}
-              {/* The worked month first, because a number an owner can follow beats any amount of
-                  policy. Then the three rules they will actually repeat afterwards. The full
-                  small print sits underneath for the ones who read it — and some do. */}
-              <SectionShell id="statement" title="Your statements" hidden={hid('statement')} edit={edit} onToggle={() => toggleSection('statement')}>
-                <div className="onb-sec" data-nav="Statements">
-                  <Head k="statement" label="Your statements" />
-                  <div className="mt-9 rounded-2xl overflow-hidden" style={{ border: '1px solid ' + t.cardBorder }}>
-                    <div className="px-6 py-4" style={{ background: t.chip }}>
-                      <p className="text-[15.5px] font-semibold" style={{ color: t.ink }}>{sec('statement').unitLabel}</p>
-                      <p className="text-[12.5px] mt-0.5" style={{ color: t.muted }}>{sec('statement').period}</p>
+          // ── 5 · WHERE IT SELLS — the distribution wall ─────────────────────
+          // The most under-sold thing we do. An owner who self-managed was on one channel; the
+          // count is the argument, so the count is set at display size and the logos-as-words
+          // wall does the rest. No logo files: wordmarks we do not have licences for would look
+          // worse than clean type, and type is what the rest of this deck is made of.
+          if (!hid('channels')) slides.push({ key: 'channels', ai: true, node: (
+            <Slide nav="Where it sells">
+              <div className="flex flex-col h-full">
+                <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', columnGap: 52 }} className="flex-1 min-h-0">
+                  <div>
+                    <Title k="channels" sub={false} />
+                    <p style={{ marginTop: 20, fontSize: 15, lineHeight: 1.7, color: t.body, maxWidth: '40ch', whiteSpace: 'pre-line' }}>
+                      <Ed v={sec('channels').body || ''} set={v => patch('channels.body', v)} edit={edit} multiline />
+                    </p>
+                  </div>
+                  <div className="min-h-0 flex flex-col">
+                    <div className="flex items-baseline" style={{ gap: 14 }}>
+                      <span style={{ fontSize: 64, fontWeight: 600, letterSpacing: '-0.04em', color: t.accent, lineHeight: 1 }}>
+                        <Ed v={sec('channels').count || ''} set={v => patch('channels.count', v)} edit={edit} />
+                      </span>
+                      <span style={{ fontSize: 15, color: t.muted }}>channels, one calendar</span>
                     </div>
-                    <div className="px-6 pt-3 pb-5" style={{ background: t.card }}>
-                      {(sec('statement').lines || []).map((ln: Any, i: number) => (
-                        <div key={i} className="flex justify-between gap-5 py-3 border-b" style={{ borderColor: t.rule }}>
-                          <span className="text-[15px]" style={{ color: t.body }}>
-                            {ln.k}{ln.sub ? <small className="block text-[12.5px] mt-0.5" style={{ color: t.muted }}>{ln.sub}</small> : null}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 0, marginTop: 26 }}>
+                      {(sec('channels').primary || []).slice(0, 6).map((n: string, i: number) => (
+                        <div key={i} style={{ padding: '15px 0', borderTop: '1px solid ' + t.rule }}>
+                          <span style={{ fontSize: 17, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em' }}>
+                            <Ed v={n} set={v => patch('channels.primary.' + i, v)} edit={edit} />
                           </span>
-                          <span className="text-[15px] font-medium whitespace-nowrap tabular-nums" style={{ color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
                         </div>
                       ))}
-                      <div className="flex justify-between gap-5 pt-4 mt-1" style={{ borderTop: '1px solid ' + t.ink }}>
-                        <span className="text-[17px] font-semibold" style={{ color: t.ink }}>Net to you</span>
-                        <span className="text-[17px] font-semibold tabular-nums" style={{ color: t.ink }}>{sec('statement').net}</span>
-                      </div>
-                      <p className="text-[13px] mt-2" style={{ color: t.good }}>{sec('statement').paid}</p>
                     </div>
-                    <div style={{ background: t.card, borderTop: '1px solid ' + t.rule }}>
-                      <p className="px-6 py-2.5 text-[12px]" style={{ color: t.muted }}>
-                        The {sec('statement').chargesTotal} owner charge, in full
+                    <div style={{ marginTop: 22, paddingTop: 16, borderTop: '1px solid ' + t.rule }}>
+                      <p style={{ fontSize: 11.5, color: t.muted, marginBottom: 9 }}>and the rest of the network</p>
+                      <p style={{ fontSize: 13, lineHeight: 1.9, color: t.sub }}>
+                        {(sec('channels').more || []).join('  ·  ')}
                       </p>
-                      <div className="lh-hscroll px-6 pb-5">
-                        <table className="w-full text-[13.5px]">
-                          <thead>
-                            <tr>{['Date', 'Work', 'Labor', 'Materials', 'Total'].map((h, i) => (
-                              <th key={h} className="text-[11.5px] font-medium pb-2 pr-4 border-b whitespace-nowrap" style={{ color: t.muted, borderColor: t.rule, textAlign: i >= 2 ? 'right' : 'left' }}>{h}</th>
-                            ))}</tr>
-                          </thead>
-                          <tbody>
-                            {(sec('statement').charges || []).map((ch: Any, i: number) => (
-                              <tr key={i}>
-                                <td className="py-3 pr-4 border-b whitespace-nowrap align-top" style={{ borderColor: t.rule, color: t.muted }}>{ch.date}</td>
-                                <td className="py-3 pr-4 border-b align-top" style={{ borderColor: t.rule, color: t.body }}>
-                                  {ch.work}<small className="block text-[12px] mt-0.5" style={{ color: t.muted }}>{ch.who}</small>
-                                </td>
-                                <td className="py-3 pr-4 border-b text-right whitespace-nowrap align-top tabular-nums" style={{ borderColor: t.rule, color: t.body }}>{ch.labor}</td>
-                                <td className="py-3 pr-4 border-b text-right whitespace-nowrap align-top tabular-nums" style={{ borderColor: t.rule, color: t.body }}>{ch.materials}</td>
-                                <td className="py-3 border-b text-right whitespace-nowrap align-top tabular-nums font-medium" style={{ borderColor: t.rule, color: t.ink }}>{ch.total}</td>
-                              </tr>
+                    </div>
+                  </div>
+                </div>
+                <Foot label="Where it sells" />
+              </div>
+            </Slide>
+          ) })
+
+          // ── 6 · THE LISTING — two slides per unit ──────────────────────────
+          if (!hid('listings')) {
+            const items: Any[] = sec('listings').items || []
+            items.forEach((L: Any, li: number) => {
+              const pics: string[] = (L.photos || []).slice(0, 5)
+              slides.push({ key: 'listings', node: (
+                <Slide nav={String(L.name || 'Unit')} bleed>
+                  <div style={{ position: 'absolute', inset: 0 }}>
+                    <Half src={pics[0] || ''} side="left" />
+                    <div style={{ position: 'absolute', top: 64, bottom: 44, right: 64, left: 516 }} className="flex flex-col">
+                      <div className="flex-1 min-h-0">
+                        <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
+                        <p style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink, lineHeight: 1.2 }}>{L.name}</p>
+                        <p style={{ fontSize: 13.5, color: t.muted, marginTop: 6 }}>{L.sub}</p>
+                        {(L.links || []).length > 0 && (
+                          <div className="flex flex-wrap" style={{ gap: '6px 16px', marginTop: 14 }}>
+                            {(L.links || []).map((k: Any) => (
+                              <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
+                                className="onb-link" style={{ fontSize: 13, fontWeight: 500, color: t.accent }}>{k.name} &#8599;</a>
                             ))}
-                          </tbody>
-                        </table>
+                          </div>
+                        )}
+                        {pics.length > 1 && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 10, marginTop: 22 }}>
+                            {pics.slice(1, 5).map((src: string, pi: number) => (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img key={pi} src={src} alt="" style={{ width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: 10 }} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <Foot label="Your listing" />
+                    </div>
+                  </div>
+                </Slide>
+              ) })
+
+              slides.push({ key: 'listings', node: (
+                <Slide nav={String(L.name || 'Unit') + ' — copy'}>
+                  <div className="flex flex-col h-full">
+                    <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
+                    <p style={{ fontSize: 12.5, color: t.muted }}>{L.name}&nbsp;&nbsp;·&nbsp;&nbsp;the words a guest reads</p>
+                    <div className="flex-1 min-h-0" style={{ marginTop: 18, overflowY: 'auto' }}>
+                      {[{ f: 'title', l: 'Listing title', cap: 50 }, { f: 'summary', l: 'Summary' }, { f: 'space', l: 'The space' }].map(F => {
+                        const val = String(L[F.f] || '')
+                        const over = !!F.cap && val.length > F.cap
+                        return (
+                          <div key={F.f} style={{ marginBottom: 22 }}>
+                            <p style={{ fontSize: 12, color: t.muted, marginBottom: 6 }}>
+                              {F.l}{over ? <span style={{ color: t.gold }}>{' · ' + val.length + ' of ' + F.cap}</span> : null}
+                            </p>
+                            {F.f === 'title' ? (
+                              <LiveText v={val} live={canEdit} t={t} single
+                                ro="" cls="onb-live"
+                                set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
+                            ) : (
+                              <LiveText v={val} live={canEdit} t={t}
+                                ro="" cls="onb-copy"
+                                set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <Foot label="Your listing" />
+                  </div>
+                </Slide>
+              ) })
+            })
+
+            if ((sec('listings').asks || []).length) slides.push({ key: 'listings', node: (
+              <Slide nav="Listing — questions">
+                <div className="flex flex-col h-full">
+                  <Title k="listings" />
+                  <div className="flex-1 min-h-0" style={{ overflowY: 'auto' }}><Asks k="listings" /></div>
+                  <Foot label="Your listing" />
+                </div>
+              </Slide>
+            ) })
+          }
+
+          // ── 6 · THE OWNER PORTAL ───────────────────────────────────────────
+          if (!hid('guesty')) slides.push({ key: 'guesty', ai: true, node: (
+            <Slide nav="Owner portal" bleed>
+              <div style={{ position: 'absolute', inset: 0 }}>
+                <Half src={(sec('guesty').shots || [])[0] || String(sec('guesty').photo || pic(9))} side="right" />
+                <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 556 }} className="flex flex-col">
+                  <div className="flex-1 min-h-0">
+                    <Title k="guesty" sub={false} />
+                    <div style={{ marginTop: 26 }}>
+                      {canEdit ? (
+                        <input
+                          value={String(sec('guesty').portalUrl || '')}
+                          onChange={e => { patch('guesty.portalUrl', e.target.value); answerChanged() }}
+                          placeholder="https://your-name.guestyowners.com"
+                          className="onb-live"
+                          style={{ width: '100%', fontSize: 24, fontWeight: 500, letterSpacing: '-0.02em', color: t.accent, background: 'transparent', border: '1px solid transparent', borderRadius: 8, padding: '4px 8px', marginLeft: -8, fontFamily: 'inherit' }}
+                        />
+                      ) : (
+                        <a href={String(sec('guesty').portalUrl || '#')} target="_blank" rel="noopener noreferrer"
+                          className="onb-link" style={{ fontSize: 24, fontWeight: 500, letterSpacing: '-0.02em', color: t.accent, wordBreak: 'break-word' }}>
+                          {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '') || 'Portal address to be set'}
+                        </a>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 26, marginTop: 20, paddingTop: 18, borderTop: '1px solid ' + t.rule }}>
+                        <div>
+                          <p style={{ fontSize: 12, color: t.muted }}>You sign in as</p>
+                          <p style={{ fontSize: 14.5, color: t.ink, marginTop: 3, wordBreak: 'break-all' }}>
+                            <Ed v={String(sec('guesty').loginEmail || '')} set={v => patch('guesty.loginEmail', v)} edit={edit} placeholder="owner@email.com" />
+                            {!String(sec('guesty').loginEmail || '') && !edit ? <span style={{ color: t.gold }}>set up on this call</span> : null}
+                          </p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: 12, color: t.muted }}>Password</p>
+                          <p style={{ fontSize: 14.5, color: t.body, marginTop: 3 }}>You set it from the invite. We never hold it.</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 22 }}>
+                      {(sec('guesty').items || []).slice(0, 4).map((it: Any, ii: number) => (
+                        <div key={ii} style={{ display: 'grid', gridTemplateColumns: '150px 1fr', columnGap: 18, padding: '10px 0', borderTop: '1px solid ' + t.rule }}>
+                          <p style={{ fontSize: 13, fontWeight: 600, color: t.sub }}>
+                            <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
+                          </p>
+                          <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body }}>
+                            <Ed v={it.v || ''} set={v => patch('guesty.items.' + ii + '.v', v)} edit={edit} multiline />
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <Foot label="Owner portal" />
+                </div>
+              </div>
+            </Slide>
+          ) })
+
+          // A SECOND PORTAL SLIDE WHEN WE HAVE THE SCREENSHOTS (Jon, 2026-09-16: "the Guesty
+          // owner portal should show what it looks like here"). Telling an owner they have a
+          // portal is worth very little; showing them the screen they will log into is worth
+          // the whole section. Shots live on the house template, so they are captured once.
+          if (!hid('guesty') && (sec('guesty').shots || []).length > 1) slides.push({ key: 'guesty', node: (
+            <Slide nav="Portal — a look inside">
+              <div className="flex flex-col h-full">
+                <div className="flex items-baseline justify-between">
+                  <div>
+                    <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
+                    <p style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink }}>This is what you will see</p>
+                  </div>
+                  <p style={{ fontSize: 12.5, color: t.muted }}>{String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '')}</p>
+                </div>
+                <div className="flex-1 min-h-0" style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16 }}>
+                  {(sec('guesty').shots || []).slice(1, 3).map((src: string, si: number) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={si} src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', borderRadius: 12, border: '1px solid ' + t.cardBorder }} />
+                  ))}
+                </div>
+                <Foot label="Owner portal" />
+              </div>
+            </Slide>
+          ) })
+
+          // ── 7 · STATEMENTS — the worked month, then the three rules ────────
+          if (!hid('statement')) {
+            slides.push({ key: 'statement', node: (
+              <Slide nav="Statements">
+                <div className="flex flex-col h-full">
+                  <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', columnGap: 46 }} className="flex-1 min-h-0">
+                    <div>
+                      <Title k="statement" />
+                    </div>
+                    <div style={{ borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, alignSelf: 'start' }}>
+                      <div style={{ padding: '13px 20px', background: t.chip }}>
+                        <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink }}>{sec('statement').unitLabel}</p>
+                        <p style={{ fontSize: 12, color: t.muted, marginTop: 2 }}>{sec('statement').period}</p>
+                      </div>
+                      <div style={{ padding: '6px 20px 16px', background: t.card }}>
+                        {(sec('statement').lines || []).map((ln: Any, i: number) => (
+                          <div key={i} className="flex justify-between" style={{ gap: 18, padding: '9px 0', borderBottom: '1px solid ' + t.rule }}>
+                            <span style={{ fontSize: 13.5, color: t.body }}>
+                              {ln.k}{ln.sub ? <small style={{ display: 'block', fontSize: 11.5, marginTop: 2, color: t.muted }}>{ln.sub}</small> : null}
+                            </span>
+                            <span className="tabular-nums" style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between items-baseline" style={{ gap: 18, paddingTop: 13, marginTop: 3, borderTop: '1px solid ' + t.ink }}>
+                          <span style={{ fontSize: 15, fontWeight: 600, color: t.ink }}>Net to you</span>
+                          <span className="tabular-nums" style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink }}>{sec('statement').net}</span>
+                        </div>
+                        <p style={{ fontSize: 12, marginTop: 6, color: t.good }}>{sec('statement').paid}</p>
                       </div>
                     </div>
                   </div>
+                  <Foot label="Owner statements" />
+                </div>
+              </Slide>
+            ) })
 
-                  {/* THE THREE AN OWNER REPEATS AFTERWARDS. */}
-                  {(sec('statement').highlights || []).length > 0 && (
-                    <div className="onb-three mt-10 grid gap-x-10 gap-y-7" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))' }}>
-                      {(sec('statement').highlights || []).map((h: Any, i: number) => (
-                        <div key={i} className="pt-5 border-t" style={{ borderColor: t.ink }}>
-                          <p className="text-[15.5px] font-semibold leading-[1.35]" style={{ color: t.ink }}>
+            if ((sec('statement').highlights || []).length) slides.push({ key: 'statement', node: (
+              <Slide nav="What we charge" bleed>
+                <div style={{ position: 'absolute', inset: 0, background: t.band, padding: 64 }} className="flex flex-col">
+                  <div className="flex-1 min-h-0 flex flex-col justify-center">
+                    <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 20 }} />
+                    <p style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em', color: D.ink, maxWidth: '24ch', lineHeight: 1.2 }}>
+                      Three rules decide everything on that statement.
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 36, marginTop: 44 }}>
+                      {(sec('statement').highlights || []).slice(0, 3).map((h: Any, i: number) => (
+                        <div key={i} style={{ paddingTop: 18, borderTop: '1px solid ' + D.rule }}>
+                          <p style={{ fontSize: 17, fontWeight: 600, color: D.ink, lineHeight: 1.3 }}>
                             <Ed v={h.k || ''} set={v => patch('statement.highlights.' + i + '.k', v)} edit={edit} multiline />
                           </p>
-                          <p className="text-[14px] mt-2 leading-[1.65]" style={{ color: t.muted }}>
+                          <p style={{ fontSize: 13.5, marginTop: 10, lineHeight: 1.6, color: D.muted }}>
                             <Ed v={h.v || ''} set={v => patch('statement.highlights.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
                       ))}
                     </div>
-                  )}
-
-                  <p className="mt-10 text-[15px] leading-[1.75]" style={{ color: t.body, maxWidth: '62ch' }}>
-                    <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
-                  </p>
-
-                  {/* The small print, kept and kept quiet. */}
-                  {(sec('statement').rules || []).length > 0 && (
-                    <details className="onb-more mt-9">
-                      <summary className="text-[13.5px] font-medium cursor-pointer" style={{ color: t.sub }}>Every rule behind those lines</summary>
-                      <Rows rows={sec('statement').rules || []} kw="200px" />
-                      {(sec('statement').also || []).length > 0 && (
-                        <>
-                          <p className="mt-9 text-[12px]" style={{ color: t.muted }}>Other lines you may see</p>
-                          <Rows rows={sec('statement').also || []} kw="200px" />
-                        </>
-                      )}
-                    </details>
-                  )}
-                  <Note k="statement" />
+                  </div>
+                  <Foot label="Owner statements" dark />
                 </div>
-              </SectionShell>
+              </Slide>
+            ) })
+          }
 
-              {/* ══════ SECTIONS THAT ARE OFF BY DEFAULT ══════
-                  Built, kept in the document, and rendered only once someone switches them on
-                  for this owner. */}
-              {!hid('unit') && (
-                <SectionShell id="unit" title="Your unit" hidden={false} edit={edit} onToggle={() => toggleSection('unit')} onAi={() => openAi('unit')}>
-                  <div className="onb-sec" data-nav="Your unit">
-                    <Head k="unit" label="Your unit" />
-                    <Body k="unit" />
-                    <Rows rows={sec('unit').facts || []} kw="200px" />
-                    <Shot k="unit" />
-                    <Note k="unit" />
-                    <Asks k="unit" />
-                  </div>
-                </SectionShell>
-              )}
-              {!hid('strategy') && (
-                <SectionShell id="strategy" title="Goals & strategy" hidden={false} edit={edit} onToggle={() => toggleSection('strategy')} onAi={() => openAi('strategy')}>
-                  <div className="onb-sec" data-nav="Strategy">
-                    <Head k="strategy" label="Goals & strategy" />
-                    <Body k="strategy" />
-                    <Shot k="strategy" />
-                    <Note k="strategy" />
-                    <Asks k="strategy" />
-                  </div>
-                </SectionShell>
-              )}
-              {!hid('ramp') && (
-                <SectionShell id="ramp" title="The ramp" hidden={false} edit={edit} onToggle={() => toggleSection('ramp')} onAi={() => openAi('ramp')}>
-                  <div className="onb-sec" data-nav="The ramp">
-                    <Head k="ramp" label="The ramp" />
-                    <Rows rows={sec('ramp').bands || []} kw="130px" />
-                    <p className="mt-9 text-[15px] leading-[1.75] pl-5" style={{ color: t.body, maxWidth: '60ch', borderLeft: '2px solid ' + t.rule }}>
-                      <Ed v={sec('ramp').note || ''} set={v => patch('ramp.note', v)} edit={edit} multiline />
-                    </p>
-                    <Note k="ramp" />
-                    <Asks k="ramp" />
-                  </div>
-                </SectionShell>
-              )}
-              {!hid('season') && (
-                <SectionShell id="season" title="Seasonality" hidden={false} edit={edit} onToggle={() => toggleSection('season')} onAi={() => openAi('season')}>
-                  <div className="onb-sec" data-nav="Seasonality">
-                    <Head k="season" label="Seasonality" />
-                    <Body k="season" />
-                    <div className="mt-10 flex items-end gap-1.5" style={{ height: 108 }}>
-                      {(sec('season').months || []).map((m: Any, mi: number) => (
-                        <div key={mi} className="flex-1 flex flex-col items-center gap-2">
-                          <div className="w-full rounded-t" style={{ height: Math.max(8, (Number(m.level) + 1) * 24), background: Number(m.level) >= 3 ? hexA(t.accent, 0.85) : Number(m.level) >= 2 ? hexA(t.accent, 0.45) : hexA(t.accent, 0.18) }} />
-                          <span className="text-[10.5px]" style={{ color: t.muted }}>{m.m}</span>
-                        </div>
-                      ))}
+          // ── the off-by-default sections, one slide each ────────────────────
+          const RowSlide = ({ k, label, rows, kw }: { k: string; label: string; rows: Any[]; kw?: number }) => (
+            <Slide nav={label}>
+              <div className="flex flex-col h-full">
+                <Title k={k} />
+                <div className="flex-1 min-h-0" style={{ marginTop: 22, overflowY: 'auto' }}>
+                  {(rows || []).map((r: Any, i: number) => (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: (kw || 180) + 'px 1fr', columnGap: 24, padding: '12px 0', borderTop: '1px solid ' + t.rule }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: t.sub }}>{r.k}</div>
+                      <div style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body }}>{r.v}</div>
                     </div>
-                    <p className="mt-8 text-[13.5px] leading-[1.7]" style={{ color: t.muted, maxWidth: '60ch' }}>
-                      <Ed v={sec('season').note || ''} set={v => patch('season.note', v)} edit={edit} multiline />
-                    </p>
-                    <Note k="season" />
-                    <Asks k="season" />
-                  </div>
-                </SectionShell>
-              )}
-              {!hid('tech') && (
-                <SectionShell id="tech" title="Your tech" hidden={false} edit={edit} onToggle={() => toggleSection('tech')} onAi={() => openAi('tech')}>
-                  <div className="onb-sec" data-nav="Your tech">
-                    <Head k="tech" label="Your tech" />
-                    <Body k="tech" />
-                    <Rows rows={sec('tech').rows || []} kw="176px" />
-                    <Shot k="tech" />
-                    <Note k="tech" />
-                    <Asks k="tech" />
-                  </div>
-                </SectionShell>
-              )}
-              {!hid('money') && (
-                <SectionShell id="money" title="Billables" hidden={false} edit={edit} onToggle={() => toggleSection('money')} onAi={() => openAi('money')}>
-                  <div className="onb-sec" data-nav="Billables">
-                    <Head k="money" label="Billables" />
-                    <Body k="money" />
-                    <Rows rows={sec('money').rules || []} kw="200px" />
-                    <div className="mt-10 grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(290px,1fr))' }}>
-                      {(sec('money').examples || []).map((ex: Any, xi: number) => (
-                        <div key={xi} className="rounded-2xl p-5" style={{ background: t.card, border: '1px solid ' + (ex.tone === 'hold' ? t.gold : t.cardBorder) }}>
-                          <p className="text-[14.5px] font-semibold leading-snug" style={{ color: t.ink }}>{ex.title}</p>
-                          <div className="mt-3.5">
-                            {(ex.lines || []).map((ln: Any, i: number) => (
-                              <div key={i} className="flex justify-between gap-4 py-2 border-t text-[14px]" style={{ borderColor: t.rule }}>
-                                <span style={{ color: t.body }}>{ln.k}</span>
-                                <span className="font-medium whitespace-nowrap tabular-nums" style={{ color: t.ink }}>{ln.v}</span>
-                              </div>
-                            ))}
-                          </div>
-                          {ex.total ? (
-                            <div className="flex justify-between gap-4 pt-2.5 mt-1" style={{ borderTop: '1px solid ' + t.ink }}>
-                              <span className="text-[14px] font-semibold" style={{ color: t.ink }}>Total</span>
-                              <span className="text-[14px] font-semibold tabular-nums" style={{ color: t.ink }}>{ex.total}</span>
-                            </div>
-                          ) : null}
-                          <p className="mt-3 text-[13px] leading-relaxed" style={{ color: ex.tone === 'hold' ? t.gold : t.good }}>{ex.verdict}</p>
-                        </div>
-                      ))}
+                  ))}
+                  <Asks k={k} />
+                </div>
+                <Foot label={label} />
+              </div>
+            </Slide>
+          )
+          for (const x of EXTRA) {
+            if (hid(x.k)) continue
+            const S = sec(x.k)
+            const rows: Any[] = S.rows || S.facts || S.bands || S.rules || (S.months ? [] : [])
+            slides.push({ key: x.k, ai: true, node: (
+              rows && rows.length
+                ? <RowSlide k={x.k} label={x.label} rows={rows} />
+                : (
+                  <Slide nav={x.label}>
+                    <div className="flex flex-col h-full">
+                      <Title k={x.k} />
+                      <div className="flex-1 min-h-0" style={{ marginTop: 20, overflowY: 'auto' }}>
+                        <p style={{ fontSize: 16, lineHeight: 1.7, color: t.body, maxWidth: '52ch', whiteSpace: 'pre-line' }}>
+                          <Ed v={S.body || ''} set={v => patch(x.k + '.body', v)} edit={edit} multiline />
+                        </p>
+                        <Asks k={x.k} />
+                      </div>
+                      <Foot label={x.label} />
                     </div>
-                    <Note k="money" />
-                    <Asks k="money" />
-                  </div>
-                </SectionShell>
-              )}
-              {!hid('comms') && (
-                <SectionShell id="comms" title="Communication" hidden={false} edit={edit} onToggle={() => toggleSection('comms')} onAi={() => openAi('comms')}>
-                  <div className="onb-sec" data-nav="Communication">
-                    <Head k="comms" label="Communication" />
-                    <Body k="comms" />
-                    <Rows rows={sec('comms').rows || []} kw="156px" />
-                    <Note k="comms" />
-                    <Asks k="comms" />
-                  </div>
-                </SectionShell>
-              )}
-              {!hid('checklist') && (
-                <SectionShell id="checklist" title="Still to do" hidden={false} edit={edit} onToggle={() => toggleSection('checklist')}>
-                  <div className="onb-sec" data-nav="Still to do">
-                    <Head k="checklist" label="Still to do" />
-                    <div className="mt-9">
-                      {(sec('checklist').rows || []).map((r: Any, ri: number) => (
-                        <div key={ri} className="onb-row grid gap-x-6 gap-y-1 py-3.5 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '1fr 92px 108px' }}>
-                          <span className="text-[15px]" style={{ color: t.ink }}>
-                            <Ed v={r.item || ''} set={v => patch('checklist.rows.' + ri + '.item', v)} edit={edit} multiline />
-                          </span>
-                          <span className="text-[12.5px]" style={{ color: String(r.who).toLowerCase() === 'stay' ? t.sub : t.gold }}>
-                            <Ed v={r.who || ''} set={v => patch('checklist.rows.' + ri + '.who', v)} edit={edit} />
-                          </span>
-                          <span className="text-[13px]">
-                            <LiveText v={String(r.by || '')} live={canEdit} t={t} single
-                              set={v => { patch('checklist.rows.' + ri + '.by', v); answerChanged() }} />
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <Note k="checklist" />
-                  </div>
-                </SectionShell>
-              )}
-              {!hid('nextup') && (
-                <SectionShell id="nextup" title="What happens next" hidden={false} edit={edit} onToggle={() => toggleSection('nextup')}>
-                  <div className="onb-sec" data-nav="What's next">
-                    <Head k="nextup" label="What happens next" />
-                    <Rows rows={sec('nextup').rows || []} kw="200px" />
-                    <Note k="nextup" />
-                  </div>
-                </SectionShell>
-              )}
+                  </Slide>
+                )
+            ) })
+          }
 
-              {/* ---------- 8 · OTHER NOTES ---------- */}
-              <SectionShell id="notes" title="Other notes" hidden={hid('notes')} edit={edit} onToggle={() => toggleSection('notes')}>
-                <div className="onb-sec" data-nav="Other notes">
-                  <Head k="notes" label="Other notes" />
-                  <div className="mt-9">
+          // ── 8 · OTHER NOTES ───────────────────────────────────────────────
+          if (!hid('notes')) slides.push({ key: 'notes', node: (
+            <Slide nav="Other notes">
+              <div className="flex flex-col h-full">
+                <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', columnGap: 46 }} className="flex-1 min-h-0">
+                  <div><Title k="notes" /></div>
+                  <div className="min-h-0" style={{ overflowY: 'auto' }}>
                     <LiveText
                       v={String(sec('notes').body || '')}
-                      live={canEdit}
-                      t={t}
-                      ro="text-[16px] leading-[1.8] whitespace-pre-line"
-                      cls="onb-copy w-full text-[16px] leading-[1.8] rounded-lg px-3 py-2 -mx-3"
+                      live={canEdit} t={t} ro="" cls="onb-copy"
                       set={v => { patch('notes.body', v); answerChanged() }}
                     />
+                    {totalAsks > 0 && (
+                      <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid ' + t.ink }}>
+                        <p style={{ fontSize: 12.5, color: open.length ? t.gold : t.good }}>{answered} of {totalAsks} answered</p>
+                        {open.length === 0 ? (
+                          <p style={{ fontSize: 14, marginTop: 10, color: t.good }}>Nothing open.</p>
+                        ) : open.map((o, oi) => (
+                          <div key={oi} style={{ display: 'grid', gridTemplateColumns: '120px 1fr', columnGap: 18, padding: '9px 0', borderTop: '1px solid ' + t.rule }}>
+                            <span style={{ fontSize: 11.5, color: t.muted }}>{o.label}</span>
+                            <span style={{ fontSize: 13.5, color: t.ink }}>{o.q}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {totalAsks > 0 && (
-                    <div className="mt-12 pt-9 border-t" style={{ borderColor: t.ink }}>
-                      <p className="text-[13px]" style={{ color: open.length ? t.gold : t.good }}>
-                        {answered} of {totalAsks} answered
-                      </p>
-                      {open.length === 0 ? (
-                        <p className="mt-4 text-[16px]" style={{ color: t.good }}>Nothing open &mdash; every question on this page has an answer.</p>
-                      ) : (
-                        <div className="mt-4">
-                          {open.map((o, oi) => (
-                            <div key={oi} className="onb-row grid gap-x-8 gap-y-1 py-3.5 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '148px 1fr' }}>
-                              <span className="text-[12.5px]" style={{ color: t.muted }}>{o.label}</span>
-                              <span className="text-[15px]" style={{ color: t.ink }}>{o.q}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <Note k="notes" />
                 </div>
-              </SectionShell>
+                <Foot label="Other notes" />
+              </div>
+            </Slide>
+          ) })
+
+          return (
+            <>
+              {slides.map((sl, i) => (
+                <SectionShell
+                  key={sl.key + '-' + i}
+                  id={sl.key + '-' + i}
+                  title={(CORE.concat(EXTRA).find(x => x.k === sl.key) || { label: sl.key }).label}
+                  hidden={false}
+                  edit={edit}
+                  onToggle={() => toggleSection(sl.key)}
+                  onAi={sl.ai ? () => openAi(sl.key) : undefined}
+                >
+                  {sl.node}
+                </SectionShell>
+              ))}
 
               {/* Switch an off-by-default section back on for this owner. Edit mode only. */}
               {edit && (
-                <div className="sb-noprint onb-sec">
-                  <div className="rounded-2xl px-6 py-5" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
-                    <p className="text-[13px] font-semibold mb-1" style={{ color: t.sub }}>More sections</p>
-                    <p className="text-[13px] mb-4" style={{ color: t.muted, maxWidth: '58ch' }}>
-                      Written and ready, off by default. Add any of these to this owner&rsquo;s deck &mdash; it changes this document only, never the template.
+                <div className="sb-noprint" style={{ marginTop: 26 }}>
+                  <div style={{ borderRadius: 16, padding: '20px 24px', background: t.chip, border: '1px dashed ' + t.cardBorder }}>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: t.sub, marginBottom: 4 }}>More slides</p>
+                    <p style={{ fontSize: 13, color: t.muted, maxWidth: '58ch', marginBottom: 14 }}>
+                      Written and ready, off by default. Adding one changes this deck only, never the template.
                     </p>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap" style={{ gap: 8 }}>
                       {EXTRA.map(x => {
                         const on = !hid(x.k)
                         return (
                           <button key={x.k} onClick={() => toggleSection(x.k)}
-                            className="rounded-full px-3.5 py-1.5 text-[12px] font-medium"
-                            style={on
-                              ? { background: t.ink, color: t.bg }
-                              : { background: t.card, border: '1px solid ' + t.cardBorder, color: t.sub }}>
+                            style={{ borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 500, ...(on ? { background: t.ink, color: t.bg } : { background: t.card, border: '1px solid ' + t.cardBorder, color: t.sub }) }}>
                             {on ? '✓ ' : '+ '}{x.label}
                           </button>
                         )
                       })}
+                      {CORE.filter(x => hid(x.k)).map(x => (
+                        <button key={x.k} onClick={() => toggleSection(x.k)}
+                          style={{ borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: t.card, border: '1px solid ' + t.cardBorder, color: t.sub }}>
+                          + {x.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
