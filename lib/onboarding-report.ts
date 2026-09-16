@@ -44,6 +44,10 @@ export type ListingCard = {
   title: string
   summary: string
   space: string
+  /** What the listing claims today. Ticked off in the room and pushed to Guesty from the slide. */
+  amenities: string[]
+  /** What a unit of this shape is missing, and why it matters — from the optimize score. */
+  amenitySuggest: { name: string; reason: string }[]
 }
 
 /** Any section can carry one of the owner's own listing photos and a free note. */
@@ -89,7 +93,12 @@ export type OnboardingContent = {
   listings: Sec<{ headline: string; subtitle: string; items: ListingCard[]; asks: Ask[] }>
   strategy: Sec<{ headline: string; subtitle: string; body: string; asks: Ask[] }>
   ramp: Sec<{ headline: string; subtitle: string; bands: KV[]; note: string; asks: Ask[] }>
-  season: Sec<{ headline: string; subtitle: string; body: string; months: { m: string; level: number }[]; note: string; asks: Ask[] }>
+  season: Sec<{
+    headline: string; subtitle: string; body: string
+    months: { m: string; level: number }[]; note: string; asks: Ask[]
+    /** The shape of the year as a share, not a dollar figure — no invented numbers on a deck. */
+    peakShare: string; peakLabel: string
+  }>
   /**
    * 6 — the owner portal. Guesty exposes NO per-owner portal URL: the account gets exactly one
    * `<name>.guestyowners.com` and every owner signs into it with their own email (confirmed
@@ -170,6 +179,8 @@ export type OnboardingTemplate = {
   rampNote: string
   seasonBody: string
   seasonNote: string
+  peakShare: string
+  peakLabel: string
   team: { name: string; role: string; blurb: string; photo?: string | null; market?: string; phone?: string; email?: string }[]
   supportLabel: string
   supportNote: string
@@ -253,6 +264,9 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   seasonBody:
     'Your season is November through April. That is when the demand is, that is when the rate is, and that is the window everything else in the year is preparing for. May through October pays the bills at a lower rate with longer stays; July and August are the floor.',
+  peakShare: '65%',
+  peakLabel: 'of the year\u2019s revenue lands November through April',
+
   seasonNote:
     'Shape only — this is the market’s year, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
 
@@ -411,6 +425,8 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     rampNote: str(stored.rampNote, D.rampNote),
     seasonBody: str(stored.seasonBody, D.seasonBody),
     seasonNote: str(stored.seasonNote, D.seasonNote),
+    peakShare: str(stored.peakShare, D.peakShare),
+    peakLabel: str(stored.peakLabel, D.peakLabel),
     // The one list whose empty state is meaningful: no team saved yet means we fall back to the
     // live staff roster at generate time rather than printing nobody.
     team: Array.isArray(stored.team) ? stored.team : D.team,
@@ -453,7 +469,11 @@ function benchmarkLine(market: string, bedrooms: number | null): string {
 }
 
 /** One listing, read for review: the live channel links, the first five photos, the copy. */
-export function listingCardFrom(l: any): ListingCard {
+export function listingCardFrom(
+  l: any,
+  amenities: string[] = [],
+  amenitySuggest: { name: string; reason: string }[] = [],
+): ListingCard {
   const raw = l && l.raw ? l.raw : {}
   const pub = raw.publicDescription || raw.publicDescriptions || {}
   const pics: string[] = Array.isArray(l.pictures) ? l.pictures.filter(Boolean) : []
@@ -475,6 +495,8 @@ export function listingCardFrom(l: any): ListingCard {
     title: String(raw.title || l.title || ''),
     summary: String(pub.summary || ''),
     space: String(pub.space || ''),
+    amenities,
+    amenitySuggest,
   }
 }
 
@@ -618,6 +640,8 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       body: t.seasonBody,
       months: SEASON_SHAPE,
       note: [benchmarkLine(i.market, i.bedrooms), t.seasonNote].filter(Boolean).join(' '),
+      peakShare: t.peakShare,
+      peakLabel: t.peakLabel,
       asks: asks('season'),
     },
     team: {
@@ -743,12 +767,18 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
 
 /** The eight sections a generated onboarding shows, in render order. */
 export const ONBOARDING_CORE = [
-  'welcome', 'agenda', 'team', 'overview', 'channels', 'listings', 'guesty', 'statement', 'notes',
+  'welcome', 'agenda', 'team', 'overview', 'channels', 'listings',
+  // THE REVENUE STORY IS NOT OPTIONAL (Jon, 2026-09-16: "we should also have a revenue slide,
+  // not actual numbers but show season pickup… ramp takes time for listing to move up on
+  // algorithms, new listing promotion, push for good reviews"). These two carry the only
+  // expectation-setting in the deck that stops month one reading as a failure in February.
+  'season', 'ramp',
+  'guesty', 'statement', 'notes',
 ] as const
 
 /** Built, kept, and hidden by default. Switched on per owner from the editing toolbar. */
 export const ONBOARDING_EXTRA = [
-  'unit', 'strategy', 'ramp', 'season', 'tech', 'money', 'comms', 'checklist', 'nextup',
+  'unit', 'strategy', 'tech', 'money', 'comms', 'checklist', 'nextup',
 ] as const
 
 /** Every section key an onboarding report can hide, in render order. */
