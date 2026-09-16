@@ -97,7 +97,7 @@ export type OnboardingContent = {
     headline: string; subtitle: string; body: string
     months: { m: string; level: number }[]; note: string; asks: Ask[]
     /** The shape of the year as a share, not a dollar figure — no invented numbers on a deck. */
-    peakShare: string; peakLabel: string
+    peakShare: string; peakLabel: string; lowNote: string
   }>
   /**
    * 6 — the owner portal. Guesty exposes NO per-owner portal URL: the account gets exactly one
@@ -124,18 +124,37 @@ export type OnboardingContent = {
   }>
   comms: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }>
   money: Sec<{ headline: string; subtitle: string; body: string; rules: KV[]; examples: { title: string; lines: KV[]; total: string; verdict: string; tone: 'ok' | 'hold' }[]; asks: Ask[] }>
+  /**
+   * 7 — THE OWNER STATEMENT, IN THE SHAPE GUESTY ACTUALLY ISSUES IT (Jon, 2026-09-16, with a
+   * real August statement attached: "use this as an example… change name, rev, expense but use
+   * same line items… make it viewable and interactive, not just a JPEG").
+   *
+   * So this is modelled on the document itself: the performance strip, the category summary
+   * ending in the navy "Payment due to owner" row, and the per-reservation detail where every
+   * booking breaks into rental / PMC commission / cleaning / parking / channel reimbursement.
+   * The figures are invented and internally consistent — the management fee really is 20% of
+   * the rental line, and every subtotal adds up — because an owner WILL check the arithmetic on
+   * the one example we show them, and a demo that does not foot is worse than no demo.
+   */
   statement: Sec<{
-    headline: string; subtitle: string; unitLabel: string; period: string
-    lines: { k: string; sub: string; v: string; neg?: boolean }[]
-    net: string; paid: string
-    charges: { date: string; work: string; who: string; labor: string; materials: string; total: string }[]
-    chargesTotal: string
-    also: KV[]
+    headline: string; subtitle: string
+    unitLabel: string; period: string
+    /** The strip across the top of the real statement. */
+    kpis: KV[]
+    /** The category summary, in the issued order. */
+    summary: { k: string; v: string; neg?: boolean; rule?: boolean }[]
+    due: KV
+    /** Per-reservation detail for one unit — the "every line traces to a booking" proof. */
+    reservations: {
+      guest: string; stay: string
+      lines: { date: string; desc: string; cat: string; amt: string; neg?: boolean }[]
+      total: string
+    }[]
+    propertyIncome: KV
     note: string
-    /** What can and cannot reach this statement. Folded in from the old billables section. */
     rules: KV[]
-    /** The three the owner will actually remember. Said out loud; the rules are the small print. */
     highlights: KV[]
+    also: KV[]
   }>
   checklist: Sec<{ headline: string; subtitle: string; rows: { item: string; who: string; by: string }[] }>
   nextup: Sec<{ headline: string; subtitle: string; rows: KV[] }>
@@ -179,6 +198,7 @@ export type OnboardingTemplate = {
   rampNote: string
   seasonBody: string
   seasonNote: string
+  seasonLowNote: string
   peakShare: string
   peakLabel: string
   team: { name: string; role: string; blurb: string; photo?: string | null; market?: string; phone?: string; email?: string }[]
@@ -263,9 +283,11 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
     'We would rather tell you this now than have you read month one as a failure. If month one looks like a normal month, we priced too high and left reviews on the table.',
 
   seasonBody:
-    'Your season is November through April. That is when the demand is, that is when the rate is, and that is the window everything else in the year is preparing for. May through October pays the bills at a lower rate with longer stays; July and August are the floor.',
+    'Your season is December through April, and it builds to a peak in March. That is when the demand is, that is when the rate is, and that is the window everything else in the year is preparing for. The year falls away from there through the summer; September is the floor, and the climb back starts in October.',
   peakShare: '65%',
-  peakLabel: 'of the year\u2019s revenue lands November through April',
+  peakLabel: 'of the year\u2019s revenue lands December through April',
+
+  seasonLowNote: 'September is the floor \u2014 the quietest month of the year, and the one we use for deep cleans, touch-ups and anything that needs the unit empty.',
 
   seasonNote:
     'Shape only — this is the market’s year, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
@@ -425,6 +447,7 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     rampNote: str(stored.rampNote, D.rampNote),
     seasonBody: str(stored.seasonBody, D.seasonBody),
     seasonNote: str(stored.seasonNote, D.seasonNote),
+    seasonLowNote: str(stored.seasonLowNote, D.seasonLowNote),
     peakShare: str(stored.peakShare, D.peakShare),
     peakLabel: str(stored.peakLabel, D.peakLabel),
     // The one list whose empty state is meaningful: no team saved yet means we fall back to the
@@ -446,9 +469,11 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
 
 // ── the season's shape. House doctrine, not a forecast: six peak months, two at the floor. ──
 const SEASON_SHAPE: { m: string; level: number }[] = [
-  { m: 'J', level: 2 }, { m: 'F', level: 3 }, { m: 'M', level: 3 }, { m: 'A', level: 3 },
-  { m: 'M', level: 2 }, { m: 'J', level: 1 }, { m: 'J', level: 0 }, { m: 'A', level: 0 },
-  { m: 'S', level: 1 }, { m: 'O', level: 1 }, { m: 'N', level: 3 }, { m: 'D', level: 3 },
+  // March is the single peak (Jon, 2026-09-16), the season builds to it from December, and the
+  // year falls away from there to a September floor before the slow climb back.
+  { m: 'J', level: 4 }, { m: 'F', level: 5 }, { m: 'M', level: 6 }, { m: 'A', level: 4 },
+  { m: 'M', level: 3 }, { m: 'J', level: 2 }, { m: 'J', level: 2 }, { m: 'A', level: 1 },
+  { m: 'S', level: 0 }, { m: 'O', level: 1 }, { m: 'N', level: 2 }, { m: 'D', level: 4 },
 ]
 
 const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
@@ -551,6 +576,20 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
   const chargeTotal = 0.7 * rate + 19 + 1.5 * rate + 18
   const net = Math.round((rental - commission - chargeTotal) * 100) / 100
 
+  // ── THE EXAMPLE STATEMENT ────────────────────────────────────────────────
+  // Built to Guesty's issued shape and made to foot, because the one example an owner is shown
+  // is the one they will add up. Three bookings, their line items, and a summary whose ending
+  // balance is the sum of the categories above it — not a plausible-looking number.
+  const nights2 = 9
+  const rental2 = 1024 + 1432                 // the two example bookings
+  const mgmt2 = Math.round(rental2 * (t.mgmtPct / 100) * 100) / 100
+  const clean2 = 180 * 2
+  const park2 = 75
+  const chan2 = 2.9
+  const supplies2 = 86.8
+  const maint2 = 168                           // 4.2h at the house rate, itemised on the detail
+  const net2 = Math.round((rental2 + chan2 + clean2 + park2 - mgmt2 - supplies2 - maint2) * 100) / 100
+
   return {
     meta: {
       kind: 'onboarding',
@@ -636,12 +675,13 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     },
     season: {
       headline: 'South Florida pays in winter',
-      subtitle: 'November through April is the window everything else prepares for.',
+      subtitle: 'December through April is the window everything else in the year prepares for.',
       body: t.seasonBody,
       months: SEASON_SHAPE,
       note: [benchmarkLine(i.market, i.bedrooms), t.seasonNote].filter(Boolean).join(' '),
       peakShare: t.peakShare,
       peakLabel: t.peakLabel,
+      lowNote: t.seasonLowNote,
       asks: asks('season'),
     },
     team: {
@@ -709,27 +749,59 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // 7 ── OWNER STATEMENTS. The worked month, then the rules that decide what can appear on
     // it — the billables doctrine folded in, because the statement is where an owner meets it.
     statement: {
-      headline: 'Your Guesty owner statements',
-      subtitle: 'A worked month, line by line, and the rules behind every line.',
+      headline: 'Your monthly owner statement',
+      subtitle: 'Issued from Guesty the month after it closes. This is an example, with the arithmetic intact.',
       unitLabel: i.cards[0] ? i.cards[0].name : i.scopeLabel,
-      period: `Example month · ${nights} nights booked · ${money0(adr)} ADR`,
-      lines: [
-        { k: 'Net rental nightly income', sub: 'What guests paid for the nights, after the channel takes its cut', v: money2(rental) },
-        { k: 'Management commission', sub: `${t.mgmtPct}% of rental income`, v: '−' + money2(commission), neg: true },
-        { k: 'Owner charge — maintenance', sub: 'Itemized below', v: '−' + money2(chargeTotal), neg: true },
+      period: 'Example month \u00b7 August',
+      kpis: [
+        { k: 'Occupancy', v: '68%' },
+        { k: 'Proceeds', v: money2(net2) },
+        { k: 'Nights occupied', v: String(nights2) },
+        { k: 'Working capital', v: money2(0) },
       ],
-      net: money2(net),
-      paid: 'Paid the following month · ACH',
-      charges,
-      chargesTotal: money2(chargeTotal),
-      also: t.statementAlso,
+      summary: [
+        { k: 'Initial balance', v: money2(0) },
+        { k: 'Rental income', v: money2(rental2) },
+        { k: 'Channel commission', v: money2(chan2) },
+        { k: 'Cleaning fee', v: money2(clean2) },
+        { k: 'Parking', v: money2(park2) },
+        { k: 'Management fee', v: '\u2212' + money2(mgmt2), neg: true },
+        { k: 'Supplies and purchases', v: '\u2212' + money2(supplies2), neg: true },
+        { k: 'Maintenance \u2014 owner charge', v: '\u2212' + money2(maint2), neg: true },
+        { k: 'Ending balance', v: money2(net2), rule: true },
+      ],
+      due: { k: 'Payment due to owner', v: money2(net2) },
+      reservations: [
+        {
+          guest: 'M. Alvarez', stay: 'Aug 2 \u2013 Aug 6 \u00b7 4 nights',
+          lines: [
+            { date: 'Aug 2', desc: 'Rental payment for HMABC12345', cat: 'Rental income', amt: money2(1024) },
+            { date: 'Aug 2', desc: 'PMC commission', cat: 'Management fee', amt: '\u2212' + money2(102.4), neg: true },
+            { date: 'Aug 2', desc: 'Cleaning fee', cat: 'Cleaning fee', amt: money2(180) },
+            { date: 'Aug 2', desc: 'Airbnb RM channel fee reimbursement', cat: 'Channel commission', amt: money2(2.9) },
+          ],
+          total: money2(1104.5),
+        },
+        {
+          guest: 'R. Whitfield', stay: 'Aug 9 \u2013 Aug 14 \u00b7 5 nights',
+          lines: [
+            { date: 'Aug 9', desc: 'Rental payment for BC-9KD3LM', cat: 'Rental income', amt: money2(1432) },
+            { date: 'Aug 9', desc: 'PMC commission', cat: 'Management fee', amt: '\u2212' + money2(143.2), neg: true },
+            { date: 'Aug 9', desc: 'Cleaning fee', cat: 'Cleaning fee', amt: money2(180) },
+            { date: 'Aug 9', desc: 'Nightly parking', cat: 'Parking', amt: money2(75) },
+          ],
+          total: money2(1543.8),
+        },
+      ],
+      propertyIncome: { k: 'Property income', v: money2(1104.5 + 1543.8) },
+      note: `Every line on this statement traces to a booking or to a job with a date on it. Labor is ${money0(rate)} an hour on the technician\u2019s actual clock, materials are at cost, and the ${t.mgmtPct}% management fee is the only fee we take.`,
       rules,
       highlights: [
         { k: 'Departure cleans', v: 'Never billed to you. The guest\u2019s cleaning fee pays for the turnover.' },
         { k: `Labor ${money0(rate)}/hr, parts at cost`, v: 'The technician\u2019s actual clock. No markup, no trip charge.' },
         { k: `Anything over ${money0(limit)}`, v: 'Goes to you first, with photos and options. Nothing is bought without your yes.' },
       ],
-      note: `Labor is ${money0(rate)} an hour on the technician’s actual clock. Materials are at cost. Nothing on this line is a markup, a trip charge, or a management fee by another name — the ${t.mgmtPct}% above is the only fee we take.`,
+      also: t.statementAlso,
     },
     checklist: {
       headline: 'What is left before we can take a booking',
