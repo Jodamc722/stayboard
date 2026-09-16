@@ -125,7 +125,7 @@ const FLAG_HELP: Record<FlagType, string> = {
   off_booking: 'Money on the statement with no booking behind it — management fees, owner charges, one-off adjustments.',
   empty_statement: 'A statement was generated with no line items at all — usually a listing that is not mapped to the owner.',
   owner_stay: 'Owner stays and friends & family stays. Discounted by design, never a pricing error — flagged so each one is confirmed as authorised and its costs land correctly.',
-  cleaning_fee: 'Every reservation should collect a cleaning fee, and the fee is judged by what it NETS to — one that was charged and refunded counts as none. Where a unit has charged nobody all month the listing is the finding, flagged once on its earliest stay instead of once per booking.',
+  cleaning_fee: 'Every reservation should collect a cleaning fee, and the fee is judged by what it NETS to — one that was charged and refunded counts as none. A channel that bills a single lump instead of itemising (Expedia\u2019s "Service" line) HAS collected the fee, so it is noted but never flagged; splitting it out is the Expedia prep list\u2019s job. Where a unit has charged nobody all month the listing is the finding, flagged once on its earliest stay instead of once per booking.',
 }
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
