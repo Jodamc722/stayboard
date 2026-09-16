@@ -680,14 +680,14 @@ function AskBlock({ ask, live, set, t }: { ask: Any; live: boolean; set: (v: str
 // TEXT YOU CAN FIX WHILE YOU READ IT ALOUD (Jon, 2026-09-16: "editable in view mode"). No
 // toolbar, no mode switch — a team viewer just clicks into the listing copy and types. It reads
 // as plain text until focused, so an owner looking at the same page sees a document, not a form.
-function LiveText({ v, set, live, single, t }: { v: string; set: (s: string) => void; live: boolean; single?: boolean; t: Any }) {
+function LiveText({ v, set, live, single, t, cls, ro }: { v: string; set: (s: string) => void; live: boolean; single?: boolean; t: Any; cls?: string; ro?: string }) {
   if (!live) {
-    return <p className="text-[15px] leading-[1.7] whitespace-pre-line" style={{ color: t.body }}>{v || '\u2014'}</p>
+    return <p className={ro || 'text-[15px] leading-[1.7] whitespace-pre-line'} style={{ color: t.body }}>{v || '\u2014'}</p>
   }
   const common = {
     value: v,
     onChange: (e: Any) => set(e.target.value),
-    className: 'onb-live w-full text-[15px] leading-[1.7] rounded-lg px-3 py-2 -mx-3',
+    className: cls || 'onb-live w-full text-[15px] leading-[1.7] rounded-lg px-3 py-2 -mx-3',
     style: { color: t.body, background: 'transparent', border: '1px solid transparent', fontFamily: 'inherit' } as Any,
   }
   return single
@@ -928,7 +928,6 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   cRef.current = c
   const askTimer = useRef<Any>(null)
   const [askSaved, setAskSaved] = useState(false)
-  const [amenityMsg, setAmenityMsg] = useState<Record<string, string>>({})
   function answerChanged() {
     if (!canEdit) return
     if (askTimer.current) clearTimeout(askTimer.current)
@@ -1288,7 +1287,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const projects = c.projects || {}
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
   const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim()))
-  const onboardingSectionKeys = ['welcome', 'contact', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season', 'portal', 'money', 'statement', 'team', 'comms', 'checklist', 'nextup', 'open']
+  // JON'S EIGHT, PLUS ANY EXTRA SWITCHED BACK ON (see the onboarding block below). Present mode
+  // counts slides off this, so a deck with the extras off says "6 of 8" and not "6 of 17".
+  const onboardingSectionKeys = ['welcome', 'agenda', 'team', 'overview', 'listings', 'guesty', 'statement', 'notes',
+    'unit', 'strategy', 'ramp', 'season', 'tech', 'money', 'comms', 'checklist', 'nextup']
   const onboardingListingSlides = isOnboarding && !isHidden('listings')
     ? (Array.isArray((c.listings || {}).items) ? (c.listings as Any).items.length : 0)
     : 0
@@ -1654,32 +1656,53 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             themes, PPTX and Present mode. Sections come from lib/onboarding-report, which merges
             the house template (settings) with this owner's facts at generate time.
 
-            THE RUNNING ORDER IS THE MEETING (Jon, 2026-09-16): welcome, agenda, review the
-            listings, goals and strategy, the ramp and the season, the portal, the money, the
-            statement, the team. Anything left blank collects at the end. */}
+            EIGHT SECTIONS, AND NO INTAKE (Jon, 2026-09-16: "I actually prefer that it doesn't
+            have any intake. It should be: 1. Agenda: Welcome to Stay Hospitality with a picture
+            2. What we're going to cover 3. Meet the team 4. Overview of Stay Hospitality
+            5. Review listing 6. Guesty owner portal with photos, etc. 7. Guesty owner statements
+            8. Other notes"). Everything we had built beyond those eight still exists in the
+            document and can be switched back on per owner from the toolbar; it just isn't in
+            the room by default any more. */}
         {isOnboarding && (() => {
           const sec = (k: string) => (c[k] || {})
-          const secs: { k: string; label: string }[] = [
-            { k: 'welcome', label: 'Welcome' }, { k: 'contact', label: 'Your details' },
-            { k: 'agenda', label: 'Agenda' },
-            { k: 'listings', label: 'Your listings' }, { k: 'unit', label: 'Your unit' },
-            { k: 'strategy', label: 'Goals & strategy' }, { k: 'ramp', label: 'The ramp' },
-            { k: 'season', label: 'Seasonality' }, { k: 'guesty', label: 'Guesty' },
-            { k: 'tech', label: 'Your tech' },
-            { k: 'money', label: 'Billables' }, { k: 'statement', label: 'Statements' },
-            { k: 'team', label: 'Your team' }, { k: 'comms', label: 'Communication' },
-            { k: 'checklist', label: 'Still to do' }, { k: 'nextup', label: 'What happens next' },
+          // A DECK GENERATED BEFORE THIS RESTRUCTURE HAS NO `overview` AND NO `notes`, and its
+          // `omit` is empty, so every retired section would come back. Treating a missing section
+          // object as hidden means the old drafts still read straight instead of printing empty
+          // headings; regenerating gives them the full eight.
+          const hid = (k: string) => isHidden(k) || !c[k] || typeof c[k] !== 'object'
+          const CORE: { k: string; label: string }[] = [
+            { k: 'welcome', label: 'Welcome' },
+            { k: 'agenda', label: 'What we will cover' },
+            { k: 'team', label: 'Meet the team' },
+            { k: 'overview', label: 'Overview' },
+            { k: 'listings', label: 'Your listing' },
+            { k: 'guesty', label: 'Owner portal' },
+            { k: 'statement', label: 'Owner statements' },
+            { k: 'notes', label: 'Other notes' },
           ]
+          const EXTRA: { k: string; label: string }[] = [
+            { k: 'unit', label: 'Your unit' }, { k: 'strategy', label: 'Goals & strategy' },
+            { k: 'ramp', label: 'The ramp' }, { k: 'season', label: 'Seasonality' },
+            { k: 'tech', label: 'Your tech' }, { k: 'money', label: 'Billables' },
+            { k: 'comms', label: 'Communication' }, { k: 'checklist', label: 'Still to do' },
+            { k: 'nextup', label: 'What happens next' },
+          ]
+          const askSecs = CORE.concat(EXTRA)
           const open: { label: string; q: string }[] = []
-          for (const x of secs) {
+          for (const x of askSecs) {
+            if (hid(x.k)) continue
             const as: Any[] = Array.isArray(sec(x.k).asks) ? sec(x.k).asks : []
             for (const a of as) if (!String(a.a || '').trim()) open.push({ label: x.label, q: a.q })
           }
-          const answered = secs.reduce((n, x) => n + ((sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
+          const answered = askSecs.reduce((n, x) => n + (hid(x.k) ? 0 : (sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
           const totalAsks = answered + open.length
-          const shown = secs.filter(x => !isHidden(x.k))
+          // Extras only exist on the page once someone switches them on. An owner's deck is the
+          // eight; the rest are one click away in edit mode and invisible otherwise.
+          const extraOn = EXTRA.filter(x => !hid(x.k))
+          const running = CORE.filter(x => !hid(x.k))
+            .concat(extraOn.filter(x => ['unit', 'strategy', 'ramp', 'season', 'tech'].indexOf(x.k) >= 0))
           const numOf = (k: string) => {
-            const i = shown.findIndex(x => x.k === k)
+            const i = running.findIndex(x => x.k === k)
             return i < 0 ? '' : String(i + 1).padStart(2, '0')
           }
 
@@ -1705,7 +1728,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // THE OWNER'S OWN UNIT RUNS THROUGH THE DECK (Jon, 2026-09-16). Each section can carry
           // one of their listing photos; in edit mode you cycle through the pool or clear it.
           const pool: string[] = Array.isArray(c.photoPool) ? c.photoPool : []
-          const Shot = ({ k }: { k: string }) => {
+          const Shot = ({ k, ratio }: { k: string; ratio?: string }) => {
             const cur = String(sec(k).photo || '')
             if (!cur && !edit) return null
             const step = (d: number) => {
@@ -1717,9 +1740,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <div className="onb-shot relative mt-8">
                 {cur ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={cur} alt="" className="w-full object-cover rounded-2xl" style={{ aspectRatio: '21 / 8' }} />
+                  <img src={cur} alt="" className="w-full object-cover rounded-2xl" style={{ aspectRatio: ratio || '21 / 8' }} />
                 ) : (
-                  <div className="w-full rounded-2xl flex items-center justify-center text-[12px]" style={{ aspectRatio: '21 / 8', background: t.chip, color: t.muted }}>
+                  <div className="w-full rounded-2xl flex items-center justify-center text-[12px]" style={{ aspectRatio: ratio || '21 / 8', background: t.chip, color: t.muted }}>
                     No photo on this section
                   </div>
                 )}
@@ -1783,221 +1806,101 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             )
           }
 
-          const toggleAmenity = (li: number, name: string) => {
-            mutate(d => {
-              const list: string[] = Array.isArray(d.listings.items[li].amenities) ? d.listings.items[li].amenities : []
-              const i = list.indexOf(name)
-              if (i >= 0) list.splice(i, 1); else list.push(name)
-              list.sort((a, b) => a.localeCompare(b))
-              d.listings.items[li].amenities = list
-            })
-            answerChanged()
-          }
-          const pushAmenities = async (id: string, list: string[]) => {
-            setAmenityMsg(m => ({ ...m, [id]: 'busy' }))
-            try {
-              const r = await fetch('/api/listing-amenities', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ listingId: id, amenities: list }),
-              })
-              const d = await r.json()
-              setAmenityMsg(m => ({ ...m, [id]: d?.ok || r.ok ? 'ok' : (d?.error || 'Could not push — try from the unit page.') }))
-            } catch {
-              setAmenityMsg(m => ({ ...m, [id]: 'Could not push — check your connection.' }))
-            }
-          }
+          /* THE LISTING, AT READING SIZE (Jon, 2026-09-16: "make the listing descriptions more
+             visible, and also the overview. This style looks bad"). The old block buried the
+             copy under an amenity grid and then set it at 15px behind a 10px label, so the one
+             thing on the page an owner can actually improve looked like metadata. Now the photos
+             run first, the channel links sit under them, and the words are set as words: the
+             title as a display line, the two descriptions as prose in a measured column. Still
+             editable without entering edit mode — you fix it while you read it aloud. */
+          const COPY = [
+            { f: 'title', l: 'Listing title', cap: 50, hint: 'The one line that wins the click in search results.' },
+            { f: 'summary', l: 'Summary', hint: 'The first paragraph a guest reads. Everything below the fold is a bonus.' },
+            { f: 'space', l: 'The space', hint: 'The room-by-room walkthrough.' },
+          ]
 
           const ListingBlock = ({ L, li }: { L: Any; li: number }) => (
-                      <div key={L.id || li}>
-                        {/* name, channels and score on one line — the unit's identity, once */}
-                        <div className="flex items-end justify-between gap-5 flex-wrap pb-3.5 border-b" style={{ borderColor: t.ink }}>
-                          <div className="min-w-0">
-                            <p className="text-[21px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>{L.name}</p>
-                            <p className="text-[13px] mt-1" style={{ color: t.sub }}>{L.sub}</p>
-                          </div>
-                        </div>
+            <div key={L.id || li}>
+              {/* name and channels on one line — the unit's identity, once */}
+              <div className="flex items-end justify-between gap-5 flex-wrap pb-3.5 border-b" style={{ borderColor: t.ink }}>
+                <div className="min-w-0">
+                  <p className="text-[21px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>{L.name}</p>
+                  <p className="text-[13px] mt-1" style={{ color: t.sub }}>{L.sub}</p>
+                </div>
+                {(L.links || []).length > 0 && (
+                  <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                    {(L.links || []).map((k: Any) => (
+                      <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
+                        className="text-[12.5px] font-semibold onb-link" style={{ color: t.accent }}>{k.name} &#8599;</a>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-                        {(L.links || []).length > 0 && (
-                          <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-3.5">
-                            {(L.links || []).map((k: Any) => (
-                              <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
-                                className="text-[12.5px] font-semibold onb-link" style={{ color: t.accent }}>{k.name} &#8599;</a>
-                            ))}
-                          </div>
-                        )}
+              {/* the first five, in the order a guest meets them */}
+              {(L.photos || []).length > 0 && (
+                <div className="onb-shots mt-5 grid gap-2" style={{ gridTemplateColumns: '1.55fr 1fr 1fr' }}>
+                  {(L.photos || []).slice(0, 5).map((src: string, pi: number) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={pi} src={src} alt="" className="w-full object-cover rounded-xl"
+                      style={{ gridRow: pi === 0 ? 'span 2' : undefined, aspectRatio: pi === 0 ? '4 / 3.3' : '4 / 3' }} />
+                  ))}
+                </div>
+              )}
 
-                        {/* the first five, in the order a guest meets them */}
-                        {(L.photos || []).length > 0 && (
-                          <div className="onb-shots mt-5 grid gap-2" style={{ gridTemplateColumns: '1.55fr 1fr 1fr' }}>
-                            {(L.photos || []).slice(0, 5).map((src: string, pi: number) => (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img key={pi} src={src} alt="" className="w-full object-cover rounded-xl"
-                                style={{ gridRow: pi === 0 ? 'span 2' : undefined, aspectRatio: pi === 0 ? '4 / 3.3' : '4 / 3' }} />
-                            ))}
-                          </div>
-                        )}
-
-                        {/* AMENITIES, TICKED OFF IN THE ROOM (Jon, 2026-09-16: "you can have
-                            amenity list selected and amenities to select to ensure it all
-                            pushed"). What the listing claims today is on; the ones underneath are
-                            what it is missing and what that costs. Tap to add, then push — it
-                            writes the whole list to Guesty and the channels pick it up. */}
-                        <div className="mt-7">
-                          <div className="flex items-baseline justify-between gap-4 flex-wrap mb-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>
-                              Amenities &middot; {(L.amenities || []).length} on the listing
-                            </p>
-                            {canEdit && (
-                              <button onClick={() => pushAmenities(L.id, L.amenities || [])}
-                                className="text-[11.5px] font-bold rounded-full px-3 py-1"
-                                style={{ background: t.accent, color: t.bg }}>
-                                {amenityMsg[L.id] === 'busy' ? 'Pushing…' : 'Push to Guesty'}
-                              </button>
-                            )}
-                          </div>
-                          {amenityMsg[L.id] && amenityMsg[L.id] !== 'busy' && (
-                            <p className="text-[12px] mb-2.5 font-semibold" style={{ color: amenityMsg[L.id] === 'ok' ? t.good : t.gold }}>
-                              {amenityMsg[L.id] === 'ok' ? 'Pushed — the channels pick it up on their own schedule.' : amenityMsg[L.id]}
-                            </p>
-                          )}
-                          <div className="flex flex-wrap gap-1.5">
-                            {(L.amenities || []).map((a: string) => (
-                              <span key={a}
-                                onClick={canEdit ? () => toggleAmenity(li, a) : undefined}
-                                className="text-[12px] rounded-full px-2.5 py-1"
-                                style={{ background: t.chip, color: t.ink, cursor: canEdit ? 'pointer' : 'default' }}>
-                                {a}
-                              </span>
-                            ))}
-                            {!(L.amenities || []).length && <span className="text-[13px]" style={{ color: t.muted }}>None listed yet.</span>}
-                          </div>
-                          {(L.amenitySuggest || []).length > 0 && (
-                            <div className="mt-4">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.gold }}>
-                                Missing &mdash; tap to add
-                              </p>
-                              <div className="flex flex-wrap gap-1.5">
-                                {(L.amenitySuggest || [])
-                                  .filter((sg: Any) => (L.amenities || []).indexOf(sg.name) < 0)
-                                  .map((sg: Any) => (
-                                    <span key={sg.name}
-                                      title={sg.reason}
-                                      onClick={canEdit ? () => toggleAmenity(li, sg.name) : undefined}
-                                      className="text-[12px] rounded-full px-2.5 py-1"
-                                      style={{ border: '1px dashed ' + t.gold, color: t.gold, cursor: canEdit ? 'pointer' : 'default' }}>
-                                      + {sg.name}
-                                    </span>
-                                  ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* THE COPY, EDITABLE WITHOUT ENTERING EDIT MODE (Jon, 2026-09-16: "make
-                            that cleaner and editable in view mode"). You are reading this listing
-                            aloud with the owner; stopping to flip a toolbar toggle is exactly the
-                            friction that stops it getting fixed. Saves itself, like the answers. */}
-                        <div className="mt-7 flex flex-col gap-5">
-                          {[{ f: 'title', l: 'Title', cap: 50 }, { f: 'summary', l: 'Summary' }, { f: 'space', l: 'The space' }].map(F => (
-                            <div key={F.f}>
-                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-1.5 flex justify-between gap-3" style={{ color: t.muted }}>
-                                <span>{F.l}</span>
-                                {F.cap ? <span style={{ color: String(L[F.f] || '').length > F.cap ? t.gold : t.muted }}>{String(L[F.f] || '').length} / {F.cap}</span> : null}
-                              </p>
-                              <LiveText
-                                v={String(L[F.f] || '')}
-                                live={canEdit}
-                                t={t}
-                                single={F.f === 'title'}
-                                set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }}
-                              />
-                            </div>
-                          ))}
-                        </div>
+              {/* THE WORDS, AT THE SIZE THEY ARE ACTUALLY READ */}
+              <div className="mt-10 flex flex-col gap-9">
+                {COPY.map(F => {
+                  const val = String(L[F.f] || '')
+                  const over = !!F.cap && val.length > F.cap
+                  return (
+                    <div key={F.f}>
+                      <div className="flex items-baseline justify-between gap-4 pb-2 mb-3 border-b" style={{ borderColor: t.rule }}>
+                        <span className="text-[10.5px] font-bold uppercase tracking-[0.2em]" style={{ color: t.accent }}>{F.l}</span>
+                        {F.cap ? (
+                          <span className="text-[11px] font-bold tabular-nums" style={{ color: over ? t.gold : t.muted }}>
+                            {val.length} / {F.cap}
+                          </span>
+                        ) : null}
                       </div>
+                      {F.f === 'title' ? (
+                        <div className="text-[23px] sm:text-[26px] font-black tracking-[-0.015em] leading-[1.2]" style={{ color: t.ink }}>
+                          <LiveText v={val} live={canEdit} t={t} single cls="w-full text-[23px] sm:text-[26px] font-black tracking-[-0.015em] leading-[1.2] rounded-lg px-3 py-1.5 -mx-3"
+                            set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
+                        </div>
+                      ) : (
+                        <LiveText v={val} live={canEdit} t={t}
+                          cls="onb-copy w-full text-[17px] leading-[1.75] rounded-lg px-3 py-2 -mx-3"
+                          set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
+                      )}
+                      {canEdit ? <p className="mt-2 text-[12px]" style={{ color: t.muted }}>{F.hint}</p> : null}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           )
 
           return (
             <>
-              {/* ---------- WELCOME ---------- */}
-              <SectionShell id="welcome" title="Welcome" hidden={isHidden('welcome')} edit={edit} onToggle={() => toggleSection('welcome')} onAi={() => openAi('welcome')}>
+              {/* ---------- 1 · WELCOME ---------- */}
+              {/* The greeting is a photograph of their unit with their name on it, not a brief.
+                  Fifteen seconds while everyone finishes joining the call. */}
+              <SectionShell id="welcome" title="Welcome" hidden={hid('welcome')} edit={edit} onToggle={() => toggleSection('welcome')} onAi={() => openAi('welcome')}>
                 <div className="onb-sec">
-                  <Head k="welcome" label="Who we are" />
-                  <Body k="welcome" />
-                  {(sec('welcome').stats || []).length > 0 && (
-                    <div className="mt-9 grid gap-y-7 gap-x-10" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))' }}>
-                      {(sec('welcome').stats || []).map((f: Any, i: number) => (
-                        <div key={i}>
-                          <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: t.muted }}>
-                            <Ed v={f.k || ''} set={v => patch('welcome.stats.' + i + '.k', v)} edit={edit} />
-                          </p>
-                          <p className="text-[19px] font-black mt-1 tracking-[-0.01em] leading-tight" style={{ color: t.ink }}>
-                            <Ed v={f.v || ''} set={v => patch('welcome.stats.' + i + '.v', v)} edit={edit} />
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <Shot k="welcome" />
+                  <Head k="welcome" label="Welcome" />
+                  <Shot k="welcome" ratio="16 / 9" />
+                  <p className="mt-8 text-[19px] sm:text-[21px] leading-[1.6] whitespace-pre-line" style={{ color: t.body, maxWidth: '46ch' }}>
+                    <Ed v={sec('welcome').body || ''} set={v => patch('welcome.body', v)} edit={edit} multiline />
+                  </p>
                   <Note k="welcome" />
                 </div>
               </SectionShell>
 
-              {/* ---------- YOUR DETAILS ---------- */}
-              <SectionShell id="contact" title="Your details" hidden={isHidden('contact')} edit={edit} onToggle={() => toggleSection('contact')}>
+              {/* ---------- 2 · WHAT WE WILL COVER ---------- */}
+              <SectionShell id="agenda" title="What we will cover" hidden={hid('agenda')} edit={edit} onToggle={() => toggleSection('agenda')}>
                 <div className="onb-sec">
-                  <Head k="contact" label="Your details" />
-                  {/* Live fields, not edit-mode fields: these get corrected out loud in the first
-                      two minutes of the call, and they save themselves like the answers do. */}
-                  <div className="mt-8 grid gap-x-10 gap-y-6" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(248px,1fr))' }}>
-                    {[
-                      { f: 'name', l: 'Name' },
-                      { f: 'email', l: 'Email' },
-                      { f: 'phone', l: 'Phone' },
-                      { f: 'preferred', l: 'Preferred contact', ph: 'Text · call · email' },
-                      { f: 'bestTime', l: 'Best time to reach you', ph: 'Mornings ET, weekdays…' },
-                      { f: 'second', l: 'Anyone else on communications', ph: 'Spouse, accountant, attorney' },
-                    ].map(F => (
-                      <div key={F.f}>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] mb-1" style={{ color: t.muted }}>{F.l}</p>
-                        {canEdit ? (
-                          <input
-                            value={String(sec('contact')[F.f] || '')}
-                            onChange={e => { patch('contact.' + F.f, e.target.value); answerChanged() }}
-                            placeholder={F.ph || '\u2014'}
-                            className="onb-ask w-full text-[16px] pb-1.5"
-                            style={{ background: 'transparent', border: 0, borderBottom: '1px ' + (String(sec('contact')[F.f] || '').trim() ? 'solid ' + t.rule : 'dashed ' + t.rule), color: t.ink, fontFamily: 'inherit' }}
-                          />
-                        ) : (
-                          <p className="text-[16px]" style={{ color: String(sec('contact')[F.f] || '').trim() ? t.ink : t.muted }}>
-                            {String(sec('contact')[F.f] || '') || '\u2014'}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  {sec('contact').fromGuesty ? (
-                    <p className="mt-5 text-[12.5px]" style={{ color: t.muted }}>
-                      Name, email and phone came from your Guesty owner record. Anything you change here is what we will use.
-                    </p>
-                  ) : (
-                    <p className="mt-5 text-[12.5px]" style={{ color: t.gold }}>
-                      Guesty has no contact details on file for this owner &mdash; these are the ones we will work from.
-                    </p>
-                  )}
-                  <div className="mt-7">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] mb-1.5" style={{ color: t.muted }}>Notes</p>
-                    <LiveText v={String(sec('contact').notes || '')} live={canEdit} t={t}
-                      set={v => { patch('contact.notes', v); answerChanged() }} />
-                  </div>
-                  <Asks k="contact" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- AGENDA ---------- */}
-              <SectionShell id="agenda" title="Agenda" hidden={isHidden('agenda')} edit={edit} onToggle={() => toggleSection('agenda')}>
-                <div className="onb-sec">
-                  <Head k="agenda" label="Agenda" />
+                  <Head k="agenda" label="What we will cover" />
                   <div className="mt-8">
                     {(sec('agenda').items || []).map((it: Any, i: number) => (
                       <div key={i} className="onb-row grid gap-x-8 gap-y-1.5 py-4 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '38px 1fr' }}>
@@ -2012,108 +1915,177 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         </div>
                       </div>
                     ))}
+                    {edit && (
+                      <button onClick={() => mutate(d => { d.agenda.items = Array.isArray(d.agenda.items) ? d.agenda.items : []; d.agenda.items.push({ k: 'New line', v: '' }) })}
+                        className="mt-5 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                        style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}>
+                        <Plus size={12} /> Add a line
+                      </button>
+                    )}
                   </div>
-                  <Shot k="agenda" />
                   <Note k="agenda" />
                 </div>
               </SectionShell>
 
-              {/* ---------- REVIEW THE LISTINGS ---------- */}
-              <SectionShell id="listings" title="Your listings" hidden={isHidden('listings')} edit={edit} onToggle={() => toggleSection('listings')}>
+              {/* ---------- 3 · MEET THE TEAM ---------- */}
+              <SectionShell id="team" title="Meet the team" hidden={hid('team')} edit={edit} onToggle={() => toggleSection('team')}>
                 <div className="onb-sec">
-                  <Head k="listings" label="Your listings" />
+                  <Head k="team" label="Meet the team" />
+                  <div className="mt-9 grid gap-x-10 gap-y-9" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(236px,1fr))' }}>
+                    {(sec('team').people || []).map((p: Any, pi: number) => (
+                      <div key={pi}>
+                        {p.photo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={p.photo} alt="" className="rounded-full object-cover mb-3.5" style={{ width: 62, height: 62 }} />
+                        ) : (
+                          <div className="rounded-full mb-3.5 flex items-center justify-center text-[20px] font-black"
+                            style={{ width: 62, height: 62, background: t.chip, color: t.accent }}>
+                            {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
+                          </div>
+                        )}
+                        <p className="text-[16px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>
+                          <Ed v={p.name || ''} set={v => patch('team.people.' + pi + '.name', v)} edit={edit} />
+                        </p>
+                        <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] mt-1 mb-2" style={{ color: t.accent }}>
+                          <Ed v={p.role || ''} set={v => patch('team.people.' + pi + '.role', v)} edit={edit} />
+                        </p>
+                        <p className="text-[14px] leading-[1.65]" style={{ color: t.sub }}>
+                          <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do for this owner&hellip;" />
+                        </p>
+                        {(p.phone || p.email || edit) && (
+                          <div className="mt-2.5 flex flex-col gap-0.5 text-[13px]" style={{ color: t.body }}>
+                            {(p.phone || edit) && <span><Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" /></span>}
+                            {(p.email || edit) && <span><Ed v={p.email || ''} set={v => patch('team.people.' + pi + '.email', v)} edit={edit} placeholder="Email" /></span>}
+                          </div>
+                        )}
+                        {edit && (
+                          <button onClick={() => mutate(d => { d.team.people.splice(pi, 1) })} className="mt-2 text-[11px] font-semibold" style={{ color: t.accent }}>Remove</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {edit && (
+                    <button
+                      onClick={() => mutate(d => { d.team.people = Array.isArray(d.team.people) ? d.team.people : []; d.team.people.push({ name: 'Name', role: 'Role', blurb: '', photo: null, phone: '', email: '' }) })}
+                      className="mt-6 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                      style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}>
+                      <Plus size={12} /> Add person
+                    </button>
+                  )}
+                  <Note k="team" />
+                </div>
+              </SectionShell>
+
+              {/* ---------- 4 · OVERVIEW OF STAY HOSPITALITY ---------- */}
+              {/* Editorial, not a fact sheet: one lead paragraph set large enough to be read
+                  aloud, the rest at body size, and the numbers on a rule underneath. */}
+              <SectionShell id="overview" title="Overview" hidden={hid('overview')} edit={edit} onToggle={() => toggleSection('overview')} onAi={() => openAi('overview')}>
+                <div className="onb-sec">
+                  <Head k="overview" label="Overview" />
+                  {(() => {
+                    const full = String(sec('overview').body || '')
+                    const cut = full.indexOf('\n\n')
+                    const lead = cut > 0 ? full.slice(0, cut) : full
+                    const rest = cut > 0 ? full.slice(cut + 2) : ''
+                    if (edit) return <Body k="overview" />
+                    return (
+                      <>
+                        <p className="mt-8 text-[19px] sm:text-[22px] leading-[1.55] tracking-[-0.005em] whitespace-pre-line" style={{ color: t.ink, maxWidth: '40ch' }}>{lead}</p>
+                        {rest ? (
+                          <p className="mt-6 text-[16px] leading-[1.75] whitespace-pre-line" style={{ color: t.body, maxWidth: '62ch' }}>{rest}</p>
+                        ) : null}
+                      </>
+                    )
+                  })()}
+                  {(sec('overview').stats || []).length > 0 && (
+                    <div className="mt-11 pt-8 grid gap-y-8 gap-x-10" style={{ borderTop: '2px solid ' + t.ink, gridTemplateColumns: 'repeat(auto-fit,minmax(168px,1fr))' }}>
+                      {(sec('overview').stats || []).map((f: Any, i: number) => (
+                        <div key={i}>
+                          <p className="text-[22px] sm:text-[25px] font-black tracking-[-0.02em] leading-[1.15]" style={{ color: t.ink }}>
+                            <Ed v={f.v || ''} set={v => patch('overview.stats.' + i + '.v', v)} edit={edit} multiline />
+                          </p>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.2em] mt-2" style={{ color: t.muted }}>
+                            <Ed v={f.k || ''} set={v => patch('overview.stats.' + i + '.k', v)} edit={edit} />
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <Shot k="overview" />
+                  <Note k="overview" />
+                </div>
+              </SectionShell>
+
+              {/* ---------- 5 · REVIEW THE LISTING ---------- */}
+              <SectionShell id="listings" title="Your listing" hidden={hid('listings')} edit={edit} onToggle={() => toggleSection('listings')}>
+                <div className="onb-sec">
+                  <Head k="listings" label="Your listing" />
                   {/* ONE UNIT PER SLIDE WHEN PRESENTING (Jon, 2026-09-16: "present mode moves
                       seamlessly through the sections without cutting anything off"). Six units
                       stacked in one section made a single 8,000px slide — technically scrollable,
                       useless to present from. On the page they stay together; on a call each unit
                       gets the screen to itself. */}
                   {!present && (
-                    <div className="mt-9 flex flex-col gap-12">
+                    <div className="mt-9 flex flex-col gap-14">
                       {(sec('listings').items || []).map((L: Any, li: number) => (
                         <ListingBlock key={L.id || li} L={L} li={li} />
                       ))}
                     </div>
                   )}
-                  <p className="mt-7 text-[13px] leading-relaxed" style={{ color: t.muted, maxWidth: '62ch' }}>
-                    Edit the copy here as we talk &mdash; it saves itself. Pushing it live to the channels happens from the unit page in the dashboard, which is the one place that writes to Guesty.
+                  <p className="mt-9 text-[13px] leading-relaxed" style={{ color: t.muted, maxWidth: '62ch' }}>
+                    Edit the copy here as we talk &mdash; it saves itself. Pushing it live to the channels happens from the unit page in the dashboard, which is the one place that writes to Guesty. Amenities are set on the unit page too.
                   </p>
                   <Asks k="listings" />
                 </div>
               </SectionShell>
 
-              {present && !isHidden('listings') && (sec('listings').items || []).map((L: Any, li: number) => (
+              {present && !hid('listings') && (sec('listings').items || []).map((L: Any, li: number) => (
                 <section key={'pres-' + (L.id || li)}>
                   <div className="onb-sec"><ListingBlock L={L} li={li} /></div>
                 </section>
               ))}
 
-              {/* ---------- YOUR UNIT ---------- */}
-              <SectionShell id="unit" title="Your unit" hidden={isHidden('unit')} edit={edit} onToggle={() => toggleSection('unit')} onAi={() => openAi('unit')}>
+              {/* ---------- 6 · YOUR GUESTY OWNER PORTAL ---------- */}
+              {/* THE ADDRESS IS A HOUSE SETTING, THE LOGIN IS THEIRS (Jon: "the owner portal
+                  should have the link to their owner portal because you can pull that from
+                  Guesty"). Guesty does not expose a per-owner portal URL — an account gets
+                  exactly one `<name>.guestyowners.com` and every owner signs into it with their
+                  own email. So the link is the house's, seeded from the onboarding template and
+                  correctable here, and the line that IS theirs is the email it belongs to. */}
+              <SectionShell id="guesty" title="Owner portal" hidden={hid('guesty')} edit={edit} onToggle={() => toggleSection('guesty')} onAi={() => openAi('guesty')}>
                 <div className="onb-sec">
-                  <Head k="unit" label="Your unit" />
-                  <Body k="unit" />
-                  {(sec('unit').facts || []).length > 0 && (
-                    <div className="mt-8 grid gap-y-6 gap-x-10" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))' }}>
-                      {(sec('unit').facts || []).map((f: Any, i: number) => (
-                        <div key={i}>
-                          <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: t.muted }}>{f.k}</p>
-                          <p className="text-[19px] font-black mt-1 tracking-[-0.01em]" style={{ color: t.ink }}>{f.v}</p>
-                        </div>
-                      ))}
+                  <Head k="guesty" label="Owner portal" />
+                  <div className="mt-8 rounded-2xl px-6 py-6 sm:px-8 sm:py-7" style={{ background: t.chip, border: '1px solid ' + t.cardBorder }}>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.muted }}>Your portal</p>
+                    {canEdit ? (
+                      <input
+                        value={String(sec('guesty').portalUrl || '')}
+                        onChange={e => { patch('guesty.portalUrl', e.target.value); answerChanged() }}
+                        placeholder="https://your-name.guestyowners.com"
+                        className="onb-live mt-2 w-full text-[21px] sm:text-[25px] font-black tracking-[-0.015em] rounded-lg px-3 py-1.5 -mx-3"
+                        style={{ color: t.accent, background: 'transparent', border: '1px solid transparent', fontFamily: 'inherit' }}
+                      />
+                    ) : (
+                      <a href={String(sec('guesty').portalUrl || '#')} target="_blank" rel="noopener noreferrer"
+                        className="onb-link block mt-2 text-[21px] sm:text-[25px] font-black tracking-[-0.015em] break-words"
+                        style={{ color: t.accent }}>
+                        {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '') || 'Portal address to be set'}
+                      </a>
+                    )}
+                    <div className="mt-5 pt-5 grid gap-x-10 gap-y-4" style={{ borderTop: '1px solid ' + t.rule, gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))' }}>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>You sign in as</p>
+                        <p className="text-[16px] font-semibold mt-1 break-words" style={{ color: t.ink }}>
+                          <Ed v={String(sec('guesty').loginEmail || '')} set={v => patch('guesty.loginEmail', v)} edit={edit} placeholder="owner@email.com" />
+                          {!String(sec('guesty').loginEmail || '') && !edit ? <span style={{ color: t.gold }}>the email we set up on this call</span> : null}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>Password</p>
+                        <p className="text-[16px] mt-1" style={{ color: t.body }}>You set it yourself from the invite email &mdash; we never hold it.</p>
+                      </div>
                     </div>
-                  )}
-                  <Shot k="unit" />
-                  <Note k="unit" />
-                  <Asks k="unit" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- GOALS & STRATEGY ---------- */}
-              <SectionShell id="strategy" title="Goals & strategy" hidden={isHidden('strategy')} edit={edit} onToggle={() => toggleSection('strategy')} onAi={() => openAi('strategy')}>
-                <div className="onb-sec"><Head k="strategy" label="Goals & strategy" /><Body k="strategy" /><Shot k="strategy" /><Note k="strategy" /><Asks k="strategy" /></div>
-              </SectionShell>
-
-              {/* ---------- THE RAMP ---------- */}
-              <SectionShell id="ramp" title="The ramp" hidden={isHidden('ramp')} edit={edit} onToggle={() => toggleSection('ramp')} onAi={() => openAi('ramp')}>
-                <div className="onb-sec">
-                  <Head k="ramp" label="The ramp" />
-                  <Rows rows={sec('ramp').bands || []} kw="132px" />
-                  {(sec('ramp').note || edit) ? (
-                    <p className="mt-8 pl-5 text-[15px] leading-[1.7] border-l-2" style={{ borderColor: t.gold, color: t.body, maxWidth: '62ch' }}>
-                      <Ed v={sec('ramp').note || ''} set={v => patch('ramp.note', v)} edit={edit} multiline />
-                    </p>
-                  ) : null}
-                  <Asks k="ramp" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- SEASONALITY ---------- */}
-              <SectionShell id="season" title="Seasonality" hidden={isHidden('season')} edit={edit} onToggle={() => toggleSection('season')} onAi={() => openAi('season')}>
-                <div className="onb-sec">
-                  <Head k="season" label="Seasonality" />
-                  <Body k="season" />
-                  <div className="mt-9">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4" style={{ color: t.muted }}>The year, by relative demand</p>
-                    <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(12,1fr)', alignItems: 'end' }}>
-                      {(sec('season').months || []).map((m: Any, mi: number) => (
-                        <div key={mi} className="text-center">
-                          <span className="block rounded-sm" style={{ height: 10 + Number(m.level || 0) * 16, background: Number(m.level) >= 3 ? t.accent : Number(m.level) >= 1 ? t.barB : t.trackBg }} />
-                          <span className="block text-[10px] mt-2" style={{ color: Number(m.level) >= 3 ? t.accent : t.muted, fontWeight: Number(m.level) >= 3 ? 700 : 400 }}>{m.m}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="mt-6 text-[13.5px] leading-[1.7]" style={{ color: t.sub, maxWidth: '64ch' }}>
-                      <Ed v={sec('season').note || ''} set={v => patch('season.note', v)} edit={edit} multiline />
-                    </p>
                   </div>
-                  <Asks k="season" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- GUESTY ---------- */}
-              <SectionShell id="guesty" title="Guesty" hidden={isHidden('guesty')} edit={edit} onToggle={() => toggleSection('guesty')} onAi={() => openAi('guesty')}>
-                <div className="onb-sec">
-                  <Head k="guesty" label="Guesty" />
                   <Body k="guesty" />
                   <div className="mt-8">
                     {(sec('guesty').items || []).map((it: Any, ii: number) => (
@@ -2127,56 +2099,25 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       </div>
                     ))}
                   </div>
+                  {/* "with photos, etc." — portal screenshots from the template, so every owner
+                      sees the same tour without anyone re-uploading them. */}
+                  {(sec('guesty').shots || []).length > 0 && (
+                    <div className="mt-9 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))' }}>
+                      {(sec('guesty').shots || []).map((src: string, si: number) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img key={si} src={src} alt="" className="w-full object-cover rounded-xl" style={{ border: '1px solid ' + t.cardBorder }} />
+                      ))}
+                    </div>
+                  )}
                   <Shot k="guesty" />
                   <Note k="guesty" />
                 </div>
               </SectionShell>
 
-              {/* ---------- YOUR TECH ---------- */}
-              <SectionShell id="tech" title="Your tech" hidden={isHidden('tech')} edit={edit} onToggle={() => toggleSection('tech')} onAi={() => openAi('tech')}>
+              {/* ---------- 7 · YOUR GUESTY OWNER STATEMENTS ---------- */}
+              <SectionShell id="statement" title="Owner statements" hidden={hid('statement')} edit={edit} onToggle={() => toggleSection('statement')}>
                 <div className="onb-sec">
-                  <Head k="tech" label="Your tech" />
-                  <Body k="tech" />
-                  <Rows rows={sec('tech').rows || []} kw="176px" />
-                  <Shot k="tech" />
-                  <Note k="tech" />
-                  <Asks k="tech" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- BILLABLES ---------- */}
-              <SectionShell id="money" title="Billables" hidden={isHidden('money')} edit={edit} onToggle={() => toggleSection('money')} onAi={() => openAi('money')}>
-                <div className="onb-sec">
-                  <Head k="money" label="Billables" />
-                  <Body k="money" />
-                  <Rows rows={sec('money').rules || []} kw="176px" />
-                  <Note k="money" />
-                  <div className="mt-10 grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
-                    {(sec('money').examples || []).map((ex: Any, xi: number) => (
-                      <div key={xi} className="rounded-2xl p-5" style={{ background: t.chip }}>
-                        <p className="text-[14.5px] font-bold leading-snug mb-3.5" style={{ color: t.ink }}>{ex.title}</p>
-                        {(ex.lines || []).map((ln: Any, lni: number) => (
-                          <div key={lni} className="flex justify-between gap-4 py-1.5 text-[14px]" style={{ color: t.body }}>
-                            <span>{ln.k}</span><span className="tabular-nums whitespace-nowrap" style={{ color: t.ink }}>{ln.v}</span>
-                          </div>
-                        ))}
-                        {ex.total ? (
-                          <div className="flex justify-between gap-4 pt-2.5 mt-1.5 text-[14.5px] font-bold border-t" style={{ borderColor: t.ink, color: t.ink }}>
-                            <span>Billed to you</span><span className="tabular-nums">{ex.total}</span>
-                          </div>
-                        ) : null}
-                        <p className="mt-3.5 text-[13px] font-semibold leading-relaxed" style={{ color: ex.tone === 'hold' ? t.gold : t.good }}>{ex.verdict}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <Asks k="money" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- STATEMENTS ---------- */}
-              <SectionShell id="statement" title="Statements" hidden={isHidden('statement')} edit={edit} onToggle={() => toggleSection('statement')}>
-                <div className="onb-sec">
-                  <Head k="statement" label="Statements" />
+                  <Head k="statement" label="Owner statements" />
                   <div className="mt-8 rounded-2xl overflow-hidden" style={{ border: '1px solid ' + t.cardBorder }}>
                     <div className="px-6 py-4" style={{ background: t.chip }}>
                       <p className="text-[16px] font-black" style={{ color: t.ink }}>{sec('statement').unitLabel}</p>
@@ -2228,132 +2169,237 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <p className="mt-7 text-[15px] leading-[1.7]" style={{ color: t.body, maxWidth: '64ch' }}>
                     <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
                   </p>
-                  <Rows rows={sec('statement').also || []} kw="216px" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- YOUR TEAM ---------- */}
-              <SectionShell id="team" title="Your team" hidden={isHidden('team')} edit={edit} onToggle={() => toggleSection('team')}>
-                <div className="onb-sec">
-                  <Head k="team" label="Your team" />
-                  <div className="mt-9 grid gap-x-10 gap-y-9" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(236px,1fr))' }}>
-                    {(sec('team').people || []).map((p: Any, pi: number) => (
-                      <div key={pi}>
-                        {p.photo ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.photo} alt="" className="rounded-full object-cover mb-3.5" style={{ width: 62, height: 62 }} />
-                        ) : (
-                          <div className="rounded-full mb-3.5 flex items-center justify-center text-[20px] font-black"
-                            style={{ width: 62, height: 62, background: t.chip, color: t.accent }}>
-                            {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
-                          </div>
-                        )}
-                        <p className="text-[16px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>
-                          <Ed v={p.name || ''} set={v => patch('team.people.' + pi + '.name', v)} edit={edit} />
-                        </p>
-                        <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] mt-1 mb-2" style={{ color: t.accent }}>
-                          <Ed v={p.role || ''} set={v => patch('team.people.' + pi + '.role', v)} edit={edit} />
-                        </p>
-                        <p className="text-[14px] leading-[1.65]" style={{ color: t.sub }}>
-                          <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do for this owner&hellip;" />
-                        </p>
-                        {(p.phone || p.email || edit) && (
-                          <div className="mt-2.5 flex flex-col gap-0.5 text-[13px]" style={{ color: t.body }}>
-                            {(p.phone || edit) && <span><Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" /></span>}
-                            {(p.email || edit) && <span><Ed v={p.email || ''} set={v => patch('team.people.' + pi + '.email', v)} edit={edit} placeholder="Email" /></span>}
-                          </div>
-                        )}
-                        {edit && (
-                          <button onClick={() => mutate(d => { d.team.people.splice(pi, 1) })} className="mt-2 text-[11px] font-semibold" style={{ color: t.accent }}>Remove</button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  {edit && (
-                    <button
-                      onClick={() => mutate(d => { d.team.people = Array.isArray(d.team.people) ? d.team.people : []; d.team.people.push({ name: 'Name', role: 'Role', blurb: '', photo: null, phone: '', email: '' }) })}
-                      className="mt-6 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
-                      style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}>
-                      <Plus size={12} /> Add person
-                    </button>
+                  {/* THE RULES BEHIND THE LINES — the billables doctrine, folded in here because
+                      this is where an owner actually meets it. */}
+                  {(sec('statement').rules || []).length > 0 && (
+                    <div className="mt-11">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-1" style={{ color: t.accent }}>What can and cannot reach this statement</p>
+                      <Rows rows={sec('statement').rules || []} kw="200px" />
+                    </div>
                   )}
-                  <Note k="team" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- COMMUNICATION ---------- */}
-              <SectionShell id="comms" title="Communication" hidden={isHidden('comms')} edit={edit} onToggle={() => toggleSection('comms')} onAi={() => openAi('comms')}>
-                <div className="onb-sec">
-                  <Head k="comms" label="Communication" />
-                  <Body k="comms" />
-                  <Rows rows={sec('comms').rows || []} kw="156px" />
-                  <Note k="comms" />
-                  <Asks k="comms" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- STILL TO DO ---------- */}
-              <SectionShell id="checklist" title="Still to do" hidden={isHidden('checklist')} edit={edit} onToggle={() => toggleSection('checklist')}>
-                <div className="onb-sec">
-                  <Head k="checklist" label="Still to do" />
-                  <div className="mt-8 lh-hscroll">
-                    <table className="w-full text-[15px]">
-                      <thead><tr>{['Item', 'Who', 'By'].map(h => (
-                        <th key={h} className="text-left text-[9.5px] font-bold uppercase tracking-[0.16em] pb-2.5 pr-4 border-b" style={{ color: t.muted, borderColor: t.ink }}>{h}</th>
-                      ))}</tr></thead>
-                      <tbody>
-                        {(sec('checklist').rows || []).map((r: Any, ri: number) => (
-                          <tr key={ri}>
-                            <td className="py-3 pr-4 border-b" style={{ borderColor: t.rule, color: t.ink }}>
-                              <Ed v={r.item || ''} set={v => patch('checklist.rows.' + ri + '.item', v)} edit={edit} />
-                            </td>
-                            <td className="py-3 pr-4 border-b whitespace-nowrap" style={{ borderColor: t.rule }}>
-                              <span className="text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: /owner/i.test(String(r.who)) ? t.gold : t.accent }}>
-                                <Ed v={r.who || ''} set={v => patch('checklist.rows.' + ri + '.who', v)} edit={edit} />
-                              </span>
-                            </td>
-                            <td className="py-3 border-b whitespace-nowrap" style={{ borderColor: t.rule, color: t.sub }}>
-                              <Ed v={r.by || ''} set={v => patch('checklist.rows.' + ri + '.by', v)} edit={edit} placeholder="date" />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {edit && (
-                    <button onClick={() => mutate(d => { d.checklist.rows.push({ item: 'New item', who: 'Stay', by: '' }) })}
-                      className="mt-4 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
-                      style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}><Plus size={12} /> Add item</button>
+                  {(sec('statement').also || []).length > 0 && (
+                    <div className="mt-11">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-1" style={{ color: t.muted }}>Other lines you may see</p>
+                      <Rows rows={sec('statement').also || []} kw="200px" />
+                    </div>
                   )}
+                  <Note k="statement" />
                 </div>
               </SectionShell>
 
-              {/* ---------- WHAT HAPPENS NEXT ---------- */}
-              <SectionShell id="nextup" title="What happens next" hidden={isHidden('nextup')} edit={edit} onToggle={() => toggleSection('nextup')}>
-                <div className="onb-sec"><Head k="nextup" label="What happens next" /><Rows rows={sec('nextup').rows || []} kw="200px" /></div>
-              </SectionShell>
-
-              {/* ---------- OPEN ITEMS ---------- */}
-              <SectionShell id="open" title="Open items" hidden={isHidden('open')} edit={edit} onToggle={() => toggleSection('open')}>
-                <div className="onb-sec">
-                  <Head k="open" label="Open items" />
-                  <p className="mt-7 text-[13px] font-bold uppercase tracking-[0.18em]" style={{ color: open.length ? t.gold : t.good }}>
-                    {answered} of {totalAsks} answered
-                  </p>
-                  {open.length === 0 ? (
-                    <p className="mt-4 text-[16px] font-semibold" style={{ color: t.good }}>Nothing open &mdash; every question on this page has an answer.</p>
-                  ) : (
-                    <div className="mt-4">
-                      {open.map((o, oi) => (
-                        <div key={oi} className="onb-row grid gap-x-8 gap-y-1 py-3.5 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '148px 1fr' }}>
-                          <span className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>{o.label}</span>
-                          <span className="text-[15px]" style={{ color: t.ink }}>{o.q}</span>
+              {/* ══════ SECTIONS THAT ARE OFF BY DEFAULT ══════
+                  Built, kept in the document, and rendered only once someone switches them on
+                  for this owner. They keep their old shape; what changed is that they are no
+                  longer in the room unless asked for. */}
+              {!hid('unit') && (
+                <SectionShell id="unit" title="Your unit" hidden={false} edit={edit} onToggle={() => toggleSection('unit')} onAi={() => openAi('unit')}>
+                  <div className="onb-sec">
+                    <Head k="unit" label="Your unit" />
+                    <Body k="unit" />
+                    <Rows rows={sec('unit').facts || []} kw="200px" />
+                    <Shot k="unit" />
+                    <Note k="unit" />
+                    <Asks k="unit" />
+                  </div>
+                </SectionShell>
+              )}
+              {!hid('strategy') && (
+                <SectionShell id="strategy" title="Goals & strategy" hidden={false} edit={edit} onToggle={() => toggleSection('strategy')} onAi={() => openAi('strategy')}>
+                  <div className="onb-sec">
+                    <Head k="strategy" label="Goals & strategy" />
+                    <Body k="strategy" />
+                    <Shot k="strategy" />
+                    <Note k="strategy" />
+                    <Asks k="strategy" />
+                  </div>
+                </SectionShell>
+              )}
+              {!hid('ramp') && (
+                <SectionShell id="ramp" title="The ramp" hidden={false} edit={edit} onToggle={() => toggleSection('ramp')} onAi={() => openAi('ramp')}>
+                  <div className="onb-sec">
+                    <Head k="ramp" label="The ramp" />
+                    <Rows rows={sec('ramp').bands || []} kw="130px" />
+                    <p className="mt-8 text-[15px] leading-[1.7] pl-5" style={{ color: t.body, maxWidth: '62ch', borderLeft: '2px solid ' + t.accent }}>
+                      <Ed v={sec('ramp').note || ''} set={v => patch('ramp.note', v)} edit={edit} multiline />
+                    </p>
+                    <Note k="ramp" />
+                    <Asks k="ramp" />
+                  </div>
+                </SectionShell>
+              )}
+              {!hid('season') && (
+                <SectionShell id="season" title="Seasonality" hidden={false} edit={edit} onToggle={() => toggleSection('season')} onAi={() => openAi('season')}>
+                  <div className="onb-sec">
+                    <Head k="season" label="Seasonality" />
+                    <Body k="season" />
+                    <div className="mt-9 flex items-end gap-1.5" style={{ height: 116 }}>
+                      {(sec('season').months || []).map((m: Any, mi: number) => (
+                        <div key={mi} className="flex-1 flex flex-col items-center gap-2">
+                          <div className="w-full rounded-t" style={{ height: Math.max(8, (Number(m.level) + 1) * 26), background: Number(m.level) >= 3 ? t.accent : Number(m.level) >= 2 ? hexA(t.accent, 0.55) : hexA(t.accent, 0.22) }} />
+                          <span className="text-[10px] font-bold" style={{ color: t.muted }}>{m.m}</span>
                         </div>
                       ))}
                     </div>
+                    <p className="mt-7 text-[13.5px] leading-relaxed" style={{ color: t.muted, maxWidth: '62ch' }}>
+                      <Ed v={sec('season').note || ''} set={v => patch('season.note', v)} edit={edit} multiline />
+                    </p>
+                    <Note k="season" />
+                    <Asks k="season" />
+                  </div>
+                </SectionShell>
+              )}
+              {!hid('tech') && (
+                <SectionShell id="tech" title="Your tech" hidden={false} edit={edit} onToggle={() => toggleSection('tech')} onAi={() => openAi('tech')}>
+                  <div className="onb-sec">
+                    <Head k="tech" label="Your tech" />
+                    <Body k="tech" />
+                    <Rows rows={sec('tech').rows || []} kw="176px" />
+                    <Shot k="tech" />
+                    <Note k="tech" />
+                    <Asks k="tech" />
+                  </div>
+                </SectionShell>
+              )}
+              {!hid('money') && (
+                <SectionShell id="money" title="Billables" hidden={false} edit={edit} onToggle={() => toggleSection('money')} onAi={() => openAi('money')}>
+                  <div className="onb-sec">
+                    <Head k="money" label="Billables" />
+                    <Body k="money" />
+                    <Rows rows={sec('money').rules || []} kw="200px" />
+                    <div className="mt-10 grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(290px,1fr))' }}>
+                      {(sec('money').examples || []).map((ex: Any, xi: number) => (
+                        <div key={xi} className="rounded-2xl p-5" style={{ background: t.card, border: '1px solid ' + (ex.tone === 'hold' ? t.gold : t.cardBorder) }}>
+                          <p className="text-[14.5px] font-bold leading-snug" style={{ color: t.ink }}>{ex.title}</p>
+                          <div className="mt-3.5">
+                            {(ex.lines || []).map((ln: Any, i: number) => (
+                              <div key={i} className="flex justify-between gap-4 py-2 border-t text-[14px]" style={{ borderColor: t.rule }}>
+                                <span style={{ color: t.body }}>{ln.k}</span>
+                                <span className="font-semibold whitespace-nowrap tabular-nums" style={{ color: t.ink }}>{ln.v}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {ex.total ? (
+                            <div className="flex justify-between gap-4 pt-2.5 mt-1" style={{ borderTop: '2px solid ' + t.ink }}>
+                              <span className="text-[14px] font-black" style={{ color: t.ink }}>Total</span>
+                              <span className="text-[14px] font-black tabular-nums" style={{ color: t.ink }}>{ex.total}</span>
+                            </div>
+                          ) : null}
+                          <p className="mt-3 text-[13px] leading-relaxed font-semibold" style={{ color: ex.tone === 'hold' ? t.gold : t.good }}>{ex.verdict}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <Note k="money" />
+                    <Asks k="money" />
+                  </div>
+                </SectionShell>
+              )}
+              {!hid('comms') && (
+                <SectionShell id="comms" title="Communication" hidden={false} edit={edit} onToggle={() => toggleSection('comms')} onAi={() => openAi('comms')}>
+                  <div className="onb-sec">
+                    <Head k="comms" label="Communication" />
+                    <Body k="comms" />
+                    <Rows rows={sec('comms').rows || []} kw="156px" />
+                    <Note k="comms" />
+                    <Asks k="comms" />
+                  </div>
+                </SectionShell>
+              )}
+              {!hid('checklist') && (
+                <SectionShell id="checklist" title="Still to do" hidden={false} edit={edit} onToggle={() => toggleSection('checklist')}>
+                  <div className="onb-sec">
+                    <Head k="checklist" label="Still to do" />
+                    <div className="mt-8">
+                      {(sec('checklist').rows || []).map((r: Any, ri: number) => (
+                        <div key={ri} className="onb-row grid gap-x-6 gap-y-1 py-3.5 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '1fr 92px 108px' }}>
+                          <span className="text-[15px]" style={{ color: t.ink }}>
+                            <Ed v={r.item || ''} set={v => patch('checklist.rows.' + ri + '.item', v)} edit={edit} multiline />
+                          </span>
+                          <span className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: String(r.who).toLowerCase() === 'stay' ? t.accent : t.gold }}>
+                            <Ed v={r.who || ''} set={v => patch('checklist.rows.' + ri + '.who', v)} edit={edit} />
+                          </span>
+                          <span className="text-[13px]">
+                            <LiveText v={String(r.by || '')} live={canEdit} t={t} single
+                              set={v => { patch('checklist.rows.' + ri + '.by', v); answerChanged() }} />
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <Note k="checklist" />
+                  </div>
+                </SectionShell>
+              )}
+              {!hid('nextup') && (
+                <SectionShell id="nextup" title="What happens next" hidden={false} edit={edit} onToggle={() => toggleSection('nextup')}>
+                  <div className="onb-sec">
+                    <Head k="nextup" label="What happens next" />
+                    <Rows rows={sec('nextup').rows || []} kw="200px" />
+                    <Note k="nextup" />
+                  </div>
+                </SectionShell>
+              )}
+
+              {/* ---------- 8 · OTHER NOTES ---------- */}
+              <SectionShell id="notes" title="Other notes" hidden={hid('notes')} edit={edit} onToggle={() => toggleSection('notes')}>
+                <div className="onb-sec">
+                  <Head k="notes" label="Other notes" />
+                  <div className="mt-8">
+                    <LiveText
+                      v={String(sec('notes').body || '')}
+                      live={canEdit}
+                      t={t}
+                      cls="onb-copy w-full text-[16.5px] leading-[1.75] rounded-lg px-3 py-2 -mx-3"
+                      set={v => { patch('notes.body', v); answerChanged() }}
+                    />
+                  </div>
+                  {totalAsks > 0 && (
+                    <div className="mt-11 pt-8" style={{ borderTop: '2px solid ' + t.ink }}>
+                      <p className="text-[13px] font-bold uppercase tracking-[0.18em]" style={{ color: open.length ? t.gold : t.good }}>
+                        {answered} of {totalAsks} answered
+                      </p>
+                      {open.length === 0 ? (
+                        <p className="mt-4 text-[16px] font-semibold" style={{ color: t.good }}>Nothing open &mdash; every question on this page has an answer.</p>
+                      ) : (
+                        <div className="mt-4">
+                          {open.map((o, oi) => (
+                            <div key={oi} className="onb-row grid gap-x-8 gap-y-1 py-3.5 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '148px 1fr' }}>
+                              <span className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>{o.label}</span>
+                              <span className="text-[15px]" style={{ color: t.ink }}>{o.q}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
+                  <Note k="notes" />
                 </div>
               </SectionShell>
+
+              {/* Switch an off-by-default section back on for this owner. Edit mode only — an
+                  owner never sees the machinery. */}
+              {edit && (
+                <div className="sb-noprint onb-sec">
+                  <div className="rounded-2xl px-6 py-5" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-1" style={{ color: t.muted }}>More sections</p>
+                    <p className="text-[13px] mb-4" style={{ color: t.sub, maxWidth: '58ch' }}>
+                      Written and ready, off by default. Add any of these to this owner&rsquo;s deck &mdash; it changes this document only, never the template.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {EXTRA.map(x => {
+                        const on = !hid(x.k)
+                        return (
+                          <button key={x.k} onClick={() => toggleSection(x.k)}
+                            className="rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                            style={on
+                              ? { background: t.accent, color: t.bg }
+                              : { background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }}>
+                            {on ? '✓ ' : '+ '}{x.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
             </>
           )
         })()}
