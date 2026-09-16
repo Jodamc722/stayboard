@@ -21,7 +21,6 @@ import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { paceStatus, paceGuidance } from '@/lib/pacing'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
 import { projectionSectionFor } from '@/lib/projections'
-import { computeScore } from '@/lib/optimize-score'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { getStaff } from '@/lib/staffing'
 import { marketOf } from '@/lib/segments'
@@ -254,30 +253,13 @@ export async function POST(req: NextRequest) {
       .in('id', ids0)
     const rows: any[] = (full || []) as any[]
 
-    // Reviews feed the optimize score's review signal; a brand-new unit simply has none.
-    const { data: revs } = await db0.from('guesty_reviews')
-      .select('listing_id, rating, excluded_from_score').in('listing_id', ids0).limit(2000)
-    const byListing: Record<string, number[]> = {}
-    for (const r of ((revs || []) as any[])) {
-      if (r.excluded_from_score) continue
-      const n = Number(r.rating)
-      if (!Number.isFinite(n)) continue
-      ;(byListing[String(r.listing_id)] = byListing[String(r.listing_id)] || []).push(n)
-    }
-
-    const cards: ListingCard[] = rows.map(l => {
-      const rl = byListing[String(l.id)] || []
-      const avg = rl.length ? Math.round((rl.reduce((a, b) => a + b, 0) / rl.length) * 10) / 10 : null
-      // The score itself never reaches the owner's document — only the amenity work it implies.
-      let have: string[] = Array.isArray(l.amenities) ? l.amenities.map(String).filter(Boolean) : []
-      let suggest: { name: string; reason: string }[] = []
-      try {
-        const sc = computeScore(l, { avgRating: avg, reviewCount: rl.length })
-        if (Array.isArray(sc.amenities?.have) && sc.amenities.have.length) have = sc.amenities.have.map(String)
-        suggest = (sc.amenities?.suggestions || []).map((x: any) => ({ name: String(x.name), reason: String(x.reason || '') }))
-      } catch { /* the listing's own amenity array still stands */ }
-      return listingCardFrom(l, Array.from(new Set(have)).sort((a, b) => a.localeCompare(b)), suggest)
-    }).sort((a, b) => a.name.localeCompare(b.name))
+    // NO SCORE AND NO AMENITY GRID (Jon, 2026-09-16: "clean up the amenity section — let's just
+    // remove that for now. We can view it on Airbnb, and I can have one of my admins do it on
+    // the backend"). Which means this branch no longer needs the reviews, the optimize score, or
+    // the amenity diff it was computing — the owner's document is the photos, the links and
+    // the copy, and the amenity work goes back to being an internal job on the unit page.
+    const cards: ListingCard[] = rows.map(l => listingCardFrom(l))
+      .sort((a, b) => a.name.localeCompare(b.name))
 
     // Facts about the unit itself. The onboarding WALK is the better source when one exists —
     // it is the only place that knows what is actually in the unit — so it wins over the listing.
