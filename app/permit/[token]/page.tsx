@@ -74,8 +74,27 @@ export default async function PermitPage({ params }: { params: { token: string }
             <img src={file} alt='Parking QR code' className='w-full max-w-[280px] mx-auto rounded-xl' />
           )}
           <p className='text-xs text-neutral-500 mt-4 leading-relaxed'>
-            Hold this on your screen at the gate reader. Screenshot it if you are parking somewhere
-            with no signal.
+            Hold this on your screen at the gate reader.
+          </p>
+        </div>
+
+        {/* SAVE IT NOW, NOT AT THE GATE (Jon, 2026-09-16: "have a note on the QR page to take a
+            screenshot").
+            It was one clause of grey fine print under the code, which is exactly where advice that
+            has to be acted on BEFORE it is needed goes unread. A parking garage is a concrete box:
+            the moment this matters is the moment the page cannot reload, and by then the guest is
+            at a barrier with a car behind them. So it gets its own block, above the fold on a
+            phone, and it says what to do rather than describing a situation.
+            It also survives the pass expiring the day after checkout, which the screenshot does
+            not — but a guest still inside the garage on that last morning has what they need. */}
+        <div className='mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3'>
+          <div className='text-sm font-bold text-amber-900'>
+            {p.view.isPdf ? 'Save this pass to your phone' : 'Screenshot this now'}
+          </div>
+          <p className='text-xs text-amber-800 mt-1 leading-relaxed'>
+            {p.view.isPdf
+              ? 'Download it before you arrive. Garages are usually dead zones, and the pass will not load without signal.'
+              : 'Garages are usually dead zones. A screenshot opens at the gate whether or not you have signal \u2014 this page will not.'}
           </p>
         </div>
 
