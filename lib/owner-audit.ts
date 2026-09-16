@@ -25,6 +25,7 @@
 // so every figure here is flipped to read as OWNER money — positive = money to the owner.
 import 'server-only'
 import { lengthFactors, expectedForLength, lengthNote, type LengthFactors } from './owner-audit-rate'
+import { cleaningGaps, cleaningNote, type CleanStay, type CleanVerdict } from './owner-audit-cleaning'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting } from './app-settings'
 import { MONTH_LABEL, money } from './owner-statements'
@@ -32,6 +33,7 @@ import { MONTH_LABEL, money } from './owner-statements'
 export type AuditFlagType =
   | 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev'
   | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay'
+  | 'cleaning_fee'
 export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
 
@@ -315,6 +317,7 @@ export type AuditRules = {
   passthruHi: number
   commTolerance: number                        // flag when commission % strays this many points from the owner's usual rate
   offBookingMin: number                        // $ from this size up, money with no room revenue behind it needs a look
+  cleaningPeerMin: number                      // charged stays a unit needs before a $0 stay there is called a gap
   enabled: Record<AuditFlagType, boolean>      // per-flag kill switch
 }
 export const DEFAULT_AUDIT_RULES: AuditRules = {
@@ -326,7 +329,9 @@ export const DEFAULT_AUDIT_RULES: AuditRules = {
   // more under "No issues found" — money moving with no booking behind it, invisible. The team's
   // own spreadsheet caught every one of them.
   offBookingMin: 25,
-  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true },
+  // Three. Under that, "the unit normally charges" is an opinion about two bookings.
+  cleaningPeerMin: 3,
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true, cleaning_fee: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
@@ -354,6 +359,7 @@ function sanitizeRules(s: any, base: AuditRules): AuditRules {
     passthruHi: Math.max(1, Math.min(2, num(s?.passthruHi, base.passthruHi))),
     commTolerance: Math.min(30, Math.max(1, num(s?.commTolerance, base.commTolerance))),
     offBookingMin: Math.max(0, num(s?.offBookingMin, base.offBookingMin)),
+    cleaningPeerMin: Math.min(20, Math.max(1, Math.round(num(s?.cleaningPeerMin, base.cleaningPeerMin)))),
     enabled,
   }
 }
@@ -686,7 +692,11 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // there, and a statement with no CF line does not prove it is missing.
   const folioByRes: Record<string, any[]> = {}
   {
-    const ids = Array.from(new Set([...expRes, ...ownerStayRes].map(r => String(r.id || '')).filter(Boolean)))
+    // ...AND every reservation the statements carry, because Jon's rule is that ALL of them
+    // carry a cleaning fee, and the only place that can be checked is the guest folio. These
+    // are ids we already hold; it is extra rows on a read that is already running, not a scan.
+    const ids = Array.from(new Set([...expRes, ...ownerStayRes, ...Object.values(resByCode)]
+      .map(r => String((r as any).id || '')).filter(Boolean)))
     for (let i = 0; i < ids.length; i += 100) {
       const { data } = await sb.from('guesty_reservations')
         .select('id, inv:raw->money->invoiceItems')
@@ -726,7 +736,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       ? sb.from('guesty_owners').select('id, full_name').in('id', ownerIds)
       : Promise.resolve({ data: [] } as any),
     listingIds.size
-      ? sb.from('guesty_listings').select('id, nickname, title, building, unit, bedrooms').in('id', Array.from(listingIds))
+      ? sb.from('guesty_listings').select('id, nickname, title, building, unit, bedrooms, cleanFee:raw->prices->>cleaningFee').in('id', Array.from(listingIds))
       : Promise.resolve({ data: [] } as any),
   ])
   const ownerName: Record<string, string> = {}
@@ -734,11 +744,55 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const unitOf: Record<string, string> = {}
   const bldgOf: Record<string, string> = {}
   const bedsOf: Record<string, number> = {}
+  const listFeeOf: Record<string, number> = {}
   for (const l of (listingRows || []) as any[]) {
     const id = String(l.id)
     unitOf[id] = String(l.nickname || l.title || (l.building ? l.building + '/' + (l.unit ?? '') : '') || l.id)
     bldgOf[id] = String(l.building || '')
     bedsOf[id] = Number(l.bedrooms) || 0
+    // What Guesty says this unit SHOULD charge. It separates "nobody set a fee" from "a fee is
+    // set and the bookings aren't picking it up", which are different fixes in different places.
+    { const f = Number(l.cleanFee); if (Number.isFinite(f) && f > 0) listFeeOf[id] = f }
+  }
+
+  // 5c. EVERY RESERVATION SHOULD CARRY A CLEANING FEE — judged by what the fee NETS to.
+  //
+  // Jon, 2026-09-16: "Yes all reservations shoould have a cleaning fee", then, on the eleven
+  // Booking.com stays that had none: "look at other booking.com units, if there is a fee it could
+  // be missing or refunded? It should be flagged."
+  //
+  // The first version of this check asked only whether a line titled "clean" EXISTED, which passed
+  // any fee that was charged and then given back. Netting instead of counting turned up forty-two
+  // Airbnb stays that collect nothing and had been reading as fine. See lib/owner-audit-cleaning
+  // for the full count and for why the unit, not the booking, is the finding when a listing has
+  // never charged anybody. Owner stays are left out — they have their own rule a few lines down,
+  // and flagging them twice would be the same problem said two ways.
+  const cleanVerdict: Record<string, CleanVerdict> = {}
+  if (rules.enabled.cleaning_fee) {
+    const seenRes = new Set<string>()
+    const cleanStays: CleanStay[] = []
+    for (const r of Object.values(resByCode) as any[]) {
+      const id = String(r.id || '')
+      const lid = String(r.listing_id || '')
+      if (!id || !lid || seenRes.has(id)) continue
+      const status = String(r.status || '')
+      if (/cancel|inquir|declin|expir/i.test(status)) continue
+      const tagBlob = Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : ''
+      if (isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))) continue
+      const inv = folioByRes[id]
+      if (!Array.isArray(inv) || !inv.length) continue   // no folio read = no opinion, not a flag
+      const lines = inv.filter(x => PREP_CLEAN_RE.test(String(x?.title || x?.name || '')))
+      seenRes.add(id)
+      cleanStays.push({
+        resId: id,
+        unitKey: lid,
+        when: String(r.check_in || ''),
+        net: money(lines.reduce((a, x) => a + (Number(x?.amount) || 0), 0)),
+        lines: lines.length,
+        hadNegative: lines.some(x => (Number(x?.amount) || 0) < -0.005),
+      })
+    }
+    for (const v of cleaningGaps(cleanStays, { peerMin: rules.cleaningPeerMin })) cleanVerdict[v.resId] = v
   }
 
   // WHAT THE OWNER IS ACTUALLY PAID, AND WHAT WE CAN HONESTLY COMPARE IT TO.
@@ -1148,6 +1202,22 @@ export async function buildAudit(month: string): Promise<AuditData> {
             ? 'Matched pair: the fee cancels the rental line for line, so this booking pays the owner exactly $0.00 — nothing is missing.'
             : 'Commission fully offsets rental (pass-through wash) — owner nets zero on it by design.',
         })
+      }
+      // A CLEANING FEE ON EVERY RESERVATION. Computed for the whole month up in 5c, because a
+      // single stay cannot tell you whether $0 is a mistake — only the unit's other stays can. The
+      // verdict already decided whether this is one booking's gap or a listing that never charges
+      // anybody, and only the earliest stay on such a listing carries the flag at review severity.
+      if (on.cleaning_fee && res && !stayTag) {
+        const v = cleanVerdict[String(res.id || '')]
+        if (v) {
+          const lid = String(res.listing_id || '') || bestListing
+          flags.push({
+            type: 'cleaning_fee',
+            severity: v.severity,
+            amount: v.expected ?? undefined,
+            detail: cleaningNote(v, unitOf[lid] || 'this unit', listFeeOf[lid] ?? null),
+          })
+        }
       }
       // OWNER STAYS AND F&F GET FLAGGED, NOT HIDDEN. The discount is by design, so these never read
       // as pricing errors — but the stay itself is a decision the owner review is supposed to see:
