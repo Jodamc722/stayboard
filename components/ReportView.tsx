@@ -2311,17 +2311,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             items.forEach((L: Any, li: number) => {
               const pics: string[] = (L.photos || []).slice(0, 5)
               slides.push({ key: 'listings', node: (
-                <Slide nav={String(L.name || 'Unit')} warn={edit} bleed>
-                  {/* A HALF-SLIDE PHOTOGRAPH WAS THE WRONG ANSWER (Jon, 2026-09-16: "does it
-                      make sense for the actual listing ones to have a big photo in the slide?").
-                      One enormous image beside a column of text is the most generic slide in
-                      any deck, and it told the owner nothing they could not see by opening the
-                      listing. What an owner is actually being shown here is their property AS A
-                      LISTING — the set of frames a guest swipes through — so the slide is the
-                      gallery: a five-frame mosaic edge to edge, with the identity on a navy
-                      panel over it. It reads like the top of a listing page, which is exactly
-                      what is being reviewed. */}
-                  <div style={{ position: 'absolute', inset: 0, display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 3, background: t.cardBorder }}>
+                <Slide nav={String(L.name || 'Unit')} warn={edit} bleed ground={GROUND.light}>
+                  {/* THE GALLERY GETS THE TOP, NOT THE WHOLE SLIDE (Jon, 2026-09-16: "the
+                      listing review should not fill the whole page with photo"). Full bleed was
+                      striking and said nothing — it was all picture and no substance, and an
+                      owner reviewing their listing needs the frames AND the facts in one look.
+                      Photographs take the upper band, the lower third is clean ground carrying
+                      the name, the shape of the unit, the live channels and the headline the
+                      listing actually leads with. */}
+                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 372, display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 3, background: t.cardBorder }}>
                     {[0, 1, 2, 3, 4].map(pi => (
                       <Pick
                         key={pi}
@@ -2332,36 +2330,41 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       />
                     ))}
                   </div>
-                  <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 260, background: 'linear-gradient(180deg, rgba(8,11,16,0) 0%, rgba(8,11,16,0.55) 34%, rgba(8,11,16,0.88) 70%, rgba(8,11,16,0.96) 100%)' }} />
-                  <div style={{ position: 'absolute', left: 64, right: 64, bottom: 40 }}>
-                    <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 14 }} />
-                    <div className="flex items-end justify-between" style={{ gap: 30 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <p style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.022em', color: D.ink, lineHeight: 1.15 }}>{L.name}</p>
-                        <p style={{ fontSize: 13.5, color: D.muted, marginTop: 7 }}>{L.sub}</p>
-                      </div>
-                      {(L.links || []).length > 0 && (
-                        <div className="flex flex-wrap justify-end" style={{ gap: 8 }}>
-                          {(L.links || []).map((k: Any) => (
-                            <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
-                              style={{
-                                fontSize: 12.5, fontWeight: 500, color: D.ink, whiteSpace: 'nowrap',
-                                border: '1px solid rgba(255,255,255,0.34)', borderRadius: 999, padding: '6px 14px',
-                                textDecoration: 'none', background: 'rgba(8,11,16,0.42)',
-                                backdropFilter: 'blur(6px)',
-                              }}>{k.name} &#8599;</a>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div style={{ position: 'absolute', top: 38, right: 64 }}>
+                  <div style={{ position: 'absolute', top: 38, right: 40, zIndex: 2 }}>
                     {mark.logo ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={mark.logo} alt={mark.word} style={{ height: 22, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)', opacity: 0.9 }} />
-                    ) : (
-                      <span style={{ fontSize: 11.5, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.78)' }}>{mark.word}</span>
-                    )}
+                      <img src={mark.logo} alt={mark.word} style={{ height: 20, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)', opacity: 0.86 }} />
+                    ) : null}
+                  </div>
+
+                  <div style={{ position: 'absolute', top: 372, left: 64, right: 64, bottom: 44 }} className="flex flex-col">
+                    <div className="flex-1 min-h-0 flex items-start" style={{ paddingTop: 26, gap: 44 }}>
+                      <div style={{ flex: '1 1 0', minWidth: 0 }}>
+                        <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
+                        <p style={{ fontSize: 27, fontWeight: 600, letterSpacing: '-0.022em', color: t.ink, lineHeight: 1.18 }}>{L.name}</p>
+                        <p style={{ fontSize: 13.5, color: t.muted, marginTop: 7 }}>{L.sub}</p>
+                      </div>
+                      <div style={{ flex: '1 1 0', minWidth: 0 }}>
+                        <p style={{ fontSize: 12, color: t.muted, marginBottom: 7 }}>What it leads with</p>
+                        <p style={{
+                          fontSize: 16, lineHeight: 1.45, color: t.ink, fontWeight: 500,
+                          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                        } as Any}>{String(L.title || '\u2014')}</p>
+                        {(L.links || []).length > 0 && (
+                          <div className="flex flex-wrap" style={{ gap: 8, marginTop: 14 }}>
+                            {(L.links || []).map((k: Any) => (
+                              <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
+                                style={{
+                                  fontSize: 12.5, fontWeight: 500, color: t.accent, whiteSpace: 'nowrap',
+                                  border: '1px solid ' + t.cardBorder, borderRadius: 999, padding: '6px 14px',
+                                  textDecoration: 'none',
+                                }}>{k.name} &#8599;</a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <Foot label="Your listing" />
                   </div>
                 </Slide>
               ) })
@@ -2514,35 +2517,84 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           if (!hid('statement')) {
             slides.push({ key: 'statement', node: (
               <Slide nav="Statements" warn={edit} ground={GROUND.light}>
+                {/* AN EXCERPT, NOT THE DOCUMENT (Jon, 2026-09-16: "make the owner statement
+                    better — show only parts of it"). The old slide tried to reproduce a whole
+                    statement: four ledger lines, a net, and a five-column itemised charge table,
+                    on one 630px canvas. Nobody reads a table on a call. Four lines decide what
+                    an owner is paid, so four lines is the slide, and the itemisation gets its
+                    own page for the owners who ask — and some always do. */}
                 <div className="flex flex-col h-full">
-                  <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', columnGap: 46 }} className="flex-1 min-h-0">
-                    <div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 430px', columnGap: 52 }} className="flex-1 min-h-0">
+                    <div className="flex flex-col justify-center">
                       <Title k="statement" />
+                      <p style={{ fontSize: 15, lineHeight: 1.7, color: t.body, marginTop: 22, maxWidth: '40ch' }}>
+                        <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
+                      </p>
                     </div>
-                    <div style={{ borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, alignSelf: 'start' }}>
-                      <div style={{ padding: '13px 20px', background: t.chip }}>
-                        <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink }}>{sec('statement').unitLabel}</p>
-                        <p style={{ fontSize: 12, color: t.muted, marginTop: 2 }}>{sec('statement').period}</p>
-                      </div>
-                      <div style={{ padding: '6px 20px 16px', background: t.card }}>
-                        {(sec('statement').lines || []).map((ln: Any, i: number) => (
-                          <div key={i} className="flex justify-between" style={{ gap: 18, padding: '9px 0', borderBottom: '1px solid ' + t.rule }}>
-                            <span style={{ fontSize: 13.5, color: t.body }}>
-                              {ln.k}{ln.sub ? <small style={{ display: 'block', fontSize: 11.5, marginTop: 2, color: t.muted }}>{ln.sub}</small> : null}
-                            </span>
-                            <span className="tabular-nums" style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
-                          </div>
-                        ))}
-                        <div style={{ height: 4 }} />
-                      </div>
-                      <div style={{ background: t.band, padding: '16px 20px' }}>
-                        <div className="flex justify-between items-baseline" style={{ gap: 18 }}>
-                          <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.72)' }}>Net to you</span>
-                          <span className="tabular-nums" style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-0.025em', color: '#fff' }}>{sec('statement').net}</span>
+                    <div className="flex flex-col justify-center">
+                      <div style={{ borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder }}>
+                        <div style={{ padding: '14px 22px', background: t.chip }}>
+                          <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink }}>{sec('statement').unitLabel}</p>
+                          <p style={{ fontSize: 12, color: t.muted, marginTop: 2 }}>{sec('statement').period}</p>
                         </div>
-                        <p style={{ fontSize: 12, marginTop: 5, color: 'rgba(255,255,255,0.58)' }}>{sec('statement').paid}</p>
+                        <div style={{ padding: '8px 22px 14px', background: t.card }}>
+                          {(sec('statement').lines || []).map((ln: Any, i: number) => (
+                            <div key={i} className="flex justify-between" style={{ gap: 18, padding: '11px 0', borderBottom: '1px solid ' + t.rule }}>
+                              <span style={{ fontSize: 14, color: t.body }}>{ln.k}</span>
+                              <span className="tabular-nums" style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ background: t.band, padding: '18px 22px' }}>
+                          <div className="flex justify-between items-baseline" style={{ gap: 18 }}>
+                            <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.72)' }}>Net to you</span>
+                            <span className="tabular-nums" style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.025em', color: '#fff' }}>{sec('statement').net}</span>
+                          </div>
+                          <p style={{ fontSize: 12, marginTop: 5, color: 'rgba(255,255,255,0.58)' }}>{sec('statement').paid}</p>
+                        </div>
                       </div>
+                      <p style={{ fontSize: 12, color: t.muted, marginTop: 12 }}>
+                        An excerpt. Your real statement carries every line, itemised.
+                      </p>
                     </div>
+                  </div>
+                  <Foot label="Owner statements" />
+                </div>
+              </Slide>
+            ) })
+
+            // The itemisation, for the owners who ask — and some always do.
+            if ((sec('statement').charges || []).length) slides.push({ key: 'statement', node: (
+              <Slide nav="Charges, itemised" warn={edit} ground={GROUND.tint}>
+                <div className="flex flex-col h-full">
+                  <div style={{ width: 30, height: 2, background: brass, marginBottom: 16 }} />
+                  <p style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink, lineHeight: 1.2 }}>
+                    Every charge traces to a job
+                  </p>
+                  <p style={{ fontSize: 14, color: t.muted, marginTop: 8 }}>
+                    The {sec('statement').chargesTotal} owner charge above, in full \u2014 with the date, the work and who did it.
+                  </p>
+                  <div className="flex-1 min-h-0 flex items-center">
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr>{['Date', 'Work', 'Labor', 'Materials', 'Total'].map((h, i) => (
+                          <th key={h} style={{ fontSize: 11.5, fontWeight: 500, color: t.muted, padding: '0 14px 9px 0', borderBottom: '1px solid ' + t.rule, textAlign: i >= 2 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}</tr>
+                      </thead>
+                      <tbody>
+                        {(sec('statement').charges || []).map((ch: Any, i: number) => (
+                          <tr key={i}>
+                            <td style={{ fontSize: 13.5, color: t.muted, padding: '14px 14px 14px 0', borderBottom: '1px solid ' + t.rule, whiteSpace: 'nowrap', verticalAlign: 'top' }}>{ch.date}</td>
+                            <td style={{ fontSize: 13.5, color: t.body, padding: '14px 14px 14px 0', borderBottom: '1px solid ' + t.rule, verticalAlign: 'top' }}>
+                              {ch.work}<small style={{ display: 'block', fontSize: 12, marginTop: 3, color: t.muted }}>{ch.who}</small>
+                            </td>
+                            <td className="tabular-nums" style={{ fontSize: 13.5, color: t.body, padding: '14px 14px 14px 0', borderBottom: '1px solid ' + t.rule, textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{ch.labor}</td>
+                            <td className="tabular-nums" style={{ fontSize: 13.5, color: t.body, padding: '14px 14px 14px 0', borderBottom: '1px solid ' + t.rule, textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{ch.materials}</td>
+                            <td className="tabular-nums" style={{ fontSize: 13.5, color: t.ink, fontWeight: 600, padding: '14px 0', borderBottom: '1px solid ' + t.rule, textAlign: 'right', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{ch.total}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                   <Foot label="Owner statements" />
                 </div>
