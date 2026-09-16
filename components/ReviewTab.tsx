@@ -42,13 +42,18 @@ type Focus = {
   error?: string
 }
 const focusUrl = (market: string, refresh = false, date?: string) => `/api/ops-today/focus?market=${encodeURIComponent(market)}${refresh ? '&refresh=1' : ''}` + (date ? `&date=${date}` : '')
+/** The badge's own url: never runs the engines, never calls the model. See the route's header. */
+const badgeUrl = (market: string, date?: string) => `/api/ops-today/focus?market=${encodeURIComponent(market)}&cached=1` + (date ? `&date=${date}` : '')
 const dupId = (g: DupGroup) => 'dup:' + g.listingId + '|' + g.date + '|' + g.key
 
 /** The number on the tab: how many the model says to focus on today. */
 export function ReviewCount({ market, date }: { market: string | null; date?: string }) {
-  // The SAME url the tab uses, or the badge and the tab are two cache entries, two requests and two
-  // model calls on every board load — which is what the in-flight guard exists to prevent.
-  const { data } = useCachedFetch<Focus>(market ? focusUrl(market, false, date) : null, { ttl: 5 * 60_000 })
+  // DELIBERATELY A DIFFERENT URL FROM THE TAB (2026-09-16). Sharing one was the right instinct —
+  // two entries meant two model calls — but it made the cheap surface pay the expensive surface's
+  // price: this badge mounts on Units, where people spend the day. It now reads cache-only, so it
+  // shows a number when there is a recent verdict and nothing when there is not. Opening the tab
+  // asks properly, and the answer it stores is what this badge renders next time.
+  const { data } = useCachedFetch<Focus>(market ? badgeUrl(market, date) : null, { ttl: 5 * 60_000 })
   const n = data?.verdict?.focus?.length || 0
   if (!n) return null
   return <span className="ml-1 text-[10px] font-bold px-1 rounded bg-brand-500 text-white tabular-nums">{n}</span>
