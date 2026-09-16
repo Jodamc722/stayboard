@@ -383,7 +383,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
 
       {current && (
         <TaskDrawer task={current} p={p} roster={roster} me={me} nameOf={nameOf} canEdit={canEdit} busy={busy}
-          onClose={() => { setOpenTask(null); setBzFocus(null) }} act={act} upload={upload} superadmin={superadmin} bzFocus={bzFocus === current.id} />
+          onClose={() => { setOpenTask(null); setBzFocus(null) }} onOpenTask={setOpenTask} act={act} upload={upload} superadmin={superadmin} bzFocus={bzFocus === current.id} />
       )}
     </div>
   )
@@ -822,6 +822,18 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, tpl
   const next = (s: string) => (s === 'done' ? 'todo' : 'done')   // one tap toggles done; the drawer has the four states
   const c = counts[t.id]
   const has = (k: ListColumn) => cols.indexOf(k) >= 0
+
+  /**
+   * SUBTASKS FOLD, THE WAY ASANA FOLDS THEM (Jon, 2026-09-16: "When I click into a task, even on
+   * the main header page, I should be able to open up all the subtasks").
+   *
+   * They used to render unconditionally, so a parent with six subtasks was seven rows whether or
+   * not you cared, and there was no way to say "not now". A chevron on the parent opens them in
+   * place; the Subtasks column already says how many there are, so closed is never hiding anything
+   * you did not know about. Local state on purpose — which rows I have open right now is not a
+   * preference worth persisting, and a page that remembers it forever gets in the way.
+   */
+  const [openSubs, setOpenSubs] = useState(false)
   const Cell = ({ children, className }: { children?: any; className?: string }) => (
     <div className={'px-2 text-[11px] min-w-0 ' + (className || 'text-muted')} onClick={e => e.stopPropagation()}>{children}</div>
   )
@@ -840,6 +852,12 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, tpl
         <div className="flex items-center gap-2.5 min-w-0 pr-2" style={{ paddingLeft: 12 + depth * 22 }}>
           {depth === 0 && canEdit && <GripVertical size={12} className="text-muted/50 shrink-0 -ml-1 cursor-grab" />}
           {depth > 0 && <CornerDownRight size={11} className="text-muted shrink-0 -ml-1" />}
+          {t.subtasks.length > 0 ? (
+            <button onClick={e => { e.stopPropagation(); setOpenSubs(o => !o) }}
+              className="shrink-0 -ml-1 text-muted hover:text-ink" title={openSubs ? 'Hide subtasks' : `Show ${t.subtasks.length} subtask${t.subtasks.length === 1 ? '' : 's'}`}>
+              {openSubs ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            </button>
+          ) : <span className="w-[13px] shrink-0" aria-hidden />}
           <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); act({ action: 'taskSet', taskId: t.id, status: next(t.status) }) }}
             className={'w-5 h-5 rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]}
             title={TASK_STATUS_LABEL[t.status]}>
@@ -851,6 +869,13 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, tpl
           ) : (canEdit && depth === 0 && onPush && (
             <button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="opacity-0 group-hover/row:opacity-100 text-muted hover:text-ink shrink-0" title="Push to Breezeway"><Wrench size={12} /></button>
           ))}
+          {t.subtasks.length > 0 && !openSubs && (
+            <button onClick={e => { e.stopPropagation(); setOpenSubs(true) }}
+              className="text-[10.5px] font-semibold text-muted hover:text-ink tabular-nums shrink-0 rounded px-1 py-0.5 hover:bg-app"
+              title="Show subtasks">
+              {t.subtasks.filter(x => x.status === 'done').length}/{t.subtasks.length} subtasks
+            </button>
+          )}
           {t.homed && <span className="text-[9.5px] font-semibold text-muted truncate max-w-[110px] shrink-0" title={`Also in ${t.home_project_title}`}>↗ {t.home_project_title}</span>}
         </div>
 
@@ -906,7 +931,7 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, tpl
       {(t.vendor_name || t.visit_on) && (
         <div className="px-3 pb-1.5" style={{ paddingLeft: 12 + depth * 22 + 26 }}><VisitLine t={t} /></div>
       )}
-      {t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} cols={cols} tpl={tpl} dragId={dragId} setDragId={setDragId} onMove={onMove} />)}
+      {openSubs && t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} cols={cols} tpl={tpl} dragId={dragId} setDragId={setDragId} onMove={onMove} />)}
     </>
   )
 }
@@ -1287,11 +1312,13 @@ function NewSection({ onAdd, busy }: { onAdd: (name: string) => void; busy: bool
 // Everything about one task, editable in place. Fields save on blur; status and assignees save
 // on change. There is no Save button because there is nothing to batch — each field is its own
 // fact, and a form that holds six unsaved facts is a form that loses them.
-function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, upload, superadmin, bzFocus }: {
+function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpenTask, act, upload, superadmin, bzFocus }: {
   task: Task; p: ProjectFull; roster: Roster; me: string; nameOf: (e: string | null) => string; canEdit: boolean; busy: boolean
-  onClose: () => void; act: (b: any) => Promise<any>; upload: (files: FileList | File[], taskId?: string | null) => Promise<boolean>; superadmin: boolean; bzFocus?: boolean
+  onClose: () => void; onOpenTask: (id: string) => void
+  act: (b: any) => Promise<any>; upload: (files: FileList | File[], taskId?: string | null) => Promise<boolean>; superadmin: boolean; bzFocus?: boolean
 }) {
   const files = useMemo(() => p.photos.filter(f => f.task_id === task.id), [p.photos, task.id])
+  const parentTask = useMemo(() => (task.parent_id ? findTask(p.tasks, String(task.parent_id)) : null), [p.tasks, task.parent_id])
   const feed = useMemo(() => p.notes.filter(n => n.task_id === task.id).slice().reverse(), [p.notes, task.id])
   const [title, setTitle] = useState(task.title)
   const [desc, setDesc] = useState(task.description || '')
@@ -1315,7 +1342,14 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
             className={'rounded-lg border px-2 py-1 text-[12px] font-bold ' + STATUS_CLS[task.status]}>
             {Object.entries(TASK_STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
-          <span className="text-[11px] text-muted truncate flex-1">{task.section || 'No section'}{task.parent_id ? ' · subtask' : ''}{task.homed ? ` · from ${task.home_project_title}` : ''}</span>
+          {/* A subtask says what it is part of, and that is a way back. Opening one from My Tasks
+              lands you here with no other context — "Which unit" tells you nothing on its own. */}
+          <span className="text-[11px] text-muted truncate flex-1">
+            {task.parent_id && parentTask && (
+              <><button onClick={() => onOpenTask(parentTask.id)} className="font-semibold text-muted hover:text-ink hover:underline">↑ {parentTask.title}</button><span className="mx-1">·</span></>
+            )}
+            {task.section || 'No section'}{task.homed ? ` · from ${task.home_project_title}` : ''}
+          </span>
           {canEdit && (
             <button onClick={async () => { if (confirm(task.homed ? `Remove this task from this project? It stays in ${task.home_project_title}.` : 'Delete this task' + (task.subtasks.length ? ' and its subtasks' : '') + '?')) { await act({ action: 'taskDelete', taskId: task.id }); onClose() } }}
               disabled={busy} className="text-muted hover:text-rose-600" title={task.homed ? 'Remove from this project' : 'Delete task'}><Trash2 size={14} /></button>
@@ -1386,22 +1420,50 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, act, 
               arithmetic somebody has to do by hand. */}
           <InvoicesPanel p={p} canEdit={canEdit} busy={busy} act={act} superadmin={superadmin} taskId={task.id} compact />
 
+          {/* SUBTASKS ARE TASKS, NOT A CHECKLIST (Jon, 2026-09-16: "the subtasks should function as
+              individual, actual assigned tasks that live under the big task and can be individually
+              assigned and will populate on other people's boards").
+              They always were, underneath — same table, same assignee table, and My Tasks has read
+              them all along. This panel was the lie: a title, a tick and a date, with no way to open
+              one and nowhere to put a name, which is what made them feel like checkboxes. Every row
+              now opens its own drawer with the same people picker as its parent, and shows who has
+              it and when it is due without being opened at all. */}
           {!task.parent_id && (
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1">Checklist <span className="normal-case font-normal tabular-nums">{task.subtasks.filter(s => s.status === 'done').length}/{task.subtasks.length}</span></p>
-              <div className="rounded-lg border border-line divide-y divide-line">
-                {task.subtasks.map(s => (
-                  <div key={s.id} className="flex items-center gap-2 px-2.5 py-1.5">
-                    <button disabled={!canEdit || busy} onClick={() => act({ action: 'taskSet', taskId: s.id, status: s.status === 'done' ? 'todo' : 'done' })}
-                      className={'w-4 h-4 rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + STATUS_CLS[s.status]}>
-                      {s.status === 'done' && <Check size={9} strokeWidth={3} />}
-                    </button>
-                    <span className={'text-[12.5px] flex-1 ' + (s.status === 'done' ? 'line-through text-muted' : 'text-ink')}>{s.title}</span>
-                    {s.due_on && <span className="text-[11px] text-muted tabular-nums">{nice(s.due_on)}</span>}
-                  </div>
-                ))}
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1">
+                Subtasks <span className="normal-case font-normal tabular-nums">{task.subtasks.filter(s => s.status === 'done').length}/{task.subtasks.length}</span>
+              </p>
+              <div className="rounded-lg border border-line divide-y divide-line overflow-hidden">
+                {task.subtasks.map(s => {
+                  const sLate = s.status !== 'done' && !!s.due_on && s.due_on < today()
+                  return (
+                    <div key={s.id} className="group/sub flex items-center gap-2 px-2.5 py-1.5 hover:bg-app/60">
+                      <button disabled={!canEdit || busy} onClick={() => act({ action: 'taskSet', taskId: s.id, status: s.status === 'done' ? 'todo' : 'done' })}
+                        className={'w-4 h-4 rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + STATUS_CLS[s.status]}
+                        title={TASK_STATUS_LABEL[s.status]}>
+                        {s.status === 'done' && <Check size={9} strokeWidth={3} />}
+                      </button>
+                      <button onClick={() => onOpenTask(s.id)} className="min-w-0 flex-1 text-left">
+                        <span className={'block text-[12.5px] truncate ' + (s.status === 'done' ? 'line-through text-muted' : 'text-ink group-hover/sub:underline')}>{s.title}</span>
+                      </button>
+                      {s.assignees.length > 0 ? (
+                        <span className="hidden sm:flex items-center gap-1 shrink-0 text-[11px] text-muted max-w-[120px]" title={s.assignees.map(a => a.display).join(', ')}>
+                          <span className="w-4 h-4 rounded-full bg-brand-50 text-brand-700 text-[8px] font-bold inline-flex items-center justify-center shrink-0">{s.assignees[0].display.slice(0, 1).toUpperCase()}</span>
+                          <span className="truncate">{s.assignees.map(a => first(a.display)).join(', ')}</span>
+                        </span>
+                      ) : (
+                        <button onClick={() => onOpenTask(s.id)} className="shrink-0 text-[11px] text-muted/50 hover:text-ink" title="Nobody is on this — open it to give it an owner">Assign</button>
+                      )}
+                      {s.due_on && <span className={'text-[11px] tabular-nums shrink-0 ' + (sLate ? 'text-rose-600 font-bold' : 'text-muted')}>{nice(s.due_on)}</span>}
+                      <button onClick={() => onOpenTask(s.id)} className="shrink-0 text-muted/50 hover:text-ink opacity-0 group-hover/sub:opacity-100" title="Open this subtask"><ChevronRight size={13} /></button>
+                    </div>
+                  )
+                })}
                 {canEdit && <QuickAdd section={task.section || ''} parentId={task.id} act={act} busy={busy} />}
               </div>
+              {task.subtasks.length > 0 && (
+                <p className="text-[11px] text-muted mt-1">Each one is a task of its own — open it to give it an owner and a date, and it shows up on their My Tasks.</p>
+              )}
             </div>
           )}
 

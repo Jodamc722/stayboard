@@ -11,7 +11,7 @@ import { Check, Circle, CircleDot, Ban, Loader2, RefreshCw, ListChecks, Lock, Ma
 
 type Item = {
   id: string; projectId: string; title: string; status: string; due: string | null; priority: string
-  section: string | null; subtask: boolean; project: string; oneOnOne: boolean; where: string | null; mine?: boolean
+  section: string | null; subtask: boolean; parent?: string | null; project: string; oneOnOne: boolean; where: string | null; mine?: boolean
 }
 type Groups = { overdue: Item[]; today: Item[]; week: Item[]; later: Item[]; someday: Item[] }
 
@@ -136,8 +136,14 @@ export function MyTasks({ me }: { me: string }) {
                         className={'w-5 h-5 rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + CLS[it.status]}>
                         {busy === it.id ? <Loader2 size={10} className="animate-spin" /> : <I size={11} strokeWidth={3} />}
                       </button>
-                      <Link href={'/projects/' + it.projectId} className="min-w-0 flex-1">
-                        <span className="block text-[13px] text-ink truncate">{it.title}</span>
+                      {/* A SUBTASK CARRIES ITS PARENT. "Which unit" is a fine subtask under "Vendor
+                          visit for 1418/2" and a meaningless line on its own — and this is the one
+                          screen that shows it on its own. The link opens the subtask's own drawer. */}
+                      <Link href={'/projects/' + it.projectId + '?task=' + it.id} className="min-w-0 flex-1">
+                        <span className="block text-[13px] text-ink truncate">
+                          {it.subtask && it.parent && <span className="text-muted">{it.parent} <span className="text-muted/60">›</span> </span>}
+                          {it.title}
+                        </span>
                         <span className="block text-[11px] text-muted truncate">
                           {it.oneOnOne && <Lock size={9} className="inline -mt-0.5 mr-0.5" />}{it.mine ? '✅ My board' : it.project}
                           {it.where && <> · <MapPin size={9} className="inline -mt-0.5" /> {it.where}</>}
