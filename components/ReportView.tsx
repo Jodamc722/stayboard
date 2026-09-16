@@ -1663,8 +1663,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
            from the viewport (1181px) — so the slide overflowed its own wrapper to the right and
            sat 50px off centre with its edge clipped. The wrapper takes the full line and does
            the centring; the slide keeps its viewport-derived size. */
-        .sb-present-deck > section > div, .sb-present-deck > header > div {
+        /* Sections only. The cover builds its own absolutely-positioned layout inside the
+           header, and forcing flex onto that wrapper made the mark a flex item that stretched
+           to the full slide height — the logo filled the cover. */
+        .sb-present-deck > section > div {
           width: 100% !important; display: flex !important; justify-content: center !important; }
+        .sb-present-deck > header { width: 100%; }
+        .sb-present-deck > header > div { margin-left: auto; margin-right: auto; }
+        /* The mark is sized in the markup; nothing in presenter CSS may resize it. */
+        .onb-cover img[alt], .sb-slide img[alt] { align-self: flex-start; }
         .sb-present-deck .sb-slide, .sb-present-deck .onb-cover { margin-left: auto !important; margin-right: auto !important; flex: 0 0 auto; }
         /* A slide taller than the glass stops centring — otherwise its first line sits above the
            top edge with nothing to scroll back to. */
