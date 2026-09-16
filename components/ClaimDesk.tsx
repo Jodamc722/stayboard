@@ -20,7 +20,14 @@ import {
   claimTitle, urgencyOf, hardUrgencyOf, type Claim, type ClaimItem, type ChannelPolicy, type Stage,
 } from '@/lib/claims'
 
-type Props = { id: string }
+/**
+ * `embedded` is the desk rendered inside the board's pop-up rather than on its own page (Jon,
+ * 2026-09-16: "I want the pop-up to work the same way versus going to another page"). It only
+ * changes the two things that assume a page: the back link at the top, and where a delete leaves
+ * you. Everything else — the gates, the items, the stage rail — is the same component, so the
+ * pop-up and /claims/<id> can never drift into two different claim desks.
+ */
+type Props = { id: string; embedded?: boolean; onClose?: () => void; onChanged?: () => void }
 
 /** A stored attachment is a private storage path; reading it goes back through our own route. */
 function fileHref(v?: string | null): string {
@@ -66,7 +73,7 @@ async function toB64(file: File): Promise<string> {
   return btoa(bin)
 }
 
-export function ClaimDesk({ id }: Props) {
+export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
   const router = useRouter()
   const [claim, setClaim] = useState<Claim | null>(null)
   const [policy, setPolicy] = useState<ChannelPolicy | null>(null)
@@ -84,7 +91,7 @@ export function ClaimDesk({ id }: Props) {
       setClaim(j.claim)
       if (j.policy) setPolicy(j.policy)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
-  }, [id])
+  }, [id, onChanged])
   useEffect(() => { load() }, [load])
 
   const patch = useCallback(async (body: Record<string, any>, opts?: { silent?: boolean }) => {
@@ -96,6 +103,10 @@ export function ClaimDesk({ id }: Props) {
       if (!r.ok || j.ok === false) { setErr(j.error || 'Save failed.'); return false }
       if (j.claim) setClaim(j.claim)
       if (j.policy) setPolicy(j.policy)
+      // Inside the pop-up the board is still on screen behind it, so it has to hear about every
+      // save — otherwise you close the drawer onto a card showing the numbers from before you
+      // edited it, which reads as the save having failed.
+      if (onChanged) onChanged()
       if (j.note && j.note.ok === false) setErr('Saved, but the reservation note did not go to Guesty: ' + (j.note.error || 'unknown'))
       else if (j.note && j.note.ok === true && !opts?.silent) { setFlash('Note written onto the reservation in Guesty.'); setTimeout(() => setFlash(''), 4000) }
       return true
@@ -118,9 +129,9 @@ export function ClaimDesk({ id }: Props) {
 
   return (
     <>
-      <Link href="/claims" className="text-xs text-muted hover:text-ink inline-flex items-center gap-1"><ArrowLeft size={12} /> All claims</Link>
+      {embedded ? null : <Link href="/claims" className="text-xs text-muted hover:text-ink inline-flex items-center gap-1"><ArrowLeft size={12} /> All claims</Link>}
 
-      <header className="mt-3 mb-4 flex flex-wrap items-start justify-between gap-3">
+      <header className={(embedded ? '' : 'mt-3 ') + 'mb-4 flex flex-wrap items-start justify-between gap-3'}>
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-widest text-muted flex items-center gap-1.5"><ShieldAlert size={12} /> Claim</div>
           <h1 className="text-2xl font-bold text-ink mt-1 break-words">{claimTitle(claim)}</h1>
@@ -220,8 +231,9 @@ export function ClaimDesk({ id }: Props) {
               const r = await fetch('/api/claims/' + id, { method: 'DELETE' })
               const j = await r.json()
               if (!r.ok || j.ok === false) return j.error || 'Delete failed'
-              // Straight back to the board, where "Recently deleted" can put it back.
-              router.push('/claims')
+              // Back to the board either way, where "Recently deleted" can put it back — by closing
+              // the pop-up when we are inside one, and by navigating when we are a page.
+              if (embedded) { if (onChanged) onChanged(); if (onClose) onClose() } else router.push('/claims')
               return null
             } catch (e: any) { return String(e?.message || e) }
           }} />

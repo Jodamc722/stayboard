@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { ClaimDesk } from '@/components/ClaimDesk'
 import {
   ShieldAlert, Search, RefreshCw, Plus, X, CalendarClock, Loader2, ExternalLink, CheckCircle2, AlertTriangle, Trash2,
 } from 'lucide-react'
@@ -88,6 +89,11 @@ export function ClaimsBoard() {
   const [channel, setChannel] = useState('all')
   const [newOpen, setNewOpen] = useState(false)
   const [showTrash, setShowTrash] = useState(false)
+  // THE CLAIM OPENS IN A POP-UP, NOT A PAGE (Jon, 2026-09-16), the way the glitch board works. The
+  // id also lives in the URL as ?claim=<id> so the drawer survives a refresh and can be pasted to
+  // someone — the same trick the projects board uses for ?task=. /claims/<id> still renders the
+  // desk as a page, so every link already sent out keeps working.
+  const [openId, setOpenId] = useState<string | null>(null)
   const [showPolicy, setShowPolicy] = useState(false)
   const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
 
@@ -112,6 +118,19 @@ export function ClaimsBoard() {
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+  // ?claim=<id> opens the pop-up on first paint, and every open/close writes it back, so a refresh
+  // lands you where you were and the address bar is pasteable.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const id = new URLSearchParams(window.location.search).get('claim')
+    if (id) setOpenId(id)
+  }, [])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const u = new URL(window.location.href)
+    if (openId) u.searchParams.set('claim', openId); else u.searchParams.delete('claim')
+    window.history.replaceState(null, '', u.pathname + (u.search || '') + u.hash)
+  }, [openId])
 
   const all = (data && data.claims) || []
   const channels = useMemo(() => {
@@ -201,9 +220,9 @@ export function ClaimsBoard() {
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {atRisk.slice(0, 8).map(c => (
-              <Link key={c.id} href={'/claims/' + c.id} className="text-[12px] font-medium px-2 py-1 rounded-lg bg-white border border-rose-200 text-rose-900 hover:bg-rose-100">
+              <button key={c.id} type="button" onClick={() => setOpenId(c.id)} className="text-[12px] font-medium px-2 py-1 rounded-lg bg-white border border-rose-200 text-rose-900 hover:bg-rose-100">
                 {claimTitle(c)} · {daysUntil(c.deadline_on) !== null && (daysUntil(c.deadline_on) as number) < 0 ? 'expired' : (daysUntil(c.deadline_on) as number) + 'd'}
-              </Link>
+              </button>
             ))}
           </div>
         </div>
@@ -236,17 +255,23 @@ export function ClaimsBoard() {
           {STAGES.map(s => {
             const lane = byStage[s.key] || []
             const laneMoney = lane.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
-            return (
-              <div key={s.key} className="w-[86vw] sm:w-[290px] shrink-0 snap-start sm:snap-align-none">
+            // AN EMPTY STAGE IS A LABEL, NOT A COLUMN. The pipeline has seven stages and most of
+              // the time five of them hold nothing, so the board was mostly dashed boxes reading
+              // "Empty" — the two claims that needed attention had the same visual weight as the
+              // five that did not exist. An empty stage keeps its place in the sequence (the shape
+              // of the pipeline is the point of showing it) at a fraction of the width.
+              const empty = lane.length === 0
+              return (
+              <div key={s.key} className={(empty ? 'w-[38vw] sm:w-[132px] opacity-55' : 'w-[86vw] sm:w-[290px]') + ' shrink-0 snap-start sm:snap-align-none transition-all'}>
                 <div className="flex items-baseline gap-2 px-1 mb-1.5">
-                  <span className="text-sm font-semibold text-ink">{s.label}</span>
+                  <span className={'font-semibold text-ink ' + (empty ? 'text-[12px]' : 'text-sm')}>{s.label}</span>
                   <span className="text-[11px] font-semibold text-muted tabular-nums">{lane.length}</span>
                   {laneMoney > 0 && <span className="ml-auto text-[11px] text-muted tabular-nums">{money(laneMoney)}</span>}
                 </div>
-                <div className="text-[10px] text-muted px-1 mb-2 leading-tight">{s.blurb}</div>
+                {empty ? null : <div className="text-[10px] text-muted px-1 mb-2 leading-tight">{s.blurb}</div>}
                 <div className="space-y-2">
-                  {lane.map(c => <Card key={c.id} claim={c} onDelete={() => removeClaim(c.id)} />)}
-                  {lane.length === 0 && <div className="rounded-xl border border-dashed border-line px-3 py-4 text-[11px] text-muted text-center">Empty</div>}
+                  {lane.map(c => <Card key={c.id} claim={c} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} />)}
+                  {empty && <div className="rounded-xl border border-dashed border-line px-2 py-3 text-[10.5px] text-muted text-center">—</div>}
                 </div>
               </div>
             )
@@ -255,9 +280,50 @@ export function ClaimsBoard() {
         </>
       )}
 
-      {newOpen && <NewClaimModal onClose={() => setNewOpen(false)} onCreated={(id: string) => router.push('/claims/' + id)} />}
+      {newOpen && <NewClaimModal onClose={() => setNewOpen(false)} onCreated={(id: string) => { setNewOpen(false); load(); setOpenId(id) }} />}
+      {openId && <ClaimDrawer id={openId} onClose={() => { setOpenId(null); load() }} onChanged={load} />}
       {undo && <UndoBar item={undo} onUndone={() => { setUndo(null); load() }} onDismiss={() => setUndo(null)} />}
     </>
+  )
+}
+
+/**
+ * THE CLAIM POP-UP — the same desk /claims/<id> renders, in a sheet over the board.
+ *
+ * It is a sheet rather than a small dialog because a claim is not a small thing: the stage rail,
+ * the evidence gates, every item with its photos and the comment thread all have to fit, and a
+ * modal that makes you scroll a 400px box through all of that is worse than the page it replaced.
+ * Escape closes it, the backdrop closes it, and the board reloads on the way out so a card never
+ * shows numbers from before you edited it.
+ */
+function ClaimDrawer({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', esc)
+    // The page behind must not scroll with the sheet — on a phone that is how you lose your place
+    // on the board and come back to the top of it.
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { window.removeEventListener('keydown', esc); document.body.style.overflow = prev }
+  }, [onClose])
+  return (
+    <div className="fixed inset-0 z-50 bg-ink/40 flex items-start justify-center overflow-y-auto p-0 sm:p-4" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+        className="bg-app w-full sm:max-w-4xl sm:rounded-2xl sm:border sm:border-line shadow-xl min-h-full sm:min-h-0 sm:my-6">
+        <div className="sticky top-0 z-10 flex items-center gap-2 px-4 py-2.5 border-b border-line bg-white/95 backdrop-blur sm:rounded-t-2xl">
+          <span className="text-[11px] font-semibold uppercase tracking-widest text-muted">Claim</span>
+          <a href={'/claims/' + id} className="text-[11px] text-muted hover:text-ink inline-flex items-center gap-1" title="Open as its own page">
+            <ExternalLink size={11} /> full page
+          </a>
+          <button onClick={onClose} className="ml-auto text-muted hover:text-ink inline-flex items-center gap-1 text-[12px] font-semibold">
+            Close <X size={15} />
+          </button>
+        </div>
+        <div className="p-4">
+          <ClaimDesk id={id} embedded onClose={onClose} onChanged={onChanged} />
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -271,7 +337,7 @@ function Tile({ label, value, sub, good }: { label: string; value: string; sub?:
   )
 }
 
-function Card({ claim, onDelete }: { claim: Claim; onDelete: () => Promise<string | null> }) {
+function Card({ claim, onDelete, onOpen }: { claim: Claim; onDelete: () => Promise<string | null>; onOpen: () => void }) {
   const items = claim.items || []
   const gates = gatesFor(claim, items)
   const done = gates.filter(g => g.ok).length
@@ -279,7 +345,7 @@ function Card({ claim, onDelete }: { claim: Claim; onDelete: () => Promise<strin
   const u = urgencyOf(claim)
   const border = u === 'expired' ? 'border-rose-300' : u === 'critical' ? 'border-rose-200' : 'border-line'
   return (
-    <Link href={'/claims/' + claim.id} className={'group relative block rounded-xl border bg-white p-3 hover:shadow-sm transition ' + border}>
+    <button type="button" onClick={onOpen} className={'group relative block w-full text-left rounded-xl border bg-white p-3 hover:shadow-sm transition ' + border}>
       {/* The delete sits on the card but out of the way — on a mouse it appears on hover, and it
           swallows the click so it can never open the claim by accident. A touch screen has no
           hover, so on a phone it is simply always there; otherwise there is no delete at all. */}
@@ -314,7 +380,7 @@ function Card({ claim, onDelete }: { claim: Claim; onDelete: () => Promise<strin
       {claim.payment_verified === true && claim.owner_adjusted !== true && claim.stage === 'settle' && (
         <div className="mt-1.5 text-[10px] text-amber-800">Paid — owner statement still to adjust</div>
       )}
-    </Link>
+    </button>
   )
 }
 
