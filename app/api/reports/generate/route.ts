@@ -21,6 +21,10 @@ import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { paceStatus, paceGuidance } from '@/lib/pacing'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
 import { projectionSectionFor } from '@/lib/projections'
+import { computeScore } from '@/lib/optimize-score'
+import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
+import { getStaff } from '@/lib/staffing'
+import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
 
@@ -219,12 +223,124 @@ export async function POST(req: NextRequest) {
   // for owners based on projections") builds a SEASON PROJECTION report: hero + snapshot tiles +
   // the Next Season table and upsides, everything else omitted (an editor can un-hide sections
   // later — that is the customizable part). No period needed: the season IS the period.
-  const kind = str(body?.kind) === 'projection' ? 'projection' : 'review'
-  if (kind !== 'projection' && (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd)) {
+  // kind 'onboarding' (Jon, 2026-09-16) builds the WELCOME PRESENTATION for a new owner — the
+  // kickoff call as a document. Like 'projection' it has no period: the unit has no history yet,
+  // which is the entire point of the exercise.
+  const KINDS = ['review', 'projection', 'onboarding']
+  const kind = KINDS.indexOf(str(body?.kind)) >= 0 ? str(body?.kind) : 'review'
+  if (kind === 'review' && (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd)) {
     return NextResponse.json({ error: 'periodStart/periodEnd (YYYY-MM-DD) required' }, { status: 400 })
   }
   if (!listingIds.length && !buildings.length) {
     return NextResponse.json({ error: 'listingIds or buildings required' }, { status: 400 })
+  }
+
+  if (kind === 'onboarding') {
+    const { listings, scopeLabel } = await resolveScope(listingIds, buildings)
+    const ids0 = listings.map(l => l.id)
+    if (!ids0.length) return NextResponse.json({ error: 'Pick at least one unit to onboard.' }, { status: 400 })
+    const db0 = supabaseAdmin()
+
+    // The full rows — we need `raw` for the channel links, the description and the photos, which
+    // are the three things this document is actually built to review.
+    const { data: full } = await db0.from('guesty_listings')
+      .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, raw')
+      .in('id', ids0)
+    const rows: any[] = (full || []) as any[]
+
+    // Reviews feed the optimize score's review signal; a brand-new unit simply has none.
+    const { data: revs } = await db0.from('guesty_reviews')
+      .select('listing_id, rating, excluded_from_score').in('listing_id', ids0).limit(2000)
+    const byListing: Record<string, number[]> = {}
+    for (const r of ((revs || []) as any[])) {
+      if (r.excluded_from_score) continue
+      const n = Number(r.rating)
+      if (!Number.isFinite(n)) continue
+      ;(byListing[String(r.listing_id)] = byListing[String(r.listing_id)] || []).push(n)
+    }
+
+    const cards: ListingCard[] = rows.map(l => {
+      const rl = byListing[String(l.id)] || []
+      const avg = rl.length ? Math.round((rl.reduce((a, b) => a + b, 0) / rl.length) * 10) / 10 : null
+      let score: number | null = null
+      let parts: { k: string; v: number }[] = []
+      try {
+        const sc = computeScore(l, { avgRating: avg, reviewCount: rl.length })
+        score = sc.overall
+        parts = [
+          { k: 'Title', v: sc.title.score },
+          { k: 'Description', v: sc.description.score },
+          { k: 'Photos', v: sc.photos.score },
+          { k: 'Amenities', v: sc.amenities.score },
+          { k: 'Booking settings', v: sc.settings.score },
+        ]
+      } catch { /* a score is nice to have; the links and the copy are the point */ }
+      return listingCardFrom(l, score, parts)
+    }).sort((a, b) => a.name.localeCompare(b.name))
+
+    // Facts about the unit itself. The onboarding WALK is the better source when one exists —
+    // it is the only place that knows what is actually in the unit — so it wins over the listing.
+    const first = rows[0] || {}
+    const market = String(marketOf(first.nickname || first.title || '', first.building || '') || '')
+    let unitLine = ''
+    const unitFacts: KV[] = []
+    try {
+      const { data: walks } = await db0.from('onboarding_units')
+        .select('name, details, status, owner_name, listing_id').in('listing_id', ids0).limit(5)
+      const w: any = (walks || [])[0]
+      if (w) {
+        const { describeUnit } = await import('@/lib/onboarding')
+        try { unitLine = String(describeUnit(w.details || {}) || '') } catch { unitLine = '' }
+        if (w.status) unitFacts.push({ k: 'Inventory walk', v: String(w.status) })
+      }
+    } catch { /* no walk yet — fall back to the listing's own shape */ }
+    if (!unitLine) {
+      unitLine = [
+        first.bedrooms != null ? `${first.bedrooms} BR` : null,
+        first.bathrooms != null ? `${first.bathrooms} BA` : null,
+        first.max_occupancy != null ? `sleeps ${first.max_occupancy}` : null,
+      ].filter(Boolean).join(' \u00b7 ')
+    }
+    unitFacts.unshift({ k: 'Units in this onboarding', v: String(cards.length) })
+    if (market) unitFacts.push({ k: 'Market', v: market })
+
+    const tpl = await getOnboardingTemplate()
+    // No team saved in settings yet: fall back to the live roster so the section is never empty
+    // on the first run. Once Jon writes the cards once, the saved ones win.
+    if (!tpl.team.length) {
+      try {
+        const staff = await getStaff()
+        tpl.team = staff
+          .filter((p: any) => p.field !== false && ['supervision', 'maintenance', 'ccs'].indexOf(String(p.dept || '')) >= 0)
+          .filter((p: any) => !market || !p.area || String(p.area).toLowerCase() === market.toLowerCase())
+          .slice(0, 6)
+          .map((p: any) => ({ name: p.name, role: p.title || p.role || String(p.dept || ''), blurb: '', photo: null, market: p.area || '' }))
+      } catch { /* the section renders with whatever the template has */ }
+    }
+
+    const pStart = etToday()
+    const content = buildOnboardingContent(tpl, {
+      scopeLabel,
+      asOf,
+      market,
+      ownerName: str(body?.ownerName),
+      goLive: str(body?.goLive),
+      cards,
+      unitLine,
+      unitFacts,
+      bedrooms: first.bedrooms != null ? Number(first.bedrooms) : null,
+      heroImage: heroImageUrl || (Array.isArray(first.pictures) && first.pictures[0] ? String(first.pictures[0]) : null),
+    })
+
+    const code0 = makeCode()
+    const title0 = scopeLabel + ' \u2014 Owner Onboarding \u2014 ' + prettyDate(asOf)
+    const { data: ins0, error: err0 } = await supabaseAdmin().from('owner_reports').insert({
+      code: code0, title: title0, scope_label: scopeLabel, listing_ids: ids0,
+      period_start: pStart, period_end: pStart, as_of: asOf,
+      theme, status: 'draft', content, created_by: user.email || null,
+    }).select('id, code').limit(1)
+    if (err0) return NextResponse.json({ error: err0.message }, { status: 500 })
+    return NextResponse.json({ ok: true, id: (ins0 || [])[0]?.id, code: code0, aiUsed: false })
   }
 
   if (kind === 'projection') {
