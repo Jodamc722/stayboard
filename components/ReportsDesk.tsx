@@ -66,7 +66,13 @@ export function ReportsDesk() {
   // 'review' = the full performance review; 'projection' = the next-season projection report
   // built from Money → Projections (Jon, 2026-08-22). Projection needs no period — the season
   // IS the period — and skips the AI pass, so it generates in a few seconds.
-  const [kind, setKind] = useState<'review' | 'projection'>('review')
+  // 'onboarding' = the welcome presentation for a NEW owner (Jon, 2026-09-16). Also periodless —
+  // the unit has no history yet, which is why we are having the call.
+  const [kind, setKind] = useState<'review' | 'projection' | 'onboarding'>('review')
+  const [ownerName, setOwnerName] = useState('')
+  const [goLive, setGoLive] = useState('')
+  // The list below mixes three document types once you have a few of each; this filters it.
+  const [listKind, setListKind] = useState<'all' | 'review' | 'projection' | 'onboarding'>('all')
   const [periodStart, setPeriodStart] = useState(defaults.start)
   const [periodEnd, setPeriodEnd] = useState(defaults.end)
   const [showNew, setShowNew] = useState(false)
@@ -184,7 +190,10 @@ export function ReportsDesk() {
 
   async function generate() {
     if (!picked.length) { setMsg('Pick at least one property.'); return }
-    setGenerating(true); setMsg(kind === 'projection' ? 'Building the projection report… (~5s)' : 'Pulling data + writing the report… (~30s)')
+    setGenerating(true)
+    setMsg(kind === 'projection' ? 'Building the projection report… (~5s)'
+      : kind === 'onboarding' ? 'Building the onboarding presentation… (~10s)'
+      : 'Pulling data + writing the report… (~30s)')
     try {
       const r = await fetch('/api/reports/generate', {
         method: 'POST',
@@ -192,6 +201,8 @@ export function ReportsDesk() {
         body: JSON.stringify({
           kind,
           buildings: picked, periodStart, periodEnd,
+          ownerName: ownerName || undefined,
+          goLive: goLive || undefined,
           pacingUrl: pacing ? pacing.url : undefined,
           statementIds: stmtPicked.length ? stmtPicked : undefined,
           heroImageUrl: heroImg ? heroImg.url : undefined,
@@ -212,6 +223,13 @@ export function ReportsDesk() {
     await fetch('/api/reports?id=' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {})
     loadReports()
   }
+
+  // Which kind a stored row is. The kind lives in the title at generation ("… — Owner Onboarding
+  // — Sep 16, 2026"), so rows generated before onboarding existed still classify correctly.
+  const kindOfRow = (r: ReportRow): 'review' | 'projection' | 'onboarding' =>
+    /onboarding/i.test(String(r.title || '')) ? 'onboarding'
+      : /projection/i.test(String(r.title || '')) ? 'projection' : 'review'
+  const shownReports = listKind === 'all' ? reports : reports.filter(r => kindOfRow(r) === listKind)
 
   return (
     <div className="space-y-5">
@@ -243,7 +261,18 @@ export function ReportsDesk() {
                   className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (kind === 'projection' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                   Season projection
                 </button>
+                <button onClick={() => setKind('onboarding')}
+                  className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (kind === 'onboarding' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                  Owner onboarding
+                </button>
               </div>
+              {kind === 'onboarding' && (
+                <p className="mt-1.5 text-[12px] text-muted">
+                  The kickoff call as a document: their listing reviewed on every channel, the strategy, the ramp, the team,
+                  how billables work, and a worked statement. Questions are filled in live on the call and answers save themselves.
+                  The boilerplate is the house template &mdash; edit it once and every future onboarding starts from it.
+                </p>
+              )}
               {/* THE PROJECTION BUILDER LIVES HERE (Jon, 2026-08-25: "remove the projections tab,
                   in the owner reports it should have a projection builder"). Projections stopped
                   being a place you navigate to — it is a thing you build for an owner, so the entry
@@ -291,12 +320,25 @@ export function ReportsDesk() {
                     <input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
                   </label>
                 </>
+              ) : kind === 'onboarding' ? (
+                <>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Owner name</span>
+                    <input value={ownerName} onChange={e => setOwnerName(e.target.value)} placeholder="Optional"
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Target go-live</span>
+                    <input value={goLive} onChange={e => setGoLive(e.target.value)} placeholder="e.g. Nov 1"
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                </>
               ) : (
                 <span className="text-[12.5px] text-muted pb-2">Period: next high season (Nov–Apr), straight from the projection model.</span>
               )}
               <button onClick={generate} disabled={generating || !picked.length}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-5 py-2 hover:bg-brand-700 disabled:opacity-50">
-                {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : 'Generate report'}
+                {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : kind === 'onboarding' ? 'Generate onboarding' : 'Generate report'}
               </button>
               <button onClick={() => { setShowNew(false); setMsg('') }} className="text-sm text-muted hover:text-ink px-2 py-2">Cancel</button>
             </div>
