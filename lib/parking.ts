@@ -728,15 +728,46 @@ export type PermitView = {
   isPdf: boolean
 }
 
-/** The permit behind a token, or null — void, unknown and malformed all answer the same way. */
-export async function permitByToken(token: string): Promise<{ id: string; storage_path: string; mime: string | null; sourceCode: string | null; view: PermitView } | null> {
+/**
+ * THE PASS STOPS WORKING THE DAY AFTER THEY LEAVE (Jon, 2026-09-16: "After guest checkouts, 1 day
+ * post checkout make the link inactive").
+ *
+ * It is a gate credential sitting in a guest's inbox forever otherwise. Somebody who stayed in
+ * March should not be able to open the garage in November, and the link is passwordless by design,
+ * so nothing else is standing between that email and the door.
+ *
+ * It runs through the CHECKOUT DAY and goes dead the next morning — a guest loading the car at
+ * 10am on their last day still has their pass; the same link tomorrow does not. Expiry is decided
+ * here, at read time, rather than by a job that voids rows: there is no cron to fail, no clock to
+ * drift, and the permit row survives intact for "which code did we send them" six months later.
+ */
+export const PERMIT_GRACE_DAYS = 0
+export function permitExpired(checkOut: string | null, today?: string): boolean {
+  const co = str(checkOut).slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(co)) return false   // no checkout on file: never expire it
+  return (today || ymdET(new Date())) > addDays(co, PERMIT_GRACE_DAYS)
+}
+
+export type PermitHit = {
+  ok: true
+  id: string
+  storage_path: string
+  mime: string | null
+  sourceCode: string | null
+  view: PermitView
+}
+/** `gone` covers unknown, malformed, voided-with-no-replacement and spare — all the same to a guest. */
+export type PermitLookup = PermitHit | { ok: false; reason: 'gone' | 'expired'; view?: PermitView }
+
+/** The permit behind a token. Unknown, malformed and voided all answer the same way. */
+export async function permitByToken(token: string): Promise<PermitLookup> {
   const t = String(token || '')
-  if (!TOKEN_RE.test(t)) return null
+  if (!TOKEN_RE.test(t)) return { ok: false, reason: 'gone' }
   const db = supabaseAdmin()
-  const { data } = await db.from('parking_permits')
-    .select('id,storage_path,mime,status,unit,check_in,check_out,reservation_id,source_code').eq('permit_token', t).limit(1)
+  const cols = 'id,storage_path,mime,status,unit,check_in,check_out,reservation_id,source_code'
+  const { data } = await db.from('parking_permits').select(cols).eq('permit_token', t).limit(1)
   let p = (data || [])[0] as any
-  if (!p) return null
+  if (!p) return { ok: false, reason: 'gone' }
 
   // A REPLACED CODE FOLLOWS THE STAY, NOT THE FILE.
   //
@@ -747,27 +778,37 @@ export async function permitByToken(token: string): Promise<{ id: string; storag
   // good code sat on their stay. So a retired token resolves to whatever is live for the SAME
   // reservation: the person holding it was given it for that stay, and that stay is what they get.
   // With nothing live it still says nothing — a stay with no permit has no pass to show.
-  if (str(p.status) !== 'assigned' && p.reservation_id) {
-    const { data: live } = await db.from('parking_permits')
-      .select('id,storage_path,mime,status,unit,check_in,check_out,reservation_id,source_code')
+  const replaced = str(p.status) !== 'assigned' && !!p.reservation_id
+  if (replaced) {
+    const { data: live } = await db.from('parking_permits').select(cols)
       .eq('reservation_id', str(p.reservation_id)).eq('status', 'assigned').limit(1)
-    p = (live || [])[0] as any
+    // Keep the retired row if there is no live one, purely so the dates below can tell an EXPIRED
+    // stay from a missing one. A guest whose stay is over should hear that, not "no pass here".
+    p = ((live || [])[0] as any) || p
   }
-  // A spare has an image but no stay, so its token addresses nothing anyone should be sent to.
-  if (!p || str(p.status) !== 'assigned') return null
   const mime = p.mime ? str(p.mime) : null
+  const view: PermitView = {
+    unit: p.unit ? str(p.unit) : null,
+    checkIn: p.check_in ? str(p.check_in).slice(0, 10) : null,
+    checkOut: p.check_out ? str(p.check_out).slice(0, 10) : null,
+    mime,
+    isPdf: mime === 'application/pdf',
+  }
+
+  // CHECKED BEFORE STATUS, because an old token from a finished stay is the common case and
+  // "your stay has ended" is the true answer to it — not "this pass is no longer available",
+  // which sounds like something went wrong and invites a call to the front desk.
+  if (permitExpired(view.checkOut)) return { ok: false, reason: 'expired', view }
+  // A spare has an image but no stay, so its token addresses nothing anyone should be sent to.
+  if (str(p.status) !== 'assigned') return { ok: false, reason: 'gone' }
+
   return {
+    ok: true,
     id: str(p.id),
     storage_path: str(p.storage_path),
     mime,
     sourceCode: p.source_code ? str(p.source_code) : null,
-    view: {
-      unit: p.unit ? str(p.unit) : null,
-      checkIn: p.check_in ? str(p.check_in).slice(0, 10) : null,
-      checkOut: p.check_out ? str(p.check_out).slice(0, 10) : null,
-      mime,
-      isPdf: mime === 'application/pdf',
-    },
+    view,
   }
 }
 

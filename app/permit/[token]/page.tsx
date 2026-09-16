@@ -21,21 +21,29 @@ const fmt = (iso: string | null) => {
 
 export default async function PermitPage({ params }: { params: { token: string } }) {
   const token = String(params.token || '')
-  const p = await permitByToken(token)
+  const r = await permitByToken(token)
 
-  if (!p) {
+  if (!r.ok) {
+    // TWO DIFFERENT SENTENCES, because they send the reader somewhere different. A finished stay
+    // is the pass working exactly as intended and needs no phone call; anything else might be a
+    // code we replaced, and that person should look for our newer message.
+    const expired = r.reason === 'expired'
     return (
       <div className='min-h-screen bg-neutral-100 text-neutral-900 px-safe-keep grid place-items-center'>
         <div className='w-full max-w-sm rounded-2xl bg-white shadow-lg p-6 text-center'>
-          <div className='text-base font-bold mb-1'>This pass is no longer available</div>
+          <div className='text-base font-bold mb-1'>
+            {expired ? 'This pass has expired' : 'This pass is no longer available'}
+          </div>
           <p className='text-sm text-neutral-600'>
-            It may have been replaced with a newer one. Check your latest message from us, or ask the
-            front desk and they will send the current pass.
+            {expired
+              ? 'Parking passes stop working the day after checkout. If you are still on the property and need access, please contact us.'
+              : 'It may have been replaced with a newer one. Check your latest message from us, or ask the front desk and they will send the current pass.'}
           </p>
         </div>
       </div>
     )
   }
+  const p = r
 
   const file = '/api/public/permit/' + encodeURIComponent(token) + '/file'
   const dates = [fmt(p.view.checkIn), fmt(p.view.checkOut)].filter(Boolean).join(' → ')

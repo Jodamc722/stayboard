@@ -14,10 +14,19 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 export async function GET(req: NextRequest, { params }: { params: { token: string } }) {
-  const p = await permitByToken(String(params.token || ''))
-  // Unknown, malformed, voided and "this is a spare" all answer identically: a token that does not
-  // resolve says nothing about what it used to open.
-  if (!p) return new NextResponse('This parking pass is no longer available.', { status: 404 })
+  const r = await permitByToken(String(params.token || ''))
+  // Unknown, malformed, voided, spare and finished-stay all answer with a 404 — a token that does
+  // not resolve says nothing about what it used to open. Only the wording differs, and only so a
+  // guest whose stay has ended is not told something went wrong.
+  if (!r.ok) {
+    return new NextResponse(
+      r.reason === 'expired'
+        ? 'This parking pass expired when the stay ended.'
+        : 'This parking pass is no longer available.',
+      { status: 404 },
+    )
+  }
+  const p = r
 
   // THE ONE SURFACE HERE WITH NO PASSCODE, so it is the one that most needs a trail. Migration 093
   // calls parking_access_log "the audit trail for a credential a third party can mint and read";
