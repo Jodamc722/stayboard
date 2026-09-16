@@ -147,5 +147,10 @@ export const config = {
   // /api is excluded entirely: the middleware already declared /api an open path and ignored its
   // own auth result there, so every API call was paying a wasted network auth round-trip (and the
   // 2.5s worst-case stall) for nothing. Route handlers do their own auth.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|icon-180.png|api/).*)']
+  // STATIC IMAGES ARE PUBLIC, BY EXTENSION RATHER THAN BY NAME. The list used to be three
+  // icon filenames, so /stay-logo.png — the mark on every owner-facing document — was being
+  // caught by auth and answered with a 307 to the login page. The share link renders for an
+  // owner who is not signed in, so the logo was a broken image on every slide of every deck
+  // and every report, and nobody noticed because the <img> was present in the DOM.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|api/|.*\\.(?:png|jpe?g|gif|svg|webp|ico|avif|woff2?)$).*)']
 }
