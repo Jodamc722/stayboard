@@ -1,5 +1,5 @@
 // Cases for the cleaning-fee rule. Run: npx tsx lib/__tests__/owner-audit-cleaning.test.ts
-import { cleaningGaps, cleaningNote, type CleanStay } from '../owner-audit-cleaning'
+import { cleaningGaps, cleaningNote, BUNDLED_FEE_RE, type CleanStay } from '../owner-audit-cleaning'
 
 let pass = 0, fail = 0
 function ok(name: string, cond: boolean, extra?: any) {
@@ -9,7 +9,7 @@ function ok(name: string, cond: boolean, extra?: any) {
 }
 
 const stay = (o: Partial<CleanStay> & { resId: string; unitKey: string }): CleanStay => ({
-  when: '2026-07-01', net: 0, lines: 0, hadNegative: false, ...o,
+  when: '2026-07-01', net: 0, lines: 0, hadNegative: false, bundled: 0, ...o,
 });
 
 // ---- a unit that charges everybody: one $0 stay is the exception -------------------------------
@@ -146,6 +146,96 @@ const stay = (o: Partial<CleanStay> & { resId: string; unitKey: string }): Clean
   ok('a note exists for every kind', (['ok'] as const).every(() => true)
     && ['unit', 'unit_more', 'refunded', 'missing', 'thin'].every(k =>
       cleaningNote({ resId: 'x', kind: k as any, severity: 'review', expected: 150, peers: 4, siblings: 2 }, 'U', null).length > 20))
+}
+
+
+// ---- EXPEDIA'S LUMP IS NOT A MISSING FEE -------------------------------------------------------
+// Jon, 2026-09-16: "for Expedia, sometimes the fees aren't broken out... The service is the bulk
+// fees." 121 bookings from June carried a Service line averaging $162.79 and no cleaning line.
+{
+  const stays: CleanStay[] = [
+    stay({ resId: 'a', unitKey: 'U1', net: 150 }),
+    stay({ resId: 'b', unitKey: 'U1', net: 150 }),
+    stay({ resId: 'c', unitKey: 'U1', net: 150 }),
+    stay({ resId: 'exp', unitKey: 'U1', net: 0, bundled: 162.79 }),
+  ]
+  const v = cleaningGaps(stays)
+  ok('the lump stay is reported, not silent', v.length === 1 && v[0].resId === 'exp', v)
+  ok('it is bundled, not missing', v[0].kind === 'bundled', v[0])
+  ok('it never joins the flagged count', v[0].severity === 'info', v[0])
+  ok('it carries the lump amount', v[0].bundled === 162.79, v[0])
+  const note = cleaningNote(v[0], 'Elser 2707', null)
+  ok('the note names the lump and points at prep', /\$162\.79/.test(note) && /prep list/i.test(note), note)
+  ok('the note does not call it missing', !/missing/i.test(note), note)
+}
+
+// ---- A UNIT THAT ONLY SELLS ON EXPEDIA IS NOT A BROKEN LISTING ---------------------------------
+// The whole reason the lump is pulled out of the zero pile: left in, this unit would read as
+// "never charged anybody" and earn a listing-setting finding on a listing that is set up right.
+{
+  const stays: CleanStay[] = Array.from({ length: 6 }, (_, i) =>
+    stay({ resId: 'e' + i, unitKey: 'EXPONLY', net: 0, bundled: 140 }))
+  const v = cleaningGaps(stays)
+  ok('six lump stays, six verdicts', v.length === 6, v.length)
+  ok('none of them is a unit finding', !v.some(x => x.kind === 'unit' || x.kind === 'unit_more'), v.map(x => x.kind))
+  ok('nothing is flagged', v.every(x => x.severity === 'info'), v.map(x => x.severity))
+}
+
+// ---- a lump does NOT excuse a unit that also has real gaps -------------------------------------
+{
+  const stays: CleanStay[] = [
+    stay({ resId: 'a', unitKey: 'U', net: 150 }),
+    stay({ resId: 'b', unitKey: 'U', net: 150 }),
+    stay({ resId: 'c', unitKey: 'U', net: 150 }),
+    stay({ resId: 'exp', unitKey: 'U', net: 0, bundled: 160 }),
+    stay({ resId: 'gap', unitKey: 'U', net: 0 }),
+  ]
+  const v = cleaningGaps(stays)
+  ok('the real gap is still high', v.find(x => x.resId === 'gap')?.severity === 'high', v)
+  ok('the lump is still info', v.find(x => x.resId === 'exp')?.severity === 'info', v)
+  ok('the lump is not counted as a peer', v.find(x => x.resId === 'gap')?.peers === 3, v)
+}
+
+// ---- a cleaning line WINS over a lump ------------------------------------------------------------
+// One booking in the real data carries both. It charged; there is nothing to say.
+{
+  const v = cleaningGaps([
+    stay({ resId: 'a', unitKey: 'U', net: 120, bundled: 90 }),
+    stay({ resId: 'b', unitKey: 'U', net: 120 }),
+  ])
+  ok('a stay that charged is not reported, lump or no lump', v.length === 0, v)
+}
+
+// ---- a zero or negative lump is not a lump -------------------------------------------------------
+{
+  const stays: CleanStay[] = [
+    stay({ resId: 'a', unitKey: 'U', net: 150 }),
+    stay({ resId: 'b', unitKey: 'U', net: 150 }),
+    stay({ resId: 'c', unitKey: 'U', net: 150 }),
+    stay({ resId: 'z', unitKey: 'U', net: 0, bundled: 0 }),
+    stay({ resId: 'n', unitKey: 'U', net: 0, bundled: -50 }),
+  ]
+  const v = cleaningGaps(stays)
+  ok('a $0 lump is still a missing fee', v.find(x => x.resId === 'z')?.kind === 'missing', v)
+  ok('a reversed lump is still a missing fee', v.find(x => x.resId === 'n')?.kind === 'missing', v)
+}
+
+// ---- WHAT COUNTS AS A LUMP LINE -------------------------------------------------------------------
+{
+  ok('Service', BUNDLED_FEE_RE.test('Service'))
+  ok('service fee', BUNDLED_FEE_RE.test('service fee'))
+  ok('Service Charge', BUNDLED_FEE_RE.test('Service Charge'))
+  ok('Additional Fees & Room Fees', BUNDLED_FEE_RE.test('Additional Fees & Room Fees'))
+  ok('Room Fees', BUNDLED_FEE_RE.test('Room Fees'))
+  // The word has to stand alone, or a pet-service or room-service charge would silence a real gap.
+  ok('Service animal fee is not a lump', !BUNDLED_FEE_RE.test('Service animal fee'))
+  ok('Room service is not a lump', !BUNDLED_FEE_RE.test('Room service'))
+  ok('Host channel Fee is not a lump', !BUNDLED_FEE_RE.test('Host channel Fee'))
+  ok('Cleaning fee is not a lump', !BUNDLED_FEE_RE.test('Cleaning fee'))
+  ok('Revenue Fee is not a lump', !BUNDLED_FEE_RE.test('Revenue Fee'))
+  ok('Markup is not a lump', !BUNDLED_FEE_RE.test('Markup'))
+  ok('Accommodation fare is not a lump', !BUNDLED_FEE_RE.test('Accommodation fare'))
+  ok('Resort fee is not a lump', !BUNDLED_FEE_RE.test('Resort fee'))
 }
 
 console.log((fail ? 'FAILED' : 'ok') + ' — ' + pass + ' passed, ' + fail + ' failed')
