@@ -17,20 +17,24 @@
 //   • THE STANDING LIST IS EDITED SEPARATELY, behind full access, so "we do this every day" keeps
 //     meaning something.
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
   ClipboardCheck, Loader2, Check, Clock, AlertTriangle, Plus, X, Pencil, Trash2,
-  CheckCircle2, Sunrise, Sun, Sunset, Moon,
+  CheckCircle2, Sunrise, Sun, Sunset, Moon, ArrowUpRight,
 } from 'lucide-react'
 
-import { clockLabel, type Band } from '@/lib/checklist-shared'
+import { clockLabel, signalLabel, SIGNAL_META, type Band } from '@/lib/checklist-shared'
 type Row = {
   id: string; title: string; detail: string | null
   band: Band; by_time: string | null; owner_role: string | null; sort: number | null; active: boolean
+  link: string | null; signal: string | null
   done: boolean; done_at: string | null; done_by: string | null; note: string | null
   late: boolean; in_minutes: number | null
 }
 type Data = {
   day: string; clock: string; rows: Row[]
+  /** Live counts for the signals this list names, keyed by signal. Missing or null = no chip. */
+  signals?: Record<string, number | null>
   progress: { total: number; done: number; late: number; pct: number; next: Row | null }
   canTick?: boolean; canManage?: boolean
 }
@@ -47,6 +51,11 @@ const shortTime = (iso: string | null) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 }
 const firstName = (s: string | null) => String(s || '').split(/[\s@]/)[0]
+
+// THE CHIP. The server sends the NUMBER and lib/checklist-shared owns what it reads like, so the
+// page and the API can never disagree about the wording. Zero is good news on every signal here,
+// so the chip goes quiet rather than loud.
+const chipTone = (n: number) => (n > 0 ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-app text-muted ring-line')
 
 export function DailyChecklist() {
   const [data, setData] = useState<Data | null>(null)
@@ -178,7 +187,8 @@ export function DailyChecklist() {
 
               <div className="divide-y divide-line">
                 {rows.map(r => (
-                  <ItemRow key={r.id} r={r} busy={busy} act={act} canTick={canTick} manage={manage} />
+                  <ItemRow key={r.id} r={r} busy={busy} act={act} canTick={canTick} manage={manage}
+                    count={r.signal ? (data.signals?.[r.signal] ?? null) : null} />
                 ))}
                 {rows.length === 0 && <p className="px-3 py-3 text-[12px] text-muted">Nothing in this part of the day.</p>}
                 {manage && <AddItem band={band.key} act={act} busy={busy} nextSort={(rows[rows.length - 1]?.sort || 0) + 10} />}
@@ -195,12 +205,14 @@ export function DailyChecklist() {
   )
 }
 
-function ItemRow({ r, busy, act, canTick, manage }: {
+function ItemRow({ r, busy, act, canTick, manage, count }: {
   r: Row; busy: string | null; act: (b: any, k: string) => Promise<boolean>; canTick: boolean; manage: boolean
+  count: number | null
 }) {
   const [open, setOpen] = useState(false)
   const due = clockLabel(r.by_time)
   const soon = !r.done && r.in_minutes != null && r.in_minutes >= 0 && r.in_minutes <= 30
+  const chip = signalLabel(r.signal, count)
   return (
     <div className={'px-3 py-2.5 ' + (r.late ? 'bg-rose-50/60' : '')}>
       <div className="flex items-start gap-2.5">
@@ -217,7 +229,20 @@ function ItemRow({ r, busy, act, canTick, manage }: {
 
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className={'text-[13.5px] leading-snug ' + (r.done ? 'text-muted line-through' : 'text-ink font-medium')}>{r.title}</span>
+            {r.link
+              ? (
+                // The row is an instruction; the link is where the instruction is carried out. It
+                // does NOT tick the item — going to look at something is not having done it.
+                <Link href={r.link}
+                  className={'text-[13.5px] leading-snug inline-flex items-center gap-1 hover:underline ' +
+                    (r.done ? 'text-muted line-through' : 'text-ink font-medium')}>
+                  {r.title}<ArrowUpRight size={12} className="text-muted shrink-0" />
+                </Link>
+              )
+              : <span className={'text-[13.5px] leading-snug ' + (r.done ? 'text-muted line-through' : 'text-ink font-medium')}>{r.title}</span>}
+            {chip && !r.done && (
+              <span className={'text-[10.5px] font-bold px-1.5 py-0.5 rounded ring-1 tabular-nums ' + chipTone(count || 0)}>{chip}</span>
+            )}
             {due && (
               <span className={'text-[11px] font-bold tabular-nums inline-flex items-center gap-0.5 ' +
                 (r.done ? 'text-muted' : r.late ? 'text-rose-700' : soon ? 'text-amber-700' : 'text-muted')}>
@@ -258,6 +283,8 @@ function EditItem({ r, act, busy, onClose }: { r: Row; act: (b: any, k: string) 
   const [byTime, setByTime] = useState((r.by_time || '').slice(0, 5))
   const [role, setRole] = useState(r.owner_role || '')
   const [band, setBand] = useState<Band>(r.band)
+  const [link, setLink] = useState(r.link || '')
+  const [signal, setSignal] = useState(r.signal || '')
   return (
     <div className="mt-2 ml-7 rounded-lg border border-line bg-app/40 p-2.5 space-y-2">
       <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What has to happen"
@@ -280,10 +307,25 @@ function EditItem({ r, act, busy, onClose }: { r: Row; act: (b: any, k: string) 
           <input value={role} onChange={e => setRole(e.target.value)} placeholder="Front desk" className="w-full rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
         </label>
       </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-0.5">Opens</span>
+          <input value={link} onChange={e => setLink(e.target.value)} placeholder="/glitches"
+            className="w-full rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
+        </label>
+        <label className="block">
+          <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted mb-0.5">Live count</span>
+          <select value={signal} onChange={e => setSignal(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]">
+            <option value="">None</option>
+            {Object.entries(SIGNAL_META).map(([k, m]) => <option key={k} value={k}>{m.title}</option>)}
+            {signal && !SIGNAL_META[signal] && <option value={signal}>{signal} (unknown)</option>}
+          </select>
+        </label>
+      </div>
       <div className="flex items-center gap-2">
         <button onClick={onClose} className="text-[12px] font-semibold text-muted hover:text-ink">Cancel</button>
         <button
-          onClick={async () => { if (await act({ action: 'itemSet', itemId: r.id, title, detail, by_time: byTime, band, owner_role: role }, 'edit' + r.id)) onClose() }}
+          onClick={async () => { if (await act({ action: 'itemSet', itemId: r.id, title, detail, by_time: byTime, band, owner_role: role, link, signal }, 'edit' + r.id)) onClose() }}
           disabled={busy === 'edit' + r.id || !title.trim()}
           className="ml-auto rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-bold disabled:opacity-40">Save</button>
       </div>
