@@ -234,7 +234,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   // roster: the roster is a payroll list of 58 and it was seeding the deck with whoever happened
   // to sort first. Edit these four in settings and every future deck follows.
   team: [
-    { name: 'Jonathan', role: 'Founder', blurb: 'Runs Stay Hospitality. On your onboarding call, and the person to call when something matters more than a ticket.', photo: null, phone: '', email: '' },
+    { name: 'Jonathan', role: 'General Manager', blurb: 'Runs Stay Hospitality day to day. On your onboarding call, and the person to call when something matters more than a ticket.', photo: null, phone: '', email: '' },
     { name: 'Roberto Chiriboga', role: 'Operations Manager', blurb: 'Owns what happens in the unit \u2014 turnovers, inspections and the maintenance calendar. Your day-to-day answer.', photo: null, phone: '', email: '' },
     { name: 'Karla Valle', role: 'Guest Care', blurb: 'Answers your guests, from the booking question to the 11pm one. Most of what she handles never needs to reach you.', photo: null, phone: '', email: '' },
     { name: 'Bernadette', role: 'Owner Relations', blurb: 'Your statements, your payouts and your reporting. The person to ask about any line on a statement.', photo: null, phone: '', email: '' },
