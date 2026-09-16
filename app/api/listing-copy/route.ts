@@ -35,7 +35,10 @@ const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const GAP_MS = 250            // between Guesty writes — polite, and well under any burst limit
 const MAX_PER_CALL = 60       // the client chunks; this is the backstop
 
-const STD_KEYS: BulkSectionKey[] = ['access', 'neighborhood', 'transit']
+// What a property remembers as its own. Other notes is here too since 2026-09-16 — Jon put it on
+// the property panel as well as the portfolio one, and a property that has its own note should keep
+// it the same way it keeps its lobby directions.
+const STD_KEYS: BulkSectionKey[] = ['access', 'neighborhood', 'transit', 'notes']
 
 type Row = { id: string; title: any; nickname: any; building: any; unit: any; status: any; raw: any }
 
@@ -110,7 +113,7 @@ export async function GET(req: NextRequest) {
   const building = units[0].building
   let standard: Record<string, string> = {}
   try {
-    const { data } = await sb.from('property_copy_standards').select('access, neighborhood, transit, updated_by, updated_at').eq('building', building).maybeSingle()
+    const { data } = await sb.from('property_copy_standards').select('access, neighborhood, transit, notes, updated_by, updated_at').eq('building', building).maybeSingle()
     if (data) standard = data as any
   } catch { /* the standard is a convenience; its absence never blocks editing */ }
 
@@ -151,8 +154,9 @@ export async function POST(req: NextRequest) {
   if (!chosen.length) return NextResponse.json({ error: 'None of those listings are live.' }, { status: 400 })
   const targets = chosen.map(toTarget)
 
-  // THE RULE. Checked against the real roster, not what the client claims.
-  const bad = scopeError(keys, targets, roster)
+  // THE RULE. Checked against the real roster and the level the caller is standing on, not what
+  // the client claims about either.
+  const bad = scopeError(keys, targets, roster, scope)
   if (bad) return NextResponse.json({ error: bad }, { status: 400 })
 
   const plan = planBulk(targets, edits)
