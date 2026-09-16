@@ -1670,8 +1670,16 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           width: 100% !important; display: flex !important; justify-content: center !important; }
         .sb-present-deck > header { width: 100%; }
         .sb-present-deck > header > div { margin-left: auto; margin-right: auto; }
-        /* The mark is sized in the markup; nothing in presenter CSS may resize it. */
-        .onb-cover img[alt], .sb-slide img[alt] { align-self: flex-start; }
+        /* THE MARK IS CLAMPED, NOT NEGOTIATED. The cover's inner column is a flex container,
+           and in present mode the slide is re-sized by CSS — between the two, the logo kept
+           being handed a height it had not asked for and filled the cover. Inline height was
+           not winning, so the size is pinned here where nothing downstream can touch it. */
+        .onb-cover > div > img:first-child {
+          height: 26px !important; max-height: 26px !important; width: auto !important;
+          max-width: 190px !important; flex: 0 0 auto !important; align-self: flex-start !important;
+          object-fit: contain !important; }
+        .sb-present-deck .onb-cover > div > img:first-child {
+          height: 24px !important; max-height: 24px !important; }
         .sb-present-deck .sb-slide, .sb-present-deck .onb-cover { margin-left: auto !important; margin-right: auto !important; flex: 0 0 auto; }
         /* A slide taller than the glass stops centring — otherwise its first line sits above the
            top edge with nothing to scroll back to. */
