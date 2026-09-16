@@ -32,7 +32,7 @@ import Link from 'next/link'
 import {
   Sparkles, RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, Crown, AlertTriangle,
   MessageSquare, CheckCircle2, Star, Phone, ClipboardCheck, Undo2, Clock, Copy, Send, ChevronDown, ChevronRight,
-  Circle, CircleDot, Ban, Plus, ListChecks, Lock, MapPin, CalendarDays, Truck,
+  Circle, CircleDot, Ban, Plus, ListChecks, Lock, MapPin, CalendarDays, Truck, HelpCircle,
 } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, NextAction, Handled } from '@/lib/command-day'
@@ -171,6 +171,7 @@ export function CommandCockpit() {
             somebody else has no other way of knowing. */}
         <VendorVisitsCard />
         <MyTasksCard />
+        <EveQuestionsCard />
         <CompletedCard d={data} onChanged={reload} tick={tick} />
         <EveLine />
         {/* A listing-settings check, not the day — it stays, quietly, at the bottom. */}
@@ -584,6 +585,123 @@ function CompletedCard({ d, onChanged, tick }: { d: CommandDay; onChanged: () =>
 }
 
 // ── EVE — one line; the floating bubble is on every page ──────────────────────────────────────
+// ── EVE'S QUESTIONS ─────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-16: "instead of questions for Eve being answered through Telegram, can we just
+// create a memory page or memory tab... stop asking through Telegram and just prep questions in
+// this section."
+//
+// The queue itself is not new — it has always lived in Users & admin -> Settings -> Eve -> Memory.
+// That is four levels down and owner-only, which is why the only way anyone ever answered one was
+// Eve tapping them on Telegram. So the answer is not another queue, it is this one showing up
+// where Jon already looks every morning, answerable in place. Telegram's half is off
+// (lib/eve/ask.ts, includeQuestions) and the inbound reply handler stays, so anything already sent
+// can still be answered there.
+//
+// TWO READS, NOT ONE. The common case is zero questions, and pulling sixty rows of question text
+// and evidence JSON to render nothing is the waste this page was rebuilt to remove. So: a count
+// first (one digit, cached five minutes), and the rows only once the count says there is something
+// to show.
+type EveQ = { id: string; question: string; why: string | null; scope: string; asked_count: number; source: string }
+const EVE_COUNT_URL = '/api/eve/questions?count=1'
+
+function EveQuestionsCard() {
+  const { data, error } = useCachedFetch<{ count: number }>(EVE_COUNT_URL, { ttl: 300_000 })
+  const count = Number(data?.count || 0)
+  const [qs, setQs] = useState<EveQ[] | null>(null)
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState('')
+  const [filed, setFiled] = useState(0)
+
+  useEffect(() => {
+    if (count > 0 && qs === null) {
+      fetch('/api/eve/questions')
+        .then(r => r.json())
+        .then(r => setQs(Array.isArray(r?.questions) ? r.questions : []))
+        .catch(() => setQs([]))
+    }
+  }, [count, qs])
+
+  async function act(id: string, op: 'answer' | 'dismiss') {
+    setBusy(id)
+    try {
+      const res = await fetch('/api/eve/questions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ op, id, answer: draft[id] || '' }),
+      })
+      if (!res.ok) return
+      setQs(x => (x || []).filter(q => q.id !== id))
+      if (op === 'answer') setFiled(n => n + 1)
+      invalidateCache(EVE_COUNT_URL)
+    } finally { setBusy('') }
+  }
+
+  // Eve is admin-only; for everybody else the count read 403s and this card simply is not there.
+  if (error) return null
+  if (!count) return null
+  const live = qs || []
+  if (qs && live.length === 0 && filed === 0) return null
+
+  return (
+    <section className={CARD}>
+      <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
+        <HelpCircle size={14} className="text-muted" />
+        <h2 className="text-[13.5px] font-bold text-ink">
+          Eve is asking you <span className="text-muted font-semibold tabular-nums">{live.length || count}</span>
+        </h2>
+        <a href="/users?tab=settings&panel=eve" className="ml-auto text-[11.5px] font-semibold text-muted hover:text-ink">
+          Memory
+        </a>
+      </div>
+
+      {qs === null && (
+        <div className="px-4 py-3 text-[12.5px] text-muted flex items-center gap-2">
+          <Loader2 size={12} className="animate-spin" /> Getting them&hellip;
+        </div>
+      )}
+
+      {live.length > 0 && (
+        <div className="px-4 py-3 space-y-2.5">
+          <p className="text-[11.5px] text-muted">
+            Everything else she knows she worked out from records. These are the things only a person can tell her — your
+            answer becomes a memory with your name on it, and outranks anything she concluded herself.
+          </p>
+          {live.map(q => (
+            <div key={q.id} className="rounded-xl border border-line bg-app px-3 py-2.5">
+              <p className="text-[13px] font-semibold text-ink">{q.question}</p>
+              {q.why && <p className="text-[12px] text-muted mt-0.5">Why she is asking: {q.why}</p>}
+              <p className="text-[11px] text-muted mt-1">
+                {q.scope}{Number(q.asked_count) > 1 ? ` \u00b7 asked ${q.asked_count} times` : ''}
+                {q.source === 'eve' ? ' \u00b7 came up in conversation' : ''}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  className="flex-1 min-w-[220px] text-[13px] text-ink bg-white border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                  placeholder="Tell her&hellip;" value={draft[q.id] || ''}
+                  onChange={e => setDraft(d => ({ ...d, [q.id]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter' && (draft[q.id] || '').trim()) act(q.id, 'answer') }}
+                />
+                <button onClick={() => act(q.id, 'answer')} disabled={busy === q.id || !(draft[q.id] || '').trim()}
+                  className={BTN + ' bg-ink text-white'}>
+                  {busy === q.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save
+                </button>
+                <button onClick={() => act(q.id, 'dismiss')} disabled={busy === q.id}
+                  className={BTN + ' text-muted hover:text-ink'}>Not worth answering</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {filed > 0 && (
+        <div className="px-4 py-2.5 border-t border-line text-[12.5px] text-muted flex items-center gap-2">
+          <CheckCircle2 size={13} className="text-emerald-600" />
+          {filed === 1 ? 'Filed as a rule, with your name on it.' : `${filed} filed as rules, with your name on them.`}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function EveLine() {
   return (
     <div className="flex items-center gap-1.5 flex-wrap px-1 text-[12px]">
