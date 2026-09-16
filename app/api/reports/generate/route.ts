@@ -219,6 +219,11 @@ export async function POST(req: NextRequest) {
   // statements" pulls everything the picker offered instead of silently dropping the tail.
   const statementIds: string[] = Array.isArray(body?.statementIds) ? body.statementIds.map((x: any) => String(x)).filter(Boolean).slice(0, 60) : []
   const heroImageUrl = str(body?.heroImageUrl)
+  // SCOPE LABEL OVERRIDE (Jon, 2026-09-16). resolveScope names a report after the buildings its
+  // units fall in, which is right for a building report and wrong for an owner's: an owner with
+  // units in two buildings would get "17WEST + 906" on the cover of their own report. When the
+  // desk scopes by owner it sends the owner's name, and that is what the document is called.
+  const scopeLabelIn = str(body?.scopeLabel).slice(0, 120)
   // kind 'projection' (Jon, 2026-08-22: "i just want to be able to create a customizable report
   // for owners based on projections") builds a SEASON PROJECTION report: hero + snapshot tiles +
   // the Next Season table and upsides, everything else omitted (an editor can un-hide sections
@@ -236,7 +241,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (kind === 'onboarding') {
-    const { listings, scopeLabel } = await resolveScope(listingIds, buildings)
+    const { listings, scopeLabel: autoLabel } = await resolveScope(listingIds, buildings)
+    const scopeLabel = scopeLabelIn || autoLabel
     const ids0 = listings.map(l => l.id)
     if (!ids0.length) return NextResponse.json({ error: 'Pick at least one unit to onboard.' }, { status: 400 })
     const db0 = supabaseAdmin()
@@ -344,7 +350,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (kind === 'projection') {
-    const { listings, scopeLabel } = await resolveScope(listingIds, buildings)
+    const { listings, scopeLabel: autoLabel } = await resolveScope(listingIds, buildings)
+    const scopeLabel = scopeLabelIn || autoLabel
     const ids2 = listings.map(l => l.id)
     if (!ids2.length) return NextResponse.json({ error: 'No active listings in that scope.' }, { status: 400 })
     let proj: ReportContent['projection'] = null
