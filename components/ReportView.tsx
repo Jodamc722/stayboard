@@ -1484,6 +1484,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .onb-more > summary::-webkit-details-marker { display: none; }
         .onb-more > summary::before { content: '+ '; }
         .onb-more[open] > summary::before { content: '– '; }
+        @media (max-width: 860px) { .onb-team { grid-template-columns: 1fr 1fr !important; } }
         .sb-navbar { scrollbar-width: none; }
         .sb-navbar::-webkit-scrollbar { display: none; }
         .sb-report .onb-sec { padding-bottom: 0.5rem; }
@@ -1496,6 +1497,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           .onb-row { grid-template-columns: 1fr !important; }
           .onb-strip { grid-template-columns: 1fr 1fr !important; }
           .onb-cover, .onb-cover-in { min-height: 380px; }
+          .onb-team { grid-template-columns: 1fr 1fr !important; }
           .onb-shots { grid-template-columns: 1fr 1fr !important; }
           .onb-shots img { grid-row: auto !important; aspect-ratio: 4 / 3 !important; }
         }
@@ -1829,7 +1831,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           const Head = ({ k, label }: { k: string; label: string }) => (
             <div className="onb-head">
               <p className="text-[12px] font-medium tabular-nums" style={{ color: t.muted }}>
-                {numOf(k) ? numOf(k) + ' ' : ''}{label}
+                {(() => {
+                  const n = numOf(k)
+                  const h = String(sec(k).headline || '').toLowerCase()
+                  const l = label.toLowerCase()
+                  // "03  Meet the team" directly above "Meet the team" is the page saying the
+                  // same thing twice in two sizes — exactly the noise this pass removes.
+                  const dupe = !!h && (h.indexOf(l) >= 0 || l.indexOf(h) >= 0)
+                  return n ? (dupe ? n : n + '\u2003' + label) : (dupe ? '' : label)
+                })()}
               </p>
               <h2 className="mt-4 text-[26px] sm:text-[31px] font-semibold tracking-[-0.018em] leading-[1.16]" style={{ color: t.ink, maxWidth: '22ch' }}>
                 <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
@@ -2060,15 +2070,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <SectionShell id="team" title="Meet the team" hidden={hid('team')} edit={edit} onToggle={() => toggleSection('team')}>
                 <div className="onb-sec" data-nav="The team">
                   <Head k="team" label="Meet the team" />
-                  <div className="onb-team mt-10 grid gap-x-9 gap-y-10" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))' }}>
+                  <div className="onb-team mt-10 grid gap-x-9 gap-y-10" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
                     {(sec('team').people || []).map((p: Any, pi: number) => (
                       <div key={pi}>
                         {p.photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={p.photo} alt="" className="rounded-2xl object-cover mb-4 w-full" style={{ aspectRatio: '1 / 1' }} />
                         ) : (
-                          <div className="rounded-2xl mb-4 w-full flex items-center justify-center text-[24px] font-semibold"
-                            style={{ aspectRatio: '1 / 1', background: t.chip, color: t.muted }}>
+                          <div className="rounded-full mb-4 flex items-center justify-center text-[15px] font-semibold"
+                            style={{ width: 46, height: 46, background: t.chip, color: t.sub }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
