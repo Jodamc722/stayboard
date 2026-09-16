@@ -33,8 +33,41 @@
 // finds noisy. The unit is the finding when the unit never charges; the booking is the finding
 // when its own unit charges everybody else.
 //
+// EXPEDIA DOES NOT ITEMISE, AND THAT IS NOT A MISSING FEE.
+//
+// Jon, 2026-09-16: "for Expedia, sometimes the fees aren't broken out, so there's likely a cleaning
+// fee... The service is the bulk fees."
+//
+// He is right, and it would have been 141 wrong flags. Expedia-family bookings from 1 June 2026:
+//
+//   254  a "Cleaning fee" line, no lump          — the team has already broken it out
+//   121  NO cleaning line, a "Service" line averaging $162.79   — the fee is INSIDE the lump
+//    20  NO cleaning line, "Additional Fees & Room Fees"        — same thing, older wording
+//     1  both a cleaning line and a lump
+//     1  neither — genuinely bare
+//
+// Service and Cleaning never appear together: Service is the state a booking arrives in, and the
+// cleaning line is what the team's breakout produces. So a lump is evidence the fee WAS collected,
+// not evidence it was missed. Flagging those 121 as "no cleaning fee" would have been the audit
+// telling the team to chase money that is already in hand, on the channel where they are already
+// doing the most work — the fastest way to teach somebody to ignore a board.
+//
+// They are not silent either. They get their own verdict at info severity, which says the fee is in
+// the lump and names the amount, so the row explains itself without joining the flagged count. The
+// work — splitting the lump into Cleaning fee + Revenue fee — is the Expedia prep list's job and is
+// already tracked there; saying it twice in two places is how two lists start disagreeing.
+//
 // Nothing here writes to Guesty. The fix for a unit that never charges is a listing setting; the
 // fix for one stay is a folio line — both are done in Guesty by a person, which is the rule.
+
+/**
+ * FEE LINES THAT SWALLOW THE CLEANING FEE INSTEAD OF NAMING IT.
+ *
+ * "Service" is Expedia's, and is the one Jon named. It is matched as a whole word so it cannot
+ * catch "Service animal fee" or a "Room service" charge, which are not fee lumps.
+ * "Additional Fees & Room Fees" is the older wording and was already known to the prep code.
+ */
+export const BUNDLED_FEE_RE = /^\s*service\s*(fee|charge)?\s*$|additional fees|room fees/i
 
 /** One stay's cleaning position, already netted by the caller. */
 export type CleanStay = {
@@ -44,6 +77,8 @@ export type CleanStay = {
   net: number                   // sum of every cleaning-ish folio line, refunds included
   lines: number                 // how many such lines exist (0 = none was ever raised)
   hadNegative: boolean          // at least one cleaning line is a credit — charged, then given back
+  /** Net of any bundled fee line (see BUNDLED_FEE_RE). Positive = the cleaning fee is in there. */
+  bundled?: number
 }
 
 export type CleanVerdictKind =
@@ -53,6 +88,7 @@ export type CleanVerdictKind =
   | 'thin'          // no fee, and the unit has charged before but too rarely to be sure
   | 'unit'          // no fee anywhere on this unit — the listing is the finding
   | 'unit_more'     // same unit, another stay; carried as info so it never doubles the count
+  | 'bundled'       // the fee is inside a lump the channel did not itemise — prep splits it
 
 export type CleanVerdict = {
   resId: string
@@ -61,6 +97,7 @@ export type CleanVerdict = {
   expected: number | null       // what this unit normally collects, when it collects anything
   peers: number                 // how many of the unit's other stays did charge
   siblings: number              // other stays on this unit sharing this verdict (unit kinds only)
+  bundled?: number              // the lump this stay's fee is sitting inside ('bundled' only)
 }
 
 export type CleanOpts = {
@@ -99,9 +136,20 @@ export function cleaningGaps(stays: CleanStay[], opts: CleanOpts = {}): CleanVer
   const out: CleanVerdict[] = []
   for (const group of Array.from(byUnit.values())) {
     const charged = group.filter(s => s.net > eps)
-    const zero = group.filter(s => s.net <= eps)
-    if (!zero.length) continue
+    // A stay whose fee is inside a channel lump is neither "charged a cleaning fee" nor "collected
+    // nothing", so it is taken out of the split entirely. If it were left in the zero pile, a unit
+    // that only ever sells on Expedia would read as "this listing has never charged anybody" —
+    // which is the opposite of true, and would put a listing-setting finding on a listing that is
+    // set up correctly.
+    const bundled = group.filter(s => s.net <= eps && (s.bundled || 0) > eps)
+    const zero = group.filter(s => s.net <= eps && (s.bundled || 0) <= eps)
+    if (!zero.length && !bundled.length) continue
     const expected = charged.length ? Math.round(median(charged.map(s => s.net)) * 100) / 100 : null
+
+    for (const s of bundled) {
+      out.push({ resId: s.resId, kind: 'bundled', severity: 'info', expected, peers: charged.length, siblings: 0, bundled: Math.round((s.bundled || 0) * 100) / 100 })
+    }
+    if (!zero.length) continue
 
     if (!charged.length) {
       // THE UNIT IS THE FINDING. Every stay on it collected nothing, so this is a listing that
@@ -157,6 +205,10 @@ export function cleaningNote(v: CleanVerdict, unitName: string, unitFee: number 
       return 'No cleaning fee on this stay. ' + u + ' charges '
         + (v.expected != null ? '$' + v.expected.toFixed(2) : 'a fee') + ' on its other ' + v.peers
         + ' stays this month, so this one is the exception — the turnover still has to be paid for.'
+    case 'bundled':
+      return 'No separate cleaning fee on this stay — the channel billed a single '
+        + (v.bundled != null ? '$' + v.bundled.toFixed(2) + ' ' : '') + 'lump instead of itemising it, '
+        + 'so the fee was collected. Breaking it out into Cleaning fee and Revenue fee is the Expedia prep list\u2019s job, not a gap here.'
     case 'thin':
       return 'No cleaning fee on this stay. ' + u + ' has only ' + v.peers + ' stay'
         + (v.peers === 1 ? '' : 's') + ' with a fee this month, which is too few to be sure — worth a look.'

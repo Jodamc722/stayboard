@@ -25,7 +25,7 @@
 // so every figure here is flipped to read as OWNER money — positive = money to the owner.
 import 'server-only'
 import { lengthFactors, expectedForLength, lengthNote, type LengthFactors } from './owner-audit-rate'
-import { cleaningGaps, cleaningNote, type CleanStay, type CleanVerdict } from './owner-audit-cleaning'
+import { cleaningGaps, cleaningNote, BUNDLED_FEE_RE, type CleanStay, type CleanVerdict } from './owner-audit-cleaning'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting } from './app-settings'
 import { MONTH_LABEL, money } from './owner-statements'
@@ -782,6 +782,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
       const inv = folioByRes[id]
       if (!Array.isArray(inv) || !inv.length) continue   // no folio read = no opinion, not a flag
       const lines = inv.filter(x => PREP_CLEAN_RE.test(String(x?.title || x?.name || '')))
+      // A channel that bills one lump instead of itemising has still COLLECTED the cleaning fee —
+      // it just has not named it. Expedia does this on more than a third of its bookings, so
+      // without this the audit would tell the team to chase money already in hand.
+      const lump = inv.filter(x => BUNDLED_FEE_RE.test(String(x?.title || x?.name || '')))
       seenRes.add(id)
       cleanStays.push({
         resId: id,
@@ -790,6 +794,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
         net: money(lines.reduce((a, x) => a + (Number(x?.amount) || 0), 0)),
         lines: lines.length,
         hadNegative: lines.some(x => (Number(x?.amount) || 0) < -0.005),
+        bundled: money(lump.reduce((a, x) => a + (Number(x?.amount) || 0), 0)),
       })
     }
     for (const v of cleaningGaps(cleanStays, { peerMin: rules.cleaningPeerMin })) cleanVerdict[v.resId] = v
@@ -1463,7 +1468,13 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const invTitle = (x: any) => String(x?.title || x?.name || '')
   const invAmt = (x: any) => Number(x?.amount) || 0
   const FOLIO_RM_RE = /revenue|\brm\b/i
-  const FOLIO_LUMP_RE = /additional fees|room fees/i
+  // THE LUMP, WHICH WAS MISSING ITS COMMONEST FORM. This was /additional fees|room fees/ and did
+  // not match "Service" — the line Expedia actually bills the bundled fee on. Jon, 2026-09-16:
+  // "The service is the bulk fees." From 1 June 2026, 121 Expedia bookings carried a Service line
+  // averaging $162.79 and no cleaning line; every one of them read here as fLump = 0 and so came
+  // out as noFees, "fees never set up", when the fee was sitting on the folio the whole time.
+  // Shared with the cleaning rule so the two can never drift apart on what a lump is.
+  const FOLIO_LUMP_RE = BUNDLED_FEE_RE
   for (const r of expRes) {
     const code = String(r.confirmation_code || '')
     if (!code) continue
