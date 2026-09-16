@@ -268,20 +268,15 @@ export async function POST(req: NextRequest) {
     const cards: ListingCard[] = rows.map(l => {
       const rl = byListing[String(l.id)] || []
       const avg = rl.length ? Math.round((rl.reduce((a, b) => a + b, 0) / rl.length) * 10) / 10 : null
-      let score: number | null = null
-      let parts: { k: string; v: number }[] = []
+      // The score itself never reaches the owner's document — only the amenity work it implies.
+      let have: string[] = Array.isArray(l.amenities) ? l.amenities.map(String).filter(Boolean) : []
+      let suggest: { name: string; reason: string }[] = []
       try {
         const sc = computeScore(l, { avgRating: avg, reviewCount: rl.length })
-        score = sc.overall
-        parts = [
-          { k: 'Title', v: sc.title.score },
-          { k: 'Description', v: sc.description.score },
-          { k: 'Photos', v: sc.photos.score },
-          { k: 'Amenities', v: sc.amenities.score },
-          { k: 'Booking settings', v: sc.settings.score },
-        ]
-      } catch { /* a score is nice to have; the links and the copy are the point */ }
-      return listingCardFrom(l, score, parts)
+        if (Array.isArray(sc.amenities?.have) && sc.amenities.have.length) have = sc.amenities.have.map(String)
+        suggest = (sc.amenities?.suggestions || []).map((x: any) => ({ name: String(x.name), reason: String(x.reason || '') }))
+      } catch { /* the listing's own amenity array still stands */ }
+      return listingCardFrom(l, Array.from(new Set(have)).sort((a, b) => a.localeCompare(b)), suggest)
     }).sort((a, b) => a.name.localeCompare(b.name))
 
     // Facts about the unit itself. The onboarding WALK is the better source when one exists —
