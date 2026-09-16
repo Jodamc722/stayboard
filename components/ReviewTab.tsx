@@ -17,7 +17,7 @@
 // /api/ops-today/review), so Add / Move / Delete go through the exact routes they always did. The
 // model only ORDERS and EXPLAINS; it never touches a task.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, RefreshCw, CalendarClock, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square, ChevronRight, ChevronDown, ExternalLink, FileText, Cpu } from 'lucide-react'
+import { Loader2, RefreshCw, CalendarClock, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square, ChevronRight, ChevronDown, ExternalLink, FileText, Cpu, ListOrdered } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
 import { useSuggestions, type Sug } from '@/components/SuggestionsBand'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
@@ -94,7 +94,8 @@ export function ReviewTab({ market, date, onRefresh }: { market: string; date?: 
   }, [market, date])
   useEffect(() => { load() }, [load])
 
-  // Re-ask the model: bypass the two-hour cache, then re-read the rows too.
+  // INVESTIGATE: the only path that calls the model. Bypasses the cache, then re-reads the rows so
+  // the picks and the list agree.
   const reask = async () => {
     setReasking(true)
     try { await fetch(focusUrl(market, true, date), { cache: 'no-store' }); invalidateCache(focusUrl(market, false, date)); await refetchFocus(); await load() } finally { setReasking(false) }
@@ -228,13 +229,23 @@ export function ReviewTab({ market, date, onRefresh }: { market: string; date?: 
               : <p className="text-[14px] font-semibold text-ink leading-snug">{v?.headline || 'Nothing to decide today.'}</p>}
           {v?.parked && <p className="text-[12px] text-muted mt-0.5">{v.parked}</p>}
           {focus?.fallback && <p className="text-[11.5px] text-amber-800 mt-1">The model could not answer ({focus.fallback}) — this is the engines&rsquo; own order, not a judgement.</p>}
+          {/* SAY WHICH ONE ANSWERED (2026-09-16). The default ranking is code — the same fields the
+              model used to be handed, weighted in lib/ops-focus where the weights can be read and
+              argued with. Fable runs only when somebody presses Investigate. A reader deciding
+              whether to trust a pick deserves to know which of the two produced it. */}
           {focus && !focus.fallback && (
-            <p className="text-[11px] text-muted mt-1 inline-flex items-center gap-1" title={'Model: ' + focus.model}><Cpu size={10} /> AI · {clock(focus.at)}{focus.cached ? ' · cached' : ''}</p>
+            focus.model === 'engine'
+              ? <p className="text-[11px] text-muted mt-1 inline-flex items-center gap-1" title="Scored from proximity, how late it is, the empty-day window and the crew's remaining capacity. No model call.">
+                  <ListOrdered size={10} /> Ranked by the engines · {clock(focus.at)}
+                </p>
+              : <p className="text-[11px] text-muted mt-1 inline-flex items-center gap-1" title={'Model: ' + focus.model}>
+                  <Cpu size={10} /> Investigated · {clock(focus.at)}{focus.cached ? ' · cached' : ''}
+                </p>
           )}
         </div>
-        <button onClick={reask} disabled={reasking || loading} title="Ask the model again with the board as it is now"
+        <button onClick={reask} disabled={reasking || loading} title="Hand the whole day to the top model for a second opinion — the crew, the board, and every candidate. Takes a few seconds and costs a model call, so it is a button rather than the default."
           className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-bold text-muted hover:text-ink disabled:opacity-40">
-          {reasking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Re-ask
+          {reasking ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Investigate
         </button>
       </div>
       {error && <p className="text-[12px] text-rose-700">{error}</p>}
