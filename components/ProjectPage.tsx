@@ -22,11 +22,11 @@ import {
   Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity, Repeat, SlidersHorizontal, LayoutTemplate, LayoutList, Columns3, ArrowUp, ArrowDown, MoreHorizontal, Save,
   CalendarRange, ChevronLeft, GripVertical, ShieldAlert, Bug, Wrench, ExternalLink, ArrowRightCircle,
-  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff,
+  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff, PanelRightClose, PanelRightOpen,
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
-import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, isDoneSection, viewPrefsFor, RAIL_PANELS, RAIL_LABEL, type ViewPrefs, type RailPanel, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
+import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, isDoneSection, viewPrefsFor, RAIL_PANELS, RAIL_LABEL, LIST_COLUMNS, COLUMN_LABEL, columnTemplate, type ViewPrefs, type RailPanel, type ListColumn, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -143,6 +143,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
     () => RAIL_PANELS.filter(k => !prefs.hidePanels.includes(k) && (railHas[k] || shown.includes(k))),
     [prefs.hidePanels, railHas, shown])
   const railRest = useMemo(() => RAIL_PANELS.filter(k => !railPanels.includes(k)), [railPanels])
+
   const showPanel = useCallback((k: RailPanel) => {
     setShown(cur => cur.includes(k) ? cur : [...cur, k])
     if (prefs.hidePanels.includes(k)) setPrefs({ hidePanels: prefs.hidePanels.filter(x => x !== k) })
@@ -208,6 +209,19 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
   const accent = ACCENT[settings.accent]
   // A viewer-role member can switch views for themselves without being able to save it.
   const view = prefs.view
+  const cols = prefs.columns
+  const tpl = useMemo(() => columnTemplate(cols), [cols])
+
+  /**
+   * THE BOARD GETS THE WHOLE WIDTH (Jon, 2026-09-16: "lets make the board bigger").
+   *
+   * A 300px rail is fine beside a list, which is vertical anyway. Beside a horizontal board it was
+   * eating a whole column: three sections visible where four fit, and the fourth half-cut at the
+   * edge. So board view closes the rail by default and the header carries a toggle to bring it
+   * back. List and calendar keep it open. The choice is remembered per person like every other
+   * view preference.
+   */
+  const railOpen = view === 'board' ? prefs.railOpen === true : prefs.railOpen !== false
   // Drag state for tasks: what is being dragged, so drop targets can accept it.
   const [dragId, setDragId] = useState<string | null>(null)
   const moveTask = (taskId: string, section: string, beforeId: string | null) => act({ action: 'taskMove', taskId, section, beforeId })
@@ -262,6 +276,10 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
             </p>
           </div>
           <div className="flex items-center gap-1.5">
+            <button onClick={() => setPrefs({ railOpen: !railOpen })} title={railOpen ? 'Hide the side panel' : 'Show the side panel'}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 text-[12px] font-bold text-muted hover:text-ink">
+              {railOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+            </button>
             <RecurChip p={p} canEdit={canEdit} act={act} busy={busy} />
             <Customize settings={settings} prefs={prefs} sections={sections.map(x => x.name)} canEdit={canEdit} act={act} setPrefs={setPrefs} busy={busy} />
             <MoreMenu p={p} canEdit={canEdit} act={act} busy={busy} />
@@ -280,7 +298,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
         {err && <p className="mt-2 text-[12.5px] text-rose-700">{err}</p>}
       </div>
 
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-4 items-start">
+      <div className={'grid gap-4 items-start ' + (railOpen ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : 'grid-cols-1')}>
         {/* ── TASKS ──
             min-w-0 is load-bearing, not tidying. A grid column's default minimum is max-content,
             so the board's horizontal scroller measured itself at the full width of every column
@@ -301,18 +319,19 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
                   dragId={dragId} setDragId={setDragId} onMove={moveTask} onPush={pushTask} />
               ))}
               {canEdit && (
-                <div className="w-[220px] shrink-0 pt-1">
+                <div className="w-[300px] shrink-0 pt-1">
                   <NewSection onAdd={name => act({ action: 'setSettings', settings: { sectionOrder: [...sections.map(x => x.name).filter(x => x && x !== name), name] } })} busy={busy} />
                 </div>
               )}
             </div>
-          ) : (
-            sections.map(sec => (
+          ) : (<>
+            <ColumnHead cols={cols} tpl={tpl} />
+            {sections.map(sec => (
               <Section key={sec.name || '__none'} name={sec.name} tasks={sec.tasks} canEdit={canEdit} busy={busy}
                 openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent} add={add}
-                dragId={dragId} setDragId={setDragId} onMove={moveTask} onPush={pushTask} />
-            ))
-          )}
+                cols={cols} tpl={tpl} dragId={dragId} setDragId={setDragId} onMove={moveTask} onPush={pushTask} />
+            ))}
+          </>)}
           {canEdit && view === 'list' && (
             <NewSection onAdd={name => act({ action: 'setSettings', settings: { sectionOrder: [...sections.map(x => x.name).filter(x => x && x !== name), name] } })} busy={busy} />
           )}
@@ -411,9 +430,10 @@ function DropSlot({ active, onDrop, className }: { active: boolean; onDrop: () =
   )
 }
 
-function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, dragId, setDragId, onMove, onPush, add }: {
+function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, accent, cols, tpl, dragId, setDragId, onMove, onPush, add }: {
   name: string; tasks: Task[]; canEdit: boolean; busy: boolean; openId: string | null
   onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts; accent: AccentCls; add: AddProps
+  cols: ListColumn[]; tpl: string
 } & DragProps) {
   const [collapsed, setCollapsed] = useState(false)
   const done = tasks.filter(t => t.status === 'done').length
@@ -434,7 +454,7 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
             <div key={t.id}>
               <DropSlot active={dragging && dragId !== t.id} onDrop={() => { if (dragId) { onMove(dragId, name, t.id); setDragId(null) } }} className="mx-3" />
               <TaskRow t={t} depth={0} canEdit={canEdit} busy={busy} open={openId === t.id} onOpen={onOpen} act={act} counts={counts}
-                dragId={dragId} setDragId={setDragId} onMove={onMove} onPush={onPush} />
+                cols={cols} tpl={tpl} dragId={dragId} setDragId={setDragId} onMove={onMove} onPush={onPush} />
             </div>
           ))}
           <DropSlot active={dragging} onDrop={() => { if (dragId) { onMove(dragId, name, null); setDragId(null) } }} className="mx-3" />
@@ -455,7 +475,7 @@ function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts
   const done = tasks.filter(t => t.status === 'done').length
   const dragging = !!dragId && canEdit
   return (
-    <div className={'w-[268px] shrink-0 rounded-2xl p-1.5 -m-1.5 ' + (dragging ? 'bg-brand-50/40' : '')}
+    <div className={'w-[300px] shrink-0 rounded-2xl p-1.5 -m-1.5 ' + (dragging ? 'bg-brand-50/40' : '')}
       onDragOver={e => { if (dragging) e.preventDefault() }}
       onDrop={e => { if (dragging && dragId) { e.preventDefault(); onMove(dragId, name, null); setDragId(null) } }}>
       <div className={'flex items-center gap-2 px-2.5 py-1.5 rounded-xl border mb-2 ' + accent.bar}>
@@ -614,6 +634,22 @@ function Customize({ settings, prefs, sections, canEdit, act, setPrefs, busy }: 
           <label className="flex items-center gap-2 text-[12.5px] text-ink">
             <input type="checkbox" checked={prefs.hideActivity} onChange={e => setPrefs({ hideActivity: e.target.checked })} /> Hide the activity feed
           </label>
+          {/* COLUMNS. Order is the order they were switched on, which is the only ordering anyone
+              can predict without a drag handle. Off is off everywhere — header and every row. */}
+          <div>
+            <p className="text-[12.5px] text-ink mb-1">Columns in list view</p>
+            <div className="flex flex-wrap gap-1">
+              {LIST_COLUMNS.map(k => {
+                const on = prefs.columns.indexOf(k) >= 0
+                return (
+                  <button key={k} onClick={() => setPrefs({ columns: on ? prefs.columns.filter(x => x !== k) : [...prefs.columns, k] })}
+                    className={'text-[11px] font-semibold rounded-md px-1.5 py-0.5 border ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>
+                    {COLUMN_LABEL[k]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
           <div>
             <p className="text-[12.5px] text-ink mb-1">Panels on the right</p>
             <div className="flex flex-wrap gap-1">
@@ -768,53 +804,115 @@ function MoreMenu({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean;
   )
 }
 
-function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, dragId, setDragId, onMove, onPush }: {
+function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, tpl, dragId, setDragId, onMove, onPush }: {
   t: Task; depth: number; canEdit: boolean; busy: boolean; open: boolean
   onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts
+  cols: ListColumn[]; tpl: string
 } & DragProps) {
   const Icon = STATUS_ICON[t.status] || Circle
   const late = t.status !== 'done' && !!t.due_on && t.due_on < today()
   const next = (s: string) => (s === 'done' ? 'todo' : 'done')   // one tap toggles done; the drawer has the four states
   const c = counts[t.id]
+  const has = (k: ListColumn) => cols.indexOf(k) >= 0
+  const Cell = ({ children, className }: { children?: any; className?: string }) => (
+    <div className={'px-2 text-[11px] min-w-0 ' + (className || 'text-muted')} onClick={e => e.stopPropagation()}>{children}</div>
+  )
   return (
     <>
-      <div className={'group/row flex items-center gap-2.5 px-3 py-2 cursor-pointer border-t border-line ' + (open ? 'bg-brand-50/60' : 'hover:bg-app/50') + (dragId === t.id ? ' opacity-40' : '')}
-        style={{ paddingLeft: 12 + depth * 22 }} onClick={() => onOpen(t.id)}
+      {/* A GRID, NOT A FLEX ROW. Everything used to float right at its natural width, so the due
+          date on one row sat under the owner on the next and a column could not be read down the
+          page — which is the only reason to want columns at all. The template comes from the
+          board's chosen columns and is shared with the header, so they cannot drift. */}
+      <div className={'group/row grid items-center gap-0 py-2 cursor-pointer border-t border-line ' + (open ? 'bg-brand-50/60' : 'hover:bg-app/50') + (dragId === t.id ? ' opacity-40' : '')}
+        style={{ gridTemplateColumns: tpl }}
+        onClick={() => onOpen(t.id)}
         draggable={canEdit && depth === 0} onDragStart={e => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDragId(null)}>
-        {depth === 0 && canEdit && <GripVertical size={12} className="text-muted/50 shrink-0 -ml-1 cursor-grab" />}
-        {depth > 0 && <CornerDownRight size={11} className="text-muted shrink-0 -ml-1" />}
-        <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); act({ action: 'taskSet', taskId: t.id, status: next(t.status) }) }}
-          className={'w-5 h-5 rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]}
-          title={TASK_STATUS_LABEL[t.status]}>
-          <Icon size={11} strokeWidth={3} />
-        </button>
-        <span className={'min-w-0 flex-1 text-[13px] truncate ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
-        {t.breezeway_task_id ? (
-          <button onClick={e => { e.stopPropagation(); onPush?.(t.id) }} className={'inline-flex items-center gap-0.5 text-[10px] font-bold uppercase px-1 py-0.5 rounded border shrink-0 ' + (TONE_CLS[t.breezeway?.tone || 'open'])} title="In Breezeway — click to reassign or move"><Wrench size={9} /> {t.breezeway?.status || 'BZ'}</button>
-        ) : (canEdit && depth === 0 && onPush && (
-          <button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="opacity-0 group-hover/row:opacity-100 text-muted hover:text-ink shrink-0" title="Push to Breezeway"><Wrench size={12} /></button>
-        ))}
-        {c && c.comments > 0 && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted tabular-nums shrink-0" title={`${c.comments} comment${c.comments === 1 ? '' : 's'}`}><MessageSquare size={11} />{c.comments}</span>}
-        {c && c.files > 0 && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted tabular-nums shrink-0" title={`${c.files} file${c.files === 1 ? '' : 's'}`}><Paperclip size={11} />{c.files}</span>}
-        {t.assignees.length > 0 && (
-          <span className="hidden sm:inline text-[11px] text-muted truncate max-w-[140px]">{t.assignees.map(a => first(a.display)).join(', ')}</span>
+
+        {/* TITLE — indentation for subtasks lives inside this cell, so nesting never shifts a column. */}
+        <div className="flex items-center gap-2.5 min-w-0 pr-2" style={{ paddingLeft: 12 + depth * 22 }}>
+          {depth === 0 && canEdit && <GripVertical size={12} className="text-muted/50 shrink-0 -ml-1 cursor-grab" />}
+          {depth > 0 && <CornerDownRight size={11} className="text-muted shrink-0 -ml-1" />}
+          <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); act({ action: 'taskSet', taskId: t.id, status: next(t.status) }) }}
+            className={'w-5 h-5 rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]}
+            title={TASK_STATUS_LABEL[t.status]}>
+            <Icon size={11} strokeWidth={3} />
+          </button>
+          <span className={'min-w-0 flex-1 text-[13px] truncate ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
+          {t.breezeway_task_id ? (
+            <button onClick={e => { e.stopPropagation(); onPush?.(t.id) }} className={'inline-flex items-center gap-0.5 text-[10px] font-bold uppercase px-1 py-0.5 rounded border shrink-0 ' + (TONE_CLS[t.breezeway?.tone || 'open'])} title="In Breezeway — click to reassign or move"><Wrench size={9} /> {t.breezeway?.status || 'BZ'}</button>
+          ) : (canEdit && depth === 0 && onPush && (
+            <button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="opacity-0 group-hover/row:opacity-100 text-muted hover:text-ink shrink-0" title="Push to Breezeway"><Wrench size={12} /></button>
+          ))}
+          {t.homed && <span className="text-[9.5px] font-semibold text-muted truncate max-w-[110px] shrink-0" title={`Also in ${t.home_project_title}`}>↗ {t.home_project_title}</span>}
+        </div>
+
+        {has('assignee') && (
+          <Cell>
+            {t.assignees.length > 0 ? (
+              <span className="flex items-center gap-1.5 min-w-0">
+                <span className="w-5 h-5 rounded-full bg-brand-50 text-brand-700 text-[9px] font-bold inline-flex items-center justify-center shrink-0">{t.assignees[0].display.slice(0, 1).toUpperCase()}</span>
+                <span className="truncate">{t.assignees.map(a => first(a.display)).join(', ')}</span>
+              </span>
+            ) : <span className="text-muted/40">—</span>}
+          </Cell>
         )}
-        {t.homed && <span className="text-[9.5px] font-semibold text-muted truncate max-w-[110px] shrink-0" title={`Also in ${t.home_project_title}`}>↗ {t.home_project_title}</span>}
-        {canEdit ? (
-          <label onClick={e => e.stopPropagation()} className={'relative inline-flex items-center gap-1 text-[11px] tabular-nums shrink-0 cursor-pointer ' + (late ? 'text-rose-600 font-bold' : t.due_on ? 'text-muted' : 'text-muted/40 hover:text-muted')} title="Due date">
-            <CalendarDays size={11} />{t.due_on ? nice(t.due_on) : ''}
-            <input type="date" value={t.due_on || ''} disabled={busy} onChange={e => act({ action: 'taskSet', taskId: t.id, due_on: e.target.value || null })} className="absolute inset-0 opacity-0 cursor-pointer w-full" />
-          </label>
-        ) : (t.due_on && <span className={'text-[11px] tabular-nums shrink-0 ' + (late ? 'text-rose-600 font-bold' : 'text-muted')}>{nice(t.due_on)}</span>)}
-        {t.priority === 'urgent' && <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-rose-100 text-rose-700 shrink-0">Urgent</span>}
-        {t.priority === 'high' && <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">High</span>}
-        {t.subtasks.length > 0 && <span className="text-[11px] text-muted tabular-nums shrink-0">{t.subtasks.filter(s => s.status === 'done').length}/{t.subtasks.length}</span>}
+
+        {has('due') && (
+          <Cell className={late ? 'text-rose-600 font-bold' : 'text-muted'}>
+            {canEdit ? (
+              <label className="relative inline-flex items-center gap-1 tabular-nums cursor-pointer w-full" title="Due date">
+                <CalendarDays size={11} className="shrink-0" />
+                <span className={t.due_on ? '' : 'text-muted/40'}>{t.due_on ? nice(t.due_on) : 'Set'}</span>
+                <input type="date" value={t.due_on || ''} disabled={busy} onChange={e => act({ action: 'taskSet', taskId: t.id, due_on: e.target.value || null })} className="absolute inset-0 opacity-0 cursor-pointer w-full" />
+              </label>
+            ) : (t.due_on ? <span className="tabular-nums">{nice(t.due_on)}</span> : <span className="text-muted/40">—</span>)}
+          </Cell>
+        )}
+
+        {has('priority') && (
+          <Cell>
+            {t.priority === 'urgent' ? <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-rose-100 text-rose-700">Urgent</span>
+              : t.priority === 'high' ? <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-amber-100 text-amber-800">High</span>
+              : <span className="text-muted/40">—</span>}
+          </Cell>
+        )}
+
+        {has('status') && <Cell><span className="truncate">{TASK_STATUS_LABEL[t.status] || t.status}</span></Cell>}
+
+        {has('subtasks') && (
+          <Cell className="text-muted tabular-nums">
+            {t.subtasks.length > 0 ? `${t.subtasks.filter(x => x.status === 'done').length}/${t.subtasks.length}` : <span className="text-muted/40">—</span>}
+          </Cell>
+        )}
+
+        {has('activity') && (
+          <Cell>
+            <span className="flex items-center gap-2 tabular-nums">
+              {c && c.comments > 0 ? <span className="inline-flex items-center gap-0.5" title={`${c.comments} comment${c.comments === 1 ? '' : 's'}`}><MessageSquare size={11} />{c.comments}</span> : null}
+              {c && c.files > 0 ? <span className="inline-flex items-center gap-0.5" title={`${c.files} file${c.files === 1 ? '' : 's'}`}><Paperclip size={11} />{c.files}</span> : null}
+              {(!c || (!c.comments && !c.files)) && <span className="text-muted/40">—</span>}
+            </span>
+          </Cell>
+        )}
       </div>
       {(t.vendor_name || t.visit_on) && (
         <div className="px-3 pb-1.5" style={{ paddingLeft: 12 + depth * 22 + 26 }}><VisitLine t={t} /></div>
       )}
-      {t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} dragId={dragId} setDragId={setDragId} onMove={onMove} />)}
+      {t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} cols={cols} tpl={tpl} dragId={dragId} setDragId={setDragId} onMove={onMove} />)}
     </>
+  )
+}
+
+/** The header strip above the sections. Same template as every row, or it is decoration. */
+function ColumnHead({ cols, tpl }: { cols: ListColumn[]; tpl: string }) {
+  if (!cols.length) return null
+  return (
+    <div className="grid items-center gap-0 px-0 pb-1" style={{ gridTemplateColumns: tpl }}>
+      <div className="pl-3 text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Task</div>
+      {cols.map(c => (
+        <div key={c} className="px-2 text-[10px] font-bold uppercase tracking-[0.12em] text-muted truncate">{COLUMN_LABEL[c]}</div>
+      ))}
+    </div>
   )
 }
 
