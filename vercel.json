@@ -137,6 +137,10 @@
       "schedule": "25 12 * * *"
     },
     {
+      "path": "/api/cron/ops-focus",
+      "schedule": "5 0,1,11,12,16,17,19,20 * * *"
+    },
+    {
       "path": "/api/cron/maint-brief",
       "schedule": "46 11 * * *"
     },
