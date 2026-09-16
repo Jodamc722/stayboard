@@ -1,7 +1,7 @@
 // Cases for the bulk listing-copy scope rules.
 // Run: npx tsx lib/__tests__/listing-copy-bulk.test.ts
 import {
-  BULK_SECTIONS, sectionsForScope, scopeOf, planBulk, scopeError, lengthErrors, driftFrom,
+  BULK_SECTIONS, sectionsForScope, scopesOf, allowedAt, planBulk, scopeError, lengthErrors, driftFrom,
   type CopyTarget,
 } from '../listing-copy-bulk';
 
@@ -17,68 +17,80 @@ const t = (id: string, building: string, current: any = {}): CopyTarget =>
 
 // ---- the scope rule Jon set, read straight off the registry ------------------------------------
 {
-  ok('guest access is property-scoped', scopeOf('access') === 'property')
-  ok('neighborhood is property-scoped', scopeOf('neighborhood') === 'property')
-  ok('getting around is property-scoped', scopeOf('transit') === 'property')
-  ok('other notes is portfolio-scoped', scopeOf('notes') === 'portfolio')
-  ok('three sections live at the property', sectionsForScope('property').length === 3)
-  ok('one section lives at the portfolio', sectionsForScope('portfolio').length === 1)
-  ok('nothing else is bulk editable', BULK_SECTIONS.length === 4 && !scopeOf('summary') && !scopeOf('title'), BULK_SECTIONS.length)
+  ok('guest access is property-only', scopesOf('access').join() === 'property')
+  ok('neighborhood is property-only', scopesOf('neighborhood').join() === 'property')
+  ok('getting around is property-only', scopesOf('transit').join() === 'property')
+  // Jon, 2026-09-16: "make sure that 'Other things to note' is on that list too, because right now
+  // I only see three." A property can have its own note AND the house can have boilerplate.
+  ok('other notes lives at both levels', allowedAt('notes', 'property') && allowedAt('notes', 'portfolio'))
+  ok('the property panel offers four sections', sectionsForScope('property').length === 4, sectionsForScope('property').map(s => s.key))
+  ok('the portfolio panel offers only other notes',
+    sectionsForScope('portfolio').map(s => s.key).join() === 'notes', sectionsForScope('portfolio').map(s => s.key))
+  ok('nothing else is bulk editable', BULK_SECTIONS.length === 4 && !scopesOf('summary').length && !scopesOf('title').length, BULK_SECTIONS.length)
 }
 
-// ---- property sections cannot cross buildings ---------------------------------------------------
+// ---- a property edit reaches one property --------------------------------------------------------
 {
   const oneBuilding = [t('a', 'Botanica'), t('b', 'Botanica')]
   const two = [t('a', 'Botanica'), t('c', 'Elser')]
   const roster = { Botanica: 2, Elser: 1 }
-  ok('one property is fine', scopeError(['neighborhood'], oneBuilding, roster) === null)
-  const e = scopeError(['neighborhood'], two, roster)
-  ok('two properties is refused', !!e && /one property at a time/.test(e), e)
-  ok('the refusal names the section', !!e && /Neighborhood/.test(e), e)
-  ok('guest access is refused the same way', !!scopeError(['access'], two, roster))
-  ok('getting around is refused the same way', !!scopeError(['transit'], two, roster))
+  ok('one property is fine', scopeError(['neighborhood'], oneBuilding, roster, 'property') === null)
+  const e = scopeError(['neighborhood'], two, roster, 'property')
+  ok('two properties is refused', !!e && /reaches one property/.test(e), e)
+  ok('guest access is refused the same way', !!scopeError(['access'], two, roster, 'property'))
+  ok('getting around is refused the same way', !!scopeError(['transit'], two, roster, 'property'))
+}
+
+// ---- a building section is refused BY NAME at portfolio level -------------------------------------
+{
+  const roster = { Botanica: 2 }
+  const whole = [t('a', 'Botanica'), t('b', 'Botanica')]
+  const e = scopeError(['neighborhood'], whole, roster, 'portfolio')
+  ok('neighborhood is refused at portfolio level', !!e && /Neighborhood/.test(e) && /one property at a time/.test(e), e)
+  const e2 = scopeError(['access', 'transit'], whole, roster, 'portfolio')
+  ok('both offenders are named', !!e2 && /Guest access/.test(e2) && /Getting around/.test(e2), e2)
+  ok('other notes is fine at portfolio level', scopeError(['notes'], whole, roster, 'portfolio') === null)
+  ok('other notes is fine at property level too', scopeError(['notes'], [t('a', 'Botanica')], roster, 'property') === null)
+}
+
+// ---- other notes rides along with the building sections on a property push -----------------------
+{
+  const roster = { Waves: 18 }
+  const some = [t('a', 'Waves'), t('b', 'Waves')]
+  ok('all four sections at once on one property',
+    scopeError(['access', 'neighborhood', 'transit', 'notes'], some, roster, 'property') === null)
 }
 
 // ---- a subset of ONE building is fine for property sections -------------------------------------
 // Inside a property you pick units; that is the level where picking units is offered.
 {
   const half = [t('a', 'Elser'), t('b', 'Elser')]
-  ok('half a building may take property text', scopeError(['transit'], half, { Elser: 32 }) === null)
+  ok('half a building may take property text', scopeError(['transit'], half, { Elser: 32 }, 'property') === null)
 }
 
 // ---- portfolio: whole properties only -----------------------------------------------------------
 {
   const roster = { Botanica: 3, Elser: 2 }
   const whole = [t('a', 'Botanica'), t('b', 'Botanica'), t('c', 'Botanica'), t('d', 'Elser'), t('e', 'Elser')]
-  ok('whole properties are allowed', scopeError(['notes'], whole, roster) === null)
+  ok('whole properties are allowed', scopeError(['notes'], whole, roster, 'portfolio') === null)
   const partial = whole.filter(x => x.id !== 'c')
-  const e = scopeError(['notes'], partial, roster)
+  const e = scopeError(['notes'], partial, roster, 'portfolio')
   ok('a partial property is refused', !!e && /whole properties are selected/.test(e), e)
   ok('the refusal names which property and the counts', !!e && /Botanica/.test(e) && /3/.test(e) && /2/.test(e), e)
 }
 
 // ---- a building the roster does not know is not fabricated into an error ------------------------
 {
-  ok('unknown roster is not an error', scopeError(['notes'], [t('a', 'Newbuild')], {}) === null)
-}
-
-// ---- mixing a property section into a portfolio push is governed by the stricter rule -----------
-{
-  const roster = { Botanica: 2, Elser: 2 }
-  const two = [t('a', 'Botanica'), t('b', 'Botanica'), t('c', 'Elser'), t('d', 'Elser')]
-  const e = scopeError(['notes', 'neighborhood'], two, roster)
-  ok('notes+neighborhood across two properties is refused', !!e && /one property at a time/.test(e), e)
-  ok('notes+neighborhood inside one property is fine',
-    scopeError(['notes', 'neighborhood'], [t('a', 'Botanica'), t('b', 'Botanica')], roster) === null)
+  ok('unknown roster is not an error', scopeError(['notes'], [t('a', 'Newbuild')], {}, 'portfolio') === null)
 }
 
 // ---- rubbish input is refused rather than guessed at ---------------------------------------------
 {
-  ok('nothing selected', scopeError(['notes'], [], {}) === 'Nothing selected.')
-  ok('no real section', !!scopeError(['summary'], [t('a', 'B')], {}))
-  const e = scopeError(['title'], [t('a', 'B')], {})
+  ok('nothing selected', scopeError(['notes'], [], {}, 'portfolio') === 'Nothing selected.')
+  ok('no real section', !!scopeError(['summary'], [t('a', 'B')], {}, 'property'))
+  const e = scopeError(['title'], [t('a', 'B')], {}, 'property')
   ok('an off-list section is named back', !!e && /title/.test(e), e)
-  const blank = scopeError(['neighborhood'], [t('a', '')], {})
+  const blank = scopeError(['neighborhood'], [t('a', '')], {}, 'property')
   ok('a listing with no property is refused', !!blank && /no property set/.test(blank), blank)
 }
 
