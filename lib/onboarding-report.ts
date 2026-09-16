@@ -34,13 +34,11 @@ export type ListingCard = {
   id: string
   name: string
   sub: string
-  // NO SCORE IN FRONT OF AN OWNER (Jon, 2026-09-16: "remove the scoring on the listing, that's
-  // not something owners need to see"). Our optimize score is an internal instrument — an owner
-  // reads "71" as a grade on their property rather than as our to-do list. What IS useful to them
-  // is the amenity list: what the listing claims today, and what it is missing, ticked off live
-  // and pushed to Guesty in the room.
-  amenities: string[]
-  amenitySuggest: { name: string; reason: string }[]
+  // NO SCORE AND NO AMENITY GRID IN FRONT OF AN OWNER (Jon, 2026-09-16: "remove the scoring on
+  // the listing" and "clean up the amenity section — let's just remove that for now. We can view
+  // it on Airbnb, and I can have one of my admins do it on the backend"). Both were our internal
+  // instruments wearing an owner's clothes. What is left is what the owner can actually judge on
+  // a call: the photos a guest meets first, the live channel links, and the words.
   links: OtaLink[]
   photos: string[]
   title: string
@@ -64,22 +62,29 @@ export type OnboardingContent = {
     wordmark: string
   }
   hero: { eyebrow: string; title: string; headline: string; preparedFor: string; dateLabel: string; heroImage: string | null }
-  welcome: Sec<{ headline: string; subtitle: string; body: string; stats: KV[] }>
-  /** Who we call, on what, and how they want to hear from us. Seeded from Guesty, edited here. */
-  contact: Sec<{
-    headline: string; subtitle: string
-    name: string; email: string; phone: string
-    preferred: string; bestTime: string; second: string; notes: string
-    fromGuesty: boolean
-    asks: Ask[]
-  }>
+  /** 1 — the opener. A greeting and one large picture of their own unit. Nothing to read. */
+  welcome: Sec<{ headline: string; subtitle: string; body: string }>
+  /** 2 — what we are going to cover, in order. */
   agenda: Sec<{ headline: string; subtitle: string; items: KV[] }>
+  /** 4 — who Stay Hospitality is. The stats live here now, not on the greeting. */
+  overview: Sec<{ headline: string; subtitle: string; body: string; stats: KV[] }>
   unit: Sec<{ headline: string; subtitle: string; body: string; facts: KV[]; asks: Ask[] }>
   listings: Sec<{ headline: string; subtitle: string; items: ListingCard[]; asks: Ask[] }>
   strategy: Sec<{ headline: string; subtitle: string; body: string; asks: Ask[] }>
   ramp: Sec<{ headline: string; subtitle: string; bands: KV[]; note: string; asks: Ask[] }>
   season: Sec<{ headline: string; subtitle: string; body: string; months: { m: string; level: number }[]; note: string; asks: Ask[] }>
-  guesty: Sec<{ headline: string; subtitle: string; body: string; items: KV[] }>
+  /**
+   * 6 — the owner portal. Guesty exposes NO per-owner portal URL: the account gets exactly one
+   * `<name>.guestyowners.com` and every owner signs into it with their own email (confirmed
+   * against help.guesty.com and against all 47 rows of guesty_owners, none of which carry a URL).
+   * So the address is a house setting and the login is this owner's Guesty email.
+   */
+  guesty: Sec<{
+    headline: string; subtitle: string; body: string; items: KV[]
+    portalUrl: string; loginEmail: string
+    /** "Guesty owner portal with photos, etc." — screenshots of the portal, set once in settings. */
+    shots: string[]
+  }>
   tech: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }>
   team: Sec<{ headline: string; subtitle: string; people: { name: string; role: string; blurb: string; photo?: string | null; phone?: string; email?: string }[] }>
   comms: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }>
@@ -92,10 +97,13 @@ export type OnboardingContent = {
     chargesTotal: string
     also: KV[]
     note: string
+    /** What can and cannot reach this statement. Folded in from the old billables section. */
+    rules: KV[]
   }>
   checklist: Sec<{ headline: string; subtitle: string; rows: { item: string; who: string; by: string }[] }>
   nextup: Sec<{ headline: string; subtitle: string; rows: KV[] }>
-  open: Sec<{ headline: string; subtitle: string }>
+  /** 8 — other notes. Free text typed on the call, plus anything still unanswered above. */
+  notes: Sec<{ headline: string; subtitle: string; body: string }>
   /** Every photo on the owner's listings, so any section can pick one without another fetch. */
   photoPool: string[]
   custom?: { id: string; eyebrow: string; title: string; body: string }[]
@@ -116,7 +124,12 @@ export type OnboardingTemplate = {
   wordmark: string
   companyStats: KV[]
   welcomeBody: string
+  overviewBody: string
   agenda: KV[]
+  /** The house's one Owners Portal address. Guesty allows exactly one per account. */
+  portalUrl: string
+  /** Screenshots of the portal, shown in section 6. Set once, used by every owner's deck. */
+  portalShots: string[]
   strategyBody: string
   rampBands: KV[]
   rampNote: string
@@ -149,9 +162,18 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
     { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
   ],
 
+  // THE GREETING IS NOT A BRIEF. It is two sentences over a large photograph of their own unit,
+  // read aloud in about fifteen seconds while everyone finishes joining the call. Everything that
+  // used to be crammed in here is now section 4, where it belongs.
   welcomeBody:
-    'Welcome to Stay Hospitality. This document is the call itself — we fill it in together as we talk, and it stays yours afterwards as the record of what we agreed.\n\n' +
-    'We will go through your listing the way a guest sees it, agree what we are optimizing for, walk through how money reaches you, and introduce the people who will actually be in your unit. Anything we do not get to stays on the last page as an open item, so nothing quietly falls off.',
+    'This document is the call itself. We fill it in together as we talk, and it stays yours afterwards as the record of what we agreed.',
+
+  overviewBody:
+    'Stay Hospitality runs short-term rentals in Miami and Broward end to end: the listing and its pricing, the guest from enquiry to review, the turnover, and the maintenance in between. Housekeeping, maintenance and guest care are our own people on our own payroll — not a marketplace of contractors we hope shows up.\n\n' +
+    'What that buys you is a single accountable line. One team that knows your unit, one system every number comes out of, and one statement a month you can trace back to the job that caused it.',
+
+  portalUrl: 'https://stay.guestyowners.com',
+  portalShots: [],
 
   agenda: [
     { k: 'Your listings', v: 'We open the live listing on every channel, score it, and fix the weak parts while you watch.' },
@@ -205,7 +227,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   ],
 
   portalItems: [
-    { k: 'The Guesty owner portal', v: 'Your live calendar, reservations and statements, straight from the system we run on. We set your login up during onboarding.' },
+    { k: 'Your calendar', v: 'Every reservation as it lands, the nights already sold, and the blocks you asked us to hold. The same calendar we work from, not a copy of it.' },
     { k: 'Your monthly report', v: 'Occupancy, rate, revenue, what we did, what guests said, what is booked ahead. One link, always the same link.' },
     { k: 'Your order sheet', v: 'Anything we want to buy for the unit, with photos, the reason, price options, and four buttons: approve, I will supply it, not now, no.' },
     { k: 'Your statement', v: 'Rental, less commission, less anything billed that month, equals what hits your account. Every billed line traces to a job with a date and a photo.' },
@@ -271,10 +293,6 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
       { id: 'e1', q: 'Any dates you already know you are blocking this season?' },
       { id: 'e2', q: 'Any renovation, special assessment or HOA work coming?' },
     ],
-    contact: [
-      { id: 'k1', q: 'How do you want us to reach you?', hint: 'Text, call, email \u2014 and whether that changes when it is urgent.' },
-      { id: 'k2', q: 'Every guest issue, or only the ones that cost money?', hint: 'Most owners want the second. Some want everything for the first month.' },
-    ],
     tech: [
       { id: 't1', q: 'Is there anything already installed we should keep or work around?', hint: 'An HOA lock standard, a Ring, a Nest you like, a mesh network.' },
       { id: 't2', q: 'Anything you would rather we did not put in?' },
@@ -308,6 +326,10 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     wordmark: str(stored.wordmark, D.wordmark),
     companyStats: arr(stored.companyStats, D.companyStats),
     guestyBody: str(stored.guestyBody, D.guestyBody),
+    overviewBody: str(stored.overviewBody, D.overviewBody),
+    portalUrl: str(stored.portalUrl, D.portalUrl),
+    // An empty shot list is a real state (no screenshots uploaded yet), so it is kept as saved.
+    portalShots: Array.isArray(stored.portalShots) ? stored.portalShots : D.portalShots,
     techRows: arr(stored.techRows, D.techRows),
     welcomeBody: str(stored.welcomeBody, D.welcomeBody),
     agenda: arr(stored.agenda, D.agenda),
@@ -355,7 +377,7 @@ function benchmarkLine(market: string, bedrooms: number | null): string {
 }
 
 /** One listing, read for review: the live channel links, the first five photos, the copy. */
-export function listingCardFrom(l: any, amenities: string[], amenitySuggest: { name: string; reason: string }[]): ListingCard {
+export function listingCardFrom(l: any): ListingCard {
   const raw = l && l.raw ? l.raw : {}
   const pub = raw.publicDescription || raw.publicDescriptions || {}
   const pics: string[] = Array.isArray(l.pictures) ? l.pictures.filter(Boolean) : []
@@ -369,8 +391,6 @@ export function listingCardFrom(l: any, amenities: string[], amenitySuggest: { n
     id: String(l.id),
     name: String(l.nickname || l.title || 'Unit'),
     sub: [bits.join(' · '), links.length ? `live on ${links.length} channel${links.length === 1 ? '' : 's'}` : 'not yet live'].filter(Boolean).join(' · '),
-    amenities,
-    amenitySuggest,
     links,
     // THE FIRST FIVE, IN ORDER (Jon, 2026-09-16). Nobody scrolls past these on a phone, which is
     // why photos carry 18% of the optimize score on their own.
@@ -453,31 +473,26 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       dateLabel: 'OWNER ONBOARDING',
       heroImage: i.heroImage,
     },
+    // 1 ── THE GREETING. A picture of their unit, their name, two sentences.
     welcome: {
       headline: 'Welcome to Stay Hospitality',
-      subtitle: 'Who we are, and how this call works.',
+      subtitle: i.ownerName ? i.ownerName : i.scopeLabel,
       body: t.welcomeBody,
-      stats: t.companyStats,
       photo: pic(0),
     },
-    contact: {
-      headline: 'How we reach you',
-      subtitle: 'Pulled from Guesty where we have it. Correct anything that is wrong.',
-      name: i.ownerName || i.scopeLabel,
-      email: i.ownerEmail || '',
-      phone: i.ownerPhone || '',
-      preferred: '',
-      bestTime: '',
-      second: '',
-      notes: '',
-      fromGuesty: !!(i.ownerEmail || i.ownerPhone),
-      asks: asks('contact'),
-    },
+    // 2 ── WHAT WE ARE GOING TO COVER.
     agenda: {
       headline: 'What we will cover',
       subtitle: 'In this order.',
       items: t.agenda,
-      photo: pic(1),
+    },
+    // 4 ── WHO STAY HOSPITALITY IS. The company slide, with the numbers on it.
+    overview: {
+      headline: 'Overview of Stay Hospitality',
+      subtitle: 'What we do, and what we do ourselves.',
+      body: t.overviewBody,
+      stats: t.companyStats,
+      photo: pic(4),
     },
     unit: {
       photo: pic(3),
@@ -487,9 +502,11 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       facts: i.unitFacts,
       asks: asks('unit'),
     },
+    // 5 ── REVIEW THE LISTING. The photos a guest meets, the live links, and the words —
+    // which are the part an owner can actually improve in the room.
     listings: {
-      headline: 'We read the listing together, and fix it while we talk',
-      subtitle: 'Open on every channel it sells on, scored against what drives ranking and conversion.',
+      headline: 'Your listing, the way a guest meets it',
+      subtitle: 'Open on every channel it sells on. The words are editable here, as we read them.',
       items: i.cards,
       asks: asks('listings'),
     },
@@ -529,12 +546,15 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       rows: t.commsRows,
       asks: asks('comms'),
     },
+    // 6 ── THE OWNER PORTAL. One address for the house, this owner's own login.
     guesty: {
-      headline: 'The system we run on',
-      subtitle: 'Guesty, and the owner portal inside it that belongs to you.',
+      headline: 'Your Guesty owner portal',
+      subtitle: 'Your own login to the system we actually run on.',
       body: t.guestyBody,
       items: t.portalItems,
-      photo: pic(4),
+      portalUrl: t.portalUrl,
+      loginEmail: i.ownerEmail || '',
+      shots: t.portalShots,
     },
     tech: {
       headline: 'The technology in your unit',
@@ -574,9 +594,11 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       ],
       asks: asks('money'),
     },
+    // 7 ── OWNER STATEMENTS. The worked month, then the rules that decide what can appear on
+    // it — the billables doctrine folded in, because the statement is where an owner meets it.
     statement: {
-      headline: 'What lands in your inbox at month end',
-      subtitle: 'Four lines decide what you are paid.',
+      headline: 'Your Guesty owner statements',
+      subtitle: 'A worked month, line by line, and the rules behind every line.',
       unitLabel: i.cards[0] ? i.cards[0].name : i.scopeLabel,
       period: `Example month · ${nights} nights booked · ${money0(adr)} ADR`,
       lines: [
@@ -589,6 +611,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       charges,
       chargesTotal: money2(chargeTotal),
       also: t.statementAlso,
+      rules,
       note: `Labor is ${money0(rate)} an hour on the technician’s actual clock. Materials are at cost. Nothing on this line is a markup, a trip charge, or a management fee by another name — the ${t.mgmtPct}% above is the only fee we take.`,
     },
     checklist: {
@@ -606,18 +629,37 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
         { k: 'First owner report', v: 'With the first full month of trading' },
       ],
     },
-    open: {
-      headline: 'What we did not get to',
-      subtitle: 'Anything left blank above collects here. This is the agenda for the follow-up call.',
+    // 8 ── OTHER NOTES. Whatever came up that has no home above, typed live; plus anything
+    // still unanswered, so an onboarding is never "done" while questions are open.
+    notes: {
+      headline: 'Other notes',
+      subtitle: 'Anything else that came up, and anything still open.',
+      body: '',
     },
     photoPool: pool,
     custom: [],
-    omit: [],
+    // JON'S EIGHT (2026-09-16: "I actually prefer that it doesn't have any intake. It should be:
+    // 1. Agenda: Welcome to Stay Hospitality with a picture 2. What we're going to cover 3. Meet
+    // the team 4. Overview of Stay Hospitality 5. Review listing 6. Guesty owner portal with
+    // photos 7. Guesty owner statements 8. Other notes"). Everything else we had built is kept
+    // in the document but starts hidden, so a deck is exactly those eight out of the box and
+    // nothing is lost for the owner who does want the ramp or the season talked through.
+    omit: ONBOARDING_EXTRA.slice(),
   }
 }
 
+/** The eight sections a generated onboarding shows, in render order. */
+export const ONBOARDING_CORE = [
+  'welcome', 'agenda', 'team', 'overview', 'listings', 'guesty', 'statement', 'notes',
+] as const
+
+/** Built, kept, and hidden by default. Switched on per owner from the editing toolbar. */
+export const ONBOARDING_EXTRA = [
+  'unit', 'strategy', 'ramp', 'season', 'tech', 'money', 'comms', 'checklist', 'nextup',
+] as const
+
 /** Every section key an onboarding report can hide, in render order. */
 export const ONBOARDING_SECTIONS = [
-  'welcome', 'contact', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season',
-  'guesty', 'tech', 'money', 'statement', 'team', 'comms', 'checklist', 'nextup', 'open',
+  'welcome', 'agenda', 'team', 'overview', 'listings', 'unit', 'strategy', 'ramp', 'season',
+  'guesty', 'tech', 'money', 'statement', 'comms', 'checklist', 'nextup', 'notes',
 ] as const
