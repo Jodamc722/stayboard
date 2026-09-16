@@ -30,6 +30,13 @@ create table if not exists daily_checklist_items (
   band        text not null default 'morning',         -- morning | midday | afternoon | evening
   by_time     time,                                    -- local wall clock, America/New_York
   owner_role  text,                                    -- 'Front desk', 'Housekeeping' — a label, not a gate
+  -- WHERE THE WORK ACTUALLY IS (Jon, 2026-09-16: "you could click on it, and it'll push you to the
+  -- tab with the glitches and claims to be managed"). An in-app path; the row title becomes a link.
+  link        text,
+  -- A COUNT THE APP CAN ALREADY ANSWER (lib/checklist-signals). Stored as free text on purpose: a
+  -- key this build has never heard of shows no number rather than breaking the page, so the list
+  -- can be edited in the browser without a deploy.
+  signal      text,
   sort        double precision,
   active      boolean not null default true,           -- retired items keep their history, unlike deleted ones
   created_by  text,
@@ -37,6 +44,11 @@ create table if not exists daily_checklist_items (
   updated_at  timestamptz not null default now()
 );
 create index if not exists daily_checklist_items_live_idx on daily_checklist_items (band, by_time) where active;
+
+-- Added after the first draft of this file. Spelled out separately so that running 091 twice, or
+-- running it over a database where an earlier copy already landed, is safe either way.
+alter table daily_checklist_items add column if not exists link   text;
+alter table daily_checklist_items add column if not exists signal text;
 
 create table if not exists daily_checklist_ticks (
   id       uuid primary key default gen_random_uuid(),
@@ -66,18 +78,22 @@ alter table daily_checklist_ticks enable row level security;
 -- Seeded only when the table is empty, so running this twice cannot duplicate anything and an
 -- edited list is never overwritten. These are a scaffold to edit, not a prescription: the real
 -- list is whatever the team decides has to happen every day.
-insert into daily_checklist_items (title, detail, band, by_time, owner_role, sort)
+insert into daily_checklist_items (title, detail, band, by_time, owner_role, link, signal, sort)
 select * from (values
-  ('Check arrivals for today',        'Every arrival has a unit ready, a code, and no unanswered message.', 'morning',   time '08:00', 'Front desk',   10.0),
-  ('Confirm cleaners are on site',    'Everyone scheduled has started. Anybody missing gets a call now, not at noon.', 'morning', time '09:00', 'Housekeeping', 20.0),
-  ('Review overnight guest messages', 'Nothing from the night is still unanswered.',                        'morning',   time '09:30', 'Front desk',   30.0),
-  ('Walk the open glitches',          'Anything still open from yesterday has a next step and an owner.',   'morning',   time '10:00', 'Management',   40.0),
-  ('Vendors coming today',            'Anybody arriving is expected and the building knows.',               'morning',   time '10:00', 'Management',   50.0),
-  ('Mid-day clean status',            'Every departure clean is done or has a time it will be.',            'midday',    time '13:00', 'Housekeeping', 60.0),
-  ('Same-day turns confirmed ready',  'Every same-day turn is inspected and released.',                     'midday',    time '14:00', 'Housekeeping', 70.0),
-  ('Check-in readiness sweep',        'Codes, access and instructions are out for every arrival left today.','afternoon', time '15:00', 'Front desk',   80.0),
-  ('Late arrivals have a plan',       'Anyone arriving after hours knows how to get in.',                   'afternoon', time '17:00', 'Front desk',   90.0),
-  ('Tomorrow is staffed',             'Tomorrow has the people it needs. Gaps are filled tonight, not in the morning.', 'evening', time '18:00', 'Management', 100.0),
-  ('Close the day',                   'Open issues handed over, nothing left needing an answer overnight.', 'evening',   time '19:00', 'Management',  110.0)
-) as seed(title, detail, band, by_time, owner_role, sort)
+  ('Check arrivals for today',        'Every arrival has a unit ready, a code, and no unanswered message.', 'morning',   time '08:00', 'Front desk',   '/command',   null,            10.0),
+  ('Confirm cleaners are on site',    'Everyone scheduled has started. Anybody missing gets a call now, not at noon.', 'morning', time '09:00', 'Housekeeping', '/plan',   null,            20.0),
+  ('Review overnight guest messages', 'Nothing from the night is still unanswered.',                        'morning',   time '09:30', 'Front desk',   null,         null,            30.0),
+  ('Walk the open glitches',          'Anything still open from yesterday has a next step and an owner.',   'morning',   time '10:00', 'Management',   '/glitches',  'open_glitches', 40.0),
+  ('Vendors coming today',            'Anybody arriving is expected and the building knows.',               'morning',   time '10:00', 'Management',   '/command',   null,            50.0),
+  ('Mid-day clean status',            'Every departure clean is done or has a time it will be.',            'midday',    time '13:00', 'Housekeeping', '/plan',      null,            60.0),
+  ('Same-day turns confirmed ready',  'Every same-day turn is inspected and released.',                     'midday',    time '14:00', 'Housekeeping', '/plan',      null,            70.0),
+  ('Check-in readiness sweep',        'Codes, access and instructions are out for every arrival left today.','afternoon', time '15:00', 'Front desk',  '/command',   null,            80.0),
+  ('Late arrivals have a plan',       'Anyone arriving after hours knows how to get in.',                   'afternoon', time '17:00', 'Front desk',   null,         null,            90.0),
+  -- TEACHING EVE IS DAILY WORK, and until now it was not on anybody's list — which is why she had
+  -- forty-five questions saved up and no way for anyone to know that. One a day clears the backlog
+  -- inside two months; the chip says how many are left, so nobody has to go and look.
+  ('Answer one of Eve''s questions',  'She only asks things no record can tell her. One answer, and it is a rule with your name on it.', 'evening', time '17:30', 'Management', '/command', 'eve_questions', 95.0),
+  ('Tomorrow is staffed',             'Tomorrow has the people it needs. Gaps are filled tonight, not in the morning.', 'evening', time '18:00', 'Management', '/labor',  null,           100.0),
+  ('Close the day',                   'Open issues handed over, nothing left needing an answer overnight.', 'evening',   time '19:00', 'Management',   null,         null,           110.0)
+) as seed(title, detail, band, by_time, owner_role, link, signal, sort)
 where not exists (select 1 from daily_checklist_items);
