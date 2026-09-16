@@ -1655,7 +1655,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .sb-present::-webkit-scrollbar { display: none; }
         .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; scroll-snap-align: start; scroll-snap-stop: normal; padding: 6vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
         /* A slide brings its own 16:9 frame, so the presenter padding would only shrink it. */
-        .sb-present-deck > section, .sb-present-deck > header { padding: 0 !important; align-items: center; }
+        .sb-present-deck > section, .sb-present-deck > header {
+          padding: 0 !important; display: flex !important; align-items: center !important;
+          justify-content: center !important; }
+        .sb-present-deck .sb-slide, .sb-present-deck .onb-cover { margin-left: auto !important; margin-right: auto !important; }
         /* A slide taller than the glass stops centring — otherwise its first line sits above the
            top edge with nothing to scroll back to. */
         .sb-present > section > * { max-height: none; }
@@ -2028,12 +2031,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // Title block. An accent hairline sits under the eyebrow — the one place the brand
           // colour appears on a light slide, which is what makes it read as a mark rather than
           // as decoration sprayed across every label.
-          const Title = ({ k, dark, sub, rule }: { k: string; dark?: boolean; sub?: boolean; rule?: string }) => (
+          const Title = ({ k, dark, sub, rule, narrow }: { k: string; dark?: boolean; sub?: boolean; rule?: string; narrow?: boolean }) => (
             <div>
               <div style={{ width: 30, height: 2, background: rule || (dark ? D.ink : t.accent), marginBottom: 18 }} />
               <h2 style={{
-                fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track,
-                fontWeight: 600, color: dark ? D.ink : t.ink, maxWidth: '17ch', margin: 0,
+                fontSize: narrow ? 34 : TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track,
+                fontWeight: 600, color: dark ? D.ink : t.ink, maxWidth: narrow ? '15ch' : '17ch', margin: 0,
               }}>
                 <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
@@ -2108,11 +2111,20 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <div style={{ position: 'absolute', inset: 0 }}>
                 <Half src={String(sec('welcome').photo || pic(0))} side="right"
                   title="Welcome slide photo" set={u => patch('welcome.photo', u)} />
-                <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 540 }} className="flex flex-col">
+                <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 586 }} className="flex flex-col">
                   <div className="flex-1 min-h-0 flex flex-col justify-center">
-                    <Title k="welcome" />
-                    <p style={{ marginTop: 26, fontSize: 18, lineHeight: 1.7, color: t.body, maxWidth: '44ch', whiteSpace: 'pre-line' }}>
+                    <Title k="welcome" sub={false} narrow />
+                    <p style={{ marginTop: 20, fontSize: 17, color: t.muted }}>
+                      <Ed v={sec('welcome').subtitle || ''} set={v => patch('welcome.subtitle', v)} edit={edit} />
+                    </p>
+                    <p style={{ marginTop: 26, fontSize: 19, lineHeight: 1.65, color: t.body, maxWidth: '42ch', whiteSpace: 'pre-line' }}>
                       <Ed v={sec('welcome').body || ''} set={v => patch('welcome.body', v)} edit={edit} multiline />
+                    </p>
+                  </div>
+                  <div style={{ paddingBottom: 18 }}>
+                    <p style={{ fontSize: 12.5, color: t.muted }}>
+                      {String(hero.preparedFor || '')}
+                      {meta.asOf ? '\u2002\u00b7\u2002' + new Date(String(meta.asOf) + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}
                     </p>
                   </div>
                   <Foot label="Welcome" />
@@ -2229,7 +2241,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 452, background: 'linear-gradient(90deg, ' + t.band + ' 0%, rgba(0,0,0,0) 42%)' }} />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 560 }} className="flex flex-col">
                   <div className="flex-1 min-h-0">
-                    <Title k="overview" dark sub={false} />
+                    <Title k="overview" dark sub={false} narrow />
                     {(() => {
                       const full = String(sec('overview').body || '')
                       const cut = full.indexOf('\n\n')
@@ -2272,7 +2284,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <div className="flex flex-col h-full">
                 <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', columnGap: 52 }} className="flex-1 min-h-0">
                   <div>
-                    <Title k="channels" sub={false} rule={brass} />
+                    <Title k="channels" sub={false} rule={brass} narrow />
                     <p style={{ marginTop: 20, fontSize: 15, lineHeight: 1.7, color: t.body, maxWidth: '40ch', whiteSpace: 'pre-line' }}>
                       <Ed v={sec('channels').body || ''} set={v => patch('channels.body', v)} edit={edit} multiline />
                     </p>
@@ -2436,7 +2448,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   title="Owner portal screenshot" set={u => patch('guesty.photo', u)} />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 556 }} className="flex flex-col">
                   <div className="flex-1 min-h-0">
-                    <Title k="guesty" sub={false} />
+                    <Title k="guesty" sub={false} narrow />
                     <div style={{ marginTop: 26 }}>
                       {canEdit ? (
                         <input
