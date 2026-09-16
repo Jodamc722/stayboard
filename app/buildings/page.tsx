@@ -20,6 +20,7 @@ import { atLeast } from '@/lib/features'
 import { Shell } from '@/components/Shell'
 import { computeScore, rollupBuilding, ratingToStars, scoreGaps, lastOptimizedOf } from '@/lib/optimize-score'
 import { BuildingGrid } from '@/components/BuildingGrid'
+import { BulkListingCopy } from '@/components/BulkListingCopy'
 import { UnitTable, type UnitRow } from '@/components/UnitTable'
 import { FixNext, type FixItem } from '@/components/FixNext'
 import { HealthBoard } from '@/components/HealthBoard'
@@ -341,6 +342,13 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
 
       {revenueNote && (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12.5px] text-amber-800">{revenueNote}</div>
+      )}
+
+      {/* OTHER NOTES IS THE ONE SECTION THAT BELONGS UP HERE. Jon, 2026-09-16: Guest access,
+          Neighborhood and Getting around describe one building and are edited on that property's
+          page; Other notes is house boilerplate, chosen by whole properties. */}
+      {view === 'buildings' && canEdit && (
+        <div className="mb-5"><BulkListingCopy scope="portfolio" /></div>
       )}
 
       {view === 'buildings' && (
