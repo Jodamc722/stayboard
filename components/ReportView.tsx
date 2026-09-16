@@ -1582,16 +1582,20 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           font-family: inherit; color: ${t.body}; resize: vertical; }
         .sb-slide .onb-copy { font-size: 14.5px; line-height: 1.7; }
         .sb-slide .onb-live { font-size: 15px; }
-        .sb-present { background: ${blend(t.bg, t.ink, darkGround ? 0.10 : 0.16)} !important; }
-        .sb-present .sb-slide { border-radius: 14px; border: 0;
-          box-shadow: 0 40px 90px -40px rgba(0,0,0,0.55);
-          width: min(92vw, calc(84vh * 16 / 9)); }
+        /* Only a deck gets the inset treatment; a scrolling report keeps its own background. */
+        .sb-present-deck { background: ${blend(t.bg, t.ink, darkGround ? 0.10 : 0.14)} !important; }
+        .sb-present-deck .sb-slide, .sb-present-deck .onb-cover {
+          border-radius: 12px; border: 0;
+          box-shadow: 0 30px 70px -34px rgba(0,0,0,0.5);
+          width: min(90vw, calc(82vh * 16 / 9)) !important;
+          min-height: 0 !important; aspect-ratio: 16 / 9; }
         @supports (height: 100dvh) {
-          .sb-present .sb-slide { width: min(92vw, calc(84dvh * 16 / 9)); }
+          .sb-present-deck .sb-slide, .sb-present-deck .onb-cover { width: min(90vw, calc(82dvh * 16 / 9)) !important; }
         }
-        /* A phone in portrait has no room to give away, so there the slide keeps the full width. */
+        .sb-present-deck .onb-cover-in { min-height: 0 !important; height: 100%; padding: 6% 6%; }
+        /* A phone in portrait has no room to give away. */
         @media (max-width: 700px) {
-          .sb-present .sb-slide { width: min(100vw, calc(100vh * 16 / 9)); border-radius: 0; }
+          .sb-present-deck .sb-slide, .sb-present-deck .onb-cover { width: 100vw !important; border-radius: 0; }
         }
         /* The cover is the first thing an owner sees and the only slide that is allowed to be
            loud. It fills the glass when presenting and stays a tall card when read as a page. */
@@ -1651,14 +1655,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .sb-present::-webkit-scrollbar { display: none; }
         .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; scroll-snap-align: start; scroll-snap-stop: normal; padding: 6vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
         /* A slide brings its own 16:9 frame, so the presenter padding would only shrink it. */
-        .sb-present > section:has(.sb-slide) { padding: 0 !important; }
+        .sb-present-deck > section, .sb-present-deck > header { padding: 0 !important; align-items: center; }
         /* A slide taller than the glass stops centring — otherwise its first line sits above the
            top edge with nothing to scroll back to. */
         .sb-present > section > * { max-height: none; }
-        .sb-present > header { padding: 0 !important; }
         .sb-present > header > .relative, .sb-present > header > div { padding: 0 !important; }
-        .sb-present .onb-cover { min-height: 100vh; border-radius: 0 !important; }
-        .sb-present .onb-cover-in { min-height: 100vh; padding: 8vh 7vw; }
         @supports (height: 100dvh) { .sb-present > section:has(> .onb-sec) { justify-content: safe center; } }
         .sb-present .onb-sec > .onb-head h2 { font-size: clamp(26px, 2.5vw, 36px); }
         .sb-present .onb-lead { max-height: 34vh; }
@@ -1699,7 +1700,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         <div className="sb-noprint fixed top-5 left-6 z-[55] pointer-events-none">
           {mark.logo ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={mark.logo} alt={mark.word} style={{ height: 22, width: 'auto', objectFit: 'contain', opacity: 0.75, ...(mark.style || {}) }} />
+            <img src={mark.logo} alt={mark.word} style={{ height: 16, width: 'auto', objectFit: 'contain', opacity: 0.75, ...(mark.style || {}) }} />
           ) : (
             <span className="text-[9.5px] font-bold" style={{ color: t.muted, letterSpacing: '0.36em' }}>{mark.word}</span>
           )}
@@ -1821,7 +1822,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         </div>
       )}
 
-      <div ref={scrollRef} onScroll={onPresentScroll} className={present ? 'sb-present' : ('sb-report ' + (isOnboarding ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
+      <div ref={scrollRef} onScroll={onPresentScroll} className={present ? ('sb-present' + (isOnboarding ? ' sb-present-deck' : '')) : ('sb-report ' + (isOnboarding ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
 
         {/* ---------- COVER ---------- */}
         {/* AN ONBOARDING OPENS ON THEIR PROPERTY, NOT ON OUR LOGO. The review report's cover — a
@@ -1845,9 +1846,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <div className="onb-cover-in relative flex flex-col px-7 sm:px-11 pt-9 pb-9">
                 {mark.logo ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={mark.logo} alt={mark.word} style={{ height: 34, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
+                  <img src={mark.logo} alt={mark.word} style={{ height: 26, width: 'auto', alignSelf: 'flex-start', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
                 ) : (
-                  <p className="text-[11px] font-bold" style={{ color: '#fff', letterSpacing: '0.42em' }}>{mark.word}</p>
+                  <p className="text-[11px] font-bold" style={{ color: '#fff', letterSpacing: '0.42em', alignSelf: 'flex-start' }}>{mark.word}</p>
                 )}
                 <div className="mt-auto pt-16">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.26em]" style={{ color: 'rgba(255,255,255,0.72)' }}>
@@ -2009,8 +2010,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   {mark.logo ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={mark.logo} alt={mark.word} style={{
-                      height: 17, width: 'auto', objectFit: 'contain',
-                      opacity: dark ? 0.82 : 0.62,
+                      height: 14, width: 'auto', objectFit: 'contain', display: 'block',
+                      opacity: dark ? 0.8 : 0.55,
                       filter: (dark || darkGround) ? 'invert(1) brightness(2.2)' : undefined,
                     }} />
                   ) : (
@@ -2283,15 +2284,29 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       </span>
                       <span style={{ fontSize: 15, color: t.muted }}>channels, one calendar</span>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 0, marginTop: 26 }}>
-                      {(sec('channels').primary || []).slice(0, 6).map((n: string, i: number) => (
-                        <div key={i} style={{ padding: '15px 0', borderTop: '1px solid ' + t.rule }}>
-                          <span style={{ fontSize: 17, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em' }}>
-                            <Ed v={n} set={v => patch('channels.primary.' + i, v)} edit={edit} />
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                    {/* Real artwork when we have licensed files, a wordmark wall when we do
+                        not. Greyscaled either way: eight brand palettes at full saturation is
+                        a sticker sheet, not a slide. */}
+                    {(sec('channels').logos || []).length > 0 ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '22px 26px', marginTop: 28, alignItems: 'center' }}>
+                        {(sec('channels').logos || []).slice(0, 8).map((lg: Any, i: number) => (
+                          <div key={i} style={{ height: 34, display: 'flex', alignItems: 'center' }}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={lg.url} alt={lg.name} style={{ maxHeight: 30, maxWidth: '100%', width: 'auto', objectFit: 'contain', filter: 'grayscale(1)', opacity: 0.78 }} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', columnGap: 30, marginTop: 26 }}>
+                        {(sec('channels').primary || []).slice(0, 8).map((n: string, i: number) => (
+                          <div key={i} style={{ padding: '13px 0', borderTop: '1px solid ' + t.rule }}>
+                            <span style={{ fontSize: 16.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em' }}>
+                              <Ed v={n} set={v => patch('channels.primary.' + i, v)} edit={edit} />
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div style={{ marginTop: 22, paddingTop: 16, borderTop: '1px solid ' + t.rule }}>
                       <p style={{ fontSize: 11.5, color: t.muted, marginBottom: 9 }}>and the rest of the network</p>
                       <p style={{ fontSize: 13, lineHeight: 1.9, color: t.sub }}>
@@ -2333,7 +2348,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div style={{ position: 'absolute', top: 38, right: 40, zIndex: 2 }}>
                     {mark.logo ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={mark.logo} alt={mark.word} style={{ height: 20, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)', opacity: 0.86 }} />
+                      <img src={mark.logo} alt={mark.word} style={{ height: 16, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)', opacity: 0.82 }} />
                     ) : null}
                   </div>
 
