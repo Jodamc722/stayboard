@@ -221,7 +221,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
    * back. List and calendar keep it open. The choice is remembered per person like every other
    * view preference.
    */
-  const railOpen = view === 'board' ? prefs.railOpen === true : prefs.railOpen !== false
+  const railOpen = prefs.railOpen === null ? view !== 'board' : prefs.railOpen
   // Drag state for tasks: what is being dragged, so drop targets can accept it.
   const [dragId, setDragId] = useState<string | null>(null)
   const moveTask = (taskId: string, section: string, beforeId: string | null) => act({ action: 'taskMove', taskId, section, beforeId })
