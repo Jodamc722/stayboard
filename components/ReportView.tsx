@@ -802,9 +802,23 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     setSlide(i)
     if (kids[i]) kids[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
+  // A PRESENTER HAS TO BE ABLE TO JUMP (Jon, 2026-09-16: "think flow, think functionality").
+  // An owner interrupts on slide 3 to ask how they get paid; arrowing through four slides to
+  // reach it is what makes a deck feel amateur. Each onboarding section carries data-nav, and
+  // the names are read off the DOM at present time rather than kept in a second list that would
+  // silently drift out of step with what is actually on the page.
+  const [navNames, setNavNames] = useState<string[]>([])
+  function readNavNames() {
+    setNavNames(slideEls().map((el, i) => {
+      const n = el.querySelector('[data-nav]')
+      const v = n ? String(n.getAttribute('data-nav') || '') : ''
+      return v || (i === 0 ? 'Cover' : 'Slide ' + (i + 1))
+    }))
+  }
   function enterPresent() {
     setEdit(false); setAiKey(null); setPicker(false)
     setPresent(true); setSlide(0)
+    setTimeout(readNavNames, 60)
     setTimeout(() => {
       const el = scrollRef.current
       try {
@@ -1461,7 +1475,17 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         html { scroll-behavior: smooth; }
         /* The onboarding document breathes more than a report: it is read one section at a time,
            out loud, on a call. */
-        .onb-sec { padding-top: 4.5rem; }
+        .onb-sec { padding-top: 5.5rem; }
+        /* The cover is the first thing an owner sees and the only slide that is allowed to be
+           loud. It fills the glass when presenting and stays a tall card when read as a page. */
+        .onb-cover { min-height: 460px; }
+        .onb-cover-in { min-height: 460px; }
+        .onb-more > summary { list-style: none; }
+        .onb-more > summary::-webkit-details-marker { display: none; }
+        .onb-more > summary::before { content: '+ '; }
+        .onb-more[open] > summary::before { content: '– '; }
+        .sb-navbar { scrollbar-width: none; }
+        .sb-navbar::-webkit-scrollbar { display: none; }
         .sb-report .onb-sec { padding-bottom: 0.5rem; }
         .onb-link { text-decoration: none; border-bottom: 1px solid transparent; }
         .onb-link:hover { border-bottom-color: currentColor; }
@@ -1470,6 +1494,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .onb-ask:focus { outline: none; border-bottom-color: ${t.accent} !important; }
         @media (max-width: 680px) {
           .onb-row { grid-template-columns: 1fr !important; }
+          .onb-strip { grid-template-columns: 1fr 1fr !important; }
+          .onb-cover, .onb-cover-in { min-height: 380px; }
           .onb-shots { grid-template-columns: 1fr 1fr !important; }
           .onb-shots img { grid-row: auto !important; aspect-ratio: 4 / 3 !important; }
         }
@@ -1500,8 +1526,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         /* A slide taller than the glass stops centring — otherwise its first line sits above the
            top edge with nothing to scroll back to. */
         .sb-present > section > * { max-height: none; }
+        .sb-present > header { padding: 0 !important; }
+        .sb-present > header > .relative, .sb-present > header > div { padding: 0 !important; }
+        .sb-present .onb-cover { min-height: 100vh; border-radius: 0 !important; }
+        .sb-present .onb-cover-in { min-height: 100vh; padding: 8vh 7vw; }
         @supports (height: 100dvh) { .sb-present > section:has(> .onb-sec) { justify-content: safe center; } }
-        .sb-present .onb-sec > .onb-head h2 { font-size: clamp(30px, 3.6vw, 46px); }
+        .sb-present .onb-sec > .onb-head h2 { font-size: clamp(26px, 2.5vw, 36px); }
+        .sb-present .onb-lead { max-height: 34vh; }
+        .sb-present .onb-strip img { max-height: 15vh; }
+        .sb-present .onb-team img, .sb-present .onb-team > div > div:first-child { max-height: 20vh; }
         .sb-present .onb-shots img { max-height: 28vh; }
         .sb-present .onb-shot img, .sb-present .onb-shot > div { max-height: 26vh; aspect-ratio: auto !important; }
         .sb-present .onb-sec > *:first-child { margin-top: 0; }
@@ -1604,17 +1637,73 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           <button onClick={() => goTo(slide + 1)} disabled={slide >= presentCount - 1} className="fixed right-3 top-1/2 -translate-y-1/2 z-[60] rounded-full p-2.5 shadow-lg disabled:opacity-25" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
             <ChevronRight size={22} />
           </button>
+          {isOnboarding && navNames.length ? (
+            <div className="sb-navbar fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-1 rounded-full px-2 py-1.5 shadow-lg max-w-[92vw] overflow-x-auto" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              {navNames.map((n, i) => (
+                <button key={i} onClick={() => goTo(i)}
+                  className="rounded-full px-3 py-1.5 text-[12px] font-medium whitespace-nowrap transition-colors"
+                  style={i === slide ? { background: t.ink, color: t.bg } : { color: t.sub }}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          ) : (
           <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 rounded-full px-3 py-2 shadow-lg" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {Array.from({ length: presentCount }).map((_x, i) => (
               <button key={i} onClick={() => goTo(i)} className="rounded-full transition-all" style={{ width: i === slide ? 22 : 8, height: 8, background: i === slide ? t.accent : t.toolbarBorder }} />
             ))}
           </div>
+          )}
         </>
       )}
 
       <div ref={scrollRef} onScroll={onPresentScroll} className={present ? 'sb-present' : 'sb-report max-w-4xl mx-auto px-5 sm:px-8 pb-20'}>
 
-        {/* ---------- HERO ---------- */}
+        {/* ---------- COVER ---------- */}
+        {/* AN ONBOARDING OPENS ON THEIR PROPERTY, NOT ON OUR LOGO. The review report's cover — a
+            centred mark on cream with a photo tucked underneath — is right for a monthly
+            performance document and wrong for the first slide of a meeting. The owner has just
+            handed us an asset; the first thing on the screen should be that asset, full-bleed,
+            with their name on it. Everything else on this slide is small and white. */}
+        {isOnboarding ? (
+          <header className="relative pt-8 pb-10">
+            {edit && (
+              <button onClick={() => openAi('hero')} className="sb-noprint absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.accent }}>
+                <Sparkles size={11} /> AI
+              </button>
+            )}
+            <div className="onb-cover relative overflow-hidden rounded-3xl" style={{ background: t.band }}>
+              {hero.heroImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={hero.heroImage} alt="" className="absolute inset-0 w-full h-full object-cover" />
+              ) : null}
+              <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(10,14,20,0.24) 0%, rgba(10,14,20,0.50) 52%, rgba(10,14,20,0.88) 100%)' }} />
+              <div className="onb-cover-in relative flex flex-col px-7 sm:px-11 pt-9 pb-9">
+                {mark.logo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={mark.logo} alt={mark.word} style={{ height: 34, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
+                ) : (
+                  <p className="text-[11px] font-bold" style={{ color: '#fff', letterSpacing: '0.42em' }}>{mark.word}</p>
+                )}
+                <div className="mt-auto pt-16">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.26em]" style={{ color: 'rgba(255,255,255,0.72)' }}>
+                    <Ed v={hero.dateLabel || 'OWNER ONBOARDING'} set={v => patch('hero.dateLabel', v)} edit={edit} />
+                  </p>
+                  <h1 className="mt-3 text-[34px] sm:text-[46px] font-semibold tracking-[-0.025em] leading-[1.05]" style={{ color: '#fff', maxWidth: '18ch' }}>
+                    <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
+                  </h1>
+                  <p className="mt-4 text-[16px] sm:text-[18px] leading-[1.5]" style={{ color: 'rgba(255,255,255,0.86)', maxWidth: '42ch' }}>
+                    <Ed v={hero.headline || ''} set={v => patch('hero.headline', v)} edit={edit} multiline />
+                  </p>
+                  <p className="mt-7 text-[11.5px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                    <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />
+                    {'  ·  '}{meta.asOf ? new Date(String(meta.asOf) + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </header>
+        ) : (
         <header className="relative pt-14 pb-12 text-center border-b" style={{ borderColor: t.rule }}>
           {edit && (
             <button onClick={() => openAi('hero')} className="absolute top-4 right-4 inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.accent }}>
@@ -1649,6 +1738,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />  ·  STAY HOSPITALITY
           </p>
         </header>
+        )}
 
 
         {/* ═══════════ OWNER ONBOARDING — the welcome presentation ═══════════
@@ -1656,13 +1746,24 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             themes, PPTX and Present mode. Sections come from lib/onboarding-report, which merges
             the house template (settings) with this owner's facts at generate time.
 
-            EIGHT SECTIONS, AND NO INTAKE (Jon, 2026-09-16: "I actually prefer that it doesn't
-            have any intake. It should be: 1. Agenda: Welcome to Stay Hospitality with a picture
-            2. What we're going to cover 3. Meet the team 4. Overview of Stay Hospitality
-            5. Review listing 6. Guesty owner portal with photos, etc. 7. Guesty owner statements
-            8. Other notes"). Everything we had built beyond those eight still exists in the
-            document and can be switched back on per owner from the toolbar; it just isn't in
-            the room by default any more. */}
+            EIGHT SECTIONS, AND NO INTAKE (Jon, 2026-09-16: "1. Agenda: Welcome to Stay
+            Hospitality with a picture 2. What we're going to cover 3. Meet the team 4. Overview
+            of Stay Hospitality 5. Review listing 6. Guesty owner portal with photos, etc.
+            7. Guesty owner statements 8. Other notes").
+
+            AND IT IS A DECK, NOT A DOCUMENT (Jon, 2026-09-16: "looks noisy and loud… think
+            visual, think flow, think functionality"). Three rules hold this layout up:
+
+            1. ONE IDEA PER SECTION, AND THE PICTURE CARRIES IT. The owner's own photographs are
+               the most persuasive thing we have — it is their property, and they are proud of it.
+               They lead; the words follow at reading size.
+            2. INK IS EARNED. The old version shouted eight times: a tracked uppercase eyebrow, a
+               38px black headline and a subtitle, on every section, plus accent-coloured labels
+               on every field. Now there is one quiet line, one heading at a normal weight, and
+               the accent is reserved for things you can click.
+            3. THE PRESENTER HAS TO BE ABLE TO DRIVE IT. An owner interrupts to ask how they get
+               paid; scrolling past four sections to find it is what makes a deck feel amateur.
+               Every section carries data-nav, and present mode turns that into a named jump. */}
         {isOnboarding && (() => {
           const sec = (k: string) => (c[k] || {})
           // A DECK GENERATED BEFORE THIS RESTRUCTURE HAS NO `overview` AND NO `notes`, and its
@@ -1674,10 +1775,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             { k: 'welcome', label: 'Welcome' },
             { k: 'agenda', label: 'What we will cover' },
             { k: 'team', label: 'Meet the team' },
-            { k: 'overview', label: 'Overview' },
+            { k: 'overview', label: 'About Stay Hospitality' },
             { k: 'listings', label: 'Your listing' },
-            { k: 'guesty', label: 'Owner portal' },
-            { k: 'statement', label: 'Owner statements' },
+            { k: 'guesty', label: 'Your owner portal' },
+            { k: 'statement', label: 'Your statements' },
             { k: 'notes', label: 'Other notes' },
           ]
           const EXTRA: { k: string; label: string }[] = [
@@ -1696,8 +1797,6 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           }
           const answered = askSecs.reduce((n, x) => n + (hid(x.k) ? 0 : (sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
           const totalAsks = answered + open.length
-          // Extras only exist on the page once someone switches them on. An owner's deck is the
-          // eight; the rest are one click away in edit mode and invisible otherwise.
           const extraOn = EXTRA.filter(x => !hid(x.k))
           const running = CORE.filter(x => !hid(x.k))
             .concat(extraOn.filter(x => ['unit', 'strategy', 'ramp', 'season', 'tech'].indexOf(x.k) >= 0))
@@ -1706,27 +1805,23 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             return i < 0 ? '' : String(i + 1).padStart(2, '0')
           }
 
-          // One head for every section: a numbered rule, the title, the line under it. The number
-          // is real information here — this document is run top to bottom as an agenda.
+          // ONE QUIET LINE, ONE HEADING. No rule, no accent, no uppercase.
           const Head = ({ k, label }: { k: string; label: string }) => (
             <div className="onb-head">
-              <div className="flex items-baseline gap-3 pb-2 mb-5 border-b" style={{ borderColor: t.rule }}>
-                <span className="text-[11px] font-bold tabular-nums" style={{ color: t.accent }}>{numOf(k)}</span>
-                <span className="text-[10.5px] font-bold uppercase tracking-[0.24em]" style={{ color: t.muted }}>{label}</span>
-              </div>
-              <h2 className="text-[30px] sm:text-[38px] font-black tracking-[-0.02em] leading-[1.08]" style={{ color: t.ink, maxWidth: '20ch' }}>
+              <p className="text-[12px] font-medium tabular-nums" style={{ color: t.muted }}>
+                {numOf(k) ? numOf(k) + ' ' : ''}{label}
+              </p>
+              <h2 className="mt-4 text-[26px] sm:text-[31px] font-semibold tracking-[-0.018em] leading-[1.16]" style={{ color: t.ink, maxWidth: '22ch' }}>
                 <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
               {(sec(k).subtitle || edit) ? (
-                <p className="mt-3 text-[15px] leading-relaxed" style={{ color: t.sub, maxWidth: '52ch' }}>
+                <p className="mt-3 text-[15px] leading-[1.6]" style={{ color: t.muted, maxWidth: '56ch' }}>
                   <Ed v={sec(k).subtitle || ''} set={v => patch(k + '.subtitle', v)} edit={edit} multiline />
                 </p>
               ) : null}
             </div>
           )
 
-          // THE OWNER'S OWN UNIT RUNS THROUGH THE DECK (Jon, 2026-09-16). Each section can carry
-          // one of their listing photos; in edit mode you cycle through the pool or clear it.
           const pool: string[] = Array.isArray(c.photoPool) ? c.photoPool : []
           const Shot = ({ k, ratio }: { k: string; ratio?: string }) => {
             const cur = String(sec(k).photo || '')
@@ -1737,12 +1832,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               patch(k + '.photo', pool[(i + d + pool.length + (i < 0 ? 1 : 0)) % pool.length])
             }
             return (
-              <div className="onb-shot relative mt-8">
+              <div className="onb-shot relative mt-9">
                 {cur ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={cur} alt="" className="w-full object-cover rounded-2xl" style={{ aspectRatio: ratio || '21 / 8' }} />
+                  <img src={cur} alt="" className="w-full object-cover rounded-2xl" style={{ aspectRatio: ratio || '21 / 9' }} />
                 ) : (
-                  <div className="w-full rounded-2xl flex items-center justify-center text-[12px]" style={{ aspectRatio: ratio || '21 / 8', background: t.chip, color: t.muted }}>
+                  <div className="w-full rounded-2xl flex items-center justify-center text-[12px]" style={{ aspectRatio: ratio || '21 / 9', background: t.chip, color: t.muted }}>
                     No photo on this section
                   </div>
                 )}
@@ -1759,13 +1854,27 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             )
           }
 
-          // A free note per section — what Jon wants to remember to say, or what was agreed.
+          // A strip of their own rooms, used where a section needs air rather than another photo
+          // the size of a billboard. Offset so it never repeats the section's own Shot.
+          const Strip = ({ from, n }: { from: number; n: number }) => {
+            if (pool.length < n) return null
+            const pics = Array.from({ length: n }, (_x, i) => pool[(from + i) % pool.length])
+            return (
+              <div className="onb-strip mt-9 grid gap-2.5" style={{ gridTemplateColumns: 'repeat(' + n + ',1fr)' }}>
+                {pics.map((src, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={i} src={src} alt="" className="w-full object-cover rounded-xl" style={{ aspectRatio: '4 / 3' }} />
+                ))}
+              </div>
+            )
+          }
+
           const Note = ({ k }: { k: string }) => {
             const has = !!String(sec(k).note || '').trim()
             if (!has && !canEdit) return null
             return (
-              <div className="mt-8 pl-5" style={{ borderLeft: '2px solid ' + (has ? t.accent : t.rule) }}>
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] mb-1.5" style={{ color: t.muted }}>Notes</p>
+              <div className="mt-9 pl-5" style={{ borderLeft: '2px solid ' + (has ? t.rule : t.chip) }}>
+                <p className="text-[12px] mb-1.5" style={{ color: t.muted }}>Notes</p>
                 <LiveText v={String(sec(k).note || '')} live={canEdit} t={t}
                   set={v => { patch(k + '.note', v); answerChanged() }} />
               </div>
@@ -1773,19 +1882,19 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           }
 
           const Body = ({ k, field }: { k: string; field?: string }) => (
-            <p className="mt-7 text-[16px] leading-[1.72] whitespace-pre-line" style={{ color: t.body, maxWidth: '64ch' }}>
+            <p className="mt-8 text-[16px] leading-[1.75] whitespace-pre-line" style={{ color: t.body, maxWidth: '62ch' }}>
               <Ed v={sec(k)[field || 'body'] || ''} set={v => patch(k + '.' + (field || 'body'), v)} edit={edit} multiline />
             </p>
           )
 
-          // Label/value pairs as a quiet two-column list. No boxes — a hairline is enough, and it
-          // keeps twelve of these in a row from reading like twelve separate objects.
+          // Label/value pairs. The label is a quiet semibold, not a tracked capital — twelve of
+          // those in a column is the single loudest thing a page can do.
           const Rows = ({ rows, kw }: { rows: Any[]; kw?: string }) => (
             <div className="mt-8">
               {(rows || []).map((r: Any, i: number) => (
                 <div key={i} className="onb-row grid gap-x-8 gap-y-1.5 py-4 border-t" style={{ borderColor: t.rule, gridTemplateColumns: (kw || '190px') + ' 1fr' }}>
-                  <div className="text-[12px] font-bold uppercase tracking-[0.1em] pt-0.5" style={{ color: t.ink }}>{r.k}</div>
-                  <div className="text-[15px] leading-[1.65]" style={{ color: t.body }}>{r.v}</div>
+                  <div className="text-[13.5px] font-semibold pt-px" style={{ color: t.sub }}>{r.k}</div>
+                  <div className="text-[15px] leading-[1.7]" style={{ color: t.body }}>{r.v}</div>
                 </div>
               ))}
             </div>
@@ -1795,8 +1904,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             const as: Any[] = Array.isArray(sec(k).asks) ? sec(k).asks : []
             if (!as.length) return null
             return (
-              <div className="mt-11 pt-7 border-t" style={{ borderColor: t.rule }}>
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-5" style={{ color: t.accent }}>On the call</p>
+              <div className="mt-12 pt-8 border-t" style={{ borderColor: t.rule }}>
+                <p className="text-[12px] mb-5" style={{ color: t.muted }}>On the call</p>
                 <div className="flex flex-col gap-5">
                   {as.map((a: Any, i: number) => (
                     <AskBlock key={a.id || i} ask={a} live={canEdit} t={t} set={v => setAnswer(k, i, v)} />
@@ -1806,154 +1915,154 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             )
           }
 
-          /* THE LISTING, AT READING SIZE (Jon, 2026-09-16: "make the listing descriptions more
-             visible, and also the overview. This style looks bad"). The old block buried the
-             copy under an amenity grid and then set it at 15px behind a 10px label, so the one
-             thing on the page an owner can actually improve looked like metadata. Now the photos
-             run first, the channel links sit under them, and the words are set as words: the
-             title as a display line, the two descriptions as prose in a measured column. Still
-             editable without entering edit mode — you fix it while you read it aloud. */
+          /* THE LISTING SLIDE. A guest meets this property as a photograph and then as a
+             sentence, in that order, so that is the order it is reviewed in: one large frame,
+             a strip of the rest, then the words at reading size with a quiet label above each.
+             The words stay editable without entering edit mode — you fix a line while you are
+             reading it out loud, which is the only moment anyone ever actually fixes it. */
           const COPY = [
-            { f: 'title', l: 'Listing title', cap: 50, hint: 'The one line that wins the click in search results.' },
-            { f: 'summary', l: 'Summary', hint: 'The first paragraph a guest reads. Everything below the fold is a bonus.' },
-            { f: 'space', l: 'The space', hint: 'The room-by-room walkthrough.' },
+            { f: 'title', l: 'Listing title', cap: 50 },
+            { f: 'summary', l: 'Summary' },
+            { f: 'space', l: 'The space' },
           ]
 
-          const ListingBlock = ({ L, li }: { L: Any; li: number }) => (
-            <div key={L.id || li}>
-              {/* name and channels on one line — the unit's identity, once */}
-              <div className="flex items-end justify-between gap-5 flex-wrap pb-3.5 border-b" style={{ borderColor: t.ink }}>
-                <div className="min-w-0">
-                  <p className="text-[21px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>{L.name}</p>
-                  <p className="text-[13px] mt-1" style={{ color: t.sub }}>{L.sub}</p>
-                </div>
-                {(L.links || []).length > 0 && (
-                  <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                    {(L.links || []).map((k: Any) => (
-                      <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
-                        className="text-[12.5px] font-semibold onb-link" style={{ color: t.accent }}>{k.name} &#8599;</a>
-                    ))}
+          const ListingBlock = ({ L, li }: { L: Any; li: number }) => {
+            const pics: string[] = (L.photos || []).slice(0, 5)
+            return (
+              <div key={L.id || li}>
+                <div className="flex items-end justify-between gap-6 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-[18px] font-semibold tracking-[-0.01em]" style={{ color: t.ink }}>{L.name}</p>
+                    <p className="text-[13px] mt-1" style={{ color: t.muted }}>{L.sub}</p>
                   </div>
-                )}
-              </div>
-
-              {/* the first five, in the order a guest meets them */}
-              {(L.photos || []).length > 0 && (
-                <div className="onb-shots mt-5 grid gap-2" style={{ gridTemplateColumns: '1.55fr 1fr 1fr' }}>
-                  {(L.photos || []).slice(0, 5).map((src: string, pi: number) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img key={pi} src={src} alt="" className="w-full object-cover rounded-xl"
-                      style={{ gridRow: pi === 0 ? 'span 2' : undefined, aspectRatio: pi === 0 ? '4 / 3.3' : '4 / 3' }} />
-                  ))}
-                </div>
-              )}
-
-              {/* THE WORDS, AT THE SIZE THEY ARE ACTUALLY READ */}
-              <div className="mt-10 flex flex-col gap-9">
-                {COPY.map(F => {
-                  const val = String(L[F.f] || '')
-                  const over = !!F.cap && val.length > F.cap
-                  return (
-                    <div key={F.f}>
-                      <div className="flex items-baseline justify-between gap-4 pb-2 mb-3 border-b" style={{ borderColor: t.rule }}>
-                        <span className="text-[10.5px] font-bold uppercase tracking-[0.2em]" style={{ color: t.accent }}>{F.l}</span>
-                        {F.cap ? (
-                          <span className="text-[11px] font-bold tabular-nums" style={{ color: over ? t.gold : t.muted }}>
-                            {val.length} / {F.cap}
-                          </span>
-                        ) : null}
-                      </div>
-                      {F.f === 'title' ? (
-                        <div className="text-[23px] sm:text-[26px] font-black tracking-[-0.015em] leading-[1.2]" style={{ color: t.ink }}>
-                          <LiveText v={val} live={canEdit} t={t} single cls="w-full text-[23px] sm:text-[26px] font-black tracking-[-0.015em] leading-[1.2] rounded-lg px-3 py-1.5 -mx-3"
-                            set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
-                        </div>
-                      ) : (
-                        <LiveText v={val} live={canEdit} t={t}
-                          cls="onb-copy w-full text-[17px] leading-[1.75] rounded-lg px-3 py-2 -mx-3"
-                          set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
-                      )}
-                      {canEdit ? <p className="mt-2 text-[12px]" style={{ color: t.muted }}>{F.hint}</p> : null}
+                  {(L.links || []).length > 0 && (
+                    <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                      {(L.links || []).map((k: Any) => (
+                        <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
+                          className="text-[13px] font-medium onb-link" style={{ color: t.accent }}>{k.name} &#8599;</a>
+                      ))}
                     </div>
-                  )
-                })}
+                  )}
+                </div>
+
+                {pics.length > 0 && (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={pics[0]} alt="" className="onb-lead mt-5 w-full object-cover rounded-2xl" style={{ aspectRatio: '16 / 9' }} />
+                    {pics.length > 1 && (
+                      <div className="onb-strip mt-2.5 grid gap-2.5" style={{ gridTemplateColumns: 'repeat(' + Math.min(4, pics.length - 1) + ',1fr)' }}>
+                        {pics.slice(1, 5).map((src: string, pi: number) => (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img key={pi} src={src} alt="" className="w-full object-cover rounded-xl" style={{ aspectRatio: '4 / 3' }} />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="mt-10 flex flex-col gap-8">
+                  {COPY.map(F => {
+                    const val = String(L[F.f] || '')
+                    const over = !!F.cap && val.length > F.cap
+                    return (
+                      <div key={F.f}>
+                        <p className="text-[12px] mb-2" style={{ color: t.muted }}>
+                          {F.l}{over ? <span style={{ color: t.gold }}>{' · ' + val.length + ' of ' + F.cap + ' characters'}</span> : null}
+                        </p>
+                        {F.f === 'title' ? (
+                          <LiveText v={val} live={canEdit} t={t} single
+                            ro="text-[19px] sm:text-[21px] font-medium leading-[1.3]"
+                            cls="onb-live w-full text-[19px] sm:text-[21px] font-medium leading-[1.3] rounded-lg px-3 py-1.5 -mx-3"
+                            set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
+                        ) : (
+                          <LiveText v={val} live={canEdit} t={t}
+                            ro="text-[16px] leading-[1.8] whitespace-pre-line"
+                            cls="onb-copy w-full text-[16px] leading-[1.8] rounded-lg px-3 py-2 -mx-3"
+                            set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }} />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          )
+            )
+          }
 
           return (
             <>
               {/* ---------- 1 · WELCOME ---------- */}
-              {/* The greeting is a photograph of their unit with their name on it, not a brief.
-                  Fifteen seconds while everyone finishes joining the call. */}
               <SectionShell id="welcome" title="Welcome" hidden={hid('welcome')} edit={edit} onToggle={() => toggleSection('welcome')} onAi={() => openAi('welcome')}>
-                <div className="onb-sec">
+                <div className="onb-sec" data-nav="Welcome">
                   <Head k="welcome" label="Welcome" />
-                  <Shot k="welcome" ratio="16 / 9" />
-                  <p className="mt-8 text-[19px] sm:text-[21px] leading-[1.6] whitespace-pre-line" style={{ color: t.body, maxWidth: '46ch' }}>
+                  <p className="mt-8 text-[18px] leading-[1.65] whitespace-pre-line" style={{ color: t.body, maxWidth: '50ch' }}>
                     <Ed v={sec('welcome').body || ''} set={v => patch('welcome.body', v)} edit={edit} multiline />
                   </p>
+                  <Shot k="welcome" ratio="16 / 9" />
                   <Note k="welcome" />
                 </div>
               </SectionShell>
 
               {/* ---------- 2 · WHAT WE WILL COVER ---------- */}
+              {/* Two columns on a wide screen: eight agenda lines in one narrow column is a
+                  scroll, and an agenda you have to scroll is not an agenda. */}
               <SectionShell id="agenda" title="What we will cover" hidden={hid('agenda')} edit={edit} onToggle={() => toggleSection('agenda')}>
-                <div className="onb-sec">
+                <div className="onb-sec" data-nav="Agenda">
                   <Head k="agenda" label="What we will cover" />
-                  <div className="mt-8">
+                  <div className="onb-agenda mt-9 grid gap-x-12 gap-y-0" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))' }}>
                     {(sec('agenda').items || []).map((it: Any, i: number) => (
-                      <div key={i} className="onb-row grid gap-x-8 gap-y-1.5 py-4 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '38px 1fr' }}>
-                        <span className="text-[12px] font-bold tabular-nums" style={{ color: t.accent }}>{String(i + 1).padStart(2, '0')}</span>
+                      <div key={i} className="grid gap-x-5 py-4 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '26px 1fr' }}>
+                        <span className="text-[12px] tabular-nums" style={{ color: t.muted }}>{String(i + 1).padStart(2, '0')}</span>
                         <div>
-                          <p className="text-[17px] font-bold" style={{ color: t.ink }}>
+                          <p className="text-[15.5px] font-semibold" style={{ color: t.ink }}>
                             <Ed v={it.k || ''} set={v => patch('agenda.items.' + i + '.k', v)} edit={edit} />
                           </p>
-                          <p className="text-[14.5px] mt-0.5 leading-relaxed" style={{ color: t.sub }}>
+                          <p className="text-[14px] mt-1 leading-[1.6]" style={{ color: t.muted }}>
                             <Ed v={it.v || ''} set={v => patch('agenda.items.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
                       </div>
                     ))}
-                    {edit && (
-                      <button onClick={() => mutate(d => { d.agenda.items = Array.isArray(d.agenda.items) ? d.agenda.items : []; d.agenda.items.push({ k: 'New line', v: '' }) })}
-                        className="mt-5 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
-                        style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}>
-                        <Plus size={12} /> Add a line
-                      </button>
-                    )}
                   </div>
+                  {edit && (
+                    <button onClick={() => mutate(d => { d.agenda.items = Array.isArray(d.agenda.items) ? d.agenda.items : []; d.agenda.items.push({ k: 'New line', v: '' }) })}
+                      className="mt-6 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                      style={{ background: t.card, border: '1px dashed ' + t.cardBorder, color: t.sub }}>
+                      <Plus size={12} /> Add a line
+                    </button>
+                  )}
                   <Note k="agenda" />
                 </div>
               </SectionShell>
 
               {/* ---------- 3 · MEET THE TEAM ---------- */}
+              {/* Four people, four faces, four direct lines. Not a directory — the point of this
+                  slide is that the owner leaves the call able to picture who walks into the unit. */}
               <SectionShell id="team" title="Meet the team" hidden={hid('team')} edit={edit} onToggle={() => toggleSection('team')}>
-                <div className="onb-sec">
+                <div className="onb-sec" data-nav="The team">
                   <Head k="team" label="Meet the team" />
-                  <div className="mt-9 grid gap-x-10 gap-y-9" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(236px,1fr))' }}>
+                  <div className="onb-team mt-10 grid gap-x-9 gap-y-10" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))' }}>
                     {(sec('team').people || []).map((p: Any, pi: number) => (
                       <div key={pi}>
                         {p.photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.photo} alt="" className="rounded-full object-cover mb-3.5" style={{ width: 62, height: 62 }} />
+                          <img src={p.photo} alt="" className="rounded-2xl object-cover mb-4 w-full" style={{ aspectRatio: '1 / 1' }} />
                         ) : (
-                          <div className="rounded-full mb-3.5 flex items-center justify-center text-[20px] font-black"
-                            style={{ width: 62, height: 62, background: t.chip, color: t.accent }}>
+                          <div className="rounded-2xl mb-4 w-full flex items-center justify-center text-[24px] font-semibold"
+                            style={{ aspectRatio: '1 / 1', background: t.chip, color: t.muted }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
-                        <p className="text-[16px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>
+                        <p className="text-[16px] font-semibold tracking-[-0.01em]" style={{ color: t.ink }}>
                           <Ed v={p.name || ''} set={v => patch('team.people.' + pi + '.name', v)} edit={edit} />
                         </p>
-                        <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] mt-1 mb-2" style={{ color: t.accent }}>
+                        <p className="text-[13px] mt-0.5 mb-2.5" style={{ color: t.muted }}>
                           <Ed v={p.role || ''} set={v => patch('team.people.' + pi + '.role', v)} edit={edit} />
                         </p>
-                        <p className="text-[14px] leading-[1.65]" style={{ color: t.sub }}>
+                        <p className="text-[14px] leading-[1.65]" style={{ color: t.body }}>
                           <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do for this owner&hellip;" />
                         </p>
                         {(p.phone || p.email || edit) && (
-                          <div className="mt-2.5 flex flex-col gap-0.5 text-[13px]" style={{ color: t.body }}>
+                          <div className="mt-2.5 flex flex-col gap-0.5 text-[13px]" style={{ color: t.sub }}>
                             {(p.phone || edit) && <span><Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" /></span>}
                             {(p.email || edit) && <span><Ed v={p.email || ''} set={v => patch('team.people.' + pi + '.email', v)} edit={edit} placeholder="Email" /></span>}
                           </div>
@@ -1967,8 +2076,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   {edit && (
                     <button
                       onClick={() => mutate(d => { d.team.people = Array.isArray(d.team.people) ? d.team.people : []; d.team.people.push({ name: 'Name', role: 'Role', blurb: '', photo: null, phone: '', email: '' }) })}
-                      className="mt-6 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
-                      style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}>
+                      className="mt-7 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                      style={{ background: t.card, border: '1px dashed ' + t.cardBorder, color: t.sub }}>
                       <Plus size={12} /> Add person
                     </button>
                   )}
@@ -1976,12 +2085,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 </div>
               </SectionShell>
 
-              {/* ---------- 4 · OVERVIEW OF STAY HOSPITALITY ---------- */}
-              {/* Editorial, not a fact sheet: one lead paragraph set large enough to be read
-                  aloud, the rest at body size, and the numbers on a rule underneath. */}
-              <SectionShell id="overview" title="Overview" hidden={hid('overview')} edit={edit} onToggle={() => toggleSection('overview')} onAi={() => openAi('overview')}>
-                <div className="onb-sec">
-                  <Head k="overview" label="Overview" />
+              {/* ---------- 4 · ABOUT STAY HOSPITALITY ---------- */}
+              {/* One sentence at speaking size, one paragraph under it, four numbers on a
+                  hairline. That is the whole slide — a company overview that runs longer than
+                  this is about us, and the owner did not come to hear about us. */}
+              <SectionShell id="overview" title="About Stay Hospitality" hidden={hid('overview')} edit={edit} onToggle={() => toggleSection('overview')} onAi={() => openAi('overview')}>
+                <div className="onb-sec" data-nav="About Stay">
+                  <Head k="overview" label="About Stay Hospitality" />
                   {(() => {
                     const full = String(sec('overview').body || '')
                     const cut = full.indexOf('\n\n')
@@ -1990,50 +2100,48 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     if (edit) return <Body k="overview" />
                     return (
                       <>
-                        <p className="mt-8 text-[19px] sm:text-[22px] leading-[1.55] tracking-[-0.005em] whitespace-pre-line" style={{ color: t.ink, maxWidth: '40ch' }}>{lead}</p>
+                        <p className="mt-8 text-[19px] sm:text-[20px] leading-[1.6] whitespace-pre-line" style={{ color: t.body, maxWidth: '46ch' }}>{lead}</p>
                         {rest ? (
-                          <p className="mt-6 text-[16px] leading-[1.75] whitespace-pre-line" style={{ color: t.body, maxWidth: '62ch' }}>{rest}</p>
+                          <p className="mt-5 text-[15.5px] leading-[1.75] whitespace-pre-line" style={{ color: t.muted, maxWidth: '58ch' }}>{rest}</p>
                         ) : null}
                       </>
                     )
                   })()}
                   {(sec('overview').stats || []).length > 0 && (
-                    <div className="mt-11 pt-8 grid gap-y-8 gap-x-10" style={{ borderTop: '2px solid ' + t.ink, gridTemplateColumns: 'repeat(auto-fit,minmax(168px,1fr))' }}>
+                    <div className="mt-11 pt-9 grid gap-y-8 gap-x-10 border-t" style={{ borderColor: t.rule, gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))' }}>
                       {(sec('overview').stats || []).map((f: Any, i: number) => (
                         <div key={i}>
-                          <p className="text-[22px] sm:text-[25px] font-black tracking-[-0.02em] leading-[1.15]" style={{ color: t.ink }}>
+                          <p className="text-[18px] sm:text-[19px] font-semibold tracking-[-0.015em] leading-[1.3]" style={{ color: t.ink }}>
                             <Ed v={f.v || ''} set={v => patch('overview.stats.' + i + '.v', v)} edit={edit} multiline />
                           </p>
-                          <p className="text-[10px] font-bold uppercase tracking-[0.2em] mt-2" style={{ color: t.muted }}>
+                          <p className="text-[12.5px] mt-1.5" style={{ color: t.muted }}>
                             <Ed v={f.k || ''} set={v => patch('overview.stats.' + i + '.k', v)} edit={edit} />
                           </p>
                         </div>
                       ))}
                     </div>
                   )}
-                  <Shot k="overview" />
+                  <Strip from={7} n={3} />
                   <Note k="overview" />
                 </div>
               </SectionShell>
 
-              {/* ---------- 5 · REVIEW THE LISTING ---------- */}
+              {/* ---------- 5 · YOUR LISTING ---------- */}
               <SectionShell id="listings" title="Your listing" hidden={hid('listings')} edit={edit} onToggle={() => toggleSection('listings')}>
-                <div className="onb-sec">
+                <div className="onb-sec" data-nav="Your listing">
                   <Head k="listings" label="Your listing" />
-                  {/* ONE UNIT PER SLIDE WHEN PRESENTING (Jon, 2026-09-16: "present mode moves
-                      seamlessly through the sections without cutting anything off"). Six units
-                      stacked in one section made a single 8,000px slide — technically scrollable,
-                      useless to present from. On the page they stay together; on a call each unit
-                      gets the screen to itself. */}
+                  {/* ONE UNIT PER SLIDE WHEN PRESENTING. Six units stacked in one section made a
+                      single 8,000px slide — technically scrollable, useless to present from. On
+                      the page they stay together; on a call each unit gets the screen to itself. */}
                   {!present && (
-                    <div className="mt-9 flex flex-col gap-14">
+                    <div className="mt-10 flex flex-col gap-16">
                       {(sec('listings').items || []).map((L: Any, li: number) => (
                         <ListingBlock key={L.id || li} L={L} li={li} />
                       ))}
                     </div>
                   )}
-                  <p className="mt-9 text-[13px] leading-relaxed" style={{ color: t.muted, maxWidth: '62ch' }}>
-                    Edit the copy here as we talk &mdash; it saves itself. Pushing it live to the channels happens from the unit page in the dashboard, which is the one place that writes to Guesty. Amenities are set on the unit page too.
+                  <p className="mt-10 text-[13px] leading-[1.7]" style={{ color: t.muted, maxWidth: '60ch' }}>
+                    The copy above is live &mdash; edit it as we read it and it saves itself. Pushing it out to the channels, and setting amenities, happens on the unit page in the dashboard.
                   </p>
                   <Asks k="listings" />
                 </div>
@@ -2041,68 +2149,56 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
               {present && !hid('listings') && (sec('listings').items || []).map((L: Any, li: number) => (
                 <section key={'pres-' + (L.id || li)}>
-                  <div className="onb-sec"><ListingBlock L={L} li={li} /></div>
+                  <div className="onb-sec" data-nav={String(L.name || 'Unit')}><ListingBlock L={L} li={li} /></div>
                 </section>
               ))}
 
-              {/* ---------- 6 · YOUR GUESTY OWNER PORTAL ---------- */}
-              {/* THE ADDRESS IS A HOUSE SETTING, THE LOGIN IS THEIRS (Jon: "the owner portal
-                  should have the link to their owner portal because you can pull that from
-                  Guesty"). Guesty does not expose a per-owner portal URL — an account gets
-                  exactly one `<name>.guestyowners.com` and every owner signs into it with their
-                  own email. So the link is the house's, seeded from the onboarding template and
-                  correctable here, and the line that IS theirs is the email it belongs to. */}
-              <SectionShell id="guesty" title="Owner portal" hidden={hid('guesty')} edit={edit} onToggle={() => toggleSection('guesty')} onAi={() => openAi('guesty')}>
-                <div className="onb-sec">
-                  <Head k="guesty" label="Owner portal" />
-                  <div className="mt-8 rounded-2xl px-6 py-6 sm:px-8 sm:py-7" style={{ background: t.chip, border: '1px solid ' + t.cardBorder }}>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.muted }}>Your portal</p>
+              {/* ---------- 6 · YOUR OWNER PORTAL ---------- */}
+              {/* THE ADDRESS IS A HOUSE SETTING, THE LOGIN IS THEIRS. Guesty does not expose a
+                  per-owner portal URL — an account gets exactly one `<name>.guestyowners.com`
+                  and every owner signs into it with their own email. So the link is the house's,
+                  seeded from the onboarding template and correctable here, and the line that IS
+                  theirs is the email it belongs to. No box around it: on a call this is one
+                  address read out loud, not a form. */}
+              <SectionShell id="guesty" title="Your owner portal" hidden={hid('guesty')} edit={edit} onToggle={() => toggleSection('guesty')} onAi={() => openAi('guesty')}>
+                <div className="onb-sec" data-nav="Owner portal">
+                  <Head k="guesty" label="Your owner portal" />
+                  <div className="mt-9 pt-8 border-t" style={{ borderColor: t.ink }}>
                     {canEdit ? (
                       <input
                         value={String(sec('guesty').portalUrl || '')}
                         onChange={e => { patch('guesty.portalUrl', e.target.value); answerChanged() }}
                         placeholder="https://your-name.guestyowners.com"
-                        className="onb-live mt-2 w-full text-[21px] sm:text-[25px] font-black tracking-[-0.015em] rounded-lg px-3 py-1.5 -mx-3"
+                        className="onb-live w-full text-[22px] sm:text-[27px] font-medium tracking-[-0.02em] rounded-lg px-3 py-1.5 -mx-3"
                         style={{ color: t.accent, background: 'transparent', border: '1px solid transparent', fontFamily: 'inherit' }}
                       />
                     ) : (
                       <a href={String(sec('guesty').portalUrl || '#')} target="_blank" rel="noopener noreferrer"
-                        className="onb-link block mt-2 text-[21px] sm:text-[25px] font-black tracking-[-0.015em] break-words"
+                        className="onb-link block text-[22px] sm:text-[27px] font-medium tracking-[-0.02em] break-words"
                         style={{ color: t.accent }}>
                         {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '') || 'Portal address to be set'}
                       </a>
                     )}
-                    <div className="mt-5 pt-5 grid gap-x-10 gap-y-4" style={{ borderTop: '1px solid ' + t.rule, gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))' }}>
+                    <div className="mt-6 grid gap-x-12 gap-y-5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))' }}>
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>You sign in as</p>
-                        <p className="text-[16px] font-semibold mt-1 break-words" style={{ color: t.ink }}>
+                        <p className="text-[12px]" style={{ color: t.muted }}>You sign in as</p>
+                        <p className="text-[15.5px] mt-1 break-words" style={{ color: t.ink }}>
                           <Ed v={String(sec('guesty').loginEmail || '')} set={v => patch('guesty.loginEmail', v)} edit={edit} placeholder="owner@email.com" />
                           {!String(sec('guesty').loginEmail || '') && !edit ? <span style={{ color: t.gold }}>the email we set up on this call</span> : null}
                         </p>
                       </div>
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.muted }}>Password</p>
-                        <p className="text-[16px] mt-1" style={{ color: t.body }}>You set it yourself from the invite email &mdash; we never hold it.</p>
+                        <p className="text-[12px]" style={{ color: t.muted }}>Password</p>
+                        <p className="text-[15.5px] mt-1" style={{ color: t.body }}>You set it from the invite email. We never hold it.</p>
                       </div>
                     </div>
                   </div>
                   <Body k="guesty" />
-                  <div className="mt-8">
-                    {(sec('guesty').items || []).map((it: Any, ii: number) => (
-                      <div key={ii} className="onb-row grid gap-x-8 gap-y-1.5 py-5 border-t" style={{ borderColor: t.rule, gridTemplateColumns: '216px 1fr' }}>
-                        <p className="text-[15px] font-bold" style={{ color: t.ink }}>
-                          <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
-                        </p>
-                        <p className="text-[15px] leading-[1.65]" style={{ color: t.body }}>
-                          <Ed v={it.v || ''} set={v => patch('guesty.items.' + ii + '.v', v)} edit={edit} multiline />
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                  {/* "with photos, etc." — portal screenshots from the template, so every owner
-                      sees the same tour without anyone re-uploading them. */}
+                  <Rows rows={sec('guesty').items || []} kw="190px" />
+                  {/* Portal screenshots from the template, so every owner sees the same tour
+                      without anyone re-uploading them. */}
                   {(sec('guesty').shots || []).length > 0 && (
-                    <div className="mt-9 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))' }}>
+                    <div className="mt-10 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
                       {(sec('guesty').shots || []).map((src: string, si: number) => (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img key={si} src={src} alt="" className="w-full object-cover rounded-xl" style={{ border: '1px solid ' + t.cardBorder }} />
@@ -2114,14 +2210,17 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 </div>
               </SectionShell>
 
-              {/* ---------- 7 · YOUR GUESTY OWNER STATEMENTS ---------- */}
-              <SectionShell id="statement" title="Owner statements" hidden={hid('statement')} edit={edit} onToggle={() => toggleSection('statement')}>
-                <div className="onb-sec">
-                  <Head k="statement" label="Owner statements" />
-                  <div className="mt-8 rounded-2xl overflow-hidden" style={{ border: '1px solid ' + t.cardBorder }}>
+              {/* ---------- 7 · YOUR STATEMENTS ---------- */}
+              {/* The worked month first, because a number an owner can follow beats any amount of
+                  policy. Then the three rules they will actually repeat afterwards. The full
+                  small print sits underneath for the ones who read it — and some do. */}
+              <SectionShell id="statement" title="Your statements" hidden={hid('statement')} edit={edit} onToggle={() => toggleSection('statement')}>
+                <div className="onb-sec" data-nav="Statements">
+                  <Head k="statement" label="Your statements" />
+                  <div className="mt-9 rounded-2xl overflow-hidden" style={{ border: '1px solid ' + t.cardBorder }}>
                     <div className="px-6 py-4" style={{ background: t.chip }}>
-                      <p className="text-[16px] font-black" style={{ color: t.ink }}>{sec('statement').unitLabel}</p>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.12em] mt-1" style={{ color: t.muted }}>{sec('statement').period}</p>
+                      <p className="text-[15.5px] font-semibold" style={{ color: t.ink }}>{sec('statement').unitLabel}</p>
+                      <p className="text-[12.5px] mt-0.5" style={{ color: t.muted }}>{sec('statement').period}</p>
                     </div>
                     <div className="px-6 pt-3 pb-5" style={{ background: t.card }}>
                       {(sec('statement').lines || []).map((ln: Any, i: number) => (
@@ -2129,36 +2228,36 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           <span className="text-[15px]" style={{ color: t.body }}>
                             {ln.k}{ln.sub ? <small className="block text-[12.5px] mt-0.5" style={{ color: t.muted }}>{ln.sub}</small> : null}
                           </span>
-                          <span className="text-[15px] font-semibold whitespace-nowrap tabular-nums" style={{ color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
+                          <span className="text-[15px] font-medium whitespace-nowrap tabular-nums" style={{ color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
                         </div>
                       ))}
-                      <div className="flex justify-between gap-5 pt-4 mt-1" style={{ borderTop: '2px solid ' + t.ink }}>
-                        <span className="text-[19px] font-black" style={{ color: t.ink }}>Net to you</span>
-                        <span className="text-[19px] font-black tabular-nums" style={{ color: t.ink }}>{sec('statement').net}</span>
+                      <div className="flex justify-between gap-5 pt-4 mt-1" style={{ borderTop: '1px solid ' + t.ink }}>
+                        <span className="text-[17px] font-semibold" style={{ color: t.ink }}>Net to you</span>
+                        <span className="text-[17px] font-semibold tabular-nums" style={{ color: t.ink }}>{sec('statement').net}</span>
                       </div>
-                      <p className="text-[13px] mt-2 font-semibold" style={{ color: t.good }}>{sec('statement').paid}</p>
+                      <p className="text-[13px] mt-2" style={{ color: t.good }}>{sec('statement').paid}</p>
                     </div>
                     <div style={{ background: t.card, borderTop: '1px solid ' + t.rule }}>
-                      <p className="px-6 py-2.5 text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: t.muted }}>
-                        Owner charge &middot; the {sec('statement').chargesTotal}, in full
+                      <p className="px-6 py-2.5 text-[12px]" style={{ color: t.muted }}>
+                        The {sec('statement').chargesTotal} owner charge, in full
                       </p>
                       <div className="lh-hscroll px-6 pb-5">
                         <table className="w-full text-[13.5px]">
                           <thead>
                             <tr>{['Date', 'Work', 'Labor', 'Materials', 'Total'].map((h, i) => (
-                              <th key={h} className="text-[9px] font-bold uppercase tracking-[0.12em] pb-2 pr-4 border-b whitespace-nowrap" style={{ color: t.muted, borderColor: t.rule, textAlign: i >= 2 ? 'right' : 'left' }}>{h}</th>
+                              <th key={h} className="text-[11.5px] font-medium pb-2 pr-4 border-b whitespace-nowrap" style={{ color: t.muted, borderColor: t.rule, textAlign: i >= 2 ? 'right' : 'left' }}>{h}</th>
                             ))}</tr>
                           </thead>
                           <tbody>
                             {(sec('statement').charges || []).map((ch: Any, i: number) => (
                               <tr key={i}>
-                                <td className="py-3 pr-4 border-b whitespace-nowrap align-top" style={{ borderColor: t.rule, color: t.sub }}>{ch.date}</td>
+                                <td className="py-3 pr-4 border-b whitespace-nowrap align-top" style={{ borderColor: t.rule, color: t.muted }}>{ch.date}</td>
                                 <td className="py-3 pr-4 border-b align-top" style={{ borderColor: t.rule, color: t.body }}>
                                   {ch.work}<small className="block text-[12px] mt-0.5" style={{ color: t.muted }}>{ch.who}</small>
                                 </td>
                                 <td className="py-3 pr-4 border-b text-right whitespace-nowrap align-top tabular-nums" style={{ borderColor: t.rule, color: t.body }}>{ch.labor}</td>
                                 <td className="py-3 pr-4 border-b text-right whitespace-nowrap align-top tabular-nums" style={{ borderColor: t.rule, color: t.body }}>{ch.materials}</td>
-                                <td className="py-3 border-b text-right whitespace-nowrap align-top tabular-nums font-bold" style={{ borderColor: t.rule, color: t.ink }}>{ch.total}</td>
+                                <td className="py-3 border-b text-right whitespace-nowrap align-top tabular-nums font-medium" style={{ borderColor: t.rule, color: t.ink }}>{ch.total}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -2166,22 +2265,39 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       </div>
                     </div>
                   </div>
-                  <p className="mt-7 text-[15px] leading-[1.7]" style={{ color: t.body, maxWidth: '64ch' }}>
-                    <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
-                  </p>
-                  {/* THE RULES BEHIND THE LINES — the billables doctrine, folded in here because
-                      this is where an owner actually meets it. */}
-                  {(sec('statement').rules || []).length > 0 && (
-                    <div className="mt-11">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-1" style={{ color: t.accent }}>What can and cannot reach this statement</p>
-                      <Rows rows={sec('statement').rules || []} kw="200px" />
+
+                  {/* THE THREE AN OWNER REPEATS AFTERWARDS. */}
+                  {(sec('statement').highlights || []).length > 0 && (
+                    <div className="onb-three mt-10 grid gap-x-10 gap-y-7" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))' }}>
+                      {(sec('statement').highlights || []).map((h: Any, i: number) => (
+                        <div key={i} className="pt-5 border-t" style={{ borderColor: t.ink }}>
+                          <p className="text-[15.5px] font-semibold leading-[1.35]" style={{ color: t.ink }}>
+                            <Ed v={h.k || ''} set={v => patch('statement.highlights.' + i + '.k', v)} edit={edit} multiline />
+                          </p>
+                          <p className="text-[14px] mt-2 leading-[1.65]" style={{ color: t.muted }}>
+                            <Ed v={h.v || ''} set={v => patch('statement.highlights.' + i + '.v', v)} edit={edit} multiline />
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   )}
-                  {(sec('statement').also || []).length > 0 && (
-                    <div className="mt-11">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-1" style={{ color: t.muted }}>Other lines you may see</p>
-                      <Rows rows={sec('statement').also || []} kw="200px" />
-                    </div>
+
+                  <p className="mt-10 text-[15px] leading-[1.75]" style={{ color: t.body, maxWidth: '62ch' }}>
+                    <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
+                  </p>
+
+                  {/* The small print, kept and kept quiet. */}
+                  {(sec('statement').rules || []).length > 0 && (
+                    <details className="onb-more mt-9">
+                      <summary className="text-[13.5px] font-medium cursor-pointer" style={{ color: t.sub }}>Every rule behind those lines</summary>
+                      <Rows rows={sec('statement').rules || []} kw="200px" />
+                      {(sec('statement').also || []).length > 0 && (
+                        <>
+                          <p className="mt-9 text-[12px]" style={{ color: t.muted }}>Other lines you may see</p>
+                          <Rows rows={sec('statement').also || []} kw="200px" />
+                        </>
+                      )}
+                    </details>
                   )}
                   <Note k="statement" />
                 </div>
@@ -2189,11 +2305,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
               {/* ══════ SECTIONS THAT ARE OFF BY DEFAULT ══════
                   Built, kept in the document, and rendered only once someone switches them on
-                  for this owner. They keep their old shape; what changed is that they are no
-                  longer in the room unless asked for. */}
+                  for this owner. */}
               {!hid('unit') && (
                 <SectionShell id="unit" title="Your unit" hidden={false} edit={edit} onToggle={() => toggleSection('unit')} onAi={() => openAi('unit')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="Your unit">
                     <Head k="unit" label="Your unit" />
                     <Body k="unit" />
                     <Rows rows={sec('unit').facts || []} kw="200px" />
@@ -2205,7 +2320,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )}
               {!hid('strategy') && (
                 <SectionShell id="strategy" title="Goals & strategy" hidden={false} edit={edit} onToggle={() => toggleSection('strategy')} onAi={() => openAi('strategy')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="Strategy">
                     <Head k="strategy" label="Goals & strategy" />
                     <Body k="strategy" />
                     <Shot k="strategy" />
@@ -2216,10 +2331,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )}
               {!hid('ramp') && (
                 <SectionShell id="ramp" title="The ramp" hidden={false} edit={edit} onToggle={() => toggleSection('ramp')} onAi={() => openAi('ramp')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="The ramp">
                     <Head k="ramp" label="The ramp" />
                     <Rows rows={sec('ramp').bands || []} kw="130px" />
-                    <p className="mt-8 text-[15px] leading-[1.7] pl-5" style={{ color: t.body, maxWidth: '62ch', borderLeft: '2px solid ' + t.accent }}>
+                    <p className="mt-9 text-[15px] leading-[1.75] pl-5" style={{ color: t.body, maxWidth: '60ch', borderLeft: '2px solid ' + t.rule }}>
                       <Ed v={sec('ramp').note || ''} set={v => patch('ramp.note', v)} edit={edit} multiline />
                     </p>
                     <Note k="ramp" />
@@ -2229,18 +2344,18 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )}
               {!hid('season') && (
                 <SectionShell id="season" title="Seasonality" hidden={false} edit={edit} onToggle={() => toggleSection('season')} onAi={() => openAi('season')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="Seasonality">
                     <Head k="season" label="Seasonality" />
                     <Body k="season" />
-                    <div className="mt-9 flex items-end gap-1.5" style={{ height: 116 }}>
+                    <div className="mt-10 flex items-end gap-1.5" style={{ height: 108 }}>
                       {(sec('season').months || []).map((m: Any, mi: number) => (
                         <div key={mi} className="flex-1 flex flex-col items-center gap-2">
-                          <div className="w-full rounded-t" style={{ height: Math.max(8, (Number(m.level) + 1) * 26), background: Number(m.level) >= 3 ? t.accent : Number(m.level) >= 2 ? hexA(t.accent, 0.55) : hexA(t.accent, 0.22) }} />
-                          <span className="text-[10px] font-bold" style={{ color: t.muted }}>{m.m}</span>
+                          <div className="w-full rounded-t" style={{ height: Math.max(8, (Number(m.level) + 1) * 24), background: Number(m.level) >= 3 ? hexA(t.accent, 0.85) : Number(m.level) >= 2 ? hexA(t.accent, 0.45) : hexA(t.accent, 0.18) }} />
+                          <span className="text-[10.5px]" style={{ color: t.muted }}>{m.m}</span>
                         </div>
                       ))}
                     </div>
-                    <p className="mt-7 text-[13.5px] leading-relaxed" style={{ color: t.muted, maxWidth: '62ch' }}>
+                    <p className="mt-8 text-[13.5px] leading-[1.7]" style={{ color: t.muted, maxWidth: '60ch' }}>
                       <Ed v={sec('season').note || ''} set={v => patch('season.note', v)} edit={edit} multiline />
                     </p>
                     <Note k="season" />
@@ -2250,7 +2365,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )}
               {!hid('tech') && (
                 <SectionShell id="tech" title="Your tech" hidden={false} edit={edit} onToggle={() => toggleSection('tech')} onAi={() => openAi('tech')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="Your tech">
                     <Head k="tech" label="Your tech" />
                     <Body k="tech" />
                     <Rows rows={sec('tech').rows || []} kw="176px" />
@@ -2262,29 +2377,29 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )}
               {!hid('money') && (
                 <SectionShell id="money" title="Billables" hidden={false} edit={edit} onToggle={() => toggleSection('money')} onAi={() => openAi('money')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="Billables">
                     <Head k="money" label="Billables" />
                     <Body k="money" />
                     <Rows rows={sec('money').rules || []} kw="200px" />
                     <div className="mt-10 grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(290px,1fr))' }}>
                       {(sec('money').examples || []).map((ex: Any, xi: number) => (
                         <div key={xi} className="rounded-2xl p-5" style={{ background: t.card, border: '1px solid ' + (ex.tone === 'hold' ? t.gold : t.cardBorder) }}>
-                          <p className="text-[14.5px] font-bold leading-snug" style={{ color: t.ink }}>{ex.title}</p>
+                          <p className="text-[14.5px] font-semibold leading-snug" style={{ color: t.ink }}>{ex.title}</p>
                           <div className="mt-3.5">
                             {(ex.lines || []).map((ln: Any, i: number) => (
                               <div key={i} className="flex justify-between gap-4 py-2 border-t text-[14px]" style={{ borderColor: t.rule }}>
                                 <span style={{ color: t.body }}>{ln.k}</span>
-                                <span className="font-semibold whitespace-nowrap tabular-nums" style={{ color: t.ink }}>{ln.v}</span>
+                                <span className="font-medium whitespace-nowrap tabular-nums" style={{ color: t.ink }}>{ln.v}</span>
                               </div>
                             ))}
                           </div>
                           {ex.total ? (
-                            <div className="flex justify-between gap-4 pt-2.5 mt-1" style={{ borderTop: '2px solid ' + t.ink }}>
-                              <span className="text-[14px] font-black" style={{ color: t.ink }}>Total</span>
-                              <span className="text-[14px] font-black tabular-nums" style={{ color: t.ink }}>{ex.total}</span>
+                            <div className="flex justify-between gap-4 pt-2.5 mt-1" style={{ borderTop: '1px solid ' + t.ink }}>
+                              <span className="text-[14px] font-semibold" style={{ color: t.ink }}>Total</span>
+                              <span className="text-[14px] font-semibold tabular-nums" style={{ color: t.ink }}>{ex.total}</span>
                             </div>
                           ) : null}
-                          <p className="mt-3 text-[13px] leading-relaxed font-semibold" style={{ color: ex.tone === 'hold' ? t.gold : t.good }}>{ex.verdict}</p>
+                          <p className="mt-3 text-[13px] leading-relaxed" style={{ color: ex.tone === 'hold' ? t.gold : t.good }}>{ex.verdict}</p>
                         </div>
                       ))}
                     </div>
@@ -2295,7 +2410,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )}
               {!hid('comms') && (
                 <SectionShell id="comms" title="Communication" hidden={false} edit={edit} onToggle={() => toggleSection('comms')} onAi={() => openAi('comms')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="Communication">
                     <Head k="comms" label="Communication" />
                     <Body k="comms" />
                     <Rows rows={sec('comms').rows || []} kw="156px" />
@@ -2306,15 +2421,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )}
               {!hid('checklist') && (
                 <SectionShell id="checklist" title="Still to do" hidden={false} edit={edit} onToggle={() => toggleSection('checklist')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="Still to do">
                     <Head k="checklist" label="Still to do" />
-                    <div className="mt-8">
+                    <div className="mt-9">
                       {(sec('checklist').rows || []).map((r: Any, ri: number) => (
                         <div key={ri} className="onb-row grid gap-x-6 gap-y-1 py-3.5 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '1fr 92px 108px' }}>
                           <span className="text-[15px]" style={{ color: t.ink }}>
                             <Ed v={r.item || ''} set={v => patch('checklist.rows.' + ri + '.item', v)} edit={edit} multiline />
                           </span>
-                          <span className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: String(r.who).toLowerCase() === 'stay' ? t.accent : t.gold }}>
+                          <span className="text-[12.5px]" style={{ color: String(r.who).toLowerCase() === 'stay' ? t.sub : t.gold }}>
                             <Ed v={r.who || ''} set={v => patch('checklist.rows.' + ri + '.who', v)} edit={edit} />
                           </span>
                           <span className="text-[13px]">
@@ -2330,7 +2445,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               )}
               {!hid('nextup') && (
                 <SectionShell id="nextup" title="What happens next" hidden={false} edit={edit} onToggle={() => toggleSection('nextup')}>
-                  <div className="onb-sec">
+                  <div className="onb-sec" data-nav="What's next">
                     <Head k="nextup" label="What happens next" />
                     <Rows rows={sec('nextup').rows || []} kw="200px" />
                     <Note k="nextup" />
@@ -2340,29 +2455,30 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
               {/* ---------- 8 · OTHER NOTES ---------- */}
               <SectionShell id="notes" title="Other notes" hidden={hid('notes')} edit={edit} onToggle={() => toggleSection('notes')}>
-                <div className="onb-sec">
+                <div className="onb-sec" data-nav="Other notes">
                   <Head k="notes" label="Other notes" />
-                  <div className="mt-8">
+                  <div className="mt-9">
                     <LiveText
                       v={String(sec('notes').body || '')}
                       live={canEdit}
                       t={t}
-                      cls="onb-copy w-full text-[16.5px] leading-[1.75] rounded-lg px-3 py-2 -mx-3"
+                      ro="text-[16px] leading-[1.8] whitespace-pre-line"
+                      cls="onb-copy w-full text-[16px] leading-[1.8] rounded-lg px-3 py-2 -mx-3"
                       set={v => { patch('notes.body', v); answerChanged() }}
                     />
                   </div>
                   {totalAsks > 0 && (
-                    <div className="mt-11 pt-8" style={{ borderTop: '2px solid ' + t.ink }}>
-                      <p className="text-[13px] font-bold uppercase tracking-[0.18em]" style={{ color: open.length ? t.gold : t.good }}>
+                    <div className="mt-12 pt-9 border-t" style={{ borderColor: t.ink }}>
+                      <p className="text-[13px]" style={{ color: open.length ? t.gold : t.good }}>
                         {answered} of {totalAsks} answered
                       </p>
                       {open.length === 0 ? (
-                        <p className="mt-4 text-[16px] font-semibold" style={{ color: t.good }}>Nothing open &mdash; every question on this page has an answer.</p>
+                        <p className="mt-4 text-[16px]" style={{ color: t.good }}>Nothing open &mdash; every question on this page has an answer.</p>
                       ) : (
                         <div className="mt-4">
                           {open.map((o, oi) => (
                             <div key={oi} className="onb-row grid gap-x-8 gap-y-1 py-3.5 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '148px 1fr' }}>
-                              <span className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>{o.label}</span>
+                              <span className="text-[12.5px]" style={{ color: t.muted }}>{o.label}</span>
                               <span className="text-[15px]" style={{ color: t.ink }}>{o.q}</span>
                             </div>
                           ))}
@@ -2374,13 +2490,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 </div>
               </SectionShell>
 
-              {/* Switch an off-by-default section back on for this owner. Edit mode only — an
-                  owner never sees the machinery. */}
+              {/* Switch an off-by-default section back on for this owner. Edit mode only. */}
               {edit && (
                 <div className="sb-noprint onb-sec">
                   <div className="rounded-2xl px-6 py-5" style={{ background: t.chip, border: '1px dashed ' + t.cardBorder }}>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-1" style={{ color: t.muted }}>More sections</p>
-                    <p className="text-[13px] mb-4" style={{ color: t.sub, maxWidth: '58ch' }}>
+                    <p className="text-[13px] font-semibold mb-1" style={{ color: t.sub }}>More sections</p>
+                    <p className="text-[13px] mb-4" style={{ color: t.muted, maxWidth: '58ch' }}>
                       Written and ready, off by default. Add any of these to this owner&rsquo;s deck &mdash; it changes this document only, never the template.
                     </p>
                     <div className="flex flex-wrap gap-2">
@@ -2388,10 +2503,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         const on = !hid(x.k)
                         return (
                           <button key={x.k} onClick={() => toggleSection(x.k)}
-                            className="rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                            className="rounded-full px-3.5 py-1.5 text-[12px] font-medium"
                             style={on
-                              ? { background: t.accent, color: t.bg }
-                              : { background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink }}>
+                              ? { background: t.ink, color: t.bg }
+                              : { background: t.card, border: '1px solid ' + t.cardBorder, color: t.sub }}>
                             {on ? '✓ ' : '+ '}{x.label}
                           </button>
                         )
