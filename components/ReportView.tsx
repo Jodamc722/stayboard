@@ -655,24 +655,42 @@ function AskBlock({ ask, live, set, t }: { ask: Any; live: boolean; set: (v: str
   const a = String(ask.a || '')
   const done = !!a.trim()
   return (
-    <div className="rounded-xl px-4 py-3" style={{ background: t.card, border: '1px solid ' + t.cardBorder, borderLeft: '3px solid ' + (done ? t.good : t.gold) }}>
-      <p className="text-[14.5px] font-semibold leading-snug" style={{ color: t.ink }}>{ask.q}</p>
-      {ask.hint ? <p className="text-[12.5px] mt-0.5" style={{ color: t.muted }}>{ask.hint}</p> : null}
+    <div className="pl-5" style={{ borderLeft: '2px solid ' + (done ? t.good : t.rule) }}>
+      <p className="text-[15.5px] font-bold leading-snug" style={{ color: t.ink }}>{ask.q}</p>
+      {ask.hint ? <p className="text-[13px] mt-1 leading-relaxed" style={{ color: t.muted }}>{ask.hint}</p> : null}
       {live ? (
         <input
           value={a}
           onChange={e => set(e.target.value)}
           placeholder="type the answer while you talk&hellip;"
-          className="mt-2 w-full rounded-lg px-2.5 py-1.5 text-[14px]"
-          style={{ background: t.bg, border: '1px ' + (done ? 'solid ' + t.cardBorder : 'dashed ' + t.rule), color: t.ink }}
+          className="onb-ask mt-2.5 w-full text-[15px] pb-1.5"
+          style={{ background: 'transparent', border: 0, borderBottom: '1px ' + (done ? 'solid ' + t.accent : 'dashed ' + t.rule), color: t.ink, fontFamily: 'inherit' }}
         />
       ) : done ? (
-        <p className="mt-1.5 text-[14px]" style={{ color: t.body }}>{a}</p>
+        <p className="mt-2 text-[15px]" style={{ color: t.body }}>{a}</p>
       ) : (
-        <p className="mt-1.5 text-[13px] font-semibold" style={{ color: t.gold }}>Not discussed yet</p>
+        <p className="mt-2 text-[13px] font-semibold uppercase tracking-[0.1em]" style={{ color: t.gold }}>Not discussed yet</p>
       )}
     </div>
   )
+}
+
+// TEXT YOU CAN FIX WHILE YOU READ IT ALOUD (Jon, 2026-09-16: "editable in view mode"). No
+// toolbar, no mode switch — a team viewer just clicks into the listing copy and types. It reads
+// as plain text until focused, so an owner looking at the same page sees a document, not a form.
+function LiveText({ v, set, live, single, t }: { v: string; set: (s: string) => void; live: boolean; single?: boolean; t: Any }) {
+  if (!live) {
+    return <p className="text-[15px] leading-[1.7] whitespace-pre-line" style={{ color: t.body }}>{v || '\u2014'}</p>
+  }
+  const common = {
+    value: v,
+    onChange: (e: Any) => set(e.target.value),
+    className: 'onb-live w-full text-[15px] leading-[1.7] rounded-lg px-3 py-2 -mx-3',
+    style: { color: t.body, background: 'transparent', border: '1px solid transparent', fontFamily: 'inherit' } as Any,
+  }
+  return single
+    ? <input {...common} />
+    : <textarea {...common} rows={Math.max(2, Math.min(9, Math.ceil((v.length || 1) / 68) + 1))} style={{ ...common.style, resize: 'vertical' }} />
 }
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
@@ -1242,6 +1260,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   // actually clears it from the reviews already out there. Older projection reports predate
   // meta.kind, so their hero label stands in for it.
   const isOnboarding = String((c.meta || {}).kind || '') === 'onboarding'
+  const mark = { logo: String((c.meta || {}).logoUrl || ''), word: String((c.meta || {}).wordmark || 'STAY HOSPITALITY') }
   const isProjectionReport = String((c.meta || {}).kind || '') === 'projection'
     || /SEASON PROJECTION/i.test(String((c.hero || {}).dateLabel || ''))
   const projection = isProjectionReport ? (c.projection || null) : null
@@ -1249,7 +1268,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const projects = c.projects || {}
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
   const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim()))
-  const onboardingSectionKeys = ['unit', 'listings', 'strategy', 'ramp', 'season', 'team', 'comms', 'portal', 'money', 'statement', 'checklist', 'nextup', 'open']
+  const onboardingSectionKeys = ['welcome', 'agenda', 'listings', 'unit', 'strategy', 'ramp', 'season', 'portal', 'money', 'statement', 'team', 'comms', 'checklist', 'nextup', 'open']
   const presentCount = isOnboarding
     ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + customSecs.length
     : ((['hero', 'snapshot',
@@ -1415,6 +1434,20 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       {/* elevated look: smoother rhythm + hairline dividers between sections */}
       <style>{`
         html { scroll-behavior: smooth; }
+        /* The onboarding document breathes more than a report: it is read one section at a time,
+           out loud, on a call. */
+        .onb-sec { padding-top: 4.5rem; }
+        .sb-report .onb-sec { padding-bottom: 0.5rem; }
+        .onb-link { text-decoration: none; border-bottom: 1px solid transparent; }
+        .onb-link:hover { border-bottom-color: currentColor; }
+        .onb-live:hover { background: ${t.chip} !important; }
+        .onb-live:focus { background: ${t.card} !important; border-color: ${t.accent} !important; outline: none; }
+        .onb-ask:focus { outline: none; border-bottom-color: ${t.accent} !important; }
+        @media (max-width: 680px) {
+          .onb-row { grid-template-columns: 1fr !important; }
+          .onb-shots { grid-template-columns: 1fr 1fr !important; }
+          .onb-shots img { grid-row: auto !important; aspect-ratio: 4 / 3 !important; }
+        }
         .sb-report > section { margin-top: 2.5rem; border-top: 1px solid ${t.rule}; }
         .sb-report > section:first-of-type { border-top: 0; margin-top: 0; }
         /* Headings wear the display face; body and numbers stay system so columns line up. */
@@ -1430,9 +1463,23 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           .sb-noprint { display: none !important; }
           .sb-report > section { break-inside: avoid; }
         }
-        .sb-present { position: fixed; inset: 0; height: 100vh; width: 100vw; overflow-y: scroll; scroll-snap-type: y mandatory; z-index: 40; background: ${t.bg}; -ms-overflow-style: none; scrollbar-width: none; }
+        /* SNAP ON PROXIMITY, NOT MANDATORY (Jon, 2026-09-16: "present mode moves seamlessly
+           through the sections without cutting anything off"). Mandatory snapping pins the
+           viewport to a slide's start, so any section TALLER than the glass — a listing review
+           with five photos, the statement, a long checklist — simply could not be scrolled into;
+           its bottom was unreachable. Proximity keeps the slide-to-slide feel for sections that
+           fit and lets the tall ones scroll like a page. */
+        .sb-present { position: fixed; inset: 0; height: 100vh; width: 100vw; overflow-y: scroll; scroll-snap-type: y proximity; scroll-behavior: smooth; z-index: 40; background: ${t.bg}; -ms-overflow-style: none; scrollbar-width: none; }
         .sb-present::-webkit-scrollbar { display: none; }
-        .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; padding: 5vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
+        .sb-present > section, .sb-present > header { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; scroll-snap-align: start; scroll-snap-stop: normal; padding: 6vh 7vw; box-sizing: border-box; border: 0 !important; margin: 0 !important; }
+        /* A slide taller than the glass stops centring — otherwise its first line sits above the
+           top edge with nothing to scroll back to. */
+        .sb-present > section > * { max-height: none; }
+        @supports (height: 100dvh) { .sb-present > section:has(> .onb-sec) { justify-content: safe center; } }
+        .sb-present .onb-sec > .onb-head h2 { font-size: clamp(30px, 3.6vw, 46px); }
+        .sb-present .onb-shots img { max-height: 28vh; }
+        .sb-present .onb-shot img, .sb-present .onb-shot > div { max-height: 26vh; aspect-ratio: auto !important; }
+        .sb-present .onb-sec > *:first-child { margin-top: 0; }
         /* PHONE: Safari counts the URL bar inside 100vh, so a presented slide was taller than the
            glass and the Exit button and slide dots sat permanently below the fold. dvh is what you
            can actually see; on a desktop dvh and vh are the same number. */
@@ -1455,9 +1502,22 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         .sb-present > footer { display: none; }
         .sb-present > section > *, .sb-present > header > * { max-width: 1080px; width: 100%; margin-left: auto; margin-right: auto; }
         .sb-present > section > * > .pt-12 { padding-top: 0 !important; }
+        .sb-present .onb-sec { padding-top: 0 !important; }
         .sb-present header img { height: 58vh !important; max-height: 58vh !important; width: 100%; object-fit: cover; border-radius: 18px; }
         .sb-present img { object-fit: cover; }
       `}</style>
+
+      {/* Presenting an onboarding: the mark sits on every slide, top-left, quietly. */}
+      {present && isOnboarding && (
+        <div className="sb-noprint fixed top-5 left-6 z-[55] pointer-events-none">
+          {mark.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={mark.logo} alt={mark.word} style={{ height: 24, width: 'auto', objectFit: 'contain', opacity: 0.9 }} />
+          ) : (
+            <span className="text-[9.5px] font-bold" style={{ color: t.muted, letterSpacing: '0.36em' }}>{mark.word}</span>
+          )}
+        </div>
+      )}
 
       {/* Answers save themselves; say so once, briefly, so a presenter can trust it. */}
       {askSaved && (
@@ -1536,6 +1596,16 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <Sparkles size={11} /> AI
             </button>
           )}
+          {/* THE MARK (Jon, 2026-09-16: "with our Stay logo"). An image when one is set on the
+              house template, otherwise the letterspaced wordmark this company's owner-facing
+              documents already use. Set logoUrl in the onboarding template and it swaps here,
+              on every presented slide, and on nothing else. */}
+          {isOnboarding && (mark.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={mark.logo} alt={mark.word} className="mx-auto mb-7" style={{ height: 40, width: 'auto', objectFit: 'contain' }} />
+          ) : (
+            <p className="mb-7 text-[12px] font-bold" style={{ color: t.ink, letterSpacing: '0.42em' }}>{mark.word}</p>
+          ))}
           <Eyebrow>{hero.eyebrow || ''}</Eyebrow>
           <p className="mt-5 text-[12px] font-bold uppercase tracking-[0.3em]" style={{ color: t.gold }}>
             <Ed v={hero.dateLabel || 'OWNER REVIEW'} set={v => patch('hero.dateLabel', v)} edit={edit} />
@@ -1559,15 +1629,21 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         {/* ═══════════ OWNER ONBOARDING — the welcome presentation ═══════════
             A different document on the same rails: same row, same share link, same editor,
             themes, PPTX and Present mode. Sections come from lib/onboarding-report, which merges
-            the house template (settings) with this owner's facts at generate time. */}
+            the house template (settings) with this owner's facts at generate time.
+
+            THE RUNNING ORDER IS THE MEETING (Jon, 2026-09-16): welcome, agenda, review the
+            listings, goals and strategy, the ramp and the season, the portal, the money, the
+            statement, the team. Anything left blank collects at the end. */}
         {isOnboarding && (() => {
           const sec = (k: string) => (c[k] || {})
           const secs: { k: string; label: string }[] = [
-            { k: 'unit', label: 'Your unit' }, { k: 'listings', label: 'Your listings' },
-            { k: 'strategy', label: 'Strategy' }, { k: 'ramp', label: 'The ramp' },
-            { k: 'season', label: 'Seasonality' }, { k: 'team', label: 'Your team' },
-            { k: 'comms', label: 'Communication' }, { k: 'portal', label: "What you'll see" },
-            { k: 'money', label: 'Money' }, { k: 'statement', label: 'Your statement' },
+            { k: 'welcome', label: 'Welcome' }, { k: 'agenda', label: 'Agenda' },
+            { k: 'listings', label: 'Your listings' }, { k: 'unit', label: 'Your unit' },
+            { k: 'strategy', label: 'Goals & strategy' }, { k: 'ramp', label: 'The ramp' },
+            { k: 'season', label: 'Seasonality' }, { k: 'guesty', label: 'Guesty' },
+            { k: 'tech', label: 'Your tech' },
+            { k: 'money', label: 'Billables' }, { k: 'statement', label: 'Statements' },
+            { k: 'team', label: 'Your team' }, { k: 'comms', label: 'Communication' },
             { k: 'checklist', label: 'Still to do' }, { k: 'nextup', label: 'What happens next' },
           ]
           const open: { label: string; q: string }[] = []
@@ -1577,27 +1653,104 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           }
           const answered = secs.reduce((n, x) => n + ((sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
           const totalAsks = answered + open.length
+          const shown = secs.filter(x => !isHidden(x.k))
+          const numOf = (k: string) => {
+            const i = shown.findIndex(x => x.k === k)
+            return i < 0 ? '' : String(i + 1).padStart(2, '0')
+          }
 
-          const Head = ({ k, eyebrow }: { k: string; eyebrow: string }) => (
-            <>
-              <Eyebrow>{eyebrow}</Eyebrow>
-              <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight" style={{ color: t.ink }}>
+          // One head for every section: a numbered rule, the title, the line under it. The number
+          // is real information here — this document is run top to bottom as an agenda.
+          const Head = ({ k, label }: { k: string; label: string }) => (
+            <div className="onb-head">
+              <div className="flex items-baseline gap-3 pb-2 mb-5 border-b" style={{ borderColor: t.rule }}>
+                <span className="text-[11px] font-bold tabular-nums" style={{ color: t.accent }}>{numOf(k)}</span>
+                <span className="text-[10.5px] font-bold uppercase tracking-[0.24em]" style={{ color: t.muted }}>{label}</span>
+              </div>
+              <h2 className="text-[30px] sm:text-[38px] font-black tracking-[-0.02em] leading-[1.08]" style={{ color: t.ink, maxWidth: '20ch' }}>
                 <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
               {(sec(k).subtitle || edit) ? (
-                <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
-                  <Ed v={sec(k).subtitle || ''} set={v => patch(k + '.subtitle', v)} edit={edit} />
+                <p className="mt-3 text-[15px] leading-relaxed" style={{ color: t.sub, maxWidth: '52ch' }}>
+                  <Ed v={sec(k).subtitle || ''} set={v => patch(k + '.subtitle', v)} edit={edit} multiline />
                 </p>
               ) : null}
-            </>
+            </div>
           )
+
+          // THE OWNER'S OWN UNIT RUNS THROUGH THE DECK (Jon, 2026-09-16). Each section can carry
+          // one of their listing photos; in edit mode you cycle through the pool or clear it.
+          const pool: string[] = Array.isArray(c.photoPool) ? c.photoPool : []
+          const Shot = ({ k }: { k: string }) => {
+            const cur = String(sec(k).photo || '')
+            if (!cur && !edit) return null
+            const step = (d: number) => {
+              if (!pool.length) return
+              const i = pool.indexOf(cur)
+              patch(k + '.photo', pool[(i + d + pool.length + (i < 0 ? 1 : 0)) % pool.length])
+            }
+            return (
+              <div className="onb-shot relative mt-8">
+                {cur ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={cur} alt="" className="w-full object-cover rounded-2xl" style={{ aspectRatio: '21 / 8' }} />
+                ) : (
+                  <div className="w-full rounded-2xl flex items-center justify-center text-[12px]" style={{ aspectRatio: '21 / 8', background: t.chip, color: t.muted }}>
+                    No photo on this section
+                  </div>
+                )}
+                {edit && (
+                  <div className="sb-noprint absolute bottom-3 right-3 flex items-center gap-1.5">
+                    <button onClick={() => step(-1)} className="rounded-full px-2 py-1 text-[11px] font-semibold shadow" style={{ background: t.card, color: t.ink }}>&#8592;</button>
+                    <button onClick={() => step(1)} className="rounded-full px-2.5 py-1 text-[11px] font-semibold shadow" style={{ background: t.card, color: t.ink }}>
+                      {cur ? 'Next photo' : 'Add photo'}
+                    </button>
+                    {cur && <button onClick={() => patch(k + '.photo', '')} className="rounded-full px-2 py-1 text-[11px] font-semibold shadow" style={{ background: t.card, color: t.accent }}>Clear</button>}
+                  </div>
+                )}
+              </div>
+            )
+          }
+
+          // A free note per section — what Jon wants to remember to say, or what was agreed.
+          const Note = ({ k }: { k: string }) => {
+            const has = !!String(sec(k).note || '').trim()
+            if (!has && !canEdit) return null
+            return (
+              <div className="mt-8 pl-5" style={{ borderLeft: '2px solid ' + (has ? t.accent : t.rule) }}>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] mb-1.5" style={{ color: t.muted }}>Notes</p>
+                <LiveText v={String(sec(k).note || '')} live={canEdit} t={t}
+                  set={v => { patch(k + '.note', v); answerChanged() }} />
+              </div>
+            )
+          }
+
+          const Body = ({ k, field }: { k: string; field?: string }) => (
+            <p className="mt-7 text-[16px] leading-[1.72] whitespace-pre-line" style={{ color: t.body, maxWidth: '64ch' }}>
+              <Ed v={sec(k)[field || 'body'] || ''} set={v => patch(k + '.' + (field || 'body'), v)} edit={edit} multiline />
+            </p>
+          )
+
+          // Label/value pairs as a quiet two-column list. No boxes — a hairline is enough, and it
+          // keeps twelve of these in a row from reading like twelve separate objects.
+          const Rows = ({ rows, kw }: { rows: Any[]; kw?: string }) => (
+            <div className="mt-8">
+              {(rows || []).map((r: Any, i: number) => (
+                <div key={i} className="onb-row grid gap-x-8 gap-y-1.5 py-4 border-t" style={{ borderColor: t.rule, gridTemplateColumns: (kw || '190px') + ' 1fr' }}>
+                  <div className="text-[12px] font-bold uppercase tracking-[0.1em] pt-0.5" style={{ color: t.ink }}>{r.k}</div>
+                  <div className="text-[15px] leading-[1.65]" style={{ color: t.body }}>{r.v}</div>
+                </div>
+              ))}
+            </div>
+          )
+
           const Asks = ({ k }: { k: string }) => {
             const as: Any[] = Array.isArray(sec(k).asks) ? sec(k).asks : []
             if (!as.length) return null
             return (
-              <div className="mt-6">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2.5" style={{ color: t.muted }}>Fill in live</p>
-                <div className="flex flex-col gap-2.5">
+              <div className="mt-11 pt-7 border-t" style={{ borderColor: t.rule }}>
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-5" style={{ color: t.accent }}>On the call</p>
+                <div className="flex flex-col gap-5">
                   {as.map((a: Any, i: number) => (
                     <AskBlock key={a.id || i} ask={a} live={canEdit} t={t} set={v => setAnswer(k, i, v)} />
                   ))}
@@ -1605,138 +1758,176 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               </div>
             )
           }
-          const KVRows = ({ rows, kw }: { rows: Any[]; kw?: number }) => (
-            <div className="mt-5 border-t" style={{ borderColor: t.rule }}>
-              {(rows || []).map((r: Any, i: number) => (
-                <div key={i} className="flex flex-wrap gap-x-5 gap-y-1 py-3 border-b" style={{ borderColor: t.rule }}>
-                  <div className="font-bold text-[14.5px]" style={{ color: t.ink, flex: '0 0 ' + (kw || 180) + 'px' }}>{r.k}</div>
-                  <div className="text-[14.5px] flex-1 min-w-[240px]" style={{ color: t.body }}>{r.v}</div>
-                </div>
-              ))}
-            </div>
-          )
 
           return (
             <>
-              {/* ---------- YOUR UNIT ---------- */}
-              <SectionShell id="unit" title="Your unit" hidden={isHidden('unit')} edit={edit} onToggle={() => toggleSection('unit')} onAi={() => openAi('unit')}>
-                <div className="pt-12">
-                  <Head k="unit" eyebrow="YOUR UNIT" />
-                  <p className="mt-4 text-[15px] leading-relaxed" style={{ color: t.body }}>
-                    <Ed v={sec('unit').body || ''} set={v => patch('unit.body', v)} edit={edit} multiline />
-                  </p>
-                  {(sec('unit').facts || []).length > 0 && (
-                    <div className="mt-5 grid gap-px rounded-xl overflow-hidden" style={{ background: t.cardBorder, border: '1px solid ' + t.cardBorder, gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))' }}>
-                      {(sec('unit').facts || []).map((f: Any, i: number) => (
-                        <div key={i} className="px-4 py-3" style={{ background: t.card }}>
-                          <p className="text-[9.5px] font-bold uppercase tracking-[0.13em]" style={{ color: t.muted }}>{f.k}</p>
-                          <p className="text-[14px] font-bold mt-0.5" style={{ color: t.ink }}>{f.v}</p>
+              {/* ---------- WELCOME ---------- */}
+              <SectionShell id="welcome" title="Welcome" hidden={isHidden('welcome')} edit={edit} onToggle={() => toggleSection('welcome')} onAi={() => openAi('welcome')}>
+                <div className="onb-sec">
+                  <Head k="welcome" label="Who we are" />
+                  <Body k="welcome" />
+                  {(sec('welcome').stats || []).length > 0 && (
+                    <div className="mt-9 grid gap-y-7 gap-x-10" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))' }}>
+                      {(sec('welcome').stats || []).map((f: Any, i: number) => (
+                        <div key={i}>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: t.muted }}>
+                            <Ed v={f.k || ''} set={v => patch('welcome.stats.' + i + '.k', v)} edit={edit} />
+                          </p>
+                          <p className="text-[19px] font-black mt-1 tracking-[-0.01em] leading-tight" style={{ color: t.ink }}>
+                            <Ed v={f.v || ''} set={v => patch('welcome.stats.' + i + '.v', v)} edit={edit} />
+                          </p>
                         </div>
                       ))}
                     </div>
                   )}
-                  <Asks k="unit" />
+                  <Shot k="welcome" />
+                  <Note k="welcome" />
                 </div>
               </SectionShell>
 
-              {/* ---------- YOUR LISTINGS — the review ---------- */}
+              {/* ---------- AGENDA ---------- */}
+              <SectionShell id="agenda" title="Agenda" hidden={isHidden('agenda')} edit={edit} onToggle={() => toggleSection('agenda')}>
+                <div className="onb-sec">
+                  <Head k="agenda" label="Agenda" />
+                  <div className="mt-8">
+                    {(sec('agenda').items || []).map((it: Any, i: number) => (
+                      <div key={i} className="onb-row grid gap-x-8 gap-y-1.5 py-4 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '38px 1fr' }}>
+                        <span className="text-[12px] font-bold tabular-nums" style={{ color: t.accent }}>{String(i + 1).padStart(2, '0')}</span>
+                        <div>
+                          <p className="text-[17px] font-bold" style={{ color: t.ink }}>
+                            <Ed v={it.k || ''} set={v => patch('agenda.items.' + i + '.k', v)} edit={edit} />
+                          </p>
+                          <p className="text-[14.5px] mt-0.5 leading-relaxed" style={{ color: t.sub }}>
+                            <Ed v={it.v || ''} set={v => patch('agenda.items.' + i + '.v', v)} edit={edit} multiline />
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <Shot k="agenda" />
+                  <Note k="agenda" />
+                </div>
+              </SectionShell>
+
+              {/* ---------- REVIEW THE LISTINGS ---------- */}
               <SectionShell id="listings" title="Your listings" hidden={isHidden('listings')} edit={edit} onToggle={() => toggleSection('listings')}>
-                <div className="pt-12">
-                  <Head k="listings" eyebrow="YOUR LISTINGS" />
-                  <div className="mt-6 flex flex-col gap-5">
+                <div className="onb-sec">
+                  <Head k="listings" label="Your listings" />
+                  <div className="mt-9 flex flex-col gap-12">
                     {(sec('listings').items || []).map((L: Any, li: number) => (
-                      <div key={L.id || li} className="rounded-2xl overflow-hidden shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
-                        <div className="px-5 py-4 flex items-start gap-4 flex-wrap border-b" style={{ borderColor: t.cardBorder }}>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-[16px] font-bold" style={{ color: t.ink }}>{L.name}</p>
-                            <p className="text-[12.5px] mt-0.5" style={{ color: t.sub }}>{L.sub}</p>
+                      <div key={L.id || li}>
+                        {/* name, channels and score on one line — the unit's identity, once */}
+                        <div className="flex items-end justify-between gap-5 flex-wrap pb-3.5 border-b" style={{ borderColor: t.ink }}>
+                          <div className="min-w-0">
+                            <p className="text-[21px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>{L.name}</p>
+                            <p className="text-[13px] mt-1" style={{ color: t.sub }}>{L.sub}</p>
                           </div>
                           {L.score != null && (
                             <div className="text-right shrink-0">
-                              <p className="text-[27px] font-black leading-none" style={{ color: t.accent }}>{L.score}</p>
-                              <p className="text-[9.5px] font-bold uppercase tracking-[0.11em] mt-1" style={{ color: t.muted }}>Listing score</p>
+                              <span className="text-[30px] font-black leading-none tabular-nums" style={{ color: t.accent }}>{L.score}</span>
+                              <span className="text-[10px] font-bold uppercase tracking-[0.14em] ml-2" style={{ color: t.muted }}>score</span>
                             </div>
                           )}
                         </div>
 
-                        {/* the live listing, on every channel it sells on */}
                         {(L.links || []).length > 0 && (
-                          <div className="px-5 py-3 flex flex-wrap gap-2 border-b" style={{ borderColor: t.cardBorder, background: t.chip }}>
+                          <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-3.5">
                             {(L.links || []).map((k: Any) => (
                               <a key={k.name} href={k.url} target="_blank" rel="noopener noreferrer"
-                                className="text-[11.5px] font-semibold rounded-lg px-2.5 py-1.5"
-                                style={{ background: t.card, border: '1px solid ' + t.cardBorder, color: t.accent }}>{k.name} &#8599;</a>
+                                className="text-[12.5px] font-semibold onb-link" style={{ color: t.accent }}>{k.name} &#8599;</a>
                             ))}
                           </div>
                         )}
 
-                        {/* the first five photos, in the order a guest meets them */}
+                        {/* the first five, in the order a guest meets them */}
                         {(L.photos || []).length > 0 && (
-                          <div className="px-5 py-4 border-b grid gap-1.5" style={{ borderColor: t.cardBorder, gridTemplateColumns: '1.6fr 1fr 1fr' }}>
+                          <div className="onb-shots mt-5 grid gap-2" style={{ gridTemplateColumns: '1.55fr 1fr 1fr' }}>
                             {(L.photos || []).slice(0, 5).map((src: string, pi: number) => (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img key={pi} src={src} alt="" className="w-full object-cover rounded-lg"
-                                style={{ gridRow: pi === 0 ? 'span 2' : undefined, height: pi === 0 ? 176 : 85, border: '1px solid ' + t.cardBorder }} />
+                              <img key={pi} src={src} alt="" className="w-full object-cover rounded-xl"
+                                style={{ gridRow: pi === 0 ? 'span 2' : undefined, aspectRatio: pi === 0 ? '4 / 3.3' : '4 / 3' }} />
                             ))}
                           </div>
                         )}
 
                         {(L.parts || []).length > 0 && (
-                          <div className="px-5 py-4 flex flex-col gap-2 border-b" style={{ borderColor: t.cardBorder }}>
+                          <div className="mt-6 grid gap-x-9 gap-y-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))' }}>
                             {(L.parts || []).map((b: Any, bi: number) => (
-                              <div key={bi} className="flex items-center gap-3 text-[13px]">
-                                <span style={{ color: t.body, flex: '0 0 118px' }}>{b.k}</span>
-                                <span className="flex-1 rounded-full overflow-hidden" style={{ height: 7, background: t.trackBg }}>
+                              <div key={bi} className="flex items-center gap-3">
+                                <span className="text-[12.5px] shrink-0" style={{ color: t.sub, minWidth: 108 }}>{b.k}</span>
+                                <span className="flex-1 rounded-full overflow-hidden" style={{ height: 4, background: t.trackBg }}>
                                   <span className="block h-full rounded-full" style={{ width: Math.max(0, Math.min(100, b.v)) + '%', background: b.v < 60 ? t.gold : t.accent }} />
                                 </span>
-                                <span className="text-[12px] w-9 text-right" style={{ color: t.sub }}>{b.v}</span>
+                                <span className="text-[12px] tabular-nums w-7 text-right" style={{ color: b.v < 60 ? t.gold : t.sub }}>{b.v}</span>
                               </div>
                             ))}
                           </div>
                         )}
 
-                        {/* the copy, edited here and pushed to Guesty from the unit page */}
-                        <div className="px-5 py-4 flex flex-col gap-3">
-                          {[{ f: 'title', l: 'Title', rows: 1 }, { f: 'summary', l: 'Summary', rows: 3 }, { f: 'space', l: 'The space', rows: 3 }].map(F => (
+                        {/* THE COPY, EDITABLE WITHOUT ENTERING EDIT MODE (Jon, 2026-09-16: "make
+                            that cleaner and editable in view mode"). You are reading this listing
+                            aloud with the owner; stopping to flip a toolbar toggle is exactly the
+                            friction that stops it getting fixed. Saves itself, like the answers. */}
+                        <div className="mt-7 flex flex-col gap-5">
+                          {[{ f: 'title', l: 'Title', cap: 50 }, { f: 'summary', l: 'Summary' }, { f: 'space', l: 'The space' }].map(F => (
                             <div key={F.f}>
-                              <p className="text-[9.5px] font-bold uppercase tracking-[0.12em] mb-1 flex justify-between gap-3" style={{ color: t.muted }}>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-1.5 flex justify-between gap-3" style={{ color: t.muted }}>
                                 <span>{F.l}</span>
-                                {F.f === 'title' ? <span style={{ color: String(L.title || '').length > 50 ? t.gold : t.muted }}>{String(L.title || '').length} / 50</span> : null}
+                                {F.cap ? <span style={{ color: String(L[F.f] || '').length > F.cap ? t.gold : t.muted }}>{String(L[F.f] || '').length} / {F.cap}</span> : null}
                               </p>
-                              <div className="text-[14px] leading-relaxed whitespace-pre-line" style={{ color: t.body }}>
-                                <Ed v={String(L[F.f] || '')} set={v => patch('listings.items.' + li + '.' + F.f, v)} edit={edit} multiline placeholder={'—'} />
-                              </div>
+                              <LiveText
+                                v={String(L[F.f] || '')}
+                                live={canEdit}
+                                t={t}
+                                single={F.f === 'title'}
+                                set={v => { patch('listings.items.' + li + '.' + F.f, v); answerChanged() }}
+                              />
                             </div>
                           ))}
                         </div>
                       </div>
                     ))}
                   </div>
-                  <p className="mt-4 text-[12px]" style={{ color: t.muted }}>
-                    Edit the copy here on the call. Pushing it live to the channels happens from the unit page in the dashboard, which is the one place that writes to Guesty.
+                  <p className="mt-7 text-[13px] leading-relaxed" style={{ color: t.muted, maxWidth: '62ch' }}>
+                    Edit the copy here as we talk &mdash; it saves itself. Pushing it live to the channels happens from the unit page in the dashboard, which is the one place that writes to Guesty.
                   </p>
                   <Asks k="listings" />
                 </div>
               </SectionShell>
 
-              {/* ---------- STRATEGY ---------- */}
-              <SectionShell id="strategy" title="Strategy" hidden={isHidden('strategy')} edit={edit} onToggle={() => toggleSection('strategy')} onAi={() => openAi('strategy')}>
-                <div className="pt-12">
-                  <Head k="strategy" eyebrow="STRATEGY" />
-                  <p className="mt-4 text-[15px] leading-relaxed whitespace-pre-line" style={{ color: t.body }}>
-                    <Ed v={sec('strategy').body || ''} set={v => patch('strategy.body', v)} edit={edit} multiline />
-                  </p>
-                  <Asks k="strategy" />
+              {/* ---------- YOUR UNIT ---------- */}
+              <SectionShell id="unit" title="Your unit" hidden={isHidden('unit')} edit={edit} onToggle={() => toggleSection('unit')} onAi={() => openAi('unit')}>
+                <div className="onb-sec">
+                  <Head k="unit" label="Your unit" />
+                  <Body k="unit" />
+                  {(sec('unit').facts || []).length > 0 && (
+                    <div className="mt-8 grid gap-y-6 gap-x-10" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))' }}>
+                      {(sec('unit').facts || []).map((f: Any, i: number) => (
+                        <div key={i}>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: t.muted }}>{f.k}</p>
+                          <p className="text-[19px] font-black mt-1 tracking-[-0.01em]" style={{ color: t.ink }}>{f.v}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <Shot k="unit" />
+                  <Note k="unit" />
+                  <Asks k="unit" />
                 </div>
+              </SectionShell>
+
+              {/* ---------- GOALS & STRATEGY ---------- */}
+              <SectionShell id="strategy" title="Goals & strategy" hidden={isHidden('strategy')} edit={edit} onToggle={() => toggleSection('strategy')} onAi={() => openAi('strategy')}>
+                <div className="onb-sec"><Head k="strategy" label="Goals & strategy" /><Body k="strategy" /><Shot k="strategy" /><Note k="strategy" /><Asks k="strategy" /></div>
               </SectionShell>
 
               {/* ---------- THE RAMP ---------- */}
               <SectionShell id="ramp" title="The ramp" hidden={isHidden('ramp')} edit={edit} onToggle={() => toggleSection('ramp')} onAi={() => openAi('ramp')}>
-                <div className="pt-12">
-                  <Head k="ramp" eyebrow="THE RAMP" />
-                  <KVRows rows={sec('ramp').bands || []} kw={130} />
+                <div className="onb-sec">
+                  <Head k="ramp" label="The ramp" />
+                  <Rows rows={sec('ramp').bands || []} kw="132px" />
                   {(sec('ramp').note || edit) ? (
-                    <p className="mt-4 rounded-xl px-4 py-3 text-[13.5px] leading-relaxed" style={{ background: t.statusHotBg || t.chip, color: t.gold }}>
+                    <p className="mt-8 pl-5 text-[15px] leading-[1.7] border-l-2" style={{ borderColor: t.gold, color: t.body, maxWidth: '62ch' }}>
                       <Ed v={sec('ramp').note || ''} set={v => patch('ramp.note', v)} edit={edit} multiline />
                     </p>
                   ) : null}
@@ -1746,22 +1937,20 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
               {/* ---------- SEASONALITY ---------- */}
               <SectionShell id="season" title="Seasonality" hidden={isHidden('season')} edit={edit} onToggle={() => toggleSection('season')} onAi={() => openAi('season')}>
-                <div className="pt-12">
-                  <Head k="season" eyebrow="SEASONALITY" />
-                  <p className="mt-4 text-[15px] leading-relaxed whitespace-pre-line" style={{ color: t.body }}>
-                    <Ed v={sec('season').body || ''} set={v => patch('season.body', v)} edit={edit} multiline />
-                  </p>
-                  <div className="mt-6 rounded-2xl p-5 border" style={{ background: t.card, borderColor: t.cardBorder }}>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-3" style={{ color: t.muted }}>The year, by relative demand</p>
-                    <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(12,1fr)', alignItems: 'end' }}>
+                <div className="onb-sec">
+                  <Head k="season" label="Seasonality" />
+                  <Body k="season" />
+                  <div className="mt-9">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] mb-4" style={{ color: t.muted }}>The year, by relative demand</p>
+                    <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(12,1fr)', alignItems: 'end' }}>
                       {(sec('season').months || []).map((m: Any, mi: number) => (
                         <div key={mi} className="text-center">
-                          <span className="block rounded-t" style={{ height: 12 + Number(m.level || 0) * 11, background: Number(m.level) >= 3 ? t.accent : Number(m.level) >= 1 ? t.barB : t.trackBg }} />
-                          <span className="block text-[9.5px] mt-1" style={{ color: Number(m.level) >= 3 ? t.accent : t.muted, fontWeight: Number(m.level) >= 3 ? 700 : 400 }}>{m.m}</span>
+                          <span className="block rounded-sm" style={{ height: 10 + Number(m.level || 0) * 16, background: Number(m.level) >= 3 ? t.accent : Number(m.level) >= 1 ? t.barB : t.trackBg }} />
+                          <span className="block text-[10px] mt-2" style={{ color: Number(m.level) >= 3 ? t.accent : t.muted, fontWeight: Number(m.level) >= 3 ? 700 : 400 }}>{m.m}</span>
                         </div>
                       ))}
                     </div>
-                    <p className="mt-4 text-[12.5px] leading-relaxed" style={{ color: t.sub }}>
+                    <p className="mt-6 text-[13.5px] leading-[1.7]" style={{ color: t.sub, maxWidth: '64ch' }}>
                       <Ed v={sec('season').note || ''} set={v => patch('season.note', v)} edit={edit} multiline />
                     </p>
                   </div>
@@ -1769,26 +1958,159 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 </div>
               </SectionShell>
 
+              {/* ---------- GUESTY ---------- */}
+              <SectionShell id="guesty" title="Guesty" hidden={isHidden('guesty')} edit={edit} onToggle={() => toggleSection('guesty')} onAi={() => openAi('guesty')}>
+                <div className="onb-sec">
+                  <Head k="guesty" label="Guesty" />
+                  <Body k="guesty" />
+                  <div className="mt-8">
+                    {(sec('guesty').items || []).map((it: Any, ii: number) => (
+                      <div key={ii} className="onb-row grid gap-x-8 gap-y-1.5 py-5 border-t" style={{ borderColor: t.rule, gridTemplateColumns: '216px 1fr' }}>
+                        <p className="text-[15px] font-bold" style={{ color: t.ink }}>
+                          <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
+                        </p>
+                        <p className="text-[15px] leading-[1.65]" style={{ color: t.body }}>
+                          <Ed v={it.v || ''} set={v => patch('guesty.items.' + ii + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <Shot k="guesty" />
+                  <Note k="guesty" />
+                </div>
+              </SectionShell>
+
+              {/* ---------- YOUR TECH ---------- */}
+              <SectionShell id="tech" title="Your tech" hidden={isHidden('tech')} edit={edit} onToggle={() => toggleSection('tech')} onAi={() => openAi('tech')}>
+                <div className="onb-sec">
+                  <Head k="tech" label="Your tech" />
+                  <Body k="tech" />
+                  <Rows rows={sec('tech').rows || []} kw="176px" />
+                  <Shot k="tech" />
+                  <Note k="tech" />
+                  <Asks k="tech" />
+                </div>
+              </SectionShell>
+
+              {/* ---------- BILLABLES ---------- */}
+              <SectionShell id="money" title="Billables" hidden={isHidden('money')} edit={edit} onToggle={() => toggleSection('money')} onAi={() => openAi('money')}>
+                <div className="onb-sec">
+                  <Head k="money" label="Billables" />
+                  <Body k="money" />
+                  <Rows rows={sec('money').rules || []} kw="176px" />
+                  <Note k="money" />
+                  <div className="mt-10 grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
+                    {(sec('money').examples || []).map((ex: Any, xi: number) => (
+                      <div key={xi} className="rounded-2xl p-5" style={{ background: t.chip }}>
+                        <p className="text-[14.5px] font-bold leading-snug mb-3.5" style={{ color: t.ink }}>{ex.title}</p>
+                        {(ex.lines || []).map((ln: Any, lni: number) => (
+                          <div key={lni} className="flex justify-between gap-4 py-1.5 text-[14px]" style={{ color: t.body }}>
+                            <span>{ln.k}</span><span className="tabular-nums whitespace-nowrap" style={{ color: t.ink }}>{ln.v}</span>
+                          </div>
+                        ))}
+                        {ex.total ? (
+                          <div className="flex justify-between gap-4 pt-2.5 mt-1.5 text-[14.5px] font-bold border-t" style={{ borderColor: t.ink, color: t.ink }}>
+                            <span>Billed to you</span><span className="tabular-nums">{ex.total}</span>
+                          </div>
+                        ) : null}
+                        <p className="mt-3.5 text-[13px] font-semibold leading-relaxed" style={{ color: ex.tone === 'hold' ? t.gold : t.good }}>{ex.verdict}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <Asks k="money" />
+                </div>
+              </SectionShell>
+
+              {/* ---------- STATEMENTS ---------- */}
+              <SectionShell id="statement" title="Statements" hidden={isHidden('statement')} edit={edit} onToggle={() => toggleSection('statement')}>
+                <div className="onb-sec">
+                  <Head k="statement" label="Statements" />
+                  <div className="mt-8 rounded-2xl overflow-hidden" style={{ border: '1px solid ' + t.cardBorder }}>
+                    <div className="px-6 py-4" style={{ background: t.chip }}>
+                      <p className="text-[16px] font-black" style={{ color: t.ink }}>{sec('statement').unitLabel}</p>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.12em] mt-1" style={{ color: t.muted }}>{sec('statement').period}</p>
+                    </div>
+                    <div className="px-6 pt-3 pb-5" style={{ background: t.card }}>
+                      {(sec('statement').lines || []).map((ln: Any, i: number) => (
+                        <div key={i} className="flex justify-between gap-5 py-3 border-b" style={{ borderColor: t.rule }}>
+                          <span className="text-[15px]" style={{ color: t.body }}>
+                            {ln.k}{ln.sub ? <small className="block text-[12.5px] mt-0.5" style={{ color: t.muted }}>{ln.sub}</small> : null}
+                          </span>
+                          <span className="text-[15px] font-semibold whitespace-nowrap tabular-nums" style={{ color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between gap-5 pt-4 mt-1" style={{ borderTop: '2px solid ' + t.ink }}>
+                        <span className="text-[19px] font-black" style={{ color: t.ink }}>Net to you</span>
+                        <span className="text-[19px] font-black tabular-nums" style={{ color: t.ink }}>{sec('statement').net}</span>
+                      </div>
+                      <p className="text-[13px] mt-2 font-semibold" style={{ color: t.good }}>{sec('statement').paid}</p>
+                    </div>
+                    <div style={{ background: t.card, borderTop: '1px solid ' + t.rule }}>
+                      <p className="px-6 py-2.5 text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: t.muted }}>
+                        Owner charge &middot; the {sec('statement').chargesTotal}, in full
+                      </p>
+                      <div className="lh-hscroll px-6 pb-5">
+                        <table className="w-full text-[13.5px]">
+                          <thead>
+                            <tr>{['Date', 'Work', 'Labor', 'Materials', 'Total'].map((h, i) => (
+                              <th key={h} className="text-[9px] font-bold uppercase tracking-[0.12em] pb-2 pr-4 border-b whitespace-nowrap" style={{ color: t.muted, borderColor: t.rule, textAlign: i >= 2 ? 'right' : 'left' }}>{h}</th>
+                            ))}</tr>
+                          </thead>
+                          <tbody>
+                            {(sec('statement').charges || []).map((ch: Any, i: number) => (
+                              <tr key={i}>
+                                <td className="py-3 pr-4 border-b whitespace-nowrap align-top" style={{ borderColor: t.rule, color: t.sub }}>{ch.date}</td>
+                                <td className="py-3 pr-4 border-b align-top" style={{ borderColor: t.rule, color: t.body }}>
+                                  {ch.work}<small className="block text-[12px] mt-0.5" style={{ color: t.muted }}>{ch.who}</small>
+                                </td>
+                                <td className="py-3 pr-4 border-b text-right whitespace-nowrap align-top tabular-nums" style={{ borderColor: t.rule, color: t.body }}>{ch.labor}</td>
+                                <td className="py-3 pr-4 border-b text-right whitespace-nowrap align-top tabular-nums" style={{ borderColor: t.rule, color: t.body }}>{ch.materials}</td>
+                                <td className="py-3 border-b text-right whitespace-nowrap align-top tabular-nums font-bold" style={{ borderColor: t.rule, color: t.ink }}>{ch.total}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-7 text-[15px] leading-[1.7]" style={{ color: t.body, maxWidth: '64ch' }}>
+                    <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
+                  </p>
+                  <Rows rows={sec('statement').also || []} kw="216px" />
+                </div>
+              </SectionShell>
+
               {/* ---------- YOUR TEAM ---------- */}
               <SectionShell id="team" title="Your team" hidden={isHidden('team')} edit={edit} onToggle={() => toggleSection('team')}>
-                <div className="pt-12">
-                  <Head k="team" eyebrow="YOUR TEAM" />
-                  <div className="mt-6 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))' }}>
+                <div className="onb-sec">
+                  <Head k="team" label="Your team" />
+                  <div className="mt-9 grid gap-x-10 gap-y-9" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(236px,1fr))' }}>
                     {(sec('team').people || []).map((p: Any, pi: number) => (
-                      <div key={pi} className="rounded-xl p-4 border" style={{ background: t.card, borderColor: t.cardBorder }}>
+                      <div key={pi}>
                         {p.photo ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.photo} alt="" className="rounded-full object-cover mb-2.5" style={{ width: 48, height: 48, border: '1px solid ' + t.cardBorder }} />
-                        ) : null}
-                        <p className="text-[14.5px] font-bold" style={{ color: t.ink }}>
+                          <img src={p.photo} alt="" className="rounded-full object-cover mb-3.5" style={{ width: 62, height: 62 }} />
+                        ) : (
+                          <div className="rounded-full mb-3.5 flex items-center justify-center text-[20px] font-black"
+                            style={{ width: 62, height: 62, background: t.chip, color: t.accent }}>
+                            {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
+                          </div>
+                        )}
+                        <p className="text-[16px] font-black tracking-[-0.01em]" style={{ color: t.ink }}>
                           <Ed v={p.name || ''} set={v => patch('team.people.' + pi + '.name', v)} edit={edit} />
                         </p>
-                        <p className="text-[10.5px] font-bold uppercase tracking-[0.08em] mt-0.5 mb-1.5" style={{ color: t.accent }}>
+                        <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] mt-1 mb-2" style={{ color: t.accent }}>
                           <Ed v={p.role || ''} set={v => patch('team.people.' + pi + '.role', v)} edit={edit} />
                         </p>
-                        <p className="text-[13px] leading-relaxed" style={{ color: t.sub }}>
+                        <p className="text-[14px] leading-[1.65]" style={{ color: t.sub }}>
                           <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do for this owner&hellip;" />
                         </p>
+                        {(p.phone || p.email || edit) && (
+                          <div className="mt-2.5 flex flex-col gap-0.5 text-[13px]" style={{ color: t.body }}>
+                            {(p.phone || edit) && <span><Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" /></span>}
+                            {(p.email || edit) && <span><Ed v={p.email || ''} set={v => patch('team.people.' + pi + '.email', v)} edit={edit} placeholder="Email" /></span>}
+                          </div>
+                        )}
                         {edit && (
                           <button onClick={() => mutate(d => { d.team.people.splice(pi, 1) })} className="mt-2 text-[11px] font-semibold" style={{ color: t.accent }}>Remove</button>
                         )}
@@ -1797,160 +2119,48 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </div>
                   {edit && (
                     <button
-                      onClick={() => mutate(d => { d.team.people = Array.isArray(d.team.people) ? d.team.people : []; d.team.people.push({ name: 'Name', role: 'Role', blurb: '', photo: null }) })}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                      onClick={() => mutate(d => { d.team.people = Array.isArray(d.team.people) ? d.team.people : []; d.team.people.push({ name: 'Name', role: 'Role', blurb: '', photo: null, phone: '', email: '' }) })}
+                      className="mt-6 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
                       style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}>
                       <Plus size={12} /> Add person
                     </button>
                   )}
+                  <Note k="team" />
                 </div>
               </SectionShell>
 
               {/* ---------- COMMUNICATION ---------- */}
               <SectionShell id="comms" title="Communication" hidden={isHidden('comms')} edit={edit} onToggle={() => toggleSection('comms')} onAi={() => openAi('comms')}>
-                <div className="pt-12">
-                  <Head k="comms" eyebrow="COMMUNICATION" />
-                  <p className="mt-4 text-[15px] leading-relaxed" style={{ color: t.body }}>
-                    <Ed v={sec('comms').body || ''} set={v => patch('comms.body', v)} edit={edit} multiline />
-                  </p>
-                  <KVRows rows={sec('comms').rows || []} kw={150} />
+                <div className="onb-sec">
+                  <Head k="comms" label="Communication" />
+                  <Body k="comms" />
+                  <Rows rows={sec('comms').rows || []} kw="156px" />
+                  <Note k="comms" />
                   <Asks k="comms" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- WHAT YOU'LL SEE ---------- */}
-              <SectionShell id="portal" title="What you'll see" hidden={isHidden('portal')} edit={edit} onToggle={() => toggleSection('portal')}>
-                <div className="pt-12">
-                  <Head k="portal" eyebrow="WHAT YOU'LL SEE" />
-                  <p className="mt-4 text-[15px] leading-relaxed" style={{ color: t.body }}>
-                    <Ed v={sec('portal').body || ''} set={v => patch('portal.body', v)} edit={edit} multiline />
-                  </p>
-                  <div className="mt-6 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(215px,1fr))' }}>
-                    {(sec('portal').items || []).map((it: Any, ii: number) => (
-                      <div key={ii} className="rounded-xl p-4 border" style={{ background: t.card, borderColor: t.cardBorder }}>
-                        <p className="text-[14.5px] font-bold mb-1" style={{ color: t.ink }}>
-                          <Ed v={it.k || ''} set={v => patch('portal.items.' + ii + '.k', v)} edit={edit} />
-                        </p>
-                        <p className="text-[13px] leading-relaxed" style={{ color: t.sub }}>
-                          <Ed v={it.v || ''} set={v => patch('portal.items.' + ii + '.v', v)} edit={edit} multiline />
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </SectionShell>
-
-              {/* ---------- MONEY ---------- */}
-              <SectionShell id="money" title="Money" hidden={isHidden('money')} edit={edit} onToggle={() => toggleSection('money')} onAi={() => openAi('money')}>
-                <div className="pt-12">
-                  <Head k="money" eyebrow="MONEY" />
-                  <p className="mt-4 text-[15px] leading-relaxed" style={{ color: t.body }}>
-                    <Ed v={sec('money').body || ''} set={v => patch('money.body', v)} edit={edit} multiline />
-                  </p>
-                  <KVRows rows={sec('money').rules || []} kw={172} />
-                  <div className="mt-6 flex flex-col gap-3">
-                    {(sec('money').examples || []).map((ex: Any, xi: number) => (
-                      <div key={xi} className="rounded-xl p-4 border" style={{ background: t.chip, borderColor: t.cardBorder }}>
-                        <p className="text-[14.5px] font-bold mb-2.5" style={{ color: t.ink }}>{ex.title}</p>
-                        {(ex.lines || []).map((ln: Any, lni: number) => (
-                          <div key={lni} className="flex justify-between gap-4 py-1 text-[14px]" style={{ color: t.body }}>
-                            <span>{ln.k}</span><span style={{ color: t.ink }}>{ln.v}</span>
-                          </div>
-                        ))}
-                        {ex.total ? (
-                          <div className="flex justify-between gap-4 pt-2 mt-1 text-[14px] font-bold border-t" style={{ borderColor: t.ink, color: t.ink }}>
-                            <span>Billed to you</span><span>{ex.total}</span>
-                          </div>
-                        ) : null}
-                        <p className="mt-2.5 rounded-lg px-3 py-2 text-[13px] font-semibold" style={{ background: t.card, color: ex.tone === 'hold' ? t.gold : t.good }}>{ex.verdict}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <Asks k="money" />
-                </div>
-              </SectionShell>
-
-              {/* ---------- YOUR STATEMENT ---------- */}
-              <SectionShell id="statement" title="Your statement" hidden={isHidden('statement')} edit={edit} onToggle={() => toggleSection('statement')}>
-                <div className="pt-12">
-                  <Head k="statement" eyebrow="YOUR STATEMENT" />
-                  <div className="mt-6 rounded-2xl overflow-hidden border shadow-sm" style={{ background: t.card, borderColor: t.cardBorder }}>
-                    <div className="px-5 py-4 border-b" style={{ borderColor: t.cardBorder }}>
-                      <p className="text-[15.5px] font-bold" style={{ color: t.ink }}>{sec('statement').unitLabel}</p>
-                      <p className="text-[11.5px] uppercase tracking-[0.06em] mt-0.5" style={{ color: t.muted }}>{sec('statement').period}</p>
-                    </div>
-                    <div className="px-5 pt-2 pb-4">
-                      {(sec('statement').lines || []).map((ln: Any, i: number) => (
-                        <div key={i} className="flex justify-between gap-4 py-2.5 border-b" style={{ borderColor: t.rule }}>
-                          <span className="text-[14.5px]" style={{ color: t.body }}>
-                            {ln.k}{ln.sub ? <small className="block text-[12.5px] mt-0.5" style={{ color: t.muted }}>{ln.sub}</small> : null}
-                          </span>
-                          <span className="text-[14.5px] font-semibold whitespace-nowrap" style={{ color: ln.neg ? t.gold : t.ink }}>{ln.v}</span>
-                        </div>
-                      ))}
-                      <div className="flex justify-between gap-4 pt-3 mt-1 border-t-2" style={{ borderColor: t.ink }}>
-                        <span className="text-[17px] font-black" style={{ color: t.ink }}>Net to you</span>
-                        <span className="text-[17px] font-black" style={{ color: t.ink }}>{sec('statement').net}</span>
-                      </div>
-                      <p className="text-[13.5px] mt-1.5 font-semibold" style={{ color: t.good }}>{sec('statement').paid}</p>
-                    </div>
-                    <div className="mx-5 mb-5 rounded-xl overflow-hidden border" style={{ borderColor: t.cardBorder }}>
-                      <p className="px-3 py-2 text-[9.5px] font-bold uppercase tracking-[0.12em] border-b" style={{ background: t.chip, borderColor: t.cardBorder, color: t.muted }}>
-                        Owner charge &middot; the {sec('statement').chargesTotal}, in full
-                      </p>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-[13.5px]">
-                          <thead>
-                            <tr>{['Date', 'Work', 'Labor', 'Materials', 'Total'].map((h, i) => (
-                              <th key={h} className="text-[9px] font-bold uppercase tracking-[0.1em] px-3 py-2 border-b whitespace-nowrap" style={{ color: t.muted, borderColor: t.cardBorder, textAlign: i >= 2 ? 'right' : 'left' }}>{h}</th>
-                            ))}</tr>
-                          </thead>
-                          <tbody>
-                            {(sec('statement').charges || []).map((ch: Any, i: number) => (
-                              <tr key={i}>
-                                <td className="px-3 py-2.5 border-b whitespace-nowrap" style={{ borderColor: t.rule, color: t.body }}>{ch.date}</td>
-                                <td className="px-3 py-2.5 border-b" style={{ borderColor: t.rule, color: t.body }}>
-                                  {ch.work}<small className="block text-[12px] mt-0.5" style={{ color: t.muted }}>{ch.who}</small>
-                                </td>
-                                <td className="px-3 py-2.5 border-b text-right whitespace-nowrap" style={{ borderColor: t.rule, color: t.body }}>{ch.labor}</td>
-                                <td className="px-3 py-2.5 border-b text-right whitespace-nowrap" style={{ borderColor: t.rule, color: t.body }}>{ch.materials}</td>
-                                <td className="px-3 py-2.5 border-b text-right whitespace-nowrap font-semibold" style={{ borderColor: t.rule, color: t.ink }}>{ch.total}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                  <p className="mt-4 text-[14.5px] leading-relaxed" style={{ color: t.body }}>
-                    <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
-                  </p>
-                  <KVRows rows={sec('statement').also || []} kw={210} />
                 </div>
               </SectionShell>
 
               {/* ---------- STILL TO DO ---------- */}
               <SectionShell id="checklist" title="Still to do" hidden={isHidden('checklist')} edit={edit} onToggle={() => toggleSection('checklist')}>
-                <div className="pt-12">
-                  <Head k="checklist" eyebrow="STILL TO DO" />
-                  <div className="mt-5 overflow-x-auto">
-                    <table className="w-full text-[14px]">
+                <div className="onb-sec">
+                  <Head k="checklist" label="Still to do" />
+                  <div className="mt-8 lh-hscroll">
+                    <table className="w-full text-[15px]">
                       <thead><tr>{['Item', 'Who', 'By'].map(h => (
-                        <th key={h} className="text-left text-[9.5px] font-bold uppercase tracking-[0.12em] pb-2 pr-3 border-b-2" style={{ color: t.muted, borderColor: t.ink }}>{h}</th>
+                        <th key={h} className="text-left text-[9.5px] font-bold uppercase tracking-[0.16em] pb-2.5 pr-4 border-b" style={{ color: t.muted, borderColor: t.ink }}>{h}</th>
                       ))}</tr></thead>
                       <tbody>
                         {(sec('checklist').rows || []).map((r: Any, ri: number) => (
                           <tr key={ri}>
-                            <td className="py-2.5 pr-3 border-b" style={{ borderColor: t.rule, color: t.ink }}>
+                            <td className="py-3 pr-4 border-b" style={{ borderColor: t.rule, color: t.ink }}>
                               <Ed v={r.item || ''} set={v => patch('checklist.rows.' + ri + '.item', v)} edit={edit} />
                             </td>
-                            <td className="py-2.5 pr-3 border-b whitespace-nowrap" style={{ borderColor: t.rule }}>
-                              <span className="text-[10px] font-bold uppercase tracking-[0.07em] px-2 py-0.5 rounded"
-                                style={{ background: /owner/i.test(String(r.who)) ? t.statusHotBg || t.chip : t.chip, color: /owner/i.test(String(r.who)) ? t.gold : t.accent }}>
+                            <td className="py-3 pr-4 border-b whitespace-nowrap" style={{ borderColor: t.rule }}>
+                              <span className="text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: /owner/i.test(String(r.who)) ? t.gold : t.accent }}>
                                 <Ed v={r.who || ''} set={v => patch('checklist.rows.' + ri + '.who', v)} edit={edit} />
                               </span>
                             </td>
-                            <td className="py-2.5 border-b whitespace-nowrap" style={{ borderColor: t.rule, color: t.sub }}>
+                            <td className="py-3 border-b whitespace-nowrap" style={{ borderColor: t.rule, color: t.sub }}>
                               <Ed v={r.by || ''} set={v => patch('checklist.rows.' + ri + '.by', v)} edit={edit} placeholder="date" />
                             </td>
                           </tr>
@@ -1960,7 +2170,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </div>
                   {edit && (
                     <button onClick={() => mutate(d => { d.checklist.rows.push({ item: 'New item', who: 'Stay', by: '' }) })}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
                       style={{ background: t.card, border: '1px dashed ' + t.accent, color: t.accent }}><Plus size={12} /> Add item</button>
                   )}
                 </div>
@@ -1968,33 +2178,28 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
               {/* ---------- WHAT HAPPENS NEXT ---------- */}
               <SectionShell id="nextup" title="What happens next" hidden={isHidden('nextup')} edit={edit} onToggle={() => toggleSection('nextup')}>
-                <div className="pt-12">
-                  <Head k="nextup" eyebrow="WHAT HAPPENS NEXT" />
-                  <KVRows rows={sec('nextup').rows || []} kw={180} />
-                </div>
+                <div className="onb-sec"><Head k="nextup" label="What happens next" /><Rows rows={sec('nextup').rows || []} kw="200px" /></div>
               </SectionShell>
 
-              {/* ---------- OPEN ITEMS — every unanswered question, collected ---------- */}
+              {/* ---------- OPEN ITEMS ---------- */}
               <SectionShell id="open" title="Open items" hidden={isHidden('open')} edit={edit} onToggle={() => toggleSection('open')}>
-                <div className="pt-12">
-                  <Head k="open" eyebrow="OPEN ITEMS" />
-                  <div className="mt-5 rounded-2xl p-5 border" style={{ background: t.card, borderColor: t.cardBorder }}>
-                    <p className="text-[12px] font-bold uppercase tracking-[0.14em] mb-3" style={{ color: t.muted }}>
-                      {answered} of {totalAsks} answered
-                    </p>
-                    {open.length === 0 ? (
-                      <p className="text-[14.5px] font-semibold" style={{ color: t.good }}>Nothing open — every question on this page has an answer.</p>
-                    ) : (
-                      <div className="flex flex-col">
-                        {open.map((o, oi) => (
-                          <div key={oi} className="flex gap-3 items-baseline py-2.5 border-b last:border-b-0" style={{ borderColor: t.rule }}>
-                            <span className="text-[10px] font-bold uppercase tracking-[0.08em] shrink-0" style={{ color: t.muted, minWidth: 96 }}>{o.label}</span>
-                            <span className="text-[14.5px]" style={{ color: t.ink }}>{o.q}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                <div className="onb-sec">
+                  <Head k="open" label="Open items" />
+                  <p className="mt-7 text-[13px] font-bold uppercase tracking-[0.18em]" style={{ color: open.length ? t.gold : t.good }}>
+                    {answered} of {totalAsks} answered
+                  </p>
+                  {open.length === 0 ? (
+                    <p className="mt-4 text-[16px] font-semibold" style={{ color: t.good }}>Nothing open &mdash; every question on this page has an answer.</p>
+                  ) : (
+                    <div className="mt-4">
+                      {open.map((o, oi) => (
+                        <div key={oi} className="onb-row grid gap-x-8 gap-y-1 py-3.5 border-t items-baseline" style={{ borderColor: t.rule, gridTemplateColumns: '148px 1fr' }}>
+                          <span className="text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: t.muted }}>{o.label}</span>
+                          <span className="text-[15px]" style={{ color: t.ink }}>{o.q}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </SectionShell>
             </>

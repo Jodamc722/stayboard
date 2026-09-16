@@ -62,6 +62,15 @@ export function ReportsDesk() {
   const [reports, setReports] = useState<ReportRow[]>([])
   const [buildings, setBuildings] = useState<string[]>([])
   const [picked, setPicked] = useState<string[]>([])
+  // SCOPE BY OWNER, NOT BUILDING (Jon, 2026-09-16: "owner reports need to be by owner, not
+  // building"). An owner can hold units across several buildings, or a handful inside one — so
+  // a building-scoped report showed them their neighbours' numbers next to their own, and titled
+  // the cover after a building instead of after them. Owner is now the default; building stays
+  // for the cases where the report really is about a whole property.
+  const [scopeMode, setScopeMode] = useState<'owner' | 'building'>('owner')
+  const [owners, setOwners] = useState<{ id: string; name: string; units: number; listingIds: string[] }[]>([])
+  const [pickedOwners, setPickedOwners] = useState<string[]>([])
+  const [ownerQ, setOwnerQ] = useState('')
   const defaults = monthDefaults()
   // 'review' = the full performance review; 'projection' = the next-season projection report
   // built from Money → Projections (Jon, 2026-08-22). Projection needs no period — the season
@@ -147,18 +156,27 @@ export function ReportsDesk() {
     fetch('/api/reports/budgets?buildings=1').then(r => r.json()).then(d => {
       if (Array.isArray(d?.buildings)) setBuildings(d.buildings)
     }).catch(() => {})
+    fetch('/api/reports/budgets?owners=1').then(r => r.json()).then(d => {
+      if (Array.isArray(d?.owners)) setOwners(d.owners)
+    }).catch(() => {})
   }, [])
 
   // Statements follow the property selection. Anything whose period sits inside the report
   // window is preselected, since that is nearly always what the report is about. Statements
   // whose month hasn't been swept into the ledger mirror can't be picked — the generator
   // refuses them rather than report a silently empty ledger.
-  const pickedKey = picked.join(',')
+  // One scope, whichever way it was picked. Everything downstream — statements, the generator —
+  // already speaks listingIds, so owner mode just resolves to the union of their live units.
+  const ownerRows = owners.filter(o => pickedOwners.indexOf(o.id) >= 0)
+  const ownerListingIds = Array.from(new Set(ownerRows.flatMap(o => o.listingIds)))
+  const ownerLabel = ownerRows.map(o => o.name).join(' + ')
+  const scopeReady = scopeMode === 'owner' ? ownerRows.length > 0 : picked.length > 0
+  const pickedKey = scopeMode === 'owner' ? ownerListingIds.join(',') : picked.join(',')
   useEffect(() => {
-    if (!picked.length) { setStmtList([]); setStmtPicked([]); return }
+    if (!pickedKey) { setStmtList([]); setStmtPicked([]); return }
     let cancelled = false
     setStmtLoading(true)
-    fetch('/api/reports/statements?buildings=' + encodeURIComponent(pickedKey))
+    fetch('/api/reports/statements?' + (scopeMode === 'owner' ? 'listingIds=' : 'buildings=') + encodeURIComponent(pickedKey))
       .then(r => r.json())
       .then(d => {
         if (cancelled) return
@@ -200,7 +218,10 @@ export function ReportsDesk() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           kind,
-          buildings: picked, periodStart, periodEnd,
+          ...(scopeMode === 'owner'
+            ? { listingIds: ownerListingIds, scopeLabel: ownerLabel }
+            : { buildings: picked }),
+          periodStart, periodEnd,
           ownerName: ownerName || undefined,
           goLive: goLive || undefined,
           pacingUrl: pacing ? pacing.url : undefined,
@@ -294,19 +315,63 @@ export function ReportsDesk() {
               )}
             </div>
             <div>
-              <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Properties</p>
-              <div className="flex flex-wrap gap-2">
-                {buildings.map(b => {
-                  const on = picked.indexOf(b) >= 0
-                  return (
-                    <button key={b} onClick={() => toggleBuilding(b)}
-                      className={'rounded-full px-3 py-1.5 text-[12.5px] font-semibold border transition-colors ' + (on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-ink border-line hover:border-brand-300')}>
-                      {b}
-                    </button>
-                  )
-                })}
-                {!buildings.length && <span className="text-sm text-muted italic">Loading properties…</span>}
+              <div className="flex items-center gap-3 flex-wrap mb-2">
+                <p className="text-[11px] uppercase tracking-wider text-muted font-semibold">Who is this for</p>
+                <span className="inline-flex items-center rounded-lg border border-line bg-neutral-50 overflow-hidden">
+                  <button onClick={() => setScopeMode('owner')}
+                    className={'px-3 py-1 text-[12px] font-semibold ' + (scopeMode === 'owner' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                    An owner
+                  </button>
+                  <button onClick={() => setScopeMode('building')}
+                    className={'px-3 py-1 text-[12px] font-semibold ' + (scopeMode === 'building' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                    A building
+                  </button>
+                </span>
               </div>
+
+              {scopeMode === 'owner' ? (
+                <div>
+                  <input
+                    value={ownerQ} onChange={e => setOwnerQ(e.target.value)}
+                    placeholder={owners.length ? 'Search ' + owners.length + ' owners…' : 'Loading owners…'}
+                    className="mb-2 w-full max-w-sm rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink"
+                  />
+                  <div className="flex flex-wrap gap-2 max-h-52 overflow-y-auto">
+                    {owners
+                      .filter(o => !ownerQ.trim() || o.name.toLowerCase().indexOf(ownerQ.trim().toLowerCase()) >= 0)
+                      .slice(0, 80)
+                      .map(o => {
+                        const on = pickedOwners.indexOf(o.id) >= 0
+                        return (
+                          <button key={o.id}
+                            onClick={() => setPickedOwners(p => on ? p.filter(x => x !== o.id) : [...p, o.id])}
+                            className={'rounded-full px-3 py-1.5 text-[12.5px] font-semibold border transition-colors ' + (on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-ink border-line hover:border-brand-300')}>
+                            {o.name} <span className={on ? 'opacity-70' : 'text-muted'}>· {o.units}</span>
+                          </button>
+                        )
+                      })}
+                    {!owners.length && <span className="text-sm text-muted italic">Loading owners…</span>}
+                  </div>
+                  {ownerRows.length > 0 && (
+                    <p className="mt-2 text-[12px] text-muted">
+                      <b className="text-ink">{ownerLabel}</b> · {ownerListingIds.length} unit{ownerListingIds.length === 1 ? '' : 's'} — the report is titled for them, and covers only their units.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {buildings.map(b => {
+                    const on = picked.indexOf(b) >= 0
+                    return (
+                      <button key={b} onClick={() => toggleBuilding(b)}
+                        className={'rounded-full px-3 py-1.5 text-[12.5px] font-semibold border transition-colors ' + (on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-ink border-line hover:border-brand-300')}>
+                        {b}
+                      </button>
+                    )
+                  })}
+                  {!buildings.length && <span className="text-sm text-muted italic">Loading properties…</span>}
+                </div>
+              )}
             </div>
             <div className="flex items-end gap-3 flex-wrap">
               {kind === 'review' ? (
@@ -336,7 +401,7 @@ export function ReportsDesk() {
               ) : (
                 <span className="text-[12.5px] text-muted pb-2">Period: next high season (Nov–Apr), straight from the projection model.</span>
               )}
-              <button onClick={generate} disabled={generating || !picked.length}
+              <button onClick={generate} disabled={generating || !scopeReady}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-5 py-2 hover:bg-brand-700 disabled:opacity-50">
                 {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : kind === 'onboarding' ? 'Generate onboarding' : 'Generate report'}
               </button>
