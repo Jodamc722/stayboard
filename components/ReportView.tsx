@@ -1677,7 +1677,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={hero.heroImage} alt="" className="absolute inset-0 w-full h-full object-cover" />
               ) : null}
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(10,14,20,0.24) 0%, rgba(10,14,20,0.50) 52%, rgba(10,14,20,0.88) 100%)' }} />
+              <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(8,11,16,0.58) 0%, rgba(8,11,16,0.28) 26%, rgba(8,11,16,0.62) 64%, rgba(8,11,16,0.93) 100%)' }} />
               <div className="onb-cover-in relative flex flex-col px-7 sm:px-11 pt-9 pb-9">
                 {mark.logo ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -1701,6 +1701,26 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </p>
                 </div>
               </div>
+              {/* AND A WAY TO CHANGE IT. Guesty's first picture is whatever the last person
+                  uploaded first — for this owner it is a four-up amenity collage, which is the
+                  one thing a cover must not be. Same cycler the sections have, so the cover is
+                  chosen in the room in two clicks. */}
+              {canEdit && (() => {
+                const cpool: string[] = Array.isArray(c.photoPool) ? c.photoPool : []
+                if (!cpool.length) return null
+                const cur = String(hero.heroImage || '')
+                const step = (d: number) => {
+                  const ix = cpool.indexOf(cur)
+                  patch('hero.heroImage', cpool[(ix + d + cpool.length + (ix < 0 ? 1 : 0)) % cpool.length])
+                  answerChanged()
+                }
+                return (
+                  <div className="sb-noprint absolute bottom-4 right-4 flex items-center gap-1.5">
+                    <button onClick={() => step(-1)} className="rounded-full px-2.5 py-1.5 text-[11px] font-semibold shadow" style={{ background: 'rgba(255,255,255,0.92)', color: '#111' }}>&#8592;</button>
+                    <button onClick={() => step(1)} className="rounded-full px-3 py-1.5 text-[11px] font-semibold shadow" style={{ background: 'rgba(255,255,255,0.92)', color: '#111' }}>Change cover photo</button>
+                  </div>
+                )
+              })()}
             </div>
           </header>
         ) : (
