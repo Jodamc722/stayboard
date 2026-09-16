@@ -147,10 +147,24 @@ export const config = {
   // /api is excluded entirely: the middleware already declared /api an open path and ignored its
   // own auth result there, so every API call was paying a wasted network auth round-trip (and the
   // 2.5s worst-case stall) for nothing. Route handlers do their own auth.
-  // STATIC IMAGES ARE PUBLIC, BY EXTENSION RATHER THAN BY NAME. The list used to be three
-  // icon filenames, so /stay-logo.png — the mark on every owner-facing document — was being
-  // caught by auth and answered with a 307 to the login page. The share link renders for an
-  // owner who is not signed in, so the logo was a broken image on every slide of every deck
-  // and every report, and nobody noticed because the <img> was present in the DOM.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|api/|.*\\.(?:png|jpe?g|gif|svg|webp|ico|avif|woff2?)$).*)']
+  // STATIC IMAGES ARE PUBLIC, BY EXTENSION RATHER THAN BY NAME — BUT ONLY AT THE ROOT.
+  //
+  // The list used to be three icon filenames, so /stay-logo.png — the mark on every owner-facing
+  // document — was being caught by auth and answered with a 307 to the login page. The share link
+  // renders for an owner who is not signed in, so the logo was a broken image on every slide of
+  // every deck and every report, and nobody noticed because the <img> was present in the DOM.
+  //
+  // THE `[^/]+` IS THE WHOLE GATE, NOT TIDINESS. The first version of this fix was `.*\.(?:png|…)$`,
+  // which has no anchor, so it exempted every NESTED path ending in an image extension too. From
+  // 16:53 to 23:0x on 2026-09-16, signed out, /claims/abc.png answered 200 with the whole app shell
+  // — the full internal navigation, every tab name — on all 34 dynamic page routes, on both
+  // domains. Record data held (pages that call getAccess still redirected and the API routes still
+  // answered 401), so it was a broken gate and a structure leak rather than a breach, but
+  // /claims/[id] and /g/[id] have no auth of their own and rendered in full: the middleware IS
+  // their gate. `[^/]+` cannot cross a slash, so the exemption now reaches root-level files only.
+  //
+  // This holds because public/ is flat — icon-180/192/512.png, stay-logo.png, manifest.json, and
+  // nothing else. A static asset added in a SUBDIRECTORY of public/ would be gated by this and must
+  // be named here explicitly rather than by widening the pattern back out.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|api/|[^/]+\\.(?:png|jpe?g|gif|svg|webp|ico|avif|woff2?)$).*)']
 }
