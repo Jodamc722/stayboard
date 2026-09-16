@@ -23,6 +23,7 @@ import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { withoutCollages } from '@/lib/photo-filter'
+import { computeScore } from '@/lib/optimize-score'
 import { getStaff } from '@/lib/staffing'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
@@ -267,8 +268,34 @@ export async function POST(req: NextRequest) {
       ...l,
       pictures: await withoutCollages(Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : []),
     })))
-    const cards: ListingCard[] = cleaned.map(l => listingCardFrom(l))
-      .sort((a, b) => a.name.localeCompare(b.name))
+
+    // AMENITIES ARE BACK, AS A SLIDE OF THEIR OWN (Jon, 2026-09-16: "add the listed amenities,
+    // have a list of recommended amenities, also non-selected amenities… option to select and
+    // push the changes to the actual listing"). They were pulled in the first pass because they
+    // sat as a grid of chips under the listing copy and made that slide unreadable. The content
+    // was never the problem; the placement was. The optimize score still supplies what is
+    // missing and why — the owner sees the list and the work, never the grade.
+    const { data: revs } = await db0.from('guesty_reviews')
+      .select('listing_id, rating, excluded_from_score').in('listing_id', ids0).limit(2000)
+    const ratingsBy: Record<string, number[]> = {}
+    for (const r of ((revs || []) as any[])) {
+      if (r.excluded_from_score) continue
+      const n = Number(r.rating)
+      if (Number.isFinite(n)) (ratingsBy[String(r.listing_id)] = ratingsBy[String(r.listing_id)] || []).push(n)
+    }
+
+    const cards: ListingCard[] = cleaned.map(l => {
+      const rl = ratingsBy[String(l.id)] || []
+      const avg = rl.length ? Math.round((rl.reduce((a, b) => a + b, 0) / rl.length) * 10) / 10 : null
+      let have: string[] = Array.isArray(l.amenities) ? l.amenities.map(String).filter(Boolean) : []
+      let suggest: { name: string; reason: string }[] = []
+      try {
+        const sc = computeScore(l, { avgRating: avg, reviewCount: rl.length })
+        if (Array.isArray(sc.amenities?.have) && sc.amenities.have.length) have = sc.amenities.have.map(String)
+        suggest = (sc.amenities?.suggestions || []).map((x: any) => ({ name: String(x.name), reason: String(x.reason || '') }))
+      } catch { /* the listing's own amenity array still stands */ }
+      return listingCardFrom(l, Array.from(new Set(have)).sort((a, b) => a.localeCompare(b)), suggest)
+    }).sort((a, b) => a.name.localeCompare(b.name))
 
     // Facts about the unit itself. The onboarding WALK is the better source when one exists —
     // it is the only place that knows what is actually in the unit — so it wins over the listing.
