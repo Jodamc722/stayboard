@@ -22,11 +22,11 @@ import {
   Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity, Repeat, SlidersHorizontal, LayoutTemplate, LayoutList, Columns3, ArrowUp, ArrowDown, MoreHorizontal, Save,
   CalendarRange, ChevronLeft, GripVertical, ShieldAlert, Bug, Wrench, ExternalLink, ArrowRightCircle,
-  Truck, Megaphone, Clock, BadgeCheck, Copy,
+  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff,
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
-import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, isDoneSection, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
+import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, isDoneSection, viewPrefsFor, RAIL_PANELS, RAIL_LABEL, type ViewPrefs, type RailPanel, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord } from '@/lib/projects-shared'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -58,10 +58,13 @@ const TONE_CLS: Record<string, string> = { open: 'bg-white border-line text-ink'
 // agree on what "violet" looks like. Shaped here for the two spots this page needs.
 const ACCENT = Object.fromEntries((Object.keys(ACCENT_CLS) as Accent[]).map(k => [k, { bar: ACCENT_CLS[k].soft, dot: ACCENT_CLS[k].solid, ring: ACCENT_CLS[k].ring }])) as Record<Accent, { bar: string; dot: string; ring: string }>
 
-export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
-  initial: ProjectFull; me: string; canEdit: boolean; canFull: boolean; superadmin: boolean
+export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPrefs: initialPrefs }: {
+  initial: ProjectFull; me: string; canEdit: boolean; canFull: boolean; superadmin: boolean; viewPrefs?: any
 }) {
   const [p, setP] = useState<ProjectFull>(initial)
+  // MY view of this board, not the board's. Optimistic: a layout toggle should feel instant, and
+  // the worst case if the save fails is that it reverts on the next load.
+  const [prefsRaw, setPrefsRaw] = useState<any>(initialPrefs ?? null)
   const [roster, setRoster] = useState<Roster>([])
   // A notification links straight to its task: /projects/<id>?task=<taskId> opens the drawer.
   const sp = useSearchParams()
@@ -95,6 +98,59 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
       return j
     } catch (e: any) { setErr(String(e?.message || e)); return null } finally { setBusy(false) }
   }, [p.id, reload])
+
+  const settings = useMemo(() => settingsOf(p.settings), [p.settings])
+  const prefs: ViewPrefs = useMemo(() => viewPrefsFor(prefsRaw, settings), [prefsRaw, settings])
+
+  /**
+   * Save a display choice. It writes to its own route, which asks only for 'view' — a person who
+   * cannot edit a single task still gets to decide whether they read this as a list or a board.
+   * Applied locally first so the tab switches on click rather than after a round trip.
+   */
+  const setPrefs = useCallback(async (patch: Partial<ViewPrefs>) => {
+    setPrefsRaw((cur: any) => ({ ...(cur || {}), ...patch }))
+    try {
+      const r = await fetch('/api/projects/' + p.id + '/view', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefs: patch }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (j?.viewPrefs) setPrefsRaw(j.viewPrefs)
+    } catch { /* it is applied locally; a failed save is not worth an error banner over a layout */ }
+  }, [p.id])
+
+  /**
+   * WHICH RAIL PANELS EARN A CARD.
+   *
+   * Two gates, in order. A panel the person has explicitly hidden never shows, whatever it holds —
+   * that is the point of hiding it. Otherwise it shows only if it has something to show; an empty
+   * one becomes a button in the "Add to this project" strip, which is both less noise and a clearer
+   * invitation than a card whose whole content is a sentence about being empty.
+   *
+   * People is the exception that is always on: a project's audience is not decoration, and on a
+   * shared board knowing who else can read it matters before anything else on this page.
+   */
+  const railHas = useMemo(() => ({
+    people: true,
+    money: (p.invoices || []).length > 0 || !!(p as any).budget_cents || Number((p as any).spent_cents || 0) > 0,
+    about: (p.links || []).length > 0,
+    files: (p.photos || []).filter(f => !f.task_id).length > 0,
+  }), [p.invoices, p.links, p.photos, (p as any).budget_cents, (p as any).spent_cents])
+
+  // `shown` is the explicit opt-in: a panel the person opened from the strip stays open for the
+  // rest of the visit even while it is still empty, or the click would appear to do nothing.
+  const [shown, setShown] = useState<RailPanel[]>([])
+  const railPanels = useMemo(
+    () => RAIL_PANELS.filter(k => !prefs.hidePanels.includes(k) && (railHas[k] || shown.includes(k))),
+    [prefs.hidePanels, railHas, shown])
+  const railRest = useMemo(() => RAIL_PANELS.filter(k => !railPanels.includes(k)), [railPanels])
+  const showPanel = useCallback((k: RailPanel) => {
+    setShown(cur => cur.includes(k) ? cur : [...cur, k])
+    if (prefs.hidePanels.includes(k)) setPrefs({ hidePanels: prefs.hidePanels.filter(x => x !== k) })
+  }, [prefs.hidePanels, setPrefs])
+  const hidePanel = useCallback((k: RailPanel) => {
+    setShown(cur => cur.filter(x => x !== k))
+    if (!prefs.hidePanels.includes(k)) setPrefs({ hidePanels: [...prefs.hidePanels, k] })
+  }, [prefs.hidePanels, setPrefs])
 
   // Files go up as multipart to their own route; the response carries the refreshed project the
   // same way an action does. Partial refusals (one bad type in a batch of five) are surfaced, not
@@ -136,7 +192,6 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
   // want"): list or columns, an accent, whether done tasks show, and the order of sections. Sections
   // named in the order but holding no task still render, so a fresh personal board shows its
   // "Doing" and "Done" columns before anything is in them.
-  const settings = useMemo(() => settingsOf(p.settings), [p.settings])
   const sections = useMemo(() => {
     const order: string[] = []
     const by: Record<string, Task[]> = {}
@@ -147,13 +202,12 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
       by[k].push(t)
     }
     if ('' in by && !order.includes('')) order.push('')
-    const keep = (t: Task) => !settings.hideDone || t.status !== 'done'
-    return order.map(k => ({ name: k, tasks: by[k].filter(keep) })).filter(sec => sec.name !== '' || sec.tasks.length || !settings.hideDone)
+    const keep = (t: Task) => !prefs.hideDone || t.status !== 'done'
+    return order.map(k => ({ name: k, tasks: by[k].filter(keep) })).filter(sec => sec.name !== '' || sec.tasks.length || !prefs.hideDone)
   }, [p.tasks, settings])
   const accent = ACCENT[settings.accent]
   // A viewer-role member can switch views for themselves without being able to save it.
-  const [localView, setLocalView] = useState<BoardSettings['view'] | null>(null)
-  const view = (canEdit ? settings.view : (localView || settings.view))
+  const view = prefs.view
   // Drag state for tasks: what is being dragged, so drop targets can accept it.
   const [dragId, setDragId] = useState<string | null>(null)
   const moveTask = (taskId: string, section: string, beforeId: string | null) => act({ action: 'taskMove', taskId, section, beforeId })
@@ -209,7 +263,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
           </div>
           <div className="flex items-center gap-1.5">
             <RecurChip p={p} canEdit={canEdit} act={act} busy={busy} />
-            <Customize settings={settings} sections={sections.map(x => x.name)} canEdit={canEdit} act={act} busy={busy} />
+            <Customize settings={settings} prefs={prefs} sections={sections.map(x => x.name)} canEdit={canEdit} act={act} setPrefs={setPrefs} busy={busy} />
             <MoreMenu p={p} canEdit={canEdit} act={act} busy={busy} />
           </div>
         </div>
@@ -217,7 +271,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
         {/* VIEWS, like Asana's tabs under the title. The choice is saved on the project. */}
         <div className="mt-3 flex items-center gap-1 border-b border-line">
           {([['list', 'List', LayoutList], ['board', 'Board', Columns3], ['calendar', 'Calendar', CalendarRange]] as const).map(([v, label, I]) => (
-            <button key={v} onClick={() => canEdit ? act({ action: 'setSettings', settings: { view: v } }) : setLocalView(v)}
+            <button key={v} onClick={() => setPrefs({ view: v })}
               className={'inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-semibold -mb-px border-b-2 ' + (view === v ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink')}>
               <I size={13} /> {label}
             </button>
@@ -238,7 +292,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
               booked, so every other kind of board is untouched by it. */}
           <ArrivalsStrip p={p} tasks={p.tasks} busy={busy} act={act} onOpen={setOpenTask} canEdit={canEdit} />
           {view === 'calendar' ? (
-            <CalendarView tasks={p.tasks} onOpen={setOpenTask} accent={accent} hideDone={settings.hideDone} />
+            <CalendarView tasks={p.tasks} onOpen={setOpenTask} accent={accent} hideDone={prefs.hideDone} />
           ) : view === 'board' ? (
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
               {sections.map(sec => (
@@ -265,15 +319,38 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin }: {
           {total === 0 && !canEdit && (
             <p className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-[13px] text-muted">Nothing here yet.</p>
           )}
-          <ActivityPanel p={p} me={me} nameOf={nameOf} act={act} busy={busy} onOpen={setOpenTask} superadmin={superadmin} />
+          {!prefs.hideActivity && <ActivityPanel p={p} me={me} nameOf={nameOf} act={act} busy={busy} onOpen={setOpenTask} superadmin={superadmin} />}
         </div>
 
-        {/* ── SIDE: people, files and what it is about ── */}
+        {/* ── SIDE: people, money, what it is about, files ──
+            A PANEL WITH NOTHING IN IT DOES NOT GET A CARD. On a board created five minutes ago all
+            four of these rendered at full height, each explaining its own emptiness — four headers,
+            four borders and about four hundred pixels of prose saying "no invoices yet", "nothing
+            attached", "not attached to anything yet". That is most of what Jon meant by noisy: the
+            page was mostly furniture, and none of it was his work.
+            So an empty panel collapses into one line in the strip below, which is where you go to
+            start one. Anything with content keeps its card. And `hidePanels` lets a person switch
+            one off permanently even when it does have content — my view, my rules. */}
         <div className="space-y-3">
-          <MembersPanel p={p} roster={roster} me={me} canEdit={canEdit} superadmin={superadmin} act={act} busy={busy} />
-          <InvoicesPanel p={p} canEdit={canEdit} busy={busy} act={act} superadmin={superadmin} />
-          <LinksPanel p={p} canEdit={canEdit} act={act} busy={busy} />
-          <FilesPanel p={p} canEdit={canEdit} act={act} busy={busy} upload={upload} onOpen={setOpenTask} />
+          {railPanels.map(k => (
+            k === 'people' ? <MembersPanel key={k} p={p} roster={roster} me={me} canEdit={canEdit} superadmin={superadmin} act={act} busy={busy} onHide={() => hidePanel('people')} />
+            : k === 'money' ? <InvoicesPanel key={k} p={p} canEdit={canEdit} busy={busy} act={act} superadmin={superadmin} onHide={() => hidePanel('money')} />
+            : k === 'about' ? <LinksPanel key={k} p={p} canEdit={canEdit} act={act} busy={busy} onHide={() => hidePanel('about')} />
+            : <FilesPanel key={k} p={p} canEdit={canEdit} act={act} busy={busy} upload={upload} onOpen={setOpenTask} onHide={() => hidePanel('files')} />
+          ))}
+          {railRest.length > 0 && (
+            <div className="rounded-2xl border border-dashed border-line bg-white/60 px-3 py-2">
+              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-1.5">Add to this project</p>
+              <div className="flex flex-wrap gap-1.5">
+                {railRest.map(k => (
+                  <button key={k} onClick={() => showPanel(k)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[11.5px] font-semibold text-muted hover:text-ink hover:border-ink/40">
+                    <Plus size={11} /> {RAIL_LABEL[k]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -487,19 +564,30 @@ function CalendarView({ tasks, onOpen, accent, hideDone }: { tasks: Task[]; onOp
 }
 
 // ── CUSTOMISE: list or columns, accent, hide done, section order ───────────────────────────────
-function Customize({ settings, sections, canEdit, act, busy }: {
-  settings: BoardSettings; sections: string[]; canEdit: boolean; act: (b: any) => Promise<any>; busy: boolean
+/**
+ * TWO KINDS OF SETTING, AND THE DIFFERENCE IS STATED ON SCREEN.
+ *
+ * Jon, 2026-09-16, asked who should see a view change: "My view is mine." So this popover is split
+ * under two headings. The top half is personal — how I read this board, which rail panels I want —
+ * and saves to my own row. The bottom half is the board's icon, colour, done-handling and section
+ * order, which changes it for everyone and is only offered to someone who may edit.
+ *
+ * Labelling which is which matters more than it looks. The old single list made every control feel
+ * equally consequential, so the safe move was to touch none of them.
+ */
+function Customize({ settings, prefs, sections, canEdit, act, setPrefs, busy }: {
+  settings: BoardSettings; prefs: ViewPrefs; sections: string[]; canEdit: boolean
+  act: (b: any) => Promise<any>; setPrefs: (patch: Partial<ViewPrefs>) => void; busy: boolean
 }) {
   const [open, setOpen] = useState(false)
   const box = useRef<HTMLDivElement | null>(null)
+  const [customIcon, setCustomIcon] = useState('')
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false) }
     document.addEventListener('mousedown', onDoc); return () => document.removeEventListener('mousedown', onDoc)
   }, [open])
-  if (!canEdit) return null
   const set = (patch: Partial<BoardSettings>) => act({ action: 'setSettings', settings: patch })
-  const [customIcon, setCustomIcon] = useState('')
   const order = sections.filter(Boolean)
   const move = (i: number, d: -1 | 1) => {
     const next = order.slice(); const j = i + d
@@ -507,62 +595,90 @@ function Customize({ settings, sections, canEdit, act, busy }: {
     ;[next[i], next[j]] = [next[j], next[i]]
     set({ sectionOrder: next })
   }
+  const Head = ({ children }: { children: any }) => (
+    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">{children}</p>
+  )
   return (
     <div ref={box} className="relative">
-      <button onClick={() => setOpen(o => !o)} title="Customize this board"
+      <button onClick={() => setOpen(o => !o)} title="How this board looks"
         className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1 text-[12px] font-bold text-muted hover:text-ink">
-        <SlidersHorizontal size={13} /> <span className="hidden sm:inline">Customize</span>
+        <SlidersHorizontal size={13} /> <span className="hidden sm:inline">View</span>
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-1.5 w-[280px] rounded-2xl border border-line bg-white shadow-2xl p-3 space-y-3">
-          <div>
-            <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-1">Icon</p>
-            <div className="flex flex-wrap gap-1">
-              {ICONS.map(ic => (
-                <button key={ic} onClick={() => set({ icon: ic })} disabled={busy}
-                  className={'w-7 h-7 rounded-lg grid place-items-center text-[15px] border ' + (settings.icon === ic ? 'border-ink bg-app' : 'border-transparent hover:border-line')}>{ic}</button>
-              ))}
-              <input value={customIcon} onChange={e => setCustomIcon(e.target.value)} placeholder="any"
-                onKeyDown={e => { if (e.key === 'Enter' && customIcon.trim()) { set({ icon: customIcon.trim().slice(0, 4) }); setCustomIcon('') } }}
-                className="w-12 h-7 rounded-lg border border-line px-1 text-[12px] text-center" title="Type any emoji and press Enter" />
-            </div>
-          </div>
-          <div>
-            <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-1">Accent</p>
-            <div className="flex gap-1.5 flex-wrap">
-              {ACCENTS.map(k => (
-                <button key={k} onClick={() => set({ accent: k })} disabled={busy} title={k}
-                  className={'w-6 h-6 rounded-full ' + ACCENT[k].dot + (settings.accent === k ? ' ring-2 ring-offset-2 ' + ACCENT[k].ring : '')} />
-              ))}
-            </div>
-          </div>
+        <div className="absolute right-0 z-50 mt-1.5 w-[286px] rounded-2xl border border-line bg-white shadow-2xl p-3 space-y-3 max-h-[70vh] overflow-y-auto">
+
+          <Head>Just for me</Head>
           <label className="flex items-center gap-2 text-[12.5px] text-ink">
-            <input type="checkbox" checked={settings.hideDone} onChange={e => set({ hideDone: e.target.checked })} disabled={busy} /> Hide done tasks
+            <input type="checkbox" checked={prefs.hideDone} onChange={e => setPrefs({ hideDone: e.target.checked })} /> Hide finished tasks
           </label>
-          {/* ON by default. Off is for a board where the section means something other than
-              progress — a 1:1 filed by topic, where moving a finished item to "Completed" would
-              take it out of the conversation it belongs to. */}
-          <label className="flex items-start gap-2 text-[12.5px] text-ink">
-            <input type="checkbox" checked={settings.moveDone} onChange={e => set({ moveDone: e.target.checked })} disabled={busy} className="mt-0.5" />
-            <span>
-              Move finished work to <span className="font-semibold">{doneSectionName(sections, settings)}</span>
-              <span className="block text-[11px] text-muted">Reopening a task puts it back where it was.</span>
-            </span>
+          <label className="flex items-center gap-2 text-[12.5px] text-ink">
+            <input type="checkbox" checked={prefs.hideActivity} onChange={e => setPrefs({ hideActivity: e.target.checked })} /> Hide the activity feed
           </label>
-          {order.length > 1 && (
+          <div>
+            <p className="text-[12.5px] text-ink mb-1">Panels on the right</p>
+            <div className="flex flex-wrap gap-1">
+              {RAIL_PANELS.map(k => {
+                const on = !prefs.hidePanels.includes(k)
+                return (
+                  <button key={k} onClick={() => setPrefs({ hidePanels: on ? [...prefs.hidePanels, k] : prefs.hidePanels.filter(x => x !== k) })}
+                    className={'text-[11px] font-semibold rounded-md px-1.5 py-0.5 border ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>
+                    {RAIL_LABEL[k]}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-[10.5px] text-muted mt-1">An empty panel stays out of the way on its own until it has something in it.</p>
+          </div>
+
+          {canEdit && (<>
+            <div className="border-t border-line -mx-3" />
+            <Head>The board — everyone sees this</Head>
             <div>
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-1">Section order</p>
-              <div className="rounded-lg border border-line divide-y divide-line">
-                {order.map((name, i) => (
-                  <div key={name} className="flex items-center gap-1 px-2 py-1">
-                    <span className="text-[12px] text-ink flex-1 truncate">{name}</span>
-                    <button onClick={() => move(i, -1)} disabled={busy || i === 0} className="text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={11} /></button>
-                    <button onClick={() => move(i, 1)} disabled={busy || i === order.length - 1} className="text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={11} /></button>
-                  </div>
+              <p className="text-[11px] text-muted mb-1">Icon</p>
+              <div className="flex flex-wrap gap-1">
+                {ICONS.map(ic => (
+                  <button key={ic} onClick={() => set({ icon: ic })} disabled={busy}
+                    className={'w-7 h-7 rounded-lg grid place-items-center text-[15px] border ' + (settings.icon === ic ? 'border-ink bg-app' : 'border-transparent hover:border-line')}>{ic}</button>
+                ))}
+                <input value={customIcon} onChange={e => setCustomIcon(e.target.value)} placeholder="any"
+                  onKeyDown={e => { if (e.key === 'Enter' && customIcon.trim()) { set({ icon: customIcon.trim().slice(0, 4) }); setCustomIcon('') } }}
+                  className="w-12 h-7 rounded-lg border border-line px-1 text-[12px] text-center" title="Type any emoji and press Enter" />
+              </div>
+            </div>
+            <div>
+              <p className="text-[11px] text-muted mb-1">Accent</p>
+              <div className="flex gap-1.5 flex-wrap">
+                {ACCENTS.map(k => (
+                  <button key={k} onClick={() => set({ accent: k })} disabled={busy} title={k}
+                    className={'w-6 h-6 rounded-full ' + ACCENT[k].dot + (settings.accent === k ? ' ring-2 ring-offset-2 ' + ACCENT[k].ring : '')} />
                 ))}
               </div>
             </div>
-          )}
+            {/* ON by default. Off is for a board where the section means something other than
+                progress — a 1:1 filed by topic, where moving a finished item to "Completed" would
+                take it out of the conversation it belongs to. */}
+            <label className="flex items-start gap-2 text-[12.5px] text-ink">
+              <input type="checkbox" checked={settings.moveDone} onChange={e => set({ moveDone: e.target.checked })} disabled={busy} className="mt-0.5" />
+              <span>
+                Move finished work to <span className="font-semibold">{doneSectionName(sections, settings)}</span>
+                <span className="block text-[11px] text-muted">Reopening a task puts it back where it was.</span>
+              </span>
+            </label>
+            {order.length > 1 && (
+              <div>
+                <p className="text-[11px] text-muted mb-1">Section order</p>
+                <div className="rounded-lg border border-line divide-y divide-line">
+                  {order.map((name, i) => (
+                    <div key={name} className="flex items-center gap-1 px-2 py-1">
+                      <span className="text-[12px] text-ink flex-1 truncate">{name}</span>
+                      <button onClick={() => move(i, -1)} disabled={busy || i === 0} className="text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={11} /></button>
+                      <button onClick={() => move(i, 1)} disabled={busy || i === order.length - 1} className="text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={11} /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>)}
         </div>
       )}
     </div>
@@ -1635,9 +1751,9 @@ function FileList({ files, canEdit, busy, onRemove, compact, onOpen }: {
   )
 }
 
-function FilesPanel({ p, canEdit, act, busy, upload, onOpen }: {
+function FilesPanel({ p, canEdit, act, busy, upload, onOpen, onHide }: {
   p: ProjectFull; canEdit: boolean; act: (b: any) => Promise<any>; busy: boolean
-  upload: (files: FileList | File[], taskId?: string | null) => Promise<boolean>; onOpen: (id: string) => void
+  upload: (files: FileList | File[], taskId?: string | null) => Promise<boolean>; onOpen: (id: string) => void; onHide?: () => void
 }) {
   const [all, setAll] = useState(false)
   const files = all ? p.photos : p.photos.slice(0, 9)
@@ -1649,6 +1765,7 @@ function FilesPanel({ p, canEdit, act, busy, upload, onOpen }: {
         <span className="text-[12.5px] font-bold text-ink flex-1">Files</span>
         {p.photos.length > 0 && <span className="text-[11px] text-muted tabular-nums" title={`${pics} photo${pics === 1 ? '' : 's'}`}>{p.photos.length}</span>}
         {canEdit && <UploadButton busy={busy} onPick={fl => upload(fl, null)} label="Add" />}
+        {onHide && <button onClick={onHide} title="Hide this on my view" className="text-muted/60 hover:text-ink"><EyeOff size={12} /></button>}
       </div>
       <div className="p-2.5">
         <FileList files={files} canEdit={canEdit} busy={busy} onRemove={f => act({ action: 'fileDelete', fileId: f.id })} onOpen={onOpen} />
@@ -1673,18 +1790,39 @@ function ActivityPanel({ p, me, nameOf, act, busy, onOpen, superadmin }: {
   const filtered = onlyComments ? ordered.filter(n => n.kind === 'comment') : ordered
   const shown = all ? filtered : filtered.slice(-25)
   const comments = p.notes.filter(n => n.kind === 'comment').length
+
+  /**
+   * AN AUDIT LOG IS NOT THE POINT OF THE PAGE.
+   *
+   * A board with no conversation on it still opened with a full-height feed of its own
+   * bookkeeping — "created this project", "deleted Plain form test" — directly under the work.
+   * That is history nobody asked for, in the most valuable space on the screen.
+   *
+   * So it starts closed when there is nothing but bookkeeping in it, and open the moment somebody
+   * has actually said something. The header always says what is inside, so closed never means
+   * hidden. A person who opens or closes it is obeyed for the rest of the visit.
+   */
+  const [openedBy, setOpenedBy] = useState<boolean | null>(null)
+  const open = openedBy ?? comments > 0
   return (
     <div className="rounded-2xl border border-line bg-white overflow-hidden">
-      <div className="px-3 py-2 bg-app/60 border-b border-line flex items-center gap-2">
+      <button onClick={() => setOpenedBy(!open)}
+        className="w-full px-3 py-2 bg-app/60 border-b border-line flex items-center gap-2 text-left hover:bg-app">
+        {open ? <ChevronDown size={13} className="text-muted" /> : <ChevronRight size={13} className="text-muted" />}
         <MessageSquare size={13} className="text-muted" />
         <span className="text-[12.5px] font-bold text-ink flex-1">Activity</span>
-        <span className="text-[11px] text-muted tabular-nums">{comments} comment{comments === 1 ? '' : 's'}</span>
-        <button onClick={() => setOnlyComments(o => !o)}
-          className={'text-[11px] font-semibold rounded-md px-1.5 py-0.5 border ' + (onlyComments ? 'bg-ink text-white border-ink' : 'border-line text-muted hover:text-ink')}>
-          {onlyComments ? 'Comments only' : 'Everything'}
-        </button>
-      </div>
+        <span className="text-[11px] text-muted tabular-nums">
+          {comments > 0 ? `${comments} comment${comments === 1 ? '' : 's'}` : `${ordered.length} event${ordered.length === 1 ? '' : 's'}`}
+        </span>
+      </button>
+      {open && (<>
       <div className="px-3 py-2">
+        <div className="flex justify-end mb-1.5">
+          <button onClick={() => setOnlyComments(o => !o)}
+            className={'text-[11px] font-semibold rounded-md px-1.5 py-0.5 border ' + (onlyComments ? 'bg-ink text-white border-ink' : 'border-line text-muted hover:text-ink')}>
+            {onlyComments ? 'Comments only' : 'Everything'}
+          </button>
+        </div>
         {filtered.length > 25 && !all && (
           <button onClick={() => setAll(true)} className="text-[11.5px] font-semibold text-muted hover:text-ink mb-1.5">Show all {filtered.length}</button>
         )}
@@ -1694,6 +1832,7 @@ function ActivityPanel({ p, me, nameOf, act, busy, onOpen, superadmin }: {
       <div className="border-t border-line px-3 py-2">
         <Composer busy={busy} members={p.members} placeholder="Comment on the project… @ to mention" onSend={body => act({ action: 'comment', body })} />
       </div>
+      </>)}
     </div>
   )
 }
@@ -2237,8 +2376,8 @@ function ApprovalRow({ inv, canEdit, busy, act }: { inv: Invoice; canEdit: boole
   )
 }
 
-function InvoicesPanel({ p, canEdit, busy, act, superadmin, taskId, compact }: {
-  p: ProjectFull; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any>; superadmin: boolean
+function InvoicesPanel({ p, canEdit, busy, act, superadmin, taskId, compact, onHide }: {
+  p: ProjectFull; canEdit: boolean; busy: boolean; act: (b: any) => Promise<any>; superadmin: boolean; onHide?: () => void
   /** Set on the task drawer: only this task's invoices, and a new one lands on the task. */
   taskId?: string; compact?: boolean
 }) {
@@ -2262,6 +2401,7 @@ function InvoicesPanel({ p, canEdit, busy, act, superadmin, taskId, compact }: {
           {compact ? 'Invoices' : 'Money'}
         </span>
         {t.awaiting > 0 && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-600 text-white">{t.awaiting} to approve</span>}
+        {!compact && onHide && <button onClick={onHide} title="Hide this on my view" className="text-muted/60 hover:text-ink"><EyeOff size={12} /></button>}
         {canEdit && !adding && (
           <button onClick={() => setAdding(true)} className="text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><Plus size={11} /> Invoice</button>
         )}
@@ -2323,11 +2463,13 @@ function InvoicesPanel({ p, canEdit, busy, act, superadmin, taskId, compact }: {
 }
 
 // ── MEMBERS ───────────────────────────────────────────────────────────────────────────────────
-function MembersPanel({ p, roster, me, canEdit, superadmin, act, busy }: {
-  p: ProjectFull; roster: Roster; me: string; canEdit: boolean; superadmin: boolean; act: (b: any) => Promise<any>; busy: boolean
+function MembersPanel({ p, roster, me, canEdit, superadmin, act, busy, onHide }: {
+  p: ProjectFull; roster: Roster; me: string; canEdit: boolean; superadmin: boolean; act: (b: any) => Promise<any>; busy: boolean; onHide?: () => void
 }) {
   const [who, setWho] = useState('')
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)   // whose role row is open
+  const [more, setMore] = useState(false)                        // my email settings + 1:1
   const suggestions = who.trim() ? roster.filter(r => r.display.toLowerCase().includes(who.toLowerCase())
     && !p.members.some(m => (m.email && r.email && m.email === r.email) || m.display === r.display)).slice(0, 6) : []
   const add = async (name: string) => { if (!name.trim()) return; await act({ action: 'memberAdd', person: name, role: 'editor' }); setWho(''); setAdding(false) }
@@ -2339,7 +2481,8 @@ function MembersPanel({ p, roster, me, canEdit, superadmin, act, busy }: {
         <Users size={13} className="text-muted" />
         <span className="text-[12.5px] font-bold text-ink flex-1">People</span>
         <span className="text-[11px] text-muted tabular-nums">{p.members.length}</span>
-        {canEdit && <button onClick={() => setAdding(a => !a)} className="text-muted hover:text-ink"><Plus size={13} /></button>}
+        {canEdit && <button onClick={() => setAdding(a => !a)} className="text-muted hover:text-ink" title="Add someone"><Plus size={13} /></button>}
+        {onHide && <button onClick={onHide} title="Hide this on my view" className="text-muted/60 hover:text-ink"><EyeOff size={12} /></button>}
       </div>
       <div className="divide-y divide-line">
         {p.members.map(m => (
@@ -2349,15 +2492,27 @@ function MembersPanel({ p, roster, me, canEdit, superadmin, act, busy }: {
               <span className="block text-[12.5px] text-ink truncate">{m.display}{isMe(m) ? <span className="text-muted"> (you)</span> : ''}</span>
               <span className="block text-[10.5px] text-muted">{m.email ? 'can be notified' : 'name only'}</span>
             </span>
-            {canEdit ? (
-              <select value={m.role} disabled={busy} onChange={e => act({ action: 'memberRole', personKey: m.person_key, role: e.target.value })}
-                className="text-[11px] rounded border border-line bg-white px-1 py-0.5">
-                <option value="owner">Owner</option><option value="editor">Editor</option><option value="viewer">Viewer</option>
-              </select>
-            ) : <span className="text-[11px] text-muted">{m.role}</span>}
-            {canEdit && !isMe(m) && (
-              <button onClick={() => act({ action: 'memberRemove', personKey: m.person_key })} disabled={busy} className="text-muted hover:text-rose-600" title="Remove"><X size={12} /></button>
-            )}
+            {/* THE ROLE IS A FACT UNTIL YOU MEAN TO CHANGE IT. Three of these dropdowns, one per
+                person, sat open on every load — controls you touch twice a year, taking the same
+                visual weight as the names. Now the role reads as a word, and clicking it turns
+                that one row into a picker. Remove goes with it, so the panel is names and roles
+                until you ask for more. */}
+            {canEdit && editing === m.person_key ? (
+              <>
+                <select autoFocus value={m.role} disabled={busy}
+                  onChange={e => { act({ action: 'memberRole', personKey: m.person_key, role: e.target.value }); setEditing(null) }}
+                  onBlur={() => setEditing(null)}
+                  className="text-[11px] rounded border border-line bg-white px-1 py-0.5">
+                  <option value="owner">Owner</option><option value="editor">Editor</option><option value="viewer">Viewer</option>
+                </select>
+                {!isMe(m) && (
+                  <button onClick={() => act({ action: 'memberRemove', personKey: m.person_key })} disabled={busy} className="text-muted hover:text-rose-600" title="Remove from this project"><X size={12} /></button>
+                )}
+              </>
+            ) : canEdit ? (
+              <button onClick={() => setEditing(m.person_key)} disabled={busy}
+                className="text-[11px] text-muted hover:text-ink rounded px-1 py-0.5 hover:bg-app capitalize" title="Change role or remove">{m.role}</button>
+            ) : <span className="text-[11px] text-muted capitalize">{m.role}</span>}
           </div>
         ))}
       </div>
@@ -2378,37 +2533,55 @@ function MembersPanel({ p, roster, me, canEdit, superadmin, act, busy }: {
           )}
         </div>
       )}
-      {p.members.some(isMe) && (() => {
-        const mine = p.members.find(isMe)!
-        const pr = prefsOf(mine.notify)
-        const Tog = ({ k, label }: { k: keyof typeof pr; label: string }) => (
-          <button onClick={() => act({ action: 'memberNotify', notify: { [k]: !pr[k] } })} disabled={busy}
-            className={'text-[10.5px] font-semibold rounded-md px-1.5 py-0.5 border ' + (pr[k] ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{label}</button>
-        )
-        return (
-          <div className="px-3 py-2 border-t border-line flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] text-muted mr-1">Email me:</span>
-            <Tog k="assigned" label="Assigned" /><Tog k="mentions" label="Mentions" /><Tog k="comments" label="Comments" /><Tog k="digest" label="Morning digest" />
-          </div>
-        )
-      })()}
-      <div className="px-3 py-2 border-t border-line bg-app/40 flex items-center gap-2">
-        <span className="text-[11px] text-muted flex-1">
-          {p.private ? 'Only these people can open this project.' : 'Only these people can open this project.'}{superadmin && !p.members.some(isMe) ? ' You see it as owner.' : ''}
+      {/* MY EMAIL SETTINGS ARE SETTINGS. Four toggles and a "Only these people can open this
+          project" line rendered under every members list on every load — a standing block of
+          configuration in the middle of a page you came to read. It all folds behind one word. */}
+      <div className="px-3 py-1.5 border-t border-line bg-app/40 flex items-center gap-2">
+        <span className="text-[11px] text-muted flex-1 truncate">
+          {p.kind === 'personal' ? 'Only you can open this board.' : 'Only these people can open this project.'}
         </span>
-        {canEdit && (
-          <button onClick={() => act({ action: 'setPrivate', private: !p.private })} disabled={busy}
-            className="text-[11px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1" title={p.private ? 'Marked as a one-on-one' : 'Mark as a one-on-one'}>
-            {p.private ? <Lock size={11} /> : <Unlock size={11} />}{p.private ? '1:1' : 'Mark 1:1'}
+        {(p.members.some(isMe) || canEdit) && (
+          <button onClick={() => setMore(v => !v)} className="text-[11px] font-semibold text-muted hover:text-ink shrink-0">
+            {more ? 'Less' : 'Settings'}
           </button>
         )}
       </div>
+      {more && (
+        <div className="border-t border-line">
+          {p.members.some(isMe) && (() => {
+            const mine = p.members.find(isMe)!
+            const pr = prefsOf(mine.notify)
+            const Tog = ({ k, label }: { k: keyof typeof pr; label: string }) => (
+              <button onClick={() => act({ action: 'memberNotify', notify: { [k]: !pr[k] } })} disabled={busy}
+                className={'text-[10.5px] font-semibold rounded-md px-1.5 py-0.5 border ' + (pr[k] ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{label}</button>
+            )
+            return (
+              <div className="px-3 py-2 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[11px] text-muted mr-1">Email me:</span>
+                <Tog k="assigned" label="Assigned" /><Tog k="mentions" label="Mentions" /><Tog k="comments" label="Comments" /><Tog k="digest" label="Morning digest" />
+              </div>
+            )
+          })()}
+          {superadmin && !p.members.some(isMe) && (
+            <p className="px-3 pb-2 text-[11px] text-muted">You are not a member — you see this as owner.</p>
+          )}
+          {canEdit && p.kind !== 'personal' && (
+            <div className="px-3 py-2 border-t border-line flex items-center gap-2">
+              <span className="text-[11px] text-muted flex-1">{p.private ? 'Marked as a one-on-one.' : 'A regular project.'}</span>
+              <button onClick={() => act({ action: 'setPrivate', private: !p.private })} disabled={busy}
+                className="text-[11px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
+                {p.private ? <Lock size={11} /> : <Unlock size={11} />}{p.private ? '1:1' : 'Mark 1:1'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
 // ── WHAT IT IS ABOUT: real Guesty things ──────────────────────────────────────────────────────
-function LinksPanel({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean; act: (b: any) => Promise<any>; busy: boolean }) {
+function LinksPanel({ p, canEdit, act, busy, onHide }: { p: ProjectFull; canEdit: boolean; act: (b: any) => Promise<any>; busy: boolean; onHide?: () => void }) {
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
   const [searching, setSearching] = useState(false)
@@ -2446,7 +2619,8 @@ function LinksPanel({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolea
         <Building2 size={13} className="text-muted" />
         <span className="text-[12.5px] font-bold text-ink flex-1">About</span>
         {units.length > 0 && <span className="text-[11px] text-muted tabular-nums">{unitsDone}/{units.length} units</span>}
-        {canEdit && <button onClick={() => setOpen(o => !o)} className="text-muted hover:text-ink"><Plus size={13} /></button>}
+        {canEdit && <button onClick={() => setOpen(o => !o)} className="text-muted hover:text-ink" title="Attach something"><Plus size={13} /></button>}
+        {onHide && <button onClick={onHide} title="Hide this on my view" className="text-muted/60 hover:text-ink"><EyeOff size={12} /></button>}
       </div>
 
       {open && canEdit && (

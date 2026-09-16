@@ -7,11 +7,11 @@
 // groups them. A tile shows the one thing a card is for — how it is doing — and opens the page.
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Lock, Repeat, Clock, AlertTriangle, ListChecks, KanbanSquare, Loader2, LayoutTemplate } from 'lucide-react'
+import { Plus, Lock, Repeat, Clock, AlertTriangle, ListChecks, KanbanSquare, Loader2, LayoutTemplate, Truck, ChevronRight, ChevronDown } from 'lucide-react'
 import { ACCENT_CLS, iconOf, accentOf } from '@/lib/projects-shared'
 
 type P = {
-  id: string; title: string; summary: string | null; kind?: string; stage: string; due_on: string | null; recurs?: any
+  id: string; title: string; summary: string | null; kind?: string; category?: string; template_key?: string | null; stage: string; due_on: string | null; recurs?: any
   lead_email: string | null; building: string | null; market: string | null; settings?: any
   health: { state: string; reason: string | null }; progress: { done: number; total: number; pct: number | null; basis: string }
 }
@@ -25,6 +25,8 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
   const [templates, setTemplates] = useState<Tpl[]>([])
   const [mine, setMine] = useState<{ overdue: number; today: number; week: number; total: number } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // Which of the foldable groups this person has opened. Vendor jobs start folded.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     fetch('/api/projects?archived=0', { cache: 'no-store' }).then(r => r.json())
@@ -35,13 +37,29 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
       .catch(() => {})
   }, [])
 
+  /**
+   * VENDOR JOBS GET THEIR OWN HEADING (Jon, 2026-09-16).
+   *
+   * "Vendor visit for 1418/2" and "Vendor will deliver the new dryer between 10am-1pm" were sitting
+   * in the same list as the Operations board, at the same size, looking like peers of it. They are
+   * not — they are single jobs, there will be dozens of them, and every one that gets created
+   * pushes the actual projects further down the page. A vendor visit is still a project with its
+   * own page, files and invoice, which is why Jon kept them as projects; it just does not deserve
+   * to compete for attention with a standing board.
+   *
+   * Matched on category rather than template_key so a job created by hand, without the template,
+   * still lands in the right group.
+   */
   const groups = useMemo(() => {
     const list = projects || []
     const live = (p: P) => p.stage !== 'done' && p.stage !== 'cancelled'
+    const isVendor = (p: P) => p.category === 'vendor' || p.template_key === 'vendor_work'
+    const team = (p: P) => p.kind !== 'personal' && p.kind !== 'one_on_one' && live(p)
     return [
       { key: 'personal', label: 'Your boards', icon: Lock, items: list.filter(p => p.kind === 'personal') },
       { key: 'one', label: 'One-on-ones', icon: Repeat, items: list.filter(p => p.kind === 'one_on_one' && live(p)) },
-      { key: 'team', label: 'Projects', icon: KanbanSquare, items: list.filter(p => p.kind !== 'personal' && p.kind !== 'one_on_one' && live(p)) },
+      { key: 'team', label: 'Projects', icon: KanbanSquare, items: list.filter(p => team(p) && !isVendor(p)) },
+      { key: 'vendor', label: 'Vendor jobs', icon: Truck, items: list.filter(p => team(p) && isVendor(p)), quiet: true },
     ].filter(g => g.items.length)
   }, [projects])
 
@@ -81,15 +99,20 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
         </div>
       )}
 
-      {groups.map(g => { const I = g.icon; return (
+      {groups.map(g => { const I = g.icon; const folded = !!(g as any).quiet && !openGroups[g.key]; return (
         <section key={g.key} className="mb-5">
-          <div className="flex items-center gap-2 px-1 mb-2">
+          {/* A QUIET GROUP FOLDS. Vendor jobs are the many, not the important: a heading with a
+              count says everything a glance needs, and one click opens them when you actually
+              want them. Everything else stays open, as it was. */}
+          <button type="button" onClick={() => (g as any).quiet && setOpenGroups(o => ({ ...o, [g.key]: !o[g.key] }))}
+            className={'w-full flex items-center gap-2 px-1 mb-2 text-left ' + ((g as any).quiet ? 'group/head' : 'cursor-default')}>
+            {(g as any).quiet && (folded ? <ChevronRight size={12} className="text-muted" /> : <ChevronDown size={12} className="text-muted" />)}
             <I size={12} className="text-muted" />
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted">{g.label}</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted group-hover/head:text-ink">{g.label}</span>
             <span className="text-[11px] text-muted tabular-nums">{g.items.length}</span>
             <span className="flex-1 h-px bg-line" />
-          </div>
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          </button>
+          {!folded && <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
             {g.items.map(p => {
               const h = p.health
               const ac = ACCENT_CLS[accentOf(p)]
@@ -118,7 +141,7 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
                 </Link>
               )
             })}
-          </div>
+          </div>}
         </section>
       )})}
 
