@@ -33,6 +33,10 @@ const SECTION_KEYS = ['reservations', 'revenue', 'marketing', 'cleaning', 'verif
 function cleanSections(v: any): Record<string, boolean> {
   const out: Record<string, boolean> = {}
   for (const k of SECTION_KEYS) out[k] = v?.[k] === true
+  // PARKING IS EXCLUSIVE. A row ticked for parking renders at /parking/<code> for a third-party
+  // garage; leaving other sections on would have left the same code working at /share/<code> with
+  // the same passcode, showing that vendor whatever else was ticked. One tick, one page.
+  if (out.parking) for (const k of SECTION_KEYS) if (k !== 'parking') out[k] = false
   return out
 }
 
@@ -156,6 +160,17 @@ export async function POST(req: NextRequest) {
     guest_names: body.guestNames === true,
     window_days: Number.isFinite(Number(body.windowDays)) && Number(body.windowDays) >= 7 && Number(body.windowDays) <= 120 ? Number(body.windowDays) : 30,
     passcode: str(body.passcode).slice(0, 60) || null,
+  }
+  // A PARKING LINK'S PASSCODE GUARDS A GATE CREDENTIAL, so it gets a floor the others do not have.
+  // Nothing anywhere else in this family enforces a length, and a four-character code behind a
+  // per-IP attempt limit is a code somebody walks through. It is also REQUIRED here: without one
+  // the link falls back to the standing share password, which the garage does not have and should
+  // never be given.
+  if (sections.parking) {
+    const pc = str(patch.passcode)
+    if (pc.length < 8) {
+      return NextResponse.json({ ok: false, error: 'A parking link needs its own passcode, at least 8 characters — the garage is outside the company.' }, { status: 400 })
+    }
   }
 
   if (action === 'update') {

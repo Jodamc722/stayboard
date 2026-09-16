@@ -43,8 +43,11 @@ create table if not exists parking_permits (
   -- The vendor's own reference for this permit — a plate, a permit number, a garage row. Their
   -- words, shown back to them, never parsed.
   label           text,
-  -- assigned = bound to a stay · spare = in the pool · void = replaced or withdrawn
-  status          text not null default 'assigned',
+  -- assigned = bound to a stay · spare = in the pool · void = replaced or withdrawn.
+  -- Constrained rather than merely documented: the partial unique index below keys off this value,
+  -- so a typo would not fail loudly, it would quietly let a stay hold two live permits.
+  status          text not null default 'assigned'
+                    check (status in ('assigned', 'spare', 'void')),
   -- Which share link uploaded it. Provenance, so a revoked vendor's permits can be found.
   source_code     text,
   uploaded_by     text,
@@ -66,7 +69,10 @@ create unique index if not exists parking_permits_one_live_per_res
   on parking_permits (reservation_id)
   where reservation_id is not null and status = 'assigned';
 
-create index if not exists parking_permits_pool_idx on parking_permits (building, status);
+-- The pool is read BY LINK, not by building: a link covering one unit must not be handed the whole
+-- building's drawer of gate credentials.
+create index if not exists parking_permits_pool_idx on parking_permits (source_code, status);
+create index if not exists parking_permits_bld_idx  on parking_permits (building, status);
 create index if not exists parking_permits_res_idx  on parking_permits (reservation_id);
 
 -- ── THE LOG ─────────────────────────────────────────────────────────────────────────────────────

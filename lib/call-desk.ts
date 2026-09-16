@@ -41,6 +41,7 @@ import 'server-only'
 import { pageRows } from '@/lib/db-page'
 import { ratingToStars } from '@/lib/optimize-score'
 import { channelOf } from '@/lib/welcome-call-guide'
+import { parkingBooked } from '@/lib/parking'
 
 export const LOW_STARS = 3        // <= this is a bad review (matches ops-brief, review KPIs, review-themes)
 export const CLEAR_STARS = 4.5    // a review this good, AFTER the low one, clears the unit
@@ -374,11 +375,13 @@ function moneyStatus(r: any) {
   const addOns = items
     .map((it: any) => ({ t: String(it.title || it.name || '').trim(), amt: Number(it.amount) || 0 }))
     .filter((x: any) => x.t && NOTABLE.test(x.t) && !STD.test(x.t))
-  const parking = addOns.find((x: any) => /park/i.test(x.t)) || null
+  // ONE PARKING RULE FOR THE WHOLE APP (2026-09-16). The parking board reads the same folio for the
+  // same line, and the two copies had already drifted by a clause. lib/parking owns it now.
+  const parkingAmt = parkingBooked(m)
   return {
     paidFull, balance,
     currency: r.money_currency || 'USD',
-    parking: parking ? parking.amt : null,
+    parking: parkingAmt,
     addOns: addOns.filter((x: any) => !/park/i.test(x.t)).slice(0, 4),
     nights: Number(r.nights) || Number(r.nightsCount) || 0,
     checkOut: String(r.check_out || '').slice(0, 10),

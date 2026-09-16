@@ -21,7 +21,7 @@ import 'server-only'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { SHARE_COOKIE, shareCookieValid } from './shareAuth'
-import { createClient } from './supabase-server'
+import { getAccess } from './access'
 import { getParkingLink, logParking, tooManyWrong, LOCKOUT_MINUTES, type ParkingLink } from './parking'
 
 export type Gate =
@@ -43,18 +43,26 @@ export async function parkingGate(req: NextRequest, code: string, pass: string):
     return { ok: false, res: NextResponse.json({ ok: false, error: 'This parking link is not valid.' }, { status: 404 }) }
   }
 
+  // A LIGHTHOUSE USER, NOT MERELY A SUPABASE ONE. `getUser()` on its own says "this person has a
+  // valid session in our Supabase project" — it says nothing about whether they still work here.
+  // Every page in the app goes through middleware that checks app_users.status === 'active'; this
+  // endpoint is on the open list and gets no middleware at all, so a deactivated employee would
+  // have kept the passcode bypass AND the power to move a live gate credential onto another guest.
+  // getAccess() is the same check the rest of the app makes.
   let signedIn = false
   let who: string | null = null
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    signedIn = !!user
-    who = user?.email ? String(user.email) : null
+    const access = await getAccess()
+    signedIn = !!access.user && !!access.allowed
+    who = access.email ? String(access.email) : null
   } catch { signedIn = false }
   if (signedIn) return { ok: true, link, signedIn, who, ip }
 
   if (await tooManyWrong(link.code, ip)) {
-    await logParking({ code: link.code, action: 'denied', detail: 'locked out', ip })
+    // DELIBERATELY NOT LOGGED. Writing another `denied` row while already locked out refreshes the
+    // rolling window, so one request every fourteen minutes would keep an address locked out
+    // forever — and the first thing a locked-out vendor does is retry, which is how the page would
+    // have permanently locked the people it is for.
     return {
       ok: false,
       res: NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: true,

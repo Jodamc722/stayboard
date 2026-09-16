@@ -24,12 +24,14 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   // THE SCOPE GUARD. Rebuilding the board is what tells us which reservations this link covers —
   // without it a permit id from one building would open through another building's link.
   const board = await buildParkingBoard(gate.link)
-  const url = await signedQrUrl(id, {
+  const got = await signedQrUrl(id, {
+    code: gate.link.code,
     building: board.building,
     reservationIds: new Set(board.rows.map(r => r.reservationId)),
   })
-  if (!url) return NextResponse.json({ ok: false, error: 'That permit is not on this link.' }, { status: 404 })
+  if (!got) return NextResponse.json({ ok: false, error: 'That permit is not on this link.' }, { status: 404 })
 
   await logParking({ code: gate.link.code, action: 'view', detail: 'permit ' + id, ip: gate.ip })
-  return NextResponse.json({ ok: true, url, expiresIn: QR_SIGNED_SECONDS })
+  // The mime travels so the page can open a PDF as a link instead of waiting for an <img> to fail.
+  return NextResponse.json({ ok: true, url: got.url, mime: got.mime, expiresIn: QR_SIGNED_SECONDS })
 }

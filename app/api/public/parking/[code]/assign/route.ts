@@ -12,6 +12,7 @@
 // passcode is not enough to reassign a credential to a different guest.
 import { NextRequest, NextResponse } from 'next/server'
 import { parkingGate } from '@/lib/parking-gate'
+import { requireLevel } from '@/lib/access'
 import { buildParkingBoard, claimSpare, logParking } from '@/lib/parking'
 
 export const dynamic = 'force-dynamic'
@@ -21,8 +22,12 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   const body = await req.json().catch(() => ({} as any))
   const gate = await parkingGate(req, String(params.code || ''), String(body?.pass || ''))
   if (!gate.ok) return gate.res
-  if (!gate.signedIn) {
-    return NextResponse.json({ ok: false, error: 'Assigning a spare needs a Lighthouse sign-in.' }, { status: 403 })
+  // THE SAME PERMISSION THAT MINTS THE LINK. Moving a live gate credential onto a different guest
+  // is the sharpest thing anyone can do here, and "has a session" is not the bar for it — this
+  // endpoint is on the open list, so it gets no middleware and has to ask for itself.
+  const level = await requireLevel('share-links', 'edit')
+  if (!level.ok) {
+    return NextResponse.json({ ok: false, error: 'Assigning a spare needs Lighthouse access to share links.' }, { status: 403 })
   }
 
   const permitId = String(body?.permitId || '').trim()
@@ -37,7 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
     return NextResponse.json({ ok: false, error: 'That spare is not in this pool.' }, { status: 403 })
   }
 
-  const who = gate.who || 'office'
+  const who = level.access.email || gate.who || 'office'
   const res = await claimSpare({
     permitId, building: board.building, who,
     stay: { reservationId: row.reservationId, listingId: row.listingId, unit: row.unit, checkIn: row.checkIn, checkOut: row.checkOut },

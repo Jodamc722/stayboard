@@ -47,6 +47,12 @@ async function handle(code: string, pw: string, body?: any) {
   const { data: rows } = await db.from('share_links').select('*').eq('code', code).limit(1)
   const link = (rows || [])[0] as any
   if (!link || link.revoked_at) return NextResponse.json({ error: 'not found' }, { status: 404 })
+  // A PARKING LINK IS NOT A REPORT LINK (2026-09-16). The same row can carry both section sets, so
+  // a link ticked for parking AND revenue would have been handed to a garage vendor as
+  // /parking/<code> — and six characters of URL editing, same passcode, would have shown them the
+  // building's money and internal notes. The builder forces exclusivity; this refuses the other
+  // door regardless, because a mis-tick should not be able to reach it.
+  if (link.sections && link.sections.parking === true) return NextResponse.json({ error: 'not found' }, { status: 404 })
   if (link.passcode && pw !== link.passcode) {
     return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: pw ? 'Wrong passcode.' : undefined }, { status: pw ? 403 : 200 })
   }

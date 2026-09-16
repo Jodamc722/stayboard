@@ -16,17 +16,25 @@
 // ── WHY THE BYTES ARE NOT RE-ENCODED ────────────────────────────────────────────────────────────
 // Every other upload route in this app pushes images through sharp at quality 82. A QR code is a
 // machine-readable credential and JPEG ringing around high-contrast modules is exactly the thing
-// that makes a scanner fail at a gate at 11pm. PNG, JPEG and PDF are stored byte for byte; nothing
-// else is accepted, because a .html "permit" is how phishing gets into a shared drive.
+// that makes a scanner fail at a gate at 11pm. PNG, JPEG and PDF are stored byte for byte.
+//
+// Nothing else is accepted, and that is decided by the FIRST FOUR BYTES, not the filename — a
+// check on the extension only ever meant "named PNG", which makes the bucket an arbitrary file
+// drop for anybody holding the passcode.
 import { NextRequest, NextResponse } from 'next/server'
 import { parkingGate } from '@/lib/parking-gate'
-import { buildParkingBoard, attachPermit, logParking } from '@/lib/parking'
+import { buildParkingBoard, attachPermit, logParking, sniffMime, uploadsInLastHour, UPLOADS_PER_HOUR } from '@/lib/parking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-/** A QR is a few kilobytes. This is generous for a scan or a vendor's PDF, and far below a photo. */
-const MAX_BYTES = 8 * 1024 * 1024
+/**
+ * A QR is a few kilobytes; this is generous for a scan or a vendor's PDF. It is set BELOW the
+ * platform's own 4.5MB request-body ceiling on purpose: an 8MB limit would have been a limit this
+ * handler never got to enforce, so the vendor would have seen a raw platform error page instead of
+ * a sentence telling them the file is too big.
+ */
+const MAX_BYTES = 4 * 1024 * 1024
 const ALLOWED: Record<string, string> = {
   'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'application/pdf': 'pdf',
 }
@@ -42,11 +50,20 @@ function mimeFor(f: File): string | null {
 }
 
 export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
+  // THE DOOR BEFORE THE BODY. The passcode rides in a header rather than a form field so the gate
+  // runs first: reading the multipart body buffers the whole upload in memory, and doing that
+  // before checking who is asking means an anonymous caller with a wrong code can still make the
+  // server hold their megabytes.
+  const gate = await parkingGate(req, String(params.code || ''), String(req.headers.get('x-parking-pass') || ''))
+  if (!gate.ok) return gate.res
+
+  // A garage sends a handful of codes a day. Anything near this is somebody filling the bucket.
+  if (await uploadsInLastHour(gate.link.code) >= UPLOADS_PER_HOUR) {
+    return NextResponse.json({ ok: false, error: 'That is a lot of codes in one hour. Try again later.' }, { status: 429 })
+  }
+
   const form = await req.formData().catch(() => null)
   if (!form) return NextResponse.json({ ok: false, error: 'Send the file as a form.' }, { status: 400 })
-
-  const gate = await parkingGate(req, String(params.code || ''), String(form.get('pass') || ''))
-  if (!gate.ok) return gate.res
 
   // WHO SENT IT. There is no login behind this link, so an unattributed permit is a permit nobody
   // can ask about — the same rule the field board applies to a job filed from the floor.
@@ -55,11 +72,15 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
 
   const file = form.get('file')
   if (!(file instanceof File)) return NextResponse.json({ ok: false, error: 'Attach the QR code.' }, { status: 400 })
-  const mime = mimeFor(file)
-  if (!mime) return NextResponse.json({ ok: false, error: 'PNG, JPG or PDF only.' }, { status: 415 })
+  const named = mimeFor(file)
+  if (!named) return NextResponse.json({ ok: false, error: 'PNG, JPG or PDF only.' }, { status: 415 })
   const bytes = Buffer.from(await file.arrayBuffer())
   if (!bytes.length) return NextResponse.json({ ok: false, error: 'That file was empty.' }, { status: 400 })
-  if (bytes.length > MAX_BYTES) return NextResponse.json({ ok: false, error: 'That file is over 8MB.' }, { status: 413 })
+  if (bytes.length > MAX_BYTES) return NextResponse.json({ ok: false, error: 'That file is over 4MB.' }, { status: 413 })
+  // THE BYTES DECIDE, NOT THE NAME. Trusting the extension made "PNG, JPG or PDF only" mean "named
+  // PNG, JPG or PDF" and the bucket an arbitrary file store for anyone holding the passcode.
+  const mime = sniffMime(bytes)
+  if (!mime) return NextResponse.json({ ok: false, error: 'That does not look like a PNG, JPG or PDF.' }, { status: 415 })
 
   const label = String(form.get('label') || '').trim().slice(0, 80) || null
   const spare = String(form.get('spare') || '') === '1'

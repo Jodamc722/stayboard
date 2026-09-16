@@ -28,12 +28,13 @@ type Permit = { id: string; label: string | null; uploadedAt: string; uploadedBy
 type Row = {
   reservationId: string; unit: string; listingId: string; guest: string; confirmation: string
   checkIn: string; checkOut: string; nights: number; arrivingIn: number; inHouse: boolean
-  paidParking: number | null; permit: Permit | null
+  parkingBooked: number | null; permit: Permit | null
 }
 type Board = {
   ok: true; label: string; building: string; scopeLabel: string; today: string; windowDays: number
   rows: Row[]
-  counts: { stays: number; withPermit: number; needPermit: number; paidParking: number }
+  counts: { stays: number; withPermit: number; needPermit: number; parkingBooked: number }
+  truncated?: boolean
   pool: { spare: number; items: { id: string; label: string | null; uploadedAt: string }[] }
   canAssign?: boolean
 }
@@ -49,10 +50,17 @@ const money = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('e
 /** When this stay lands, in the words somebody standing at a gate would use. */
 function whenWord(r: Row): string {
   if (r.inHouse) return 'in house now'
-  if (r.arrivingIn <= 0) return 'arrives today'
+  // A stay whose check-out is today is still in the window (they are here this morning) but their
+  // check-in was days ago. Without this branch they rendered as "arrives today", sat in the
+  // Need-a-code tab and got the red border — the most urgent-looking row on the page belonged to
+  // somebody driving away.
+  if (r.arrivingIn < 0) return 'checking out today'
+  if (r.arrivingIn === 0) return 'arrives today'
   if (r.arrivingIn === 1) return 'arrives tomorrow'
   return 'in ' + r.arrivingIn + ' days'
 }
+/** Leaving today: nobody needs to issue them a code now. */
+const leavingToday = (r: Row) => !r.inHouse && r.arrivingIn < 0
 
 export default function ParkingPage({ params }: { params: { code: string } }) {
   const code = String(params.code || '')
@@ -63,7 +71,7 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [view, setView] = useState<'need' | 'all' | 'done'>('need')
-  const [qr, setQr] = useState<{ url: string; row: Row } | null>(null)
+  const [qr, setQr] = useState<{ url: string; row: Row; mime: string | null } | null>(null)
   const [openRow, setOpenRow] = useState<string | null>(null)
   const [note, setNote] = useState<string>('')
   const passRef = useRef('')
@@ -105,7 +113,7 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
     const all = (d?.rows || []).slice().sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))
     if (view === 'all') return all
     if (view === 'done') return all.filter(r => !!r.permit)
-    return all.filter(r => !r.permit)
+    return all.filter(r => !r.permit && !leavingToday(r))
   }, [d, view])
 
   // ── upload ────────────────────────────────────────────────────────────────────────────────────
@@ -114,10 +122,14 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
     setBusy(true); setErr(''); setNote('')
     try {
       const fd = new FormData()
-      fd.set('pass', passRef.current); fd.set('who', who.trim()); fd.set('file', file)
+      fd.set('who', who.trim()); fd.set('file', file)
       if (label.trim()) fd.set('label', label.trim())
       if (row) fd.set('reservationId', row.reservationId); else fd.set('spare', '1')
-      const r = await fetch('/api/public/parking/' + code + '/upload', { method: 'POST', body: fd, cache: 'no-store' })
+      // The passcode is a header, not a form field, so the server can check it before it buffers
+      // the file. It is still never in the URL.
+      const r = await fetch('/api/public/parking/' + code + '/upload', {
+        method: 'POST', body: fd, cache: 'no-store', headers: { 'x-parking-pass': passRef.current },
+      })
       const j = await r.json().catch(() => ({} as any))
       if (!r.ok || !j.ok) throw new Error(j.error || 'Upload failed.')
       setNote(row ? (j.replaced ? 'Replaced the code on ' + row.unit + '.' : 'Code saved for ' + row.unit + '.') : 'Spare code added to the pool.')
@@ -132,7 +144,7 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
     setBusy(true); setErr('')
     const { j } = await post('/qr', { id: row.permit.id })
     setBusy(false)
-    if (j && j.ok && j.url) setQr({ url: j.url, row })
+    if (j && j.ok && j.url) setQr({ url: j.url, row, mime: j.mime || null })
     else setErr((j && j.error) || 'Could not open that code.')
   }
 
@@ -176,6 +188,9 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
   }
 
   const poolLow = d.pool.spare < POOL_LOW
+  // The tab count has to be the length of the list behind it, not a number computed server-side
+  // over a slightly different set.
+  const needN = d.rows.filter(r => !r.permit && !leavingToday(r)).length
 
   return (
     <div className="pk"><Style />
@@ -187,7 +202,7 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
         </div>
 
         <div className="pk-stats">
-          <Stat label="Need a code" value={String(d.counts.needPermit)} tone={d.counts.needPermit ? 'hot' : 'ok'} />
+          <Stat label="Need a code" value={String(needN)} tone={needN ? 'hot' : 'ok'} />
           <Stat label="On file" value={String(d.counts.withPermit)} note={'of ' + d.counts.stays} />
           <Stat label="Spare pool" value={String(d.pool.spare)} tone={poolLow ? 'warn' : 'ok'} note={poolLow ? 'running low' : 'in the drawer'} />
         </div>
@@ -201,6 +216,12 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
           <p className="pk-hint">Goes on every code you send, so we know who to ask if a gate turns someone away.</p>
         </div>
 
+        {d.truncated && (
+          <div className="pk-err pk-err-box">
+            This list came back short, so some stays may be missing. Reload in a minute rather than
+            working from it — a stay that is not here still needs a code.
+          </div>
+        )}
         {note && <div className="pk-ok">{note}</div>}
         {err && <div className="pk-err pk-err-box">{err}</div>}
 
@@ -217,13 +238,15 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
                 ? 'Running low. These are what cover a guest who books on a Saturday — a few in hand means nobody waits for Monday.'
                 : 'Held for last-minute bookings when you are not working. The office assigns one and it stops being spare.'}
             </p>
-            <Upload id="spare" busy={busy} onSend={(f, l) => send(f, l, null)} cta="Add a spare code" />
+            {/* Re-keyed on the pool size so a successful upload gives a fresh, empty control —
+                otherwise the file stayed selected and one more tap filed a duplicate code. */}
+            <Upload key={'spare-' + d.pool.spare} id="spare" busy={busy} onSend={(f, l) => send(f, l, null)} cta="Add a spare code" />
           </div>
         </div>
 
         <div className="pk-tabs">
           <button className={'pk-tab' + (view === 'need' ? ' on' : '')} onClick={() => setView('need')}>
-            Need a code <span className="pk-tabn">{d.counts.needPermit}</span>
+            Need a code <span className="pk-tabn">{needN}</span>
           </button>
           <button className={'pk-tab' + (view === 'done' ? ' on' : '')} onClick={() => setView('done')}>
             Sent <span className="pk-tabn">{d.counts.withPermit}</span>
@@ -240,7 +263,7 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
         )}
 
         {rows.map(r => (
-          <div key={r.reservationId} className={'pk-card' + (!r.permit && r.arrivingIn <= 2 ? ' hot' : '')}>
+          <div key={r.reservationId} className={'pk-card' + (!r.permit && !leavingToday(r) && r.arrivingIn <= 2 ? ' hot' : '')}>
             <div className="pk-row">
               <div className="pk-rowmain">
                 <b className="pk-unit">{r.unit}</b>
@@ -250,7 +273,9 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
                 </div>
                 <div className="pk-chips">
                   <span className={'pk-pill ' + (r.inHouse ? 'now' : r.arrivingIn <= 2 ? 'soon' : 'off')}>{whenWord(r)}</span>
-                  {r.paidParking != null && <span className="pk-pill paid">paid parking {r.paidParking ? money(r.paidParking) : ''}</span>}
+                  {/* BOOKED, not paid. The folio carries a parking line; whether the guest has
+                      settled it is a different field nobody here reads. */}
+                  {r.parkingBooked != null && <span className="pk-pill paid">parking booked {r.parkingBooked ? money(r.parkingBooked) : ''}</span>}
                   {r.permit && <span className="pk-pill ok">code on file{r.permit.wasSpare ? ' · spare' : ''}</span>}
                 </div>
               </div>
@@ -298,8 +323,13 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
             <div className="pk-cardhead"><span><b>{qr.row.unit}</b> · {day(qr.row.checkIn)}</span>
               <button className="pk-mini" onClick={() => setQr(null)}>Close</button></div>
             <div className="pk-pad pk-qr">
-              {/* A PDF permit opens in its own tab; an image shows here. */}
-              <img src={qr.url} alt={'Parking code for ' + qr.row.unit} onError={() => { window.open(qr.url, '_blank') }} />
+              {/* A PDF never loads in an <img>, so the old version relied on the error handler
+                  calling window.open — several async hops after the click, which is exactly when a
+                  popup blocker stops it. The mime comes back with the URL now, so a PDF is a link
+                  the person taps themselves. */}
+              {qr.mime === 'application/pdf'
+                ? <a className="pk-btn pk-a" href={qr.url} target="_blank" rel="noreferrer">Open the PDF</a>
+                : <img src={qr.url} alt={'Parking code for ' + qr.row.unit} />}
               <p className="pk-hint">This view expires in five minutes.</p>
             </div>
           </div>
@@ -393,5 +423,6 @@ function Style() {
 .pk-modal{background:#fff;border-radius:14px;width:100%;max-width:420px;overflow:hidden}
 .pk-qr{text-align:center}
 .pk-qr img{max-width:100%;height:auto;border-radius:8px}
+.pk-a{display:block;text-decoration:none;text-align:center;box-sizing:border-box}
 ` }} />
 }
