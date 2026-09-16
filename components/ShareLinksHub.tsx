@@ -56,7 +56,24 @@ const BOARD_SECTIONS: { key: string; label: string; sub: string }[] = [
   { key: 'add', label: 'Let them add jobs', sub: 'the crew can file a task into Breezeway, on these units only' },
 ]
 const BOARD_KEYS = BOARD_SECTIONS.map(s => s.key)
-const isBoard = (sections: any) => !!sections && BOARD_KEYS.some(k => sections[k] === true)
+// PARKING (Jon, 2026-09-16). A third thing this table can render: a vendor board at
+// /parking/<code> carrying every upcoming stay in scope and a QR upload against each one. One
+// section, because there is only one question it answers.
+const PARKING_SECTIONS: { key: string; label: string; sub: string }[] = [
+  { key: 'parking', label: 'Parking — QR codes', sub: 'every upcoming stay in scope, and a place for the garage to send back a code for each one' },
+]
+// Three kinds of link now, so the binary board-or-report flag became a name. Parking wins the
+// tie-break: a row ticked for both is a parking board, because that is the page that accepts
+// uploads and the report page would silently drop them.
+type Kind = 'parking' | 'board' | 'report'
+const kindOf = (sections: any): Kind =>
+  sections?.parking === true ? 'parking'
+    : (!!sections && BOARD_KEYS.some(k => sections[k] === true)) ? 'board'
+      : 'report'
+const PATH_FOR: Record<Kind, string> = { parking: '/parking/', board: '/board/', report: '/share/' }
+const KIND_BADGE: Record<Kind, string> = { parking: 'Parking', board: 'Live board', report: '' }
+const SECTIONS_FOR: Record<Kind, { key: string; label: string; sub: string }[]> =
+  { parking: PARKING_SECTIONS, board: BOARD_SECTIONS, report: SECTIONS }
 const SCOPES = [
   { key: 'portfolio', label: 'Whole portfolio', Icon: Globe },
   { key: 'market', label: 'Market', Icon: MapPin },
@@ -130,7 +147,7 @@ export function ShareLinksHub() {
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.message || j?.error || 'Could not save.')
       setOpen(false); reset(); await load()
-      if (!editingId && j.link?.code) copy(j.link.code)
+      if (!editingId && j.link?.code) copy(j.link.code, kindOf(sections))
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }
@@ -139,9 +156,9 @@ export function ShareLinksHub() {
     await fetch('/api/share-links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'revoke', id }) })
     await load()
   }
-  // A board's link is /board/<code>; a report's is /share/<code>. Copying the wrong one hands the
-  // crew a page that asks them for a report password they do not have.
-  const copy = async (code: string, board = false) => { copyPath((board ? '/board/' : '/share/') + code, code) }
+  // Each kind has its own page — /parking, /board, /share. Copying the wrong one hands someone a
+  // page that asks them for a password they do not have.
+  const copy = async (code: string, kind: Kind = 'report') => { copyPath(PATH_FOR[kind] + code, code) }
   const copyPath = async (path: string, key: string) => {
     try { await navigator.clipboard.writeText(origin + path); setCopied(key); setTimeout(() => setCopied(''), 1800) } catch { /* blocked */ }
   }
@@ -152,8 +169,8 @@ export function ShareLinksHub() {
    * screen and showing every passcode at once is a different mistake — and "Link + passcode" puts
    * both on the clipboard in the shape you would type them into a message anyway.
    */
-  const copyBoth = async (l: LinkRow, board: boolean) => {
-    const url = origin + (board ? '/board/' : '/share/') + l.code
+  const copyBoth = async (l: LinkRow, kind: Kind) => {
+    const url = origin + PATH_FOR[kind] + l.code
     const text = l.passcode ? `${url}\nPasscode: ${l.passcode}` : url
     try { await navigator.clipboard.writeText(text); setCopied(l.code + ':both'); setTimeout(() => setCopied(''), 1800) } catch { /* blocked */ }
   }
@@ -237,6 +254,23 @@ export function ShareLinksHub() {
           </div>
 
           <div>
+            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">Parking vendor</p>
+            <p className="text-[11px] text-muted -mt-1 mb-1.5">
+              Tick this and the link becomes a <b>parking board</b> at /parking — every upcoming stay on the
+              units above, and a place for the garage to send a QR code back for each one, plus a few spare
+              codes for the weekends. It overrides the other two kinds, so leave them off.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-x-5 gap-y-1.5">
+              {PARKING_SECTIONS.map(s => (
+                <label key={s.key} className="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!sections[s.key]} onChange={e => setSections(x => ({ ...x, [s.key]: e.target.checked }))} className="mt-0.5" />
+                  <span className="text-[12.5px]"><span className="font-semibold text-ink">{s.label}</span> <span className="text-muted">— {s.sub}</span></span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
             <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">Live field board</p>
             <p className="text-[11px] text-muted -mt-1 mb-1.5">
               Tick any of these and this link becomes a <b>live board</b> for the crew — the morning brief,
@@ -307,8 +341,8 @@ export function ShareLinksHub() {
         ) : (
           <div className="divide-y divide-line">
             {links.map(l => {
-              const board = isBoard(l.sections)
-              const secs = (board ? BOARD_SECTIONS : SECTIONS).filter(s => l.sections?.[s.key]).map(s => s.label)
+              const kind = kindOf(l.sections)
+              const secs = SECTIONS_FOR[kind].filter(s => l.sections?.[s.key]).map(s => s.label)
               return (
                 <div key={l.id} className="px-4 py-3">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -317,7 +351,7 @@ export function ShareLinksHub() {
                     <span className="text-[10.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-app text-muted">
                       {l.scope_type === 'portfolio' ? 'Portfolio' : l.scope_type}
                     </span>
-                    {board ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-50 text-brand-700">Live board</span> : null}
+                    {KIND_BADGE[kind] ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-50 text-brand-700">{KIND_BADGE[kind]}</span> : null}
                     {l.passcode ? (
                       shownCodes[l.id] ? (
                         <button onClick={async () => { try { await navigator.clipboard.writeText(l.passcode || ''); setCopied(l.code + ':pw'); setTimeout(() => setCopied(''), 1500) } catch { /* blocked */ } }}
@@ -335,10 +369,10 @@ export function ShareLinksHub() {
                     ) : <span className="text-[10.5px] text-muted">no passcode</span>}
                     {l.show_money ? <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 rounded px-1.5 py-0.5">$ on</span> : null}
                     <div className="flex-1" />
-                    <button onClick={() => copyBoth(l, board)} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1">
+                    <button onClick={() => copyBoth(l, kind)} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1">
                       {copied === l.code + ':both' ? <><Check size={12} /> Copied</> : <><Copy size={12} /> {l.passcode ? 'Link + passcode' : 'Copy link'}</>}
                     </button>
-                    <a href={(board ? '/board/' : '/share/') + l.code} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-ink">Open</a>
+                    <a href={PATH_FOR[kind] + l.code} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-ink">Open</a>
                     <button onClick={() => startEdit(l)} className="p-1 text-muted hover:text-ink" title="Edit"><Pencil size={13} /></button>
                     <button onClick={() => revoke(l.id)} className="p-1 text-muted hover:text-rose-600" title="Revoke"><Trash2 size={13} /></button>
                   </div>

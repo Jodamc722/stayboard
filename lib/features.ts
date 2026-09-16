@@ -198,6 +198,11 @@ export const OPEN_PREFIXES = [
   '/count/',
   // TEAM SCHEDULER LINK (Jon, 2026-09-03): one link per market; picks land in schedule_staged, Submit emails Jon.
   '/scheduler/',
+  // PARKING VENDOR LINK (Jon, 2026-09-16): one link per building, sent to the garage that issues
+  // the QR codes. The code is the capability and the link carries its own passcode, checked
+  // server-side in /api/public/parking. Open here because a garage has no Lighthouse account; a
+  // signed-in user skips the passcode and gets the assign-a-spare control the vendor never sees.
+  '/parking/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
   // whether a code worked are field techs without logins, and a question only answerable by people
   // who were not at the door is a question that never gets a true answer. The token is the auth.

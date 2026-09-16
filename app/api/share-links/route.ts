@@ -19,6 +19,10 @@ const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 // adding a shareable data set later means adding a line in each. (Local const: Next route files
 // may only export HTTP handlers.)
 const SECTION_KEYS = ['reservations', 'revenue', 'marketing', 'cleaning', 'verification', 'notes', 'team', 'team_maint',
+  // PARKING (Jon, 2026-09-16). Tick this and the link renders at /parking/<code> as a vendor board:
+  // every upcoming stay in scope, and a QR upload against each one. Same row, same scope picker,
+  // same passcode and revoke as everything else here.
+  'parking',
   // Audience (2026-09-14): contact COUNTS for the scope. Never names, addresses or numbers.
   'audience',
   // FIELD BOARD sections (Jon, 2026-08-25). Tick any of these and the link renders as a live crew
