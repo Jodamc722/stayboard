@@ -3120,7 +3120,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               ) })
             })
 
-            if ((sec('listings').asks || []).length) slides.push({ key: 'listings', node: (
+            // OFF FOR NOW (Jon, 2026-09-17: "get rid of slide 9 for now"). This was the
+            // on-the-call questions page for the listing section — slide 09. Nothing is lost by
+            // dropping it: every unanswered ask still collects on the closing Other notes slide,
+            // which is where the follow-up list belongs anyway. Flip this to true to bring the
+            // page back; the slide itself is untouched below.
+            const SHOW_LISTING_QUESTIONS = false
+            if (SHOW_LISTING_QUESTIONS && (sec('listings').asks || []).length) slides.push({ key: 'listings', node: (
               <Slide nav="Listing — questions" warn={edit}>
                 <div className="flex flex-col h-full">
                   <Title k="listings" />
