@@ -1842,10 +1842,19 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           body * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           .sb-report, .sb-deck { max-width: none !important; width: 1120px !important;
             margin: 0 !important; padding: 0 !important; }
+          /* BREAK BEFORE, NEVER AFTER. Breaking after every slide asks for a page following
+             the last one, and whatever sits at the end of the deck — even an empty node — lands
+             on it: the first PDF came out 18 pages for 17 slides, the last one blank. Breaking
+             BEFORE each slide except the opening cover gives exactly one page per slide with
+             nothing trailing. */
           .sb-deck > section, .sb-deck > header {
             margin: 0 !important; padding: 0 !important; border: 0 !important;
-            break-after: page; page-break-after: always; break-inside: avoid; page-break-inside: avoid; }
-          .sb-deck > section:last-of-type { break-after: auto; page-break-after: auto; }
+            break-after: auto !important; page-break-after: auto !important;
+            break-inside: avoid; page-break-inside: avoid; }
+          .sb-deck > section { break-before: page; page-break-before: always; }
+          .sb-deck > header { break-before: auto; page-break-before: auto; }
+          /* Anything after the last slide is chrome, and chrome is not a page. */
+          .sb-deck > div, .sb-deck > p { display: none !important; }
           .sb-slide, .onb-cover {
             width: 1120px !important; height: 630px !important; min-height: 0 !important;
             aspect-ratio: auto !important; border-radius: 0 !important; border: 0 !important;
