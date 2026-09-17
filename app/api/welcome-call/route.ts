@@ -12,6 +12,18 @@ import { writeCustomFields } from '@/lib/guesty-custom-fields'
 import { notesDefId } from '@/lib/guesty-res-notes'
 
 export const dynamic = 'force-dynamic'
+// WHY THIS IS HERE NOW (Silvia, 2026-09-17: "it just sits there thinking for a moment and doesn't
+// update... it also wouldn't let me save the notes").
+//
+// Marking one call is up to nine sequential round-trips — the auth gate, the reservation read, a
+// Guesty token, the notes field definition, Guesty's read-before-write, the write itself, then the
+// mirror and the call log. With no maxDuration this route took the platform default, and a slow
+// Guesty ran it past the limit: the function was killed, the browser got a gateway page instead of
+// JSON, and the button spun and gave up. The work the caller had actually done was lost.
+//
+// Every comparable Guesty-writing route here already sets 30. This one asks for 60 because it is
+// the one a person is standing over, and a call marked late is better than a call marked never.
+export const maxDuration = 60
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
 // Pull a custom-field definition id out of whatever shape Guesty returns it in.
