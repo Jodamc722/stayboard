@@ -275,6 +275,27 @@ export async function POST(req: NextRequest) {
     // sat as a grid of chips under the listing copy and made that slide unreadable. The content
     // was never the problem; the placement was. The optimize score still supplies what is
     // missing and why — the owner sees the list and the work, never the grade.
+    // EVERY AMENITY THE OWNER CAN PICK (Jon, 2026-09-17: "we need to be able to see all
+    // selectable amenities and be able to scroll down"). Guesty does not publish its amenity
+    // vocabulary on the open API, so the honest source is the portfolio itself: every distinct
+    // amenity string in use across our own listings. Each one is a value Guesty has already
+    // accepted on a PUT, so anything ticked here pushes back cleanly.
+    const amenityCatalog: string[] = []
+    try {
+      const { data: allAm } = await db0.from('guesty_listings').select('amenities').limit(2000)
+      const seenAm = new Set<string>()
+      for (const r of ((allAm || []) as any[])) {
+        for (const a of (Array.isArray(r.amenities) ? r.amenities : [])) {
+          const v = String(a == null ? '' : a).trim()
+          if (!v || v.length > 60) continue
+          const k = v.toLowerCase()
+          if (seenAm.has(k)) continue
+          seenAm.add(k); amenityCatalog.push(v)
+        }
+      }
+      amenityCatalog.sort((x, y) => x.localeCompare(y))
+    } catch { /* the recommended list still stands on its own */ }
+
     const { data: revs } = await db0.from('guesty_reviews')
       .select('listing_id, rating, excluded_from_score').in('listing_id', ids0).limit(2000)
     const ratingsBy: Record<string, number[]> = {}
@@ -360,6 +381,7 @@ export async function POST(req: NextRequest) {
       unitFacts,
       bedrooms: first.bedrooms != null ? Number(first.bedrooms) : null,
       heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
+      amenityCatalog,
     })
 
     const code0 = makeCode()
