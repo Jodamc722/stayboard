@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
+import { textOf } from '@/lib/anthropic-text'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -31,7 +32,7 @@ async function visionOne(key: string, content: any[], room: string): Promise<{ i
     clearTimeout(timer)
     if (!r || !r.ok) return null
     const j = await r.json()
-    const txt = (j && j.content && j.content[0] && j.content[0].text) || ''
+    const txt = textOf(j)
     const m = txt.match(/\{[\s\S]*\}/)
     if (!m) return null
     const parsed = JSON.parse(m[0])
@@ -49,7 +50,7 @@ async function consolidate(key: string, room: string, items: any[], questions: s
     clearTimeout(timer)
     if (!r.ok) return null
     const j = await r.json()
-    const txt = (j && j.content && j.content[0] && j.content[0].text) || ''
+    const txt = textOf(j)
     const m = txt.match(/\{[\s\S]*\}/)
     if (!m) return null
     const parsed = JSON.parse(m[0])
