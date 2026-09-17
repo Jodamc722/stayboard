@@ -53,3 +53,13 @@ export const SEASON_SHAPE: { m: string; level: number; peak?: boolean }[] = [
 /** The headline beside the curve. Tied to the curve above: change one, change the other. */
 export const SEASON_PEAK_SHARE = '65%'
 export const SEASON_PEAK_LABEL = 'of the year\u2019s revenue lands December through April'
+
+/**
+ * The paragraph under the curve. It lives here with the share and the shape because it makes the
+ * same claims in words, and a deck generated before any of this still carries the old version:
+ * "Your season is November through April... July and August are the floor" — printed directly
+ * beneath a chart whose band starts in December and whose floor dot is on September. Three
+ * statements, two of them contradicted by the picture above them.
+ */
+export const SEASON_BODY =
+  'Your season is December through April, and it builds to a peak in March. That is when the demand is, that is when the rate is, and that is the window everything else in the year is preparing for. The year falls away from there through the summer; September is the floor, and the climb back starts in October.'

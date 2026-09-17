@@ -286,8 +286,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   rampNote:
     'We would rather tell you this now than have you read month one as a failure. If month one looks like a normal month, we priced too high and left reviews on the table.',
 
-  seasonBody:
-    'Your season is December through April, and it builds to a peak in March. That is when the demand is, that is when the rate is, and that is the window everything else in the year is preparing for. The year falls away from there through the summer; September is the floor, and the climb back starts in October.',
+  seasonBody: SEASON_BODY,
   // 65%, AND THE CURVE IN ./season-shape IS BUILT TO MATCH IT. Blending our own book with
   // Miami market data gives 55%; 65% is Jon's figure and the reason is the luxury weighting of
   // this portfolio, which those market averages cannot see. Both numbers live in season-shape
@@ -479,7 +478,7 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
 // The shape of the year lives in ./season-shape so the deck renderer (a client component)
 // can read it too; this module is server-only.
 export { SEASON_SHAPE } from './season-shape'
-import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL } from './season-shape'
+import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from './season-shape'
 
 
 const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
