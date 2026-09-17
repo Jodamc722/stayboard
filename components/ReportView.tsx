@@ -850,6 +850,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   // produced it, which is the whole argument of the section — every line traces to a stay.
   const [stmtCat, setStmtCat] = useState<string | null>(null)
   const [amenQ, setAmenQ] = useState('')
+  const [teamSaveMsg, setTeamSaveMsg] = useState('')
   // OPTIMIZE FROM WHERE THE COPY IS READ (Jon, 2026-09-16: "make sure we have prompt or use AI
   // to optimize listing, from there"). /api/optimize-listing already writes to the house rules
   // and the honesty block; this is a caller, not a second optimizer. It PROPOSES — the draft
@@ -2423,16 +2424,48 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     ))}
                   </div>
                 </div>
-                {edit && (sec('team').people || []).length < 6 && (
-                  <button
-                    onClick={() => mutate(d => {
-                      d.team.people = Array.isArray(d.team.people) ? d.team.people : []
-                      d.team.people.push({ name: '', role: '', blurb: '', photo: null, phone: '', email: '' })
-                    })}
-                    className="sb-noprint"
-                    style={{ marginTop: 12, alignSelf: 'flex-start', fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '7px 15px', background: t.card, border: '1px dashed ' + t.cardBorder, color: t.ink }}>
-                    + Add someone
-                  </button>
+                {/* THE TEAM IS THE SAME TEAM ON EVERY DECK, SO THE HEADSHOTS SHOULD BE TOO
+                    (Jon, 2026-09-17: "take photo that I uploaded and use as standard for all
+                    slides"). An upload lands in this report's content JSON like any other edit,
+                    which means the next deck opens with monograms and the same faces get
+                    uploaded again. This writes the cards — names, roles, blurbs, contacts and
+                    photos — into the onboarding template, so every deck built afterwards starts
+                    with them. It touches nothing else in the template and no existing deck. */}
+                {edit && (
+                  <div className="sb-noprint flex items-center" style={{ marginTop: 12, gap: 12, flexWrap: 'wrap' }}>
+                    {(sec('team').people || []).length < 6 && (
+                      <button
+                        onClick={() => mutate(d => {
+                          d.team.people = Array.isArray(d.team.people) ? d.team.people : []
+                          d.team.people.push({ name: '', role: '', blurb: '', photo: null, phone: '', email: '' })
+                        })}
+                        style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '7px 15px', background: t.card, border: '1px dashed ' + t.cardBorder, color: t.ink }}>
+                        + Add someone
+                      </button>
+                    )}
+                    <button
+                      onClick={async () => {
+                        setTeamSaveMsg('busy')
+                        try {
+                          const r = await fetch('/api/settings/onboarding-team', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ people: sec('team').people || [], support: sec('team').support || null }),
+                          })
+                          const d = await r.json().catch(() => ({}))
+                          setTeamSaveMsg((d?.ok || r.ok) ? 'ok' : (d?.error || 'Could not save.'))
+                        } catch { setTeamSaveMsg('Could not reach the server.') }
+                      }}
+                      style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '7px 15px', background: t.ink, color: t.bg }}>
+                      {teamSaveMsg === 'busy' ? 'Saving\u2026' : 'Use this team on every deck'}
+                    </button>
+                    {teamSaveMsg && teamSaveMsg !== 'busy' && (
+                      <span style={{ fontSize: 12, color: teamSaveMsg === 'ok' ? t.good : t.gold }}>
+                        {teamSaveMsg === 'ok'
+                          ? 'Saved. Every onboarding generated from now on opens with these cards and these photos.'
+                          : teamSaveMsg}
+                      </span>
+                    )}
+                  </div>
                 )}
                 {/* The shared inbox, as the backstop behind the four names rather than a fifth
                     face. A slide that promises "you are not handed to an inbox" cannot then put
