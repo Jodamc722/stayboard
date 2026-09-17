@@ -2581,12 +2581,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             cur={String(p.photo)}
                             set={u => patch('team.people.' + pi + '.photo', u)}
                             pos="center 20%"
-                            style={{ width: 142, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 12 }}
+                            style={{ width: 120, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 10 }}
                           />
                         ) : (
                           <div
                             onClick={edit ? () => { setPhotoUrl(''); setPhotoPick({ title: 'Headshot \u2014 ' + String(p.name || ''), cur: '', set: u => patch('team.people.' + pi + '.photo', u) }) } : undefined}
-                            style={{ width: 142, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
+                            style={{ width: 120, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 10, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
@@ -2609,8 +2609,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             empty contact block is just a stray rule under a role. It draws only
                             when there is something in it, or when you are editing and need the
                             fields to type into. */}
+                        {/* MEASURED, NOT ESTIMATED. The row gives the card 270px and the card
+                            wanted 295, so the last line — the email, the thing an owner is meant
+                            to write to — was sliced in half by the support band. The portrait
+                            keeps its 4:5 shape, so taking it from 142 to 120 wide scales it
+                            rather than re-cropping it: still 83% of the person in frame, 28px
+                            back in the budget, and the whole card inside the row. */}
                         {(p.phone || p.email || edit) ? (
-                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + t.rule }}>
+                        <div style={{ marginTop: 9, paddingTop: 9, borderTop: '1px solid ' + t.rule }}>
                           <p style={{ fontSize: 12.5, color: t.ink }}>
                             <Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" />
                           </p>
