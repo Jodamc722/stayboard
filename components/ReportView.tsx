@@ -819,6 +819,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [photoUrl, setPhotoUrl] = useState('')
   const [amenityMsg, setAmenityMsg] = useState<Record<string, string>>({})
   const [copyMsg, setCopyMsg] = useState<Record<string, string>>({})
+  // ONE STATEMENT SLIDE, AND IT ANSWERS BACK (Jon, 2026-09-17: "the owner statements should be
+  // on one slide, interactive"). Clicking a category on the summary shows the bookings that
+  // produced it, which is the whole argument of the section — every line traces to a stay.
+  const [stmtCat, setStmtCat] = useState<string | null>(null)
+  const [amenQ, setAmenQ] = useState('')
   // OPTIMIZE FROM WHERE THE COPY IS READ (Jon, 2026-09-16: "make sure we have prompt or use AI
   // to optimize listing, from there"). /api/optimize-listing already writes to the house rules
   // and the honesty block; this is a caller, not a second optimizer. It PROPOSES — the draft
@@ -2507,6 +2512,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       {canEdit ? (
                         <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <button
+                            onClick={() => { setOptMsg(''); setOptInstr(''); setOpt({ id: String(L.id), li, name: String(L.name || 'this unit') }) }}
+                            style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '8px 16px', marginRight: 8, background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink, whiteSpace: 'nowrap' }}>
+                            Optimize with AI
+                          </button>
+                          <button
                             onClick={async () => {
                               const id = String(L.id)
                               setCopyMsg(m => ({ ...m, [id]: 'busy' }))
@@ -2527,11 +2537,6 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             }}
                             style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '8px 16px', background: t.ink, color: t.bg, whiteSpace: 'nowrap' }}>
                             {copyMsg[String(L.id)] === 'busy' ? 'Pushing\u2026' : 'Push to Guesty'}
-                          </button>
-                          <button
-                            onClick={() => { setOptMsg(''); setOptInstr(''); setOpt({ id: String(L.id), li, name: String(L.name || 'this unit') }) }}
-                            style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '8px 16px', marginRight: 8, background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink, whiteSpace: 'nowrap' }}>
-                            Optimize with AI
                           </button>
                           <p style={{ fontSize: 11.5, marginTop: 7, maxWidth: 230, color: copyMsg[String(L.id)] === 'ok' ? t.good : t.gold }}>
                             {copyMsg[String(L.id)] === 'ok'
@@ -2633,6 +2638,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               }
             }
 
+            const catalog: string[] = Array.isArray((sec('listings') as Any).catalog) ? (sec('listings') as Any).catalog : []
             items.forEach((L: Any, li: number) => {
               const have: string[] = Array.isArray(L.amenities) ? L.amenities : []
               const claimed = new Set(have.map(familyOf).filter(Boolean))
@@ -2646,7 +2652,24 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 seen.add(fam)
                 return true
               })
-              if (!have.length && !missing.length) return
+              // EVERYTHING ELSE THE OWNER CAN TICK. The recommended list is the twenty-odd
+              // amenities the score actually models; the catalogue is every value in use across
+              // the portfolio, so nothing is unreachable. Same family rule on both: once a pool
+              // is on the listing, the other four spellings of pool leave the list.
+              const inMissing = new Set(missing.map((x: Any) => String(x.name).toLowerCase()))
+              const haveLower = new Set(have.map(x => x.toLowerCase()))
+              const rest: string[] = (Array.isArray(catalog) ? catalog : []).filter((c: string) => {
+                const lc = c.toLowerCase()
+                if (haveLower.has(lc) || inMissing.has(lc)) return false
+                const fam = familyOf(c)
+                if (fam && claimed.has(fam)) return false
+                return true
+              })
+              const q = amenQ.trim().toLowerCase()
+              const hit = (n: string) => !q || n.toLowerCase().indexOf(q) >= 0
+              const missingQ = missing.filter((x: Any) => hit(String(x.name)))
+              const restQ = rest.filter(hit)
+              if (!have.length && !missing.length && !rest.length) return
               slides.push({ key: 'listings', node: (
                 <Slide nav={String(L.name || 'Unit') + ' \u2014 amenities'} warn={edit} ground={GROUND.tint}>
                   <div className="flex flex-col h-full">
@@ -2671,16 +2694,21 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       )}
                     </div>
 
-                    <div className="flex-1 min-h-0" style={{ marginTop: 22, display: 'grid', gridTemplateColumns: '1.25fr 1fr', columnGap: 40 }}>
+                    {/* Both columns scroll. The grid row is pinned to minmax(0,1fr) because an
+                        auto row takes its min-content height from the list inside it, which on a
+                        fixed 630px canvas means the list runs off the bottom instead of
+                        scrolling (Jon, 2026-09-17: "need to be able to see all selectable
+                        amenities and be able to scroll down"). */}
+                    <div className="flex-1 min-h-0" style={{ marginTop: 18, display: 'grid', gridTemplateColumns: '1.1fr 1fr', gridTemplateRows: 'minmax(0, 1fr)', columnGap: 36 }}>
                       {/* on the listing */}
-                      <div className="min-h-0 flex flex-col">
-                        <div style={{ paddingBottom: 9, borderBottom: '1px solid ' + t.ink, marginBottom: 13 }}>
+                      <div className="flex flex-col" style={{ minHeight: 0 }}>
+                        <div className="flex items-baseline justify-between" style={{ paddingBottom: 8, borderBottom: '1px solid ' + t.ink, marginBottom: 11 }}>
                           <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>On the listing</span>
-                          <span className="tabular-nums" style={{ fontSize: 12, color: t.muted, marginLeft: 9 }}>{have.length}</span>
+                          <span className="tabular-nums" style={{ fontSize: 12, color: t.muted }}>{have.length}</span>
                         </div>
-                        <div className="min-h-0 onb-scroll" style={{ flex: 1 }}>
+                        <div className="onb-scroll" style={{ flex: 1, minHeight: 0, paddingRight: 8 }}>
                           <div className="flex flex-wrap" style={{ gap: 6 }}>
-                            {have.map((a: string) => (
+                            {have.filter(hit).map((a: string) => (
                               <span key={a}
                                 onClick={canEdit ? () => toggleAmenity(li, a) : undefined}
                                 title={canEdit ? 'Remove from the listing' : undefined}
@@ -2695,24 +2723,51 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         </div>
                       </div>
 
-                      {/* recommended, not on it */}
-                      <div className="min-h-0 flex flex-col">
-                        <div style={{ paddingBottom: 9, borderBottom: '1px solid ' + brass, marginBottom: 13 }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>Worth adding</span>
-                          <span className="tabular-nums" style={{ fontSize: 12, color: t.muted, marginLeft: 9 }}>{missing.length}</span>
+                      {/* everything they can add: the ones worth adding first, then the rest */}
+                      <div className="flex flex-col" style={{ minHeight: 0 }}>
+                        <div className="flex items-baseline justify-between" style={{ paddingBottom: 8, borderBottom: '1px solid ' + brass, marginBottom: 11, gap: 12 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: t.ink, whiteSpace: 'nowrap' }}>Add to the listing</span>
+                          {canEdit ? (
+                            <input value={amenQ} onChange={e => setAmenQ(e.target.value)} placeholder={'Filter…'}
+                              style={{ fontSize: 11.5, padding: '3px 10px', borderRadius: 999, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink, width: 112, outline: 'none' }} />
+                          ) : (
+                            <span className="tabular-nums" style={{ fontSize: 12, color: t.muted }}>{missing.length + rest.length}</span>
+                          )}
                         </div>
-                        <div className="min-h-0 onb-scroll" style={{ flex: 1 }}>
-                          {missing.map((sg: Any) => (
+                        <div className="onb-scroll" style={{ flex: 1, minHeight: 0, paddingRight: 8 }}>
+                          {missingQ.length > 0 && (
+                            <p style={{ fontSize: 10, letterSpacing: '0.11em', textTransform: 'uppercase', color: brass, fontWeight: 700, marginBottom: 5 }}>Worth adding</p>
+                          )}
+                          {missingQ.map((sg: Any) => (
                             <div key={sg.name}
                               onClick={canEdit ? () => toggleAmenity(li, sg.name) : undefined}
-                              style={{ padding: '9px 0', borderBottom: '1px solid ' + t.rule, cursor: canEdit ? 'pointer' : 'default' }}>
-                              <p style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>
+                              style={{ padding: '7px 0', borderBottom: '1px solid ' + t.rule, cursor: canEdit ? 'pointer' : 'default' }}>
+                              <p style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>
                                 {canEdit ? <span style={{ color: brass, marginRight: 6 }}>+</span> : null}{sg.name}
                               </p>
-                              {sg.reason ? <p style={{ fontSize: 11.5, lineHeight: 1.45, color: t.muted, marginTop: 2 }}>{sg.reason}</p> : null}
+                              {sg.reason ? <p style={{ fontSize: 11, lineHeight: 1.4, color: t.muted, marginTop: 1 }}>{sg.reason}</p> : null}
                             </div>
                           ))}
-                          {!missing.length && <p style={{ fontSize: 13, color: t.good }}>Nothing obvious missing.</p>}
+                          {restQ.length > 0 && (
+                            <p style={{ fontSize: 10, letterSpacing: '0.11em', textTransform: 'uppercase', color: t.muted, fontWeight: 700, marginTop: missingQ.length ? 15 : 0, marginBottom: 8 }}>
+                              Everything else <span className="tabular-nums" style={{ fontWeight: 500 }}>{restQ.length}</span>
+                            </p>
+                          )}
+                          <div className="flex flex-wrap" style={{ gap: 6 }}>
+                            {restQ.map((a: string) => (
+                              <span key={a}
+                                onClick={canEdit ? () => toggleAmenity(li, a) : undefined}
+                                title={canEdit ? 'Add to the listing' : undefined}
+                                style={{
+                                  fontSize: 11.5, borderRadius: 999, padding: '4px 10px',
+                                  background: 'transparent', border: '1px dashed ' + t.cardBorder, color: t.muted,
+                                  cursor: canEdit ? 'pointer' : 'default',
+                                }}>{a}</span>
+                            ))}
+                          </div>
+                          {!missingQ.length && !restQ.length && (
+                            <p style={{ fontSize: 13, color: t.good }}>{q ? 'Nothing matches that.' : 'Nothing obvious missing.'}</p>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2754,30 +2809,92 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <div>
                       {/* the year, as a curve */}
                       {(() => {
+                        // A CURVE, WITH THE SEASON MARKED ON IT (Jon, 2026-09-17: "round out the
+                        // high months and highlight peak season months"). Twelve bars made the
+                        // year read as twelve separate facts. A smoothed area says one thing:
+                        // the year has a shape. Monotone cubic interpolation, so the line never
+                        // overshoots above a peak or dips below a trough the way a naive spline
+                        // does — an invented bump between February and March would be a claim.
                         const ms: Any[] = sec('season').months || []
+                        if (ms.length < 2) return null
+                        const W = 620, H = 196, PAD = 14
                         const max = Math.max(1, ...ms.map((m: Any) => Number(m.level) || 0))
-                        const low = Math.min(...ms.map((m: Any) => Number(m.level) || 0))
-                        const H = 188
+                        const xs = ms.map((_m: Any, i: number) => PAD + (i * (W - PAD * 2)) / (ms.length - 1))
+                        const ys = ms.map((m: Any) => H - 26 - ((Number(m.level) || 0) / max) * (H - 52))
+
+                        // monotone tangents
+                        const n = ms.length
+                        const dx: number[] = [], dy: number[] = [], sl: number[] = []
+                        for (let i = 0; i < n - 1; i++) { dx.push(xs[i + 1] - xs[i]); dy.push(ys[i + 1] - ys[i]); sl.push(dy[i] / dx[i]) }
+                        const m0: number[] = new Array(n).fill(0)
+                        m0[0] = sl[0]; m0[n - 1] = sl[n - 2]
+                        for (let i = 1; i < n - 1; i++) m0[i] = (sl[i - 1] * sl[i] <= 0) ? 0 : (sl[i - 1] + sl[i]) / 2
+                        for (let i = 0; i < n - 1; i++) {
+                          if (sl[i] === 0) { m0[i] = 0; m0[i + 1] = 0; continue }
+                          const a = m0[i] / sl[i], b = m0[i + 1] / sl[i], h = Math.hypot(a, b)
+                          if (h > 3) { const tt = 3 / h; m0[i] = tt * a * sl[i]; m0[i + 1] = tt * b * sl[i] }
+                        }
+                        let d = `M ${xs[0]} ${ys[0]}`
+                        for (let i = 0; i < n - 1; i++) {
+                          const h = dx[i]
+                          d += ` C ${xs[i] + h / 3} ${ys[i] + (m0[i] * h) / 3}, ${xs[i + 1] - h / 3} ${ys[i + 1] - (m0[i + 1] * h) / 3}, ${xs[i + 1]} ${ys[i + 1]}`
+                        }
+                        const base = H - 26
+                        const area = d + ` L ${xs[n - 1]} ${base} L ${xs[0]} ${base} Z`
+
+                        // peak season wraps the year end, so it is two bands, not one
+                        const peakIx = ms.map((m: Any, i: number) => ({ i, lvl: Number(m.level) || 0 })).filter(o => o.lvl >= max - 1).map(o => o.i)
+                        const bands: { x: number; w: number }[] = []
+                        let runStart = -1
+                        for (let i = 0; i < n; i++) {
+                          const on = peakIx.indexOf(i) >= 0
+                          if (on && runStart < 0) runStart = i
+                          if ((!on || i === n - 1) && runStart >= 0) {
+                            const last = on ? i : i - 1
+                            const x0 = xs[runStart] - (runStart > 0 ? (xs[runStart] - xs[runStart - 1]) / 2 : PAD)
+                            const x1 = xs[last] + (last < n - 1 ? (xs[last + 1] - xs[last]) / 2 : PAD)
+                            bands.push({ x: x0, w: x1 - x0 })
+                            runStart = -1
+                          }
+                        }
+                        const topI = ms.reduce((b: number, m: Any, i: number) => ((Number(m.level) || 0) > (Number(ms[b].level) || 0) ? i : b), 0)
+                        const lowI = ms.reduce((b: number, m: Any, i: number) => ((Number(m.level) || 0) < (Number(ms[b].level) || 0) ? i : b), 0)
+
                         return (
                           <>
-                            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 7, height: H }}>
-                              {ms.map((m: Any, mi: number) => {
-                                const lvl = Number(m.level) || 0
-                                const peak = lvl === max
-                                const floor = lvl === low
-                                return (
-                                  <div key={mi} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9 }}>
-                                    <div style={{
-                                      width: '100%', borderRadius: '4px 4px 0 0',
-                                      height: Math.max(8, Math.round((lvl / max) * (H - 26))),
-                                      background: peak ? D.ink : floor ? hexA(t.accent, 0.85) : 'rgba(255,255,255,' + (0.16 + (lvl / max) * 0.34) + ')',
-                                    }} />
-                                    <span style={{ fontSize: 11, color: peak || floor ? D.ink : D.muted }}>{m.m}</span>
-                                  </div>
-                                )
-                              })}
+                            <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 196, display: 'block', overflow: 'visible' }}>
+                              <defs>
+                                <linearGradient id="seasonFill" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor="#ffffff" stopOpacity="0.30" />
+                                  <stop offset="100%" stopColor="#ffffff" stopOpacity="0.03" />
+                                </linearGradient>
+                              </defs>
+                              {bands.map((b, i) => (
+                                <rect key={i} x={b.x} y={0} width={b.w} height={base} fill="rgba(255,255,255,0.09)" rx="4" />
+                              ))}
+                              <line x1={PAD} y1={base} x2={W - PAD} y2={base} stroke="rgba(255,255,255,0.22)" strokeWidth="1" />
+                              <path d={area} fill="url(#seasonFill)" />
+                              <path d={d} fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                              <circle cx={xs[topI]} cy={ys[topI]} r="5" fill="#ffffff" />
+                              <circle cx={xs[lowI]} cy={ys[lowI]} r="5" fill={t.accent} />
+                              {ms.map((m: Any, i: number) => (
+                                <text key={i} x={xs[i]} y={H - 6} textAnchor="middle"
+                                  fill={i === topI || i === lowI || peakIx.indexOf(i) >= 0 ? '#ffffff' : 'rgba(255,255,255,0.5)'}
+                                  style={{ fontSize: 11, fontWeight: peakIx.indexOf(i) >= 0 ? 600 : 400 }}>{m.m}</text>
+                              ))}
+                            </svg>
+                            <div className="flex items-center" style={{ gap: 20, marginTop: 12, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 11.5, color: D.body }}>
+                                <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: 'rgba(255,255,255,0.22)', marginRight: 6 }} />Peak season
+                              </span>
+                              <span style={{ fontSize: 11.5, color: D.body }}>
+                                <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 999, background: '#fff', marginRight: 6 }} />March, the high
+                              </span>
+                              <span style={{ fontSize: 11.5, color: D.body }}>
+                                <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 999, background: t.accent, marginRight: 6 }} />September, the floor
+                              </span>
                             </div>
-                            <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.muted, marginTop: 14 }}>
+                            <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.muted, marginTop: 12 }}>
                               <Ed v={sec('season').lowNote || ''} set={v => patch('season.lowNote', v)} edit={edit} multiline />
                             </p>
                           </>
@@ -2993,19 +3110,38 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
           // ── 7 · STATEMENTS — the worked month, then the three rules ────────
           if (!hid('statement')) {
-            // ── THE STATEMENT, IN ITS ISSUED SHAPE ────────────────────────
-            // Modelled on a real August statement Jon supplied: the performance strip, the
-            // category summary, and the navy "Payment due to owner" row that closes it. Live
-            // text throughout rather than a picture of a document (Jon: "make it viewable and
-            // interactive, not just a JPEG") — so a figure can be changed on the call and the
-            // owner can see it is the same document they will receive, not a mock-up.
+            // ── THE STATEMENT, ON ONE SLIDE, INTERACTIVE ──────────────────
+            // Modelled on the August statement Jon supplied: the performance strip, the category
+            // summary in the issued order, and the navy "Payment due to owner" row. The detail
+            // used to be a second slide; now the categories are the control — tap Rental income
+            // and the right-hand panel shows the two bookings that produced it, tap Management
+            // fee and it shows the commission lines. That is the point of the section made
+            // operable rather than asserted, and it keeps the section to one page.
+            const stRes: Any[] = sec('statement').reservations || []
+            const catLines = (cat: string | null) => {
+              const out: Any[] = []
+              for (const r of stRes) for (const ln of (r.lines || [])) {
+                if (!cat || String(ln.cat || '').toLowerCase() === cat.toLowerCase()) out.push({ ...ln, guest: r.guest, stay: r.stay })
+              }
+              return out
+            }
+            const catTotal = (cat: string) => {
+              let n = 0
+              for (const l of catLines(cat)) {
+                const v = Number(String(l.amt || '').replace(/[^0-9.]/g, '')) * (l.neg ? -1 : 1)
+                if (Number.isFinite(v)) n += v
+              }
+              return n
+            }
+            const hasDetail = (cat: string) => catLines(cat).length > 0
+
             slides.push({ key: 'statement', node: (
               <Slide nav="Statements" warn={edit} ground={GROUND.light}>
                 <div className="flex flex-col h-full">
                   <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
                     <div>
-                      <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
-                      <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>
+                      <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 12 }} />
+                      <p className="onb-h" style={{ fontSize: 28, color: t.ink, lineHeight: 1.2 }}>
                         <Ed v={sec('statement').headline || ''} set={v => patch('statement.headline', v)} edit={edit} />
                       </p>
                     </div>
@@ -3015,109 +3151,104 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </div>
                   </div>
 
-                  {/* the performance strip */}
-                  <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: t.cardBorder, border: '1px solid ' + t.cardBorder, borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: t.cardBorder, border: '1px solid ' + t.cardBorder, borderRadius: 10, overflow: 'hidden' }}>
                     {(sec('statement').kpis || []).map((k: Any, i: number) => (
-                      <div key={i} style={{ background: t.card, padding: '10px 16px' }}>
-                        <p style={{ fontSize: 11.5, color: t.muted }}>
+                      <div key={i} style={{ background: t.card, padding: '9px 16px' }}>
+                        <p style={{ fontSize: 11, color: t.muted }}>
                           <Ed v={k.k || ''} set={v => patch('statement.kpis.' + i + '.k', v)} edit={edit} />
                         </p>
-                        <p className="tabular-nums" style={{ fontSize: 19, fontWeight: 600, color: t.ink, marginTop: 2, letterSpacing: '-0.02em' }}>
+                        <p className="tabular-nums" style={{ fontSize: 18, fontWeight: 600, color: t.ink, marginTop: 1, letterSpacing: '-0.02em' }}>
                           <Ed v={k.v || ''} set={v => patch('statement.kpis.' + i + '.v', v)} edit={edit} />
                         </p>
                       </div>
                     ))}
                   </div>
 
-                  {/* the category summary */}
-                  <div className="flex-1 min-h-0" style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1.15fr 1fr', columnGap: 44 }}>
+                  <div className="flex-1 min-h-0" style={{ marginTop: 13, display: 'grid', gridTemplateColumns: '1.02fr 1fr', columnGap: 34 }}>
+                    {/* the summary — and the control */}
                     <div className="min-h-0 flex flex-col">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: t.chip, borderRadius: '6px 6px 0 0' }}>
-                        <span style={{ fontSize: 11.5, color: t.sub }}>Category</span>
-                        <span style={{ fontSize: 11.5, color: t.sub }}>Monthly amount</span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 12px', background: t.chip, borderRadius: '6px 6px 0 0' }}>
+                        <span style={{ fontSize: 11, color: t.sub }}>Category</span>
+                        <span style={{ fontSize: 11, color: t.sub }}>Monthly amount</span>
                       </div>
-                      <div>
-                        {(sec('statement').summary || []).map((ln: Any, i: number) => (
-                          <div key={i} style={{
-                            display: 'flex', justifyContent: 'space-between', gap: 16,
-                            padding: '5px 12px', borderBottom: '1px solid ' + t.rule,
-                            borderTop: ln.rule ? '1px solid ' + t.ink : undefined,
-                          }}>
+                      {(sec('statement').summary || []).map((ln: Any, i: number) => {
+                        const name = String(ln.k || '')
+                        const clickable = hasDetail(name)
+                        const on = stmtCat && stmtCat.toLowerCase() === name.toLowerCase()
+                        return (
+                          <div key={i}
+                            onClick={clickable ? () => setStmtCat(on ? null : name) : undefined}
+                            style={{
+                              display: 'flex', justifyContent: 'space-between', gap: 12,
+                              padding: '5px 12px', borderBottom: '1px solid ' + t.rule,
+                              borderTop: ln.rule ? '1px solid ' + t.ink : undefined,
+                              background: on ? t.chip : 'transparent',
+                              cursor: clickable ? 'pointer' : 'default',
+                              boxShadow: on ? 'inset 2px 0 0 ' + t.accent : undefined,
+                            }}>
                             <span style={{ fontSize: 12.5, color: ln.rule ? t.ink : t.body, fontWeight: ln.rule ? 600 : 400 }}>
-                              <Ed v={ln.k || ''} set={v => patch('statement.summary.' + i + '.k', v)} edit={edit} />
+                              <Ed v={name} set={v => patch('statement.summary.' + i + '.k', v)} edit={edit} />
+                              {clickable ? <span style={{ color: t.accent, marginLeft: 6, fontSize: 11 }}>{on ? '\u25be' : '\u203a'}</span> : null}
                             </span>
                             <span className="tabular-nums" style={{ fontSize: 12.5, fontWeight: ln.rule ? 600 : 500, whiteSpace: 'nowrap', color: ln.neg ? t.gold : t.ink }}>
                               <Ed v={ln.v || ''} set={v => patch('statement.summary.' + i + '.v', v)} edit={edit} />
                             </span>
                           </div>
-                        ))}
-                      </div>
-                      {/* the row the whole document exists to produce */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '11px 14px', background: t.band, borderRadius: '0 0 6px 6px' }}>
-                        <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.78)' }}>
+                        )
+                      })}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '10px 14px', background: t.band, borderRadius: '0 0 6px 6px' }}>
+                        <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.78)' }}>
                           <Ed v={(sec('statement').due || {}).k || ''} set={v => patch('statement.due.k', v)} edit={edit} />
                         </span>
-                        <span className="tabular-nums" style={{ fontSize: 22, fontWeight: 600, color: '#fff', letterSpacing: '-0.02em' }}>
+                        <span className="tabular-nums" style={{ fontSize: 21, fontWeight: 600, color: '#fff', letterSpacing: '-0.02em' }}>
                           <Ed v={(sec('statement').due || {}).v || ''} set={v => patch('statement.due.v', v)} edit={edit} />
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex flex-col justify-center">
-                      <p style={{ fontSize: 14.5, lineHeight: 1.7, color: t.body }}>
-                        <Ed v={sec('statement').note || ''} set={v => patch('statement.note', v)} edit={edit} multiline />
-                      </p>
-                      <p style={{ fontSize: 12, color: t.muted, marginTop: 16 }}>
-                        Example figures. Your statement carries every booking and every charge, itemised.
-                      </p>
-                    </div>
-                  </div>
-                  <Foot label="Owner statements" />
-                </div>
-              </Slide>
-            ) })
-
-            // ── THE DETAIL — every line traces to a booking ────────────────
-            if ((sec('statement').reservations || []).length) slides.push({ key: 'statement', node: (
-              <Slide nav="Statement detail" warn={edit} ground={GROUND.tint}>
-                <div className="flex flex-col h-full">
-                  <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
-                    <div>
-                      <div style={{ width: 30, height: 2, background: brass, marginBottom: 14 }} />
-                      <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>Every line traces to a booking</p>
-                    </div>
-                    <p style={{ fontSize: 12.5, color: t.muted }}>{sec('statement').unitLabel}</p>
-                  </div>
-
-                  <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 18 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr 150px 92px', gap: 12, padding: '0 0 7px', borderBottom: '1px solid ' + t.rule }}>
-                      {['Date', 'Description', 'Category', 'Amount'].map((h, i) => (
-                        <span key={h} style={{ fontSize: 11, color: t.muted, textAlign: i === 3 ? 'right' : 'left' }}>{h}</span>
-                      ))}
-                    </div>
-                    {(sec('statement').reservations || []).map((r: Any, ri: number) => (
-                      <div key={ri} style={{ marginTop: 12 }}>
-                        <div className="flex items-baseline justify-between" style={{ gap: 14, marginBottom: 4 }}>
-                          <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>{r.guest}</span>
-                          <span style={{ fontSize: 11.5, color: t.muted }}>{r.stay}</span>
-                        </div>
-                        {(r.lines || []).map((ln: Any, li2: number) => (
-                          <div key={li2} style={{ display: 'grid', gridTemplateColumns: '64px 1fr 150px 92px', gap: 12, padding: '5px 0', borderBottom: '1px solid ' + t.rule }}>
-                            <span style={{ fontSize: 11.5, color: t.muted }}>{ln.date}</span>
-                            <span style={{ fontSize: 12, color: t.body }}>{ln.desc}</span>
-                            <span style={{ fontSize: 11.5, color: t.muted }}>{ln.cat}</span>
-                            <span className="tabular-nums" style={{ fontSize: 12, textAlign: 'right', color: ln.neg ? t.gold : t.ink }}>{ln.amt}</span>
-                          </div>
-                        ))}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 92px', gap: 12, padding: '5px 0' }}>
-                          <span />
-                          <span className="tabular-nums" style={{ fontSize: 12.5, fontWeight: 600, textAlign: 'right', color: t.ink }}>{r.total}</span>
-                        </div>
+                    {/* what sits behind the category you picked */}
+                    <div className="min-h-0 flex flex-col">
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, paddingBottom: 6, borderBottom: '1px solid ' + t.ink }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>
+                          {stmtCat ? stmtCat : 'Every line traces to a booking'}
+                        </span>
+                        {stmtCat ? (
+                          <button onClick={() => setStmtCat(null)} style={{ fontSize: 11.5, color: t.accent }}>Show all</button>
+                        ) : (
+                          <span style={{ fontSize: 11, color: t.muted }}>tap a category</span>
+                        )}
                       </div>
-                    ))}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', marginTop: 8, background: t.chip, borderRadius: 6 }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>{(sec('statement').propertyIncome || {}).k}</span>
-                      <span className="tabular-nums" style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>{(sec('statement').propertyIncome || {}).v}</span>
+                      <div className="min-h-0 onb-scroll" style={{ flex: 1, paddingTop: 8 }}>
+                        {stRes.map((r: Any, ri: number) => {
+                          const lines = (r.lines || []).filter((ln: Any) => !stmtCat || String(ln.cat || '').toLowerCase() === stmtCat.toLowerCase())
+                          if (!lines.length) return null
+                          return (
+                            <div key={ri} style={{ marginBottom: 10 }}>
+                              <div className="flex items-baseline justify-between" style={{ gap: 10 }}>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: t.ink }}>{r.guest}</span>
+                                <span style={{ fontSize: 11, color: t.muted }}>{r.stay}</span>
+                              </div>
+                              {lines.map((ln: Any, li3: number) => (
+                                <div key={li3} style={{ display: 'grid', gridTemplateColumns: '1fr 78px', gap: 10, padding: '4px 0', borderBottom: '1px solid ' + t.rule }}>
+                                  <span style={{ fontSize: 11.5, color: t.body }}>
+                                    {ln.desc}
+                                    {!stmtCat ? <span style={{ color: t.muted }}>{'\u2002\u00b7\u2002' + ln.cat}</span> : null}
+                                  </span>
+                                  <span className="tabular-nums" style={{ fontSize: 11.5, textAlign: 'right', color: ln.neg ? t.gold : t.ink }}>{ln.amt}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })}
+                        {stmtCat && catLines(stmtCat).length === 0 ? (
+                          <p style={{ fontSize: 12, color: t.muted, paddingTop: 6 }}>
+                            No booking lines behind this one \u2014 it is a monthly charge, itemised on your real statement with the job it came from.
+                          </p>
+                        ) : null}
+                      </div>
+                      <p style={{ fontSize: 11, color: t.muted, paddingTop: 8, borderTop: '1px solid ' + t.rule }}>
+                        Example figures. Your statement carries every booking and every charge.
+                      </p>
                     </div>
                   </div>
                   <Foot label="Owner statements" />
