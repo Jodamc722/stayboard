@@ -90,7 +90,7 @@ export type OnboardingContent = {
     logos: { name: string; url: string }[]
   }>
   unit: Sec<{ headline: string; subtitle: string; body: string; facts: KV[]; asks: Ask[] }>
-  listings: Sec<{ headline: string; subtitle: string; items: ListingCard[]; asks: Ask[] }>
+  listings: Sec<{ headline: string; subtitle: string; items: ListingCard[]; asks: Ask[]; catalog: string[] }>
   strategy: Sec<{ headline: string; subtitle: string; body: string; asks: Ask[] }>
   ramp: Sec<{ headline: string; subtitle: string; bands: KV[]; note: string; asks: Ask[] }>
   season: Sec<{
@@ -540,6 +540,8 @@ export type BuildInput = {
   unitFacts: KV[]
   bedrooms: number | null
   heroImage: string | null
+  /** Every amenity string in use across the portfolio - the owner's full pick list. */
+  amenityCatalog?: string[]
 }
 
 /**
@@ -657,6 +659,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       headline: 'Your listing, the way a guest meets it',
       subtitle: 'Open on every channel it sells on. The words are editable here, as we read them.',
       items: i.cards,
+      catalog: i.amenityCatalog || [],
       asks: asks('listings'),
     },
     strategy: {
