@@ -659,6 +659,60 @@ function AutoArea({ v, set, className, placeholder, style, max }: {
   )
 }
 
+// THE SAME PROBLEM ON ONE LINE. A single-line field sized itself with `width: (len + 2)ch`,
+// which is a decent guess for body text and wrong wherever the type is tracked out: the cover
+// eyebrow is letter-spaced 0.28em, so "OWNER ONBOARDING" needs roughly a third more width than
+// its character count implies and the box cut it to "OWNER ONBOA". `ch` cannot know that,
+// because letter-spacing is not part of the character advance it measures.
+//
+// So the text is measured instead of estimated: a hidden span carrying the identical computed
+// font, tracking and weight is laid out next to the input and its width is read back. Same
+// method as AutoArea, same reason — the edit box should occupy exactly what the finished slide
+// occupies, whatever the type is doing.
+function AutoInput({ v, set, className, placeholder }: {
+  v: string; set: (s: string) => void; className?: string; placeholder?: string
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  const ghost = useRef<HTMLSpanElement>(null)
+  const fit = () => {
+    const el = ref.current, g = ghost.current
+    if (!el || !g) return
+    const cs = getComputedStyle(el)
+    g.style.font = cs.font
+    g.style.letterSpacing = cs.letterSpacing
+    g.style.textTransform = cs.textTransform
+    g.textContent = v || placeholder || ''
+    el.style.width = Math.ceil(g.getBoundingClientRect().width + 18) + 'px'
+  }
+  useLayoutEffect(fit, [v])
+  useEffect(() => {
+    let done = false
+    const again = () => { if (!done) fit() }
+    const id = setTimeout(again, 300)
+    try { (document as Any).fonts?.ready?.then?.(again) } catch { /* no font API */ }
+    return () => { done = true; clearTimeout(id) }
+  }, [])
+  return (
+    <>
+      <span ref={ghost} aria-hidden style={{
+        position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', pointerEvents: 'none',
+        left: -9999, top: 0,
+      }} />
+      <input
+        ref={ref}
+        value={v}
+        placeholder={placeholder}
+        onChange={e => { set(e.target.value); fit() }}
+        className={(className || '') + ' rounded-md px-1.5 outline-none min-w-0'}
+        style={{
+          color: 'inherit', font: 'inherit', letterSpacing: 'inherit', maxWidth: '100%',
+          background: 'var(--ed-bg)', border: '1px dashed var(--ed-border)',
+        }}
+      />
+    </>
+  )
+}
+
 function Ed({ v, set, edit, className, multiline, placeholder, max }: {
   v: string; set: (s: string) => void; edit: boolean; className?: string; multiline?: boolean; placeholder?: string
   /** Cap the grown height, for a field in a box that cannot grow with it (a team card). */
@@ -666,21 +720,7 @@ function Ed({ v, set, edit, className, multiline, placeholder, max }: {
 }) {
   if (!edit) return <span className={className}>{v}</span>
   if (multiline) return <AutoArea v={v} set={set} className={className} placeholder={placeholder} max={max} />
-  return (
-    <input
-      value={v}
-      placeholder={placeholder}
-      onChange={e => set(e.target.value)}
-      className={(className || '') + ' rounded-md px-1.5 outline-none min-w-0'}
-      style={{
-        color: 'inherit', font: 'inherit', letterSpacing: 'inherit',
-        // Wide enough for the text, never wider than the box it sits in: "Roberto Chiriboga"
-        // asking for 19ch inside a 229px card is what pushes a column out of its grid.
-        width: Math.max(4, (v || '').length + 2) + 'ch', maxWidth: '100%',
-        background: 'var(--ed-bg)', border: '1px dashed var(--ed-border)',
-      }}
-    />
-  )
+  return <AutoInput v={v} set={set} className={className} placeholder={placeholder} />
 }
 
 function SectionShell({ id, title, hidden, edit, onToggle, onAi, children }: {
@@ -2419,7 +2459,18 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.min(6, Math.max(1, (sec('team').people || []).length || 1)) + ',1fr)', gap: (sec('team').people || []).length > 4 ? 16 : 24, width: '100%' }}>
                     {(sec('team').people || []).slice(0, 6).map((p: Any, pi: number) => (
                       <div key={pi}>
-                        {/* A HEADSHOT IS A PORTRAIT, AND THIS FRAME WAS A LETTERBOX (Jon,
+                        {/* ZOOM OUT BY MAKING THE FRAME PORTRAIT, NOT BY MAKING IT SHORTER
+                            (Jon, 2026-09-17: "readjust my photo, general manager, to fit better
+                            — zoom it out, not so in"). The frame ran the full card width at 229
+                            x 149, and `object-fit: cover` fills that from a 798 x 1200 headshot
+                            by scaling until the WIDTH matches — which leaves 43% of the person's
+                            height on screen and 57% cropped away. Height was not the lever: the
+                            card cannot grow. Width was. At 124 x 155 the same photo shows 83% of
+                            its height, because the box is now shaped like the thing inside it.
+                            A landscape headshot trades the other way and loses side margin it
+                            can afford. See the arithmetic in the commit.
+
+                            A HEADSHOT IS A PORTRAIT, AND THIS FRAME WAS A LETTERBOX (Jon,
                             2026-09-17: "fix the photo headshots, look at the way they look").
                             230px wide by 132 tall is a horizontal band, and `object-fit: cover`
                             fills it from the middle of the source — so a phone photo of a
@@ -2431,13 +2482,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             title={'Headshot \u2014 ' + String(p.name || '')}
                             cur={String(p.photo)}
                             set={u => patch('team.people.' + pi + '.photo', u)}
-                            pos="center 22%"
-                            style={{ width: '100%', aspectRatio: '4 / 5', maxHeight: 150, borderRadius: 12, marginBottom: 10 }}
+                            pos="center 20%"
+                            style={{ width: 124, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 10 }}
                           />
                         ) : (
                           <div
                             onClick={canEdit ? () => { setPhotoUrl(''); setPhotoPick({ title: 'Headshot \u2014 ' + String(p.name || ''), cur: '', set: u => patch('team.people.' + pi + '.photo', u) }) } : undefined}
-                            style={{ width: '100%', aspectRatio: '4 / 5', maxHeight: 150, borderRadius: 12, marginBottom: 10, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
+                            style={{ width: 124, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 10, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
