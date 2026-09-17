@@ -2874,7 +2874,17 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         const area = d + ` L ${xs[n - 1]} ${base} L ${xs[0]} ${base} Z`
 
                         // peak season wraps the year end, so it is two bands, not one
-                        const peakIx = ms.map((m: Any, i: number) => ({ i, lvl: Number(m.level) || 0 })).filter(o => o.lvl >= max - 1).map(o => o.i)
+                        // WHICH MONTHS ARE PEAK IS A FLAG, NOT A THRESHOLD. This used to be
+                        // `level >= max - 1`, which only worked while levels were a hand-drawn
+                        // 0-6 scale: on the real index (March = 100) `max - 1` is 99 and the
+                        // band collapsed onto March alone. The shape now carries `peak` per
+                        // month; the old rule stays as the fallback so a deck generated before
+                        // this still bands correctly off its own stored 0-6 numbers.
+                        const flagged = ms.some((m: Any) => m && m.peak)
+                        const peakIx = ms
+                          .map((m: Any, i: number) => ({ i, lvl: Number(m.level) || 0, on: !!(m && m.peak) }))
+                          .filter(o => flagged ? o.on : o.lvl >= max - 1)
+                          .map(o => o.i)
                         const bands: { x: number; w: number }[] = []
                         let runStart = -1
                         for (let i = 0; i < n; i++) {
@@ -3288,7 +3298,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         })}
                         {stmtCat && catLines(stmtCat).length === 0 ? (
                           <p style={{ fontSize: 12, color: t.muted, paddingTop: 6 }}>
-                            No booking lines behind this one \u2014 it is a monthly charge, itemised on your real statement with the job it came from.
+                            Not tied to a booking. This is a monthly charge, billed once at its full amount \u2014 on your real statement it is itemised with the job and the date it came from.
                           </p>
                         ) : null}
                       </div>
