@@ -9,7 +9,8 @@ import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { updateBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { monthTasks } from '@/lib/billing'
-import { modelFor } from '@/lib/ai-models'
+import { modelPairFor } from '@/lib/ai-models'
+import { anthropicMessages, textOf } from '@/lib/anthropic-call'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -48,13 +49,12 @@ export async function POST(req: NextRequest) {
     const batch = candidates.slice(i, i + 25)
     let out: { id: string; title: string }[] = []
     try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: await modelFor('billing'), max_tokens: 3000, system: SYS, messages: [{ role: 'user', content: JSON.stringify(batch) }] }),
-      })
-      const j: any = await r.json().catch(() => null)
-      const text = j && Array.isArray(j.content) && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
+      // anthropicMessages + textOf, not a raw fetch reading content[0]: a model that answers with a
+      // thinking block first made this read an empty string from an HTTP 200, so the whole batch was
+      // silently "already English" and nothing got translated.
+      const { model, fallback } = await modelPairFor('billing')
+      const r = await anthropicMessages(key, { model, max_tokens: 3000, system: SYS, messages: [{ role: 'user', content: JSON.stringify(batch) }] }, fallback)
+      const text = textOf(r.data)
       const m = text.match(/\[[\s\S]*\]/)
       if (r.ok && m) out = JSON.parse(m[0])
     } catch { /* batch failed — skip, counted below */ }
