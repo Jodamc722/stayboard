@@ -111,6 +111,11 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
   const code = String(params.code || '')
   const [pass, setPass] = useState('')
   const [who, setWho] = useState('')
+  /** One writer for the name: the board's field and the upload sheet's both go through here. */
+  const rememberWho = useCallback((v: string) => {
+    setWho(v)
+    try { localStorage.setItem(WHO_KEY, v) } catch { /* private window — the name just does not persist */ }
+  }, [])
   const [d, setD] = useState<Board | null>(null)
   const [locked, setLocked] = useState<any>(null)
   const [err, setErr] = useState('')
@@ -176,6 +181,8 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
 
   // ── upload ────────────────────────────────────────────────────────────────────────────────────
   const send = async (file: File, label: string, row: Row) => {
+    // Unreachable from the sheet now that the name is asked for there and Send is disabled without
+    // it. Kept because this is the last line before a code is filed under nobody.
     if (!who.trim()) { setErr('Add your name first — we need to know who sent the code.'); return }
     setBusy(true); setErr(''); setNote('')
     try {
@@ -293,7 +300,7 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
         <div className='rounded-2xl border border-neutral-200 bg-white shadow-sm p-4 mb-3'>
           <label className='block text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-1.5'>Your name</label>
           <input value={who} placeholder='who is uploading'
-            onChange={e => { setWho(e.target.value); try { localStorage.setItem(WHO_KEY, e.target.value) } catch { /* fine */ } }}
+            onChange={e => rememberWho(e.target.value)}
             className='w-full text-base border border-neutral-200 rounded-lg px-3 py-2' />
           <p className='text-xs text-neutral-400 mt-2'>Goes on every code you send, so we know who to ask if a gate turns someone away.</p>
         </div>
@@ -468,6 +475,8 @@ export default function ParkingPage({ params }: { params: { code: string } }) {
                 key={upload.reservationId + '-' + (upload.permit?.id || 'new')}
                 id={upload.reservationId}
                 busy={busy}
+                who={who}
+                setWho={rememberWho}
                 onSend={(f, l) => send(f, l, upload)}
                 cta={upload.permit ? 'Replace the code' : 'Send this code'}
               />
@@ -498,10 +507,37 @@ function Chip({ tone, children }: { tone: 'blue' | 'amber' | 'violet'; children:
   return <span className={'text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ' + c}>{children}</span>
 }
 
-/** One file, one optional reference of the vendor's own. Kept dumb on purpose. */
-function Upload({ id, busy, onSend, cta }: { id: string; busy: boolean; onSend: (f: File, label: string) => void; cta: string }) {
+/**
+ * One file, who is sending it, and an optional reference of the vendor's own.
+ *
+ * WHY THE NAME IS IN HERE (Jon, 2026-09-17, with a screenshot of it going wrong).
+ *
+ * "Your name" used to live only on the board BEHIND this sheet. So a vendor who opened the sheet,
+ * chose their file and pressed Send got "Add your name first" — an instruction they could not act
+ * on without closing the sheet, and nothing on screen said so. Worse, the one text box in front of
+ * them read "your reference (optional)", so the natural move was to type the name there. That is
+ * exactly what happened: a code sent as reference "Sulaman", by nobody.
+ *
+ * An error must be fixable where it is raised. So the name is asked for here, once, and the send
+ * button simply cannot be pressed without it — the message Jon photographed is now unreachable
+ * rather than merely better worded. It still saves to the same key, so filling it in either place
+ * fills it in both, and the board keeps its own field for the vendor who sets up before starting.
+ */
+function Upload({ id, busy, who, setWho, onSend, cta }: {
+  id: string; busy: boolean
+  who: string
+  setWho: (v: string) => void
+  onSend: (f: File, label: string) => void
+  cta: string
+}) {
   const [file, setFile] = useState<File | null>(null)
   const [label, setLabel] = useState('')
+  // A name already on this device is shown, not asked for again — but it stays correctable, because
+  // the person holding the phone is not always the person who set it up.
+  const [editingWho, setEditingWho] = useState(false)
+  const named = !!who.trim()
+  const ready = !!file && named
+
   return (
     <div>
       <input id={'f-' + id} type='file' accept='image/png,image/jpeg,application/pdf'
@@ -510,12 +546,33 @@ function Upload({ id, busy, onSend, cta }: { id: string; busy: boolean; onSend: 
         className='block text-sm text-center text-neutral-600 border border-dashed border-neutral-300 rounded-xl px-3 py-5 cursor-pointer truncate hover:bg-neutral-50'>
         {file ? file.name : 'Choose a file'}
       </label>
-      <input value={label} placeholder='your reference (optional)' onChange={e => setLabel(e.target.value)}
+
+      {(!named || editingWho) ? (
+        <div className='mt-2'>
+          <label htmlFor={'who-' + id} className='block text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-1'>Your name</label>
+          <input id={'who-' + id} value={who} autoFocus={!named} placeholder='who is sending this'
+            onChange={e => setWho(e.target.value)}
+            className='w-full text-base border border-neutral-200 rounded-lg px-3 py-2' />
+          <p className='text-xs text-neutral-400 mt-1'>Goes on the code, so we know who to ask if a gate turns someone away.</p>
+        </div>
+      ) : (
+        <p className='mt-2 text-xs text-neutral-500'>
+          Sending as <span className='font-semibold text-neutral-700'>{who.trim()}</span>
+          <button onClick={() => setEditingWho(true)} className='ml-1.5 font-semibold text-neutral-500 underline hover:text-neutral-800'>change</button>
+        </p>
+      )}
+
+      {/* "your reference" was read as "your name" when it was the only box on the sheet. It now sits
+          under a labelled name field, and says what it is for rather than whose it is. */}
+      <input value={label} placeholder='Reference for your own records (optional)' onChange={e => setLabel(e.target.value)}
         className='mt-2 w-full text-base border border-neutral-200 rounded-lg px-3 py-2' />
-      <button disabled={busy || !file} onClick={() => file && onSend(file, label)}
+
+      <button disabled={busy || !ready} onClick={() => ready && file && onSend(file, label)}
+        title={!file ? 'Choose the QR code file first' : !named ? 'Add your name first' : undefined}
         className='mt-3 w-full rounded-xl bg-neutral-900 text-white text-sm font-semibold py-2.5 disabled:opacity-40'>
         {busy ? 'Sending…' : cta}
       </button>
+      {file && !named ? <p className='mt-1.5 text-xs text-neutral-500 text-center'>Add your name above and this will send.</p> : null}
     </div>
   )
 }
