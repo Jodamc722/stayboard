@@ -4,8 +4,8 @@ import PolishButton from './PolishButton'
 // Pool → Ops → Guest Followup → Refund → Manager Review → Incident → Closed.
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
 // Breezeway task for the field, and move the card along the escalation path.
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil } from 'lucide-react'
 import CommentThread from './CommentThread'
 import UnitCalendar from './UnitCalendar'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
@@ -305,6 +305,19 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
 }) {
   const [tab, setTab] = useState<'work' | 'money' | 'talk'>('work')
   const [panel, setPanel] = useState<'' | 'edit' | 'push'>('')
+  // FIXING A TYPO SHOULD START WHERE THE TYPO IS (Sulaman, 2026-09-17: "once the Glitch is created,
+  // there is no option to edit or modify the details in case there is a typo or any other error").
+  //
+  // There was an option — "Edit the details", a quiet outline button at the FOOT of this tab, past
+  // the photos, the stay and the whole crew section. Somebody re-reading what they just typed is
+  // looking at the words, not scrolling to the bottom of a tab to find a settings-shaped control.
+  // So the same editor is now reachable from beside the text it edits, and opening it scrolls to
+  // it — a panel that appears off-screen has not really opened.
+  const editRef = useRef<HTMLElement | null>(null)
+  const openEdit = useCallback(() => {
+    setPanel('edit')
+    setTimeout(() => editRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60)
+  }, [])
   const lane = laneOf(g.status)
   const refund = Number(g.refund_approved) || 0
 
@@ -368,7 +381,13 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
           </section>
 
           <section>
-            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">What the guest said</p>
+            <div className="flex items-baseline gap-2 mb-1.5">
+              <p className="text-[11px] uppercase tracking-wider font-bold text-muted">What the guest said</p>
+              <button onClick={openEdit} title="Fix a typo, or change the unit, guest or category"
+                className="text-[11px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
+                <Pencil size={11} /> Edit
+              </button>
+            </div>
             <p className="text-[13.5px] text-ink leading-relaxed whitespace-pre-wrap">{g.overview}</p>
             {g.sentiment && g.sentiment.excerpt ? (
               <p className="text-[12.5px] text-muted mt-2 border-l-2 border-line pl-3 italic">&ldquo;{String(g.sentiment.excerpt).slice(0, 300)}&rdquo;</p>
@@ -440,12 +459,17 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
             )}
           </section>
 
-          <section>
-            <button onClick={() => setPanel(panel === 'edit' ? '' : 'edit')}
-              className="text-[12px] font-semibold px-2.5 h-8 rounded-lg border border-line bg-white text-muted hover:text-ink">
-              {panel === 'edit' ? 'Done editing' : 'Edit the details'}
+          <section ref={editRef as any}>
+            <button onClick={() => (panel === 'edit' ? setPanel('') : openEdit())}
+              className="text-[12px] font-semibold px-2.5 h-8 rounded-lg border border-line bg-white text-muted hover:text-ink inline-flex items-center gap-1.5">
+              <Pencil size={12} /> {panel === 'edit' ? 'Done editing' : 'Edit the details'}
             </button>
-            {panel === 'edit' ? <div className="mt-2"><EditGlitch g={g} onDone={() => { setPanel(''); onChanged() }} /></div> : null}
+            {panel === 'edit' ? (
+              <div className="mt-2">
+                <p className="text-[11.5px] text-muted mb-2">Anything typed in wrong — the words, the unit, the guest, the category, the date.</p>
+                <EditGlitch g={g} onDone={() => { setPanel(''); onChanged() }} />
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}
