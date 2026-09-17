@@ -12,6 +12,7 @@
 //      of Lighthouse's formatting around it.
 import 'server-only'
 import { writeCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
+import { guestyFetch } from '@/lib/guesty-retry'
 
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const isNotes = (cf: any) => /reservation[_ ]?notes/i.test(String(cf?.fieldName || cf?.name || cf?.fieldId?.name || cf?.field?.name || ''))
@@ -39,7 +40,8 @@ export async function notesDefId(token: string): Promise<string | null> {
   ]
   for (const u of urls) {
     try {
-      const r = await fetch(u, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
+      // Same treatment: the definitions endpoint is exactly the one that 429s under load.
+      const r = await guestyFetch(u, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } })
       if (!r.ok) continue
       const j: any = await r.json().catch(() => ({}))
       const arr = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || j?.customFields || [])

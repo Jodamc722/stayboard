@@ -14,6 +14,8 @@
 // If the read fails we DO NOT WRITE. A write built on a guess about what else is on the booking is
 // exactly the thing that destroyed data the first time. Failing to record a note is recoverable;
 // erasing a field nobody notices for a month is not.
+import { guestyFetch, isRateLimited } from './guesty-retry'
+
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
 /** Custom-field entries come back with fieldId as a string OR as a populated `{_id}` object. */
@@ -28,6 +30,8 @@ export type WriteResult = {
   /** The full merged array as sent to Guesty — mirror this locally on success. */
   fields?: any[]
   note?: string
+  /** Guesty asked us to slow down. Nothing was written, and pressing again is safe. */
+  rateLimited?: boolean
 }
 
 /**
@@ -46,11 +50,17 @@ export async function writeCustomFields(
   // 1. What is actually on the booking right now, straight from Guesty.
   let existing: any[] = []
   try {
-    const r = await fetch(
+    // guestyFetch, not fetch: a 429 here is Guesty asking us to slow down, and it used to end the
+    // whole operation. Silvia lost a day of welcome calls to exactly this — read refused, so the
+    // write never happened, so the call showed as never made.
+    const r = await guestyFetch(
       BASE + '/reservations/' + encodeURIComponent(reservationId) + '?fields=customFields',
       { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } },
     )
     if (!r.ok) {
+      if (isRateLimited(r.status)) {
+        return { ok: false, rateLimited: true, note: 'Guesty is rate-limiting us right now, so nothing was written. Give it a minute and press it again — this cannot double-record anything.' }
+      }
       return { ok: false, note: 'could not read the booking first (Guesty ' + r.status + '), so nothing was written' }
     }
     const j: any = await r.json().catch(() => null)
@@ -77,12 +87,15 @@ export async function writeCustomFields(
     .filter((c) => c.fieldId)
 
   try {
-    const r = await fetch(BASE + '/reservations/' + encodeURIComponent(reservationId), {
+    const r = await guestyFetch(BASE + '/reservations/' + encodeURIComponent(reservationId), {
       method: 'PUT',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ customFields: payload }),
     })
     if (!r.ok) {
+      if (isRateLimited(r.status)) {
+        return { ok: false, rateLimited: true, note: 'Guesty is rate-limiting us right now, so nothing was written. Give it a minute and press it again — this cannot double-record anything.' }
+      }
       return { ok: false, note: 'Guesty said ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 140) }
     }
     return { ok: true, fields: merged }
@@ -94,7 +107,7 @@ export async function writeCustomFields(
 /** Read one custom field's current value straight from Guesty. */
 export async function readCustomFields(reservationId: string, token: string): Promise<any[] | null> {
   try {
-    const r = await fetch(
+    const r = await guestyFetch(
       BASE + '/reservations/' + encodeURIComponent(reservationId) + '?fields=customFields',
       { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } },
     )
