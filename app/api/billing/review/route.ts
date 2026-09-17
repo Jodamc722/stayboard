@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { pendingRoutine } from '@/lib/billing-ai'
 import { requireLevel } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { billingRange, monthRange, type BillingTask, type ReviewState } from '@/lib/billing'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -63,7 +64,9 @@ export async function GET(req: NextRequest) {
     })
     return NextResponse.json({
       ok: true, month: monthKey, from: win.from, to: win.to,
-      me: { email: gate.access.email || '', isGm: gate.access.role === 'admin' },
+      // canEdit so the desk does not offer buttons the API will refuse: the GET is 'view', but
+      // approving, pushing a title to Breezeway and the ES->EN pass all need 'edit'.
+      me: { email: gate.access.email || '', isGm: gate.access.role === 'admin', canEdit: atLeast(gate.access.levels['billing'], 'edit') },
       tasks: data.tasks.map(slim),
       owners,
       missingDetail: data.missingDetail,
