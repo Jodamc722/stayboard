@@ -2600,7 +2600,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   title="About Stay photo" set={u => patch('overview.photo', u)} />
                 <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 452, background: 'linear-gradient(90deg, ' + t.band + ' 0%, rgba(0,0,0,0) 42%)' }} />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 560 }} className="flex flex-col">
-                  <div className="flex-1 min-h-0">
+                  <div className="flex-1 min-h-0 onb-scroll">
                     <Title k="overview" dark sub={false} narrow />
                     {(() => {
                       const full = String(sec('overview').body || '')
@@ -2608,8 +2608,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       const lead = cut > 0 ? full.slice(0, cut) : full
                       if (edit) {
                         return (
+                          // THE ONLY SLIDE THAT STILL RAN LONG IN EDIT MODE. The reader sees
+                          // just the opening paragraph here; the editor sees the whole body,
+                          // both paragraphs, which is 500-odd characters and 49px more than the
+                          // column has. Capping the box makes the overflow scroll inside the
+                          // field being typed into, instead of pushing the stats and the footer
+                          // off the bottom of the slide.
                           <p style={{ marginTop: 22, fontSize: 16, lineHeight: 1.6, color: D.body, whiteSpace: 'pre-line' }}>
-                            <Ed v={full} set={v => patch('overview.body', v)} edit={edit} multiline />
+                            <Ed v={full} set={v => patch('overview.body', v)} edit={edit} multiline max={168} />
                           </p>
                         )
                       }
