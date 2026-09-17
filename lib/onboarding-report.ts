@@ -21,6 +21,7 @@
 //    with an empty answer. They get filled in live on the call. Anything still blank collects in
 //    the closing section, so the unanswered questions ARE the follow-up agenda and an onboarding
 //    is never "done" while fields are empty.
+import { SAMPLE_STATEMENT } from './statement-sample'
 import 'server-only'
 import { getSetting } from './app-settings'
 import { otaLinksFrom, type OtaLink } from './ota-links'
@@ -578,20 +579,6 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
   const chargeTotal = 0.7 * rate + 19 + 1.5 * rate + 18
   const net = Math.round((rental - commission - chargeTotal) * 100) / 100
 
-  // ── THE EXAMPLE STATEMENT ────────────────────────────────────────────────
-  // Built to Guesty's issued shape and made to foot, because the one example an owner is shown
-  // is the one they will add up. Three bookings, their line items, and a summary whose ending
-  // balance is the sum of the categories above it — not a plausible-looking number.
-  const nights2 = 9
-  const rental2 = 1024 + 1432                 // the two example bookings
-  const mgmt2 = Math.round(rental2 * (t.mgmtPct / 100) * 100) / 100
-  const clean2 = 180 * 2
-  const park2 = 75
-  const chan2 = 2.9
-  const supplies2 = 86.8
-  const maint2 = 168                           // 4.2h at the house rate, itemised on the detail
-  const net2 = Math.round((rental2 + chan2 + clean2 + park2 - mgmt2 - supplies2 - maint2) * 100) / 100
-
   return {
     meta: {
       kind: 'onboarding',
@@ -756,53 +743,10 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       subtitle: 'A worked sample, not your numbers \u2014 so you know how to read the real one.',
       // THE SAMPLE IS THE SAME SAMPLE FOR EVERY OWNER (Jon, 2026-09-17: "the owner statement is
       // a sample one to show the owner and explain how to read \u2014 should be a standard slide, so
-      // once we build it, it's the default one we use"). It used to carry the owner's own unit
-      // name at the top, which read as their statement rather than a teaching example. The line
-      // items, the arithmetic and the labels are the house standard; only the management rate
-      // follows settings, because that is the number the owner is actually agreeing to.
-      unitLabel: 'Sample statement \u00b7 2 BR / 2 BA condo',
-      period: 'Example month \u00b7 August',
-      kpis: [
-        { k: 'Occupancy', v: '68%' },
-        { k: 'Proceeds', v: money2(net2) },
-        { k: 'Nights occupied', v: String(nights2) },
-        { k: 'Working capital', v: money2(0) },
-      ],
-      summary: [
-        { k: 'Initial balance', v: money2(0) },
-        { k: 'Rental income', v: money2(rental2) },
-        { k: 'Channel commission', v: money2(chan2) },
-        { k: 'Cleaning fee', v: money2(clean2) },
-        { k: 'Parking', v: money2(park2) },
-        { k: 'Management fee', v: '\u2212' + money2(mgmt2), neg: true },
-        { k: 'Supplies and purchases', v: '\u2212' + money2(supplies2), neg: true },
-        { k: 'Maintenance \u2014 owner charge', v: '\u2212' + money2(maint2), neg: true },
-        { k: 'Ending balance', v: money2(net2), rule: true },
-      ],
-      due: { k: 'Payment due to owner', v: money2(net2) },
-      reservations: [
-        {
-          guest: 'M. Alvarez', stay: 'Aug 2 \u2013 Aug 6 \u00b7 4 nights',
-          lines: [
-            { date: 'Aug 2', desc: 'Rental payment for HMABC12345', cat: 'Rental income', amt: money2(1024) },
-            { date: 'Aug 2', desc: 'PMC commission', cat: 'Management fee', amt: '\u2212' + money2(102.4), neg: true },
-            { date: 'Aug 2', desc: 'Cleaning fee', cat: 'Cleaning fee', amt: money2(180) },
-            { date: 'Aug 2', desc: 'Airbnb RM channel fee reimbursement', cat: 'Channel commission', amt: money2(2.9) },
-          ],
-          total: money2(1104.5),
-        },
-        {
-          guest: 'R. Whitfield', stay: 'Aug 9 \u2013 Aug 14 \u00b7 5 nights',
-          lines: [
-            { date: 'Aug 9', desc: 'Rental payment for BC-9KD3LM', cat: 'Rental income', amt: money2(1432) },
-            { date: 'Aug 9', desc: 'PMC commission', cat: 'Management fee', amt: '\u2212' + money2(143.2), neg: true },
-            { date: 'Aug 9', desc: 'Cleaning fee', cat: 'Cleaning fee', amt: money2(180) },
-            { date: 'Aug 9', desc: 'Nightly parking', cat: 'Parking', amt: money2(75) },
-          ],
-          total: money2(1543.8),
-        },
-      ],
-      propertyIncome: { k: 'Property income', v: money2(1104.5 + 1543.8) },
+      // once we build it, it's the default one we use"). It lives in lib/statement-sample.ts as a
+      // constant rather than being assembled here, so that changing the example changes it in
+      // every deck, including the ones already generated. See that file for why.
+      ...SAMPLE_STATEMENT,
       note: `Every line on this statement traces to a booking or to a job with a date on it. Labor is ${money0(rate)} an hour on the technician\u2019s actual clock, materials are at cost, and the ${t.mgmtPct}% management fee is the only fee we take.`,
       rules,
       highlights: [
