@@ -16,8 +16,23 @@ import { writeCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const isNotes = (cf: any) => /reservation[_ ]?notes/i.test(String(cf?.fieldName || cf?.name || cf?.fieldId?.name || cf?.field?.name || ''))
 
+// THE DEFINITION ID DOES NOT CHANGE BETWEEN CLICKS (2026-09-17).
+//
+// Silvia: "when I click 'reached', it just sits there thinking for a moment and doesn't update. It
+// also wouldn't let me save the notes." Both paths run this, and a reservation that has never had a
+// note has no notes field on it — so every single press asked Guesty for the account's whole
+// custom-field list (200 definitions) before it could write anything, on top of a token call, a
+// reservation read and the write itself. That is a lot of sequential latency to hang a button on.
+//
+// The account's field definitions are configuration, not data. Held for ten minutes per instance:
+// long enough to take this off the click path, short enough that adding a field in Guesty shows up
+// without a deploy. A miss simply costs what it always cost.
+let CACHED: { id: string | null; at: number } | null = null
+const DEF_TTL = 10 * 60_000
+
 /** The Reservation Notes custom-field id, from the account's field definitions. */
 export async function notesDefId(token: string): Promise<string | null> {
+  if (CACHED && CACHED.id && Date.now() - CACHED.at < DEF_TTL) return CACHED.id
   const urls = [
     `${BASE}/accounts/${process.env.GUESTY_ACCOUNT_ID || '68af6c6fc3307ffd38a1c2b6'}/custom-fields?limit=200`,
     `${BASE}/custom-fields?limit=200`,
@@ -29,7 +44,13 @@ export async function notesDefId(token: string): Promise<string | null> {
       const j: any = await r.json().catch(() => ({}))
       const arr = Array.isArray(j) ? j : (j?.results || j?.data || j?.fields || j?.customFields || [])
       const w = (arr || []).find((d: any) => /reservation[_ ]?notes/i.test(String(d?.name || d?.fieldName || d?.displayName || d?.label || '')))
-      if (w) return w._id || w.id || w.fieldId || null
+      if (w) {
+        const id = w._id || w.id || w.fieldId || null
+        // Only a HIT is cached. Caching a miss would pin a broken lookup for ten minutes across
+        // every call the desk makes, which is worse than paying for the retry.
+        if (id) CACHED = { id, at: Date.now() }
+        return id
+      }
     } catch { /* try the next shape */ }
   }
   return null
