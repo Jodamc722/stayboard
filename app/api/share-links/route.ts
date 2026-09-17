@@ -25,6 +25,11 @@ const SECTION_KEYS = ['reservations', 'revenue', 'marketing', 'cleaning', 'verif
   'parking',
   // Audience (2026-09-14): contact COUNTS for the scope. Never names, addresses or numbers.
   'audience',
+  // Contact list (Jon, 2026-09-17): the mailing list itself — names, emails, phone numbers, for the
+  // units in scope. Kept separate from `audience` on purpose so links already handed out under the
+  // counts-only promise keep it. /api/share/[code] refuses to send the rows unless the link has a
+  // passcode, so ticking this and forgetting the passcode fails closed.
+  'contacts',
   // FIELD BOARD sections (Jon, 2026-08-25). Tick any of these and the link renders as a live crew
   // board at /board/<code> instead of a report at /share/<code> — same row, same scope picker,
   // same passcode and revoke. Keep in step with BOARD_SECTIONS in lib/field-board.ts.
