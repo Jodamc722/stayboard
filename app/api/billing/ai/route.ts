@@ -18,7 +18,7 @@
 // MODEL (2026-09-09): Sonnet 5, was Opus. Tidying a task title for an owner statement is a
 // wording job; the bigger model produced the same title at 2.5x the price.
 import { NextRequest, NextResponse } from 'next/server'
-import { anthropicMessages } from '@/lib/anthropic-call'
+import { anthropicMessages, textOf } from '@/lib/anthropic-call'
 import { requireLevel } from '@/lib/access'
 import { modelPairFor } from '@/lib/ai-models'
 
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
     const { model, fallback } = await modelPairFor('billing')
     const r = await anthropicMessages(key, { model, max_tokens: 600, system: spelling ? SYS_SPELLING : SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] }, fallback)
     const j: any = r.data
-    const text = j && Array.isArray(j.content) && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
+    const text = textOf(j)
     // SAY WHAT WENT WRONG. "AI request failed." sent whoever hit it to the server logs, or more
     // likely to me. The API's own message names the cause — an unknown model, a bad key, a rate
     // limit — and the person reading it is the one who can act on it.
