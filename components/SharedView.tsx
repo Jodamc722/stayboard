@@ -4,7 +4,8 @@
 // verified, what the notes say. Only sections the link enables ever arrive from the API — this
 // component cannot leak what it was never sent.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users, RefreshCw, AtSign } from 'lucide-react'
+import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users, RefreshCw, AtSign,
+  Mail, MailX, Ban, Star, Repeat, AlertTriangle, Search, Download } from 'lucide-react'
 import { PlannerView, PlannerLegend, type PGroup } from './PlannerView'
 import { ScheduleLaborStrip } from './ScheduleLaborStrip'
 import { DayCleans } from './DayCleans'
@@ -358,57 +359,361 @@ export function SharedView({ code }: { code: string }) {
 }
 
 /**
- * The mailing list on a shared page. Deliberately plain: a search box, the rows, and a copy of the
- * emails — the three things somebody opens this link to do. No editing, no Mailchimp push, no
- * settings; a share link is a window, not a seat in the app.
+ * THE MAILING LIST ON A SHARED PAGE — the Contacts tab, read-only (Jon, 2026-09-17: "can we make
+ * it function just like the tab please").
+ *
+ * The first cut here was a plain table: search, six columns, copy the emails. It showed only the
+ * mailable rows, so the counts did not match the tab, and there was no way to ask the question the
+ * tab is built around — which Airbnb guests can I email, who left us a low rating, who books direct.
+ *
+ * So this is the same screen: the four headline numbers, the same warning panel about who is off
+ * limits and why, the same two filter axes (channel, then mail state), the same row. What it is NOT
+ * is a seat in the app — no Mailchimp push, no blocked-channel settings, no refresh: a share link is
+ * a window. Everything here runs on rows already delivered, so filtering and the CSV never go back
+ * to the server.
  */
-function ContactsTable({ data }: { data: any }) {
-  const [q, setQ] = useState('')
-  const [copied, setCopied] = useState(false)
-  const rows: any[] = Array.isArray(data.rows) ? data.rows : []
-  const shown = q.trim()
-    ? rows.filter(r => (r.name + ' ' + (r.email || '') + ' ' + (r.phone || '') + ' ' + (r.units || []).join(' ')).toLowerCase().includes(q.trim().toLowerCase()))
-    : rows
+const CSEGS = [
+  { key: '', label: 'Everyone' },
+  { key: 'mailable', label: 'Can email' },
+  { key: 'restricted', label: 'Channel blocked' },
+  { key: 'relay', label: 'Relay address' },
+  { key: 'noemail', label: 'No email' },
+  { key: 'direct', label: 'Booked direct' },
+  { key: 'repeat', label: 'Repeat' },
+  { key: 'vip', label: 'VIP' },
+  { key: 'unhappy', label: 'Left a low rating' },
+]
+// The segments where the point IS the people you cannot mail. Exporting those filtered to "mailable"
+// would hand back an empty file, so the export follows what is on screen instead.
+const CANNOT_SEGS = ['restricted', 'relay', 'noemail', 'unhappy']
+
+function CStat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+  // min-w-0: a grid column's default minimum is max-content, so a long sub-line would otherwise
+  // widen its column past its share and push the page off the right edge on a phone.
   return (
-    <>
-      <div className="flex items-center gap-2 flex-wrap mb-2">
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, email, unit…"
-          className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-line bg-white w-full sm:w-64" />
-        <span className="text-[11.5px] text-muted tabular-nums">{shown.length.toLocaleString()} of {rows.length.toLocaleString()} mailable · {Number(data.total || 0).toLocaleString()} guests in total</span>
-        <button type="button"
-          onClick={() => { try { navigator.clipboard.writeText(shown.map(r => r.email).filter(Boolean).join(', ')); setCopied(true); setTimeout(() => setCopied(false), 1600) } catch { /* blocked */ } }}
-          className="ml-auto text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app">
+    <div className="min-w-0 rounded-xl bg-white ring-1 ring-line px-3 py-2.5">
+      <p className="text-[9.5px] uppercase tracking-wider font-bold text-muted">{label}</p>
+      <p className={'text-[19px] font-bold tabular-nums leading-tight mt-0.5 ' + (tone || 'text-ink')}>{value}</p>
+      {sub ? <p className="text-[11px] text-muted mt-0.5 break-words">{sub}</p> : null}
+    </div>
+  )
+}
+
+function csvCell(v: any): string {
+  const s = v == null ? '' : String(v)
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+}
+
+function ContactsTable({ data }: { data: any }) {
+  const [typed, setTyped] = useState('')
+  const [q, setQ] = useState('')
+  const [seg, setSeg] = useState('')
+  const [chan, setChan] = useState('')
+  const [sort, setSort] = useState('recent')
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setQ(typed.trim().toLowerCase()), 250); return () => clearTimeout(t) }, [typed])
+
+  const rows: any[] = Array.isArray(data.rows) ? data.rows : []
+  const s = data.summary || null
+  const blocked: string[] = Array.isArray(data.restrictedChannels) ? data.restrictedChannels : []
+  const money = data.showMoney === true
+
+  const inSeg = (c: any) =>
+    seg === 'mailable' ? c.mail === 'mailable'
+    : seg === 'restricted' ? c.mail === 'restricted'
+    : seg === 'relay' ? c.mail === 'relay'
+    : seg === 'noemail' ? (c.mail === 'none' || c.mail === 'invalid')
+    : seg === 'direct' ? !!c.everDirect
+    : seg === 'repeat' ? c.stays >= 2
+    : seg === 'vip' ? !!c.vip
+    : seg === 'unhappy' ? !!c.unhappy
+    : true
+  const hit = (c: any) => !q || (c.name + ' ' + (c.email || '') + ' ' + (c.phone || '') + ' '
+    + (c.units || []).join(' ') + ' ' + (c.tags || []).join(' ') + ' ' + (c.channel || '')).toLowerCase().includes(q)
+  // SORTING (Jon, 2026-09-17: "should be able to sort, download, filter"). Newest stay first by
+  // default, because the commonest read of this page is "who was here lately". Every sort is a
+  // total order — ties fall back to the last stay, then the name — so the list never reshuffles
+  // under the reader between two renders of the same data.
+  const num = (v: any) => Number(v) || 0
+  const cmp = (a: any, b: any) => {
+    if (sort === 'stays') return num(b.stays) - num(a.stays) || String(b.lastStay || '').localeCompare(String(a.lastStay || ''))
+    if (sort === 'nights') return num(b.nights) - num(a.nights) || String(b.lastStay || '').localeCompare(String(a.lastStay || ''))
+    if (sort === 'value') return num(b.value) - num(a.value) || String(b.lastStay || '').localeCompare(String(a.lastStay || ''))
+    if (sort === 'rating') return num(b.reviewAvg) - num(a.reviewAvg) || num(b.reviews) - num(a.reviews)
+    if (sort === 'name') return String(a.last || a.name).localeCompare(String(b.last || b.name))
+    if (sort === 'oldest') return String(a.lastStay || '').localeCompare(String(b.lastStay || ''))
+    return String(b.lastStay || '').localeCompare(String(a.lastStay || ''))
+  }
+  const shown = rows.filter(c => inSeg(c) && (!chan || c.channel === chan) && hit(c))
+    .sort((a, b) => cmp(a, b) || String(a.name || '').localeCompare(String(b.name || '')))
+
+  // WHAT THE EXPORT CONTAINS (Jon, 2026-09-17: "make sure you can export by the filter and be able
+  // to sort if you download all data by that field, needs to show on download" / "when you export it
+  // should show low reviews category too").
+  //
+  // Three rules, and they are all about the file matching the screen:
+  //   • THE FILTER TRAVELS. The CSV is the rows you are looking at — same segment, same channel,
+  //     same search — not the whole list.
+  //   • THE SORT TRAVELS, AND SAYS SO. Rows come out in the order on screen, the file is named for
+  //     the field they were sorted by, and the first two columns are the rank and that field's
+  //     value, so whoever opens it in Excel can see what it was sorted by without being told.
+  //   • LOW RATINGS ARE SHOWN, NOT SILENTLY DROPPED. They used to be filtered out of the default
+  //     export, which meant a file whose row count nobody could reconcile with the screen. They are
+  //     in it now, with their own Category and a Left a low rating column, so the decision to leave
+  //     them out of a campaign is made by the person reading the file, in front of the reason.
+  const catOf = (c: any) =>
+    c.mail === 'restricted' ? 'Channel blocked'
+    : c.mail === 'relay' ? 'Relay address'
+    : (c.mail === 'none' || c.mail === 'invalid') ? 'No email'
+    : c.unhappy ? 'Can email — left a low rating'
+    : 'Can email'
+  const SORT_LABEL: Record<string, string> = {
+    recent: 'Most recent stay', oldest: 'Longest since a stay', stays: 'Most stays',
+    nights: 'Most nights', value: 'Highest value', rating: 'Best rated', name: 'Name A–Z',
+  }
+  const sortCol = sort === 'stays' ? ['Stays', (c: any) => c.stays]
+    : sort === 'nights' ? ['Nights', (c: any) => c.nights]
+    : sort === 'value' ? ['Lifetime value', (c: any) => c.value ?? '']
+    : sort === 'rating' ? ['Average rating', (c: any) => c.reviewAvg ?? '']
+    : sort === 'name' ? ['Name', (c: any) => (c.last || '') + ', ' + (c.first || '')]
+    : ['Last stay', (c: any) => c.lastStay || '']
+  // On a cannot-email segment the point IS the people you cannot write to, so the file is the whole
+  // screen. Everywhere else it is the addresses that work — low ratings included and labelled.
+  const exportRows = CANNOT_SEGS.indexOf(seg) >= 0 ? shown : shown.filter(c => c.mail === 'mailable')
+  const copyList = shown.filter(c => c.mail === 'mailable' && !c.unhappy).map(c => c.email).filter(Boolean)
+  const download = () => {
+    const head = ['#', 'Sorted by: ' + String(sortCol[0]), 'Category', 'First name', 'Last name', 'Email',
+      'Mailable', 'Why not', 'Left a low rating', 'Lowest rating', 'Average rating', 'Reviews left',
+      'Phone', 'Last channel', 'Booked direct before', 'VIP', 'Stays', 'Nights',
+      ...(money ? ['Lifetime value'] : []), 'First stay', 'Last stay', 'Next stay',
+      'Last unit', 'Last building', 'All units', 'Tags']
+    const val = sortCol[1] as (c: any) => any
+    const body = exportRows.map((c, n) => [
+      n + 1, val(c), catOf(c), c.first, c.last, c.email || '',
+      c.mail === 'mailable' ? 'yes' : 'no', c.mail === 'mailable' ? '' : c.mailReason,
+      c.unhappy ? 'yes' : 'no', c.reviewLow ?? '', c.reviewAvg ?? '', c.reviews,
+      c.phone || '', c.channel, c.everDirect ? 'yes' : 'no', c.vip ? 'yes' : 'no', c.stays, c.nights,
+      ...(money ? [c.value ?? ''] : []),
+      c.firstStay, c.lastStay, c.nextStay || '', c.lastUnit, c.lastBuilding || '',
+      (c.units || []).join(' | '), (c.tags || []).join(' | '),
+    ])
+    const text = '﻿' + [head, ...body].map(r => r.map(csvCell).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    // The filename carries the filter and the sort, because three of these land in one downloads
+    // folder within a minute and "contacts (2).csv" tells you nothing about which is which.
+    a.download = ['contacts', todayET(), seg || 'all', chan ? chan.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
+      'by-' + sort].filter(Boolean).join('-') + '.csv'
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+  }
+
+  const chipOn = 'bg-ink text-white border-ink'
+  const chipOff = 'bg-white text-muted border-line hover:text-ink hover:border-ink/25'
+
+  return (
+    <div className="space-y-3.5">
+      {s ? (
+        <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
+          <CStat label="Contacts" value={Number(s.contacts || 0).toLocaleString()}
+            sub={Number(s.withPhone || 0).toLocaleString() + ' with a phone number'} />
+          <CStat label="Will email" value={Number(s.mailableAfterUnhappy ?? s.mailable ?? 0).toLocaleString()} tone="text-emerald-700"
+            sub={(s.unhappy ? Number(s.unhappy).toLocaleString() + ' more held back for a low rating' : '')
+              || (s.contacts ? Math.round((s.mailable / s.contacts) * 100) + '% of the list' : '')} />
+          <CStat label="Cannot email" value={Number((s.restricted || 0) + (s.relay || 0) + (s.noEmail || 0)).toLocaleString()} tone="text-amber-700"
+            sub={[s.restricted ? Number(s.restricted).toLocaleString() + ' channel-blocked' : '',
+                  s.relay ? Number(s.relay).toLocaleString() + ' relay' : '',
+                  s.noEmail ? Number(s.noEmail).toLocaleString() + ' no address' : ''].filter(Boolean).join(' · ')} />
+          <CStat label="Repeat guests" value={Number(s.repeat || 0).toLocaleString()}
+            sub={Number(s.everDirect || 0).toLocaleString() + ' have booked direct'} />
+        </div>
+      ) : null}
+
+      {/* WHO IS OFF LIMITS, AND WHY. Said once, next to the number it explains — the reader of a
+          shared link is the likeliest person to paste a column into a campaign tool without it. */}
+      {s && (s.relay > 0 || s.restricted > 0 || s.unhappy > 0) ? (
+        <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3.5 py-2.5 space-y-2">
+          {s.unhappy > 0 ? (
+            <div className="flex items-start gap-2">
+              <Star size={14} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="min-w-0 text-[12px] text-amber-900 leading-relaxed">
+                <span className="font-bold">{Number(s.unhappy).toLocaleString()} left us three stars or fewer.</span>{' '}
+                They are kept out of the default export. The test is their <b>lowest</b> rating, not their average —
+                winning them back is a phone call, not a campaign.{' '}
+                <button onClick={() => setSeg('unhappy')} className="underline font-semibold">See who</button>
+              </p>
+            </div>
+          ) : null}
+          {s.restricted > 0 ? (
+            <div className="flex items-start gap-2">
+              <Ban size={14} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="min-w-0 text-[12px] text-amber-900 leading-relaxed">
+                <span className="font-bold">{Number(s.restricted).toLocaleString()} are blocked by their booking channel.</span>{' '}
+                {blocked.join(', ') || 'No channels'} forbid marketing to guests booked through them, and they hand over a
+                real address, so the address alone cannot tell you. A guest who later books direct is yours again.
+              </p>
+            </div>
+          ) : null}
+          {s.relay > 0 ? (
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={14} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="min-w-0 text-[12px] text-amber-900 leading-relaxed">
+                <span className="font-bold">{Number(s.relay).toLocaleString()} only ever gave a channel forwarding address</span>
+                {' '}— <span className="font-mono text-[11px]">a1b2c3@guest.airbnb.com</span> and the like. They stop working
+                when the booking closes and they bounce. Kept here for lookup, never exported.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={typed} onChange={e => setTyped(e.target.value)}
+            placeholder="Name, email, phone, unit or tag"
+            name="shared-contact-lookup" autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
+            className="w-full h-9 pl-8 pr-3 rounded-xl border border-line bg-white text-base sm:text-[12.5px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        </div>
+        <select value={sort} onChange={e => setSort(e.target.value)} aria-label="Sort"
+          className="h-9 px-2.5 rounded-xl border border-line bg-white text-[12px] font-semibold text-ink focus:outline-none focus:ring-2 focus:ring-brand-200">
+          <option value="recent">Most recent stay</option>
+          <option value="oldest">Longest since a stay</option>
+          <option value="stays">Most stays</option>
+          <option value="nights">Most nights</option>
+          {money ? <option value="value">Highest value</option> : null}
+          <option value="rating">Best rated</option>
+          <option value="name">Name A–Z</option>
+        </select>
+        <button type="button" onClick={download} disabled={!exportRows.length}
+          className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white text-[12px] font-bold disabled:opacity-40">
+          <Download size={13} /> Export CSV
+        </button>
+        {/* COPY IS NOT EXPORT. A CSV gets read; a clipboard full of addresses gets pasted straight
+            into a campaign tool, so this one stays strict — mailable, and never a guest who left us
+            a low rating, whatever is on screen. */}
+        <button type="button" title={copyList.length.toLocaleString() + ' addresses you may email'}
+          onClick={() => { try { navigator.clipboard.writeText(copyList.join(', ')); setCopied(true); setTimeout(() => setCopied(false), 1600) } catch { /* blocked */ } }}
+          disabled={!copyList.length}
+          className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl border border-line bg-white text-[12px] font-bold text-muted hover:text-ink disabled:opacity-40">
           {copied ? 'Copied' : 'Copy emails'}
         </button>
       </div>
-      <div className="overflow-x-auto -mx-1 px-1">
-        <table className="w-full min-w-[620px] text-[12.5px] border-collapse">
-          <thead>
-            <tr className="text-left text-[10.5px] uppercase tracking-wide text-muted">
-              <th className="py-1.5 pr-3 font-semibold">Name</th>
-              <th className="py-1.5 pr-3 font-semibold">Email</th>
-              <th className="py-1.5 pr-3 font-semibold">Phone</th>
-              <th className="py-1.5 pr-3 font-semibold">Booked via</th>
-              <th className="py-1.5 pr-3 font-semibold">Stays</th>
-              <th className="py-1.5 font-semibold">Last stay</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.slice(0, 1000).map((r, i) => (
-              <tr key={i} className="border-t border-line/60">
-                <td className="py-1.5 pr-3 text-ink">{r.name}</td>
-                <td className="py-1.5 pr-3 break-all">{r.email || '—'}</td>
-                <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap">{r.phone || '—'}</td>
-                <td className="py-1.5 pr-3 text-muted">{r.channel}</td>
-                <td className="py-1.5 pr-3 tabular-nums">{r.stays}</td>
-                <td className="py-1.5 tabular-nums whitespace-nowrap text-muted">{r.lastStay || '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {shown.length > 1000 ? <div className="text-[11.5px] text-muted mt-2">Showing the first 1,000 — narrow the search to see the rest.</div> : null}
-        {!shown.length ? <div className="text-[12.5px] text-muted py-6 text-center">Nobody matches “{q}”.</div> : null}
+
+      <div>
+        <p className="text-[9.5px] uppercase tracking-wider font-bold text-muted mb-1.5">Channel</p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button onClick={() => setChan('')}
+            className={'text-[12px] font-semibold px-2.5 h-8 rounded-xl border transition ' + (!chan ? chipOn : chipOff)}>
+            All channels
+          </button>
+          {(s?.channels || []).map((c: any) => {
+            const isBlocked = blocked.some(r => r.toLowerCase() === String(c.label).toLowerCase())
+            return (
+              <button key={c.label} onClick={() => setChan(c.label === chan ? '' : c.label)}
+                title={isBlocked ? 'Blocked for marketing' : Number(c.mailable || 0).toLocaleString() + ' of these can be emailed'}
+                className={'text-[12px] font-semibold px-2.5 h-8 rounded-xl border transition inline-flex items-center gap-1.5 ' + (chan === c.label ? chipOn : chipOff)}>
+                {isBlocked ? <Ban size={11} className={chan === c.label ? 'text-white/70' : 'text-amber-600'} /> : null}
+                {c.label}
+                <span className={'tabular-nums font-bold ' + (chan === c.label ? 'text-white/70' : 'text-faint')}>
+                  {Number(c.count || 0).toLocaleString()}
+                </span>
+              </button>
+            )
+          })}
+        </div>
       </div>
-    </>
+
+      <div>
+        <p className="text-[9.5px] uppercase tracking-wider font-bold text-muted mb-1.5">Show</p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {CSEGS.map(x => (
+            <button key={x.key} onClick={() => setSeg(x.key)}
+              className={'text-[12px] font-semibold px-2.5 h-8 rounded-xl border transition ' + (seg === x.key ? chipOn : chipOff)}>
+              {x.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {(data.short || []).length ? (
+        <p className="text-[11.5px] text-amber-800 font-semibold">
+          The {(data.short || []).join(' and ')} read came back short, so ratings or tags may be missing on some rows.
+        </p>
+      ) : null}
+
+      {!shown.length ? (
+        <div className="rounded-xl bg-white ring-1 ring-line p-10 text-center text-[12.5px] text-muted">Nobody matches that.</div>
+      ) : (
+        <>
+          <p className="text-[11.5px] text-muted">
+            Showing {Math.min(shown.length, 1000).toLocaleString()}
+            {shown.length > 1000 ? ' of ' + shown.length.toLocaleString() + ' matches' : ''}
+            {' '}— sorted by {(SORT_LABEL[sort] || 'Most recent stay').toLowerCase()}. The CSV takes this filter and
+            this order: {exportRows.length.toLocaleString()} row{exportRows.length === 1 ? '' : 's'}
+            {CANNOT_SEGS.indexOf(seg) >= 0 ? '' : ', with anyone who left a low rating flagged rather than dropped'}.
+          </p>
+          <div className="rounded-xl bg-white ring-1 ring-line overflow-hidden">
+            <div className="divide-y divide-line">
+              {shown.slice(0, 1000).map((c, i) => <CRow key={c.key || i} c={c} money={money} />)}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function CRow({ c, money }: { c: any; money: boolean }) {
+  return (
+    <div className="px-3 py-2.5 flex items-start gap-3 flex-wrap sm:flex-nowrap">
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-semibold text-ink leading-tight flex items-center gap-1.5 flex-wrap">
+          <span className="truncate">{c.first} {c.last}</span>
+          {c.vip ? <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-100 text-violet-800">VIP</span> : null}
+          {c.inHouse ? <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">In house</span> : null}
+          {(c.tags || []).map((t: string) => <span key={t} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">{t}</span>)}
+        </p>
+        <p className="text-[11.5px] mt-0.5 flex items-center gap-1.5 flex-wrap">
+          {c.mail === 'mailable' ? (
+            <span className="inline-flex items-center gap-1 text-ink break-all"><Mail size={11} className="text-emerald-600 shrink-0" />{c.email}</span>
+          ) : c.mail === 'restricted' ? (
+            <span title={c.mailReason} className="inline-flex items-center gap-1 text-muted break-all">
+              <Ban size={11} className="text-amber-600 shrink-0" />
+              <span>{c.email}</span>
+              <span className="text-[10px] text-amber-700 font-semibold">{c.channel} — do not market</span>
+            </span>
+          ) : c.email ? (
+            <span title={c.mailReason} className="inline-flex items-center gap-1 text-muted break-all">
+              <MailX size={11} className="text-amber-600 shrink-0" />
+              <span className="line-through decoration-amber-400/60">{c.email}</span>
+              <span className="text-[10px] text-amber-700 font-semibold">not mailable</span>
+            </span>
+          ) : (
+            <span className="text-muted inline-flex items-center gap-1"><MailX size={11} /> no email</span>
+          )}
+          {c.phone ? <span className="text-muted">· {c.phone}</span> : null}
+        </p>
+        {c.mail !== 'mailable' && c.email ? <p className="text-[10.5px] text-amber-700 mt-0.5">{c.mailReason}</p> : null}
+      </div>
+
+      <div className="text-[11px] text-muted shrink-0 sm:w-[190px] leading-relaxed">
+        <p className="text-ink font-semibold text-[11.5px]">{c.channel || '—'}</p>
+        <p className="truncate" title={(c.units || []).join(', ')}>{c.lastUnit || '—'}</p>
+        {(c.units || []).length > 1 ? <p className="text-faint">+{c.units.length - 1} more unit{c.units.length > 2 ? 's' : ''}</p> : null}
+      </div>
+
+      <div className="text-[11px] text-muted shrink-0 sm:w-[145px] leading-relaxed">
+        <p className="inline-flex items-center gap-1 text-ink font-semibold text-[11.5px]">
+          <Repeat size={11} /> {c.stays} stay{c.stays === 1 ? '' : 's'}
+        </p>
+        <p>{c.nights} night{c.nights === 1 ? '' : 's'}{money && c.value != null ? ' · ' + usd(c.value) : ''}</p>
+        <p className="inline-flex items-center gap-1">
+          <Star size={10} className={c.reviews ? 'text-amber-500' : 'text-line'} />
+          {c.reviews ? c.reviews + ' review' + (c.reviews === 1 ? '' : 's') + (c.reviewAvg ? ' · ' + c.reviewAvg : '') : 'no reviews'}
+        </p>
+      </div>
+    </div>
   )
 }
