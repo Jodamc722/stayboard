@@ -5,7 +5,7 @@
 // project items be removed/added, and sections be hidden/shown (content.omit).
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
-import { createContext, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
@@ -603,29 +603,82 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null, logoData?: s
 }
 
 // ---------- tiny editable primitives (module scope: keeps input focus) ----------
-function Ed({ v, set, edit, className, multiline, placeholder }: {
+// AN EDIT BOX HAS TO BE THE SIZE OF THE TEXT IT REPLACES.
+//
+// Jon, 2026-09-17, with a screenshot of the team slide in edit mode: "look when I click edit."
+// Every headline had a box twice its own height, the cards below were sliced off mid-photo, and
+// the names, roles and blurbs were pushed off the slide entirely.
+//
+// The cause was `rows={Math.max(2, ceil(len / 60))}`. "Meet your team" is fourteen characters,
+// so it asked for the minimum of two rows -- at a 40px display face that is ~88px of textarea
+// standing in for ~44px of rendered heading. Every multiline field on every slide paid that
+// tax, and on a fixed 630px canvas the overflow has nowhere to go.
+//
+// A textarea cannot size to its content in CSS, so it is measured: set the height to nothing,
+// read scrollHeight, set that. Done in a layout effect, so it happens before paint and never
+// flashes at the wrong size, and repeated on every keystroke so the box grows with the sentence
+// as it is typed. Edit mode now occupies the same space the finished slide does, which is the
+// only way a WYSIWYG page on a fixed canvas can work.
+function AutoArea({ v, set, className, placeholder, style, max }: {
+  v: string; set: (s: string) => void; className?: string; placeholder?: string; style?: Any; max?: number
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const fit = () => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = '0px'
+    const want = el.scrollHeight
+    el.style.height = (max && want > max ? max : want) + 'px'
+    el.style.overflowY = (max && want > max) ? 'auto' : 'hidden'
+  }
+  useLayoutEffect(fit, [v])
+  // The slide is scaled by a transform and re-scaled on resize; a box measured at one scale is
+  // still right at another, but a font landing late is not, so re-measure once fonts settle.
+  useEffect(() => {
+    let done = false
+    const again = () => { if (!done) fit() }
+    const id = setTimeout(again, 300)
+    try { (document as Any).fonts?.ready?.then?.(again) } catch { /* no font API */ }
+    return () => { done = true; clearTimeout(id) }
+  }, [])
+  return (
+    <textarea
+      ref={ref}
+      value={v}
+      placeholder={placeholder}
+      onChange={e => { set(e.target.value); fit() }}
+      rows={1}
+      className={(className || '') + ' w-full rounded-md px-1.5 outline-none block'}
+      style={{
+        color: 'inherit', font: 'inherit', letterSpacing: 'inherit', lineHeight: 'inherit',
+        background: 'var(--ed-bg)', border: '1px dashed var(--ed-border)',
+        resize: 'none', overflow: 'hidden', paddingTop: 1, paddingBottom: 1,
+        ...(style || {}),
+      }}
+    />
+  )
+}
+
+function Ed({ v, set, edit, className, multiline, placeholder, max }: {
   v: string; set: (s: string) => void; edit: boolean; className?: string; multiline?: boolean; placeholder?: string
+  /** Cap the grown height, for a field in a box that cannot grow with it (a team card). */
+  max?: number
 }) {
   if (!edit) return <span className={className}>{v}</span>
-  if (multiline) {
-    return (
-      <textarea
-        value={v}
-        placeholder={placeholder}
-        onChange={e => set(e.target.value)}
-        rows={Math.max(2, Math.ceil((v || '').length / 60))}
-        className={(className || '') + ' w-full rounded-md px-1.5 py-0.5 outline-none'}
-        style={{ color: 'inherit', font: 'inherit', letterSpacing: 'inherit', background: 'var(--ed-bg)', border: '1px dashed var(--ed-border)' }}
-      />
-    )
-  }
+  if (multiline) return <AutoArea v={v} set={set} className={className} placeholder={placeholder} max={max} />
   return (
     <input
       value={v}
       placeholder={placeholder}
       onChange={e => set(e.target.value)}
       className={(className || '') + ' rounded-md px-1.5 outline-none min-w-0'}
-      style={{ color: 'inherit', font: 'inherit', letterSpacing: 'inherit', width: Math.max(4, (v || '').length + 2) + 'ch', background: 'var(--ed-bg)', border: '1px dashed var(--ed-border)' }}
+      style={{
+        color: 'inherit', font: 'inherit', letterSpacing: 'inherit',
+        // Wide enough for the text, never wider than the box it sits in: "Roberto Chiriboga"
+        // asking for 19ch inside a 229px card is what pushes a column out of its grid.
+        width: Math.max(4, (v || '').length + 2) + 'ch', maxWidth: '100%',
+        background: 'var(--ed-bg)', border: '1px dashed var(--ed-border)',
+      }}
     />
   )
 }
@@ -2399,7 +2452,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
                           overflow: 'hidden',
                         } as Any}>
-                          <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do&hellip;" />
+                          <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline max={36} placeholder="What they do&hellip;" />
                         </p>
                         {/* CONTACT ON THE CARD (Jon, 2026-09-16: "Contact info"). The whole
                             promise of this slide is that the owner leaves with a number, not
