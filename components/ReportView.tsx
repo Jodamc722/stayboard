@@ -2555,8 +2555,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     — past that the cards are too narrow to read on a call. */}
                 <div className="flex-1 min-h-0 flex items-start" style={{ marginTop: 22, overflow: 'hidden' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.min(6, Math.max(1, (sec('team').people || []).length || 1)) + ',1fr)', gap: (sec('team').people || []).length > 4 ? 16 : 24, width: '100%' }}>
+                    {/* CONTACT SITS ON THE FLOOR OF THE CARD, NOT UNDER THE ROLE. Two of these
+                        four have a direct line and two do not, so a block that simply follows
+                        the role puts half the emails on one baseline and half a line lower —
+                        four cards, two ragged rows of addresses. Pushing the block to the bottom
+                        of an equal-height card lands every email on the same line whether or not
+                        there is a number above it. */}
                     {(sec('team').people || []).slice(0, 6).map((p: Any, pi: number) => (
-                      <div key={pi}>
+                      <div key={pi} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                         {/* ZOOM OUT BY MAKING THE FRAME PORTRAIT, NOT BY MAKING IT SHORTER
                             (Jon, 2026-09-17: "readjust my photo, general manager, to fit better
                             — zoom it out, not so in"). The frame ran the full card width at 229
@@ -2616,7 +2622,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             rather than re-cropping it: still 83% of the person in frame, 28px
                             back in the budget, and the whole card inside the row. */}
                         {(p.phone || p.email || edit) ? (
-                        <div style={{ marginTop: 9, paddingTop: 9, borderTop: '1px solid ' + t.rule }}>
+                        <div style={{ marginTop: 'auto', paddingTop: 9, borderTop: '1px solid ' + t.rule }}>
                           <p style={{ fontSize: 12.5, color: t.ink }}>
                             <Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" />
                           </p>
