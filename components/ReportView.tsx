@@ -11,6 +11,7 @@ import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 import { SAMPLE_STATEMENT, statementHasRows } from '@/lib/statement-sample'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
+import { SEASON_SHAPE } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS } from '@/lib/channel-marks'
 
@@ -2846,7 +2847,17 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         // the year has a shape. Monotone cubic interpolation, so the line never
                         // overshoots above a peak or dips below a trough the way a naive spline
                         // does — an invented bump between February and March would be a claim.
-                        const ms: Any[] = sec('season').months || []
+                        // THE CURVE IS THE MARKET'S, NOT THIS OWNER'S, SO IT LIVES IN CODE.
+                        // Decks generated before 2026-09-17 stored the old hand-drawn 0-6 scale
+                        // with September at 0, which draws the line onto the axis and tells an
+                        // owner their unit earns nothing in September (Jon: "the drop is way too
+                        // dramatic"). Those levels are recognisable — a real index peaks at 100 —
+                        // so an old deck is re-pointed at the measured shape instead of being
+                        // left showing a cliff. A deck whose curve has been edited by hand keeps
+                        // the edit, because an edited one will not be on the old scale.
+                        const stored: Any[] = sec('season').months || []
+                        const topLvl = Math.max(0, ...stored.map((m: Any) => Number(m.level) || 0))
+                        const ms: Any[] = (stored.length === 12 && topLvl <= 12) ? (SEASON_SHAPE as Any[]) : stored
                         if (ms.length < 2) return null
                         const W = 620, H = 196, PAD = 14
                         const max = Math.max(1, ...ms.map((m: Any) => Number(m.level) || 0))
