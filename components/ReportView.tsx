@@ -1614,6 +1614,23 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           <button onClick={downloadPptx} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {busy === 'pptx' ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} PPTX
           </button>
+          {/* PDF is the format an owner can actually be sent (Jon, 2026-09-17). The print
+              stylesheet already lays the deck out one slide to a landscape page at full size, so
+              this only has to leave edit mode first — the dashed field outlines and the spill
+              badge are tools, not something to hand someone — and open the print dialog, where
+              "Save as PDF" is the destination. Rendering server-side would mean a headless
+              browser in the deploy; the browser already here does it faithfully, because it is
+              the same engine that drew the slides. */}
+          <button
+            onClick={() => {
+              if (edit) setEdit(false)
+              setTimeout(() => { try { window.print() } catch { /* dialog blocked */ } }, edit ? 400 : 60)
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+            style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}
+            title="One slide per page — choose Save as PDF in the print dialog">
+            <Download size={12} /> PDF
+          </button>
           <button onClick={sendToDrive} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {busy === 'drive' ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />} Slides
           </button>
@@ -1808,6 +1825,35 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         @media print {
           .sb-noprint { display: none !important; }
           .sb-report > section { break-inside: avoid; }
+        }
+        /* ONE SLIDE, ONE PAGE (Jon, 2026-09-17: "I can share this link with owners… in PDF
+           format"). A deck on screen is a column of slides, each drawn on a 1120x630 canvas and
+           scaled down by a transform to whatever width the column happens to be. Printed as-is
+           that gives a strip of shrunken slides two to a sheet with the page breaks landing
+           wherever they land.
+           So for print the scale is dropped and the canvas prints at its authored size, one to a
+           page, on a sheet cut to the same 16:9 — the page IS the slide, with no margin to
+           letterbox it. The !important flag is what reaches the inline transform React writes.
+           print-color-adjust keeps the navy slides navy; without it the dark pages come out
+           white and the reversed type disappears. */
+        @page { size: 296mm 167mm; margin: 0; }
+        @media print {
+          html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
+          body * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          .sb-report, .sb-deck { max-width: none !important; width: 1120px !important;
+            margin: 0 !important; padding: 0 !important; }
+          .sb-deck > section, .sb-deck > header {
+            margin: 0 !important; padding: 0 !important; border: 0 !important;
+            break-after: page; page-break-after: always; break-inside: avoid; page-break-inside: avoid; }
+          .sb-deck > section:last-of-type { break-after: auto; page-break-after: auto; }
+          .sb-slide, .onb-cover {
+            width: 1120px !important; height: 630px !important; min-height: 0 !important;
+            aspect-ratio: auto !important; border-radius: 0 !important; border: 0 !important;
+            box-shadow: none !important; overflow: hidden !important; }
+          .sb-slide-canvas { transform: none !important; width: 1120px !important; height: 630px !important; }
+          /* The spill badge and the edit affordances are working tools, never artefacts on a
+             page an owner is holding. */
+          .sb-pick, textarea, input { border-color: transparent !important; background: transparent !important; }
         }
         /* SNAP ON PROXIMITY, NOT MANDATORY (Jon, 2026-09-16: "present mode moves seamlessly
            through the sections without cutting anything off"). Mandatory snapping pins the
@@ -2483,12 +2529,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             cur={String(p.photo)}
                             set={u => patch('team.people.' + pi + '.photo', u)}
                             pos="center 20%"
-                            style={{ width: 124, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 10 }}
+                            style={{ width: 142, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 12 }}
                           />
                         ) : (
                           <div
                             onClick={canEdit ? () => { setPhotoUrl(''); setPhotoPick({ title: 'Headshot \u2014 ' + String(p.name || ''), cur: '', set: u => patch('team.people.' + pi + '.photo', u) }) } : undefined}
-                            style={{ width: 124, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 10, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
+                            style={{ width: 142, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
@@ -2498,17 +2544,21 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         <p style={{ fontSize: 12.5, color: t.accent, marginTop: 2 }}>
                           <Ed v={p.role || ''} set={v => patch('team.people.' + pi + '.role', v)} edit={edit} />
                         </p>
-                        <p style={{
-                          fontSize: 12, lineHeight: 1.45, color: t.muted, marginTop: 6,
-                          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                        } as Any}>
-                          <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline max={36} placeholder="What they do&hellip;" />
-                        </p>
+                        {/* NO BLURB (Jon, 2026-09-17: "just remove this part of the about team,
+                            title is fine"). Two clamped lines ending in an ellipsis said less
+                            than the role above them already did, and four of them across the row
+                            read as four unfinished sentences. The name and the title carry it.
+                            The field is still on the record and still saved to the template — it
+                            is only off this card, so nothing is lost if it earns a place back. */}
                         {/* CONTACT ON THE CARD (Jon, 2026-09-16: "Contact info"). The whole
                             promise of this slide is that the owner leaves with a number, not
                             an inbox — so the number is on the slide, not in a footnote. */}
-                        <div style={{ marginTop: 11, paddingTop: 10, borderTop: '1px solid ' + t.rule }}>
+                        {/* The card is down to a name, a title and how to reach them, so an
+                            empty contact block is just a stray rule under a role. It draws only
+                            when there is something in it, or when you are editing and need the
+                            fields to type into. */}
+                        {(p.phone || p.email || edit) ? (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + t.rule }}>
                           <p style={{ fontSize: 12.5, color: t.ink }}>
                             <Ed v={p.phone || ''} set={v => patch('team.people.' + pi + '.phone', v)} edit={edit} placeholder="Direct line" />
                           </p>
@@ -2516,6 +2566,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             <Ed v={p.email || ''} set={v => patch('team.people.' + pi + '.email', v)} edit={edit} placeholder="Email" />
                           </p>
                         </div>
+                        ) : null}
                         {edit && (
                           <button
                             onClick={() => mutate(d => { d.team.people.splice(pi, 1) })}
