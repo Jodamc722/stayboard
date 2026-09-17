@@ -35,7 +35,16 @@
 // replacement that stays in the unit. Coffee, paper goods and dish soap are ours. Keep every
 // example on this statement something an owner would expect to pay for and recognise.
 //
-// The per-booking detail foots to the same place: 698.10 + 1,089.80 = 1,787.90. Twenty-one
+// EXPENSES ARE LUMPED AT THE TOP, AT THEIR FULL AMOUNT (Jon, 2026-09-17: "billable labor is
+// lumped in at the top, its full amount"). The issued statement keeps two things apart: the
+// per-booking financials -- rental, commission, channel fee, parking -- and the owner expenses,
+// which are one line each for the month. Splitting the month's labour across the two stays,
+// which is what this sample used to do, invents a link between a booking and a job that the
+// real document does not make, and it buries the number the owner actually asks about behind
+// two part-amounts. Supplies are handled the same way, for the same reason.
+//
+// So the detail foots to the booking subtotal -- 822.10 + 1,220.60 = 2,042.70 -- and the two
+// expense lines carry that down to the 1,787.90 payout. Twenty-one
 // nights across the two stays is 68% of August, which is the occupancy in the strip. If you
 // change a figure here, change its partners: nothing in this object is independent of the rest.
 import type { KV } from './onboarding-report'
@@ -83,10 +92,8 @@ export const SAMPLE_STATEMENT: SampleStatement = {
         { date: 'Aug 2', desc: 'Rental payment for HMABC12345', cat: 'Rental income', amt: m(1024) },
         { date: 'Aug 2', desc: 'PMC commission — 20% of rental', cat: 'Management fee', amt: MINUS + m(204.8), neg: true },
         { date: 'Aug 2', desc: 'Airbnb RM channel fee reimbursement', cat: 'Channel commission', amt: m(2.9) },
-        { date: 'Aug 6', desc: 'Replacement table lamp — living room', cat: 'Supplies and purchases', amt: MINUS + m(64), neg: true },
-        { date: 'Aug 7', desc: 'Kitchen faucet cartridge — 1.5h at $40', cat: 'Maintenance — owner charge', amt: MINUS + m(60), neg: true },
       ],
-      total: m(698.1),
+      total: m(822.1),
     },
     {
       guest: 'R. Whitfield', stay: 'Aug 14 – Aug 29 · 15 nights',
@@ -94,10 +101,8 @@ export const SAMPLE_STATEMENT: SampleStatement = {
         { date: 'Aug 14', desc: 'Rental payment for BC-9KD3LM', cat: 'Rental income', amt: m(1432) },
         { date: 'Aug 14', desc: 'PMC commission — 20% of rental', cat: 'Management fee', amt: MINUS + m(286.4), neg: true },
         { date: 'Aug 14', desc: 'Nightly parking', cat: 'Parking', amt: m(75) },
-        { date: 'Aug 20', desc: 'Bath mat and shower curtain liner', cat: 'Supplies and purchases', amt: MINUS + m(22.8), neg: true },
-        { date: 'Aug 23', desc: 'A/C service and filter change — 2.7h at $40', cat: 'Maintenance — owner charge', amt: MINUS + m(108), neg: true },
       ],
-      total: m(1089.8),
+      total: m(1220.6),
     },
   ],
   propertyIncome: { k: 'Property income', v: m(2533.9) },

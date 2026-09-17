@@ -42,6 +42,8 @@ export type ListingCard = {
   // a call: the photos a guest meets first, the live channel links, and the words.
   links: OtaLink[]
   photos: string[]
+  /** EVERY picture on the listing, for the photo picker. See listingCardFrom. */
+  allPhotos: string[]
   title: string
   summary: string
   space: string
@@ -96,7 +98,7 @@ export type OnboardingContent = {
   ramp: Sec<{ headline: string; subtitle: string; bands: KV[]; note: string; asks: Ask[] }>
   season: Sec<{
     headline: string; subtitle: string; body: string
-    months: { m: string; level: number }[]; note: string; asks: Ask[]
+    months: { m: string; level: number; peak?: boolean }[]; note: string; asks: Ask[]
     /** The shape of the year as a share, not a dollar figure — no invented numbers on a deck. */
     peakShare: string; peakLabel: string; lowNote: string
   }>
@@ -286,13 +288,17 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   seasonBody:
     'Your season is December through April, and it builds to a peak in March. That is when the demand is, that is when the rate is, and that is the window everything else in the year is preparing for. The year falls away from there through the summer; September is the floor, and the climb back starts in October.',
-  peakShare: '65%',
+  // 55%, NOT 65%. Measured, not asserted: our own book puts December-April at 60% of the
+  // year, but that 60% leans on Sep-Nov months where the reservations mirror is thin. With
+  // the trough at the level PriceLabs and AirROI both measure, the honest share is 55%.
+  // An owner can check this one against their own statements a year from now.
+  peakShare: '55%',
   peakLabel: 'of the year\u2019s revenue lands December through April',
 
   seasonLowNote: 'September is the floor \u2014 the quietest month of the year, and the one we use for deep cleans, touch-ups and anything that needs the unit empty.',
 
   seasonNote:
-    'Shape only — this is the market’s year, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
+    'Shape from our own book across 400+ units, cross-checked against Miami market data — the year’s shape, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
 
   // THE FOUR PEOPLE AN OWNER MEETS (Jon, 2026-09-16: "the about the team should be Roberto,
   // Karla, Jonathan (me) and Bernadette"). Written once here rather than pulled from the staff
@@ -470,12 +476,36 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
 }
 
 // ── the season's shape. House doctrine, not a forecast: six peak months, two at the floor. ──
-const SEASON_SHAPE: { m: string; level: number }[] = [
-  // March is the single peak (Jon, 2026-09-16), the season builds to it from December, and the
-  // year falls away from there to a September floor before the slow climb back.
-  { m: 'J', level: 4 }, { m: 'F', level: 5 }, { m: 'M', level: 6 }, { m: 'A', level: 4 },
-  { m: 'M', level: 3 }, { m: 'J', level: 2 }, { m: 'J', level: 2 }, { m: 'A', level: 1 },
-  { m: 'S', level: 0 }, { m: 'O', level: 1 }, { m: 'N', level: 2 }, { m: 'D', level: 4 },
+// THE YEAR, FROM REAL NUMBERS (Jon, 2026-09-17: "the drop is way too dramatic, use real data
+// on rev in south florida, based on seasons — just to get a real idea of the trends").
+//
+// The old shape was a hand-drawn 0-6 scale with September at 0, which the chart renders as the
+// curve touching the axis: a slide telling a new owner their unit earns NOTHING in September.
+// That is not what happens and it is not what our own book says.
+//
+// These are index values against March = 100, blended from three sources that agree on the
+// shape and disagree only about how deep the trough goes:
+//
+//   1. OUR OWN BOOK. Revenue per booked unit by check-in month, Sep 2025 - Aug 2026, one clean
+//      year normalised per listing so portfolio growth cannot fake a season:
+//      J 66 / F 81 / M 100 / A 70 / M 49 / J 45 / J 46 / A 42 / S 24 / O 22 / N 31 / D 65.
+//   2. PriceLabs, Miami: RevPAR peaks at $179 in March, $130 April, $112 May, under $100 in
+//      August-September; low season runs 40-55% below peak.
+//   3. AirROI, Miami: March is the high (revenue $6,509, 59.7% occupancy), September the floor
+//      (revenue $2,915, 27.8% occupancy) — a trough at 45% of the peak.
+//
+// WHERE THEY DISAGREE, THE MARKET WINS, AND ONLY FOR SEP-NOV. Our mirror holds 83/99/125
+// listings with bookings in those months against 160-221 across the winter, so the 22-31 in our
+// own data is thin coverage, not demand. Those three months are floored at the 40-48 both
+// market sources support. Every other month is ours as measured.
+//
+// This puts December-April at 55% of the year, not the 65% the deck claimed. See peakShare.
+const SEASON_SHAPE: { m: string; level: number; peak?: boolean }[] = [
+  { m: 'J', level: 66, peak: true }, { m: 'F', level: 81, peak: true },
+  { m: 'M', level: 100, peak: true }, { m: 'A', level: 70, peak: true },
+  { m: 'M', level: 49 }, { m: 'J', level: 45 }, { m: 'J', level: 46 }, { m: 'A', level: 42 },
+  { m: 'S', level: 40 }, { m: 'O', level: 43 }, { m: 'N', level: 48 },
+  { m: 'D', level: 65, peak: true },
 ]
 
 const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
@@ -519,6 +549,11 @@ export function listingCardFrom(
     // THE FIRST FIVE, IN ORDER (Jon, 2026-09-16). Nobody scrolls past these on a phone, which is
     // why photos carry 18% of the optimize score on their own.
     photos: pics.slice(0, 5),
+    // AND EVERY PICTURE BEHIND THEM (Jon, 2026-09-17: "have more photos to select from, should
+    // be from the actual listing"). The five above are what the slide shows; the picker was
+    // offering only those five, so changing a photo meant choosing between the same five already
+    // on the page. The whole listing goes in the pool.
+    allPhotos: pics,
     title: String(raw.title || l.title || ''),
     summary: String(pub.summary || ''),
     space: String(pub.space || ''),
@@ -556,9 +591,18 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
   // photos of the listing throughout the presentation"). Sections draw from the pool in rotation
   // so a deck about their property actually looks like their property; each one is swappable in
   // the editor afterwards.
+  // TWO SETS, AND THE DIFFERENCE MATTERS. `pool` is what the picker offers: every photo on
+  // every listing in this onboarding, so an owner can put any of their own images on any slide.
+  // `lead` is what a slide gets AUTOMATICALLY: only the first five per listing, which are the
+  // ones the collage check actually verified. Auto-placing from the full pool would eventually
+  // drop an unchecked marketing collage onto a slide by itself, which is the thing we removed.
   const pool: string[] = []
-  for (const cd of i.cards) for (const ph of cd.photos) if (pool.indexOf(ph) < 0) pool.push(ph)
-  const pic = (n: number): string => (pool.length ? pool[n % pool.length] : '')
+  for (const cd of i.cards) for (const ph of (cd.allPhotos && cd.allPhotos.length ? cd.allPhotos : cd.photos)) {
+    if (pool.indexOf(ph) < 0) pool.push(ph)
+  }
+  const lead: string[] = []
+  for (const cd of i.cards) for (const ph of cd.photos) if (lead.indexOf(ph) < 0) lead.push(ph)
+  const pic = (n: number): string => (lead.length ? lead[n % lead.length] : (pool.length ? pool[n % pool.length] : ''))
   const rate = t.laborRate
   const limit = t.approvalLimit
 
