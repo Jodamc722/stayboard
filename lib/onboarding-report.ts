@@ -753,8 +753,14 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // it — the billables doctrine folded in, because the statement is where an owner meets it.
     statement: {
       headline: 'Your monthly owner statement',
-      subtitle: 'Issued from Guesty the month after it closes. This is an example, with the arithmetic intact.',
-      unitLabel: i.cards[0] ? i.cards[0].name : i.scopeLabel,
+      subtitle: 'A worked sample, not your numbers \u2014 so you know how to read the real one.',
+      // THE SAMPLE IS THE SAME SAMPLE FOR EVERY OWNER (Jon, 2026-09-17: "the owner statement is
+      // a sample one to show the owner and explain how to read \u2014 should be a standard slide, so
+      // once we build it, it's the default one we use"). It used to carry the owner's own unit
+      // name at the top, which read as their statement rather than a teaching example. The line
+      // items, the arithmetic and the labels are the house standard; only the management rate
+      // follows settings, because that is the number the owner is actually agreeing to.
+      unitLabel: 'Sample statement \u00b7 2 BR / 2 BA condo',
       period: 'Example month \u00b7 August',
       kpis: [
         { k: 'Occupancy', v: '68%' },
