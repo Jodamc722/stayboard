@@ -108,7 +108,11 @@ export function SharedView({ code }: { code: string }) {
         </p>
       </div>
 
-      <div className={'px-3 pt-3 space-y-3 mx-auto ' + (s.team ? 'max-w-5xl' : 'max-w-2xl')}>
+      {/* HOW WIDE THE COLUMN IS, by what is in it. max-w-2xl is right for a partner report read on
+          a phone — a dozen rows of two fields. It is wrong for a mailing list: at 672px a contact
+          row had to stack the email under the name and wrap it mid-word, and the filter chips ran to
+          four ragged lines. The list and the crew planner get a real table width. */}
+      <div className={'px-3 pt-3 space-y-3 mx-auto ' + (s.contacts && !s.contacts.locked ? 'max-w-6xl' : s.team ? 'max-w-5xl' : 'max-w-2xl')}>
         {s.revenue ? (
           <Sec Icon={TrendingUp} title="Performance" sub={s.revenue.basis}>
             <div className="grid grid-cols-3 divide-x divide-neutral-100">
@@ -411,6 +415,7 @@ function ContactsTable({ data }: { data: any }) {
   const [chan, setChan] = useState('')
   const [sort, setSort] = useState('recent')
   const [copied, setCopied] = useState(false)
+  const [why, setWhy] = useState(false)
   useEffect(() => { const t = setTimeout(() => setQ(typed.trim().toLowerCase()), 250); return () => clearTimeout(t) }, [typed])
 
   const rows: any[] = Array.isArray(data.rows) ? data.rows : []
@@ -513,7 +518,7 @@ function ContactsTable({ data }: { data: any }) {
   const chipOff = 'bg-white text-muted border-line hover:text-ink hover:border-ink/25'
 
   return (
-    <div className="space-y-3.5">
+    <div className="space-y-3">
       {s ? (
         <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
           <CStat label="Contacts" value={Number(s.contacts || 0).toLocaleString()}
@@ -530,39 +535,53 @@ function ContactsTable({ data }: { data: any }) {
         </div>
       ) : null}
 
-      {/* WHO IS OFF LIMITS, AND WHY. Said once, next to the number it explains — the reader of a
-          shared link is the likeliest person to paste a column into a campaign tool without it. */}
+      {/* WHO IS OFF LIMITS, AND WHY — one line each, not three paragraphs.
+          The long version was correct and nobody read it: it filled a third of the screen above the
+          thing you came for, and the same wall reappeared on every load. Each rule is now one line
+          you can act on — the number, what it means, and the chip that shows you those people. The
+          reasoning still exists, one click away, for the reader who wants it. */}
       {s && (s.relay > 0 || s.restricted > 0 || s.unhappy > 0) ? (
-        <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3.5 py-2.5 space-y-2">
-          {s.unhappy > 0 ? (
-            <div className="flex items-start gap-2">
-              <Star size={14} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="min-w-0 text-[12px] text-amber-900 leading-relaxed">
-                <span className="font-bold">{Number(s.unhappy).toLocaleString()} left us three stars or fewer.</span>{' '}
-                They are kept out of the default export. The test is their <b>lowest</b> rating, not their average —
-                winning them back is a phone call, not a campaign.{' '}
-                <button onClick={() => setSeg('unhappy')} className="underline font-semibold">See who</button>
-              </p>
-            </div>
-          ) : null}
-          {s.restricted > 0 ? (
-            <div className="flex items-start gap-2">
-              <Ban size={14} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="min-w-0 text-[12px] text-amber-900 leading-relaxed">
-                <span className="font-bold">{Number(s.restricted).toLocaleString()} are blocked by their booking channel.</span>{' '}
-                {blocked.join(', ') || 'No channels'} forbid marketing to guests booked through them, and they hand over a
-                real address, so the address alone cannot tell you. A guest who later books direct is yours again.
-              </p>
-            </div>
-          ) : null}
-          {s.relay > 0 ? (
-            <div className="flex items-start gap-2">
-              <AlertTriangle size={14} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="min-w-0 text-[12px] text-amber-900 leading-relaxed">
-                <span className="font-bold">{Number(s.relay).toLocaleString()} only ever gave a channel forwarding address</span>
-                {' '}— <span className="font-mono text-[11px]">a1b2c3@guest.airbnb.com</span> and the like. They stop working
-                when the booking closes and they bounce. Kept here for lookup, never exported.
-              </p>
+        <div className="rounded-xl bg-amber-50/70 ring-1 ring-amber-200/80 px-3.5 py-2.5">
+          <div className="flex items-start justify-between gap-3">
+            <ul className="min-w-0 space-y-1.5">
+              {s.unhappy > 0 ? (
+                <li className="flex items-center gap-2 text-[12px] text-amber-900">
+                  <Star size={13} className="text-amber-600 shrink-0" />
+                  <span><b>{Number(s.unhappy).toLocaleString()}</b> left three stars or fewer — flagged in the export, never in Copy emails.</span>
+                  <button onClick={() => setSeg('unhappy')} className="underline font-semibold shrink-0">Show</button>
+                </li>
+              ) : null}
+              {s.restricted > 0 ? (
+                <li className="flex items-center gap-2 text-[12px] text-amber-900">
+                  <Ban size={13} className="text-amber-600 shrink-0" />
+                  <span><b>{Number(s.restricted).toLocaleString()}</b> blocked by their channel ({blocked.join(', ') || 'none set'}) — real addresses we may not market to.</span>
+                  <button onClick={() => setSeg('restricted')} className="underline font-semibold shrink-0">Show</button>
+                </li>
+              ) : null}
+              {s.relay > 0 ? (
+                <li className="flex items-center gap-2 text-[12px] text-amber-900">
+                  <AlertTriangle size={13} className="text-amber-600 shrink-0" />
+                  <span><b>{Number(s.relay).toLocaleString()}</b> gave only a channel forwarding address — they expire and bounce.</span>
+                  <button onClick={() => setSeg('relay')} className="underline font-semibold shrink-0">Show</button>
+                </li>
+              ) : null}
+            </ul>
+            <button onClick={() => setWhy(v => !v)}
+              className="shrink-0 text-[11px] font-bold text-amber-800 underline underline-offset-2">
+              {why ? 'Hide' : 'Why'}
+            </button>
+          </div>
+          {why ? (
+            <div className="mt-2.5 pt-2.5 border-t border-amber-200/70 space-y-1.5 text-[11.5px] text-amber-900 leading-relaxed">
+              <p><b>Low ratings.</b> The test is their <b>lowest</b> rating, not their average — a guest who loved three
+                stays and gave a 2 for the fourth is exactly who a cheerful come-back email lands worst with. Winning
+                them back is a phone call, not a campaign.</p>
+              <p><b>Channel-blocked.</b> {blocked.join(', ') || 'These channels'} forbid marketing to guests booked
+                through them, and they hand over a real address — so the address alone cannot tell you. A guest who
+                later books direct is yours again and comes off this list.</p>
+              <p><b>Relay addresses.</b> <span className="font-mono text-[11px]">a1b2c3@guest.airbnb.com</span> and the
+                like. They forward only while the booking is live, then bounce. Kept here so the desk can still look a
+                guest up by the address the channel gave.</p>
             </div>
           ) : null}
         </div>
@@ -601,8 +620,10 @@ function ContactsTable({ data }: { data: any }) {
         </button>
       </div>
 
-      <div>
-        <p className="text-[9.5px] uppercase tracking-wider font-bold text-muted mb-1.5">Channel</p>
+      {/* Label beside the chips, not stacked over them — two stacked label rows cost 40px of
+          vertical space each and pushed the list itself below the fold. */}
+      <div className="flex items-baseline gap-2.5">
+        <p className="shrink-0 w-[58px] text-[9.5px] uppercase tracking-wider font-bold text-faint pt-1.5">Channel</p>
         <div className="flex items-center gap-1.5 flex-wrap">
           <button onClick={() => setChan('')}
             className={'text-[12px] font-semibold px-2.5 h-8 rounded-xl border transition ' + (!chan ? chipOn : chipOff)}>
@@ -625,8 +646,8 @@ function ContactsTable({ data }: { data: any }) {
         </div>
       </div>
 
-      <div>
-        <p className="text-[9.5px] uppercase tracking-wider font-bold text-muted mb-1.5">Show</p>
+      <div className="flex items-baseline gap-2.5">
+        <p className="shrink-0 w-[58px] text-[9.5px] uppercase tracking-wider font-bold text-faint pt-1.5">Show</p>
         <div className="flex items-center gap-1.5 flex-wrap">
           {CSEGS.map(x => (
             <button key={x.key} onClick={() => setSeg(x.key)}
@@ -650,12 +671,20 @@ function ContactsTable({ data }: { data: any }) {
           <p className="text-[11.5px] text-muted">
             Showing {Math.min(shown.length, 1000).toLocaleString()}
             {shown.length > 1000 ? ' of ' + shown.length.toLocaleString() + ' matches' : ''}
-            {' '}— sorted by {(SORT_LABEL[sort] || 'Most recent stay').toLowerCase()}. The CSV takes this filter and
-            this order: {exportRows.length.toLocaleString()} row{exportRows.length === 1 ? '' : 's'}
-            {CANNOT_SEGS.indexOf(seg) >= 0 ? '' : ', with anyone who left a low rating flagged rather than dropped'}.
+            {' '}· sorted by {(SORT_LABEL[sort] || 'Most recent stay').toLowerCase()}
+            <span className="text-faint"> · </span>
+            <span className="text-ink font-semibold">CSV: {exportRows.length.toLocaleString()} row{exportRows.length === 1 ? '' : 's'}</span>
+            <span className="text-faint"> (this filter, this order)</span>
           </p>
+          {s && Number(s.contacts || 0) > rows.length ? (
+            <p className="text-[11px] text-amber-800 font-semibold">
+              This link carries the first {rows.length.toLocaleString()} of {Number(s.contacts).toLocaleString()} contacts.
+              Narrow the link's scope to see the rest.
+            </p>
+          ) : null}
           <div className="rounded-xl bg-white ring-1 ring-line overflow-hidden">
-            <div className="divide-y divide-line">
+            <CHead money={money} />
+            <div className="divide-y divide-line/70">
               {shown.slice(0, 1000).map((c, i) => <CRow key={c.key || i} c={c} money={money} />)}
             </div>
           </div>
@@ -666,54 +695,91 @@ function ContactsTable({ data }: { data: any }) {
 }
 
 function CRow({ c, money }: { c: any; money: boolean }) {
+  // ONE LINE PER PERSON, COLUMNS THAT LINE UP (Jon, 2026-09-17: "clean the format and the visuals" /
+  // "it does not fit the page properly").
+  //
+  // What was wrong: the email was allowed to wrap mid-word, so a relay address broke as
+  // "…expediapartnercen / tral.com"; the "not mailable" caption wrapped to "not maila / ble"; and the
+  // reason sentence was repeated in full under EVERY row, which on an Expedia-heavy page meant the
+  // same forty words forty times. Three columns of real data turned into a 140px block of noise.
+  //
+  // Now: the address truncates with the full value in the tooltip, the mail state is a chip whose
+  // tooltip carries the reason (the panel above explains each kind once, which is where an
+  // explanation belongs), and the columns are fixed widths so the eye can run down them.
+  const pill = c.mail === 'mailable' ? null
+    : c.mail === 'restricted' ? { t: 'Blocked', cls: 'bg-amber-100 text-amber-800' }
+    : c.mail === 'relay' ? { t: 'Relay', cls: 'bg-amber-100 text-amber-800' }
+    : { t: 'No email', cls: 'bg-neutral-100 text-neutral-500' }
   return (
-    <div className="px-3 py-2.5 flex items-start gap-3 flex-wrap sm:flex-nowrap">
+    <div className="px-3.5 py-2 flex items-center gap-3 hover:bg-neutral-50/70">
+      {/* WHO — name over address. The only column allowed to take the slack. */}
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-semibold text-ink leading-tight flex items-center gap-1.5 flex-wrap">
+        <p className="text-[13px] font-semibold text-ink leading-tight flex items-center gap-1.5 min-w-0">
           <span className="truncate">{c.first} {c.last}</span>
-          {c.vip ? <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-100 text-violet-800">VIP</span> : null}
-          {c.inHouse ? <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">In house</span> : null}
-          {(c.tags || []).map((t: string) => <span key={t} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">{t}</span>)}
+          {c.vip ? <span className="shrink-0 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-100 text-violet-800">VIP</span> : null}
+          {c.inHouse ? <span className="shrink-0 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">In house</span> : null}
+          {(c.tags || []).slice(0, 2).map((t: string) => (
+            <span key={t} className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">{t}</span>
+          ))}
         </p>
-        <p className="text-[11.5px] mt-0.5 flex items-center gap-1.5 flex-wrap">
-          {c.mail === 'mailable' ? (
-            <span className="inline-flex items-center gap-1 text-ink break-all"><Mail size={11} className="text-emerald-600 shrink-0" />{c.email}</span>
-          ) : c.mail === 'restricted' ? (
-            <span title={c.mailReason} className="inline-flex items-center gap-1 text-muted break-all">
-              <Ban size={11} className="text-amber-600 shrink-0" />
-              <span>{c.email}</span>
-              <span className="text-[10px] text-amber-700 font-semibold">{c.channel} — do not market</span>
+        <p className="mt-0.5 flex items-center gap-1.5 min-w-0 text-[11.5px]">
+          {c.mail === 'mailable'
+            ? <Mail size={11} className="text-emerald-600 shrink-0" />
+            : <MailX size={11} className="text-amber-600 shrink-0" />}
+          <span className={'truncate ' + (c.mail === 'mailable' ? 'text-ink' : 'text-muted')} title={c.email || ''}>
+            {c.email || 'no email on file'}
+          </span>
+          {pill ? (
+            <span title={c.mailReason} className={'shrink-0 text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded ' + pill.cls}>
+              {pill.t}
             </span>
-          ) : c.email ? (
-            <span title={c.mailReason} className="inline-flex items-center gap-1 text-muted break-all">
-              <MailX size={11} className="text-amber-600 shrink-0" />
-              <span className="line-through decoration-amber-400/60">{c.email}</span>
-              <span className="text-[10px] text-amber-700 font-semibold">not mailable</span>
-            </span>
-          ) : (
-            <span className="text-muted inline-flex items-center gap-1"><MailX size={11} /> no email</span>
-          )}
-          {c.phone ? <span className="text-muted">· {c.phone}</span> : null}
+          ) : null}
         </p>
-        {c.mail !== 'mailable' && c.email ? <p className="text-[10.5px] text-amber-700 mt-0.5">{c.mailReason}</p> : null}
       </div>
 
-      <div className="text-[11px] text-muted shrink-0 sm:w-[190px] leading-relaxed">
-        <p className="text-ink font-semibold text-[11.5px]">{c.channel || '—'}</p>
-        <p className="truncate" title={(c.units || []).join(', ')}>{c.lastUnit || '—'}</p>
-        {(c.units || []).length > 1 ? <p className="text-faint">+{c.units.length - 1} more unit{c.units.length > 2 ? 's' : ''}</p> : null}
+      {/* Phone: its own column so it stops landing on a line of its own under the address. */}
+      <div className="hidden lg:block shrink-0 w-[130px] text-[11.5px] text-muted tabular-nums truncate">
+        {c.phone || '—'}
       </div>
 
-      <div className="text-[11px] text-muted shrink-0 sm:w-[145px] leading-relaxed">
-        <p className="inline-flex items-center gap-1 text-ink font-semibold text-[11.5px]">
-          <Repeat size={11} /> {c.stays} stay{c.stays === 1 ? '' : 's'}
-        </p>
-        <p>{c.nights} night{c.nights === 1 ? '' : 's'}{money && c.value != null ? ' · ' + usd(c.value) : ''}</p>
-        <p className="inline-flex items-center gap-1">
-          <Star size={10} className={c.reviews ? 'text-amber-500' : 'text-line'} />
-          {c.reviews ? c.reviews + ' review' + (c.reviews === 1 ? '' : 's') + (c.reviewAvg ? ' · ' + c.reviewAvg : '') : 'no reviews'}
-        </p>
+      <div className="hidden sm:block shrink-0 w-[120px] min-w-0">
+        <p className="text-[11.5px] text-ink font-semibold truncate" title={c.channel}>{c.channel || '—'}</p>
+        {c.everDirect ? <p className="text-[10px] text-emerald-700 font-semibold">direct before</p> : null}
       </div>
+
+      <div className="hidden md:block shrink-0 w-[150px] min-w-0">
+        <p className="text-[11.5px] text-muted truncate" title={(c.units || []).join(', ')}>{c.lastUnit || '—'}</p>
+        {(c.units || []).length > 1 ? <p className="text-[10px] text-faint">+{c.units.length - 1} more</p> : null}
+      </div>
+
+      <div className="shrink-0 w-[92px] text-[11.5px] leading-tight">
+        <p className="text-ink font-semibold tabular-nums">{c.stays} stay{c.stays === 1 ? '' : 's'}</p>
+        <p className="text-muted tabular-nums">{c.nights}n{money && c.value != null ? ' · ' + usd(c.value) : ''}</p>
+      </div>
+
+      <div className="hidden sm:flex shrink-0 w-[74px] items-center gap-1 text-[11.5px] tabular-nums">
+        <Star size={10} className={c.reviews ? 'text-amber-500' : 'text-line'} />
+        <span className={c.reviews ? 'text-ink' : 'text-faint'}>{c.reviews ? (c.reviewAvg ?? c.reviews) : '—'}</span>
+        {c.unhappy ? <span className="text-[9px] font-bold uppercase text-amber-700">low</span> : null}
+      </div>
+
+      <div className="shrink-0 w-[78px] text-[11px] text-muted tabular-nums text-right">{c.lastStay || '—'}</div>
+    </div>
+  )
+}
+
+/** The column heads. Only at sm+ — on a phone each row reads as a card and a header would lie. */
+function CHead({ money }: { money: boolean }) {
+  const h = 'text-[9.5px] uppercase tracking-wider font-bold text-faint'
+  return (
+    <div className="hidden sm:flex items-center gap-3 px-3.5 py-1.5 bg-neutral-50 border-b border-line">
+      <div className={'flex-1 min-w-0 ' + h}>Guest</div>
+      <div className={'hidden lg:block shrink-0 w-[130px] ' + h}>Phone</div>
+      <div className={'shrink-0 w-[120px] ' + h}>Channel</div>
+      <div className={'hidden md:block shrink-0 w-[150px] ' + h}>Last unit</div>
+      <div className={'shrink-0 w-[92px] ' + h}>{money ? 'Stays · value' : 'Stays'}</div>
+      <div className={'shrink-0 w-[74px] ' + h}>Rating</div>
+      <div className={'shrink-0 w-[78px] text-right ' + h}>Last stay</div>
     </div>
   )
 }
