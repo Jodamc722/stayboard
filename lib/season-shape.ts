@@ -25,20 +25,29 @@
 // the house figure.
 //
 // WHAT THAT COSTS. The share and the depth of the trough are the same fact. Five months holding
-// 65% of the year averages 13% each against 5% for the other seven, so September has to land
-// near a quarter of March; at 55% it would sit near 40%. These numbers are the 65% answer:
-// September is 25% of March. That is deeper than the blend, and nowhere near the old cliff at
-// zero. If the share moves again, this curve has to move with it or the slide will contradict
-// the number printed beside it \u2014 ReportView reads both from here for exactly that reason.
+// 65% of the year averages 13% each against 5% for the other seven, so the low months have to
+// land near a third of the high ones; at 55% they would sit near 40%. There is no arrangement
+// of twelve numbers that puts 65% in five months AND keeps the year flat.
 //
-// Index against March = 100. Shares: Dec 11.5 / Jan 11.6 / Feb 14.2 / Mar 17.5 / Apr 10.2 = 65,
-// May 5.6 / Jun 5.0 / Jul 5.1 / Aug 4.7 / Sep 4.4 / Oct 4.6 / Nov 5.6 = 35.
+// A PLATEAU, NOT A SPIKE (Jon, 2026-09-17: "for the slide the peak should not show so much
+// higher"). What CAN be fixed is the shape inside the season. The first 65% curve put March at
+// 100 against December at 65 — a 35-point tower with everything else falling away from it, so
+// the slide read as one enormous month rather than a season. The same 65% now sits across
+// December through April as a plateau: 14 points from end to end, March only 4 above February.
+// The season is what stands up on the chart, which is the point being made, and September lifts
+// from 25% of the peak to 31% as a side effect of not exaggerating March.
+//
+// If the share moves again, this curve has to move with it or the slide will contradict the
+// number printed beside it — ReportView reads both from here for exactly that reason.
+//
+// Index against March = 100. Shares: Dec 12.2 / Jan 12.6 / Feb 13.6 / Mar 14.2 / Apr 13.2 = 65,
+// May 6.4 / Jun 5.2 / Jul 5.1 / Aug 4.8 / Sep 4.4 / Oct 4.5 / Nov 5.0 = 35.
 export const SEASON_SHAPE: { m: string; level: number; peak?: boolean }[] = [
-  { m: 'J', level: 66, peak: true }, { m: 'F', level: 81, peak: true },
-  { m: 'M', level: 100, peak: true }, { m: 'A', level: 58, peak: true },
-  { m: 'M', level: 32 }, { m: 'J', level: 29 }, { m: 'J', level: 29 }, { m: 'A', level: 27 },
-  { m: 'S', level: 25 }, { m: 'O', level: 26 }, { m: 'N', level: 32 },
-  { m: 'D', level: 66, peak: true },
+  { m: 'J', level: 89, peak: true }, { m: 'F', level: 96, peak: true },
+  { m: 'M', level: 100, peak: true }, { m: 'A', level: 93, peak: true },
+  { m: 'M', level: 45 }, { m: 'J', level: 37 }, { m: 'J', level: 36 }, { m: 'A', level: 34 },
+  { m: 'S', level: 31 }, { m: 'O', level: 32 }, { m: 'N', level: 35 },
+  { m: 'D', level: 86, peak: true },
 ]
 
 /** The headline beside the curve. Tied to the curve above: change one, change the other. */
