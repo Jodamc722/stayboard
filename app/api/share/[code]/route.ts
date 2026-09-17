@@ -11,6 +11,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bucketFor, familyFor, FAMILY_LABEL } from '@/lib/marketing'
 import { buildContacts, audienceSummary } from '@/lib/guest-contacts'
+import { getRestrictedChannels } from '@/lib/contacts-load'
+import { pageRows } from '@/lib/db-page'
 import { marketOf } from '@/lib/segments'
 import { buildTeamSchedule, addDays as addDaysET } from '@/lib/team-schedule'
 import { scheduleLabor } from '@/lib/schedule-labor'
@@ -219,17 +221,48 @@ async function handle(code: string, pw: string, body?: any) {
       }
       const scoped2 = (listings || []).filter((l: any) => ids.has(str((l as any).id)))
         .map((l: any) => ({ id: str(l.id), nickname: l.nickname, title: l.title, building: l.building, city: (l as any).address_city }))
-      const all = buildContacts({ reservations: cres, listings: scoped2, reviews: [], profiles: [], today })
-      // Only the people we may actually mail. A channel forwarding address is kept out entirely
-      // rather than shown and captioned — on a shared page nobody reads the caption before pasting
-      // the column into a campaign.
-      const rows = all.filter((c: any) => c.mail === 'mailable')
+      // SAME INPUTS AS THE TAB, NOT A SUBSET (Jon, 2026-09-17: "can we make it function just like
+      // the tab please"). The first cut built contacts from reservations alone, which meant no
+      // reviews and no profile layer: every guest came back with no VIP flag, no tags, no rating
+      // and unhappy=false. The segments that depend on those would have been silently empty, and
+      // "left a low rating" would have said nobody — on a page whose whole job is deciding who to
+      // email. Reviews, profiles and the blocked-channel rule are read here for that reason.
+      const [crev, cprof, restrictedChannels] = await Promise.all([
+        pageRows<any>((a, b) => db.from('guesty_reviews')
+          .select('listing_id, guest_name, rating, created_at')
+          .in('listing_id', idList.slice(0, 400))
+          .gte('created_at', twoYears).order('id').range(a, b), 10),
+        pageRows<any>((a, b) => db.from('guest_profiles').select('*').order('guest_key').range(a, b), 10),
+        getRestrictedChannels(),
+      ])
+      const all = buildContacts({
+        reservations: cres, listings: scoped2, reviews: crev.rows || [],
+        profiles: cprof.rows || [], today, restrictedChannels,
+      })
+      // EVERY ROW, WITH ITS MAIL STATE ATTACHED — again, like the tab. Relays and channel-blocked
+      // addresses are shown rather than dropped, because the reader of this link is doing the same
+      // job as the reader of the tab: a front desk still needs to find the guest by the address the
+      // OTA gave, and a list that silently omits 4,000 people reads as a list of everyone. What
+      // protects the campaign is the EXPORT, not the display: the CSV this page writes carries the
+      // mailable, not-unhappy rows unless you are looking at one of the cannot-email segments.
       out.sections.contacts = {
         basis: `guests of these ${idList.length} unit${idList.length === 1 ? '' : 's'} in the last two years`,
         total: all.length,
-        rows: rows.map((c: any) => ({
-          name: c.name, first: c.first, last: c.last, email: c.email, phone: c.phone,
-          channel: c.channel, units: c.units, stays: c.stays, lastStay: c.lastStay,
+        summary: audienceSummary(all),
+        restrictedChannels,
+        showMoney,
+        short: [crev.truncated ? 'reviews' : '', cprof.truncated ? 'guest profiles' : ''].filter(Boolean),
+        // Capped. Six thousand contacts at the full shape is megabytes of JSON down a phone
+        // connection; the fields here are exactly the ones the page renders.
+        rows: all.slice(0, 6000).map((c: any) => ({
+          key: c.key, first: c.first, last: c.last, name: c.name,
+          email: c.email, mail: c.mail, mailReason: c.mailReason, phone: c.phone,
+          channel: c.channel, everDirect: c.everDirect, inHouse: c.inHouse,
+          stays: c.stays, nights: c.nights, value: showMoney ? Math.round(c.value) : undefined,
+          firstStay: c.firstStay, lastStay: c.lastStay, nextStay: c.nextStay,
+          units: c.units, lastUnit: c.lastUnit, lastBuilding: c.lastBuilding,
+          reviews: c.reviews, reviewAvg: c.reviewAvg, reviewLow: c.reviewLow, unhappy: c.unhappy,
+          vip: c.vip, tags: c.tags,
         })),
       }
     }
