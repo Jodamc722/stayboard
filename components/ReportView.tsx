@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
+import { SAMPLE_STATEMENT, statementHasRows } from '@/lib/statement-sample'
+import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS } from '@/lib/channel-marks'
 
@@ -2638,7 +2640,22 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               }
             }
 
-            const catalog: string[] = Array.isArray((sec('listings') as Any).catalog) ? (sec('listings') as Any).catalog : []
+            // THE PICK LIST IS THE UNION, NOT WHATEVER THE REPORT HAPPENED TO BE BORN WITH.
+            // `catalog` is the portfolio's own amenity vocabulary, written into the content JSON
+            // at generation time — so a deck generated before that existed carries none, and the
+            // column showed the scored recommendations and stopped. Unioned with the built-in
+            // vocabulary, every deck has the full list whether or not it is regenerated; a
+            // regenerated one additionally gets the spellings unique to our own listings.
+            const stored: string[] = Array.isArray((sec('listings') as Any).catalog) ? (sec('listings') as Any).catalog : []
+            const catSeen = new Set<string>()
+            const catalog: string[] = []
+            for (const n of AMENITY_VOCAB.concat(stored)) {
+              const v = String(n || '').trim()
+              if (!v) continue
+              const k = v.toLowerCase()
+              if (catSeen.has(k)) continue
+              catSeen.add(k); catalog.push(v)
+            }
             items.forEach((L: Any, li: number) => {
               const have: string[] = Array.isArray(L.amenities) ? L.amenities : []
               const claimed = new Set(have.map(familyOf).filter(Boolean))
@@ -2669,6 +2686,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               const hit = (n: string) => !q || n.toLowerCase().indexOf(q) >= 0
               const missingQ = missing.filter((x: Any) => hit(String(x.name)))
               const restQ = rest.filter(hit)
+              const restGroups = groupAmenities(restQ)
               if (!have.length && !missing.length && !rest.length) return
               slides.push({ key: 'listings', node: (
                 <Slide nav={String(L.name || 'Unit') + ' \u2014 amenities'} warn={edit} ground={GROUND.tint}>
@@ -2748,23 +2766,36 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                               {sg.reason ? <p style={{ fontSize: 11, lineHeight: 1.4, color: t.muted, marginTop: 1 }}>{sg.reason}</p> : null}
                             </div>
                           ))}
-                          {restQ.length > 0 && (
-                            <p style={{ fontSize: 10, letterSpacing: '0.11em', textTransform: 'uppercase', color: t.muted, fontWeight: 700, marginTop: missingQ.length ? 15 : 0, marginBottom: 8 }}>
-                              Everything else <span className="tabular-nums" style={{ fontWeight: 500 }}>{restQ.length}</span>
-                            </p>
-                          )}
-                          <div className="flex flex-wrap" style={{ gap: 6 }}>
-                            {restQ.map((a: string) => (
-                              <span key={a}
-                                onClick={canEdit ? () => toggleAmenity(li, a) : undefined}
-                                title={canEdit ? 'Add to the listing' : undefined}
-                                style={{
-                                  fontSize: 11.5, borderRadius: 999, padding: '4px 10px',
-                                  background: 'transparent', border: '1px dashed ' + t.cardBorder, color: t.muted,
-                                  cursor: canEdit ? 'pointer' : 'default',
-                                }}>{a}</span>
-                            ))}
-                          </div>
+                          {/* BY CATEGORY, NOT ONE ALPHABETICAL WALL (Jon, 2026-09-17: "that
+                              right column should have a scroll through amenities organized by
+                              category"). A hundred names in one run is unreadable on a call;
+                              grouped, the owner can be asked "anything in the kitchen we are
+                              missing?" and the list answers it. Headers stick while you scroll. */}
+                          {restGroups.map(g => (
+                            <div key={g.name}>
+                              <p style={{
+                                position: 'sticky', top: 0, zIndex: 1,
+                                fontSize: 10, letterSpacing: '0.11em', textTransform: 'uppercase',
+                                color: t.muted, fontWeight: 700,
+                                marginTop: 14, marginBottom: 7, paddingTop: 2, paddingBottom: 4,
+                                background: GROUND.tint,
+                              }}>
+                                {g.name} <span className="tabular-nums" style={{ fontWeight: 500 }}>{g.items.length}</span>
+                              </p>
+                              <div className="flex flex-wrap" style={{ gap: 6 }}>
+                                {g.items.map((a: string) => (
+                                  <span key={a}
+                                    onClick={canEdit ? () => toggleAmenity(li, a) : undefined}
+                                    title={canEdit ? 'Add to the listing' : undefined}
+                                    style={{
+                                      fontSize: 11.5, borderRadius: 999, padding: '4px 10px',
+                                      background: 'transparent', border: '1px dashed ' + t.cardBorder, color: t.muted,
+                                      cursor: canEdit ? 'pointer' : 'default',
+                                    }}>{a}</span>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
                           {!missingQ.length && !restQ.length && (
                             <p style={{ fontSize: 13, color: t.good }}>{q ? 'Nothing matches that.' : 'Nothing obvious missing.'}</p>
                           )}
@@ -3117,7 +3148,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             // and the right-hand panel shows the two bookings that produced it, tap Management
             // fee and it shows the commission lines. That is the point of the section made
             // operable rather than asserted, and it keeps the section to one page.
-            const stRes: Any[] = sec('statement').reservations || []
+            // A DECK GENERATED BEFORE THE STATEMENT WAS REMODELLED HAS NO ROWS IN IT.
+            // The sample is the house standard, so it belongs in code rather than frozen into
+            // each report's content JSON at generation time (lib/statement-sample.ts says why).
+            // Any deck whose stored statement has no rows — every one built before the remodel,
+            // which rendered as a headline over an empty table — falls back to the shared one,
+            // with no regeneration. A statement that HAS been edited keeps the edit.
+            const stFallback = !statementHasRows(sec('statement'))
+            const st = stFallback ? { ...sec('statement'), ...SAMPLE_STATEMENT } : sec('statement')
+            const stRes: Any[] = st.reservations || []
             const catLines = (cat: string | null) => {
               const out: Any[] = []
               for (const r of stRes) for (const ln of (r.lines || [])) {
@@ -3153,13 +3192,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </div>
                     <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.gold, border: '1px solid ' + t.gold, borderRadius: 999, padding: '2px 8px' }}>Sample</span>
-                      <p style={{ fontSize: 12.5, fontWeight: 600, color: t.ink, marginTop: 6 }}>{sec('statement').unitLabel}</p>
-                      <p style={{ fontSize: 11.5, color: t.muted, marginTop: 2 }}>{sec('statement').period}</p>
+                      <p style={{ fontSize: 12.5, fontWeight: 600, color: t.ink, marginTop: 6 }}>{st.unitLabel}</p>
+                      <p style={{ fontSize: 11.5, color: t.muted, marginTop: 2 }}>{st.period}</p>
                     </div>
                   </div>
 
                   <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: t.cardBorder, border: '1px solid ' + t.cardBorder, borderRadius: 10, overflow: 'hidden' }}>
-                    {(sec('statement').kpis || []).map((k: Any, i: number) => (
+                    {(st.kpis || []).map((k: Any, i: number) => (
                       <div key={i} style={{ background: t.card, padding: '9px 16px' }}>
                         <p style={{ fontSize: 11, color: t.muted }}>
                           <Ed v={k.k || ''} set={v => patch('statement.kpis.' + i + '.k', v)} edit={edit} />
@@ -3178,7 +3217,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         <span style={{ fontSize: 11, color: t.sub }}>Category</span>
                         <span style={{ fontSize: 11, color: t.sub }}>Monthly amount</span>
                       </div>
-                      {(sec('statement').summary || []).map((ln: Any, i: number) => {
+                      {(st.summary || []).map((ln: Any, i: number) => {
                         const name = String(ln.k || '')
                         const clickable = hasDetail(name)
                         const on = stmtCat && stmtCat.toLowerCase() === name.toLowerCase()
@@ -3205,10 +3244,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       })}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '10px 14px', background: t.band, borderRadius: '0 0 6px 6px' }}>
                         <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.78)' }}>
-                          <Ed v={(sec('statement').due || {}).k || ''} set={v => patch('statement.due.k', v)} edit={edit} />
+                          <Ed v={(st.due || {}).k || ''} set={v => patch('statement.due.k', v)} edit={edit} />
                         </span>
                         <span className="tabular-nums" style={{ fontSize: 21, fontWeight: 600, color: '#fff', letterSpacing: '-0.02em' }}>
-                          <Ed v={(sec('statement').due || {}).v || ''} set={v => patch('statement.due.v', v)} edit={edit} />
+                          <Ed v={(st.due || {}).v || ''} set={v => patch('statement.due.v', v)} edit={edit} />
                         </span>
                       </div>
                     </div>
