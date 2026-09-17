@@ -5,13 +5,13 @@
 // project items be removed/added, and sections be hidden/shown (content.omit).
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 import { SAMPLE_STATEMENT, statementHasRows } from '@/lib/statement-sample'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
-import { SEASON_SHAPE } from '@/lib/season-shape'
+import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS } from '@/lib/channel-marks'
 
@@ -719,6 +719,15 @@ function LiveText({ v, set, live, single, t, cls, ro }: { v: string; set: (s: st
 const SLIDE_W = CANVAS.w
 const SLIDE_H = CANVAS.h
 
+// BIGGER TYPE, WITHOUT A NEW SET OF FONT SIZES (Jon, 2026-09-17: "change font size too, need
+// that feature"). Every size on a slide is an inline px value against the fixed 1120x630
+// canvas, so there is no single number to turn and a CSS variable cannot reach any of them.
+// What CAN be turned is the canvas: author the same slide into a SMALLER logical box and scale
+// it up by the same factor, and every glyph on it lands larger while the layout reflows to suit.
+// 1.1 gives a slide authored at 1018x573 shown at 110% — type 10% bigger, margins in proportion,
+// and the spill warning still measures against the box the content actually has.
+const TextScale = createContext(1)
+
 function Slide({ nav, children, pad, bleed, warn, ground }: {
   nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean; warn?: boolean
   /** Resolved background for this slide's tone. Set by the deck, never guessed here. */
@@ -728,18 +737,21 @@ function Slide({ nav, children, pad, bleed, warn, ground }: {
   const canvas = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(0)
   const [spill, setSpill] = useState(0)
+  const tz = useContext(TextScale)
+  const LW = Math.round(SLIDE_W / tz)
+  const LH = Math.round(SLIDE_H / tz)
   useEffect(() => {
     const el = box.current
     if (!el) return
     const fit = () => {
       const w = el.clientWidth
-      if (w > 0) setScale(w / SLIDE_W)
+      if (w > 0) setScale(w / LW)
     }
     fit()
     let ro: Any = null
     try { ro = new ResizeObserver(fit); ro.observe(el) } catch { window.addEventListener('resize', fit) }
     return () => { if (ro) ro.disconnect(); else window.removeEventListener('resize', fit) }
-  }, [])
+  }, [LW])
   // Measured after paint, and again whenever the content changes, because the content here is
   // editable — a paragraph typed on the call is exactly when a slide starts overflowing.
   useEffect(() => {
@@ -747,7 +759,7 @@ function Slide({ nav, children, pad, bleed, warn, ground }: {
     if (!c) return
     const measure = () => {
       const inner = c.firstElementChild as HTMLElement | null
-      setSpill(inner ? Math.max(0, Math.round(inner.scrollHeight - SLIDE_H)) : 0)
+      setSpill(inner ? Math.max(0, Math.round(inner.scrollHeight - LH)) : 0)
     }
     measure()
     const id = setTimeout(measure, 400)
@@ -763,7 +775,7 @@ function Slide({ nav, children, pad, bleed, warn, ground }: {
         ref={canvas}
         className="sb-slide-canvas"
         style={{
-          width: SLIDE_W, height: SLIDE_H, transform: 'scale(' + (scale || 1) + ')',
+          width: LW, height: LH, transform: 'scale(' + (scale || 1) + ')',
           opacity: scale ? 1 : 0, padding: bleed ? 0 : (pad == null ? 64 : pad),
         }}
       >
@@ -801,6 +813,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const fontKey: string = FONT_PAIRS[styleCfg.font] ? styleCfg.font
     : (String(((c || {}).meta || {}).kind || '') === 'onboarding' ? 'stay' : 'modern')
   const fontPair = FONT_PAIRS[fontKey]
+  // Type size rides with the other style overrides, so it saves and shares like the rest.
+  const TEXT_SIZES: { k: string; label: string; v: number }[] = [
+    { k: 's', label: 'S', v: 0.92 }, { k: 'm', label: 'M', v: 1 },
+    { k: 'l', label: 'L', v: 1.1 }, { k: 'xl', label: 'XL', v: 1.22 },
+  ]
+  const sizeKey: string = TEXT_SIZES.some(z => z.k === styleCfg.textSize) ? String(styleCfg.textSize) : 'm'
+  const textScale: number = (TEXT_SIZES.find(z => z.k === sizeKey) || { v: 1 }).v
   const t = {
     ...THEMES[themeKey],
     ...(accentOv ? { accent: accentOv, statusHotInk: accentOv, statusHotBg: hexA(accentOv, 0.13), barB: accentOv, edBorder: accentOv } : {}),
@@ -820,6 +839,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   const [picker, setPicker] = useState(false)
   const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void } | null>(null)
   const [photoUrl, setPhotoUrl] = useState('')
+  // Upload state for the picker. One picker serves every photo slot in the deck, so wiring
+  // upload here covers the cover, the team cards, the portal shots and any slide added by hand.
+  const [upBusy, setUpBusy] = useState(false)
+  const [upMsg, setUpMsg] = useState('')
   const [amenityMsg, setAmenityMsg] = useState<Record<string, string>>({})
   const [copyMsg, setCopyMsg] = useState<Record<string, string>>({})
   // ONE STATEMENT SLIDE, AND IT ANSWERS BACK (Jon, 2026-09-17: "the owner statements should be
@@ -1450,6 +1473,17 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 </button>
               ))}
             </span>
+            {/* Type size — the whole deck at once. See TextScale for why it is a canvas trick. */}
+            <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5" style={{ color: t.sub }}>Size</span>
+              {TEXT_SIZES.map(z => (
+                <button key={z.k} onClick={() => setStyle({ textSize: z.k })} title={'Type size: ' + z.label}
+                  className="rounded-full px-2 py-1 text-[11px] font-semibold"
+                  style={sizeKey === z.k ? { background: t.ink, color: t.bg } : { color: t.sub }}>
+                  {z.label}
+                </button>
+              ))}
+            </span>
             {/* Custom accent — one dot of brand colour, everywhere at once. */}
             <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-1" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
               <label className="relative inline-flex items-center cursor-pointer" title="Custom accent colour — flows into chips, bars, buttons and the PPTX export">
@@ -1907,12 +1941,48 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       {photoPick && (
         <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5"
           style={{ background: 'rgba(10,14,20,0.66)' }}
-          onClick={() => { setPhotoPick(null); setPhotoUrl('') }}>
+          onClick={() => { if (!upBusy) { setPhotoPick(null); setPhotoUrl(''); setUpMsg('') } }}>
           <div onClick={e => e.stopPropagation()} className="rounded-2xl w-full max-w-3xl max-h-[86vh] overflow-auto p-5"
             style={{ background: t.card, border: '1px solid ' + t.cardBorder }}>
             <div className="flex items-center justify-between gap-4 mb-4">
               <p className="text-[15px] font-semibold" style={{ color: t.ink }}>{photoPick.title}</p>
               <button onClick={() => { setPhotoPick(null); setPhotoUrl('') }} className="rounded-full p-1.5" style={{ color: t.sub }}><X size={16} /></button>
+            </div>
+            {/* UPLOAD FIRST, because it is the answer for every photo that is not already on
+                the listing — headshots above all (Jon, 2026-09-17: "have upload path for all
+                images"). Paste-a-URL stays underneath for a portal screenshot already hosted. */}
+            <div className="mb-3">
+              <label className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-semibold cursor-pointer"
+                style={{ background: t.ink, color: t.bg, opacity: upBusy ? 0.6 : 1 }}>
+                <UploadCloud size={14} />
+                {upBusy ? 'Uploading\u2026' : 'Upload a photo'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={upBusy}
+                  className="hidden"
+                  onChange={async e => {
+                    const f = e.target.files && e.target.files[0]
+                    e.target.value = ''
+                    if (!f) return
+                    setUpBusy(true); setUpMsg('')
+                    try {
+                      const fd = new FormData()
+                      fd.append('file', f)
+                      const r = await fetch('/api/deck-photo', { method: 'POST', body: fd })
+                      const d = await r.json().catch(() => ({}))
+                      if (!r.ok || !d?.url) { setUpMsg(d?.error || 'Upload failed.'); setUpBusy(false); return }
+                      photoPick.set(String(d.url)); answerChanged()
+                      setUpBusy(false); setPhotoPick(null); setPhotoUrl(''); setUpMsg('')
+                    } catch {
+                      setUpMsg('Could not reach the server.'); setUpBusy(false)
+                    }
+                  }}
+                />
+              </label>
+              <span className="text-[12px] ml-3" style={{ color: upMsg ? t.gold : t.muted }}>
+                {upMsg || 'JPG or PNG, up to 12MB. Resized and optimised automatically.'}
+              </span>
             </div>
             <div className="flex gap-2 mb-4">
               <input value={photoUrl} onChange={e => setPhotoUrl(e.target.value)} placeholder="Or paste an image URL — a headshot, a portal screenshot…"
@@ -1922,6 +1992,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: t.ink, color: t.bg }}>Use</button>
             </div>
+            {(Array.isArray(c.photoPool) ? c.photoPool : []).length > 0 && (
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>Or pick one from the listing</p>
+            )}
             <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))' }}>
               {(Array.isArray(c.photoPool) ? c.photoPool : []).map((src: string, i: number) => (
                 <button key={i} onClick={() => { photoPick.set(src); answerChanged(); setPhotoPick(null); setPhotoUrl('') }}
@@ -2280,9 +2353,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <Slide nav="Your team" warn={edit} ground={GROUND.light}>
               <div className="flex flex-col h-full">
                 <Title k="team" />
+                {/* FOUR WAS A HARD CAP, AND THAT WAS THE BUG (Jon, 2026-09-17: "need to be
+                    able to edit meet the team names, roles, etc. Not letting me"). The fields
+                    themselves were always editable; what was missing was any way to ADD a fifth
+                    person or remove one, so a roster that did not happen to be exactly these
+                    four could not be made right at all. The grid now follows the count, to six
+                    — past that the cards are too narrow to read on a call. */}
                 <div className="flex-1 min-h-0 flex items-start" style={{ marginTop: 22, overflow: 'hidden' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 24, width: '100%' }}>
-                    {(sec('team').people || []).slice(0, 4).map((p: Any, pi: number) => (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.min(6, Math.max(1, (sec('team').people || []).length || 1)) + ',1fr)', gap: (sec('team').people || []).length > 4 ? 16 : 24, width: '100%' }}>
+                    {(sec('team').people || []).slice(0, 6).map((p: Any, pi: number) => (
                       <div key={pi}>
                         {p.photo ? (
                           <Pick
@@ -2322,10 +2401,29 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             <Ed v={p.email || ''} set={v => patch('team.people.' + pi + '.email', v)} edit={edit} placeholder="Email" />
                           </p>
                         </div>
+                        {edit && (
+                          <button
+                            onClick={() => mutate(d => { d.team.people.splice(pi, 1) })}
+                            title={'Remove ' + String(p.name || 'this person')}
+                            style={{ marginTop: 9, fontSize: 11.5, fontWeight: 600, color: t.accent }}>
+                            Remove
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
                 </div>
+                {edit && (sec('team').people || []).length < 6 && (
+                  <button
+                    onClick={() => mutate(d => {
+                      d.team.people = Array.isArray(d.team.people) ? d.team.people : []
+                      d.team.people.push({ name: '', role: '', blurb: '', photo: null, phone: '', email: '' })
+                    })}
+                    className="sb-noprint"
+                    style={{ marginTop: 12, alignSelf: 'flex-start', fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '7px 15px', background: t.card, border: '1px dashed ' + t.cardBorder, color: t.ink }}>
+                    + Add someone
+                  </button>
+                )}
                 {/* The shared inbox, as the backstop behind the four names rather than a fifth
                     face. A slide that promises "you are not handed to an inbox" cannot then put
                     the inbox in the line-up. */}
@@ -2834,10 +2932,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           const seasonStored: Any[] = sec('season').months || []
           const seasonStale = seasonStored.length === 12 &&
             Math.max(0, ...seasonStored.map((m: Any) => Number(m.level) || 0)) <= 12
-          const seasonShare = seasonStale ? '55%' : (sec('season').peakShare || '')
-          const seasonLabel = seasonStale
-            ? 'of the year\u2019s revenue lands December through April'
-            : (sec('season').peakLabel || '')
+          const seasonShare = seasonStale ? SEASON_PEAK_SHARE : (sec('season').peakShare || '')
+          const seasonLabel = seasonStale ? SEASON_PEAK_LABEL : (sec('season').peakLabel || '')
 
           if (!hid('season')) slides.push({ key: 'season', ai: true, node: (
             <Slide nav="The season" warn={edit} ground={GROUND.dark} bleed>
@@ -3437,8 +3533,78 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             </Slide>
           ) })
 
+          // A SLIDE OF YOUR OWN (Jon, 2026-09-17: "be able to add a slide and build it how I
+          // want"). "Add section" already existed and already wrote to content.custom — but only
+          // the scrolling report layout rendered those, so in a deck the button did nothing at
+          // all: press it, and the slide count stayed exactly where it was. Custom sections now
+          // build a slide each, on the deck's own Slide primitive, with the same editing and the
+          // same overflow warning as every other page, and they sit at the end of the order
+          // where an owner-specific addition belongs.
+          const customs: Any[] = Array.isArray(c.custom) ? c.custom : []
+          customs.forEach((cs: Any, ci: number) => {
+            slides.push({ key: 'custom', node: (
+              <Slide nav={String(cs.title || 'New slide')} warn={edit} ground={GROUND.light}>
+                <div className="flex flex-col h-full">
+                  <div className="flex items-start justify-between" style={{ gap: 24 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
+                      {(edit || String(cs.eyebrow || '').trim()) ? (
+                        <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.24em', textTransform: 'uppercase', color: t.accent, marginBottom: 10 }}>
+                          <Ed v={cs.eyebrow || ''} set={v => patch('custom.' + ci + '.eyebrow', v)} edit={edit} placeholder="OVERLINE (OPTIONAL)" />
+                        </p>
+                      ) : null}
+                      <p className="onb-h" style={{ fontSize: 34, color: t.ink, lineHeight: 1.18, maxWidth: '22ch' }}>
+                        <Ed v={cs.title || ''} set={v => patch('custom.' + ci + '.title', v)} edit={edit} placeholder="Slide title" />
+                      </p>
+                    </div>
+                    {edit && (
+                      <div style={{ display: 'flex', gap: 8, whiteSpace: 'nowrap' }}>
+                        <button
+                          onClick={() => mutate(d => {
+                            const arr = Array.isArray(d.custom) ? d.custom : []
+                            if (ci > 0) { const x = arr[ci - 1]; arr[ci - 1] = arr[ci]; arr[ci] = x }
+                          })}
+                          title="Move this slide earlier"
+                          style={{ fontSize: 12, borderRadius: 999, padding: '6px 12px', background: t.card, border: '1px solid ' + t.cardBorder, color: t.sub }}>
+                          Move up
+                        </button>
+                        <button
+                          onClick={() => mutate(d => { d.custom.splice(ci, 1) })}
+                          title="Delete this slide"
+                          style={{ fontSize: 12, borderRadius: 999, padding: '6px 12px', background: t.card, border: '1px solid ' + t.cardBorder, color: t.accent }}>
+                          Delete slide
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-h-0" style={{ marginTop: 22, display: 'grid', gridTemplateColumns: cs.photo || edit ? '1.15fr 0.85fr' : '1fr', gridTemplateRows: 'minmax(0, 1fr)', columnGap: 40 }}>
+                    <div className="min-h-0 onb-scroll" style={{ paddingRight: 8 }}>
+                      <LiveText
+                        v={String(cs.body || '')}
+                        live={canEdit} t={t} ro="" cls="onb-copy"
+                        set={v => { patch('custom.' + ci + '.body', v); answerChanged() }}
+                      />
+                    </div>
+                    {(cs.photo || edit) ? (
+                      <div className="min-h-0">
+                        <Pick
+                          title={'Photo \u2014 ' + String(cs.title || 'slide')}
+                          cur={String(cs.photo || '')}
+                          set={u => patch('custom.' + ci + '.photo', u)}
+                          style={{ width: '100%', height: '100%', minHeight: 180, borderRadius: 14 }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                  <Foot label={String(cs.title || 'Your slide')} />
+                </div>
+              </Slide>
+            ) })
+          })
+
           return (
-            <>
+            <TextScale.Provider value={textScale}>
               {slides.map((sl, i) => (
                 <SectionShell
                   key={sl.key + '-' + i}
@@ -3452,6 +3618,26 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   {sl.node}
                 </SectionShell>
               ))}
+
+              {/* Build one from scratch. Lands at the end of the deck, editable immediately. */}
+              {edit && (
+                <div className="sb-noprint" style={{ marginTop: 26 }}>
+                  <button
+                    onClick={() => mutate(d => {
+                      d.custom = Array.isArray(d.custom) ? d.custom : []
+                      d.custom.push({
+                        id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                        eyebrow: '', title: 'New slide', body: '', photo: '',
+                      })
+                    })}
+                    style={{ fontSize: 13, fontWeight: 600, borderRadius: 999, padding: '11px 20px', background: t.ink, color: t.bg }}>
+                    + Add a slide
+                  </button>
+                  <span style={{ fontSize: 12.5, color: t.muted, marginLeft: 12 }}>
+                    Blank page with a title, your words and a photo. This deck only, never the template.
+                  </span>
+                </div>
+              )}
 
               {/* Switch an off-by-default section back on for this owner. Edit mode only. */}
               {edit && (
@@ -3481,7 +3667,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   </div>
                 </div>
               )}
-            </>
+            </TextScale.Provider>
           )
         })()}
 
