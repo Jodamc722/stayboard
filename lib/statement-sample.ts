@@ -16,19 +16,28 @@
 // deck — old and new — carries the change.
 //
 // THE ARITHMETIC FOOTS, AND THAT IS THE POINT. The one statement an owner is ever shown is the
-// one they will add up on the call. Modelled on a real issued August statement (figures, names
-// and the unit changed; line items kept):
+// one they will add up on the call. Modelled on a real issued August statement (figures, guest
+// names and the unit changed; line items kept):
 //
-//   rental 2,456.00 + channel reimbursement 2.90 + cleaning 360.00 + parking 75.00
-//     = property income 2,893.90
-//   − management 491.20 (20% of rental) − supplies 86.80 − maintenance 168.00 (4.2h @ $40)
-//     = ending balance 2,147.90, which is the payment due.
+//   rental 2,456.00 + channel reimbursement 2.90 + parking 75.00
+//     = property income 2,533.90
+//   - management 491.20 (20% of rental) - supplies 86.80 - maintenance 168.00 (4.2h @ $40)
+//     = ending balance 1,787.90, which is the payment due.
 //
-// The per-booking detail foots to the same place: 903.70 + 1,244.20 = 2,147.90. It did not
-// before — the old version charged 20% in the summary and itemised 10% on the bookings, so an
-// owner adding up the detail got a different answer than the total above it. Twenty-one nights
-// across the two stays is 68% of August, which is the occupancy in the strip. If you change a
-// figure here, change its partners: nothing in this object is independent of the rest.
+// NO CLEANING LINE, ANYWHERE (Jon, 2026-09-17: "on the owner statement they won't see cleaning
+// fees, that's pulled out"). The guest's cleaning fee settles the turnover before any of this
+// reaches the owner, so a cleaning row on the statement -- as income or as a charge -- describes
+// money the owner never touches. It used to appear on both sides, which made the document
+// contradict the rule three slides later that says departure cleans are never billed to them.
+//
+// SUPPLIES ARE THINGS, NOT CONSUMABLES (Jon, 2026-09-17: "we don't charge for coffee pods, it
+// could be like a lamp replacement or something like that"). What gets charged to an owner is a
+// replacement that stays in the unit. Coffee, paper goods and dish soap are ours. Keep every
+// example on this statement something an owner would expect to pay for and recognise.
+//
+// The per-booking detail foots to the same place: 698.10 + 1,089.80 = 1,787.90. Twenty-one
+// nights across the two stays is 68% of August, which is the occupancy in the strip. If you
+// change a figure here, change its partners: nothing in this object is independent of the rest.
 import type { KV } from './onboarding-report'
 
 export type SampleStatement = {
@@ -52,7 +61,7 @@ export const SAMPLE_STATEMENT: SampleStatement = {
   period: 'Example month · August',
   kpis: [
     { k: 'Occupancy', v: '68%' },
-    { k: 'Proceeds', v: m(2147.9) },
+    { k: 'Proceeds', v: m(1787.9) },
     { k: 'Nights occupied', v: '21' },
     { k: 'Working capital', v: m(0) },
   ],
@@ -60,41 +69,38 @@ export const SAMPLE_STATEMENT: SampleStatement = {
     { k: 'Initial balance', v: m(0) },
     { k: 'Rental income', v: m(2456) },
     { k: 'Channel commission', v: m(2.9) },
-    { k: 'Cleaning fee', v: m(360) },
     { k: 'Parking', v: m(75) },
     { k: 'Management fee', v: MINUS + m(491.2), neg: true },
     { k: 'Supplies and purchases', v: MINUS + m(86.8), neg: true },
     { k: 'Maintenance — owner charge', v: MINUS + m(168), neg: true },
-    { k: 'Ending balance', v: m(2147.9), rule: true },
+    { k: 'Ending balance', v: m(1787.9), rule: true },
   ],
-  due: { k: 'Payment due to owner', v: m(2147.9) },
+  due: { k: 'Payment due to owner', v: m(1787.9) },
   reservations: [
     {
       guest: 'M. Alvarez', stay: 'Aug 2 – Aug 8 · 6 nights',
       lines: [
         { date: 'Aug 2', desc: 'Rental payment for HMABC12345', cat: 'Rental income', amt: m(1024) },
         { date: 'Aug 2', desc: 'PMC commission — 20% of rental', cat: 'Management fee', amt: MINUS + m(204.8), neg: true },
-        { date: 'Aug 2', desc: 'Cleaning fee', cat: 'Cleaning fee', amt: m(180) },
         { date: 'Aug 2', desc: 'Airbnb RM channel fee reimbursement', cat: 'Channel commission', amt: m(2.9) },
-        { date: 'Aug 6', desc: 'Coffee, paper goods, replacement bath mat', cat: 'Supplies and purchases', amt: MINUS + m(38.4), neg: true },
+        { date: 'Aug 6', desc: 'Replacement table lamp — living room', cat: 'Supplies and purchases', amt: MINUS + m(64), neg: true },
         { date: 'Aug 7', desc: 'Kitchen faucet cartridge — 1.5h at $40', cat: 'Maintenance — owner charge', amt: MINUS + m(60), neg: true },
       ],
-      total: m(903.7),
+      total: m(698.1),
     },
     {
       guest: 'R. Whitfield', stay: 'Aug 14 – Aug 29 · 15 nights',
       lines: [
         { date: 'Aug 14', desc: 'Rental payment for BC-9KD3LM', cat: 'Rental income', amt: m(1432) },
         { date: 'Aug 14', desc: 'PMC commission — 20% of rental', cat: 'Management fee', amt: MINUS + m(286.4), neg: true },
-        { date: 'Aug 14', desc: 'Cleaning fee', cat: 'Cleaning fee', amt: m(180) },
         { date: 'Aug 14', desc: 'Nightly parking', cat: 'Parking', amt: m(75) },
-        { date: 'Aug 20', desc: 'Linens, dish soap, coffee pods', cat: 'Supplies and purchases', amt: MINUS + m(48.4), neg: true },
+        { date: 'Aug 20', desc: 'Bath mat and shower curtain liner', cat: 'Supplies and purchases', amt: MINUS + m(22.8), neg: true },
         { date: 'Aug 23', desc: 'A/C service and filter change — 2.7h at $40', cat: 'Maintenance — owner charge', amt: MINUS + m(108), neg: true },
       ],
-      total: m(1244.2),
+      total: m(1089.8),
     },
   ],
-  propertyIncome: { k: 'Property income', v: m(2893.9) },
+  propertyIncome: { k: 'Property income', v: m(2533.9) },
 }
 
 /** True when a stored statement actually has rows to render. */

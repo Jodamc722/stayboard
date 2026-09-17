@@ -132,7 +132,8 @@ export type OnboardingContent = {
    *
    * So this is modelled on the document itself: the performance strip, the category summary
    * ending in the navy "Payment due to owner" row, and the per-reservation detail where every
-   * booking breaks into rental / PMC commission / cleaning / parking / channel reimbursement.
+   * booking breaks into rental / PMC commission / parking / channel reimbursement. No cleaning
+   * line: the guest’s cleaning fee settles the turnover before any of it reaches the owner.
    * The figures are invented and internally consistent — the management fee really is 20% of
    * the rental line, and every subtotal adds up — because an owner WILL check the arithmetic on
    * the one example we show them, and a demo that does not foot is worse than no demo.
@@ -351,7 +352,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   ],
 
   statementAlso: [
-    { k: 'Cleaning fee', v: 'The guest’s cleaning fee, passing through to us. This is what pays for turnovers — which is why a departure clean is never an owner charge.' },
+    { k: 'No cleaning line', v: 'You will not see one. The guest’s cleaning fee settles the turnover before your statement is drawn, so departure cleans never appear as income or as a charge.' },
     { k: 'Channel fee reimbursement', v: 'What Airbnb, Vrbo or Booking took out of the booking, shown so the rental line reads as a real number rather than a gross one.' },
     { k: 'Revenue management', v: 'Appears only if you are on a revenue-management arrangement.' },
     { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labelled with the month it belongs to.' },
@@ -750,7 +751,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       note: `Every line on this statement traces to a booking or to a job with a date on it. Labor is ${money0(rate)} an hour on the technician\u2019s actual clock, materials are at cost, and the ${t.mgmtPct}% management fee is the only fee we take.`,
       rules,
       highlights: [
-        { k: 'Departure cleans', v: 'Never billed to you. The guest\u2019s cleaning fee pays for the turnover.' },
+        { k: 'Departure cleans', v: 'Never billed to you, and never a line on your statement. The guest\u2019s cleaning fee pays for the turnover.' },
         { k: `Labor ${money0(rate)}/hr, parts at cost`, v: 'The technician\u2019s actual clock. No markup, no trip charge.' },
         { k: `Anything over ${money0(limit)}`, v: 'Goes to you first, with photos and options. Nothing is bought without your yes.' },
       ],
