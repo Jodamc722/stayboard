@@ -11,7 +11,7 @@ import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 import { SAMPLE_STATEMENT, statementHasRows } from '@/lib/statement-sample'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
-import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL } from '@/lib/season-shape'
+import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS } from '@/lib/channel-marks'
 
@@ -2379,12 +2379,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             cur={String(p.photo)}
                             set={u => patch('team.people.' + pi + '.photo', u)}
                             pos="center 22%"
-                            style={{ width: '100%', aspectRatio: '4 / 5', maxHeight: 186, borderRadius: 12, marginBottom: 12 }}
+                            style={{ width: '100%', aspectRatio: '4 / 5', maxHeight: 150, borderRadius: 12, marginBottom: 10 }}
                           />
                         ) : (
                           <div
                             onClick={canEdit ? () => { setPhotoUrl(''); setPhotoPick({ title: 'Headshot \u2014 ' + String(p.name || ''), cur: '', set: u => patch('team.people.' + pi + '.photo', u) }) } : undefined}
-                            style={{ width: '100%', aspectRatio: '4 / 5', maxHeight: 186, borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
+                            style={{ width: '100%', aspectRatio: '4 / 5', maxHeight: 150, borderRadius: 12, marginBottom: 10, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
@@ -2395,8 +2395,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           <Ed v={p.role || ''} set={v => patch('team.people.' + pi + '.role', v)} edit={edit} />
                         </p>
                         <p style={{
-                          fontSize: 12.5, lineHeight: 1.5, color: t.muted, marginTop: 8,
-                          display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                          fontSize: 12, lineHeight: 1.45, color: t.muted, marginTop: 6,
+                          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
                           overflow: 'hidden',
                         } as Any}>
                           <Ed v={p.blurb || ''} set={v => patch('team.people.' + pi + '.blurb', v)} edit={edit} multiline placeholder="What they do&hellip;" />
@@ -2931,7 +2931,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                                     title={canEdit ? 'Add to the listing' : undefined}
                                     style={{
                                       fontSize: 11.5, borderRadius: 999, padding: '4px 10px',
-                                      background: 'transparent', border: '1px dashed ' + t.cardBorder, color: t.muted,
+                                      background: t.card, border: '1px solid ' + t.cardBorder, color: t.sub,
                                       cursor: canEdit ? 'pointer' : 'default',
                                     }}>{a}</span>
                                 ))}
@@ -2977,6 +2977,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             Math.max(0, ...seasonStored.map((m: Any) => Number(m.level) || 0)) <= 12
           const seasonShare = seasonStale ? SEASON_PEAK_SHARE : (sec('season').peakShare || '')
           const seasonLabel = seasonStale ? SEASON_PEAK_LABEL : (sec('season').peakLabel || '')
+          // The paragraph makes the same claims in words, so it travels with them. On a stale
+          // deck it still read "November through April... July and August are the floor",
+          // printed under a chart banding December and dotting September.
+          const seasonBodyTxt = seasonStale ? SEASON_BODY : (sec('season').body || '')
 
           if (!hid('season')) slides.push({ key: 'season', ai: true, node: (
             <Slide nav="The season" warn={edit} ground={GROUND.dark} bleed>
@@ -3107,7 +3111,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </div>
                   </div>
                   <p style={{ fontSize: 14.5, lineHeight: 1.65, color: D.body, marginTop: 30, maxWidth: '78ch' }}>
-                    <Ed v={sec('season').body || ''} set={v => patch('season.body', v)} edit={edit} multiline />
+                    <Ed v={seasonBodyTxt} set={v => patch('season.body', v)} edit={edit} multiline />
                   </p>
                 </div>
                 <Foot label="The season" dark />
@@ -3285,10 +3289,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         </div>
                       </div>
 
-                      {/* what each screen gives them */}
-                      <div className="flex flex-col justify-center">
+                      {/* WHAT EACH SCREEN GIVES THEM. `justify-center` centred four items plus
+                          the caption inside a box too short for them, which pushed the caption
+                          out of the bottom and printed it through the footer rule. It flows from
+                          the top now, with the caption held at the bottom of the column. */}
+                      <div className="flex flex-col" style={{ minHeight: 0, overflow: 'hidden' }}>
                         {(sec('guesty').items || []).slice(0, 4).map((it: Any, ii: number) => (
-                          <div key={ii} style={{ padding: '11px 0', borderTop: ii === 0 ? 'none' : '1px solid ' + t.rule }}>
+                          <div key={ii} style={{ padding: '9px 0', borderTop: ii === 0 ? 'none' : '1px solid ' + t.rule }}>
                             <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
                               <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
                             </p>
@@ -3300,7 +3307,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             </p>
                           </div>
                         ))}
-                        <p style={{ fontSize: 11, color: t.muted, marginTop: 14, fontStyle: 'italic' }}>
+                        <p style={{ fontSize: 11, color: t.muted, marginTop: 'auto', paddingTop: 12, fontStyle: 'italic', flex: '0 0 auto' }}>
                           Illustration of the portal layout &mdash; not a screenshot.
                         </p>
                       </div>
@@ -3383,9 +3390,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     ))}
                   </div>
 
-                  <div className="flex-1 min-h-0" style={{ marginTop: 13, display: 'grid', gridTemplateColumns: '1.02fr 1fr', columnGap: 34 }}>
+                  {/* THE GRID ROW HAS TO BE PINNED OR THE PAYOUT SITS ON THE FOOTER. An
+                      implicit grid row is `auto`, which takes its height from the tallest column
+                      — here nine summary rows plus the navy payout bar — and on a fixed 630px
+                      canvas that runs past the bottom of the slide and prints the payout over
+                      the foot label. minmax(0,1fr) binds the row to the space actually left.
+                      Rows are a shade tighter for the same reason: the summary has to fit. */}
+                  <div className="flex-1 min-h-0" style={{ marginTop: 13, display: 'grid', gridTemplateColumns: '1.02fr 1fr', gridTemplateRows: 'minmax(0, 1fr)', columnGap: 34 }}>
                     {/* the summary — and the control */}
-                    <div className="min-h-0 flex flex-col">
+                    <div className="flex flex-col" style={{ minHeight: 0 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 12px', background: t.chip, borderRadius: '6px 6px 0 0' }}>
                         <span style={{ fontSize: 11, color: t.sub }}>Category</span>
                         <span style={{ fontSize: 11, color: t.sub }}>Monthly amount</span>
@@ -3399,7 +3412,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             onClick={clickable ? () => setStmtCat(on ? null : name) : undefined}
                             style={{
                               display: 'flex', justifyContent: 'space-between', gap: 12,
-                              padding: '5px 12px', borderBottom: '1px solid ' + t.rule,
+                              padding: '4px 12px', borderBottom: '1px solid ' + t.rule,
                               borderTop: ln.rule ? '1px solid ' + t.ink : undefined,
                               background: on ? t.chip : 'transparent',
                               cursor: clickable ? 'pointer' : 'default',
@@ -3415,7 +3428,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           </div>
                         )
                       })}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '10px 14px', background: t.band, borderRadius: '0 0 6px 6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '9px 14px', marginTop: 'auto', background: t.band, borderRadius: '0 0 6px 6px', flex: '0 0 auto' }}>
                         <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.78)' }}>
                           <Ed v={(st.due || {}).k || ''} set={v => patch('statement.due.k', v)} edit={edit} />
                         </span>
@@ -3426,7 +3439,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </div>
 
                     {/* what sits behind the category you picked */}
-                    <div className="min-h-0 flex flex-col">
+                    <div className="flex flex-col" style={{ minHeight: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, paddingBottom: 6, borderBottom: '1px solid ' + t.ink }}>
                         <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink }}>
                           {stmtCat ? stmtCat : 'Every line traces to a booking'}
