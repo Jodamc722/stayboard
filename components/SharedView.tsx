@@ -173,6 +173,18 @@ export function SharedView({ code }: { code: string }) {
           </Sec>
         ) : null}
 
+        {/* THE CONTACT LIST. Locked unless the link carries a passcode — the server refuses to send
+            the rows without one, and this says so plainly rather than rendering an empty table. */}
+        {s.contacts ? (
+          <Sec Icon={AtSign} title="Contact list" sub={s.contacts.locked ? 'locked' : s.contacts.basis}>
+            {s.contacts.locked ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12.5px] text-amber-900">{s.contacts.reason}</div>
+            ) : (
+              <ContactsTable data={s.contacts} />
+            )}
+          </Sec>
+        ) : null}
+
         {s.audience ? (
           <Sec Icon={AtSign} title="Audience" sub={s.audience.basis}>
             {/* Counts and labels only — by design. The API cannot send a name, address or phone
@@ -342,5 +354,61 @@ export function SharedView({ code }: { code: string }) {
         </p>
       </div>
     </div>
+  )
+}
+
+/**
+ * The mailing list on a shared page. Deliberately plain: a search box, the rows, and a copy of the
+ * emails — the three things somebody opens this link to do. No editing, no Mailchimp push, no
+ * settings; a share link is a window, not a seat in the app.
+ */
+function ContactsTable({ data }: { data: any }) {
+  const [q, setQ] = useState('')
+  const [copied, setCopied] = useState(false)
+  const rows: any[] = Array.isArray(data.rows) ? data.rows : []
+  const shown = q.trim()
+    ? rows.filter(r => (r.name + ' ' + (r.email || '') + ' ' + (r.phone || '') + ' ' + (r.units || []).join(' ')).toLowerCase().includes(q.trim().toLowerCase()))
+    : rows
+  return (
+    <>
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, email, unit…"
+          className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-line bg-white w-full sm:w-64" />
+        <span className="text-[11.5px] text-muted tabular-nums">{shown.length.toLocaleString()} of {rows.length.toLocaleString()} mailable · {Number(data.total || 0).toLocaleString()} guests in total</span>
+        <button type="button"
+          onClick={() => { try { navigator.clipboard.writeText(shown.map(r => r.email).filter(Boolean).join(', ')); setCopied(true); setTimeout(() => setCopied(false), 1600) } catch { /* blocked */ } }}
+          className="ml-auto text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app">
+          {copied ? 'Copied' : 'Copy emails'}
+        </button>
+      </div>
+      <div className="overflow-x-auto -mx-1 px-1">
+        <table className="w-full min-w-[620px] text-[12.5px] border-collapse">
+          <thead>
+            <tr className="text-left text-[10.5px] uppercase tracking-wide text-muted">
+              <th className="py-1.5 pr-3 font-semibold">Name</th>
+              <th className="py-1.5 pr-3 font-semibold">Email</th>
+              <th className="py-1.5 pr-3 font-semibold">Phone</th>
+              <th className="py-1.5 pr-3 font-semibold">Booked via</th>
+              <th className="py-1.5 pr-3 font-semibold">Stays</th>
+              <th className="py-1.5 font-semibold">Last stay</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.slice(0, 1000).map((r, i) => (
+              <tr key={i} className="border-t border-line/60">
+                <td className="py-1.5 pr-3 text-ink">{r.name}</td>
+                <td className="py-1.5 pr-3 break-all">{r.email || '—'}</td>
+                <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap">{r.phone || '—'}</td>
+                <td className="py-1.5 pr-3 text-muted">{r.channel}</td>
+                <td className="py-1.5 pr-3 tabular-nums">{r.stays}</td>
+                <td className="py-1.5 tabular-nums whitespace-nowrap text-muted">{r.lastStay || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {shown.length > 1000 ? <div className="text-[11.5px] text-muted mt-2">Showing the first 1,000 — narrow the search to see the rest.</div> : null}
+        {!shown.length ? <div className="text-[12.5px] text-muted py-6 text-center">Nobody matches “{q}”.</div> : null}
+      </div>
+    </>
   )
 }

@@ -34,6 +34,7 @@ const SECTIONS: { key: string; label: string; sub: string }[] = [
   { key: 'revenue', label: 'Revenue & ADR', sub: 'stays, nights, ADR for the window' },
   { key: 'marketing', label: 'Booking sources', sub: 'direct vs OTA — the marketing lens' },
   { key: 'audience', label: 'Audience', sub: 'how many contacts these units have and where they came from — counts only, no names or emails' },
+  { key: 'contacts', label: 'Contact list', sub: 'the actual mailing list — names, emails and phone numbers. Needs a passcode; without one the section stays locked.' },
   { key: 'cleaning', label: 'Cleaning & tasks', sub: 'the next 14 days of scheduled work' },
   { key: 'verification', label: 'Guest verification', sub: 'verified / pending per arrival' },
   { key: 'notes', label: 'Reservation notes', sub: 'notes on current + upcoming stays' },
@@ -312,7 +313,7 @@ export function ShareLinksHub() {
             </span>
             <span className="flex items-center gap-1.5 text-[12.5px] text-muted">
               <Lock size={11} /> Passcode
-              <input value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="optional"
+              <input value={passcode} onChange={e => setPasscode(e.target.value)} placeholder={sections.contacts ? 'required for the contact list' : 'optional'}
                 className="w-28 rounded-lg border border-line px-2 py-1 text-[12.5px]" />
             </span>
           </div>
