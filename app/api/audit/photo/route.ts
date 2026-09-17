@@ -6,6 +6,7 @@ import { verifyUploadToken } from '@/lib/upload-token'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
 import { modelFor } from '@/lib/ai-models'
+import { textOf } from '@/lib/anthropic-text'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -42,7 +43,7 @@ async function analyze(b64: string): Promise<any | null> {
     })
     clearTimeout(timer)
     const j = await r.json().catch(() => null)
-    const txt = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
+    const txt = textOf(j)
     const m = txt.match(/\{[\s\S]*\}/)
     if (!m) return null
     const parsed = JSON.parse(m[0])
