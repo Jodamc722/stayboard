@@ -1766,6 +1766,28 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         @supports (height: 100dvh) {
           .sb-present-deck .sb-slide, .sb-present-deck .onb-cover { width: min(90vw, calc(82dvh * 16 / 9)) !important; }
         }
+        /* A 16:9 SLIDE ON A PHONE HELD UPRIGHT (Jon, 2026-09-17: "we need to make it better on
+           phone too"). An owner opens the link on a phone, and the deck is authored on a 1120px
+           canvas: across 390px of portrait screen that is a scale of 0.31, so a 13px label lands
+           at 4px. Nobody reads that.
+           The screen has 844px the other way. Turning the slide a quarter turn spends the long
+           axis on the long edge of the slide: min(95vh, 173vw), which on a 390x844 phone is a
+           675px slide instead of 351 — the same 13px label at 7.8px, near twice the size, with
+           the whole slide still on screen. The rotated box is 380 x 675 inside 390 x 844, which
+           is where those two multipliers come from; change one and check the other.
+           Turn the phone and the rule stops applying, because landscape already gives the slide
+           the room it wants. */
+        @media (max-width: 760px) and (orientation: portrait) {
+          .sb-present-deck > section, .sb-present-deck > header {
+            padding: 0 !important; overflow: hidden !important; }
+          .sb-present-deck .sb-slide, .sb-present-deck .onb-cover {
+            width: min(95vh, 173vw) !important;
+            height: auto !important;
+            aspect-ratio: 16 / 9 !important;
+            min-height: 0 !important;
+            transform: rotate(90deg);
+            transform-origin: center center; }
+        }
         .sb-present-deck .onb-cover-in { min-height: 0 !important; height: 100%; padding: 6% 6%; }
         /* A phone in portrait has no room to give away. */
         @media (max-width: 700px) {
@@ -1836,7 +1858,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
            letterbox it. The !important flag is what reaches the inline transform React writes.
            print-color-adjust keeps the navy slides navy; without it the dark pages come out
            white and the reversed type disappears. */
-        @page { size: 296mm 167mm; margin: 0; }
+        /* The sheet must be at least as big as the slide or a sliver spills onto a page of
+           its own: 1120x630px is 296.33 x 166.69mm, and a 296mm page is 1.3px short of the
+           slide's width — which is exactly the blank 17th page the first PDF ended on. 297 x
+           167mm clears it with about 2px to spare on each axis. */
+        @page { size: 297mm 167mm; margin: 0; }
         @media print {
           html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
           body * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
@@ -1853,8 +1879,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             break-inside: avoid; page-break-inside: avoid; }
           .sb-deck > section { break-before: page; page-break-before: always; }
           .sb-deck > header { break-before: auto; page-break-before: auto; }
-          /* Anything after the last slide is chrome, and chrome is not a page. */
-          .sb-deck > div, .sb-deck > p { display: none !important; }
+          /* Anything after the last slide is chrome, and chrome is not a page. The page-credit
+             FOOTER is the one that kept producing a blank 17th sheet: 105px of centred text with
+             no break rules on it, sitting past the final slide. Every slide already carries the
+             mark in its own foot, so on paper this line has nothing left to say. */
+          .sb-deck > div, .sb-deck > p, .sb-deck > footer { display: none !important; }
           .sb-slide, .onb-cover {
             width: 1120px !important; height: 630px !important; min-height: 0 !important;
             aspect-ratio: auto !important; border-radius: 0 !important; border: 0 !important;
@@ -1959,12 +1988,16 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         </div>
       )}
 
-      {/* Present + unlock-editing buttons for viewers (no edit toolbar) */}
+      {/* WHAT A SHARED LINK OFFERS: the deck, and a way to full-screen it. Nothing else.
+          (Jon, 2026-09-17: "make the shareable link uneditable.") The document was already
+          read-only for anyone without a login or the team cookie — no fields, no contenteditable
+          — but it still put a "Team edit" button in the corner of the owner's screen. That is an
+          invitation to try the door of a document about their own money, and the answer to
+          "can I change this?" should be that there is nothing there to ask. The team still
+          unlocks the same way: open it signed in, or use ?edit=1 with the password prompt from
+          the reports desk. */}
       {!canEdit && !present && (
         <div className="sb-noprint fixed top-4 right-4 z-30 flex items-center gap-2">
-          <button onClick={() => openPw('unlock')} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
-            <Lock size={12} /> Team edit
-          </button>
           <button onClick={enterPresent} className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.ink, color: t.bg }}>
             <Play size={13} /> Present
           </button>
@@ -2209,7 +2242,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   uploaded first — for this owner it is a four-up amenity collage, which is the
                   one thing a cover must not be. Same cycler the sections have, so the cover is
                   chosen in the room in two clicks. */}
-              {canEdit && (
+              {edit && (
                 <button
                   onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Cover photo', cur: String(hero.heroImage || ''), set: u => patch('hero.heroImage', u) }) }}
                   className="sb-noprint absolute bottom-4 right-4 rounded-full px-3.5 py-2 text-[11.5px] font-semibold shadow"
@@ -2412,7 +2445,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               ) : (
                 <div style={{ width: '100%', height: '100%', background: t.chip }} />
               )}
-              {canEdit && (
+              {/* IN EDIT MODE, NOT WHENEVER YOU HAPPEN TO HAVE PERMISSION (Jon, 2026-09-17:
+                  "the change photo needs to show in edit mode"). Gated on canEdit, a "Change"
+                  chip sat on every photo any time Jon had the deck open — including the moment
+                  he shares his screen on the call, where it reads as a half-built page. It is a
+                  tool, so it appears when the tools are out. */}
+              {edit && (
                 <button
                   onClick={() => { setPhotoUrl(''); setPhotoPick({ title, cur, set }) }}
                   className="sb-noprint sb-pick"
@@ -2542,7 +2580,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           />
                         ) : (
                           <div
-                            onClick={canEdit ? () => { setPhotoUrl(''); setPhotoPick({ title: 'Headshot \u2014 ' + String(p.name || ''), cur: '', set: u => patch('team.people.' + pi + '.photo', u) }) } : undefined}
+                            onClick={edit ? () => { setPhotoUrl(''); setPhotoPick({ title: 'Headshot \u2014 ' + String(p.name || ''), cur: '', set: u => patch('team.people.' + pi + '.photo', u) }) } : undefined}
                             style={{ width: 142, aspectRatio: '4 / 5', borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
