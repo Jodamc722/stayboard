@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
+import { textOf } from '@/lib/anthropic-text'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
     })
     clearTimeout(timer)
     const j = await r.json().catch(() => null)
-    const txt = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
+    const txt = textOf(j)
     const m = txt.match(/\{[\s\S]*\}/)
     if (!m) return NextResponse.json({ ok: true, ai: null })
     const parsed = JSON.parse(m[0])
