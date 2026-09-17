@@ -2251,13 +2251,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // Any image in the deck, with the picker hung off it in edit mode. `Edit photo` only
           // appears for the team; everywhere else the whole frame is the target, because on a
           // gallery slide a button per frame would be five buttons on five photographs.
-          const Pick = ({ title, cur, set, style, cover }: {
-            title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean
+          // `pos` is object-position. It matters most for faces: a cover crop defaults to the
+          // middle of the source, and the middle of a portrait photograph is a torso.
+          const Pick = ({ title, cur, set, style, cover, pos }: {
+            title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean; pos?: string
           }) => (
             <div style={{ position: 'relative', overflow: 'hidden', ...(style || {}) }}>
               {cur ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={cur} alt="" style={{ width: '100%', height: '100%', objectFit: cover === false ? 'contain' : 'cover' }} />
+                <img src={cur} alt="" style={{ width: '100%', height: '100%', objectFit: cover === false ? 'contain' : 'cover', objectPosition: pos || 'center' }} />
               ) : (
                 <div style={{ width: '100%', height: '100%', background: t.chip }} />
               )}
@@ -2363,17 +2365,25 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.min(6, Math.max(1, (sec('team').people || []).length || 1)) + ',1fr)', gap: (sec('team').people || []).length > 4 ? 16 : 24, width: '100%' }}>
                     {(sec('team').people || []).slice(0, 6).map((p: Any, pi: number) => (
                       <div key={pi}>
+                        {/* A HEADSHOT IS A PORTRAIT, AND THIS FRAME WAS A LETTERBOX (Jon,
+                            2026-09-17: "fix the photo headshots, look at the way they look").
+                            230px wide by 132 tall is a horizontal band, and `object-fit: cover`
+                            fills it from the middle of the source — so a phone photo of a
+                            colleague came out as a strip across their chest with the head cut
+                            off above it. The frame is now taller than it is wide, and the crop
+                            is pulled up to where a face actually sits in a portrait. */}
                         {p.photo ? (
                           <Pick
                             title={'Headshot \u2014 ' + String(p.name || '')}
                             cur={String(p.photo)}
                             set={u => patch('team.people.' + pi + '.photo', u)}
-                            style={{ width: '100%', height: 132, borderRadius: 12, marginBottom: 12 }}
+                            pos="center 22%"
+                            style={{ width: '100%', aspectRatio: '4 / 5', maxHeight: 186, borderRadius: 12, marginBottom: 12 }}
                           />
                         ) : (
                           <div
                             onClick={canEdit ? () => { setPhotoUrl(''); setPhotoPick({ title: 'Headshot \u2014 ' + String(p.name || ''), cur: '', set: u => patch('team.people.' + pi + '.photo', u) }) } : undefined}
-                            style={{ width: '100%', height: 132, borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 600, cursor: canEdit ? 'pointer' : 'default' }}>
+                            style={{ width: '100%', aspectRatio: '4 / 5', maxHeight: 186, borderRadius: 12, marginBottom: 12, background: t.chip, color: t.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 600, letterSpacing: '0.04em', cursor: canEdit ? 'pointer' : 'default' }}>
                             {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                           </div>
                         )}
