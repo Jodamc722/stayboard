@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
+import { textOf } from '@/lib/anthropic-text'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
       }),
     })
     const j = await r.json().catch(() => null)
-    const txt = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
+    const txt = textOf(j)
     const m = txt.match(/\[[\s\S]*\]/)
     const list = m ? JSON.parse(m[0]) : []
     const clean = Array.isArray(list) ? list.filter((x: any) => x && x.title).slice(0, 6).map((x: any) => ({ title: String(x.title).slice(0, 60), why: String(x.why || '').slice(0, 140) })) : []
