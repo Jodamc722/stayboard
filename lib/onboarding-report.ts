@@ -359,7 +359,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   statementAlso: [
     { k: 'No cleaning line, no OTA fee line', v: 'You will not see either. We keep the cleaning fee and it pays for the turnover, and the channel’s commission is already out of your rental figure rather than shown again below it.' },
-    { k: 'Channel fee reimbursement', v: 'The channel charges a fee on the cleaning fee as well as on the rent. The cleaning fee is ours, so that piece is not yours to carry — it comes back to you as this line.' },
+    { k: 'Channel fee reimbursement', v: 'The channel charges a fee on the cleaning fee as well as on the rent — 15% of it. The cleaning fee is ours, so that piece is not yours to carry — it comes back to you as this line.' },
     { k: 'Revenue management', v: 'Appears only if you are on a revenue-management arrangement.' },
     { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labelled with the month it belongs to.' },
   ],
