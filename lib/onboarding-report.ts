@@ -358,8 +358,8 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   ],
 
   statementAlso: [
-    { k: 'No cleaning line', v: 'You will not see one. The guest’s cleaning fee settles the turnover before your statement is drawn, so departure cleans never appear as income or as a charge.' },
-    { k: 'Channel fee reimbursement', v: 'What Airbnb, Vrbo or Booking took out of the booking, shown so the rental line reads as a real number rather than a gross one.' },
+    { k: 'No cleaning line, no OTA fee line', v: 'You will not see either. We keep the cleaning fee and it pays for the turnover, and the channel’s commission is already out of your rental figure rather than shown again below it.' },
+    { k: 'Channel fee reimbursement', v: 'The channel charges a fee on the cleaning fee as well as on the rent. The cleaning fee is ours, so that piece is not yours to carry — it comes back to you as this line.' },
     { k: 'Revenue management', v: 'Appears only if you are on a revenue-management arrangement.' },
     { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labelled with the month it belongs to.' },
   ],
@@ -766,7 +766,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       // constant rather than being assembled here, so that changing the example changes it in
       // every deck, including the ones already generated. See that file for why.
       ...SAMPLE_STATEMENT,
-      note: `Every line on this statement traces to a booking or to a job with a date on it. Labor is ${money0(rate)} an hour on the technician\u2019s actual clock, materials are at cost, and the ${t.mgmtPct}% management fee is the only fee we take.`,
+      note: `Your rental line is what is left after the channel takes its cut — there is no separate OTA fee to find, because it has already come out. You will not see the cleaning fee either: we keep it and it pays for the turnover, which is why the channel\u2019s fee on that cleaning fee comes back to you as its own line. Everything else traces to a booking or to a job with a date on it. Labor is ${money0(rate)} an hour on the technician\u2019s actual clock, materials are at cost, and the ${t.mgmtPct}% management fee is the only fee we take.`,
       rules,
       highlights: [
         { k: 'Departure cleans', v: 'Never billed to you, and never a line on your statement. The guest\u2019s cleaning fee pays for the turnover.' },
