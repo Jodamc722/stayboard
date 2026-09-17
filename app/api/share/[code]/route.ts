@@ -190,6 +190,51 @@ async function handle(code: string, pw: string, body?: any) {
     }
   }
 
+  // THE CONTACT LIST ITSELF — names, emails and phone numbers (Jon, 2026-09-17: "a shareable link,
+  // password protected, for contacts... same as the contact page on app").
+  //
+  // This is deliberately a SEPARATE section from `audience` rather than an upgrade to it. `audience`
+  // promises counts and nothing else, and links already handed out were configured under that
+  // promise; quietly teaching it to emit names would turn every existing partner link into a guest
+  // data leak without anyone ticking a box.
+  //
+  // A PASSCODE IS NOT OPTIONAL HERE. Everywhere else on a share link the code is the capability and
+  // the passcode is a second factor the creator may skip. This section is two years of guests' names,
+  // emails and phone numbers, so the section simply does not render without one — a forgotten
+  // passcode field can never be the reason that list is on the open internet.
+  if (sections.contacts) {
+    if (!String(link.passcode || '').trim()) {
+      out.sections.contacts = { locked: true, reason: 'This link needs a passcode before the contact list will show. Set one on the Share Links page.' }
+    } else {
+      const twoYears = ymdET(new Date(Date.now() - 730 * 86400000))
+      let cres: any[] = []
+      for (let i = 0; i < 12; i++) {
+        const { data: page } = await db.from('guesty_reservations')
+          .select('listing_id, guest_id, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, money_total')
+          .in('listing_id', idList.slice(0, 400))
+          .gte('check_in', twoYears)
+          .order('check_in', { ascending: false }).range(i * 1000, i * 1000 + 999)
+        cres = cres.concat(page || [])
+        if (!page || page.length < 1000) break
+      }
+      const scoped2 = (listings || []).filter((l: any) => ids.has(str((l as any).id)))
+        .map((l: any) => ({ id: str(l.id), nickname: l.nickname, title: l.title, building: l.building, city: (l as any).address_city }))
+      const all = buildContacts({ reservations: cres, listings: scoped2, reviews: [], profiles: [], today })
+      // Only the people we may actually mail. A channel forwarding address is kept out entirely
+      // rather than shown and captioned — on a shared page nobody reads the caption before pasting
+      // the column into a campaign.
+      const rows = all.filter((c: any) => c.mail === 'mailable')
+      out.sections.contacts = {
+        basis: `guests of these ${idList.length} unit${idList.length === 1 ? '' : 's'} in the last two years`,
+        total: all.length,
+        rows: rows.map((c: any) => ({
+          name: c.name, first: c.first, last: c.last, email: c.email, phone: c.phone,
+          channel: c.channel, units: c.units, stays: c.stays, lastStay: c.lastStay,
+        })),
+      }
+    }
+  }
+
   if (sections.cleaning) {
     const capUntil = ymdET(new Date(Date.now() + Math.min(windowDays, 14) * 86400000))
     const { data: tasks } = await db.from('breezeway_tasks_sync')
