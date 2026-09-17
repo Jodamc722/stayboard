@@ -205,7 +205,7 @@ export async function POST(req: NextRequest) {
     // 2026-07-31. writeCustomFields reads the live array first and merges; it refuses to write if
     // it cannot read, because a write built on a guess is the bug.
     const wr = await writeCustomFields(reservationId, token, writes)
-    if (!wr.ok) return NextResponse.json({ error: 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240) }, { status: 502 })
+    if (!wr.ok) return NextResponse.json({ error: wr.rateLimited ? String(wr.note) : 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240) }, { status: wr.rateLimited ? 429 : 502 })
     try {
       const cf = Array.isArray(wr.fields) ? wr.fields : []
       await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
@@ -231,7 +231,7 @@ export async function POST(req: NextRequest) {
     const { notesId, newNotes } = await appendNote('Call note')
     if (!notesId) return NextResponse.json({ error: 'Could not resolve the Reservation Notes custom field id in Guesty.' }, { status: 422 })
     const wr = await writeCustomFields(reservationId, token, [{ fieldId: notesId, value: newNotes }])
-    if (!wr.ok) return NextResponse.json({ error: 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240) }, { status: 502 })
+    if (!wr.ok) return NextResponse.json({ error: wr.rateLimited ? String(wr.note) : 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240) }, { status: wr.rateLimited ? 429 : 502 })
     try {
       const cf = Array.isArray(wr.fields) ? wr.fields : []
       await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
@@ -272,7 +272,7 @@ export async function POST(req: NextRequest) {
 
   // Guesty Open API: merge-and-write the reservation custom field value(s) — never a bare PUT.
   const wr = await writeCustomFields(reservationId, token, writes)
-  if (!wr.ok) return NextResponse.json({ error: 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240), fieldId }, { status: 502 })
+  if (!wr.ok) return NextResponse.json({ error: wr.rateLimited ? String(wr.note) : 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240), fieldId }, { status: wr.rateLimited ? 429 : 502 })
 
   // Mirror locally: the merged array Guesty now holds, plus who/when/note on the welcome entry.
   try {
