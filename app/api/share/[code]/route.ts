@@ -252,9 +252,10 @@ async function handle(code: string, pw: string, body?: any) {
         restrictedChannels,
         showMoney,
         short: [crev.truncated ? 'reviews' : '', cprof.truncated ? 'guest profiles' : ''].filter(Boolean),
-        // Capped. Six thousand contacts at the full shape is megabytes of JSON down a phone
-        // connection; the fields here are exactly the ones the page renders.
-        rows: all.slice(0, 6000).map((c: any) => ({
+        // Capped, and the page says so when the cap bites. Eight thousand clears today's 7,163 with
+        // headroom; past that this becomes megabytes of JSON down a phone connection, and the fields
+        // below are already only the ones the page renders.
+        rows: all.slice(0, 8000).map((c: any) => ({
           key: c.key, first: c.first, last: c.last, name: c.name,
           email: c.email, mail: c.mail, mailReason: c.mailReason, phone: c.phone,
           channel: c.channel, everDirect: c.everDirect, inHouse: c.inHouse,
