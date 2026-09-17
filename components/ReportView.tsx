@@ -3015,7 +3015,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         // the edit, because an edited one will not be on the old scale.
                         const ms: Any[] = seasonStale ? (SEASON_SHAPE as Any[]) : seasonStored
                         if (ms.length < 2) return null
-                        const W = 620, H = 196, PAD = 14
+                        // PAD is the plot inset. At 14 the December band — the wrap-around
+                        // half of peak season — ran hard into the right edge of the chart and
+                        // read as a solid bar stuck to the side rather than a band around a
+                        // month, and the curve's last point sat almost on the boundary. 26
+                        // gives both a margin, and the band edges are clamped to the plot below.
+                        const W = 620, H = 196, PAD = 26
                         const max = Math.max(1, ...ms.map((m: Any) => Number(m.level) || 0))
                         const xs = ms.map((_m: Any, i: number) => PAD + (i * (W - PAD * 2)) / (ms.length - 1))
                         const ys = ms.map((m: Any) => H - 26 - ((Number(m.level) || 0) / max) * (H - 52))
@@ -3059,9 +3064,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           if (on && runStart < 0) runStart = i
                           if ((!on || i === n - 1) && runStart >= 0) {
                             const last = on ? i : i - 1
-                            const x0 = xs[runStart] - (runStart > 0 ? (xs[runStart] - xs[runStart - 1]) / 2 : PAD)
-                            const x1 = xs[last] + (last < n - 1 ? (xs[last + 1] - xs[last]) / 2 : PAD)
-                            bands.push({ x: x0, w: x1 - x0 })
+                            const x0 = Math.max(2, xs[runStart] - (runStart > 0 ? (xs[runStart] - xs[runStart - 1]) / 2 : PAD))
+                            const x1 = Math.min(W - 2, xs[last] + (last < n - 1 ? (xs[last + 1] - xs[last]) / 2 : PAD))
+                            bands.push({ x: x0, w: Math.max(0, x1 - x0) })
                             runStart = -1
                           }
                         }
