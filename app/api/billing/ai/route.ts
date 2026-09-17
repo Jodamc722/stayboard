@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { anthropicMessages } from '@/lib/anthropic-call'
 import { requireLevel } from '@/lib/access'
-import { modelFor } from '@/lib/ai-models'
+import { modelPairFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -55,10 +55,19 @@ export async function POST(req: NextRequest) {
     department: String(body?.department || ''),
   }
   try {
-    const r = await anthropicMessages(key, { model: await modelFor('billing'), max_tokens: 600, system: spelling ? SYS_SPELLING : SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] })
+    // modelPairFor, not modelFor: the helper's default fallback is a guess, and a Polish button
+    // that fails because the account cannot see one alias is worse than one that costs more.
+    const { model, fallback } = await modelPairFor('billing')
+    const r = await anthropicMessages(key, { model, max_tokens: 600, system: spelling ? SYS_SPELLING : SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] }, fallback)
     const j: any = r.data
     const text = j && Array.isArray(j.content) && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
-    if (!r.ok || !text) return NextResponse.json({ ok: false, error: 'AI request failed.' }, { status: 502 })
+    // SAY WHAT WENT WRONG. "AI request failed." sent whoever hit it to the server logs, or more
+    // likely to me. The API's own message names the cause — an unknown model, a bad key, a rate
+    // limit — and the person reading it is the one who can act on it.
+    if (!r.ok || !text) {
+      const detail = String(j?.error?.message || j?.error?.type || '').slice(0, 200)
+      return NextResponse.json({ ok: false, error: `AI request failed (${r.status}${r.model ? ', ' + r.model : ''})${detail ? ': ' + detail : '.'}` }, { status: 502 })
+    }
     const m = text.match(/\{[\s\S]*\}/)
     if (!m) return NextResponse.json({ ok: false, error: 'AI returned no JSON.' }, { status: 502 })
     let out: any = null
