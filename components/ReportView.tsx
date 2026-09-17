@@ -3144,14 +3144,21 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <p className="onb-h" style={{ fontSize: 28, color: t.ink, lineHeight: 1.2 }}>
                         <Ed v={sec('statement').headline || ''} set={v => patch('statement.headline', v)} edit={edit} />
                       </p>
+                      {/* SAID OUT LOUD, ON THE SLIDE. This is the one slide in the deck whose
+                          numbers are not the owner's, and an owner reading a figure as theirs is
+                          the single worst thing this document could do. */}
+                      <p style={{ fontSize: 11.5, lineHeight: 1.45, color: t.muted, marginTop: 6, maxWidth: '62ch' }}>
+                        <Ed v={sec('statement').subtitle || ''} set={v => patch('statement.subtitle', v)} edit={edit} multiline />
+                      </p>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>{sec('statement').unitLabel}</p>
-                      <p style={{ fontSize: 12, color: t.muted, marginTop: 2 }}>{sec('statement').period}</p>
+                    <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.gold, border: '1px solid ' + t.gold, borderRadius: 999, padding: '2px 8px' }}>Sample</span>
+                      <p style={{ fontSize: 12.5, fontWeight: 600, color: t.ink, marginTop: 6 }}>{sec('statement').unitLabel}</p>
+                      <p style={{ fontSize: 11.5, color: t.muted, marginTop: 2 }}>{sec('statement').period}</p>
                     </div>
                   </div>
 
-                  <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: t.cardBorder, border: '1px solid ' + t.cardBorder, borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: t.cardBorder, border: '1px solid ' + t.cardBorder, borderRadius: 10, overflow: 'hidden' }}>
                     {(sec('statement').kpis || []).map((k: Any, i: number) => (
                       <div key={i} style={{ background: t.card, padding: '9px 16px' }}>
                         <p style={{ fontSize: 11, color: t.muted }}>
