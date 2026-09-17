@@ -1257,19 +1257,38 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
   )
 }
 
+/**
+ * EVERYTHING ON THE CARD, EDITABLE (Jon, 2026-09-17: "just want to be editable").
+ *
+ * Three things were shown on the issue and could not be changed anywhere: how it came in, how the
+ * guest sounded, and the photos. The server's update action has always accepted all three — only
+ * the form had never offered them. A chip that reads "via message" when it arrived as a phone call,
+ * on a card whose whole point is being an accurate record, is the same class of problem as the typo
+ * Sulaman could not fix.
+ *
+ * PHOTOS ARE REMOVE-ONLY HERE, and deliberately: attaching the wrong picture is the mistake worth
+ * undoing, and adding one belongs with the camera on the main card rather than buried in a
+ * corrections form.
+ */
 function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
   const [f, setF] = useState({
     glitchType: g.glitch_type || TYPES[0], category: g.category || '', incidentDate: g.incident_date || '',
     overview: g.overview || '', refundApproved: String(g.refund_approved || ''),
     reportedBy: g.reported_by || '', guestName: g.guest_name || '', guestPhone: g.guest_phone || '', guestEmail: g.guest_email || '', unit: g.unit || '', channel: g.channel || '',
+    reportedVia: g.reported_via || '', guestTone: g.guest_tone || '',
   })
+  // Photos are an array, so they travel beside `f` rather than in it, and only when one was dropped
+  // — an unchanged list is not sent, so a photo added on the card while this form sits open is not
+  // quietly reverted by pressing Save.
+  const [photos, setPhotos] = useState<string[]>(() => (g.photos || []).slice())
+  const photosChanged = photos.length !== (g.photos || []).length
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const set = (k: string, v: string) => setF(prev => ({ ...prev, [k]: v }))
   const save = async () => {
     setBusy(true); setErr('')
     try {
-      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, action: 'update', ...f }) })
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, action: 'update', ...f, ...(photosChanged ? { photos } : {}) }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setErr(j.error || 'Save failed'); setBusy(false); return }
       onDone()
@@ -1292,8 +1311,40 @@ function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
         <input value={f.channel} onChange={e => set('channel', e.target.value)} placeholder="Channel (Airbnb…)" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
         <input value={f.refundApproved} onChange={e => set('refundApproved', e.target.value)} placeholder="Refund approved $" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white" />
         <input value={f.reportedBy} onChange={e => set('reportedBy', e.target.value)} placeholder="Reported by" className="text-xs border border-line rounded px-1.5 py-1.5 bg-white sm:col-span-2" />
+        <select value={f.reportedVia} onChange={e => set('reportedVia', e.target.value)} className="text-xs border border-line rounded px-1.5 py-1.5 bg-white">
+          <option value="">How it came in…</option>
+          {[['message', 'Message'], ['call', 'Phone call'], ['in_person', 'In person'], ['at_checkout', 'At checkout'], ['review', 'In a review'], ['other', 'Other']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <select value={f.guestTone} onChange={e => set('guestTone', e.target.value)} className="text-xs border border-line rounded px-1.5 py-1.5 bg-white">
+          <option value="">Guest sounded…</option>
+          {[['understanding', 'Understanding'], ['frustrated', 'Frustrated'], ['angry', 'Angry'], ['fishing', 'Fishing']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
       </div>
-      <textarea value={f.overview} onChange={e => set('overview', e.target.value)} rows={3} className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
+
+      <label className="block">
+        <span className="block text-[10px] uppercase tracking-wider font-bold text-muted mb-1">What the guest said</span>
+        <textarea value={f.overview} onChange={e => set('overview', e.target.value)} rows={3} className="w-full text-xs border border-line rounded px-2 py-1.5 bg-white" />
+      </label>
+
+      {photos.length > 0 ? (
+        <div>
+          <span className="block text-[10px] uppercase tracking-wider font-bold text-muted mb-1">Photos &mdash; tap the cross to drop a wrong one</span>
+          <div className="flex gap-1.5 flex-wrap">
+            {photos.map((u, i) => (
+              <div key={u + i} className="relative">
+                <img src={glitchPhotoSrc(u)} alt="" className="w-14 h-14 object-cover rounded-md border border-line" />
+                <button onClick={() => setPhotos(prev => prev.filter((_, j) => j !== i))}
+                  title="Remove this photo" aria-label="Remove this photo"
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 grid place-items-center rounded-full bg-ink text-white text-[11px] leading-none shadow">
+                  <X size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {photosChanged ? <p className="text-[10px] text-muted mt-1">Not removed until you press Save.</p> : null}
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-1.5">
         <button onClick={save} disabled={busy} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
         {err && <span className="text-[10px] text-rose-700">{err}</span>}
