@@ -1777,10 +1777,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
            is where those two multipliers come from; change one and check the other.
            Turn the phone and the rule stops applying, because landscape already gives the slide
            the room it wants. */
+        /* The selector carries BOTH root classes on purpose. A later rule in this same sheet
+           sets a width of 100vw, flagged important, for narrow screens at equal specificity, and on equal
+           specificity the last one wins — which is why the first version of this block rotated
+           the slide correctly and then left it 390px long anyway. Naming both root classes
+           outranks it whatever the order. */
         @media (max-width: 760px) and (orientation: portrait) {
-          .sb-present-deck > section, .sb-present-deck > header {
+          .sb-present.sb-present-deck > section, .sb-present.sb-present-deck > header {
             padding: 0 !important; overflow: hidden !important; }
-          .sb-present-deck .sb-slide, .sb-present-deck .onb-cover {
+          .sb-present.sb-present-deck .sb-slide, .sb-present.sb-present-deck .onb-cover {
             width: min(95vh, 173vw) !important;
             height: auto !important;
             aspect-ratio: 16 / 9 !important;
