@@ -70,6 +70,26 @@ const REASON_META: Record<string, { label: string; Icon: any; cls: string }> = {
 
 const money = (n: number) => n ? '$' + Math.round(n).toLocaleString() : ''
 const who = (e: string) => e ? (e.split('@')[0] || e) : ''
+/**
+ * The reply, or a sentence a caller can act on.
+ *
+ * A route that runs past its limit is answered by the platform with an HTML gateway page, not JSON.
+ * `await r.json()` then throws a SyntaxError, and what reached the screen was "Unexpected token '<'"
+ * — from a button the caller had just watched spin. Silvia, 2026-09-17: "it just sits there thinking
+ * for a moment and doesn't update."
+ *
+ * So: read the body once as text, parse it only if it is JSON, and otherwise say what happened and
+ * whether it is safe to press again.
+ */
+async function readReply(r: Response): Promise<any> {
+  const text = await r.text().catch(() => '')
+  try { return text ? JSON.parse(text) : {} } catch { /* not JSON — below */ }
+  if (r.status === 504 || r.status === 502 || r.status === 408) {
+    throw new Error('Guesty took too long to answer, so nothing was saved. Press it again in a moment — this cannot double-record a call.')
+  }
+  throw new Error(`The server answered ${r.status} instead of a result, so nothing was saved. Press it again in a moment.`)
+}
+
 const day = (iso: string) => { try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) } catch { return '' } }
 const longDay = (ymd: string) => { try { return new Date(ymd + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) } catch { return ymd } }
 const shortDay = (ymd: string) => { try { return new Date(ymd + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) } catch { return ymd } }
@@ -316,6 +336,10 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   const [tab, setTab] = useState<'welcome' | 'post' | 'board' | 'all'>('welcome')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // WHICH row failed. The banner lives at the top of a list that runs to seventy rows, so a caller
+  // working row forty watched the button spin, stop, and change nothing — the explanation was a
+  // screen and a half away. The message now also appears against the row it belongs to.
+  const [failedId, setFailedId] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -341,10 +365,10 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
     if (outcome !== 'undo' && outcome !== 'claim') { const n = askName(); if (n === null) return; by = n }
     if (outcome === 'claim' && !by) { const n = askName(); if (n === null) return; by = n }
     const note = (draft[id] || '').trim()
-    setBusy(id); setError(null)
+    setBusy(id); setError(null); setFailedId(null)
     try {
       const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, outcome, tier: row.tier, note, by }) })
-      const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed.')
+      const j = await readReply(r); if (!r.ok) throw new Error(j?.error || 'Failed.')
       setRows(prev => prev.map(x => {
         if (x.id !== id) return x
         if (outcome === 'undo') return { ...x, done: false, outcome: '', calledBy: '', calledAt: '', claimedBy: '', claimedAt: '', callValue: '' }
@@ -353,17 +377,17 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
         return { ...x, done: true, outcome, calledBy: j.by || by, calledAt: j.at || new Date().toISOString(), callValue: j.callValue || x.callValue, notes: j.notes || x.notes, claimedBy: '', attempts: j.attempts || (x.attempts + 1) }
       }))
       if (outcome !== 'claim') setDraft(d => ({ ...d, [id]: '' }))
-    } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(null) }
+    } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setBusy(null) }
   }
   async function saveNote(id: string) {
     const note = (draft[id] || '').trim(); if (!note) return
-    setSaving(id); setError(null)
+    setSaving(id); setError(null); setFailedId(null)
     try {
       const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, noteOnly: true, note }) })
-      const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to save note.')
+      const j = await readReply(r); if (!r.ok) throw new Error(j?.error || 'Failed to save note.')
       setRows(prev => prev.map(x => x.id === id ? { ...x, notes: j.notes || x.notes } : x))
       setDraft(d => ({ ...d, [id]: '' })); setSaved(id); setTimeout(() => setSaved(s => s === id ? null : s), 1800)
-    } catch (e: any) { setError(e.message || String(e)) } finally { setSaving(null) }
+    } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setSaving(null) }
   }
 
   // ── POST-CHECKOUT ACTIONS ──
@@ -371,10 +395,10 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
     let by = myName || who(me)
     if (outcome !== 'undo') { const n = askName(); if (n === null) return; by = n }
     const note = (draft[id] || '').trim()
-    setBusy(id); setError(null)
+    setBusy(id); setError(null); setFailedId(null)
     try {
       const r = await fetch('/api/post-checkout-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(outcome === 'undo' ? { reservationId: id, undo: true } : { reservationId: id, outcome, note, by }) })
-      const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to log the call.')
+      const j = await readReply(r); if (!r.ok) throw new Error(j?.error || 'Failed to log the call.')
       setOutRows(prev => prev.map(x => {
         if (x.id !== id) return x
         if (outcome === 'undo') return { ...x, done: false, outcome: '', calledBy: '', calledAt: '', callNote: '', claimedBy: '' }
@@ -383,7 +407,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       }))
       if (outcome !== 'claim') setDraft(d => ({ ...d, [id]: '' }))
       if (j.noteSynced === false) setError('Call logged. The note could not be written to Guesty — add it there by hand if it matters.')
-    } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(null) }
+    } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setBusy(null) }
   }
   async function copyPhone(id: string, phone: string) {
     try { await navigator.clipboard.writeText(phone); setCopied(id); setTimeout(() => setCopied(c => c === id ? null : c), 1500) } catch { /* ignore */ }
@@ -533,7 +557,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
                     {Array.from(byDay.entries()).map(([d, xs]) => (
                       <div key={d}>
                         <h3 className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${d === today ? 'text-rose-700' : 'text-muted'}`}>{dayLabel(d)} — {xs.length}</h3>
-                        <WelcomeList rows={xs} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName }} />
+                        <WelcomeList rows={xs} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }} />
                       </div>
                     ))}
                   </div>
@@ -547,7 +571,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       {tab === 'all' && (
         allSorted.length === 0
           ? <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No upcoming reservations.</div>
-          : <WelcomeList rows={allSorted} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName }} />
+          : <WelcomeList rows={allSorted} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }} />
       )}
 
       <p className="text-[11px] text-muted"><StickyNote size={11} className="inline" /> Reached and Voicemail write the <b>Welcome Call</b> field on the reservation in Guesty and append your note to the reservation notes. No answer, Take it and post-checkout outcomes are logged in Lighthouse (the post-checkout note goes to Guesty too). After midnight, any welcome call whose guest arrived today and any post-checkout call past its 48 hours closes as incomplete.</p>
@@ -558,12 +582,14 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 function nextDay(ymd: string) { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10) }
 
 // ── ONE WELCOME-CALL CARD LIST ─────────────────────────────────────────────────────────────────
-function WelcomeList({ rows, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName }: {
+function WelcomeList({ rows, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }: {
   rows: Row[]; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; copied: string | null; copyPhone: (id: string, p: string) => void
   welcome: (id: string, o: 'reached' | 'voicemail' | 'no_answer' | 'claim' | 'undo') => void
   saveNote: (id: string) => void; saving: string | null; saved: string | null; myName: string
+  /** The row a save failed on, and what to say about it — shown against that row, not only up top. */
+  failedId: string | null; error: string | null
 }) {
   return (
     <ul className="rounded-2xl border border-line bg-white divide-y divide-line overflow-hidden">
@@ -627,6 +653,11 @@ function WelcomeList({ rows, openId, setOpenId, draft, setDraft, busy, copied, c
                 {!r.done && !r.closed && (
                   <OutcomeRow busy={busy === r.id} attempts={r.attempts}
                     onReached={() => welcome(r.id, 'reached')} onVoicemail={() => welcome(r.id, 'voicemail')} onNoAnswer={() => welcome(r.id, 'no_answer')} />
+                )}
+                {failedId === r.id && error && (
+                  <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-start gap-1.5">
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" /> <span>{error}</span>
+                  </p>
                 )}
               </>
             )}
