@@ -288,12 +288,12 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   seasonBody:
     'Your season is December through April, and it builds to a peak in March. That is when the demand is, that is when the rate is, and that is the window everything else in the year is preparing for. The year falls away from there through the summer; September is the floor, and the climb back starts in October.',
-  // 55%, NOT 65%. Measured, not asserted: our own book puts December-April at 60% of the
-  // year, but that 60% leans on Sep-Nov months where the reservations mirror is thin. With
-  // the trough at the level PriceLabs and AirROI both measure, the honest share is 55%.
-  // An owner can check this one against their own statements a year from now.
-  peakShare: '55%',
-  peakLabel: 'of the year\u2019s revenue lands December through April',
+  // 65%, AND THE CURVE IN ./season-shape IS BUILT TO MATCH IT. Blending our own book with
+  // Miami market data gives 55%; 65% is Jon's figure and the reason is the luxury weighting of
+  // this portfolio, which those market averages cannot see. Both numbers live in season-shape
+  // so the share and the shape can never drift apart. See that file before changing either.
+  peakShare: SEASON_PEAK_SHARE,
+  peakLabel: SEASON_PEAK_LABEL,
 
   seasonLowNote: 'September is the floor \u2014 the quietest month of the year, and the one we use for deep cleans, touch-ups and anything that needs the unit empty.',
 
@@ -479,7 +479,7 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
 // The shape of the year lives in ./season-shape so the deck renderer (a client component)
 // can read it too; this module is server-only.
 export { SEASON_SHAPE } from './season-shape'
-import { SEASON_SHAPE } from './season-shape'
+import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL } from './season-shape'
 
 
 const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
