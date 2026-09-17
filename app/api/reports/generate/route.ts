@@ -266,7 +266,11 @@ export async function POST(req: NextRequest) {
     // here, once, rather than in the renderer — the deck should never see one.
     const cleaned = await Promise.all(rows.map(async l => ({
       ...l,
-      pictures: await withoutCollages(Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : []),
+      // CHECK DEEPER THAN THE FIRST TEN. withoutCollages only decodes the first `limit`
+      // images and passes the rest through unverified, which was fine when the deck used five
+      // photos per listing and wrong now that the picker offers the whole set (Jon, 2026-09-17).
+      // Thirty covers a typical Guesty listing end to end.
+      pictures: await withoutCollages(Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : [], 30),
     })))
 
     // AMENITIES ARE BACK, AS A SLIDE OF THEIR OWN (Jon, 2026-09-16: "add the listed amenities,
