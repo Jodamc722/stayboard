@@ -2824,6 +2824,21 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // No dollar figure anywhere (Jon: "not actual numbers"). A number we invented today
           // is the number an owner holds us to in April, and their unit has no history yet. The
           // share and the shape are true of the market and safe to put in front of them.
+          // THE SHARE AND THE CURVE HAVE TO AGREE. A deck still carrying the old hand-drawn
+          // 0-6 curve is also carrying the headline written beside it that day - "65% ...
+          // November through April" - and the measured curve does not support either number:
+          // it is 55%, and November is not a peak month. Substituting the chart but leaving the
+          // sentence would hand Jon a slide that argues with itself in front of an owner, so
+          // the two move together or not at all. An edited deck is not on the old scale and is
+          // left alone.
+          const seasonStored: Any[] = sec('season').months || []
+          const seasonStale = seasonStored.length === 12 &&
+            Math.max(0, ...seasonStored.map((m: Any) => Number(m.level) || 0)) <= 12
+          const seasonShare = seasonStale ? '55%' : (sec('season').peakShare || '')
+          const seasonLabel = seasonStale
+            ? 'of the year\u2019s revenue lands December through April'
+            : (sec('season').peakLabel || '')
+
           if (!hid('season')) slides.push({ key: 'season', ai: true, node: (
             <Slide nav="The season" warn={edit} ground={GROUND.dark} bleed>
               <div style={{ position: 'absolute', inset: 0, background: t.band, padding: 64 }} className="flex flex-col">
@@ -2832,10 +2847,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', columnGap: 52, alignItems: 'center' }}>
                     <div>
                       <p style={{ fontSize: 84, fontWeight: 600, letterSpacing: '-0.045em', color: D.ink, lineHeight: 0.9 }}>
-                        <Ed v={sec('season').peakShare || ''} set={v => patch('season.peakShare', v)} edit={edit} />
+                        <Ed v={seasonShare} set={v => patch('season.peakShare', v)} edit={edit} />
                       </p>
                       <p style={{ fontSize: 15.5, lineHeight: 1.5, color: D.body, marginTop: 14, maxWidth: '26ch' }}>
-                        <Ed v={sec('season').peakLabel || ''} set={v => patch('season.peakLabel', v)} edit={edit} multiline />
+                        <Ed v={seasonLabel} set={v => patch('season.peakLabel', v)} edit={edit} multiline />
                       </p>
                     </div>
                     <div>
@@ -2855,9 +2870,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         // so an old deck is re-pointed at the measured shape instead of being
                         // left showing a cliff. A deck whose curve has been edited by hand keeps
                         // the edit, because an edited one will not be on the old scale.
-                        const stored: Any[] = sec('season').months || []
-                        const topLvl = Math.max(0, ...stored.map((m: Any) => Number(m.level) || 0))
-                        const ms: Any[] = (stored.length === 12 && topLvl <= 12) ? (SEASON_SHAPE as Any[]) : stored
+                        const ms: Any[] = seasonStale ? (SEASON_SHAPE as Any[]) : seasonStored
                         if (ms.length < 2) return null
                         const W = 620, H = 196, PAD = 14
                         const max = Math.max(1, ...ms.map((m: Any) => Number(m.level) || 0))
