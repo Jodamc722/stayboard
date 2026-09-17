@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
+import { textOf } from '@/lib/anthropic-text'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify({ model: await modelFor('audit'), max_tokens: 2000, system: mode === 'onboarding' ? OSYS : SYS, messages: [{ role: 'user', content: 'TAG LIST: ' + taxonomy.join(', ') + '. Rooms in this unit: ' + (rooms.join(', ') || 'unknown - rooms come from the dictation') + '. Dictation: ' + transcript }] }) })
     const j = await r.json()
-    const text = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
+    const text = textOf(j)
     const m = text.match(/\{[\s\S]*\}/)
     const parsed = m ? JSON.parse(m[0]) : null
     const KINDS = mode === 'onboarding' ? ['inventory', 'faq'] : ['maintenance', 'replace', 'add', 'clean']
