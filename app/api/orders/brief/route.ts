@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
+import { textOf } from '@/lib/anthropic-text'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ model: await modelFor('orders'), max_tokens: 8000, system: SYS, messages: [{ role: 'user', content: 'Items: ' + JSON.stringify(payload) }] }),
     })
     const j = await r.json()
-    const text = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
+    const text = textOf(j)
     const m = text.match(/\{[\s\S]*\}/)
     const parsed = m ? JSON.parse(m[0]) : null
     const briefs = parsed && Array.isArray(parsed.briefs) ? parsed.briefs : []
