@@ -403,6 +403,18 @@ function CStat({ label, value, sub, tone }: { label: string; value: string; sub?
   )
 }
 
+// A PHONE NUMBER THE EYE CAN READ. Guesty hands these over as a raw digit string — 17577542941 —
+// which in a column of two hundred is unscannable and impossible to compare. US numbers get the
+// familiar shape; everything else keeps its digits behind a + so it reads as international rather
+// than as a broken US number.
+function phoneOf(raw: any): string {
+  const d = String(raw || '').replace(/[^0-9]/g, '')
+  if (!d) return '—'
+  if (d.length === 10) return '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6)
+  if (d.length === 11 && d[0] === '1') return '(' + d.slice(1, 4) + ') ' + d.slice(4, 7) + '-' + d.slice(7)
+  return '+' + d
+}
+
 function csvCell(v: any): string {
   const s = v == null ? '' : String(v)
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
@@ -735,11 +747,17 @@ function CRow({ c, money }: { c: any; money: boolean }) {
             </span>
           ) : null}
         </p>
+        {/* ON A PHONE the channel and unit columns are hidden, and without this line the row read
+            as a name, an address and a date — no way to tell an Airbnb guest from a direct one, which
+            is half the reason to open this page. They come back as one muted line under the address. */}
+        <p className="sm:hidden mt-0.5 text-[10.5px] text-muted truncate">
+          {[c.channel, c.lastUnit, c.phone ? phoneOf(c.phone) : ''].filter(Boolean).join(' · ')}
+        </p>
       </div>
 
       {/* Phone: its own column so it stops landing on a line of its own under the address. */}
-      <div className="hidden lg:block shrink-0 w-[130px] text-[11.5px] text-muted tabular-nums truncate">
-        {c.phone || '—'}
+      <div className="hidden lg:block shrink-0 w-[130px] text-[11.5px] text-muted tabular-nums truncate" title={c.phone || ''}>
+        {phoneOf(c.phone)}
       </div>
 
       <div className="hidden sm:block shrink-0 w-[120px] min-w-0">
@@ -779,7 +797,10 @@ function CHead({ money }: { money: boolean }) {
       <div className={'hidden md:block shrink-0 w-[150px] ' + h}>Last unit</div>
       <div className={'shrink-0 w-[92px] ' + h}>{money ? 'Stays · value' : 'Stays'}</div>
       <div className={'shrink-0 w-[74px] ' + h}>Rating</div>
-      <div className={'shrink-0 w-[78px] text-right ' + h}>Last stay</div>
+      {/* Not "Last stay": this is the latest stay on the guest's record, and for someone with a
+          booking ahead of them that date is in the future. Calling it "last" made a 2027 date look
+          like a data bug. */}
+      <div className={'shrink-0 w-[78px] text-right ' + h}>Latest stay</div>
     </div>
   )
 }
