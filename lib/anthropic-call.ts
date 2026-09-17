@@ -5,6 +5,7 @@
 // than a Polish button that costs 2.5x. So: try the model asked for; if the API says it does not
 // know it, try the fallback once, and say which one answered.
 import 'server-only'
+export { textOf } from './anthropic-text'
 
 const URL = 'https://api.anthropic.com/v1/messages'
 
