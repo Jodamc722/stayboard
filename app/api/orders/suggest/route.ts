@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { anthropicMessages } from '@/lib/anthropic-call'
 import { createClient } from '@/lib/supabase-server'
 import { modelFor } from '@/lib/ai-models'
+import { textOf } from '@/lib/anthropic-text'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
     const SYS = 'You suggest products for a short-term rental property manager restocking units. Given a need, return 2-3 concrete product suggestions a manager could buy today - durable, mid-range, guest-proof picks (not luxury, not bottom-tier). Each option: name (specific product or product type incl. brand when it matters, max 8 words), why (max 8 words - the reason this pick), searchTerm (the exact retailer search phrase), store (amazon or wayfair - wayfair only for furniture). STRICT JSON ONLY, no markdown: {"options":[{"name":"","why":"","searchTerm":"","store":""}]}'
     const r = await anthropicMessages(key, { model: await modelFor('order-suggest'), max_tokens: 700, system: SYS, messages: [{ role: 'user', content: 'Need: ' + title + (note ? '. Detail: ' + note : '') + '. Quantity: ' + qty }] })
     const j = r.data
-    const text = j && j.content && j.content[0] && j.content[0].text ? String(j.content[0].text) : ''
+    const text = textOf(j)
     const m = text.match(/\{[\s\S]*\}/)
     const parsed = m ? JSON.parse(m[0]) : null
     const options = (parsed && Array.isArray(parsed.options) ? parsed.options : []).slice(0, 3).map((o: any) => ({ name: String(o.name || '').slice(0, 120), why: String(o.why || '').slice(0, 120), url: searchUrl(String(o.store || 'amazon'), String(o.searchTerm || o.name || title).slice(0, 160)) })).filter((o: any) => o.name)
