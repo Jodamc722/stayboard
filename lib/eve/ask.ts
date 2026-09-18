@@ -198,17 +198,23 @@ export async function buildBatch(limit: number): Promise<AskItem[]> {
     const qs = await listQuestions('open', 60).catch(() => [])
     for (const q of qs) {
       if (!fresh('question', String(q.id))) continue
+      // A review question (kind 'plan') is one the weekly review could not answer from data and it
+      // carries the default she will act on. It outranks a gap question: one answer changes which
+      // plan goes first this week, and silence has a stated consequence rather than none.
+      const isPlan = q.kind === 'plan'
+      const assume = isPlan && q.evidence && typeof q.evidence === 'object' ? String(q.evidence.what_i_will_assume || '') : ''
       items.push({
         type: 'question',
         ref: String(q.id),
-        title: `A question — I'd learn something here`,
+        title: isPlan ? `From this week's review — one question` : `A question — I'd learn something here`,
         body: [
           `**${q.question}**`,
           q.why ? `\n_Why it matters:_ ${q.why}` : '',
+          assume ? `\n_If I hear nothing, I'll assume:_ ${assume}` : '',
           Number(q.asked_count || 1) > 1 ? `\n_This has come up ${q.asked_count} times._` : '',
           `\nReply to this message and I'll file your answer as a rule.`,
         ].filter(Boolean).join('\n'),
-        rank: 100 + Math.min(Number(q.asked_count || 1), 20) * 5,
+        rank: (isPlan ? 220 : 100) + Math.min(Number(q.asked_count || 1), 20) * 5,
       })
     }
   }

@@ -90,9 +90,10 @@ export async function POST(req: NextRequest) {
   let questions: any = null
   try { questions = await generateQuestions() }
   catch (e: any) { questions = { error: String(e?.message || e).slice(0, 160) } }
-  // WHO DOES WHAT (Jon, 2026-09-11: "she needs to know that... Eve needs to learn, ask questions").
-  // One question per building still running on an assumption. Dedupes against open questions, so
-  // this is idempotent night to night; once Jon answers, that building stops being asked about.
+  // WHO DOES WHAT (Jon, 2026-09-11: "she needs to know that... Eve needs to learn, ask questions";
+  // revised 2026-09-18: "think higher level"). Derived nightly from Breezeway closes, the Homebase
+  // roster and the ops presets into an inferred memory per building; a question is raised only where
+  // the data contradicts itself. Idempotent: memories supersede, questions dedupe.
   try { const c = await askCalibrationQuestions(); questions = { ...(questions || {}), calibration: c } }
   catch (e: any) { questions = { ...(questions || {}), calibration: { error: String(e?.message || e).slice(0, 160) } } }
 

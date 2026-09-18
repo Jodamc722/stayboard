@@ -97,6 +97,10 @@ export const AUTOMATIONS: AutomationDef[] = [
   { key: 'eve-learn', label: 'Nightly learning pass', area: 'eve', path: '/api/eve/learn',
     what: 'Mines messages, reviews and her own chat log into knowledge, expires beliefs that stopped being true, and writes new questions for a human.', receipt: 'automation_runs',
     settingsPath: '/users → Settings → Eve → Memory' },
+  { key: 'eve-review', label: "The operator's review", area: 'eve', path: '/api/cron/eve-review',
+    what: 'Monday 06:30 ET, and on demand from the Review tab or by asking Eve for a plan: reads one evidence pack (the week\'s KPIs vs last week, anomalies, sweep findings, audits, Slack items, glitches, low reviews, checklist ticks, app usage, her own track record) and writes what moved and why, three to six ranked plans, critiques with evidence, and at most four questions the data cannot answer. Plans land in the recommendation ledger to be accepted and graded; questions land on /command.',
+    receipt: 'automation_runs', settingsPath: '/users → Settings → Eve → Review',
+    notes: 'One Fable-tier call a week (task eve-review). The first run also retires the old per-building template questions. ?focus= steers a run. Needs migration 099.' },
   { key: 'slack-watch', label: 'Keeping tabs on Slack', area: 'eve', path: '/api/cron/slack-watch',
     what: 'Reads the team channels twice a day. Pulls out commitments, open problems, unanswered questions and decisions; closes them from thread replies, finished Breezeway tasks or closed glitches; nudges the owner once in the thread; posts a morning roll-up in #vr-eve; and files what it learned into memory.', receipt: 'automation_runs',
     settingsPath: '/vr-eve in Slack',
@@ -111,7 +115,8 @@ export const AUTOMATIONS: AutomationDef[] = [
   { key: 'notice-drafts', label: 'Notice drafts into Gmail', area: 'guests', path: '/api/cron/notice-drafts',
     what: 'Drafts those notices into the sending mailbox so a human only has to read and press send.',
     configKey: 'task_automation', enabledPath: 'noticeDrafts.enabled', defaultOff: true,
-    settingsPath: '/users → Settings → Task automation', receipt: 'none' },
+    settingsPath: '/users → Settings → Task automation', receipt: 'none', trigger: 'chained — runs inside /api/cron/reservation-notices',
+    notes: 'Since 2026-09-18 it has no vercel.json line of its own (the 40-cron cap): the hourly notice-queue cron runs it at 03:13, 11:13, 15:13, 19:13 and 23:13 UTC — the same five hours it used to fire. Exactly-once per notice either way.' },
   { key: 'guest-orders', label: 'Guest orders', area: 'guests', path: '/api/cron/guest-orders',
     what: 'Writes the per-reservation order link into Guesty, and on the delivery day pushes paid orders to Breezeway, Slack and email.',
     configKey: 'guest_orders', enabledPath: 'enabled', defaultOff: true,
@@ -185,7 +190,9 @@ export const AUTOMATION_KEYS = AUTOMATIONS.map(a => a.key)
 export function expectedCronPaths(): string[] {
   const out: string[] = []
   for (const a of AUTOMATIONS) {
-    if (a.trigger === 'webhook' || a.trigger === 'in-app') continue
+    // Anything with its own trigger (a webhook, an in-app action, a chained run inside another
+    // cron) is not a vercel.json line and must not be reported as a missing one.
+    if (a.trigger) continue
     if (a.path && out.indexOf(a.path) < 0) out.push(a.path)
   }
   return out

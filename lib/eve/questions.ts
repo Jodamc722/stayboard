@@ -81,9 +81,11 @@ export async function askQuestion(input: {
     }
     const { data, error } = await db.from('eve_questions').insert({
       question, why, scope,
-      kind: ['gap', 'verify', 'conflict'].includes(String(input.kind)) ? String(input.kind) : 'gap',
+      // 'plan' is a question the weekly review could not answer from data — it carries a default
+      // (evidence.what_i_will_assume) so an unanswered one still lets her act.
+      kind: ['gap', 'verify', 'conflict', 'plan'].includes(String(input.kind)) ? String(input.kind) : 'gap',
       evidence: input.evidence ?? null,
-      source: String(input.source) === 'eve' ? 'eve' : 'system',
+      source: ['eve', 'review'].includes(String(input.source)) ? String(input.source) : 'system',
     }).select('id').maybeSingle()
     if (error) return { ok: false, error: error.message.slice(0, 200) }
     return { ok: true, id: (data as any)?.id }
@@ -167,12 +169,43 @@ export async function dismissQuestion(id: string, by: string): Promise<{ ok: boo
 }
 
 /**
+ * ONE-OFF CLEANUP (2026-09-18). Two generators — "I know nothing specific about <building>" here and
+ * "Who does what at <building>?" in operating-model.ts — fired a template per building and left 35
+ * open questions, almost all answerable from Breezeway assignees, the Homebase roster and the ops
+ * presets. Jon: "Questions are not very smart or intuitive, think higher level." The operating
+ * model now DERIVES who does what (see deriveOperatingPicture) and only asks when the data
+ * contradicts itself. This retires what the templates already wrote. Idempotent: a second run finds
+ * nothing open and does nothing.
+ */
+export const TEMPLATE_PREFIXES = ['I know nothing specific about', 'Who does what at']
+
+export async function retireTemplateQuestions(): Promise<{ retired: number }> {
+  const db = supabaseAdmin()
+  let retired = 0
+  try {
+    const { data } = await db.from('eve_questions').select('id,question').eq('status', 'open').limit(500)
+    const ids = ((data || []) as any[])
+      .filter(q => TEMPLATE_PREFIXES.some(p => String(q.question || '').startsWith(p)))
+      .map(q => String(q.id))
+    if (!ids.length) return { retired: 0 }
+    const now = new Date().toISOString()
+    const { error } = await db.from('eve_questions').update({
+      status: 'dismissed', answered_by: 'system', answered_at: now, updated_at: now,
+      answer: 'Retired by the operator\'s review: this was a template question the data can answer. Who does what per building is now derived from Breezeway assignees, the Homebase roster and the ops presets (memory, scope building:<name>, labelled inferred).',
+    }).in('id', ids)
+    if (!error) retired = ids.length
+  } catch { /* a cleanup that fails costs nothing; the next run tries again */ }
+  return { retired }
+}
+
+/**
  * Find the gaps worth asking about, deterministically.
  *
  * Deliberately conservative. Every question here comes from something Eve can SEE and cannot
- * EXPLAIN — a problem that keeps recurring, a building she knows nothing about, a person whose
- * pattern stands out. It never asks about something it could look up, because a system that asks
- * you things it could have found out itself gets ignored within a week.
+ * EXPLAIN — a problem that keeps recurring, a person whose pattern stands out. It never asks about
+ * something it could look up, because a system that asks you things it could have found out itself
+ * gets ignored within a week. (The per-building "I know nothing about X" generator that used to sit
+ * here was exactly that, and was retired on 2026-09-18 — see retireTemplateQuestions.)
  */
 export async function generateQuestions(): Promise<{ asked: number; repeated: number; considered: number }> {
   const db = supabaseAdmin()
@@ -186,12 +219,13 @@ export async function generateQuestions(): Promise<{ asked: number; repeated: nu
 
   try {
     // 1. Audit items that keep sitting open. Something is stopping them being fixed, and whatever
-    //    that is will not be in any table.
+    //    that is will not be in any table. Three weeks, not ten days: the audit re-raises daily and
+    //    a fortnight of "still open" is a busy month, not a mystery.
     const { data: audits } = await db.from('eve_audits').select('id,title,area,severity,first_seen_at,fix')
       .eq('status', 'open').order('first_seen_at').limit(50)
     for (const a of (audits || []) as any[]) {
       const days = Math.round((Date.now() - Date.parse(String(a.first_seen_at))) / 864e5)
-      if (days < 10 || a.severity === 'info') continue
+      if (days < 21 || a.severity === 'info') continue
       await send({
         question: `"${String(a.title).slice(0, 160)}" has been open for ${days} days. What is actually stopping this getting fixed?`,
         why: 'If it is blocked on something I cannot see, I should stop re-raising it every hour and say what the real blocker is instead.',
@@ -199,23 +233,7 @@ export async function generateQuestions(): Promise<{ asked: number; repeated: nu
       })
     }
 
-    // 2. Buildings the sweep has learned nothing about. Usually means they are run differently —
-    //    a vendor crew, an owner who self-manages — and that changes how every number reads.
-    const { data: ls } = await db.from('guesty_listings').select('id,building,status').order('id').limit(500)
-    const buildings = new Set<string>()
-    for (const l of (ls || []) as any[]) if (l.building) buildings.add(String(l.building))
-    const { data: mems } = await db.from('eve_memory').select('scope').is('superseded_by', null).is('expires_on', null).limit(1000)
-    const known = new Set((mems || []).map((m: any) => String(m.scope)))
-    for (const b of Array.from(buildings).slice(0, 12)) {
-      if (known.has('building:' + b)) continue
-      await send({
-        question: `I know nothing specific about ${b}. Is it run differently from the rest — different crew, different owner arrangement, anything I should assume?`,
-        why: 'Right now I read its numbers with portfolio assumptions, which will make me confidently wrong about it.',
-        scope: 'building:' + b, kind: 'gap', evidence: { building: b },
-      })
-    }
-
-    // 3. Recommendations that keep getting rejected. She is proposing something that does not fit,
+    // 2. Recommendations that keep getting rejected. She is proposing something that does not fit,
     //    and the reason is worth more than the next ten proposals.
     const { data: recs } = await db.from('eve_recommendations').select('id,title,status,created_at')
       .eq('status', 'rejected').order('created_at', { ascending: false }).limit(40)

@@ -17,6 +17,7 @@ import { loadMemories, saveMemory, normKind, MEMORY_KINDS } from './memory'
 import { METRICS, METRIC_BY_KEY } from './metrics'
 import { computeTrend, anomalyScan } from './trends'
 import { createRecommendation, scorecard } from './recommendations'
+import { runReview } from './review'
 import { upcomingEvents, stormRisk } from './signals'
 import { runCheck as doorCodeCheck, requestDoorCode, attachSlackPost } from './door-code'
 import { doorCodePolicy } from '@/lib/access'
@@ -302,6 +303,22 @@ export const CORE_TOOLS: EveTool[] = [
       })
       if (!res.ok) return { logged: false, error: res.error }
       return { logged: true, id: res.id, note: 'Logged. It shows on /eve under Direction for Jon to accept or reject, and it will be graded automatically.' }
+    },
+  },
+
+  {
+    name: 'operator_review',
+    description: 'WRITE A PLAN. Runs the operator\'s review — the same weekly pass Jon reads on Monday — over one deterministic evidence pack (this week\'s KPI tiles vs the same weekdays last week, anomalies, sweep findings, open audits, Slack items, glitches, low reviews, dissatisfied threads, checklist ticks, app usage, your own track record and standing beliefs) and returns what moved and why, three to six ranked plans with cost and first step, critiques with evidence, and at most four questions the data cannot answer. Use it when somebody asks for a PLAN, a REVIEW of the week, how to cut a cost, how to fix a recurring problem, or what to change about a checklist, a page or an automation — "give me a plan to cut labor per clean in Broward" is exactly this. Pass their words as focus. It is one large model call and it persists: the plans land in the recommendation ledger for Jon to accept, and the questions on /command. Do not call it for a lookup; call it when the answer is a plan.',
+    input_schema: obj({ focus: S.str }),
+    money: true,
+    run: async (input, ctx) => {
+      const r = await runReview({ trigger: 'manual', focus: input?.focus ? String(input.focus) : undefined, by: ctx.email })
+      if (!r.ok) return { ok: false, error: r.error, pack: r.pack }
+      return {
+        ok: true, review_id: r.id, model: r.model, pack: r.pack, persisted: r.persisted,
+        review: r.review,
+        note: 'The plans are logged (Settings → Eve → Review, and the Decide band on /command) for Jon to accept or reject; only accepted plans get graded. Present the headline, then the plans in rank order with the first step for each; say which questions you have filed and what you will assume meanwhile. Do not restate the pack.',
+      }
     },
   },
 

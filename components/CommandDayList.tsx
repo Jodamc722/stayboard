@@ -50,7 +50,7 @@ import { Scoreboard } from '@/components/command/Scoreboard'
 
 type Sev = NextItem['severity']
 type Ranked = { key: string; sev: Sev; rank: number; node: ReactNode }
-type EveQ = { id: string; question: string; why: string | null; scope: string; asked_count: number; source: string }
+type EveQ = { id: string; question: string; why: string | null; scope: string; asked_count: number; source: string; kind?: string; evidence?: any }
 type VendorVisit = { id: string; tone: 'today' | 'soon' | 'later' | 'missed' | 'done' }
 
 const EVE_COUNT_URL = '/api/eve/questions?count=1'
@@ -277,6 +277,7 @@ function Row({ sev, title, meta, primary, secondary, onTap, expanded, children, 
 // ── 1. DECIDE ───────────────────────────────────────────────────────────────────────────────────
 function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: CommandDay; claims: NextItem[]; approvals: GuestDeskRow[]; onCleared: (key: string) => void; onChanged: () => void }) {
   const eve = useEveQuestions()
+  const plans = useEvePlans()
   const slack = useSlackQueue()
   const [allEve, setAllEve] = useState(false)
   const slackLive = slack.live || []
@@ -287,13 +288,14 @@ function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: Command
   const eveMore = eveGroups.slice(eveShown.length).reduce((a, g) => a + g.qs.length, 0)
   const eveCount = eve.rows.length || (eve.loaded ? 0 : eve.count)
   const approvalsHidden = Math.max(0, d.tiles.guestDesk.approvals - d.tiles.guestDesk.rows.filter(r => r.kind === 'approval').length)
-  const count = slackLive.length + approvals.length + claims.length + eveCount
+  const count = slackLive.length + approvals.length + claims.length + eveCount + plans.rows.length
 
   const rows: Ranked[] = []
   for (const it of slackLive) rows.push({ key: 'slack:' + it.id, sev: 'now', rank: 0, node: <SlackRow item={it} q={slack} /> })
   for (const c of claims) rows.push({ key: c.key, sev: c.severity, rank: c.rank, node: <ClaimRow item={c} onCleared={onCleared} /> })
   for (const a of approvals) rows.push({ key: a.key, sev: 'today', rank: 3, node: <ApprovalRow row={a} onCleared={onCleared} onChanged={onChanged} /> })
   if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} meta="Only the first few are listed here" primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
+  for (const p of plans.rows) rows.push({ key: 'plan:' + p.id, sev: 'today', rank: 8, node: <EvePlanRow p={p} act={plans.decide} busy={plans.busy === p.id} /> })
   for (const g of eveShown) rows.push({ key: 'eve:' + g.key, sev: 'today', rank: 9, node: g.qs.length > 1 ? <EveGroupRow g={g} act={eve.act} busy={eve.busy} /> : <EveRow q={g.qs[0]} act={eve.act} busy={eve.busy === g.qs[0].id} /> })
   if (!eve.loaded && eve.count > 0) rows.push({ key: 'eve:loading', sev: 'today', rank: 9, node: <Row sev={null} title={'Eve is asking you ' + eve.count} meta={<span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> getting them</span>} /> })
   if (eveMore > 0) rows.push({ key: 'eve:more', sev: 'today', rank: 9.5, node: <button onClick={() => setAllEve(true)} className="w-full text-left px-3 py-2 min-h-[40px] text-[12px] font-semibold text-muted hover:text-ink">{eveMore} more from Eve</button> })
@@ -304,6 +306,47 @@ function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: Command
       {slack.err && <p className="px-3 py-2 text-[12px] text-rose-700">{slack.err}</p>}
       {rows.map(r => <div key={r.key}>{r.node}</div>)}
     </Band>
+  )
+}
+
+// ── EVE'S PLANS from the latest operator's review (2026-09-18) ─────────────────────────────────
+// The review's plans are recommendations with kind 'plan'; the ones still `open` are decisions
+// only Jon can make, so they sit in Decide next to her questions. Accept / Reject goes through the
+// same /api/eve/recommendations decide op the Direction tab uses, so an accepted plan is graded.
+type EvePlan = { id: string; title: string; detail: string | null; area: string | null; metric: string; scope: string }
+const EVE_PLANS_URL = '/api/eve/review?n=1'
+
+function useEvePlans() {
+  const { data, error } = useCachedFetch<{ open?: { headline?: string | null; plans?: EvePlan[] } }>(EVE_PLANS_URL, { ttl: 300_000 })
+  const [gone, setGone] = useState<Record<string, true>>({})
+  const [busy, setBusy] = useState('')
+  const rows = error ? [] : ((data?.open?.plans || []) as EvePlan[]).filter(p => !gone[p.id])
+  const decide = async (id: string, status: 'accepted' | 'rejected') => {
+    setBusy(id)
+    try {
+      const r = await fetch('/api/eve/recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'decide', id, status }) })
+      if (!r.ok) return false
+      setGone(g => ({ ...g, [id]: true }))
+      invalidateCache(EVE_PLANS_URL)
+      return true
+    } finally { setBusy('') }
+  }
+  return { rows, headline: data?.open?.headline || null, busy, decide }
+}
+
+function EvePlanRow({ p, act, busy }: { p: EvePlan; act: (id: string, s: 'accepted' | 'rejected') => Promise<boolean>; busy: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [err, setErr] = useState('')
+  const go = async (s: 'accepted' | 'rejected') => { setErr(''); const ok = await act(p.id, s); if (!ok) setErr('Could not save that decision.') }
+  // The first step is what Jon needs at a glance; the rest opens on tap.
+  const first = (String(p.detail || '').match(/FIRST STEP:\s*([^\n]+)/) || [])[1] || ''
+  const meta = [p.area ? 'Eve plan · ' + p.area : 'Eve plan', first ? 'first step: ' + first : 'graded on ' + p.metric].filter(Boolean).join(' · ')
+  return (
+    <Row sev={null} title={'Eve plan: ' + p.title} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
+      primary={<button onClick={() => go('accepted')} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Accept</button>}
+      secondary={<button onClick={() => go('rejected')} disabled={busy} className={SECONDARY} aria-label="Reject" title="Reject — not this one"><X size={14} /></button>}>
+      {open && p.detail && <pre className="mt-2 ml-3.5 rounded-xl border border-line bg-app/40 p-3 text-[12px] text-ink whitespace-pre-wrap font-sans leading-relaxed">{p.detail}</pre>}
+    </Row>
   )
 }
 
@@ -387,13 +430,14 @@ function EveRow({ q, act, busy, nested }: { q: EveQ; act: (id: string, op: 'answ
   const [open, setOpen] = useState(false)
   const [err, setErr] = useState('')
   const send = async () => { if (!draft.trim() || busy) return; setErr(''); const ok = await act(q.id, 'answer', draft.trim()); if (!ok) setErr('Could not save that answer.') }
-  const meta = [q.scope, Number(q.asked_count) > 1 ? 'asked ' + q.asked_count + ' times' : '', q.source === 'eve' ? 'came up in conversation' : ''].filter(Boolean).join(' · ')
+  const meta = [q.kind === 'plan' ? 'from the weekly review' : q.scope, Number(q.asked_count) > 1 ? 'asked ' + q.asked_count + ' times' : '', q.source === 'eve' ? 'came up in conversation' : ''].filter(Boolean).join(' · ')
   return (
     <Row sev={null} title={nested ? (q.scope || 'Question') : q.question} meta={nested && !open ? q.question : open && q.why ? 'Why: ' + q.why : meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
       secondary={<button onClick={() => act(q.id, 'dismiss', '')} disabled={busy} className={SECONDARY} aria-label="Later" title="Later — not worth answering now"><X size={14} /></button>}>
       {open && (
         <>
           <p className="text-[12.5px] text-ink/80 mt-1 pl-3.5 leading-snug">{q.question}</p>
+          {q.kind === 'plan' && q.evidence?.what_i_will_assume ? <p className="text-[11.5px] text-muted mt-1 pl-3.5 leading-snug">If you say nothing, she assumes: {String(q.evidence.what_i_will_assume)}</p> : null}
           <div className="mt-1.5 pl-3.5 flex items-center gap-1.5">
             <input autoFocus value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') send() }} placeholder="Tell her…" aria-label={'Answer: ' + q.question}
               className="flex-1 min-w-0 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] min-h-[34px] focus:outline-none focus:ring-2 focus:ring-brand-200" />

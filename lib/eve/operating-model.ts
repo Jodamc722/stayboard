@@ -16,16 +16,24 @@
 // row marked `default` is an assumption derived from the vendor flag; a row marked `jon` is a fact
 // he stated. She is shown the difference and told to ask before leaning on an assumption.
 //
-// HOW IT LEARNS. Every building still on a default gets ONE calibration question, through the same
-// morning-ask that already reaches Jon on Telegram. His answer lands here as well as in memory, so
-// the next prompt she builds already has it. No new table: the model lives in app_settings, the
-// questions in eve_questions, the answers in eve_memories — three things that already exist.
+// HOW IT LEARNS (revised 2026-09-18). She derives who does what from ninety days of Breezeway
+// closes, the Homebase roster and the ops-presets vendor list, writes that down as an INFERRED
+// memory per building, and asks a question only where the data contradicts itself. Jon's answer
+// lands here as well as in memory, so the next prompt she builds already has it. No new table: the
+// model lives in app_settings, the questions in eve_questions, the answers in eve_memory.
 import 'server-only'
-import { getSetting, setSetting } from '@/lib/app-settings'
+import { getSetting, setSetting, getOpsPresets } from '@/lib/app-settings'
 import { KNOWN_BUILDINGS } from '@/lib/segments'
 import { modelFor } from '@/lib/ai-models'
 import { askQuestion } from './questions'
 import { aiFetch } from '@/lib/ai-usage'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
+import { getEmployeeNames, nameMatchesRoster } from '@/lib/homebase'
+import { vendorNameOf } from '@/lib/ops-presets'
+import { rollupBuilding } from '@/lib/optimize-score'
+import { saveMemory } from './memory'
+import { todayET, shiftDay } from './ctx'
 
 export const OPERATING_MODEL_KEY = 'eve_operating_model'
 
@@ -159,29 +167,169 @@ export function describeBuilding(m: OperatingModel, building: string | null | un
 }
 
 // ── Learning ───────────────────────────────────────────────────────────────────────────────────
+//
+// DERIVE, DON'T ASK (Jon, 2026-09-18: "Questions are not very smart or intuitive, think higher
+// level"). The first version of this file asked "Who does what at <building>?" once per building
+// and left twelve of those open. Every one of them was answerable from tables she can read: the
+// Breezeway mirror says who closed the cleans and the maintenance jobs, the Homebase roster says
+// which of those names are ours, and the ops presets already list the vendor-cleaned buildings.
+// So now she works it out, writes it down as an INFERRED memory (weight 5 — a person's word at 8
+// still outranks it), and asks only when the data contradicts itself — and then the question says
+// exactly what she saw.
+
+export type DutyPicture = {
+  tasks: number
+  inhouse: number          // closed by a Homebase roster name
+  outside: number          // closed by a named person who is not on the roster
+  unassigned: number
+  inhouseNames: string[]
+  outsideNames: string[]
+}
+export type BuildingPicture = {
+  building: string
+  presetVendor: string | null    // ops-presets vendor label, when the building is on that list
+  cleaning: DutyPicture
+  maintenance: DutyPicture
+  verdict: { cleaning: 'ours' | 'vendor' | 'mixed' | 'no signal'; maintenance: 'ours' | 'vendor' | 'mixed' | 'no signal' }
+  contradiction: string | null
+}
+
+const HK = /housekeep|clean|turn/i
+const MT = /maint|repair|hvac|plumb|electric|pest|handy/i
+
+function emptyDuty(): DutyPicture { return { tasks: 0, inhouse: 0, outside: 0, unassigned: 0, inhouseNames: [], outsideNames: [] } }
+
+function judge(d: DutyPicture): { verdict: 'ours' | 'vendor' | 'mixed' | 'no signal'; contradiction: string | null } {
+  const named = d.inhouse + d.outside
+  if (d.tasks < 5 || named < 3) return { verdict: 'no signal', contradiction: null }
+  const inShare = d.inhouse / named, outShare = d.outside / named
+  // Both sides over 30% is the one shape the data cannot settle: a vendor and our crew both
+  // working the building, or a roster name the Homebase pull is missing.
+  if (inShare >= 0.3 && outShare >= 0.3) {
+    return {
+      verdict: 'mixed',
+      contradiction: `${Math.round(inShare * 100)}% by roster names (${d.inhouseNames.slice(0, 3).join(', ')}) and ${Math.round(outShare * 100)}% by names not on the Homebase roster (${d.outsideNames.slice(0, 3).join(', ')})`,
+    }
+  }
+  return { verdict: inShare >= 0.7 ? 'ours' : outShare >= 0.7 ? 'vendor' : 'mixed', contradiction: null }
+}
+
+async function rosterNames(): Promise<string[]> {
+  // The same 6-hour cache lib/billing keeps, read first so this never adds a Homebase hop when the
+  // billing board has already paid for one today.
+  try {
+    const c = await getSetting<{ at: number; names: string[] }>('homebase_roster_cache', { at: 0, names: [] })
+    if (c && Array.isArray(c.names) && c.names.length && Date.now() - Number(c.at) < 6 * 3600_000) return c.names
+  } catch { /* fall through */ }
+  try { return await getEmployeeNames() } catch { return [] }
+}
+
+/** Ninety days of Breezeway closes, sorted into who did what, per building. */
+export async function deriveOperatingPicture(days = 90): Promise<BuildingPicture[]> {
+  const db = supabaseAdmin()
+  const from = shiftDay(todayET(), -days)
+  const [roster, presets, listings, tasks] = await Promise.all([
+    rosterNames(),
+    getOpsPresets().catch(() => null),
+    db.from('guesty_listings').select('id,building,nickname,title').limit(1000).then(r => (r.data || []) as any[]),
+    pageRows((a, b) => db.from('breezeway_tasks_sync')
+      .select('reference_property_id,type_department,assignees,assignee_name,finished_by_name,status,scheduled_date')
+      .gte('scheduled_date', from).order('id').range(a, b), 15),
+  ])
+  const rollupOf: Record<string, string> = {}
+  for (const l of listings) rollupOf[String(l.id)] = rollupBuilding(l.building, l.nickname || l.title)
+
+  const by: Record<string, BuildingPicture> = {}
+  const pic = (b: string): BuildingPicture => {
+    if (!by[b]) by[b] = { building: b, presetVendor: presets ? vendorNameOf(presets.vendorBuildings, b) : null, cleaning: emptyDuty(), maintenance: emptyDuty(), verdict: { cleaning: 'no signal', maintenance: 'no signal' }, contradiction: null }
+    return by[b]
+  }
+  for (const t of tasks.rows as any[]) {
+    // A deleted row is the ghost Breezeway leaves when a task moves days; the replacement is its own row.
+    if (String(t.status || '').toLowerCase() === 'deleted') continue
+    const b = rollupOf[String(t.reference_property_id || '')]
+    if (!b || b === 'Unassigned') continue
+    const dept = String(t.type_department || '')
+    const duty: DutyPicture | null = HK.test(dept) ? pic(b).cleaning : MT.test(dept) ? pic(b).maintenance : null
+    if (!duty) continue
+    duty.tasks++
+    const doer = (Array.isArray(t.assignees) && t.assignees[0] && t.assignees[0].name ? String(t.assignees[0].name) : '') || String(t.assignee_name || '') || String(t.finished_by_name || '')
+    if (!doer) { duty.unassigned++; continue }
+    if (roster.length && nameMatchesRoster(doer, roster)) {
+      duty.inhouse++
+      if (duty.inhouseNames.indexOf(doer) < 0 && duty.inhouseNames.length < 8) duty.inhouseNames.push(doer)
+    } else {
+      duty.outside++
+      if (duty.outsideNames.indexOf(doer) < 0 && duty.outsideNames.length < 8) duty.outsideNames.push(doer)
+    }
+  }
+  // Buildings with no Breezeway rows at all still get a picture when the presets name a vendor.
+  for (const b of KNOWN_BUILDINGS) pic(b.label)
+
+  const out = Object.keys(by).sort().map(k => by[k])
+  for (const p of out) {
+    // No roster means every name reads as "outside", which is not a finding — say no signal.
+    if (!roster.length) { p.verdict = { cleaning: 'no signal', maintenance: 'no signal' }; continue }
+    const c = judge(p.cleaning), m = judge(p.maintenance)
+    p.verdict = { cleaning: c.verdict, maintenance: m.verdict }
+    if (p.presetVendor && p.cleaning.tasks < 5) p.verdict.cleaning = 'vendor'
+    // A preset that says vendor while the roster is closing most of the cleans is its own contradiction.
+    if (p.presetVendor && c.verdict === 'ours') p.contradiction = `the ops presets list ${p.building} as vendor-cleaned (${p.presetVendor}) but ${p.cleaning.inhouse} of ${p.cleaning.inhouse + p.cleaning.outside} named cleans in ${days} days were closed by roster names (${p.cleaning.inhouseNames.slice(0, 3).join(', ')})`
+    else p.contradiction = c.contradiction ? `cleaning: ${c.contradiction}` : m.contradiction ? `maintenance: ${m.contradiction}` : null
+  }
+  return out
+}
+
+function describePicture(p: BuildingPicture, days: number): string {
+  const duty = (label: string, d: DutyPicture, v: string) => {
+    if (v === 'no signal') return `${label}: no signal (${d.tasks} Breezeway tasks in ${days}d)`
+    const who = v === 'ours' ? `our team (${d.inhouseNames.slice(0, 4).join(', ') || 'roster names'})` : v === 'vendor' ? `an outside crew (${d.outsideNames.slice(0, 4).join(', ') || 'names not on our roster'})` : 'a mix of our team and outside names'
+    return `${label}: ${who} — ${d.inhouse} in-house / ${d.outside} outside / ${d.unassigned} unassigned of ${d.tasks} tasks`
+  }
+  return `INFERRED who-does-what at ${p.building}${p.presetVendor ? ` (ops presets: vendor-cleaned, ${p.presetVendor})` : ''}. ${duty('Cleaning', p.cleaning, p.verdict.cleaning)}. ${duty('Maintenance', p.maintenance, p.verdict.maintenance)}.`
+}
 
 /**
- * One question per building still on a default. Goes through eve_questions, which the morning ask
- * already batches to Jon on Telegram — so nothing new has to be wired for the asking, only for
- * what happens to the answer (see applyCalibrationAnswer).
+ * Work out who does what from the data, write it down as an inferred memory per building, and ask
+ * ONLY where the data contradicts itself. Replaces the per-building calibration question
+ * (2026-09-18). Idempotent: memories supersede the previous night's copy; questions dedupe.
  */
-export async function askCalibrationQuestions(): Promise<{ asked: number; repeated: number }> {
+export async function askCalibrationQuestions(): Promise<{ asked: number; repeated: number; derived: number; contradictions: number }> {
+  const days = 90
   const m = await getOperatingModel()
-  let asked = 0, repeated = 0
-  for (const b of m.buildings) {
-    if (b.source === 'jon') continue
-    const assumed = b.operator === 'stay'
-      ? 'that our own team does everything there — cleaning, maintenance, inspections, supplies'
-      : `that an outside operator does the cleaning, maintenance and inspections, and we only do distribution and guest messaging`
+  const pictures = await deriveOperatingPicture(days)
+  const db = supabaseAdmin()
+  let asked = 0, repeated = 0, derived = 0, contradictions = 0
+  for (const p of pictures) {
+    const stated = m.buildings.find(b => b.building === p.building)
+    const scope = 'building:' + p.building
+    const finding = 'ops-picture:' + p.building
+    try {
+      const { data: prior } = await db.from('eve_memory').select('id').eq('source', 'system').is('superseded_by', null)
+        .contains('evidence', { finding }).limit(1)
+      const saved = await saveMemory({
+        kind: 'insight', text: describePicture(p, days).slice(0, 900),
+        why: `Derived from ${days} days of Breezeway closes matched against the Homebase roster and the ops-presets vendor list. Inferred, not stated — anything Jon says outranks it.`,
+        scope, weight: 5, source: 'system', confidence: p.contradiction ? 0.4 : 0.7,
+        evidence: { finding, inferred: true, building: p.building, cleaning: p.cleaning, maintenance: p.maintenance, verdict: p.verdict, presetVendor: p.presetVendor, contradiction: p.contradiction, days },
+        supersedes: (prior || [])[0]?.id || null,
+      })
+      if (saved.ok) derived++
+    } catch { /* one building's memory failing must not stop the rest */ }
+
+    // Jon has already said who does what here — nothing to ask, whatever the data shows.
+    if (stated?.source === 'jon') continue
+    if (!p.contradiction) continue
+    contradictions++
     const r = await askQuestion({
-      question: `Who does what at ${b.building}? I am assuming ${assumed}. Is that right — and if not, what is ours and what is theirs?`,
-      why: `Every cleaning, maintenance and labour number I quote for ${b.building} depends on whether that work is ours. If it is not, I should stop attributing it to our crew and stop computing a cost per clean there.`,
-      scope: b.building, kind: 'verify', source: 'system',
-      evidence: { calibration: true, building: b.building, assumed: { operator: b.operator, we: b.we, they: b.they } },
+      question: `At ${p.building} the data disagrees with itself: ${p.contradiction}. Is that building ours, a vendor's, or genuinely shared — and which should I count as our labour?`,
+      why: `Every cleaning, maintenance and labour number I quote for ${p.building} depends on whose work it is. Until I know, I will count only roster names as ours and say the rest is outside labour.`,
+      scope: p.building, kind: 'conflict', source: 'system',
+      evidence: { calibration: true, building: p.building, assumed: stated ? { operator: stated.operator, we: stated.we, they: stated.they } : null, seen: { cleaning: p.cleaning, maintenance: p.maintenance, presetVendor: p.presetVendor } },
     })
     if (r.ok) { if (r.repeated) repeated++; else asked++ }
   }
-  return { asked, repeated }
+  return { asked, repeated, derived, contradictions }
 }
 
 const SYSTEM = `You turn one sentence from a property manager into a structured statement of who does what at one building. Return JSON only:
