@@ -22,6 +22,14 @@ import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 
 type Any = any
+/** Drop a trailing "· live on N channels" / "· not yet live" from a stored listing sub-line. */
+function stripChannelCount(sub: unknown): string {
+  return String(sub || '')
+    .replace(/\s*\u00b7\s*live on \d+ channels?\s*$/i, '')
+    .replace(/\s*\u00b7\s*not yet live\s*$/i, '')
+    .replace(/^\s*(live on \d+ channels?|not yet live)\s*$/i, '')
+    .trim()
+}
 // Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
 function fmtMoney(n: number): string {
   const a = Math.abs(n)
@@ -1788,16 +1796,32 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
            specificity the last one wins — which is why the first version of this block rotated
            the slide correctly and then left it 390px long anyway. Naming both root classes
            outranks it whatever the order. */
+        /* FLEX CENTRING CANNOT CENTRE SOMETHING WIDER THAN ITS CONTAINER, and this slide is
+           deliberately wider: its LAYOUT box is 675px across inside a 390px phone, because only
+           the rotation makes it fit. Asked to centre an item that overflows, the browser clamps
+           it to the start edge rather than placing it at a negative offset, so the box sat at
+           x=0 instead of x=-142 and the rotation pivoted 142px right of where it should have.
+           Measured on a 390x844 phone: the slide landed at x=148 with a width of 380, i.e. its
+           right edge at 528 against a 390px screen — a third of every slide cut off, and a dead
+           grey band down the left. That is the "present mode does not work on phone".
+           Pinning the centre with absolute positioning takes the slide out of flex flow, so
+           there is no overflow to clamp and the pivot is exact: left/top 50% puts the box's
+           corner at the centre, translate(-50%,-50%) pulls its own centre onto that point, and
+           the rotation then happens about the middle of the screen by construction. */
         @media (max-width: 760px) and (orientation: portrait) {
           .sb-present.sb-present-deck > section, .sb-present.sb-present-deck > header {
-            padding: 0 !important; overflow: hidden !important; }
+            padding: 0 !important; overflow: hidden !important; position: relative !important; }
           .sb-present.sb-present-deck .sb-slide, .sb-present.sb-present-deck .onb-cover {
             width: min(95vh, 173vw) !important;
             height: auto !important;
             aspect-ratio: 16 / 9 !important;
             min-height: 0 !important;
-            transform: rotate(90deg);
-            transform-origin: center center; }
+            position: absolute !important;
+            left: 50% !important;
+            top: 50% !important;
+            margin: 0 !important;
+            transform: translate(-50%, -50%) rotate(90deg) !important;
+            transform-origin: center center !important; }
         }
         .sb-present-deck .onb-cover-in { min-height: 0 !important; height: 100%; padding: 6% 6%; }
         /* A phone in portrait has no room to give away. */
@@ -2860,7 +2884,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <div style={{ flex: '1 1 0', minWidth: 0 }}>
                         <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
                         <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.18 }}>{L.name}</p>
-                        <p style={{ fontSize: 13.5, color: t.muted, marginTop: 7 }}>{L.sub}</p>
+                        {/* Jon, 2026-09-18: "the tab that says live on three channels, remove that".
+                            Stripped here as well as at generation, because every deck already built
+                            froze the old sub-line into its own content. The channel links sit right
+                            beside this line anyway, so the count was saying what the buttons show. */}
+                        <p style={{ fontSize: 13.5, color: t.muted, marginTop: 7 }}>{stripChannelCount(L.sub)}</p>
                       </div>
                       <div style={{ flex: '1 1 0', minWidth: 0 }}>
                         <p style={{ fontSize: 12, color: t.muted, marginBottom: 7 }}>What it leads with</p>
