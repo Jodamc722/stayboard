@@ -79,7 +79,10 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
     setLoading(true)
     try {
       const saved = pw ?? (typeof window !== 'undefined' ? window.localStorage.getItem('board:' + code) || '' : '')
-      const r = await fetch(`/api/public/field-board/${code}` + (saved ? '?pass=' + encodeURIComponent(saved) : ''), { cache: 'no-store' })
+      // The passcode goes in a POST body, never the URL (query strings end up in logs and history).
+      const r = saved
+        ? await fetch(`/api/public/field-board/${code}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pass: saved }), cache: 'no-store' })
+        : await fetch(`/api/public/field-board/${code}`, { cache: 'no-store' })
       const j = await r.json()
       if (j.locked) { setLocked(j); setD(null); if (j.error) setErr(j.error) }
       else if (j.ok) {

@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[]; verified?: boolean; verifiedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null; emailedTo?: string[]; emailedCc?: string[]; emailError?: string | null }
+type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; bedrooms: number | null; doorCode: string | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; extended?: boolean; extendedTo?: string | null; cleanDay?: string | null; guestName: string | null; phone: string | null; confirmationCode: string | null; notes: string | null; resNotes?: string; customFields?: { label: string; value: string }[]; verified?: boolean; verifyToken?: string; verifiedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null; emailedTo?: string[]; emailedCc?: string[]; emailError?: string | null }
 type Data = { ok: boolean; label?: string; today?: string; start?: string; end?: string; unitCount?: number; verifyEnabled?: boolean; isAppUser?: boolean; bannerImage?: string | null; bannerOverride?: string | null; bannerOptions?: { name: string; url: string }[]; lastSync?: string | null; arrivals: Row[]; departures: Row[]; active: Row[]; upcoming: Row[]; past?: Row[]; error?: string }
 type TabKey = 'arrivals' | 'departures' | 'active' | 'upcoming' | 'past' | 'rules'
 
@@ -137,10 +137,10 @@ export default function VendorPage({ params }: { params: { v: string } }) {
     } catch (e: any) { setRulesMsg(String(e?.message || e)) }
     setRulesBusy(false)
   }
-  const reopen = async (rid: string) => {
+  const reopen = async (token: string) => {
     setReopenBusy(true); setReopenMsg('')
     try {
-      const payload: any = { rid, action: 'reopen' }
+      const payload: any = { token, action: 'reopen' }
       if (!data?.isAppUser) payload.password = reopenPw
       const r = await fetch('/api/public/salato-verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       const j = await r.json()
@@ -411,7 +411,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                                           <input type="password" value={reopenPw} onChange={e => setReopenPw(e.target.value)} placeholder="Admin password" className="w-full max-w-xs text-sm border border-neutral-200 rounded-lg px-2 py-1.5 mb-1.5 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
                                         )}
                                         <div className="flex items-center gap-2">
-                                          <button onClick={() => reopen(r.id as string)} disabled={reopenBusy || (!data.isAppUser && reopenPw.trim().length < 4)} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white disabled:opacity-40 hover:bg-red-700 transition-colors">{reopenBusy ? 'Reopening…' : 'Confirm reopen'}</button>
+                                          <button onClick={() => reopen(r.verifyToken || '')} disabled={reopenBusy || (!data.isAppUser && reopenPw.trim().length < 4)} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white disabled:opacity-40 hover:bg-red-700 transition-colors">{reopenBusy ? 'Reopening…' : 'Confirm reopen'}</button>
                                           <button onClick={() => { setReopenFor(''); setReopenPw(''); setReopenMsg('') }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-neutral-300 text-neutral-700">Cancel</button>
                                           {reopenMsg && <span className="text-xs text-red-600">{reopenMsg}</span>}
                                         </div>
@@ -423,7 +423,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                                 </div>
                               ) : (tab === 'past'
                                 ? <div className="text-neutral-400 text-[13px]">No verification on file for this stay.</div>
-                                : <a href={'/salato/verify/' + r.id} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-2 rounded-lg text-sm font-semibold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors">Start verification</a>
+                                : <a href={'/salato/verify/' + (r.verifyToken || '')} target="_blank" rel="noopener noreferrer" className="inline-flex items-center px-3 py-2 rounded-lg text-sm font-semibold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors">Start verification</a>
                               )}
                             </div>
                           )}

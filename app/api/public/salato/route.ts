@@ -5,6 +5,7 @@ import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { salatoListings } from '@/lib/salato-units'
 import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { salatoVerifyToken } from '@/lib/salato-verify-token'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
       const checkOutTime = r.coLocal ? String(r.coLocal).slice(11, 16) : null
       const gRaw = r.g1 ?? r.g2
       const guests = gRaw == null || gRaw === '' ? null : Number(gRaw)
-      return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), nights: r.nights ?? null, checkInTime, checkOutTime, guests, source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
+      return { id: String(r.id), verifyToken: salatoVerifyToken(String(r.id)), unit: match[String(r.listing_id)] || 'Unit', checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), nights: r.nights ?? null, checkInTime, checkOutTime, guests, source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
     }
     const rows = ((res || []) as any[]).filter(r => LIVE.test(str(r.status))).map(toRow)
     const arrivals = rows.filter(r => r.checkIn >= today && r.checkIn <= end).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))

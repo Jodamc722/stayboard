@@ -592,7 +592,7 @@ const WRONG_WINDOW_MIN = 15
  * uses. It is NOT a substitute for hashing the passcode, which the whole share-link family still
  * does not do; see the note in the route.
  */
-export async function tooManyWrong(code: string, ip: string | null): Promise<boolean> {
+export async function tooManyWrong(code: string, ip: string | null, perIp = WRONG_LIMIT): Promise<boolean> {
   try {
     const since = new Date(Date.now() - WRONG_WINDOW_MIN * 60000).toISOString()
     const db = supabaseAdmin()
@@ -605,7 +605,7 @@ export async function tooManyWrong(code: string, ip: string | null): Promise<boo
       ip ? base().eq('ip', ip) : Promise.resolve({ count: 0 } as any),
       base(),
     ])
-    return (mine || 0) >= WRONG_LIMIT || (all || 0) >= WRONG_LIMIT_CODE
+    return (mine || 0) >= perIp || (all || 0) >= WRONG_LIMIT_CODE
   } catch { return false }  // counting failures never block a correct passcode
 }
 

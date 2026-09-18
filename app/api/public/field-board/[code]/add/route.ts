@@ -16,7 +16,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
-import { createClient } from '@/lib/supabase-server'
+import { getAccess } from '@/lib/access'
+import { checkLinkPasscode, lockedResponse } from '@/lib/passcode-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
 import { getBoardLink, buildFieldBoard } from '@/lib/field-board'
@@ -33,18 +34,22 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   if (!link) return NextResponse.json({ ok: false, error: 'Unknown or revoked board.' }, { status: 404 })
   if (!link.sections?.add) return NextResponse.json({ ok: false, error: 'This board cannot add jobs.' }, { status: 403 })
 
+  // A LIGHTHOUSE USER, not merely a Supabase session (same bar as lib/parking-gate.ts).
   let signedIn = false
-  try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    signedIn = !!user
-  } catch { signedIn = false }
+  try { const a = await getAccess(); signedIn = !!a.user && a.allowed } catch { signedIn = false }
 
   const body = await req.json().catch(() => ({} as any))
   const pass = String(body?.pass || '')
-  const shareOk = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value).catch(() => false)
-  const passOk = link.passcode ? pass === link.passcode : shareOk
-  if (!signedIn && !passOk) return NextResponse.json({ ok: false, error: 'Enter the board passcode first.' }, { status: 403 })
+  if (!signedIn) {
+    if (link.passcode) {
+      const verdict = await checkLinkPasscode(req, 'board:' + String(params.code || ''), pass, String(link.passcode))
+      if (verdict === 'locked') return lockedResponse({ label: link.label })
+      if (verdict !== 'ok') return NextResponse.json({ ok: false, error: 'Enter the board passcode first.' }, { status: 403 })
+    } else {
+      const shareOk = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value).catch(() => false)
+      if (!shareOk) return NextResponse.json({ ok: false, error: 'Enter the board passcode first.' }, { status: 403 })
+    }
+  }
 
   const listingId = String(body?.listingId || '').trim()
   const title = String(body?.title || '').trim().slice(0, 120)

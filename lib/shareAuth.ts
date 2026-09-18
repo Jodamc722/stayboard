@@ -1,28 +1,30 @@
 // Shared-password gate for the public vendor / front-desk share links.
 // One password for all share links (not user accounts). Stored in share_settings (RLS on,
-// service-role only). The browser only ever holds a hash, never the password itself.
-import { createHash } from 'crypto'
+// service-role only). The browser only ever holds a signed, expiring cookie, never the password.
+//
+// 2026-09-18: the compare, the lockout, the hashing and the cookie all moved to
+// lib/passcode-gate.ts (one implementation for every family). The names below are kept so the
+// forty-odd routes that call shareCookieValid() and friends did not have to change.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { familyCookieValid, familyStored, passcodeMatches, FAMILY } from '@/lib/passcode-gate'
 
-export const SHARE_COOKIE = 'share_ok'
+export const SHARE_COOKIE = FAMILY.share.cookie
 
-export function tokenFor(pw: string) { return createHash('sha256').update('stayboard-share:' + pw).digest('hex') }
-
-export async function currentSharePassword(): Promise<string> {
-  try {
-    const db = supabaseAdmin()
-    const { data, error } = await db.from('share_settings').select('password').eq('id', 1).single()
-    if (error) { console.error('share_settings read', error.message); return '' }
-    return data && data.password ? String(data.password) : ''
-  } catch (e) { console.error('share_settings read', e); return '' }
-}
+/** The STORED value (a scrypt hash once upgraded, legacy plaintext until then). '' = unset. */
+export async function currentSharePassword(): Promise<string> { return familyStored('share') }
 
 // Fail CLOSED: if no password is configured we deny rather than expose the board.
 export async function shareCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
-  if (!cookieVal) return false
-  const cur = await currentSharePassword()
-  if (!cur) return false
-  return cookieVal === tokenFor(cur)
+  return familyCookieValid('share', cookieVal)
+}
+
+// BOTANICA REPORT (2026-09-18, P0-4) — the owner money report for the hotel's Area GM used to open
+// on the VENDOR share password, i.e. the credential every cleaning crew holds. Its own row (id=7),
+// its own cookie. FAIL CLOSED while unset.
+export const BOT_COOKIE = FAMILY.botanica.cookie
+export async function currentBotanicaPassword(): Promise<string> { return familyStored('botanica') }
+export async function botanicaCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
+  return familyCookieValid('botanica', cookieVal)
 }
 
 // ADMIN password — gates destructive actions (e.g. deleting a clean from Breezeway).
@@ -41,24 +43,12 @@ export async function currentAdminPassword(): Promise<string> {
 // separate from the vendor share password on purpose: a marketing agency gets booking numbers,
 // NOT the ops boards. Stored as share_settings row id=3, cookie `mkt_ok`.
 // FAIL CLOSED: while no marketing password is set, the partner link stays shut.
-export const MKT_COOKIE = 'mkt_ok'
+export const MKT_COOKIE = FAMILY.marketing.cookie
 
-export function mktTokenFor(pw: string) { return createHash('sha256').update('stayboard-marketing:' + pw).digest('hex') }
-
-export async function currentMarketingPassword(): Promise<string> {
-  try {
-    const db = supabaseAdmin()
-    const { data, error } = await db.from('share_settings').select('password').eq('id', 3).maybeSingle()
-    if (error) { console.error('marketing_settings read', error.message); return '' }
-    return data && data.password ? String(data.password) : ''
-  } catch (e) { console.error('marketing_settings read', e); return '' }
-}
+export async function currentMarketingPassword(): Promise<string> { return familyStored('marketing') }
 
 export async function marketingCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
-  if (!cookieVal) return false
-  const cur = await currentMarketingPassword()
-  if (!cur) return false
-  return cookieVal === mktTokenFor(cur)
+  return familyCookieValid('marketing', cookieVal)
 }
 
 // OWNER AUDIT password — its own credential for the owner-statement audit share link, separate
@@ -66,30 +56,18 @@ export async function marketingCookieValid(cookieVal: string | undefined | null)
 // accountant) sees owner-level money, NOT the ops boards and NOT the marketing report.
 // Stored as share_settings row id=4, cookie `oa_ok`.
 // FAIL CLOSED: while no audit password is set, the share link stays shut.
-export const OA_COOKIE = 'oa_ok'
+export const OA_COOKIE = FAMILY.audit.cookie
 
-export function oaTokenFor(pw: string) { return createHash('sha256').update('stayboard-owner-audit:' + pw).digest('hex') }
-
-export async function currentAuditPassword(): Promise<string> {
-  try {
-    const db = supabaseAdmin()
-    const { data, error } = await db.from('share_settings').select('password').eq('id', 4).maybeSingle()
-    if (error) { console.error('audit_settings read', error.message); return '' }
-    return data && data.password ? String(data.password) : ''
-  } catch (e) { console.error('audit_settings read', e); return '' }
-}
+export async function currentAuditPassword(): Promise<string> { return familyStored('audit') }
 
 export async function auditCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
-  if (!cookieVal) return false
-  const cur = await currentAuditPassword()
-  if (!cur) return false
-  return cookieVal === oaTokenFor(cur)
+  return familyCookieValid('audit', cookieVal)
 }
 
 export async function adminPasswordOk(pw: string | undefined | null): Promise<{ ok: boolean; reason: string }> {
   const cur = await currentAdminPassword()
   if (!cur) return { ok: false, reason: 'Delete is locked. Set the admin password in Users \u2192 Share links & security first.' }
-  if (!pw || String(pw) !== cur) return { ok: false, reason: 'Wrong admin password.' }
+  if (!pw || !passcodeMatches(String(pw), cur)) return { ok: false, reason: 'Wrong admin password.' }
   return { ok: true, reason: '' }
 }
 
@@ -109,7 +87,7 @@ export async function currentRulesPassword(): Promise<string> {
 export async function rulesPasswordOk(pw: string | undefined | null): Promise<{ ok: boolean; reason: string }> {
   const cur = await currentRulesPassword()
   if (!cur) return { ok: false, reason: 'Editing rules from the share link is locked. Set a rules password in Users \u2192 Share links & security first, or sign in.' }
-  if (!pw || String(pw) !== cur) return { ok: false, reason: 'Wrong rules password.' }
+  if (!pw || !passcodeMatches(String(pw), cur)) return { ok: false, reason: 'Wrong rules password.' }
   return { ok: true, reason: '' }
 }
 

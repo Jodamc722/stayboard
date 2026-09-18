@@ -11,7 +11,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { revalidateTag } from 'next/cache'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createClient } from '@/lib/supabase-server'
+import { getAccess } from '@/lib/access'
+import { checkLinkPasscode, lockedResponse } from '@/lib/passcode-gate'
 import { buildSchedule } from '@/lib/schedule-build'
 import { getOpsPresets } from '@/lib/app-settings'
 import { clusterAreas } from '@/lib/geo-areas'
@@ -35,11 +36,14 @@ async function loadLink(code: string) {
   if (!data || data.revoked_at) return null
   return data
 }
-async function unlocked(link: any, pass: string | null): Promise<boolean> {
-  if (!link.passcode) return true
-  try { const s = createClient(); const { data: { user } } = await s.auth.getUser(); if (user) return true } catch {}
-  if (pass && pass === link.passcode) return true
-  return shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
+// 'ok' | 'wrong' | 'locked'. A signed-in LIGHTHOUSE user (allowlisted, active — not merely a
+// Supabase session) skips the passcode; the standing share cookie still opens it; otherwise the
+// link's own passcode, checked with lockout + constant-time compare (lib/passcode-gate).
+async function unlocked(req: NextRequest, link: any, pass: string | null): Promise<'ok' | 'wrong' | 'locked'> {
+  if (!link.passcode) return 'ok'
+  try { const a = await getAccess(); if (a.user && a.allowed) return 'ok' } catch {}
+  if (await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)) return 'ok'
+  return checkLinkPasscode(req, 'sched:' + String(link.code), pass || '', String(link.passcode))
 }
 /** The week, cut down to one market — and to OUR cleans. Vendor-cleaned buildings (Botanica, Park
  *  Towers… — the list lives in /users → Ops presets, "Vendor-cleaned buildings") are not this team's
@@ -85,7 +89,10 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
   const link = await loadLink(params.code)
   if (!link) return NextResponse.json({ ok: false, error: 'This link is not active.' }, { status: 404 })
   const sp = req.nextUrl.searchParams
-  if (!(await unlocked(link, sp.get('pass')))) return NextResponse.json({ ok: false, locked: true, label: link.label || link.market + ' team schedule' }, { status: 401 })
+  // GET never carries the passcode: the page POSTs { action:'unlock', pass } first (below).
+  const v = await unlocked(req, link, null)
+  if (v === 'locked') return lockedResponse({ label: link.label || link.market + ' team schedule' })
+  if (v !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label || link.market + ' team schedule' }, { status: 401 })
   const ws = /^\d{4}-\d{2}-\d{2}$/.test(sp.get('weekStart') || '') ? sp.get('weekStart') : null
   try {
     const week = await marketWeek(link.market, ws)
@@ -99,7 +106,19 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   const link = await loadLink(params.code)
   if (!link) return NextResponse.json({ ok: false, error: 'This link is not active.' }, { status: 404 })
   const b = await req.json().catch(() => ({} as any))
-  if (!(await unlocked(link, str(b.pass) || null))) return NextResponse.json({ ok: false, locked: true }, { status: 401 })
+  const v = await unlocked(req, link, str(b.pass) || null)
+  if (v === 'locked') return lockedResponse({ label: link.label || link.market + ' team schedule' })
+  if (v !== 'ok') return NextResponse.json({ ok: false, locked: true, error: str(b.pass) ? 'That passcode did not match.' : undefined }, { status: 401 })
+  // UNLOCK: the passcode was right — answer the same payload GET would, so the page loads.
+  if (str(b.action) === 'unlock') {
+    const ws = /^\d{4}-\d{2}-\d{2}$/.test(str(b.weekStart)) ? str(b.weekStart) : null
+    try {
+      const week = await marketWeek(link.market, ws)
+      const db = supabaseAdmin()
+      const { data: subs } = await db.from('schedule_submissions').select('id,week_start,week_end,submitted_by,note,status,feedback,reviewed_at,created_at').eq('link_code', link.code).order('created_at', { ascending: false }).limit(6)
+      return NextResponse.json({ ok: true, link: { market: link.market, label: link.label || link.market + ' team schedule', viewOnly: link.view_only === true }, ...week, submissions: subs || [] })
+    } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
+  }
   // A VIEW-ONLY LINK CANNOT WRITE, AND THE SERVER IS WHERE THAT IS TRUE (migration 084). Hiding the
   // controls in components/TeamScheduler is for the person holding the phone; it is not a control.
   // The link IS the credential here — no login stands behind it — so anyone who has the URL can

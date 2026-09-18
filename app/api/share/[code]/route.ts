@@ -16,6 +16,7 @@ import { pageRows } from '@/lib/db-page'
 import { marketOf } from '@/lib/segments'
 import { buildTeamSchedule, addDays as addDaysET } from '@/lib/team-schedule'
 import { scheduleLabor } from '@/lib/schedule-labor'
+import { checkLinkPasscode, lockedResponse } from '@/lib/passcode-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -43,7 +44,7 @@ function pickRange(body: any, today: string, windowDays: number): { from: string
 const MEMO_MS = 90 * 1000
 const payloadMemo: Map<string, { at: number; out: any }> = new Map()
 
-async function handle(code: string, pw: string, body?: any) {
+async function handle(req: NextRequest, code: string, pw: string, body?: any) {
   if (!/^[0-9a-f]{12,32}$/i.test(code)) return NextResponse.json({ error: 'not found' }, { status: 404 })
   const db = supabaseAdmin()
   const { data: rows } = await db.from('share_links').select('*').eq('code', code).limit(1)
@@ -55,8 +56,11 @@ async function handle(code: string, pw: string, body?: any) {
   // building's money and internal notes. The builder forces exclusivity; this refuses the other
   // door regardless, because a mis-tick should not be able to reach it.
   if (link.sections && link.sections.parking === true) return NextResponse.json({ error: 'not found' }, { status: 404 })
-  if (link.passcode && pw !== link.passcode) {
-    return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: pw ? 'Wrong passcode.' : undefined }, { status: pw ? 403 : 200 })
+  if (link.passcode) {
+    // Lockout + constant-time compare live in lib/passcode-gate (2026-09-18, P0-5).
+    const verdict = await checkLinkPasscode(req, 'link:' + code, pw, String(link.passcode))
+    if (verdict === 'locked') return lockedResponse({ label: link.label || 'Shared data' })
+    if (verdict !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: pw ? 'Wrong passcode.' : undefined }, { status: pw ? 403 : 200 })
   }
 
   // The unlocked payload is memoised for 90 s per (link, range, crew): a reviewer flipping
@@ -363,9 +367,9 @@ async function handle(code: string, pw: string, body?: any) {
 }
 
 export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
-  return handle(str(params.code), '')
+  return handle(req, str(params.code), '')
 }
 export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
   const body = await req.json().catch(() => ({} as any))
-  return handle(str(params.code), str(body?.pw), body)
+  return handle(req, str(params.code), str(body?.pw), body)
 }

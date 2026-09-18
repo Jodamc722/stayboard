@@ -3,7 +3,8 @@
 // and marketing passwords — the audit reviewer sees owner statements, nothing else.
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { OA_COOKIE, oaTokenFor, currentAuditPassword, auditCookieValid } from '@/lib/shareAuth'
+import { OA_COOKIE, auditCookieValid } from '@/lib/shareAuth'
+import { familyLogin } from '@/lib/passcode-gate'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,11 +15,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
-  const pw = String(body.password || '')
-  const cur = await currentAuditPassword()
-  if (!cur) return NextResponse.json({ ok: false, error: 'No audit password is set yet. Set one in Users → share links.' }, { status: 503 })
-  if (!pw || pw !== cur) return NextResponse.json({ ok: false, error: 'Wrong password' }, { status: 401 })
-  const res = NextResponse.json({ ok: true })
-  res.cookies.set(OA_COOKIE, oaTokenFor(cur), { httpOnly: true, sameSite: 'lax', secure: true, path: '/', maxAge: 60 * 60 * 24 * 90 })
-  return res
+  // Lockout, constant-time compare, hash upgrade and the signed 30-day cookie all live in
+  // lib/passcode-gate.ts — one implementation for every share-link family.
+  return familyLogin(req, 'audit', String(body.password || ''), 'No audit password is set yet. Set one in Users → share links.')
 }

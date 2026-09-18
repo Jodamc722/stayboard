@@ -25,7 +25,7 @@ function StayLogo({ light = false, small = false }: { light?: boolean; small?: b
   )
 }
 
-export function GuidebookView({ initial, guest = false }: { initial: any; guest?: boolean }) {
+export function GuidebookView({ initial, guest = false, photoToken = '' }: { initial: any; guest?: boolean; photoToken?: string }) {
   const router = useRouter()
   const [gb, setGb] = useState<any>(initial)
   const [edit, setEdit] = useState(false)
@@ -176,7 +176,7 @@ export function GuidebookView({ initial, guest = false }: { initial: any; guest?
     ;(async () => {
       for (const { k, i } of need) {
         try {
-          const r = await fetch('/api/public/place-photo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, section: k, index: i }) })
+          const r = await fetch('/api/public/place-photo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, section: k, index: i, token: photoToken }) })
           const d = await r.json()
           if (d?.photo) set([k, 'items', String(i), 'photo'], d.photo)
         } catch { /* leave this card on its text fallback and carry on to the next */ }

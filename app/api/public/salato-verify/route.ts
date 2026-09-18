@@ -1,8 +1,12 @@
 // Salato guest verification — powers the iPad check-in flow.
-// GET  ?rid=<reservationId>  -> guest + unit + house rules + current status (capability = the id).
-// POST { rid, fullName, initials, signature, idPhoto, selfie } -> stores photos + signature in a
+// GET  ?token=<signed>  -> guest + unit + house rules + current status.
+// POST { token, fullName, initials, signature, idPhoto, selfie } -> stores photos + signature in a
 //       PRIVATE Supabase bucket and writes the verification record to app_settings (key sv:<rid>).
-// The reservation id is the capability, so the guest device does not need the share password.
+// THE TOKEN IS SIGNED (lib/salato-verify-token.ts). It used to be the bare Guesty reservation id,
+// which is not a secret — so the guest device still needs no share password, but the link has to
+// have been issued by one of our boards. A bad token counts toward a per-address lockout, and a
+// stay that is already verified refuses a second submission (it would have overwritten the ID and
+// selfie of the real guest and emailed the building again).
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isSalatoListing } from '@/lib/salato-units'
@@ -15,6 +19,26 @@ import { sendGmail } from '@/lib/gmail-send'
 import { getAccess } from '@/lib/access'
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { SALATO_RULES_INTRO, SALATO_RULES_IMPORTANT } from '@/lib/salato-rules'
+import { salatoVerifyRid } from '@/lib/salato-verify-token'
+import { logParking, tooManyWrong, LOCKOUT_MINUTES } from '@/lib/parking'
+
+// Lockout counter — shares the parking_access_log ledger (code = this constant) so it survives a
+// redeploy, exactly like lib/parking-gate.ts.
+const LOCK_CODE = 'salato-verify'
+function ipOf(req: NextRequest): string | null {
+  const h = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || ''
+  const first = String(h).split(',')[0].trim()
+  return first || null
+}
+/** Resolve the signed token to a reservation id, counting failures; null = refuse. */
+async function ridFromToken(req: NextRequest, token: string): Promise<{ rid: string | null; locked: boolean }> {
+  const ip = ipOf(req)
+  if (await tooManyWrong(LOCK_CODE, ip)) return { rid: null, locked: true }
+  const rid = salatoVerifyRid(token)
+  if (!rid) { if (token) await logParking({ code: LOCK_CODE, action: 'denied', detail: 'bad verify token', ip }); return { rid: null, locked: false } }
+  return { rid, locked: false }
+}
+const LOCKED = () => NextResponse.json({ ok: false, locked: true, error: `Too many attempts. Try again in ${LOCKOUT_MINUTES} minutes.` }, { status: 429 })
 
 function escapeHtml(s: any): string { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') }
 function fmtDay(d?: string): string { if (!d) return '—'; const x = new Date(d + 'T12:00:00'); return isNaN(x.getTime()) ? String(d) : x.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
@@ -55,7 +79,9 @@ async function readRecord(db: any, rid: string): Promise<any | null> {
 
 export async function GET(req: NextRequest) {
   try {
-    const rid = str(new URL(req.url).searchParams.get('rid')).trim()
+    const { rid, locked } = await ridFromToken(req, str(new URL(req.url).searchParams.get('token')).trim())
+    if (locked) return LOCKED()
+    if (!rid) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
     const db = supabaseAdmin()
     const info = await loadSalatoRes(db, rid)
     if (!info.ok) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
@@ -85,7 +111,9 @@ function decodeImage(dataUrl: string): { ext: 'jpg' | 'png'; bytes: Buffer } | n
 export async function POST(req: NextRequest) {
   try {
     const body: any = await req.json().catch(() => ({}))
-    const rid = str(body?.rid).trim()
+    const { rid, locked } = await ridFromToken(req, str(body?.token).trim())
+    if (locked) return LOCKED()
+    if (!rid) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
     const db = supabaseAdmin()
     const info = await loadSalatoRes(db, rid)
     if (!info.ok) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
@@ -105,6 +133,13 @@ export async function POST(req: NextRequest) {
       const { error: rErr } = await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(reopened), updated_at: new Date().toISOString() })
       if (rErr) return NextResponse.json({ ok: false, error: String(rErr.message || rErr).slice(0, 160) }, { status: 500 })
       return NextResponse.json({ ok: true, reopened: true })
+    }
+
+    // ONE VERIFICATION PER STAY. A second submission would overwrite the real guest's ID and selfie
+    // (upsert: true below) and email the building again. The front desk reopens deliberately.
+    {
+      const prior = await readRecord(db, rid)
+      if (prior && prior.status === 'verified') return NextResponse.json({ ok: false, alreadyVerified: true, error: 'This stay is already verified. Ask the front desk to reopen it if something was wrong.' }, { status: 409 })
     }
 
     // Name is auto-filled from the reservation; fall back to it if the client didn't send one.

@@ -3,7 +3,8 @@
 // the vendor share password — a marketing partner can never open the ops boards with it.
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { MKT_COOKIE, mktTokenFor, currentMarketingPassword, marketingCookieValid } from '@/lib/shareAuth'
+import { MKT_COOKIE, marketingCookieValid } from '@/lib/shareAuth'
+import { familyLogin } from '@/lib/passcode-gate'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,11 +15,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
-  const pw = String(body.password || '')
-  const cur = await currentMarketingPassword()
-  if (!cur) return NextResponse.json({ ok: false, error: 'No marketing password is set yet. Set one in Users → share links.' }, { status: 503 })
-  if (!pw || pw !== cur) return NextResponse.json({ ok: false, error: 'Wrong password' }, { status: 401 })
-  const res = NextResponse.json({ ok: true })
-  res.cookies.set(MKT_COOKIE, mktTokenFor(cur), { httpOnly: true, sameSite: 'lax', secure: true, path: '/', maxAge: 60 * 60 * 24 * 90 })
-  return res
+  // Lockout, constant-time compare, hash upgrade and the signed 30-day cookie all live in
+  // lib/passcode-gate.ts — one implementation for every share-link family.
+  return familyLogin(req, 'marketing', String(body.password || ''), 'No marketing password is set yet. Set one in Users → share links.')
 }

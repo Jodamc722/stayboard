@@ -3,6 +3,7 @@
 import { notFound } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GuidebookView } from '@/components/GuidebookView'
+import { signPlacePhotoToken } from '@/lib/place-photo-token'
 
 export const dynamic = 'force-dynamic'
 export async function generateMetadata({ params }: { params: { id: string } }) {
@@ -37,5 +38,5 @@ export default async function PublicGuidebookPage({ params }: { params: { id: st
   const { data } = await supabaseAdmin().from('guidebooks').select('*').eq('id', id).limit(1)
   const gb = (data || [])[0]
   if (!gb) notFound()
-  return <GuidebookView initial={gb} guest />
+  return <GuidebookView initial={gb} guest photoToken={signPlacePhotoToken(String(gb.id))} />
 }

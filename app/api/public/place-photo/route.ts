@@ -16,6 +16,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isPlaceSection, photoAlive, photoForPlace } from '@/lib/place-photo'
+import { placePhotoTokenValid } from '@/lib/place-photo-token'
+import { getAccess } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -37,6 +39,14 @@ export async function POST(req: NextRequest) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: 'bad id' }, { status: 400 })
   if (!isPlaceSection(section)) return NextResponse.json({ error: 'bad section' }, { status: 400 })
   if (!Number.isInteger(index) || index < 0 || index > 11) return NextResponse.json({ error: 'bad index' }, { status: 400 })
+  // WHO MAY ASK (2026-09-18): the rendered book carries a signed, expiring token for ITS id
+  // (lib/place-photo-token, minted on the server page); the team's own editor is signed in.
+  // Anyone else, with any id, gets nothing — this route writes to the book and spends API calls.
+  if (!placePhotoTokenValid(String(body?.token || ''), id)) {
+    let signedIn = false
+    try { const a = await getAccess(); signedIn = !!a.user && a.allowed } catch { signedIn = false }
+    if (!signedIn) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
 
   const key = id + ':' + section + ':' + index
   const hit = _recent.get(key)

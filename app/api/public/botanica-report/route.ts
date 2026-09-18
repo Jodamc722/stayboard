@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { BOT_COOKIE, botanicaCookieValid } from '@/lib/shareAuth'
+import { getAccess } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -40,7 +41,10 @@ const fareOf = (m: any): number => num(m?.fareAccommodationAdjusted ?? m?.fareAc
 const cleaningOf = (m: any): number => num(m?.fareCleaning)
 
 export async function GET(req: NextRequest) {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
+  // ITS OWN PASSWORD (2026-09-18, P0-4). This report carries owner money and used to open on the
+  // vendor share password every cleaning crew holds. A signed-in Lighthouse user opens it too.
+  let authed = await botanicaCookieValid(cookies().get(BOT_COOKIE)?.value)
+  if (!authed) { try { const a = await getAccess(); authed = !!a.user && a.allowed } catch { authed = false } }
   if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
   const debug = new URL(req.url).searchParams.get('debug') === '1'
   try {

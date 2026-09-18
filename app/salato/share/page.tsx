@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; verified?: boolean; verifiedAt?: string | null }
+type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; verified?: boolean; verifyToken?: string; verifiedAt?: string | null }
 type Data = { ok: boolean; today: string; unitCount?: number; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
 type ViewData = { ok: boolean; fullName?: string | null; unit?: string | null; signedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
 
@@ -216,7 +216,7 @@ export default function SalatoShare() {
                       </div>
                       {showVerify && (r.verified
                         ? <button onClick={() => r.id && openViewer(r.id)} className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800'>✓ Verified</button>
-                        : <a href={'/salato/verify/' + r.id} target='_blank' rel='noopener noreferrer' className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl bg-neutral-900 text-white'>Verify</a>)}
+                        : <a href={'/salato/verify/' + (r.verifyToken || '')} target='_blank' rel='noopener noreferrer' className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl bg-neutral-900 text-white'>Verify</a>)}
                     </div>
                   </div>
                 )

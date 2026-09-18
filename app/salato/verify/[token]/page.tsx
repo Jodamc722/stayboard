@@ -73,7 +73,7 @@ function Detail({ label, value }: { label: string; value: string }) {
 }
 
 export default function SalatoVerify({ params }: { params: { token: string } }) {
-  const rid = params.token
+  const token = params.token
   const [data, setData] = useState<Load | null>(null)
   const [fullName, setFullName] = useState('')
   const [ruleInitials, setRuleInitials] = useState<Record<string, string>>({})
@@ -85,17 +85,17 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
   const [done, setDone] = useState(false)
 
   useEffect(() => {
-    fetch('/api/public/salato-verify?rid=' + encodeURIComponent(rid), { cache: 'no-store' })
+    fetch('/api/public/salato-verify?token=' + encodeURIComponent(token), { cache: 'no-store' })
       .then(r => r.json()).then((j: Load) => { setData(j); if (j && j.guestName) setFullName(j.guestName) })
       .catch(() => setData({ ok: false, error: 'Could not load. Check your connection.' }))
-  }, [rid])
+  }, [token])
 
   const submit = async () => {
     setBusy(true); setErr('')
     try {
       const res = await fetch('/api/public/salato-verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rid, fullName: fullName.trim(), ruleInitials, signature: sig, idPhoto, selfie }),
+        body: JSON.stringify({ token, fullName: fullName.trim(), ruleInitials, signature: sig, idPhoto, selfie }),
       })
       const j = await res.json()
       if (!res.ok || j.ok === false) { setErr(j.error || 'Something went wrong. Please try again.'); setBusy(false); return }

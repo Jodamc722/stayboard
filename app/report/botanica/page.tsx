@@ -131,7 +131,7 @@ export default function BotanicaReportPage() {
     e.preventDefault()
     setPwBusy(true); setPwErr('')
     try {
-      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      const r = await fetch('/api/public/botanica-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
       const jr = await r.json()
       if (!r.ok || !jr.ok) { setPwErr(jr.error || 'Wrong password'); setPwBusy(false); return }
       setNeedsPw(false); setPw(''); setLoading(true); await load()

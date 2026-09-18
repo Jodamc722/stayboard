@@ -46,9 +46,12 @@ export function TeamScheduler({ code }: { code: string }) {
   const load = async (ws: string | null = weekStart) => {
     setLoading(true); setErr('')
     try {
-      const r = await fetch('/api/public/scheduler/' + code + '?weekStart=' + (ws || '') + (pass ? '&pass=' + encodeURIComponent(pass) : ''), { cache: 'no-store' })
+      // With a passcode the page POSTs it (never in the URL); without one, a plain GET.
+      const r = pass
+        ? await fetch('/api/public/scheduler/' + code, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'unlock', weekStart: ws || '', pass }), cache: 'no-store' })
+        : await fetch('/api/public/scheduler/' + code + '?weekStart=' + (ws || ''), { cache: 'no-store' })
       const j = await r.json()
-      if (r.status === 401 && j.locked) { setLocked(j.label || 'Team schedule'); setData(null); setLoading(false); return }
+      if ((r.status === 401 || r.status === 429) && j.locked) { setLocked(j.label || 'Team schedule'); setData(null); setLoading(false); if (j.error) setErr(j.error); return }
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load')
       setLocked(null); setData(j); setWeekStart(j.weekStart)
       try { if (pass) localStorage.setItem('tsched:' + code + ':pass', pass) } catch {}

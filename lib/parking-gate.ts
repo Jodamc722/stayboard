@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { SHARE_COOKIE, shareCookieValid } from './shareAuth'
 import { getAccess } from './access'
+import { passcodeMatches } from './passcode-gate'
 import { getParkingLink, logParking, tooManyWrong, LOCKOUT_MINUTES, type ParkingLink } from './parking'
 
 export type Gate =
@@ -71,7 +72,7 @@ export async function parkingGate(req: NextRequest, code: string, pass: string):
   }
 
   const shareOk = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value).catch(() => false)
-  const passOk = link.passcode ? pass === link.passcode : shareOk
+  const passOk = link.passcode ? passcodeMatches(pass, String(link.passcode)) : shareOk
   if (!passOk) {
     // A wrong attempt is counted; an empty one is just somebody arriving at the page.
     if (pass) await logParking({ code: link.code, action: 'denied', detail: 'wrong passcode', ip })

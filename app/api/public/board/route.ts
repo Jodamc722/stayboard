@@ -9,15 +9,21 @@ import { getAccess } from '@/lib/access'
 import { customFieldNameMap } from '@/lib/custom-fields'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { salatoListings } from '@/lib/salato-units'
+import { salatoVerifyToken } from '@/lib/salato-verify-token'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const SCOPES: Record<string, { label: string; re: RegExp }> = {
-  botanica: { label: 'Botanica', re: /botanica/i },
-  pt: { label: 'Park Towers', re: /park\s*towers?|\bpt\b/i },
-  'amrit-capri-lucerne': { label: 'Amrit / Capri / Lucerne', re: /amrit|capri|lucerne/i },
-  salato: { label: 'Salato', re: /salato/i },
+// AUDIENCE (2026-09-18 audit). The header of this file promised "no guest names / phone / email /
+// notes" and the rows carried all three to any share-password holder. A cleaning crew needs the
+// unit, the dates and the day-of code; the Salato FRONT DESK checks guests in by name and calls
+// them, so that board keeps them. 'crew' is the default for anything added here later.
+type Audience = 'crew' | 'desk'
+const SCOPES: Record<string, { label: string; re: RegExp; audience: Audience }> = {
+  botanica: { label: 'Botanica', re: /botanica/i, audience: 'crew' },
+  pt: { label: 'Park Towers', re: /park\s*towers?|\bpt\b/i, audience: 'crew' },
+  'amrit-capri-lucerne': { label: 'Amrit / Capri / Lucerne', re: /amrit|capri|lucerne/i, audience: 'crew' },
+  salato: { label: 'Salato', re: /salato/i, audience: 'desk' },
 }
 const LIVE = /confirm|checked/i
 const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
@@ -148,6 +154,10 @@ export async function GET(req: NextRequest) {
       }
     }
     const all = live.map(row)
+    // PII only for the desk audience (or a signed-in Lighthouse user opening the same link).
+    if (scope.audience !== 'desk' && !isAppUser) {
+      for (const r of all) { r.guestName = null; r.phone = null; r.notes = null }
+    }
     const byUnitDate = (a: any, b: any) => a.unit.localeCompare(b.unit)
     const arrivals = all.filter(r => r.checkIn >= today && r.checkIn <= end).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || byUnitDate(a, b))
     const seen: Record<string, boolean> = {}
@@ -221,6 +231,7 @@ export async function GET(req: NextRequest) {
           const sign = async (p: string) => { if (!p) return null; try { const s = await db.storage.from('salato-verify').createSignedUrl(p, 600); return s.data ? s.data.signedUrl : null } catch { return null } }
           for (const r of guestRows) {
             const rec = recs[r.id]
+            r.verifyToken = salatoVerifyToken(r.id)
             if (rec && rec.status === 'verified') {
               r.verified = true; r.verifiedAt = rec.signedAt || null
               // Photos are for signed-in users only — a share-password-only viewer sees the
