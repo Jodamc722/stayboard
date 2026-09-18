@@ -42,20 +42,20 @@ import { openEve } from '@/components/EveFloat'
 import { SlackQueueCard } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 
-type Roster = { id: number; name: string; departments: string[] }
-type TileKey = 'cleans' | 'arrivals' | 'tasks' | 'team' | 'glitches' | 'claims' | 'overdue' | 'guestDesk'
+export type Roster = { id: number; name: string; departments: string[] }
+export type TileKey = 'cleans' | 'arrivals' | 'tasks' | 'team' | 'glitches' | 'claims' | 'overdue' | 'guestDesk'
 
-const DAY_URL = '/api/command/day'
-const MINE_URL = '/api/projects/mine'
+export const DAY_URL = '/api/command/day'
+export const MINE_URL = '/api/projects/mine'
 const fmtMoney = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 const fmtLeft = (m: number) => { const a = Math.abs(m); const h = Math.floor(a / 60); return (h ? h + 'h ' : '') + (a % 60) + 'm' }
 const fmtH = (mins: number) => { const m = Math.max(0, Math.round(mins)); const h = Math.floor(m / 60), r = m % 60; return h ? h + 'h' + (r ? ' ' + r + 'm' : '') : r + 'm' }
 const ago = (iso: string, tick: number) => { void tick; const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago' }
 const clock = (iso: string) => { try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) } catch { return '' } }
 const bz = (id: string) => 'https://app.breezeway.io/task/' + id
-const BTN = 'text-[12px] font-bold px-3 py-1.5 rounded-lg shrink-0 inline-flex items-center gap-1 min-h-[34px] disabled:opacity-50'
-const ICON_BTN = 'inline-flex items-center justify-center w-8 h-8 rounded-lg shrink-0'
-const CARD = 'rounded-2xl border border-line bg-white overflow-hidden'
+export const BTN = 'text-[12px] font-bold px-3 py-1.5 rounded-lg shrink-0 inline-flex items-center gap-1 min-h-[34px] disabled:opacity-50'
+export const ICON_BTN = 'inline-flex items-center justify-center w-8 h-8 rounded-lg shrink-0'
+export const CARD = 'rounded-2xl border border-line bg-white overflow-hidden'
 
 /** Recommendation = the engine proposes a change a person commits. Pending = in motion; follow it. */
 const isRecommendation = (i: NextItem) => !!i.action && (i.action.type === 'create_task' || i.action.type === 'assign' || i.action.type === 'cancel_task')
@@ -182,8 +182,8 @@ export function CommandCockpit() {
 }
 
 // ── THE NUMBERS ─────────────────────────────────────────────────────────────────────────────────
-type Tone = 'ok' | 'warn' | 'hot' | 'quiet'
-function Stat({ label, value, sub, tone, active, onClick }: { label: string; value: string; sub: string; tone: Tone; active: boolean; onClick: () => void }) {
+export type Tone = 'ok' | 'warn' | 'hot' | 'quiet'
+export function Stat({ label, value, sub, tone, active, onClick }: { label: string; value: string; sub: string; tone: Tone; active: boolean; onClick: () => void }) {
   const num = tone === 'hot' ? 'text-rose-700' : tone === 'warn' ? 'text-amber-800' : tone === 'ok' ? 'text-emerald-700' : 'text-ink'
   const dot = tone === 'hot' ? 'bg-rose-500' : tone === 'warn' ? 'bg-amber-400' : tone === 'ok' ? 'bg-emerald-500' : 'bg-transparent'
   return (
@@ -380,11 +380,11 @@ function Row({ item: i, roster, onChanged }: { item: NextItem; roster: Roster[];
 }
 
 // ── MY TASKS — every Projects board, your name on it ───────────────────────────────────────────
-type MineItem = { id: string; projectId: string; title: string; status: string; due: string | null; priority: string; section: string | null; project: string; oneOnOne: boolean; where: string | null; mine?: boolean }
-type Mine = { ok: boolean; today: string; total: number; groups: { overdue: MineItem[]; today: MineItem[]; week: MineItem[]; later: MineItem[]; someday: MineItem[] }; board?: { id: string; title: string } | null; error?: string }
-const MINE_ICON: Record<string, any> = { todo: Circle, doing: CircleDot, blocked: Ban, done: Check }
-const MINE_CLS: Record<string, string> = { todo: 'text-muted border-line hover:border-ink', doing: 'text-amber-600 border-amber-300 bg-amber-50', blocked: 'text-rose-600 border-rose-300 bg-rose-50', done: 'text-white bg-emerald-500 border-emerald-500' }
-const niceDay = (ymd: string | null) => { if (!ymd) return ''; try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd } }
+export type MineItem = { id: string; projectId: string; title: string; status: string; due: string | null; priority: string; section: string | null; project: string; oneOnOne: boolean; where: string | null; mine?: boolean }
+export type Mine = { ok: boolean; today: string; total: number; groups: { overdue: MineItem[]; today: MineItem[]; week: MineItem[]; later: MineItem[]; someday: MineItem[] }; board?: { id: string; title: string } | null; error?: string }
+export const MINE_ICON: Record<string, any> = { todo: Circle, doing: CircleDot, blocked: Ban, done: Check }
+export const MINE_CLS: Record<string, string> = { todo: 'text-muted border-line hover:border-ink', doing: 'text-amber-600 border-amber-300 bg-amber-50', blocked: 'text-rose-600 border-rose-300 bg-rose-50', done: 'text-white bg-emerald-500 border-emerald-500' }
+export const niceDay = (ymd: string | null) => { if (!ymd) return ''; try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd } }
 
 type VendorVisit = {
   id: string; projectId: string; project: string; title: string; vendor: string | null
@@ -539,7 +539,7 @@ function MyTasksCard() {
 }
 
 // ── COMPLETED TODAY ─────────────────────────────────────────────────────────────────────────────
-function CompletedCard({ d, onChanged, tick }: { d: CommandDay; onChanged: () => void; tick: number }) {
+export function CompletedCard({ d, onChanged, tick }: { d: CommandDay; onChanged: () => void; tick: number }) {
   const c = d.completed
   const [showSkipped, setShowSkipped] = useState(false)
   const [busy, setBusy] = useState('')
@@ -738,7 +738,7 @@ function AssignBtn({ who, open, onClick }: { who: string; open: boolean; onClick
   )
 }
 
-function TilePanel({ k, d, roster, onChanged }: { k: TileKey; d: CommandDay; roster: Roster[]; onChanged: () => void }) {
+export function TilePanel({ k, d, roster, onChanged }: { k: TileKey; d: CommandDay; roster: Roster[]; onChanged: () => void }) {
   const t = d.tiles
   const [assignFor, setAssignFor] = useState('')
   const scroll = 'divide-y divide-line max-h-[440px] overflow-y-auto'
@@ -874,7 +874,7 @@ function TilePanel({ k, d, roster, onChanged }: { k: TileKey; d: CommandDay; ros
 }
 
 /** The capacity model, per person, with the moves it recommends. Assign-kind moves file here. */
-function TeamPanel({ d, roster, onChanged }: { d: CommandDay; roster: Roster[]; onChanged: () => void }) {
+export function TeamPanel({ d, roster, onChanged }: { d: CommandDay; roster: Roster[]; onChanged: () => void }) {
   const tm = d.tiles.team
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, boolean>>({})
@@ -938,7 +938,7 @@ function TeamPanel({ d, roster, onChanged }: { d: CommandDay; roster: Roster[]; 
 }
 
 /** Assign a Breezeway task inline: filtered roster, one tap, done. Errors stay in the row. */
-function InlineAssign({ taskId, dept, roster, onDone }: { taskId: string; dept: string; roster: Roster[]; onDone: () => void }) {
+export function InlineAssign({ taskId, dept, roster, onDone }: { taskId: string; dept: string; roster: Roster[]; onDone: () => void }) {
   const [busy, setBusy] = useState(0)
   const [err, setErr] = useState('')
   const [all, setAll] = useState(false)

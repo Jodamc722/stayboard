@@ -1,17 +1,17 @@
-// COMMAND CENTER v4 (Jon, 2026-09-09: "cleaner and easier to read, get rid of noise and waste,
-// an actionable page, clarity in the day. Think Recommendations, pending, completed. My tasks from
-// all boards. In future important emails.") The page is a thin server shell: auth, the header, the
-// client cockpit. Every number comes from /api/command/day, which reads the same lib/ops-day
-// picture the board reads — so the cockpit and Today in Ops cannot disagree about the same morning.
+// COMMAND CENTER v5 — "My day, one screen" (Jon, 2026-09-18: v4 was "not actionable enough,
+// wrong content/noise, visual/layout bad, rethink from scratch"). Everything that needs Jon today,
+// ranked, in four bands — Decide · Fix · Clear · Yours — each row with its one-tap action. Nothing
+// informational above the list; the numbers live behind "How's the day".
 //
-// v3 → v4: the eight tiles became one strip; the single "Do next" list became Recommendations
-// (the engine proposes, you commit) and Pending (in motion, follow it); My tasks (every Projects
-// board) and Completed today joined on the right; the sticky Eve panel became one line — the
-// floating Eve bubble is on every page. All of it lives in components/CommandCockpit.
+// The page is a thin server shell: auth, an eyebrow, the client list. Every number comes from
+// /api/command/day, which reads the same lib/ops-day picture the board reads — so the list and
+// Today in Ops cannot disagree about the same morning. The day verdict IS the header, so there is
+// no h1. All of it lives in components/CommandDayList; the v4 sub-components it reuses (the stat
+// strip, the tile drawers, inline assign, Completed) stay in components/CommandCockpit.
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
-import { CommandCockpit } from '@/components/CommandCockpit'
+import { CommandDayList } from '@/components/CommandDayList'
 import { Sparkles } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -23,13 +23,10 @@ export default async function CommandCenterPage() {
 
   return (
     <Shell>
-      <header className="mb-4 hidden sm:block">
-        <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5">
-          <Sparkles size={13} /> Command Center
-        </p>
-        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Command Center</h1>
-      </header>
-      <CommandCockpit />
+      <p className="max-w-[760px] mx-auto mb-2 text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5">
+        <Sparkles size={13} /> Command Center
+      </p>
+      <CommandDayList />
     </Shell>
   )
 }

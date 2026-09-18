@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Send, Check, X, Clock, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 
-type Pending = {
+export type Pending = {
   id: string
   eventKey: string
   building: string | null
@@ -35,7 +35,7 @@ const EVENT_TONE: Record<string, string> = {
   sync: 'bg-rose-100 text-rose-700',
   personal_brief: 'bg-emerald-100 text-emerald-800',
 }
-const EVENT_LABEL: Record<string, string> = {
+export const EVENT_LABEL: Record<string, string> = {
   late_cleans: 'Cleans behind',
   glitches: 'Guest issues',
   overtime: 'Over hours',
@@ -49,7 +49,7 @@ function humanise(body: string, names: Record<string, string>): string {
   return body.replace(/<@([A-Z0-9]+)>/g, (_m, id) => '@' + (names[id] || id))
 }
 
-function expiresIn(iso: string | null): string {
+export function expiresIn(iso: string | null): string {
   if (!iso) return ''
   const ms = Date.parse(iso) - Date.now()
   if (!Number.isFinite(ms)) return ''
@@ -58,13 +58,17 @@ function expiresIn(iso: string | null): string {
   return mins < 60 ? mins + 'm left' : Math.round(mins / 60) + 'h left'
 }
 
-export function SlackQueueCard() {
+/**
+ * The queue's logic, shared by the card (v4 right rail) and the Command Center v5 Decide band,
+ * which renders the same items as rows. One fetch, one decide() — the rendering is the only
+ * thing that differs.
+ */
+export function useSlackQueue() {
   const router = useRouter()
   const [items, setItems] = useState<Pending[] | null>(null)
   const [names, setNames] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [done, setDone] = useState<Record<string, string>>({})
-  const [open, setOpen] = useState<Record<string, boolean>>({})
   const [err, setErr] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -93,7 +97,7 @@ export function SlackQueueCard() {
     return () => { alive = false }
   }, [])
 
-  async function decide(item: Pending, approve: boolean) {
+  const decide = useCallback(async (item: Pending, approve: boolean) => {
     setBusy(b => ({ ...b, [item.id]: true })); setErr(null)
     try {
       const r = await fetch('/api/slack/queue', {
@@ -111,10 +115,18 @@ export function SlackQueueCard() {
       setErr('Could not reach the server.')
     }
     setBusy(b => ({ ...b, [item.id]: false }))
-  }
+  }, [router])
+
+  const live = items === null ? null : items.filter(i => !done[i.id])
+  return { items, live, names, busy, done, err, decide, preview: (item: Pending) => humanise(item.body, names) }
+}
+
+export function SlackQueueCard() {
+  const { items, live: liveOrNull, names, busy, err, decide } = useSlackQueue()
+  const [open, setOpen] = useState<Record<string, boolean>>({})
 
   if (items === null || !items.length) return null
-  const live = items.filter(i => !done[i.id])
+  const live = liveOrNull || []
   if (!live.length) return null
 
   return (
