@@ -13,13 +13,14 @@ import { SAMPLE_STATEMENT, statementHasRows, STATEMENT_ALSO } from '@/lib/statem
 import {
   houseLine, houseRows, agendaStale, channelBodyStale, statementAlsoRowsStale, AGENDA_ROWS, HERO_HEADLINE,
   CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
+  WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_BANDS_RETIRED_MARKS, RAMP_NOTE,
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
   houseBody, OVERVIEW_BODY, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS, COMPANY_STATS_RETIRED_MARK,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
-import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from '@/lib/season-shape'
+import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 import OwnerPortalDemo from '@/components/OwnerPortalDemo'
@@ -1176,6 +1177,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       houseTeamSubtitle(g('team').subtitle, ((g('team').people || []) as Any[]).length) !== (g('team').subtitle || '') ||
       houseLine(g('ramp').headline, RAMP_HEADLINE) !== (g('ramp').headline || '') ||
       houseLine(g('ramp').subtitle, RAMP_SUBTITLE) !== (g('ramp').subtitle || '') ||
+      houseRows<Any>(g('ramp').bands, RAMP_BANDS_RETIRED_MARKS, RAMP_BANDS as Any[]) !== g('ramp').bands ||
+      houseLine(g('ramp').note, RAMP_NOTE) !== (g('ramp').note || '') ||
+      houseLine(g('welcome').body, WELCOME_BODY) !== (g('welcome').body || '') ||
+      houseLine((g('team').support || {}).note, SUPPORT_NOTE) !== ((g('team').support || {}).note || '') ||
+      seasonBodyStale(g('season').body) ||
       houseLine(g('checklist').headline, CHECKLIST_HEADLINE) !== (g('checklist').headline || '') ||
       houseLine(g('checklist').subtitle, CHECKLIST_SUBTITLE) !== (g('checklist').subtitle || '') ||
       houseRows<Any>(g('checklist').rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[]) !== g('checklist').rows ||
@@ -1201,6 +1207,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       const rp = d.ramp || (d.ramp = {})
       rp.headline = houseLine(rp.headline, RAMP_HEADLINE)
       rp.subtitle = houseLine(rp.subtitle, RAMP_SUBTITLE)
+      rp.bands = houseRows<Any>(rp.bands, RAMP_BANDS_RETIRED_MARKS, RAMP_BANDS as Any[])
+      rp.note = houseLine(rp.note, RAMP_NOTE)
+      const wl = d.welcome || (d.welcome = {})
+      wl.body = houseLine(wl.body, WELCOME_BODY)
+      const tm2 = d.team || (d.team = {})
+      if (tm2.support) tm2.support.note = houseLine(tm2.support.note, SUPPORT_NOTE)
+      const sn = d.season || (d.season = {})
+      if (seasonBodyStale(sn.body)) sn.body = SEASON_BODY
       const cl = d.checklist || (d.checklist = {})
       cl.headline = houseLine(cl.headline, CHECKLIST_HEADLINE)
       cl.subtitle = houseLine(cl.subtitle, CHECKLIST_SUBTITLE)
@@ -2610,7 +2624,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <Ed v={sec('welcome').subtitle || ''} set={v => patch('welcome.subtitle', v)} edit={edit} />
                     </p>
                     <p style={{ marginTop: 26, fontSize: 19, lineHeight: 1.65, color: t.body, maxWidth: '42ch', whiteSpace: 'pre-line' }}>
-                      <Ed v={sec('welcome').body || ''} set={v => patch('welcome.body', v)} edit={edit} multiline />
+                      <Ed v={houseLine(sec('welcome').body, WELCOME_BODY)} set={v => patch('welcome.body', v)} edit={edit} multiline />
                     </p>
                   </div>
                   <div style={{ paddingBottom: 18 }}>
@@ -2808,7 +2822,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <Ed v={sec('team').support.email || ''} set={v => patch('team.support.email', v)} edit={edit} />
                     </a>
                     <span style={{ fontSize: 12.5, color: t.muted, lineHeight: 1.5 }}>
-                      <Ed v={sec('team').support.note || ''} set={v => patch('team.support.note', v)} edit={edit} multiline />
+                      <Ed v={houseLine(sec('team').support.note, SUPPORT_NOTE)} set={v => patch('team.support.note', v)} edit={edit} multiline />
                     </span>
                   </div>
                 ) : null}
@@ -3342,7 +3356,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // The paragraph makes the same claims in words, so it travels with them. On a stale
           // deck it still read "November through April... July and August are the floor",
           // printed under a chart banding December and dotting September.
-          const seasonBodyTxt = seasonStale ? SEASON_BODY : (sec('season').body || '')
+          const seasonBodyTxt = (seasonStale || seasonBodyStale(sec('season').body)) ? SEASON_BODY : (sec('season').body || '')
 
           if (!hid('season')) slides.push({ key: 'season', ai: true, node: (
             <Slide nav="The season" warn={edit} ground={GROUND.dark} bleed>
@@ -3514,7 +3528,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     ))}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 26 }}>
-                    {(sec('ramp').bands || []).slice(0, 3).map((b: Any, i: number) => (
+                    {houseRows<Any>(sec('ramp').bands, RAMP_BANDS_RETIRED_MARKS, RAMP_BANDS as Any[]).slice(0, 3).map((b: Any, i: number) => (
                       <div key={i} style={{ paddingTop: 14, borderTop: '1px solid ' + t.ink }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
                           <Ed v={b.k || ''} set={v => patch('ramp.bands.' + i + '.k', v)} edit={edit} />
@@ -3529,7 +3543,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     ))}
                   </div>
                   <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 24, paddingLeft: 16, borderLeft: '2px solid ' + t.accent, maxWidth: '76ch' }}>
-                    <Ed v={sec('ramp').note || ''} set={v => patch('ramp.note', v)} edit={edit} multiline />
+                    <Ed v={houseLine(sec('ramp').note, RAMP_NOTE)} set={v => patch('ramp.note', v)} edit={edit} multiline />
                   </p>
                 </div>
                 <Foot label="The first 90 days" />

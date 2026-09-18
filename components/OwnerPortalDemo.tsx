@@ -681,8 +681,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
           border: '1px solid ' + P.line, borderRadius: 6, padding: '5px 9px', cursor: 'pointer',
         }}>Start over</button>
         <p style={{ fontSize: 8, color: P.muted, lineHeight: 1.4, marginTop: 7 }}>
-          An illustration of your Owners Portal &mdash; the figures and guest names are made up.
-          The real one is at {host}.
+          Illustration &mdash; figures and names are made up. The real portal is at {host}.
         </p>
       </div>
     </div>
