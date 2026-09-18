@@ -125,7 +125,7 @@ export const MONEY_RULES: { k: string; v: string }[] = [
 
 export const PORTAL_ITEMS: { k: string; v: string }[] = [
     { k: 'Your calendar, and your own stays', v: 'Every reservation as it lands and the nights already sold — the same calendar we work from, not a copy of it. Block your own dates here and they become an owner stay that nothing can book over. Tell us early; the clean after an owner stay is billed to you at cost, since no guest fee covers it.' },
-    { k: 'Your monthly report', v: 'Occupancy, rate, revenue, what we did, what guests said, what is booked ahead. One link, always the same link.' },
+    { k: 'Your monthly report', v: 'Occupancy, rate, revenue, what we did and what is booked ahead. One link, always the same link \u2014 and it comes from us, separately from the portal.' },
     { k: 'Your order sheet', v: 'Anything we want to buy for the unit, with photos, the reason, price options, and four buttons: approve, I will supply it, not now, no.' },
     { k: 'Your statement', v: 'Rental, less commission, less anything billed that month, equals what hits your account. Every billed line traces to a job with a date and a photo.' },
 ]
@@ -226,4 +226,38 @@ export function houseBody(stored: unknown, mark: string, current: string): strin
   const s = String(stored || '')
   if (!s.trim()) return current
   return s.includes(mark) ? current : s
+}
+
+// ── THE PORTAL, AS OUR ACCOUNT ACTUALLY HAS IT ──────────────────────────────
+// Read from Guesty's own Owners Portal settings on 2026-09-18 (Operations > Owners > Portal
+// settings), not from memory. Two things were wrong in the deck.
+//
+// 1. THE ADDRESS. The deck sent owners to stay.guestyowners.com. The account's portal is
+//    stayhospitality.guestyowners.com. An owner following the deck could not sign in at all,
+//    which is the single worst sentence to get wrong in an onboarding document.
+//
+// 2. WHAT IS ACTUALLY SWITCHED ON. The portal item list promised "what guests said", and guest
+//    reviews are turned OFF for our owners (Jon, 2026-09-18: "we won't let them see reviews on
+//    owner portal"). Both "Display guest reviews" and "Display overall guest rating" are off, as
+//    are the owner inbox, cleaning photos and inspection photos.
+//
+// What IS on, and therefore what the deck may promise:
+//   Performance  : booked nights · owner revenue · revenue per listing · occupancy ·
+//                  net rental income
+//   Calendar     : nightly rate · reserved guest reservations · reservation tooltip ·
+//                  guest name (full name)
+//   Owner stays  : owner booked nights · upcoming owner reservations ·
+//                  ALLOW THE OWNER TO MAKE RESERVATIONS  (check-in/out time editing is off)
+//   Reports      : reservations report
+//   Extras       : help center only
+export const PORTAL_URL = 'https://stayhospitality.guestyowners.com'
+export const PORTAL_URL_RETIRED_MARK = 'stay.guestyowners.com'
+
+/** The stored portal address, unless it is empty or the retired (wrong) one. */
+export function housePortalUrl(stored: unknown): string {
+  const s = String(stored || '').trim()
+  if (!s) return PORTAL_URL
+  // The retired value is a strict prefix of the correct one, so match on the host, not a substring.
+  const host = s.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  return host === PORTAL_URL_RETIRED_MARK ? PORTAL_URL : s
 }

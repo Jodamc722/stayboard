@@ -26,7 +26,7 @@ import { CHANNEL_BODY, CHANNEL_COUNT } from './channel-marks'
 import { STATEMENT_ALSO } from './statement-sample'
 import {
   AGENDA_ROWS, HERO_HEADLINE, CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
-  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS,
+  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL,
 } from './onboarding-copy'
 import 'server-only'
 import { getSetting } from './app-settings'
@@ -259,7 +259,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   overviewBody: OVERVIEW_BODY,
 
-  portalUrl: 'https://stay.guestyowners.com',
+  portalUrl: PORTAL_URL,
   portalShots: [],
 
   // NINE CONNECTIONS, HUNDREDS OF STOREFRONTS (Jon, 2026-09-18: "Expedia has a ton of
