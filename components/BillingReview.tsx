@@ -30,9 +30,10 @@
 // Stages: OPEN → OPS APPROVED (Ronnie / ops) → GM APPROVED (Jon). Ops-approved is the GM's queue.
 // GM approval is what reaches an owner's statement, and only an admin can give it.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Undo2, ExternalLink, Loader2, ChevronDown, Search, Download, Sparkles, SpellCheck2, Languages } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Undo2, ExternalLink, Loader2, ChevronDown, Search, Download } from 'lucide-react'
+import { isTaskDone } from '@/lib/task-done'
 
-type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate' | 'long_hours' | 'no_owner' | 'ai_bill' | 'ai_pending'
+type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate' | 'long_hours' | 'no_owner' | 'ai_bill' | 'ai_pending' | 'not_done'
 type State = 'open' | 'ops_approved' | 'gm_approved'
 type Item = { key: string; description: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: string }
 type Task = {
@@ -49,12 +50,13 @@ type Task = {
   aiVerdict: 'no_charge' | 'bill' | null; aiReason: string | null; aiAmount: number | null
 }
 type Owner = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; open: number; opsApproved: number; gmApproved: number; flagged: number }
-type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean; canEdit?: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number }
+type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number }
 type Stage = 'ops' | 'gm' | 'done' | 'all'
 
 const FLAG_LABEL: Record<Flag, string> = {
   over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
   no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
+  not_done: 'not finished in Breezeway',
   ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
 }
 const STAGE_OF: Record<Stage, (t: Task) => boolean> = {
@@ -81,19 +83,17 @@ function recompute(t: Task): Task {
     const gap = Math.abs(t.overrideAmount - computed)
     if (computed > 0 ? (gap / computed > 0.5 || gap > 50) : t.overrideAmount > 50) flags.push('override_far')
   }
-  const finished = /complet|close|approv|finish/i.test(t.status) || !!t.finishedAt
+  const finished = isTaskDone(t.status, t.finishedAt)
   if (finished && !t.excluded && billed === 0 && t.overrideAmount == null && !/(departur|turnover|check-?out)[\s\-_/]*clean/i.test(t.name)) flags.push('no_price')
   return { ...t, billedAmount: billed, flags }
 }
 
 // ── ONE TASK ──────────────────────────────────────────────────────────────────────────────────
-const Row = memo(function Row({ t, stage, isGm, canEdit, busy, open, onToggle, onState, onEdit, onMeta }: {
-  t: Task; stage: Stage; isGm: boolean; canEdit: boolean; busy: boolean; open: boolean
+const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, onEdit }: {
+  t: Task; stage: Stage; isGm: boolean; busy: boolean; open: boolean
   onToggle: (id: string) => void
   onState: (id: string, to: State) => void
   onEdit: (id: string, patch: { override_amount?: number | null; note?: string; excluded?: boolean }) => Promise<void>
-  /** Writes the title and description to Breezeway. Resolves false if Breezeway refused it. */
-  onMeta: (id: string, name: string, description: string) => Promise<boolean>
 }) {
   const over = t.flags.includes('over_150')
   const done = t.reviewState === 'gm_approved'
@@ -102,36 +102,6 @@ const Row = memo(function Row({ t, stage, isGm, canEdit, busy, open, onToggle, o
   const [editing, setEditing] = useState(false)
   const [note, setNote] = useState<string>(t.note || '')
   useEffect(() => { setAmt(t.overrideAmount != null ? String(t.overrideAmount) : ''); setNote(t.note || '') }, [t.overrideAmount, t.note])
-
-  // THE WORDS BREEZEWAY HOLDS. Draft state, not the task: nothing here reaches Breezeway until
-  // Push is pressed, so an AI suggestion is always something a person read first.
-  const [title, setTitle] = useState(t.name || '')
-  const [desc, setDesc] = useState(t.description || '')
-  const [wordBusy, setWordBusy] = useState<'' | 'spelling' | 'polish' | 'push'>('')
-  const [wordErr, setWordErr] = useState('')
-  useEffect(() => { setTitle(t.name || ''); setDesc(t.description || ''); setWordErr('') }, [t.id, t.name, t.description])
-  const dirty = title.trim() !== (t.name || '').trim() || desc.trim() !== (t.description || '').trim()
-
-  const suggest = async (mode: 'spelling' | 'polish') => {
-    setWordBusy(mode); setWordErr('')
-    try {
-      const r = await fetch('/api/billing/ai', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: title, description: desc, department: t.department, unit: t.unit, mode }),
-      })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok || !j.ok) throw new Error(j?.error || 'That did not come back.')
-      setTitle(j.title || title)
-      if (typeof j.description === 'string' && j.description) setDesc(j.description)
-    } catch (e: any) { setWordErr(String(e?.message || e)) }
-    setWordBusy('')
-  }
-  const push = async () => {
-    setWordBusy('push'); setWordErr('')
-    const ok = await onMeta(t.id, title.trim(), desc)
-    if (!ok) setWordErr('Breezeway did not take it.')
-    setWordBusy('')
-  }
 
   const btn = 'inline-flex items-center gap-1 rounded-lg px-2.5 h-8 text-[12px] font-semibold disabled:opacity-40 transition'
   return (
@@ -215,46 +185,7 @@ const Row = memo(function Row({ t, stage, isGm, canEdit, busy, open, onToggle, o
               ))}
               {!t.hasDetail ? <li className="text-amber-800 text-[11.5px] flex items-center gap-1"><AlertTriangle size={11} /> Detail not pulled yet — cost lines may be missing.</li> : null}
             </ul>
-
-            {!canEdit ? (
-              t.description ? <p className="text-[11.5px] text-muted mt-2 whitespace-pre-wrap">{t.description}</p> : null
-            ) : (
-            <>
-            {/* ── THE WORDS, EDITABLE ──────────────────────────────────────────────────────────
-                This is what the owner reads, so it is edited where it is shown rather than in a
-                separate screen. Fix it by hand, or let the model propose — then Push, which is the
-                only thing here that reaches Breezeway. */}
-            <div className="mt-2.5 space-y-1.5">
-              <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted">Title &amp; description</p>
-              <input value={title} onChange={e => setTitle(e.target.value)} disabled={done}
-                className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px] font-semibold text-ink disabled:opacity-60" />
-              <textarea value={desc} onChange={e => setDesc(e.target.value)} disabled={done} rows={2}
-                placeholder="What was done — this is what the owner reads"
-                className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12px] text-ink disabled:opacity-60" />
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button onClick={() => suggest('spelling')} disabled={done || !!wordBusy || !title.trim()}
-                  title="Correct spelling and capitals only — the team's own words and meaning stay exactly as written"
-                  className={btn + ' border border-line bg-white text-muted hover:text-ink'}>
-                  {wordBusy === 'spelling' ? <Loader2 size={12} className="animate-spin" /> : <SpellCheck2 size={12} />} Fix spelling
-                </button>
-                <button onClick={() => suggest('polish')} disabled={done || !!wordBusy || !title.trim()}
-                  title="Rewrite as a clean owner-facing service line — read it before you push"
-                  className={btn + ' border border-brand-200 bg-white text-brand-700 hover:bg-brand-50'}>
-                  {wordBusy === 'polish' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Rewrite for the owner
-                </button>
-                <span className="flex-1" />
-                <button onClick={push} disabled={done || !!wordBusy || !dirty || !title.trim()}
-                  title={dirty ? 'Send this title and description to Breezeway' : 'Nothing changed yet'}
-                  className={btn + ' bg-ink text-white hover:bg-ink/90'}>
-                  {wordBusy === 'push' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Push to Breezeway
-                </button>
-              </div>
-              {wordErr ? <p className="text-[11px] text-rose-700">{wordErr}</p> : null}
-              {dirty && !wordErr ? <p className="text-[11px] text-muted">Not sent yet — Push writes it to Breezeway.</p> : null}
-            </div>
-            </>
-            )}
-
+            {t.description ? <p className="text-[11.5px] text-muted mt-2 whitespace-pre-wrap">{t.description}</p> : null}
             {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700 mt-2"><ExternalLink size={11} /> Open in Breezeway</a> : null}
           </div>
           <div className="min-w-0 space-y-2">
@@ -415,66 +346,9 @@ export function BillingReview() {
   }, [byId])
   const onToggle = useCallback((id: string) => setOpenId(cur => (cur === id ? '' : id)), [])
 
-  /**
-   * The title and description go STRAIGHT TO BREEZEWAY (/api/billing/task action:'update'), unlike
-   * everything else on this panel, which is our own overlay. Their PATCH is the source of truth, so
-   * the row is updated only after they accept it — no optimism here. Rule 3 still holds: the month
-   * is not re-fetched, the one row is merged.
-   */
-  const onMeta = useCallback(async (id: string, name: string, description: string): Promise<boolean> => {
-    if (!name.trim()) return false
-    markBusy([id], true); setErr('')
-    try {
-      const r = await fetch('/api/billing/task', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update', taskId: id, name: name.trim(), description }),
-      })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok || !j.ok) throw new Error(j?.error || 'Breezeway would not take the change.')
-      setData(d => d ? { ...d, tasks: d.tasks.map(t => t.id === id ? { ...t, name: name.trim(), description: description || null } : t) } : d)
-      markBusy([id], false)
-      return true
-    } catch (e: any) {
-      setErr(String(e?.message || e))
-      markBusy([id], false)
-      return false
-    }
-  }, [])
-
-  /**
-   * SPANISH TITLES → ENGLISH, for the whole month (Jon, 2026-08-07; lost in the 09-10 redesign and
-   * asked for back on 09-16). The route is resumable on a 250s budget and reports what is left, so
-   * this calls it until it says nothing remains — six passes is the ceiling, not the expectation.
-   * It writes to Breezeway, so the month is re-read once at the end rather than merged: this is the
-   * one action here that can change hundreds of rows.
-   */
-  const [esBusy, setEsBusy] = useState<string>('')
-  const [esNote, setEsNote] = useState<string>('')
-  const translateMonth = useCallback(async () => {
-    setEsBusy('Looking…'); setErr(''); setEsNote('')
-    let total = 0
-    let touched = false
-    for (let i = 0; i < 6; i++) {
-      try {
-        const r = await fetch('/api/billing/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }) })
-        const j = await r.json().catch(() => ({}))
-        if (!r.ok || !j.ok) { setErr(j?.error || 'The translation pass failed.'); break }
-        if (!j.candidates) { setEsNote('Nothing to translate — every title this month already reads in English.'); break }
-        touched = true
-        total += Number(j.translated || 0)
-        setEsBusy(total + ' done' + (j.remaining ? ' · ' + j.remaining + ' left' : '…'))
-        if (!j.remaining) { setEsNote(total ? total + ' title' + (total === 1 ? '' : 's') + ' translated and written back to Breezeway.' : 'No titles needed changing.'); break }
-      } catch (e: any) { setErr(String(e?.message || e)); break }
-    }
-    setEsBusy('')
-    if (touched) await load(month)
-  }, [month, load])
-
   if (!data && loading) return <div className="rounded-2xl bg-white ring-1 ring-line p-12 text-center text-sm text-muted"><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading {monthLabel(month)}…</div>
   if (!data) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err || 'Nothing loaded.'}</div>
   const isGm = !!data.me?.isGm
-  // Absent on an older payload — treat that as allowed, the same as before this field existed.
-  const canEdit = data.me?.canEdit !== false
   const st: Stage = stage || (isGm ? 'gm' : 'ops')
   const tab = (k: Stage, label: string, n: number) => (
     <button onClick={() => { setStage(k); resnapshot() }}
@@ -496,11 +370,6 @@ export function BillingReview() {
           <button onClick={() => setMonth(shiftMonth(month, 1))} className="h-9 w-9 grid place-items-center rounded-xl border border-line text-muted hover:text-ink" aria-label="Later"><ChevronRight size={15} /></button>
           <button onClick={() => load(month)} disabled={loading} className="h-9 w-9 grid place-items-center rounded-xl border border-line text-muted hover:text-ink disabled:opacity-40" aria-label="Refresh"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
           <div className="flex-1" />
-          {data.me?.canEdit === false ? null : <button onClick={translateMonth} disabled={!!esBusy || loading}
-            title="Find this month's Spanish task titles, translate them to English, and write them back to Breezeway"
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-line text-[12.5px] font-semibold text-ink hover:bg-app disabled:opacity-50">
-            {esBusy ? <Loader2 size={13} className="animate-spin" /> : <Languages size={13} />}{esBusy || 'ES → EN titles'}
-          </button>}
           <a href={'/api/billing/export?month=' + month + '&format=zip&reviewed=1'} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-line text-[12.5px] font-semibold text-ink hover:bg-app"><Download size={13} /> Final-approved statements</a>
           <a href="/billing?view=labor" className="text-[12px] font-semibold text-muted hover:text-ink">Labor &amp; rates</a>
         </div>
@@ -531,7 +400,6 @@ export function BillingReview() {
         <button onClick={() => setFlaggedOnly(v => !v)} className={'h-9 px-3 rounded-xl border text-[12.5px] font-semibold inline-flex items-center gap-1.5 ' + (flaggedOnly ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-muted hover:text-ink')}><AlertTriangle size={13} /> Flagged only</button>
         <label className="h-9 inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 text-[12.5px]"><Search size={13} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit, task, person, owner" className="w-44 bg-transparent outline-none text-ink" /></label>
         {aiBusy ? <span className="inline-flex items-center gap-1.5 text-[12px] text-muted"><Loader2 size={12} className="animate-spin" /> AI is reading {aiBusy} unit check{aiBusy === 1 ? '' : 's'}/strip{aiBusy === 1 ? '' : 's'}…</span> : null}
-        {esNote ? <span className="text-[12px] text-muted inline-flex items-center gap-1.5"><Languages size={12} /> {esNote} <button onClick={() => setEsNote('')} className="font-semibold hover:text-ink">dismiss</button></span> : null}
         <div className="flex-1" />
         {canApproveAll && visible.some(inStage) ? (
           <button onClick={() => setState(visible.filter(inStage).map(t => t.id), approveAllTo)} className="h-9 px-3 rounded-xl bg-ink text-white text-[12.5px] font-semibold inline-flex items-center gap-1.5"><Check size={13} /> {approveAllLabel} ({visible.filter(inStage).length})</button>
@@ -576,7 +444,7 @@ export function BillingReview() {
             </header>
             {isOpen ? (
               <ul>
-                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} canEdit={canEdit} busy={busy.has(t.id)} open={openId === t.id} onToggle={onToggle} onState={onState} onEdit={onEdit} onMeta={onMeta} />)}
+                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} onToggle={onToggle} onState={onState} onEdit={onEdit} />)}
               </ul>
             ) : null}
           </section>
