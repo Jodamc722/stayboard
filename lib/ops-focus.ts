@@ -248,8 +248,11 @@ Pick what is REAL and DOABLE today: a technician already in the building or unit
   try {
     // No `temperature`: the Fable tier rejects it as deprecated (seen live 2026-09-09), and the
     // system prompt already asks for a stingy, literal answer.
+    // max_tokens 4000 -> 2000 (2026-09-18): the answer is a headline, at most six picks with a
+    // sentence each, up to ten short review notes and one parked line — about 600 tokens; 2000
+    // is over 3x that. The ceiling is rate-limit headroom on the top tier, not dollars.
     const r = await anthropicMessages(key, {
-      model, max_tokens: 4000, system,
+      model, max_tokens: 2000, system,
       messages: [{ role: 'user', content: lines.join('\n') }],
     }, fallback, 'ops-focus')
     answeredBy = r.model

@@ -112,11 +112,19 @@ function pickPhotosForCopy(raw: any, listing: any, cfg: ListingAi): { photos: Co
   return { photos: pics.slice(0, 8).map(p => ({ url: p.url, label: null })), labelled: false, rooms: [] }
 }
 
+// A 1024px rendition for the copywriter (2026-09-18), the same Cloudinary transform the Hero Studio
+// focus call uses. The `original` was being sent at full size, which the API downsizes to ~1.15MP
+// and bills at ~1,600 tokens a photo; 1024 wide is ~1,050 and reads a room just as well. Ten
+// photos on Opus is the single biggest input in this route.
+function copyUrl(u: string): string {
+  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_1024,q_auto/')
+  return u
+}
 function photoBlocksFor(sel: { photos: CopyPhoto[] }): any[] {
   const out: any[] = []
   for (const p of sel.photos) {
     if (p.label) out.push({ type: 'text', text: `${p.label}:` })
-    out.push({ type: 'image', source: { type: 'url', url: p.url } })
+    out.push({ type: 'image', source: { type: 'url', url: copyUrl(p.url) } })
   }
   return out
 }
@@ -279,23 +287,32 @@ export async function POST(req: NextRequest) {
     // behind the "Test on a unit" playground in settings — which always sends a section. So every
     // voice experiment anyone has ever run was judged on a prompt that ignored the voice they were
     // editing. Tuning the voice appeared to do nothing, because on the path being tested it did.
-    const SYS = `${cfg.voice}
+    // TWO SYSTEM BLOCKS (2026-09-18): the house voice, honesty floor, photo rules and banned list
+    // are the same bytes for every field of every listing, so they carry a cache breakpoint — a
+    // person regenerating three fields in a row on Opus reads them at a tenth of list price. The
+    // field-specific tail rides after it, uncached. Same text the model always saw, in two pieces.
+    const SYS_STATIC = `${cfg.voice}
 
 You are rewriting ONE field of the Guesty MASTER listing content, which syncs to Airbnb, Vrbo, Expedia and Booking.com.
 
 ${HONESTY}
 
 ${photoRules}
-${bannedRule(cfg) ? '\n' + bannedRule(cfg) + '\n' : ''}
-You are writing ONLY this field:
+${bannedRule(cfg) ? '\n' + bannedRule(cfg) + '\n' : ''}`
+    const SYS_FIELD = `You are writing ONLY this field:
 ${guide}${examplesRule(cfg.sections[sk])}
 ${instruction ? `\nTHE USER WANTS THIS SPECIFIC CHANGE (apply it, within the honesty rules above): "${instruction}"` : ''}
 
 OUTPUT: STRICT minified JSON only, nothing else, exactly: {"text":"...","rationale":"..."}
 - "text" = the new field content as a single non-empty string (for the title, obey the character limit).
 - "rationale" = one short sentence on why it is stronger.`
+    const SYS = [
+      { type: 'text', text: SYS_STATIC, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: SYS_FIELD },
+    ]
+    // The building facts used to appear twice in this message (once here, once above VERIFIED
+    // FACTS); the second copy is the one that stays.
     const USR = `Field to rewrite: "${sk}".
-${factsBlock ? '\n' + factsBlock + '\n' : ''}
 ${sk === 'space' && spaceExemplar ? `\nHOUSE STYLE EXEMPLAR (match its voice/format as a baseline, then ENHANCE; do NOT copy its facts):\n"""${spaceExemplar}"""\n` : ''}
 ${photoBrief}
 
@@ -370,7 +387,9 @@ ${JSON.stringify(current)}`
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       signal: ac.signal,
-      body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 3200, system: SYSTEM, messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
+      // The whole system prompt is listing-independent (voice, rules, section spec), so it is one
+      // cached block: a run over several units in a sitting pays list price for it once.
+      body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 3200, system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
     })
     const d: any = await r.json()
     if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })

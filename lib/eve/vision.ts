@@ -80,11 +80,22 @@ Describe ONLY what is visible. Do not infer that a unit has something because ap
 
 Return a JSON array and nothing else.`
 
+/**
+ * A 1024px rendition for the model (2026-09-18) — the same Cloudinary transform the Hero Studio
+ * uses. picturesOf() prefers `original`, which the API downsizes to ~1.15MP and bills at ~1,600
+ * tokens a photo; 1024 wide is ~1,050 and still shows a room, an appliance and visible wear. The
+ * stored key stays the original url, so nothing already catalogued is re-seen.
+ */
+function visionUrl(u: string): string {
+  if (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) return u.replace('/image/upload/', '/image/upload/w_1024,q_auto/')
+  return u
+}
+
 async function callVision(key: string, model: string, urls: string[]): Promise<Seen[] | null> {
   const content: any[] = []
   urls.forEach((u, i) => {
     content.push({ type: 'text', text: `Image ${i}:` })
-    content.push({ type: 'image', source: { type: 'url', url: u } })
+    content.push({ type: 'image', source: { type: 'url', url: visionUrl(u) } })
   })
   content.push({ type: 'text', text: `Return the JSON array for images 0 to ${urls.length - 1}.` })
 

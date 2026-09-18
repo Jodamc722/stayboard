@@ -53,7 +53,8 @@ export async function POST(req: NextRequest) {
       // thinking block first made this read an empty string from an HTTP 200, so the whole batch was
       // silently "already English" and nothing got translated.
       const { model, fallback } = await modelPairFor('billing')
-      const r = await anthropicMessages(key, { model, max_tokens: 3000, system: SYS, messages: [{ role: 'user', content: JSON.stringify(batch) }] }, fallback, 'billing')
+      // 25 titles of ~25 tokens each is ~700 tokens out; 1500 is twice that (was 3000).
+      const r = await anthropicMessages(key, { model, max_tokens: 1500, system: SYS, messages: [{ role: 'user', content: JSON.stringify(batch) }] }, fallback, 'billing')
       const text = textOf(r.data)
       const m = text.match(/\[[\s\S]*\]/)
       if (r.ok && m) out = JSON.parse(m[0])

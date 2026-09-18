@@ -104,7 +104,9 @@ async function callModel(key: string, system: string, content: any[], maxTokens:
     const r = await aiFetch('photos', {
       method: 'POST', signal,
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: await modelFor('photos'), max_tokens: maxTokens, system, messages: [{ role: 'user', content }] }),
+      // The analyst's rulebook (~1.2k tokens) is identical for every batch and for the re-run a
+      // host makes with a correction a minute later, so it carries a cache breakpoint.
+      body: JSON.stringify({ model: await modelFor('photos'), max_tokens: maxTokens, system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content }] }),
     })
     const j = await r.json().catch(() => null)
     if (!r.ok) return { json: null, err: `AI ${r.status}: ${str(j?.error?.message).slice(0, 180)}` }

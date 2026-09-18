@@ -169,7 +169,15 @@ export async function POST(req: NextRequest) {
   // voicePreview: the admin voice-training playground sends its UNSAVED editor state so admins can
   // test guideline changes before saving. Everyone else gets the saved profile.
   const voice = (voicePreview && typeof voicePreview === 'object') ? voicePreview : await getVoice()
-  const system = SYSTEM + voiceSection(voice)
+  const systemText = SYSTEM + voiceSection(voice)
+  // PROMPT CACHE (2026-09-18). The rules plus the saved voice profile (guidelines + up to twelve
+  // example replies) are the same bytes on every draft — several thousand tokens on Opus — and a
+  // host answering reviews clicks Draft/Rewrite many times within the five-minute cache window.
+  // The unsaved playground state changes on every keystroke, so it is sent plain: a cache write
+  // costs 25% over list and would never be read back.
+  const system: any = (voicePreview && typeof voicePreview === 'object')
+    ? systemText
+    : [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
 
   // THE RATING GOES IN ON ITS NATIVE SCALE (Jon, 2026-09-01, from a live draft). Ratings are
   // STORED out of 5 (lib/review-scale) — Booking.com's 10 arrives here as 5. This line used to
