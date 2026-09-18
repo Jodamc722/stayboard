@@ -50,6 +50,20 @@ export type ListingCard = {
   photos: string[]
   /** EVERY picture on the listing, for the photo picker. See listingCardFrom. */
   allPhotos: string[]
+  /**
+   * The collage-free subset, used ONLY to auto-place photographs on other slides.
+   *
+   * Jon, 2026-09-18: "I know I said not collage, but I meant on slides — not on the actual
+   * listing slide, the first-five-photo one." The collage rule was applied to the listing's
+   * pictures wholesale, which meant the one slide whose entire job is to show the owner what a
+   * guest meets first was showing a doctored gallery: photo three on Airbnb might be the
+   * collage, and the deck quietly skipped it. The listing strip must be the listing.
+   *
+   * So the filter moved off the source and onto the destination. `photos` and `allPhotos` are
+   * now the listing exactly as Guesty holds it, and this is the list a decorative slide draws
+   * from, so a marketing collage still never lands alone under a section headline.
+   */
+  cleanPhotos: string[]
   title: string
   summary: string
   space: string
@@ -505,6 +519,8 @@ export function listingCardFrom(
   l: any,
   amenities: string[] = [],
   amenitySuggest: { name: string; reason: string }[] = [],
+  /** The collage-checked subset of l.pictures. Defaults to the raw set when nothing was checked. */
+  cleanPictures?: string[],
 ): ListingCard {
   const raw = l && l.raw ? l.raw : {}
   const pub = raw.publicDescription || raw.publicDescriptions || {}
@@ -524,14 +540,17 @@ export function listingCardFrom(
     // restating what the owner can already see and count for themselves.
     sub: bits.join(' · '),
     links,
-    // THE FIRST FIVE, IN ORDER (Jon, 2026-09-16). Nobody scrolls past these on a phone, which is
-    // why photos carry 18% of the optimize score on their own.
+    // THE FIRST FIVE, IN ORDER, EXACTLY AS THE LISTING HAS THEM (Jon, 2026-09-16, and again
+    // 2026-09-18 on collages). Nobody scrolls past these on a phone, which is why photos carry
+    // 18% of the optimize score on their own — and why showing a filtered version of them on the
+    // review slide would be reviewing a listing that does not exist.
     photos: pics.slice(0, 5),
     // AND EVERY PICTURE BEHIND THEM (Jon, 2026-09-17: "have more photos to select from, should
     // be from the actual listing"). The five above are what the slide shows; the picker was
     // offering only those five, so changing a photo meant choosing between the same five already
     // on the page. The whole listing goes in the pool.
     allPhotos: pics,
+    cleanPhotos: Array.isArray(cleanPictures) && cleanPictures.length ? cleanPictures.filter(Boolean) : pics,
     title: String(raw.title || l.title || ''),
     summary: String(pub.summary || ''),
     space: String(pub.space || ''),
@@ -573,15 +592,22 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
   // the editor afterwards.
   // TWO SETS, AND THE DIFFERENCE MATTERS. `pool` is what the picker offers: every photo on
   // every listing in this onboarding, so an owner can put any of their own images on any slide.
-  // `lead` is what a slide gets AUTOMATICALLY: only the first five per listing, which are the
-  // ones the collage check actually verified. Auto-placing from the full pool would eventually
-  // drop an unchecked marketing collage onto a slide by itself, which is the thing we removed.
+  // `lead` is what a slide gets AUTOMATICALLY, and it is drawn from the COLLAGE-CHECKED list, so
+  // a marketing collage is never placed alone under a section headline.
+  //
+  // The check used to be applied to the listing's pictures themselves, which also stripped
+  // collages out of the listing review slide -- the one slide that is supposed to show the owner
+  // their gallery as a guest meets it (Jon, 2026-09-18). Filtering now happens here, at the
+  // point of decoration, and nowhere else.
   const pool: string[] = []
   for (const cd of i.cards) for (const ph of (cd.allPhotos && cd.allPhotos.length ? cd.allPhotos : cd.photos)) {
     if (pool.indexOf(ph) < 0) pool.push(ph)
   }
   const lead: string[] = []
-  for (const cd of i.cards) for (const ph of cd.photos) if (lead.indexOf(ph) < 0) lead.push(ph)
+  for (const cd of i.cards) {
+    const clean = (cd.cleanPhotos && cd.cleanPhotos.length ? cd.cleanPhotos : cd.photos) || []
+    for (const ph of clean.slice(0, 5)) if (lead.indexOf(ph) < 0) lead.push(ph)
+  }
   const pic = (n: number): string => (lead.length ? lead[n % lead.length] : (pool.length ? pool[n % pool.length] : ''))
   const rate = t.laborRate
   const limit = t.approvalLimit
