@@ -18,7 +18,7 @@ const isNotes = (c: any): boolean => String(fieldIdOf(c) || '') === RES_NOTES_FI
 
 export async function POST(req: NextRequest) {
   // Any unlocked board link in this browser (or a signed-in user) may call this helper.
-  const gate = await anyLinkGate(['vendor-board', 'botanica', 'salato-desk'])
+  const gate = await anyLinkGate(['vendor-board', 'salato-desk'])
   if (!gate.ok) return gate.res
   const body = await req.json().catch(() => ({} as any))
   const reservationId = String(body?.reservationId || '')

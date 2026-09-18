@@ -19,5 +19,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
-  return linkLogin(req, CODE || String(body.code || ''), String(body.password || ''))
+  const code = CODE || String(body.code || '')
+  // An old tab posts { password } alone — it cannot say which link it is. Reloading gets the new page.
+  if (!code) return NextResponse.json({ ok: false, error: 'This page has changed — reload it and enter the passcode again.' }, { status: 410 })
+  return linkLogin(req, code, String(body.password || ''))
 }

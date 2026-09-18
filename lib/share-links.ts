@@ -183,7 +183,7 @@ export function hintOf(pw: string): string { const s = String(pw || ''); return 
  * no money: every numeric field whose name says money becomes null, recursively. Used by the
  * marketing report so a partner link can be built "counts only" without a second report page.
  */
-const MONEY_KEY = /(^|[^a-z])(rev|revenue|accom|value|fare|money|adr|amount|total|payout|price)($|[^a-z])|Rev$|Revenue$|Value$|Adr$|Amount$|Total$/
+const MONEY_KEY = /(^|[^a-z])(rev|revenue|accom|value|fare|money|adr|amount|amt|total|payout|price|paid|balance|cleaning)($|[^a-z])|Rev$|Revenue$|Value$|Adr$|Amount$|Amt$|Total$|Paid$|Balance$/
 export function stripMoney<T>(v: T, depth = 0): T {
   if (depth > 8 || v == null || typeof v !== 'object') return v
   if (Array.isArray(v)) return v.map(x => stripMoney(x, depth + 1)) as any

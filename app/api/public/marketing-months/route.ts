@@ -203,7 +203,12 @@ export async function GET(req: NextRequest) {
 
     for (const m of failed) { const row = byMonth[m]; if (row) row.failed = true }
 
-    const shown = linkScope.showMoney === false ? stripMoney(months) : months
+    // A link pinned to a period (scope.from / scope.to) shows only that period's months, as the
+    // main report does — the month strip cannot widen what the link was built to show.
+    const lo = linkScope.from ? linkScope.from.slice(0, 7) : ''
+    const hi = linkScope.to ? linkScope.to.slice(0, 7) : ''
+    const inRange = months.filter(r => (!lo || r.m >= lo) && (!hi || r.m <= hi))
+    const shown = linkScope.showMoney === false ? stripMoney(inRange) : inRange
     return NextResponse.json({ ok: true, today, floorMonth, truncated, failed, months: shown, showMoney: linkScope.showMoney !== false })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })

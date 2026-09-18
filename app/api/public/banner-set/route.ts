@@ -10,7 +10,7 @@ const KEY = 'banner_overrides'
 
 export async function POST(req: NextRequest) {
   // Any unlocked board link in this browser (or a signed-in user) may call this helper.
-  const gate = await anyLinkGate(['vendor-board', 'botanica', 'salato-desk'])
+  const gate = await anyLinkGate(['vendor-board', 'salato-desk'])
   if (!gate.ok) return gate.res
   try {
     const body: any = await req.json().catch(() => ({}))

@@ -3,7 +3,8 @@
 // the link's passcode, revoking it or letting it expire kills the cookie. Lockout, constant-time
 // compare and the cookie all live in lib/passcode-gate.ts.
 //
-// GET ?code=… answers whether this browser is already in: { authed, label, hint }.
+// GET ?code=… answers whether this browser is already in: { authed, label, unset }. Never the hint —
+// that is the passcode's last two characters and belongs to the hub only.
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { linkLogin, linkCookieName, linkCookieOk, signedInUser } from '@/lib/passcode-gate'
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest) {
   if (!link || !linkUsable(link)) return NextResponse.json({ ok: false, authed: false, gone: true })
   const me = await signedInUser()
   const authed = me.signedIn || link.open || linkCookieOk(link, cookies().get(linkCookieName(link.code))?.value)
-  return NextResponse.json({ ok: true, authed, label: link.title || link.label || '', hint: link.passcode_hint || null, unset: !link.open && !link.passcode_hash })
+  return NextResponse.json({ ok: true, authed, label: link.title || link.label || '', unset: !link.open && !link.passcode_hash })
 }
 
 export async function POST(req: NextRequest) {

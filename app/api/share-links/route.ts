@@ -25,6 +25,8 @@ import { generatePasscode, newCode, hashLegacyPasscodes, normalizeRow } from '@/
 export const dynamic = 'force-dynamic'
 
 const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
+// A missing column means migration 101 has not been run yet — say so instead of a bare Postgres line.
+const dbErr = (e: { message: string }) => /does not exist|schema cache/i.test(e.message) ? `${e.message} — run supabase/migrations/101_share_links_one_model.sql first.` : e.message
 const isKind = (k: string) => (LINK_KINDS as readonly string[]).indexOf(k) >= 0
 const isAudience = (a: string) => (AUDIENCES as readonly string[]).indexOf(a) >= 0
 
@@ -202,7 +204,7 @@ export async function POST(req: NextRequest) {
       patch.expires_at = exp
     }
     const { error } = await db.from('share_links').update(patch).in('id', ids)
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ ok: false, error: dbErr(error) }, { status: 500 })
     return NextResponse.json({ ok: true, count: ids.length })
   }
 
@@ -217,7 +219,7 @@ export async function POST(req: NextRequest) {
     if (row.kind === 'parking' && given && given.length < 8) return NextResponse.json({ ok: false, error: 'A parking passcode needs at least 8 characters — the garage is outside the company.' }, { status: 400 })
     const pw = given || generatePasscode()
     const { data, error } = await db.from('share_links').update({ passcode_hash: storablePasscode(pw), passcode_hint: hintOf(pw), open: false, updated_at: now }).eq('id', id).select('*').limit(1)
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ ok: false, error: dbErr(error) }, { status: 500 })
     // THE ONE TIME THE PASSCODE LEAVES THE SERVER. It is not stored; the hub shows it once.
     return NextResponse.json({ ok: true, link: shape((data || [])[0], names), passcode: pw })
   }
@@ -248,7 +250,7 @@ export async function POST(req: NextRequest) {
       if (!canSeeMoney(gate.access) && patch.show_money !== undefined) patch.show_money = row.show_money === true
     }
     const { data, error } = await db.from('share_links').update(patch).eq('id', id).select('*').limit(1)
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ ok: false, error: dbErr(error) }, { status: 500 })
     return NextResponse.json({ ok: true, link: shape((data || [])[0], names) })
   }
 
@@ -286,6 +288,6 @@ export async function POST(req: NextRequest) {
     ...legacyColumns(kind, c.scope),
   }
   const { data, error } = await db.from('share_links').insert(row).select('*').limit(1)
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  if (error) return NextResponse.json({ ok: false, error: dbErr(error) }, { status: 500 })
   return NextResponse.json({ ok: true, link: shape((data || [])[0], names), passcode: pw || null })
 }

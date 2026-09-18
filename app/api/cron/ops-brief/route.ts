@@ -15,6 +15,7 @@ import { getSetting } from '@/lib/app-settings'
 import { buildOpsBrief, buildGmBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
 import { asLang, type BriefLang } from '@/lib/brief-lang'
 import { sendGmail } from '@/lib/gmail-send'
+import { hashLegacyPasscodes } from '@/lib/share-links-server'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -100,6 +101,11 @@ export async function GET(req: NextRequest) {
 
   // ---- the real morning send ----
   if (!isCron && !me) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // NO PLAINTEXT PASSCODE AT REST PAST THE FIRST MORNING (2026-09-18). Migration 101 carries a few
+  // legacy cleartext passcodes into share_links; the hub hashes them on its first load, but nobody
+  // may open /links for days. The daily brief is the one job that runs every morning regardless —
+  // it does the same sweep here. Cheap once nothing is left; runs before the sends, never blocks them.
+  try { await hashLegacyPasscodes() } catch { /* the next morning tries again */ }
   if (cfg.enabled !== true) {
     return NextResponse.json({ ok: true, skipped: 'ops_brief not enabled — turn it on in /users once recipients are set' })
   }

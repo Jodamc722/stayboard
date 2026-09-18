@@ -25,6 +25,12 @@
 // page is now a share_links row with its own passcode_hash; the cookie is `lk_<code>`, and its
 // generation is derived from THAT row's hash, so rotating one link's passcode logs out only that
 // link's holders. See lib/share-links.ts for the model and migration 101 for the move.
+//
+// DEPLOY ORDER (review, 2026-09-18): the code ships before Jon runs migration 101. Until it runs,
+// getLink() (lib/share-links-server) synthesises the family rows from share_settings and the
+// scheduler rows from schedule_links, so every link that opens today keeps opening on the same
+// passcode — and a cookie minted then stays valid after the migration, because the row it creates
+// carries the same stored value and the cookie generation is derived from that value.
 import 'server-only'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from './supabase-admin'
@@ -33,8 +39,8 @@ import { hmacHex, safeEqual, sha256Hex } from './signing'
 import { logParking, tooManyWrong, LOCKOUT_MINUTES } from './parking'
 import { cookies } from 'next/headers'
 import { getAccess } from './access'
-import { linkUsable, type ShareLinkRow } from './share-links'
-import { getLink, touchLink } from './share-links-server'
+import { linkUsable, hintOf, type ShareLinkRow } from './share-links'
+import { getLink, touchLink, legacySettingsId, isLegacyLink } from './share-links-server'
 
 export const PASSCODE_COOKIE_DAYS = 30
 export { LOCKOUT_MINUTES }
@@ -91,7 +97,9 @@ export async function checkLinkPasscode(req: NextRequest | Request, gate: string
 
 async function upgradeRow(table: string, column: string, match: Record<string, any>, pw: string): Promise<void> {
   try {
-    let q: any = supabaseAdmin().from(table).update({ [column]: hashPassword(pw) })
+    const patch: Record<string, string> = { [column]: hashPassword(pw) }
+    if (table === 'share_links' && column === 'passcode_hash') patch.passcode_hint = hintOf(pw)
+    let q: any = supabaseAdmin().from(table).update(patch)
     for (const k of Object.keys(match)) q = q.eq(k, match[k])
     await q
   } catch { /* the upgrade is opportunistic; the next correct entry tries again */ }
@@ -154,7 +162,9 @@ export async function linkGate(code: string, opts: { kinds?: string[]; touch?: b
   let cookieVal: string | undefined
   try { cookieVal = cookies().get(linkCookieName(link.code))?.value } catch { cookieVal = undefined }
   if (!linkCookieOk(link, cookieVal)) {
-    return { ok: false, link, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, label: link.title || link.label || 'Shared page', hint: link.passcode_hint || null, error: 'This link needs its passcode — ask Jon for this link’s passcode.' }, { status: 401 }) }
+    // NO HINT HERE: the hint is the passcode's last two characters, for the hub after the reveal.
+    // It never goes to an unauthenticated caller.
+    return { ok: false, link, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, label: link.title || link.label || 'Shared page', error: 'This link needs its passcode — ask Jon for this link’s passcode.' }, { status: 401 }) }
   }
   if (opts.touch !== false) touchLink(link)
   return { ok: true, link, signedIn: false, who: null }
@@ -203,9 +213,14 @@ export async function linkLogin(req: NextRequest, code: string, pw: string): Pro
   if (!isHash(current)) {
     // A legacy plaintext row (carried over by migration 101) becomes a hash on the first correct
     // entry; the cookie is minted against the NEW value so this login does not invalidate itself.
+    // Before the migration has run the "row" is share_settings (lib/share-links-server
+    // legacyFamilyLink): the upgrade lands there, and the migration copies the hash across.
     const hashed = hashPassword(pw)
+    const settingsId = legacySettingsId(link.id)
     try {
-      const { error } = await supabaseAdmin().from('share_links').update({ passcode_hash: hashed, passcode_hint: pw.slice(-2) ? '••' + pw.slice(-2) : null }).eq('id', link.id)
+      const { error } = settingsId !== null
+        ? await supabaseAdmin().from('share_settings').update({ password: hashed }).eq('id', settingsId)
+        : await supabaseAdmin().from('share_links').update({ passcode_hash: hashed, passcode_hint: hintOf(pw) }).eq('id', link.id)
       if (!error) current = hashed
     } catch { /* stays plaintext until the next correct entry */ }
   }
@@ -217,5 +232,7 @@ export async function linkLogin(req: NextRequest, code: string, pw: string): Pro
 
 /** Per-request passcode check for a row (field board / scheduler / parking POST { pass }): lockout + compare + hash upgrade. */
 export async function checkRowPasscode(req: NextRequest | Request, link: Pick<ShareLinkRow, 'id' | 'code' | 'passcode_hash'>, pw: string): Promise<'ok' | 'wrong' | 'locked'> {
-  return checkLinkPasscode(req, 'link:' + link.code, pw, String(link.passcode_hash || ''), { table: 'share_links', column: 'passcode_hash', match: { id: link.id } })
+  // A row synthesised before migration 101 (lib/share-links-server) has nothing in share_links to upgrade.
+  const upgrade = isLegacyLink(link.id) ? undefined : { table: 'share_links', column: 'passcode_hash', match: { id: link.id } }
+  return checkLinkPasscode(req, 'link:' + link.code, pw, String(link.passcode_hash || ''), upgrade)
 }

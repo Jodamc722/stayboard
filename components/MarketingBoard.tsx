@@ -31,13 +31,15 @@ type MonthRow = {
   direct: number; directNights: number; directRev: number
   manual: number; owner: number; ota: number; partial: boolean; failed?: boolean
 }
-type MonthsData = { ok: boolean; floorMonth?: string; truncated?: boolean; months?: MonthRow[]; error?: string }
+type MonthsData = { ok: boolean; floorMonth?: string; truncated?: boolean; months?: MonthRow[]; error?: string; showMoney?: boolean }
 type Trend = { d: string; direct: number; manual: number; ota: number; directRev: number; otaRev: number }
 type Data = {
   ok: boolean; internal?: boolean; today?: string
   range?: { from: string; to: string; span: number }
   compare?: { from: string; to: string }
   lastSync?: string | null; truncated?: boolean; needsPassword?: boolean
+  // false on a partner link built "counts only": every dollar field arrives null (lib/share-links stripMoney).
+  showMoney?: boolean
   unmapped?: Record<string, number>
   current?: Roll; previous?: Roll; trend?: Trend[]; rows?: Row[]; rowsTotal?: number; error?: string
 }
@@ -64,13 +66,15 @@ const PAY_CLS: Record<Pay, string> = {
   unpaid: 'bg-rose-50 text-rose-700 ring-rose-200',
 }
 
-const money0 = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
-const money2 = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+// Null-safe: a counts-only link (scope.showMoney false) delivers every dollar field as null.
+const money0 = (n: number | null | undefined) => Number.isFinite(n as number) ? (n as number).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : '—'
+const money2 = (n: number | null | undefined) => Number.isFinite(n as number) ? (n as number).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'
 const pct1 = (n: number) => (Math.round(n * 1000) / 10).toFixed(1) + '%'
 // Compact form for the BIG side of a comparison ("$9,647 of $678k") — never for the number the
 // reader is actually judging.
-const moneyC = (n: number) => {
-  const v = Math.round(n)
+const moneyC = (n: number | null | undefined) => {
+  if (!Number.isFinite(n as number)) return '—'
+  const v = Math.round(n as number)
   if (Math.abs(v) >= 1000000) return '$' + (v / 1000000).toFixed(1) + 'M'
   if (Math.abs(v) >= 1000) return '$' + Math.round(v / 1000) + 'k'
   return '$' + v
@@ -261,11 +265,12 @@ function TrendChart({ trend }: { trend: Trend[] }) {
 // read by length. Months the mirror never covered are dimmed AND labelled, never shown as a dip.
 function MonthTimeline({ data }: { data: MonthsData | null }) {
   const all = (data && data.months) || []
+  const noMoney = !!data && data.showMoney === false
   // Drop the lead-in months that carry no direct activity at all. They are true zeros, but a
   // report opening on four empty rows reads as broken data rather than as a quiet quarter.
   const months = useMemo(() => {
     const out = all.slice()
-    while (out.length > 6 && out[0].direct === 0 && out[0].directRev === 0) out.shift()
+    while (out.length > 6 && out[0].direct === 0 && !out[0].directRev) out.shift()
     return out
   }, [all])
   const solid = useMemo(() => months.filter(r => !r.partial), [months])
@@ -305,7 +310,7 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
               <th className="py-2.5 border-b border-line" style={{ width: '34%' }} />
               <th className="text-right px-3 py-2.5 font-bold border-b border-line">Direct</th>
               <th className="text-right px-3 py-2.5 font-bold border-b border-line">Share</th>
-              <th className="text-right px-3 py-2.5 font-bold border-b border-line">Revenue</th>
+              {noMoney ? null : <th className="text-right px-3 py-2.5 font-bold border-b border-line">Revenue</th>}
               <th className="text-right pr-6 pl-3 py-2.5 font-bold border-b border-line">Nights</th>
             </tr>
           </thead>
@@ -330,7 +335,7 @@ function MonthTimeline({ data }: { data: MonthsData | null }) {
                   </td>
                   <td className={'px-3 py-2.5 text-right tabular-nums font-bold ' + (r.direct ? (dim ? 'text-muted' : 'text-ink') : 'text-neutral-300')}>{r.direct || 0}</td>
                   <td className={'px-3 py-2.5 text-right tabular-nums ' + (r.won ? (dim ? 'text-muted' : 'text-ink') : 'text-neutral-300')}>{r.won ? pct1(share) : '—'}</td>
-                  <td className={'px-3 py-2.5 text-right tabular-nums ' + (r.directRev ? (dim ? 'text-muted' : 'text-ink') : 'text-neutral-300')}>{r.directRev ? moneyC(r.directRev) : '$0'}</td>
+                  {noMoney ? null : <td className={'px-3 py-2.5 text-right tabular-nums ' + (r.directRev ? (dim ? 'text-muted' : 'text-ink') : 'text-neutral-300')}>{r.directRev ? moneyC(r.directRev) : '$0'}</td>}
                   <td className={'pr-6 pl-3 py-2.5 text-right tabular-nums ' + (r.directNights ? 'text-muted' : 'text-neutral-300')}>{r.directNights || 0}</td>
                 </tr>
               )
@@ -511,7 +516,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
     })
     const dir = sortDir === 'asc' ? 1 : -1
     out.sort((a, b) => {
-      if (sortKey === 'accom') return (a.accom - b.accom) * dir
+      if (sortKey === 'accom') return ((Number(a.accom) || 0) - (Number(b.accom) || 0)) * dir
       if (sortKey === 'nights') return (a.nights - b.nights) * dir
       if (sortKey === 'checkIn') return (a.checkIn < b.checkIn ? -1 : a.checkIn > b.checkIn ? 1 : 0) * dir
       return (a.createdTs < b.createdTs ? -1 : a.createdTs > b.createdTs ? 1 : 0) * dir
@@ -524,7 +529,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
     let n = 0, won = 0, accom = 0, bal = 0
     for (const r of filtered) {
       n += 1
-      if (r.state !== 'canceled' && r.state !== 'pending') { won += 1; accom += r.accom; bal += r.balance }
+      if (r.state !== 'canceled' && r.state !== 'pending') { won += 1; accom += Number(r.accom) || 0; bal += Number(r.balance) || 0 }
     }
     return { n, won, accom, bal }
   }, [filtered])
@@ -532,9 +537,10 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const exportCsv = () => {
     const head = ['Booked on', 'Guest', 'Property', 'Source', 'Group', 'Status', 'Payment', 'Check-in', 'Check-out', 'Nights', 'Lead days', 'Net accom', 'Cleaning', 'Paid', 'Balance', 'Confirmation']
     const esc = (v: any) => '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"'
+    const fx = (n: any) => Number.isFinite(n) ? Number(n).toFixed(2) : ''
     const lines = [head.map(esc).join(',')]
     for (const r of filtered) {
-      lines.push([r.created, r.guest, r.property, r.source, r.family, STATE_LABEL[r.state], PAY_LABEL[r.pay], r.checkIn, r.checkOut, r.nights, r.lead === null ? '' : r.lead, r.accom.toFixed(2), r.cleaning.toFixed(2), r.paid.toFixed(2), r.balance.toFixed(2), r.conf].map(esc).join(','))
+      lines.push([r.created, r.guest, r.property, r.source, r.family, STATE_LABEL[r.state], PAY_LABEL[r.pay], r.checkIn, r.checkOut, r.nights, r.lead === null ? '' : r.lead, fx(r.accom), fx(r.cleaning), fx(r.paid), fx(r.balance), r.conf].map(esc).join(','))
     }
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
@@ -548,6 +554,9 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   // must run on every render (React #310 bit this app before).
   const cur = data && data.current ? data.current : undefined
   const prev = data && data.previous ? data.previous : undefined
+  // COUNTS ONLY (a partner link with scope.showMoney false): every dollar field is null, so the
+  // money tiles, columns and lines are left out rather than printed as dashes.
+  const noMoney = !!data && data.showMoney === false
 
   // Direct bookings per building, this window vs the same length before it. Buildings with none in
   // EITHER window are dropped — a list of zeros hides the movement that matters.
@@ -720,27 +729,27 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               <div className="grid gap-4 sm:grid-cols-2 lg:border-l lg:border-line lg:pl-10">
                 <Meter label="Share of bookings" pct={dirShare} now={dirShare} before={dirSharePrev}
                   detail={dirNow.won.toLocaleString() + ' of ' + allNow.won.toLocaleString() + ' bookings'} />
-                <Meter label="Share of revenue" pct={dirRevShare} now={dirRevShare} before={dirRevSharePrev}
-                  detail={money0(dirNow.accom) + ' direct revenue'} />
+                {noMoney ? null : <Meter label="Share of revenue" pct={dirRevShare} now={dirRevShare} before={dirRevSharePrev}
+                  detail={money0(dirNow.accom) + ' direct revenue'} />}
               </div>
             </div>
             {/* every number below is DIRECT only */}
             <div className="border-t border-line bg-[#FAFBFC] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-y sm:divide-y-0 divide-line">
-              <Stat label="Revenue" value={money0(dirNow.accom)} now={dirNow.accom} before={dirPrev.accom} />
-              <Stat label="Avg booking" value={dirNow.won ? money0(dirNow.accom / dirNow.won) : '—'}
-                now={dirNow.won ? dirNow.accom / dirNow.won : 0} before={dirPrev.won ? dirPrev.accom / dirPrev.won : 0} />
+              {noMoney ? null : <Stat label="Revenue" value={money0(dirNow.accom)} now={dirNow.accom} before={dirPrev.accom} />}
+              {noMoney ? null : <Stat label="Avg booking" value={dirNow.won ? money0(dirNow.accom / dirNow.won) : '—'}
+                now={dirNow.won ? dirNow.accom / dirNow.won : 0} before={dirPrev.won ? dirPrev.accom / dirPrev.won : 0} />}
               <Stat label="Nights sold" value={dirNow.nights ? dirNow.nights.toLocaleString() : '—'}
                 now={dirNow.nights} before={dirPrev.nights} />
-              <Stat label="ADR" value={dirNow.nights ? money0(dirNow.accom / dirNow.nights) : '—'}
-                now={dirNow.nights ? dirNow.accom / dirNow.nights : 0} before={dirPrev.nights ? dirPrev.accom / dirPrev.nights : 0} />
+              {noMoney ? null : <Stat label="ADR" value={dirNow.nights ? money0(dirNow.accom / dirNow.nights) : '—'}
+                now={dirNow.nights ? dirNow.accom / dirNow.nights : 0} before={dirPrev.nights ? dirPrev.accom / dirPrev.nights : 0} />}
               <Stat label="Booked ahead" value={dirNow.leadN ? Math.round(dirNow.leadSum / dirNow.leadN) + ' days' : '—'}
                 sub="average lead time" />
               <Stat label="Canceled" value={dirNow.canceled ? String(dirNow.canceled) : '—'}
                 now={dirNow.canceled} before={dirPrev.canceled} invert />
             </div>
-            <div className="border-t border-line px-4 py-2 text-[11px] text-muted">
+            {noMoney ? null : <div className="border-t border-line px-4 py-2 text-[11px] text-muted">
               Direct money: <strong className="text-ink">{money0(dirNow.paidAmt)}</strong> collected · <strong className="text-ink">{money0(dirNow.balanceAmt)}</strong> still owing{dirNow.unpaidCount ? ' on ' + dirNow.unpaidCount + ' booking' + (dirNow.unpaidCount === 1 ? '' : 's') : ''}. Revenue is net accommodation. Canceled bookings and open inquiries carry $0.
-            </div>
+            </div>}
           </div>
 
           {/* THE SPLIT — the one place OTA appears, and only ever as a percentage of bookings.
@@ -793,7 +802,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                       <th className="text-right px-3 py-2.5 font-bold border-b border-line">Direct</th>
                       <th className="text-right px-3 py-2.5 font-bold border-b border-line">Was</th>
                       <th className="text-right px-3 py-2.5 font-bold border-b border-line">Move</th>
-                      <th className="text-right px-3 py-2.5 font-bold border-b border-line">Revenue</th>
+                      {noMoney ? null : <th className="text-right px-3 py-2.5 font-bold border-b border-line">Revenue</th>}
                       <th className="text-right pr-6 pl-3 py-2.5 font-bold border-b border-line">Nights</th>
                     </tr>
                   </thead>
@@ -816,7 +825,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                               </span>
                             : <span className="text-neutral-300">—</span>}
                         </td>
-                        <td className={'px-3 py-2.5 text-right tabular-nums ' + (b.rev ? 'text-ink' : 'text-neutral-300')}>{b.rev ? money0(b.rev) : '$0'}</td>
+                        {noMoney ? null : <td className={'px-3 py-2.5 text-right tabular-nums ' + (b.rev ? 'text-ink' : 'text-neutral-300')}>{b.rev ? money0(b.rev) : '$0'}</td>}
                         <td className={'pr-6 pl-3 py-2.5 text-right tabular-nums ' + (b.nights ? 'text-muted' : 'text-neutral-300')}>{b.nights || 0}</td>
                       </tr>
                     ))}
@@ -857,10 +866,10 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                         <div className={'text-lg font-bold leading-none ' + (dead ? 'text-muted' : 'text-ink')}>{c.a.won || '—'}</div>
                         <div className="text-[10px] uppercase tracking-widest text-muted mt-1">bookings</div>
                       </div>
-                      <div className="text-right min-w-[86px]">
+                      {noMoney ? null : <div className="text-right min-w-[86px]">
                         <div className={'text-lg font-bold leading-none ' + (dead ? 'text-muted' : 'text-ink')}>{c.a.accom ? money0(c.a.accom) : '—'}</div>
                         <div className="text-[10px] uppercase tracking-widest text-muted mt-1">revenue</div>
-                      </div>
+                      </div>}
                       <div className="text-right min-w-[64px] hidden sm:block">
                         <div className="text-lg font-bold leading-none text-muted">{c.a.nights || '—'}</div>
                         <div className="text-[10px] uppercase tracking-widest text-muted mt-1">nights</div>
@@ -903,7 +912,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                 <option value="unpaid">Unpaid</option>
               </select>
               <span className="text-[11px] text-muted ml-auto tabular-nums">
-                {shown.n} shown · {shown.won} booked · {money0(shown.accom)}{shown.bal ? ' · ' + money0(shown.bal) + ' outstanding' : ''}
+                {shown.n} shown · {shown.won} booked{noMoney ? '' : ' · ' + money0(shown.accom) + (shown.bal ? ' · ' + money0(shown.bal) + ' outstanding' : '')}
               </span>
               {data && data.rowsTotal !== undefined && data.rowsTotal > rows.length ? (
                 <span className="w-full text-[11px] text-amber-700">
@@ -923,8 +932,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                     <th className="text-left px-3 py-2 font-semibold">Payment</th>
                     <SortTh label="Check-in" k="checkIn" sortKey={sortKey} sortDir={sortDir} onSort={(k, d) => { setSortKey(k); setSortDir(d) }} />
                     <SortTh label="Nights" k="nights" right sortKey={sortKey} sortDir={sortDir} onSort={(k, d) => { setSortKey(k); setSortDir(d) }} />
-                    <SortTh label="Net accom" k="accom" right sortKey={sortKey} sortDir={sortDir} onSort={(k, d) => { setSortKey(k); setSortDir(d) }} />
-                    <th className="text-right px-3 py-2 font-semibold">Balance</th>
+                    {noMoney ? null : <SortTh label="Net accom" k="accom" right sortKey={sortKey} sortDir={sortDir} onSort={(k, d) => { setSortKey(k); setSortDir(d) }} />}
+                    {noMoney ? null : <th className="text-right px-3 py-2 font-semibold">Balance</th>}
                     <th className="text-left px-3 py-2 font-semibold">Conf #</th>
                   </tr>
                 </thead>
@@ -941,13 +950,13 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                       <td className="px-3 py-2 whitespace-nowrap">{r.state === 'canceled' ? <span className="text-[11px] text-muted">—</span> : <span className={'text-[11px] px-1.5 py-0.5 rounded-md ring-1 ' + PAY_CLS[r.pay]}>{PAY_LABEL[r.pay]}</span>}</td>
                       <td className="px-3 py-2 whitespace-nowrap text-muted">{fmtDay(r.checkIn)}{r.lead !== null ? <span className="text-[10px] text-muted/70 ml-1">+{r.lead}d</span> : null}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-muted">{r.nights || '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium text-ink">{r.state === 'canceled' || r.state === 'pending' ? <span className="text-neutral-300">$0</span> : money0(r.accom)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-muted">{r.balance > 0.01 ? money2(r.balance) : '—'}</td>
+                      {noMoney ? null : <td className="px-3 py-2 text-right tabular-nums font-medium text-ink">{r.state === 'canceled' || r.state === 'pending' ? <span className="text-neutral-300">$0</span> : money0(r.accom)}</td>}
+                      {noMoney ? null : <td className="px-3 py-2 text-right tabular-nums text-muted">{r.balance > 0.01 ? money2(r.balance) : '—'}</td>}
                       <td className="px-3 py-2 whitespace-nowrap text-[11px] text-muted font-mono">{r.conf || '—'}</td>
                     </tr>
                   ))}
                   {filtered.length === 0 ? (
-                    <tr><td colSpan={11} className="px-4 py-8 text-center text-sm text-muted">No bookings match these filters.</td></tr>
+                    <tr><td colSpan={noMoney ? 9 : 11} className="px-4 py-8 text-center text-sm text-muted">No bookings match these filters.</td></tr>
                   ) : null}
                 </tbody>
               </table>

@@ -118,7 +118,9 @@ export async function getParkingLink(code: string): Promise<ParkingLink | null> 
     scope_type: str(row.scope_type) || 'portfolio',
     scope_ids: Array.isArray(row.scope_ids) ? row.scope_ids.map(str) : [],
     sections: (row.sections || {}) as Record<string, boolean>,
-    passcode_hash: row.passcode_hash ? str(row.passcode_hash) : null,
+    // Before migration 101 has run the row still carries the old `passcode` column: honour it, and
+    // never open a board that was locked (the old team-password fallback is gone either way).
+    passcode_hash: row.passcode_hash ? str(row.passcode_hash) : (row.passcode_hash === undefined && row.passcode ? str(row.passcode) : null),
     open: row.open === true,
     expires_at: row.expires_at ? str(row.expires_at) : null,
     guest_names: row.guest_names === true,

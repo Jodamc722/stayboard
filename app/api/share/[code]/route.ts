@@ -18,7 +18,7 @@ import { buildTeamSchedule, addDays as addDaysET } from '@/lib/team-schedule'
 import { scheduleLabor } from '@/lib/schedule-labor'
 import { checkRowPasscode, lockedResponse, signedInUser } from '@/lib/passcode-gate'
 import { linkUsable } from '@/lib/share-links'
-import { touchLink } from '@/lib/share-links-server'
+import { touchLink, normalizeRow } from '@/lib/share-links-server'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -50,7 +50,8 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
   if (!/^[0-9a-f]{12,32}$/i.test(code)) return NextResponse.json({ error: 'not found' }, { status: 404 })
   const db = supabaseAdmin()
   const { data: rows } = await db.from('share_links').select('*').eq('code', code).limit(1)
-  const link = (rows || [])[0] as any
+  // normalizeRow also reads a row migration 101 has not reached yet (old `passcode` column).
+  const link = (rows || [])[0] ? normalizeRow((rows || [])[0]) as any : null
   if (!link || link.revoked_at) return NextResponse.json({ error: 'not found' }, { status: 404 })
   if (!linkUsable(link)) return NextResponse.json({ error: 'This link has expired.', gone: true }, { status: 410 })
   // A PARKING LINK IS NOT A REPORT LINK (2026-09-16). The same row can carry both section sets, so
