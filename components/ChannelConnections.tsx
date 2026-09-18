@@ -234,13 +234,16 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
 
       {/* ── matrix ───────────────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* The matrix scrolls inside its own frame so the channel names stay pinned at the top
+            while you scroll the units (Jon, 2026-09-18: "freeze the header so you can see the
+            channel"); the Unit column stays pinned on the left the same way. */}
+        <div className="overflow-auto max-h-[calc(100vh-190px)]">
           <table className="min-w-full text-[12.5px]">
-            <thead className="bg-app/60 text-[10.5px] uppercase tracking-wide text-muted">
+            <thead className="text-[10.5px] uppercase tracking-wide text-muted">
               <tr>
-                <th className="text-left px-3 py-2 sticky left-0 bg-app/60 backdrop-blur z-10">Unit</th>
-                {cols.map(c => <th key={c.key} className={'px-1.5 py-2 text-center whitespace-nowrap ' + (c.major ? 'text-ink' : '')}>{c.label}</th>)}
-                <th className="px-2 py-2 text-right whitespace-nowrap">Bookings 90d</th>
+                <th className="text-left px-3 py-2 sticky left-0 top-0 bg-app z-30 border-b border-line">Unit</th>
+                {cols.map(c => <th key={c.key} className={'px-1.5 py-2 text-center whitespace-nowrap sticky top-0 bg-app z-20 border-b border-line ' + (c.major ? 'text-ink' : '')}>{c.label}</th>)}
+                <th className="px-2 py-2 text-right whitespace-nowrap sticky top-0 bg-app z-20 border-b border-line">Bookings 90d</th>
               </tr>
             </thead>
             <tbody>
