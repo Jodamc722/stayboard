@@ -26,6 +26,8 @@ import { runAudit, listAudits } from './audit'
 import { askQuestion } from './questions'
 
 const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+// What guesty_live may read with a raw path (first segment). Objects Eve already reasons about.
+const GUESTY_LIVE_PREFIXES = ['reservations', 'listings', 'calendar', 'availability-pricing', 'reviews', 'guests-crud', 'guests', 'custom-fields', 'tasks-open-api', 'owners']
 
 export const CORE_TOOLS: EveTool[] = [
   {
@@ -218,7 +220,10 @@ export const CORE_TOOLS: EveTool[] = [
       const kinds = (MEMORY_KINDS as readonly string[]).join('|')
       const res = await saveMemory({
         text: input?.text, kind: input?.kind, why: input?.why, scope: input?.scope,
-        weight: input?.weight, source: 'eve', created_by: ctx.email,
+        // `_source` / `_maxWeight` are stamped by run.ts for a Slack turn (never by the model in a
+        // way that widens anything: they only lower trust and cap weight).
+        weight: input?.weight, source: input?._source === 'slack' ? 'slack' : 'eve', created_by: ctx.email,
+        maxWeight: Number.isFinite(Number(input?._maxWeight)) ? Number(input._maxWeight) : undefined,
         supersedes: input?.supersedes || null,
       })
       if (!res.ok) return { saved: false, error: res.error, hint: `kind must be one of ${kinds}` }
@@ -477,8 +482,10 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'guesty_live',
-    description: 'Go DIRECTLY to the live Guesty API when the synced data is missing or you need the freshest record. kind: "reservation"|"listing" with id, OR "path" with a raw Guesty GET path (e.g. path="reservations?limit=5&sort=-createdAt"). Read-only. Use this to be resourceful when the cached tools do not have what you need.',
+    description: 'Go DIRECTLY to the live Guesty API when the synced data is missing or you need the freshest record. kind: "reservation"|"listing" with id, OR "path" with a raw Guesty GET path (e.g. path="reservations?limit=5&sort=-createdAt"). Read-only, and only under these paths: reservations, listings, calendar, availability-pricing, reviews, guests-crud (guests), custom-fields, tasks-open-api, owners. Use this to be resourceful when the cached tools do not have what you need.',
     input_schema: obj({ kind: S.str, id: S.str, path: S.str }),
+    // A live reservation carries money and (in its custom fields) codes; the registry redacts both.
+    money: true,
     run: async (input) => {
       let token: string | null = null
       try { token = await getToken() } catch { token = null }
@@ -488,7 +495,16 @@ export const CORE_TOOLS: EveTool[] = [
       let url = ''
       if (kind === 'reservation' && id) url = `${GBASE}/reservations/${encodeURIComponent(id)}`
       else if (kind === 'listing' && id) url = `${GBASE}/listings/${encodeURIComponent(id)}`
-      else if (kind === 'path' && input?.path) url = `${GBASE}/${String(input.path).replace(/^\//, '')}`
+      else if (kind === 'path' && input?.path) {
+        // ALLOW-LISTED PREFIXES (2026-09-18, P0-7). A raw path was the whole Guesty API: users,
+        // integrations, webhooks, payment methods… Read paths on the objects Eve already reasons
+        // about, nothing else, and never a path that climbs out of the base.
+        const p = String(input.path).replace(/^\/+/, '')
+        if (/\.\.|\/\/|[?#].*\.\.|^https?:/i.test(p)) return { error: 'That path is not allowed.' }
+        const head = p.split(/[/?#]/)[0].toLowerCase()
+        if (GUESTY_LIVE_PREFIXES.indexOf(head) < 0) return { error: `guesty_live only reads these Guesty paths: ${GUESTY_LIVE_PREFIXES.join(', ')}.` }
+        url = `${GBASE}/${p}`
+      }
       else return { error: 'Provide kind=reservation|listing|path with id (reservation/listing) or path (raw Guesty GET path).' }
       const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, cache: 'no-store' })
       const txt = await r.text().catch(() => '')

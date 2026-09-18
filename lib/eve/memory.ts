@@ -139,7 +139,7 @@ export function renderMemories(rows: EveMemory[]): string {
   for (const k of order) {
     const list = byKind[k]
     if (!list || !list.length) continue
-    const label = k === 'rule' ? 'STANDING RULES (follow these, they came from Jon)'
+    const label = k === 'rule' ? 'STANDING RULES (follow these; from Jon unless a line says otherwise)'
       : k === 'preference' ? 'HOW JON WANTS THINGS'
       : k === 'correction' ? 'MISTAKES YOU HAVE MADE BEFORE — do not repeat them'
       : k === 'decision' ? 'DECISIONS ALREADY MADE'
@@ -149,7 +149,11 @@ export function renderMemories(rows: EveMemory[]): string {
     const lines = list.map(r => {
       const sc = r.scope === 'portfolio' ? '' : ` [${r.scope}]`
       const why = r.why ? ` (why: ${r.why})` : ''
-      return `- ${r.text}${why}${sc}`
+      // Provenance, said plainly. A Slack or document memory is not Jon's word and must not read as it.
+      const src = r.source === 'jon' ? '' : r.source === 'slack' ? ' — overheard in Slack, not from Jon'
+        : r.source === 'doc' ? ' — from a company document' : r.source === 'telegram' ? ' — said on Telegram'
+        : r.source === 'system' ? ' — found by the nightly sweep' : ' — learned by Eve, not from Jon'
+      return `- ${r.text}${why}${sc}${src}`
     })
     out.push(label + ':\n' + lines.join('\n'))
   }
@@ -160,6 +164,20 @@ export type SaveMemoryInput = {
   kind?: any; text: string; why?: any; scope?: any; weight?: any
   source?: string; confidence?: any; evidence?: any; created_by?: string | null
   supersedes?: string | null; expires_on?: string | null
+  /** The CALLER'S ceiling (a Slack tier's memoryWeightCap, for instance). Weight never exceeds it. */
+  maxWeight?: number
+}
+
+// WHERE A MEMORY CAME FROM, KEPT HONEST (2026-09-18 audit, P0-8). This used to flatten anything
+// that was not jon/eve/system to 'eve', so a rule overheard in a Slack channel — possibly from a
+// vendor — rendered in the prompt under "they came from Jon". The source now survives the write,
+// and renderMemories() says it.
+const SOURCES = ['jon', 'eve', 'system', 'slack', 'doc', 'telegram']
+function normSource(v: any): string { const s = String(v || '').toLowerCase(); return SOURCES.includes(s) ? s : 'eve' }
+function cappedWeight(input: SaveMemoryInput): number {
+  const w = normWeight(input.weight)
+  const cap = Number(input.maxWeight)
+  return Number.isFinite(cap) ? Math.max(1, Math.min(w, cap)) : w
 }
 
 // Near-duplicate test for the dedupe below: same words is the same memory, however punctuated.
@@ -192,7 +210,7 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
     const twin = ((peers || []) as any[]).find(p => sameThought(String(p.text || ''), text))
     if (twin) {
       await db.from('eve_memory').update({
-        weight: Math.max(Number(twin.weight || 0), normWeight(input.weight)),
+        weight: Math.max(Number(twin.weight || 0), cappedWeight(input)),
         why: twin.why || (input.why ? String(input.why).slice(0, 500) : null),
         updated_at: new Date().toISOString(),
       }).eq('id', twin.id)
@@ -204,8 +222,8 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
     text,
     why: input.why ? String(input.why).slice(0, 500) : null,
     scope: normScope(input.scope),
-    weight: normWeight(input.weight),
-    source: ['jon', 'eve', 'system'].includes(String(input.source)) ? String(input.source) : 'eve',
+    weight: cappedWeight(input),
+    source: normSource(input.source),
     confidence: Number.isFinite(Number(input.confidence)) ? Math.min(1, Math.max(0, Number(input.confidence))) : null,
     evidence: input.evidence ?? null,
     created_by: input.created_by || null,

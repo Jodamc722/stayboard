@@ -10,6 +10,7 @@
 // extra turn on the first deep question of a thread; benefit is she picks from twelve, then six.
 import 'server-only'
 import { redactMoney } from '@/lib/money'
+import { redactSensitive } from './redact'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
 import type { EveCtx } from './ctx'
@@ -117,7 +118,11 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     return { output: { error: `Unknown tool "${name}".` } }
   }
   try {
-    const out = await tool.run(input || {}, ctx)
+    // DOOR CODES NEVER LEAVE THROUGH A SIDE DOOR (2026-09-18, P0-6). Every tool result is scrubbed
+    // of door / access codes except the door-code tool's own, which returns a code only when the
+    // per-person policy in lib/eve/door-code.ts says it may.
+    const raw = await tool.run(input || {}, ctx)
+    const out = tool.name === 'door_code_check' ? raw : redactSensitive(raw)
     if (tool.money && !ctx.canMoney) {
       return { output: { ...redactMoney(out), _money_redacted: 'Dollar amounts are hidden for this user. Ratios (occupancy, ADR, RevPAR, percentages) are still accurate. Do not guess at the hidden numbers.' } }
     }

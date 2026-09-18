@@ -309,7 +309,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
           let args = block.input || {}
           if (block.name === 'remember' && Number.isFinite(input.memoryWeightCap)) {
             const cap = Number(input.memoryWeightCap)
-            args = { ...args, weight: Math.min(cap, Number(args.weight) || cap), why: `${String(args.why || '').slice(0, 200)} [said by ${ctx.email || 'someone'} in Slack]`.trim() }
+            args = { ...args, weight: Math.min(cap, Number(args.weight) || cap), _maxWeight: cap, _source: source === 'slack' ? 'slack' : undefined, why: `${String(args.why || '').slice(0, 200)} [said by ${ctx.email || 'someone'} in Slack]`.trim() }
           }
           const { output, opened } = await runTool(block.name, args, ctx, open)
           if (opened && open.indexOf(opened) < 0) open.push(opened)
@@ -360,13 +360,21 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // CONSTANT LEARNING, ZERO CEREMONY (Jon, 2026-08-19: "read and learn and update constantly").
     // When the user speaks in standing-instruction form — always / never / from now on / stop
     // doing / make sure — that sentence IS a preference, whether or not anyone clicks "teach her".
+    //
+    // NOT FROM A SHARED ROOM (2026-09-18 audit, P0-8). A Slack channel can contain a vendor, and a
+    // surface whose tier caps memory weight below 6 is by definition not somebody whose "always…"
+    // is a standing rule. Those may still TEACH her explicitly through `remember`, at their capped
+    // weight; nothing is captured behind their back and nothing they say is filed as Jon's.
     try {
+      const cap = Number.isFinite(input.memoryWeightCap) ? Number(input.memoryWeightCap) : 10
       const directive = /\b(always|never|from now on|going forward|do not ever|don'?t ever|stop (?:doing|sending|creating|drafting)|make sure (?:to|you|we|it))\b/i
-      if (directive.test(lastUser) && lastUser.length >= 25 && lastUser.length <= 600) {
+      if (source !== 'slack' && cap >= 6 && directive.test(lastUser) && lastUser.length >= 25 && lastUser.length <= 600) {
         const kind = /\b(always|never)\b/i.test(lastUser) ? 'rule' : 'preference'
         saveMemory({
-          text: lastUser.trim(), kind, scope: 'portfolio', weight: 6, source: 'eve',
-          why: source === 'telegram' ? 'said on Telegram — auto-captured' : source === 'slack' ? 'said in Slack — auto-captured' : 'said in chat — auto-captured',
+          text: lastUser.trim(), kind, scope: 'portfolio', weight: 6, maxWeight: cap,
+          // Only Jon's own words are filed as Jon's; a colleague's directive is Eve's inference.
+          source: isSuperadmin(ctx.email) ? 'jon' : source === 'telegram' ? 'telegram' : 'eve',
+          why: source === 'telegram' ? 'said on Telegram — auto-captured' : `said in chat by ${ctx.email || 'someone'} — auto-captured`,
           evidence: chatId ? { chatId } : null, created_by: ctx.email || null,
         }).catch(() => {})
       }

@@ -64,7 +64,11 @@ const ENTRY_TOOLS = ['door_code', 'door_code_check']
 const ADMIN_ONLY = ['ask_ralph', 'slack_queue']
 // A vendor room has an outside company reading it, so a guest's own words and contact details stay
 // out too — those are ours and the guest's, not the contractor's.
-const GUEST_TOOLS = ['guest_profile', 'guest_thread', 'guest_history']
+// 2026-09-18 audit (P0-7): reservation_detail, awaiting_reply, unread_conversations, welcome_calls
+// and search_reservations all carry guest names, emails, phones or message previews; guesty_live
+// is the raw record. None of it belongs in a room with an outside company in it.
+const GUEST_TOOLS = ['guest_profile', 'guest_thread', 'guest_history',
+  'reservation_detail', 'awaiting_reply', 'unread_conversations', 'welcome_calls', 'search_reservations', 'guesty_live']
 
 export async function tierFor(access: Access | null, channelId: string): Promise<TierGrant> {
   const rules = await getSlackRules().catch(() => null as any)
