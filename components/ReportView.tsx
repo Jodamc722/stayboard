@@ -16,7 +16,7 @@ import {
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
   houseBody, OVERVIEW_BODY, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS, COMPANY_STATS_RETIRED_MARK,
-  housePortalUrl,
+  housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from '@/lib/season-shape'
@@ -1172,8 +1172,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       channelBodyStale(g('channels').subtitle) ||
       agendaStale(g('agenda').items) ||
       statementAlsoRowsStale(g('statement').also) ||
-      (Array.isArray(g('statement').highlights) && g('statement').highlights[0] &&
-        houseLine(g('statement').highlights[0].v, CLEANS_HIGHLIGHT) !== (g('statement').highlights[0].v || '')) ||
+      statementHighlightsStale(g('statement').highlights) ||
+      houseTeamSubtitle(g('team').subtitle, ((g('team').people || []) as Any[]).length) !== (g('team').subtitle || '') ||
       houseLine(g('ramp').headline, RAMP_HEADLINE) !== (g('ramp').headline || '') ||
       houseLine(g('ramp').subtitle, RAMP_SUBTITLE) !== (g('ramp').subtitle || '') ||
       houseLine(g('checklist').headline, CHECKLIST_HEADLINE) !== (g('checklist').headline || '') ||
@@ -1195,9 +1195,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       if (agendaStale(ag.items)) ag.items = JSON.parse(JSON.stringify(AGENDA_ROWS))
       const st = d.statement || (d.statement = {})
       if (statementAlsoRowsStale(st.also)) st.also = JSON.parse(JSON.stringify(STATEMENT_ALSO))
-      if (Array.isArray(st.highlights) && st.highlights[0]) {
-        st.highlights[0].v = houseLine(st.highlights[0].v, CLEANS_HIGHLIGHT)
-      }
+      if (statementHighlightsStale(st.highlights)) st.highlights = JSON.parse(JSON.stringify(STATEMENT_HIGHLIGHTS))
+      const tm = d.team || (d.team = {})
+      tm.subtitle = houseTeamSubtitle(tm.subtitle, ((tm.people || []) as Any[]).length)
       const rp = d.ramp || (d.ramp = {})
       rp.headline = houseLine(rp.headline, RAMP_HEADLINE)
       rp.subtitle = houseLine(rp.subtitle, RAMP_SUBTITLE)
@@ -2514,6 +2514,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // deliberately this blunt. Both of these used to assume the unit had not opened yet.
           const HOUSE_HEAD: Record<string, typeof HERO_HEADLINE> = { checklist: CHECKLIST_HEADLINE, ramp: RAMP_HEADLINE }
           const HOUSE_SUB: Record<string, typeof HERO_HEADLINE> = { checklist: CHECKLIST_SUBTITLE, ramp: RAMP_SUBTITLE }
+          // The team line counts the cards rather than saying "four" — see lib/onboarding-copy.
+          const teamCount = ((sec('team').people || []) as Any[]).length
           const Title = ({ k, dark, sub, rule, narrow }: { k: string; dark?: boolean; sub?: boolean; rule?: string; narrow?: boolean }) => (
             <div>
               <div style={{ width: 30, height: 2, background: rule || (dark ? D.ink : t.accent), marginBottom: 18 }} />
@@ -2525,7 +2527,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               </h2>
               {sub !== false && (sec(k).subtitle || edit) ? (
                 <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: dark ? D.muted : t.muted, maxWidth: '50ch' }}>
-                  <Ed v={HOUSE_SUB[k] ? houseLine(sec(k).subtitle, HOUSE_SUB[k]) : (sec(k).subtitle || '')} set={v => patch(k + '.subtitle', v)} edit={edit} multiline />
+                  <Ed v={k === 'team' ? houseTeamSubtitle(sec(k).subtitle, teamCount) : HOUSE_SUB[k] ? houseLine(sec(k).subtitle, HOUSE_SUB[k]) : (sec(k).subtitle || '')} set={v => patch(k + '.subtitle', v)} edit={edit} multiline />
                 </p>
               ) : null}
             </div>
@@ -3790,7 +3792,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               </Slide>
             ) })
 
-            if ((sec('statement').highlights || []).length) slides.push({ key: 'statement', node: (
+            // $250 and a cleans rule with no owner-stay exception were still on screen after the
+            // exact-match repair, because this deck carried an older wording than the one recorded
+            // as retired. Judged by mark now, and replaced as a set.
+            const hlRows: Any[] = statementHighlightsStale(sec('statement').highlights)
+              ? (STATEMENT_HIGHLIGHTS as Any[]) : (sec('statement').highlights || [])
+            if (hlRows.length) slides.push({ key: 'statement', node: (
               <Slide nav="What we charge" warn={edit} bleed>
                 <div style={{ position: 'absolute', inset: 0, background: t.band, padding: 64 }} className="flex flex-col">
                   <div className="flex-1 min-h-0 flex flex-col justify-center">
@@ -3799,13 +3806,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       Three rules decide everything on that statement.
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 36, marginTop: 44 }}>
-                      {(sec('statement').highlights || []).slice(0, 3).map((h: Any, i: number) => (
+                      {hlRows.slice(0, 3).map((h: Any, i: number) => (
                         <div key={i} style={{ paddingTop: 18, borderTop: '1px solid ' + D.rule }}>
                           <p style={{ fontSize: 17, fontWeight: 600, color: D.ink, lineHeight: 1.3 }}>
                             <Ed v={h.k || ''} set={v => patch('statement.highlights.' + i + '.k', v)} edit={edit} multiline />
                           </p>
                           <p style={{ fontSize: 13.5, marginTop: 10, lineHeight: 1.6, color: D.muted }}>
-                            <Ed v={i === 0 ? houseLine(h.v, CLEANS_HIGHLIGHT) : (h.v || '')} set={v => patch('statement.highlights.' + i + '.v', v)} edit={edit} multiline />
+                            <Ed v={h.v || ''} set={v => patch('statement.highlights.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
                       ))}
