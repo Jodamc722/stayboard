@@ -545,10 +545,15 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
 
         {/* ── "Create a reservation", the real drawer ───────────────────────── */}
         {drawer ? (
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(20,28,48,0.26)' }}>
+          // THE SCRIM MUST NOT EAT THE CLICK. This panel says "tap the nights on the calendar
+          // behind this panel" and the full-bleed overlay was swallowing every one of them, so
+          // the instruction was impossible to follow and Create reservation could never arm.
+          // pointerEvents none on the scrim, auto on the panel: the calendar stays live.
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(20,28,48,0.18)', pointerEvents: 'none' }}>
             <div style={{
               position: 'absolute', top: 0, right: 0, bottom: 0, width: '54%', background: P.card,
               padding: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              pointerEvents: 'auto', boxShadow: '-8px 0 24px -12px rgba(20,28,48,0.3)',
             }}>
               <div style={{ display: 'flex', alignItems: 'flex-start' }}>
                 <div>
