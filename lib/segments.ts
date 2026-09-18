@@ -70,6 +70,10 @@ const BROWARD_CITIES = [
   'pembroke pines', 'hallandale', 'dania', 'davie', 'plantation', 'sunrise', 'oakland park',
   'wilton manors', 'deerfield', 'coral springs', 'miramar', 'weston', 'tamarac', 'lauderhill',
   'margate', 'coconut creek', 'parkland', 'cooper city', 'lighthouse point', 'sea ranch lakes',
+  // Hillsboro Beach is Broward and was not on this list, so its listing fell through the bottom
+  // of marketOf and was counted as Miami. Found while checking which cities the book actually
+  // holds (2026-09-18); it is one listing today, and it was one listing in the wrong column.
+  'hillsboro beach',
 ]
 // PALM BEACH COUNTY = North. This list did not exist before, which is exactly why Lucerne and
 // Amrit units with no building text were being called Miami.
@@ -139,6 +143,31 @@ export function marketOf(building?: string | null, city?: string | null, name?: 
 
 export function tierOf(lux: boolean): 'Lux' | 'Other' { return lux ? 'Lux' : 'Other' }
 export const MARKETS: Market[] = ['Miami', 'Broward', 'North']
+
+// ── WHAT WE CALL A MARKET IN FRONT OF AN OWNER ──────────────────────────────
+// Jon, 2026-09-18: "can we add West Palm Beach to our markets".
+//
+// It was already a market. Palm Beach County has been its own segment since the Lucerne/Amrit
+// fix, with its own ADR and occupancy defaults, and the book carries 20 listings there today
+// (Lake Worth Beach 18, Riviera Beach 2 — Capri, Lucerne and Amrit). What was missing is that we
+// never SAID it: the deck told owners we run "Miami and Broward", and the season slide printed
+// the internal codename, so an owner in Lake Worth read "comparable 2-bedrooms in North
+// benchmark around $260 ADR". "North" is a column heading, not a place.
+//
+// The internal key stays 'North' on purpose. It is the key for MARKET_DEFAULTS, for the saved
+// uplift configuration and for every stored segment value; renaming it to make one slide read
+// better would silently detach those. Display names belong in a display map.
+export const MARKET_LABEL: Record<string, string> = {
+  miami: 'Miami',
+  broward: 'Broward',
+  north: 'West Palm Beach',
+}
+
+/** The owner-facing name of a market, from either the Market value or its lowercase key. */
+export function marketLabel(market?: string | null): string {
+  const k = String(market || '').toLowerCase().trim()
+  return MARKET_LABEL[k] || (k ? k.charAt(0).toUpperCase() + k.slice(1) : '')
+}
 /** Every building we know about, for filter menus and coverage checks. */
 export const KNOWN_BUILDINGS: { label: string; market: Market; lux: boolean; vendor: boolean }[] =
   BUILDINGS.map(b => ({ label: b.label, market: b.market, lux: !!b.lux, vendor: !!b.vendor }))

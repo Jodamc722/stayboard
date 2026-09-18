@@ -196,3 +196,34 @@ export function statementAlsoRowsStale(rows: unknown): boolean {
   if (!Array.isArray(rows) || !rows.length) return true
   return rows.some(r => hasMark((r as { v?: string } | null)?.v, STATEMENT_ALSO_RETIRED_MARKS))
 }
+
+// ── THE MARKETS WE SAY WE ARE IN ────────────────────────────────────────────
+// Jon, 2026-09-18: "can we add West Palm Beach to our markets".
+//
+// It was already a market. Palm Beach County has had its own segment, its own ADR and occupancy
+// defaults and 20 listings (Lake Worth Beach and Riviera Beach — Capri, Lucerne, Amrit) for a
+// while. These two lines were the last place the company still introduced itself as Miami and
+// Broward only, which is the version every owner has read.
+//
+// Matched on a phrase rather than the whole paragraph: the stored text is the evaluated string,
+// newlines and all, and pinning a repair to 300 characters of prose means it stops working the
+// first time someone fixes a comma.
+export const OVERVIEW_BODY_RETIRED_MARK = 'in Miami and Broward end to end'
+export const OVERVIEW_BODY =
+  'Stay Hospitality runs short-term rentals in Miami, Broward and West Palm Beach end to end: the listing and its pricing, the guest from inquiry to review, the turnover, and the maintenance in between. Housekeeping, maintenance and guest care are our own people on our own payroll \u2014 not a marketplace of contractors we hope shows up.\n\n' +
+  'What that buys you is a single accountable line. One team that knows your unit, one system every number comes out of, and one statement a month you can trace back to the job that caused it.'
+
+export const COMPANY_STATS_RETIRED_MARK = 'Miami & Broward'
+export const COMPANY_STATS: { k: string; v: string }[] = [
+  { k: 'Markets', v: 'Miami, Broward & West Palm Beach' },
+  { k: 'Units managed', v: '400+' },
+  { k: 'Channels', v: 'Airbnb \u00b7 Vrbo \u00b7 Booking.com' },
+  { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
+]
+
+/** The stored paragraph, unless it is empty or still carries `mark`. */
+export function houseBody(stored: unknown, mark: string, current: string): string {
+  const s = String(stored || '')
+  if (!s.trim()) return current
+  return s.includes(mark) ? current : s
+}

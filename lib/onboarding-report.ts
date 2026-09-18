@@ -26,12 +26,13 @@ import { CHANNEL_BODY, CHANNEL_COUNT } from './channel-marks'
 import { STATEMENT_ALSO } from './statement-sample'
 import {
   AGENDA_ROWS, HERO_HEADLINE, CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
-  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS,
+  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS,
 } from './onboarding-copy'
 import 'server-only'
 import { getSetting } from './app-settings'
 import { otaLinksFrom, type OtaLink } from './ota-links'
 import { MARKET_DEFAULTS } from './projections'
+import { marketLabel } from './segments'
 
 /** A question we ask on the call. `a` is the answer, typed live into the report. */
 export type Ask = { id: string; q: string; hint?: string; a?: string }
@@ -248,12 +249,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   logoUrl: '',
   wordmark: 'STAY HOSPITALITY',
-  companyStats: [
-    { k: 'Markets', v: 'Miami & Broward' },
-    { k: 'Units managed', v: '400+' },
-    { k: 'Channels', v: 'Airbnb · Vrbo · Booking.com' },
-    { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
-  ],
+  companyStats: COMPANY_STATS,
 
   // THE GREETING IS NOT A BRIEF. It is two sentences over a large photograph of their own unit,
   // read aloud in about fifteen seconds while everyone finishes joining the call. Everything that
@@ -261,9 +257,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   welcomeBody:
     'This document is the call itself. We fill it in together as we talk, and it stays yours afterwards as the record of what we agreed.',
 
-  overviewBody:
-    'Stay Hospitality runs short-term rentals in Miami and Broward end to end: the listing and its pricing, the guest from enquiry to review, the turnover, and the maintenance in between. Housekeeping, maintenance and guest care are our own people on our own payroll — not a marketplace of contractors we hope shows up.\n\n' +
-    'What that buys you is a single accountable line. One team that knows your unit, one system every number comes out of, and one statement a month you can trace back to the job that caused it.',
+  overviewBody: OVERVIEW_BODY,
 
   portalUrl: 'https://stay.guestyowners.com',
   portalShots: [],
@@ -507,7 +501,9 @@ function benchmarkLine(market: string, bedrooms: number | null): string {
   if (!d) return ''
   const bk = String(Math.max(0, Math.min(4, Number(bedrooms ?? 1))))
   const adr = d.adr && d.adr[bk]
-  const label = key.charAt(0).toUpperCase() + key.slice(1)
+  // The owner-facing name, not the segment key. This printed "in North" to an owner in Lake
+  // Worth, which reads as a compass direction rather than the place their unit is in.
+  const label = marketLabel(key)
   const what = bedrooms == null ? 'Comparable units' : bedrooms <= 0 ? 'Comparable studios' : `Comparable ${bedrooms}-bedrooms`
   return adr
     ? `${what} in ${label} benchmark around ${money0(adr)} ADR at roughly ${d.occPct}% annual occupancy.`
