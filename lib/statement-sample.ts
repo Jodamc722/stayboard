@@ -162,5 +162,18 @@ export const STATEMENT_ALSO: KV[] = [
     { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labelled with the month it belongs to.' },
 ]
 
-/** The retired wording of the reimbursement row. A deck carrying it was never edited here. */
-export const STATEMENT_ALSO_RETIRED_MARK = 'as well as on the rent'
+/**
+ * The day the reading-guide slide shipped. Every deck generated before it froze one of the older
+ * versions of these rows into its content JSON -- including the two Jon corrected: a "Cleaning
+ * fee" row describing a fee owners never see, and a reimbursement row describing the OTA
+ * commission, which is already out of the rental line. Those rows were never rendered, so no one
+ * can have edited them on purpose, which is why an old deck is safe to overwrite wholesale.
+ * A deck generated from today forward keeps whatever is stored, edits included.
+ */
+export const STATEMENT_ALSO_SINCE = '2026-09-18'
+
+/** True when a deck predates the slide and its stored rows should be replaced by the house set. */
+export function statementAlsoStale(generatedAt: unknown): boolean {
+  const g = String(generatedAt || '').slice(0, 10)
+  return !g || g < STATEMENT_ALSO_SINCE
+}
