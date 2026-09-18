@@ -24,6 +24,10 @@
 import { SAMPLE_STATEMENT } from './statement-sample'
 import { CHANNEL_BODY, CHANNEL_COUNT } from './channel-marks'
 import { STATEMENT_ALSO } from './statement-sample'
+import {
+  AGENDA_ROWS, HERO_HEADLINE, CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
+  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS,
+} from './onboarding-copy'
 import 'server-only'
 import { getSetting } from './app-settings'
 import { otaLinksFrom, type OtaLink } from './ota-links'
@@ -286,14 +290,13 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   channelsCount: CHANNEL_COUNT,
   channelsLogos: [],
 
-  agenda: [
-    { k: 'Your listings', v: 'We open the live listing on every channel, review it together, and fix the weak parts while you watch.' },
-    { k: 'Goals & strategy', v: 'Who the unit is for, and the one trade-off every pricing decision comes from.' },
-    { k: 'The first 90 days', v: 'What a brand-new listing actually does, and why month one is bought rather than earned.' },
-    { k: 'Your portal & statements', v: 'Where you see performance, approve spend, and read what you were paid.' },
-    { k: 'How billables work', v: 'What we charge, what we never charge, and what needs your yes first.' },
-    { k: 'Your team', v: 'Names, faces and direct numbers — not a shared inbox.' },
-  ],
+  // THE ORDER OF THE MEETING, IN JON'S WORDS (2026-09-18: "a little bit about our team, review
+  // listing, Guesty portal, talk revenue and owner expectations and strategy — share what to
+  // expect"). Two things were wrong before this. It promised to "score" the listing, which we
+  // stopped doing on that slide months ago, and it sold "direct numbers — not a shared inbox"
+  // three slides before a shared inbox appears under the team. An agenda is a promise made in
+  // the first two minutes and checked against for the next forty.
+  agenda: AGENDA_ROWS,
 
   strategyBody:
     'Every pricing decision downstream comes from one trade-off: rate or occupancy. A unit can run high-rate and sit emptier, or run a shade under the market and stay full. Both work. They do not work at the same time, and pretending otherwise is how a unit ends up mediocre at both.\n\n' +
@@ -360,41 +363,15 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
     { k: 'Guidebook', v: 'A digital guide for the unit \u2014 check-in, Wi-Fi, appliances, local picks. Cuts the "how does this work" messages by more than half.' },
   ],
 
-  portalItems: [
-    { k: 'Your calendar', v: 'Every reservation as it lands, the nights already sold, and the blocks you asked us to hold. The same calendar we work from, not a copy of it.' },
-    { k: 'Your monthly report', v: 'Occupancy, rate, revenue, what we did, what guests said, what is booked ahead. One link, always the same link.' },
-    { k: 'Your order sheet', v: 'Anything we want to buy for the unit, with photos, the reason, price options, and four buttons: approve, I will supply it, not now, no.' },
-    { k: 'Your statement', v: 'Rental, less commission, less anything billed that month, equals what hits your account. Every billed line traces to a job with a date and a photo.' },
-  ],
+  portalItems: PORTAL_ITEMS,
 
   moneyBody:
     'This is the section that decides whether you trust your statement in six months, so here are the rules in full, including the ones that cost us money.',
-  moneyRules: [
-    { k: 'Departure cleans', v: 'Never billed to you. The guest’s cleaning fee pays for the turnover. If a clean costs us more than the fee collected, that is our problem, not a line on your statement.' },
-    { k: 'Labor', v: '$40 an hour, or a flat price agreed for a defined job. Time is the technician’s actual clock in and out on the task, not an estimate.' },
-    { k: 'Parts and supplies', v: 'At cost. No markup. A $19 faucet cartridge is $19 on your statement.' },
-    { k: 'Guest-caused damage', v: 'Billed to the guest or their channel, not to you. You only see it if we fail to recover it, and then you see why.' },
-    { k: 'Under $300', v: 'We handle it and it appears on your next statement. This threshold is yours to set — raise it, lower it, or set it to zero and see every item first.' },
-    { k: 'Over $300', v: 'It goes to your order sheet before anyone spends anything, with photos, the reason, and usually three options. Nothing over your limit gets bought without your yes.' },
-    { k: 'Emergencies', v: 'Active leak, no A/C, lockout, anything unsafe with a guest in house — we act first and tell you immediately. This is the one exception to the rule above, and we would rather explain a $600 invoice than a flooded unit.' },
-  ],
+  moneyRules: MONEY_RULES,
 
   statementAlso: STATEMENT_ALSO,
 
-  checklist: [
-    { item: 'W-9 and banking details for payouts', who: 'Owner', by: '' },
-    { item: 'Short-term rental rider on your insurance', who: 'Owner', by: '' },
-    { item: 'HOA registration and any rental approval', who: 'Owner', by: '' },
-    { item: 'County tourist tax registration', who: 'Stay', by: '' },
-    { item: 'Smart lock installed, codes into Guesty', who: 'Stay', by: '' },
-    { item: 'Opening buy list approved and delivered', who: 'Owner', by: '' },
-    { item: 'Linen par levels stocked — 3 sets per bed', who: 'Stay', by: '' },
-    { item: 'Professional photos', who: 'Stay', by: '' },
-    { item: 'Listing written and live on every channel', who: 'Stay', by: '' },
-    { item: 'Calendar sync verified across all channels', who: 'Stay', by: '' },
-    { item: 'Wi-Fi in the unit’s name, password into the guidebook', who: 'Owner', by: '' },
-    { item: 'Parking spot or guest parking rules confirmed', who: 'Owner', by: '' },
-  ],
+  checklist: CHECKLIST_ROWS,
 
   asks: {
     unit: [
@@ -412,7 +389,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
       { id: 's2', q: 'If we can only have one — higher rate, or higher occupancy?' },
       { id: 's3', q: 'Minimum stay floor?', hint: 'Shorter fills faster and turns more; longer protects the unit.' },
       { id: 's4', q: 'Pets — yes, no, or case by case?' },
-      { id: 's5', q: 'Owner blocks — how often, and how much notice can you give us?', hint: 'Notice is the whole game. Two weeks costs nothing; two days costs a booking.' },
+      { id: 's5', q: 'Owner blocks — how often, and how much notice can you give us?', hint: 'Notice is the whole game. Two weeks costs nothing; two days costs a booking. The clean after an owner stay is billed at cost.' },
     ],
     ramp: [
       { id: 'r1', q: 'Are you comfortable opening under target rate for the first 30–45 nights?' },
@@ -641,7 +618,12 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       // thing was the first thing on the cover and it read as a mistake.
       eyebrow: '',
       title: i.scopeLabel,
-      headline: 'Everything we agree today, before your first guest.',
+      // "BEFORE YOUR FIRST GUEST" WAS AN ASSUMPTION, NOT A FACT (Jon, 2026-09-18: "sometimes
+      // onboarding will be after the unit is live, so line should not be 'before first guest' --
+      // more this is an onboarding meeting"). Onboarding is the meeting, not a launch gate. The
+      // headline now describes what the hour produces, which is true whether the unit opens next
+      // month or has been taking bookings since June.
+      headline: HERO_HEADLINE.current,
       preparedFor: i.ownerName ? 'Prepared for ' + i.ownerName : 'Prepared for the owners of ' + i.scopeLabel,
       dateLabel: 'OWNER ONBOARDING',
       heroImage: i.heroImage,
@@ -705,8 +687,10 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       asks: asks('strategy'),
     },
     ramp: {
-      headline: 'The first ninety days are bought, not earned',
-      subtitle: 'A new listing has no reviews and no standing in any channel’s ranking.',
+      // Named as being about a NEW listing, so an owner whose unit is already trading reads it
+      // as history rather than as a forecast they are about to be held to.
+      headline: RAMP_HEADLINE.current,
+      subtitle: RAMP_SUBTITLE.current,
       bands: t.rampBands,
       note: t.rampNote,
       asks: asks('ramp'),
@@ -798,15 +782,19 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       note: `Your rental line is what is left after the channel takes its cut — there is no separate OTA fee to find, because it has already come out. You will not see the cleaning fee either: we keep it and it pays for the turnover, which is why the channel\u2019s fee on that cleaning fee comes back to you as its own line. Everything else traces to a booking or to a job with a date on it. Labor is ${money0(rate)} an hour on the technician\u2019s actual clock, materials are at cost, and the ${t.mgmtPct}% management fee is the only fee we take.`,
       rules,
       highlights: [
-        { k: 'Departure cleans', v: 'Never billed to you, and never a line on your statement. The guest\u2019s cleaning fee pays for the turnover.' },
+        { k: 'Departure cleans', v: 'Never billed to you after a guest stay \u2014 the guest\u2019s cleaning fee pays for the turnover. The clean after your own stay is the one exception, at cost.' },
         { k: `Labor ${money0(rate)}/hr, parts at cost`, v: 'The technician\u2019s actual clock. No markup, no trip charge.' },
         { k: `Anything over ${money0(limit)}`, v: 'Goes to you first, with photos and options. Nothing is bought without your yes.' },
       ],
       also: t.statementAlso,
     },
     checklist: {
-      headline: 'What is left before we can take a booking',
-      subtitle: 'Neither of us can open this unit alone.',
+      // Retitled for the same reason as the cover: a unit that has been live since June still
+      // has open items, and "before we can take a booking" told its owner this slide was not
+      // about them. What survives is the real point -- some of these are ours and some are only
+      // ever theirs.
+      headline: CHECKLIST_HEADLINE.current,
+      subtitle: CHECKLIST_SUBTITLE.current,
       rows: t.checklist.map(r => ({ ...r })),
     },
     nextup: {
@@ -846,12 +834,19 @@ export const ONBOARDING_CORE = [
   // algorithms, new listing promotion, push for good reviews"). These two carry the only
   // expectation-setting in the deck that stops month one reading as a failure in February.
   'season', 'ramp',
-  'guesty', 'statement', 'notes',
+  'guesty', 'statement',
+  // CHECKLIST MOVED OUT OF THE HIDDEN SET (Jon, 2026-09-18: "mention ACH and W9 needs to be
+  // filled out, log in to Guesty owner portal"). Those three were added to the checklist and the
+  // checklist was hidden by default, so the deck answered his request by printing them nowhere.
+  // It also earns its place on its own terms: the meeting has to end on what each side still
+  // owes, and the owner's half -- W-9, ACH, insurance rider, HOA -- is the half that holds up a
+  // first payout.
+  'checklist', 'notes',
 ] as const
 
 /** Built, kept, and hidden by default. Switched on per owner from the editing toolbar. */
 export const ONBOARDING_EXTRA = [
-  'unit', 'strategy', 'tech', 'money', 'comms', 'checklist', 'nextup',
+  'unit', 'strategy', 'tech', 'money', 'comms', 'nextup',
 ] as const
 
 /** Every section key an onboarding report can hide, in render order. */
