@@ -342,7 +342,9 @@ type EveGroup = { key: string; title: string; qs: EveQ[] }
 /** The template a question was cut from: first sentence, the name after "at " dropped, 40 chars. */
 function eveTemplate(question: string): string {
   const first = String(question || '').split(/[?.!]/)[0] || String(question || '')
-  return first.replace(/\bat\s+.*$/i, 'at').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 40)
+  // "at Amrit", "about 3213", "for Lucerne" — the name after the preposition is the only thing
+  // that varies between copies of the same question.
+  return first.replace(/\b(at|about|for|in)\s+.*$/i, '$1').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 40)
 }
 function groupEve(rows: EveQ[]): EveGroup[] {
   const byKey: Record<string, EveGroup> = {}
@@ -356,9 +358,10 @@ function groupEve(rows: EveQ[]): EveGroup[] {
   return order.map(k => {
     const g = byKey[k]
     if (g.qs.length === 1) return { ...g, key: g.qs[0].id, title: g.qs[0].question }
-    const stem = k.replace(/\s+at$/, '')
+    const stem = k.replace(/\s+(at|about|for|in)$/, '')
     const places = plural(g.qs.length, /\bunit\b/i.test(stem) ? 'unit' : 'building')
-    g.title = 'Eve: ' + (k.endsWith('at') ? stem + ' at ' + places : plural(g.qs.length, 'question') + ' — ' + stem + '…')
+    const prep = (k.match(/\s(at|about|for|in)$/) || [])[1]
+    g.title = 'Eve: ' + (prep ? stem + ' ' + prep + ' ' + places : plural(g.qs.length, 'question') + ' — ' + stem + '…')
     return g
   })
 }

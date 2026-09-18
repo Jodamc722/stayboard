@@ -292,10 +292,13 @@ async function buildScoreboard(): Promise<Scoreboard> {
       const mtPayroll = econNow.ok ? (econNow.v.departments.filter(d => d.key === 'maintenance')[0] || null) : null
       const share = mNow > 0 ? Math.round((bNow / mNow) * 100) : null
       const taskRow = (t: BillingTask, amt: number) => ({ text: t.unit + ' — ' + t.name + ' · ' + money(amt) + (t.assignees[0]?.name ? ' · ' + t.assignees[0]!.name : '') + (t.reviewState === 'open' ? ' · to review' : ''), href: '/billing' })
+      // Maintenance tasks rarely carry a Breezeway rate, so the rate side reads $0 while the crew's
+      // Homebase wages are the real number. Wages lead; the rate side rides in the sub when it exists.
+      const wages = mtPayroll && mtPayroll.payroll > 0 ? mtPayroll.payroll : 0
       tiles.push({
         ...mBase,
-        value: money(mNow),
-        sub: mTasks.length + ' tasks' + (mtPayroll && mtPayroll.payroll > 0 ? ' · ' + money(mtPayroll.payroll) + ' wages' : ''),
+        value: money(wages > 0 ? wages : mNow),
+        sub: wages > 0 ? (mtPayroll!.hours + ' h · ' + mTasks.length + ' rated task' + (mTasks.length === 1 ? '' : 's') + (mNow > 0 ? ' · ' + money(mNow) : '')) : mTasks.length + ' tasks',
         tone: 'quiet',
         delta: delta(mNow, mPrev, n => money(n), 'down'),
         detail: {
