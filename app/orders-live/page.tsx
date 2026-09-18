@@ -35,7 +35,7 @@ export default function OrdersLivePage() {
     if (!pw.trim()) return
     setPwErr('')
     try {
-      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      const r = await fetch('/api/public/link-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'orders-live', password: pw }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setPwErr(j.error || 'Wrong password'); return }
       setPw(''); await load()

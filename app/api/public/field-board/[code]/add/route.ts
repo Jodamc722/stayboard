@@ -14,10 +14,8 @@
 // Everything else matches /api/ops-today/add-task: create in Breezeway, then write through to
 // breezeway_tasks_sync so the board shows it before the 15-minute sync catches up.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 import { getAccess } from '@/lib/access'
-import { checkLinkPasscode, lockedResponse } from '@/lib/passcode-gate'
+import { checkRowPasscode, lockedResponse } from '@/lib/passcode-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
 import { getBoardLink, buildFieldBoard } from '@/lib/field-board'
@@ -40,14 +38,13 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
 
   const body = await req.json().catch(() => ({} as any))
   const pass = String(body?.pass || '')
-  if (!signedIn) {
-    if (link.passcode) {
-      const verdict = await checkLinkPasscode(req, 'board:' + String(params.code || ''), pass, String(link.passcode))
+  if (!signedIn && !link.open) {
+    if (link.passcode_hash) {
+      const verdict = await checkRowPasscode(req, link, pass)
       if (verdict === 'locked') return lockedResponse({ label: link.label })
       if (verdict !== 'ok') return NextResponse.json({ ok: false, error: 'Enter the board passcode first.' }, { status: 403 })
     } else {
-      const shareOk = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value).catch(() => false)
-      if (!shareOk) return NextResponse.json({ ok: false, error: 'Enter the board passcode first.' }, { status: 403 })
+      return NextResponse.json({ ok: false, error: 'This board has no passcode yet.' }, { status: 403 })
     }
   }
 

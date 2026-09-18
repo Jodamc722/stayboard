@@ -16,7 +16,9 @@ import { pageRows } from '@/lib/db-page'
 import { marketOf } from '@/lib/segments'
 import { buildTeamSchedule, addDays as addDaysET } from '@/lib/team-schedule'
 import { scheduleLabor } from '@/lib/schedule-labor'
-import { checkLinkPasscode, lockedResponse } from '@/lib/passcode-gate'
+import { checkRowPasscode, lockedResponse, signedInUser } from '@/lib/passcode-gate'
+import { linkUsable } from '@/lib/share-links'
+import { touchLink } from '@/lib/share-links-server'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -50,18 +52,23 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
   const { data: rows } = await db.from('share_links').select('*').eq('code', code).limit(1)
   const link = (rows || [])[0] as any
   if (!link || link.revoked_at) return NextResponse.json({ error: 'not found' }, { status: 404 })
+  if (!linkUsable(link)) return NextResponse.json({ error: 'This link has expired.', gone: true }, { status: 410 })
   // A PARKING LINK IS NOT A REPORT LINK (2026-09-16). The same row can carry both section sets, so
   // a link ticked for parking AND revenue would have been handed to a garage vendor as
   // /parking/<code> — and six characters of URL editing, same passcode, would have shown them the
   // building's money and internal notes. The builder forces exclusivity; this refuses the other
   // door regardless, because a mis-tick should not be able to reach it.
   if (link.sections && link.sections.parking === true) return NextResponse.json({ error: 'not found' }, { status: 404 })
-  if (link.passcode) {
-    // Lockout + constant-time compare live in lib/passcode-gate (2026-09-18, P0-5).
-    const verdict = await checkLinkPasscode(req, 'link:' + code, pw, String(link.passcode))
+  // ITS OWN PASSCODE (hashed; lib/passcode-gate does lockout + constant-time compare). A row made
+  // without one is `open` — the code is the capability. A signed-in Lighthouse user walks in.
+  const me = await signedInUser()
+  if (!me.signedIn && !link.open) {
+    if (!link.passcode_hash) return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: 'This link has no passcode yet — ask the office to set one on the Share Links page.' }, { status: 200 })
+    const verdict = await checkRowPasscode(req, link, pw)
     if (verdict === 'locked') return lockedResponse({ label: link.label || 'Shared data' })
     if (verdict !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: pw ? 'Wrong passcode.' : undefined }, { status: pw ? 403 : 200 })
   }
+  if (!me.signedIn) touchLink(link)
 
   // The unlocked payload is memoised for 90 s per (link, range, crew): a reviewer flipping
   // In-house / Vendor / Calendar or re-opening the page must not pay the Homebase + planner walk
@@ -209,7 +216,7 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
   // emails and phone numbers, so the section simply does not render without one — a forgotten
   // passcode field can never be the reason that list is on the open internet.
   if (sections.contacts) {
-    if (!String(link.passcode || '').trim()) {
+    if (!String(link.passcode_hash || '').trim()) {
       out.sections.contacts = { locked: true, reason: 'This link needs a passcode before the contact list will show. Set one on the Share Links page.' }
     } else {
       const twoYears = ymdET(new Date(Date.now() - 730 * 86400000))

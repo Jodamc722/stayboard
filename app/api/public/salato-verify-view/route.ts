@@ -3,8 +3,7 @@
 // sensitive images are never exposed on the public board or via a permanent URL.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,8 +12,8 @@ const TTL = 600 // signed URLs valid 10 minutes
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 export async function GET(req: NextRequest) {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  const gate = await linkGate('salato-desk', { kinds: ['salato-desk'], touch: false })
+  if (!gate.ok) return gate.res
   try {
     const rid = str(new URL(req.url).searchParams.get('rid')).trim()
     if (!/^[a-z0-9]{6,40}$/i.test(rid)) return NextResponse.json({ ok: false, error: 'bad id' }, { status: 400 })

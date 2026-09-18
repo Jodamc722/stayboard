@@ -4,9 +4,7 @@
 // No PII: numbers only, no guest data.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { cookies } from 'next/headers'
-import { BOT_COOKIE, botanicaCookieValid } from '@/lib/shareAuth'
-import { getAccess } from '@/lib/access'
+import { linkGate } from '@/lib/passcode-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -43,9 +41,9 @@ const cleaningOf = (m: any): number => num(m?.fareCleaning)
 export async function GET(req: NextRequest) {
   // ITS OWN PASSWORD (2026-09-18, P0-4). This report carries owner money and used to open on the
   // vendor share password every cleaning crew holds. A signed-in Lighthouse user opens it too.
-  let authed = await botanicaCookieValid(cookies().get(BOT_COOKIE)?.value)
-  if (!authed) { try { const a = await getAccess(); authed = !!a.user && a.allowed } catch { authed = false } }
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  // share_links row 'botanica-report' since 2026-09-18 — its own passcode, its own revoke.
+  const gate = await linkGate('botanica-report', { kinds: ['botanica'] })
+  if (!gate.ok) return gate.res
   const debug = new URL(req.url).searchParams.get('debug') === '1'
   try {
     const db = supabaseAdmin()

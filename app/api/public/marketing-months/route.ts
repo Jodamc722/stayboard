@@ -14,10 +14,10 @@
 // table. Rather than draw a flattering hockey stick out of missing history, every month earlier
 // than the mirror's own floor is returned with partial:true and the UI greys it out.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { MKT_COOKIE, marketingCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
+import { stripMoney, type LinkScope } from '@/lib/share-links'
 import { bucketFor, familyFor, stateFor, accomOf, num, etDay } from '@/lib/marketing'
 
 export const dynamic = 'force-dynamic'
@@ -59,9 +59,13 @@ export async function GET(req: NextRequest) {
     const { data: { user } } = await sb.auth.getUser()
     internal = !!user
   } catch { internal = false }
+  // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
+  // range and switch dollars off for this link alone.
+  let linkScope: LinkScope = {}
   if (!internal) {
-    const ok = await marketingCookieValid(cookies().get(MKT_COOKIE)?.value)
-    if (!ok) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+    const gate = await linkGate('marketing', { kinds: ['marketing'] })
+    if (!gate.ok) return gate.res
+    linkScope = gate.link.scope || {}
   }
 
   const url = new URL(req.url)
@@ -199,7 +203,8 @@ export async function GET(req: NextRequest) {
 
     for (const m of failed) { const row = byMonth[m]; if (row) row.failed = true }
 
-    return NextResponse.json({ ok: true, today, floorMonth, truncated, failed, months })
+    const shown = linkScope.showMoney === false ? stripMoney(months) : months
+    return NextResponse.json({ ok: true, today, floorMonth, truncated, failed, months: shown, showMoney: linkScope.showMoney !== false })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }

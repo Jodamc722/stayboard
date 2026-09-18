@@ -1,23 +1,30 @@
 // TEAM SCHEDULER LINKS — the desk side (signed in, feature 'schedule').
 //   GET  → links + recent submissions
-//   POST {action:'create', market, label?, passcode?} | {action:'passcode', id, passcode} | {action:'revoke', id} | {action:'feedback', id, feedback} | {action:'reviewed', id}
+//   POST {action:'feedback', id, feedback} | {action:'reviewed', id}
+//
+// 2026-09-18: scheduler links are share_links rows (kind 'scheduler') and are MADE on /links like
+// every other link, with their own passcode. This route keeps the submissions desk; create /
+// passcode / revoke moved to /api/share-links and answer 410 here so an old tab says why.
 import { NextRequest, NextResponse } from 'next/server'
-import { randomBytes } from 'crypto'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
-const MARKETS = ['Miami', 'Broward', 'North']
 const str = (v: any) => (v == null ? '' : String(v)).trim()
 
 export async function GET() {
   const g = await requireLevel('schedule', 'view'); if (!g.ok) return g.res
   const db = supabaseAdmin()
   const [{ data: links }, { data: subs }] = await Promise.all([
-    db.from('schedule_links').select('*').order('created_at', { ascending: false }),
+    db.from('share_links').select('id, code, title, label, scope, passcode_hint, open, created_at, revoked_at, expires_at, uses, last_used_at').eq('kind', 'scheduler').order('created_at', { ascending: false }),
     db.from('schedule_submissions').select('*').order('created_at', { ascending: false }).limit(60),
   ])
-  return NextResponse.json({ ok: true, links: links || [], submissions: subs || [] })
+  const shaped = (links || []).map((l: any) => ({
+    id: l.id, code: l.code, market: str(l.scope?.market) || 'All', label: l.title || l.label || null,
+    passcode_hint: l.passcode_hint || null, open: l.open === true, view_only: l.scope?.viewOnly === true,
+    created_at: l.created_at, revoked_at: l.revoked_at, expires_at: l.expires_at, uses: l.uses, last_used_at: l.last_used_at,
+  }))
+  return NextResponse.json({ ok: true, links: shaped, submissions: subs || [] })
 }
 
 export async function POST(req: NextRequest) {
@@ -27,27 +34,10 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin()
   const now = new Date().toISOString()
   try {
-    if (b.action === 'create') {
-      // 'All' = the ops review link: every market on one page, sortable, for whoever runs the day.
-      const market = MARKETS.includes(b.market) || b.market === 'All' ? b.market : null
-      if (!market) return NextResponse.json({ ok: false, error: 'market must be Miami, Broward, North or All' }, { status: 400 })
-      const code = randomBytes(6).toString('hex')
-      // VIEW-ONLY IS DECIDED AT CREATE AND NOT CHANGED AFTER (migration 084). A link the crew has
-      // saved to a home screen is a promise about what that page does; flipping a read-only link
-      // into an editable one later would quietly hand twenty people the ability to reassign the
-      // week. Make a second link instead — they cost nothing and revoke independently.
-      const viewOnly = b.viewOnly === true
-      const defaultLabel = market === 'All'
-        ? (viewOnly ? 'Schedule · all markets (view only)' : 'Ops schedule review · all markets')
-        : market + (viewOnly ? ' schedule (view only)' : ' team schedule')
-      const { data, error } = await db.from('schedule_links').insert({ code, market, label: str(b.label).slice(0, 120) || defaultLabel, passcode: str(b.passcode).slice(0, 40) || null, view_only: viewOnly, created_by: me }).select('*').single()
-      if (error) throw new Error(error.message)
-      return NextResponse.json({ ok: true, link: data, url: '/scheduler/' + code })
+    if (b.action === 'create' || b.action === 'passcode' || b.action === 'revoke') {
+      return NextResponse.json({ ok: false, error: 'Scheduler links are made and managed on the Share Links page (/links) now.' }, { status: 410 })
     }
     const id = str(b.id); if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
-    // Change or clear the passcode on a live link. Phones that saved the old one get the gate again.
-    if (b.action === 'passcode') { const pc = str(b.passcode).slice(0, 40) || null; await db.from('schedule_links').update({ passcode: pc }).eq('id', id); return NextResponse.json({ ok: true, passcode: pc }) }
-    if (b.action === 'revoke') { await db.from('schedule_links').update({ revoked_at: now }).eq('id', id); return NextResponse.json({ ok: true }) }
     if (b.action === 'feedback') {
       const feedback = str(b.feedback).slice(0, 4000)
       await db.from('schedule_submissions').update({ feedback: feedback || null, status: 'reviewed', reviewed_by: me, reviewed_at: now }).eq('id', id)

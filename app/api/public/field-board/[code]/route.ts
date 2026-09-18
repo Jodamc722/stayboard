@@ -6,11 +6,11 @@
 // work today keep working. Locked responses carry the board's LABEL and nothing else — an
 // unlocked board must not leak whose units it covers.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 import { getAccess } from '@/lib/access'
 import { getBoardLink, buildFieldBoard } from '@/lib/field-board'
-import { checkLinkPasscode, lockedResponse } from '@/lib/passcode-gate'
+import { checkRowPasscode, lockedResponse } from '@/lib/passcode-gate'
+import { linkUsable } from '@/lib/share-links'
+import { touchLink } from '@/lib/share-links-server'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -21,21 +21,21 @@ export const maxDuration = 60
 async function open(req: NextRequest, code: string, pass: string) {
   const link = await getBoardLink(code)
   if (!link) return NextResponse.json({ ok: false, error: 'Unknown or revoked board.' }, { status: 404 })
+  if (!linkUsable(link)) return NextResponse.json({ ok: false, error: 'This board link has expired.' }, { status: 410 })
 
   // A LIGHTHOUSE USER, not merely a Supabase session (same bar as lib/parking-gate.ts).
   let signedIn = false
   try { const a = await getAccess(); signedIn = !!a.user && a.allowed } catch { signedIn = false }
 
-  if (!signedIn) {
-    if (link.passcode) {
-      const verdict = await checkLinkPasscode(req, 'board:' + code, pass, String(link.passcode))
-      if (verdict === 'locked') return lockedResponse({ label: link.label, needsPasscode: true })
-      if (verdict !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: true, error: pass ? 'That passcode did not match.' : undefined }, { status: pass ? 403 : 200 })
-    } else {
-      const shareOk = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value).catch(() => false)
-      if (!shareOk) return NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: false }, { status: 200 })
-    }
+  // ITS OWN PASSCODE OR NOTHING (2026-09-18). The standing share password is gone; a board made
+  // without a passcode is `open` (the code is the capability), otherwise the phone POSTs { pass }.
+  if (!signedIn && !link.open) {
+    if (!link.passcode_hash) return NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: true, error: 'This board has no passcode yet — ask the office to set one on the Share Links page.' }, { status: 200 })
+    const verdict = await checkRowPasscode(req, link, pass)
+    if (verdict === 'locked') return lockedResponse({ label: link.label, needsPasscode: true })
+    if (verdict !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: true, error: pass ? 'That passcode did not match.' : undefined }, { status: pass ? 403 : 200 })
   }
+  if (!signedIn) touchLink({ id: link.id, code: link.code })
 
   try {
     return NextResponse.json(await buildFieldBoard(link))

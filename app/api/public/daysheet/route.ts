@@ -6,8 +6,7 @@
 // CREW block: who is on the schedule, who has actually clocked in, and what each person is on
 // right now. No wages, ever — this is a field link, and the crew reads it.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
 import { buildDaySheet } from '@/lib/daysheet'
 import { getShifts, nameMatches } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
@@ -105,12 +104,15 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  // share_links row 'day' (2026-09-18) — its own passcode. A link scoped to one market
+  // (scope.market) pins that market: the Broward crew's link cannot flip to Miami.
+  const gate = await linkGate('day', { kinds: ['day-sheet'] })
+  if (!gate.ok) return gate.res
   try {
     const sp = req.nextUrl.searchParams
     const date = sp.get('date') || ''
-    const market = sp.get('market') || ''
+    const pinned = String(gate.link.scope?.market || '')
+    const market = pinned && pinned !== 'All' ? pinned : (sp.get('market') || '')
     const sheet: any = await buildDaySheet(date, market)
     // Additive: a Homebase hiccup costs the crew card, never the day sheet.
     let crew: any = null

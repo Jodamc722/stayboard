@@ -1,10 +1,13 @@
 'use client'
-// TEAM SCHEDULE LINKS — the desk (Jon, 2026-09-03). Mint a link per market, watch submissions come
-// in, send notes back. Reviewing the actual picks happens on /schedule, where they show as staged.
+// TEAM SCHEDULE LINKS — the desk (Jon, 2026-09-03). Watch submissions come in, send notes back.
+// Reviewing the actual picks happens on /schedule, where they show as staged.
+//
+// 2026-09-18: the links themselves are MADE on /links (share_links, kind 'scheduler'), each with
+// its own passcode that is shown once and then only hinted. This desk lists them and points there.
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Copy, Check, ExternalLink, Loader2, Ban, Link2, MessageSquare, ChevronDown, Mail, KeyRound } from 'lucide-react'
+import { Copy, Check, ExternalLink, Loader2, Link2, MessageSquare, ChevronDown, Mail, KeyRound } from 'lucide-react'
 
-type Lnk = { id: string; code: string; market: string; label: string | null; passcode: string | null; view_only?: boolean; created_at: string; revoked_at: string | null }
+type Lnk = { id: string; code: string; market: string; label: string | null; passcode_hint: string | null; open?: boolean; view_only?: boolean; created_at: string; revoked_at: string | null }
 type Sub = { id: string; link_code: string; market: string; week_start: string; week_end: string; submitted_by: string | null; note: string | null; snapshot: any[]; status: string; feedback: string | null; reviewed_at: string | null; emailed_at: string | null; created_at: string }
 
 const BTN = 'inline-flex items-center gap-1.5 rounded-xl font-bold text-[13px] min-h-[38px] px-3.5 disabled:opacity-50'
@@ -17,9 +20,6 @@ export function ScheduleLinksDesk() {
   const [subs, setSubs] = useState<Sub[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
-  const [market, setMarket] = useState('Miami')
-  const [passcode, setPasscode] = useState('')
-  const [kind, setKind] = useState<'team' | 'view'>('team')
   const [busy, setBusy] = useState(false)
   const load = async () => {
     try { const r = await fetch('/api/schedule/links', { cache: 'no-store' }); const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load'); setLinks(j.links); setSubs(j.submissions); setErr('') } catch (e: any) { setErr(String(e?.message || e)) }
@@ -41,23 +41,11 @@ export function ScheduleLinksDesk() {
         <div className="mt-3 space-y-2">
           {loading && <div className="text-[13px] text-muted"><Loader2 size={14} className="animate-spin inline mr-1" /> Loading…</div>}
           {!loading && !active.length && <div className="text-[13px] text-muted">No links yet.</div>}
-          {active.map(l => <LinkRow key={l.id} l={l} origin={origin} onPasscode={(pc) => post({ action: 'passcode', id: l.id, passcode: pc })} onRevoke={() => { if (confirm('Revoke the ' + l.market + ' link? The team will lose access until you make a new one.')) post({ action: 'revoke', id: l.id }) }} />)}
+          {active.map(l => <LinkRow key={l.id} l={l} origin={origin} />)}
         </div>
         <div className="mt-4 pt-3 border-t border-line flex items-center gap-2 flex-wrap">
-          <select value={market} onChange={e => setMarket(e.target.value)} className={INPUT}>{['Miami', 'Broward', 'North', 'All'].map(m => <option key={m} value={m}>{m === 'All' ? 'All markets (ops review)' : m}</option>)}</select>
-          {/* TWO KINDS OF LINK, ONE TABLE (Jon, 2026-09-14: "a link by market area that just a view
-              of the schedule"). The team link is a working tool — assign the week, press Submit —
-              and is right for the two or three people who build it. The view link is what you send
-              to the twenty who only need to know where they are going: every control on the other
-              one is a chance to change the plan by accident on a phone, and there is no undo on a
-              schedule forty people have already read. */}
-          <select value={kind} onChange={e => setKind(e.target.value as any)} className={INPUT}>
-            <option value="team">Team link — they can assign and submit</option>
-            <option value="view">View only — they can see the schedule</option>
-          </select>
-          <input value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="Passcode (optional)" className={INPUT + ' w-44'} />
-          <button disabled={busy} onClick={async () => { await post({ action: 'create', market, passcode, viewOnly: kind === 'view' }); setPasscode('') }} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} New {market === 'All' ? 'all-markets' : market} {kind === 'view' ? 'view' : 'team'} link</button>
-          <span className="text-[12px] text-muted">A passcode is a second lock if the link gets forwarded; without one the link alone opens it. Which kind a link is is fixed when you make it — a saved link is a promise about what that page does.</span>
+          <a href="/links" className={BTN + ' bg-ink text-white'}><Link2 size={14} /> Make or manage links on Share Links</a>
+          <span className="text-[12px] text-muted">Team link (assign + submit) or view-only, per market, each with its own passcode — shown once when made, rotated or revoked from the same page.</span>
         </div>
       </section>
 
@@ -73,10 +61,8 @@ export function ScheduleLinksDesk() {
   )
 }
 
-function LinkRow({ l, origin, onPasscode, onRevoke }: { l: Lnk; origin: string; onPasscode: (pc: string) => Promise<any>; onRevoke: () => void }) {
+function LinkRow({ l, origin }: { l: Lnk; origin: string }) {
   const [copied, setCopied] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [pc, setPc] = useState(l.passcode || '')
   const url = origin + '/scheduler/' + l.code
   // A row that does not say which kind it is makes somebody open the link to find out — and the
   // one they would open to check is the one they must not hand to the crew.
@@ -87,15 +73,11 @@ function LinkRow({ l, origin, onPasscode, onRevoke }: { l: Lnk; origin: string; 
       <span className={'text-[11px] font-bold uppercase px-2 py-0.5 rounded ' + (viewOnly ? 'bg-slate-100 text-slate-600' : 'bg-brand-50 text-brand-700')}>{viewOnly ? 'View only' : 'Team'}</span>
       <span className="text-[13px] font-semibold text-ink">{l.label || l.market + ' team schedule'}</span>
       <code className="text-[12px] text-muted truncate max-w-[340px]">{url}</code>
-      {editing ? (
-        <span className="inline-flex items-center gap-1"><input value={pc} onChange={e => setPc(e.target.value)} className={INPUT + ' w-36 py-1.5 text-[13px]'} placeholder="Passcode (blank = none)" autoFocus onKeyDown={async e => { if (e.key === 'Enter') { await onPasscode(pc); setEditing(false) } if (e.key === 'Escape') setEditing(false) }} /><button onClick={async () => { await onPasscode(pc); setEditing(false) }} className={BTN + ' bg-ink text-white min-h-[32px] px-2.5 text-[12px]'}>Save</button></span>
-      ) : (
-        <button onClick={() => setEditing(true)} className="text-[11.5px] text-muted inline-flex items-center gap-1 hover:text-ink"><KeyRound size={11} /> {l.passcode ? <>passcode <b className="text-ink">{l.passcode}</b></> : 'no passcode — add one'}</button>
-      )}
+      <span className="text-[11.5px] text-muted inline-flex items-center gap-1"><KeyRound size={11} /> {l.passcode_hint ? <>passcode <b className="text-ink font-mono">{l.passcode_hint}</b></> : l.open ? 'open — no passcode' : <span className="text-amber-800 font-semibold">no passcode yet</span>}</span>
       <span className="ml-auto flex items-center gap-1.5">
-        <button onClick={async () => { try { await navigator.clipboard.writeText(url + (l.passcode ? '  (passcode: ' + l.passcode + ')' : '')); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {} }} className={BTN + ' border border-line bg-white text-ink'}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy link'}</button>
+        <button onClick={async () => { try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {} }} className={BTN + ' border border-line bg-white text-ink'}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy link'}</button>
         <a href={'/scheduler/' + l.code} target="_blank" rel="noreferrer" className={BTN + ' border border-line bg-white text-ink'}>Open <ExternalLink size={13} /></a>
-        <button onClick={onRevoke} className="w-9 h-9 rounded-lg border border-line bg-white text-muted grid place-items-center" aria-label="Revoke"><Ban size={14} /></button>
+        <a href={'/links?q=' + encodeURIComponent(l.code)} className={BTN + ' border border-line bg-white text-muted'}>Manage</a>
       </span>
     </div>
   )

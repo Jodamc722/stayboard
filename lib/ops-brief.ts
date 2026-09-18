@@ -701,13 +701,15 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // THE TEAM SCHEDULE LINK (Jon, 2026-09-07: "add the schedule link and have password StayBroward
   // and StayMiami"). Each market sheet carries its own live scheduler link and the passcode that
   // opens it, so the crew can pick up the week from the same email that runs the day.
+  // The scheduler link for this market (share_links, kind 'scheduler'). Passcodes are hashed at
+  // rest since 2026-09-18, so the brief can carry the link and a HINT, never the code itself.
   let schedLink: { url: string; passcode: string | null } | null = null
   if (isField) {
     try {
-      const { data } = await supabaseAdmin().from('schedule_links').select('code,passcode,created_at')
-        .eq('market', variant).is('revoked_at', null).order('created_at', { ascending: false }).limit(1)
-      const row = (data || [])[0] as any
-      if (row?.code) schedLink = { url: `${APP_URL}/scheduler/${row.code}`, passcode: row.passcode ? String(row.passcode) : null }
+      const { data } = await supabaseAdmin().from('share_links').select('code,passcode_hint,scope,created_at')
+        .eq('kind', 'scheduler').is('revoked_at', null).order('created_at', { ascending: false }).limit(50)
+      const row = ((data || []) as any[]).find(r => String(r.scope?.market || '') === variant)
+      if (row?.code) schedLink = { url: `${APP_URL}/scheduler/${row.code}`, passcode: row.passcode_hint ? '…' + String(row.passcode_hint).replace(/•/g, '') : null }
     } catch { /* no link, no button */ }
   }
   if (variant === 'full') {
@@ -1569,7 +1571,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
         'Este correo es la foto de las 7am. Ese tablero está en vivo todo el día.')) : ''}
   ${isField && schedLink ? btn(schedLink.url,
       pick('Team schedule →', 'Horario del equipo →'),
-      (schedLink.passcode ? `${pick('Passcode', 'Clave')}: <b style="color:#111827">${esc(schedLink.passcode)}</b> · ` : '') +
+      (schedLink.passcode ? `${pick('Passcode ends', 'La clave termina en')}: <b style="color:#111827">${esc(schedLink.passcode)}</b> · ` : '') +
       pick('Pick your cleans for the week and press Submit — Jon reviews it and sends notes back.', 'Elija sus limpiezas de la semana y presione Enviar — Jon lo revisa y devuelve notas.')) : ''}
   ${isField ? accessNotice(lang) : ''}
 

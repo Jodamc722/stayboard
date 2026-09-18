@@ -12,8 +12,9 @@ export default function LinksPage() {
       <div className="max-w-4xl">
         <h1 className="text-xl font-bold text-ink mb-1">Share Links</h1>
         <p className="text-[12.5px] text-muted mb-4">
-          Create a live link scoped to the whole portfolio, a building, an owner or a unit — and choose
-          exactly which data it shows. Edit a link and every copy of it updates; revoke it and it dies.
+          Every link anyone outside the app can open, in one place — vendor boards, scheduler links, field boards,
+          the reports, custom pages. Each has its <b>own</b> passcode (shown once when made), an optional expiry,
+          and a scope that says exactly what it shows. Describe the one you need, or fill the form.
         </p>
         <ShareLinksHub />
       </div>

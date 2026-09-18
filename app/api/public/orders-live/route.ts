@@ -2,9 +2,8 @@
 // building → unit, with who has it. Gated by the shared team password like /delivery. The one
 // write is "delivered" — a tap from the phone of whoever carried it up.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
 import { todayET, addDays, markDelivered, fmtDay } from '@/lib/guest-orders'
 
 export const dynamic = 'force-dynamic'
@@ -23,8 +22,8 @@ function shape(o: any, today: string) {
 }
 
 export async function GET() {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  const gate = await linkGate('orders-live', { kinds: ['orders-live'] })
+  if (!gate.ok) return gate.res
   const today = todayET()
   const db = supabaseAdmin()
   const [live, done] = await Promise.all([
@@ -41,8 +40,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true }, { status: 401 })
+  const gate = await linkGate('orders-live', { kinds: ['orders-live'], touch: false })
+  if (!gate.ok) return gate.res
   const body = await req.json().catch(() => ({} as any))
   const id = String(body?.id || '')
   const who = String(body?.who || '').trim().slice(0, 60) || 'team (live link)'

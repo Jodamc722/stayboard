@@ -2,16 +2,15 @@
 // approved / ordered / arriving line with WHERE it goes (building -> unit -> room).
 // Gated by the shared team password (same cookie as the vendor / front-desk boards).
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function GET() {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  const gate = await linkGate('delivery', { kinds: ['delivery'] })
+  if (!gate.ok) return gate.res
   const db = supabaseAdmin()
   const [oi, ol] = await Promise.all([
     db.from('audit_items').select('id,listing_id,room,kind,title,qty,note,photo_url,status,details').in('kind', ['replace', 'add']).in('status', ['approved', 'ordered', 'arriving']).order('created_at', { ascending: false }).limit(2000),

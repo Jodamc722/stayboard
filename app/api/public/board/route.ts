@@ -3,9 +3,7 @@
 // No guest names / phone / email / notes — unit, dates, times, bedrooms, door code, guest count, source.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
-import { getAccess } from '@/lib/access'
+import { linkGate } from '@/lib/passcode-gate'
 import { customFieldNameMap } from '@/lib/custom-fields'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { salatoListings } from '@/lib/salato-units'
@@ -55,17 +53,23 @@ function cfValue(raw: any, fieldId: string): string | null {
 }
 
 export async function GET(req: NextRequest) {
-  const v = String(new URL(req.url).searchParams.get('v') || '').toLowerCase()
+  const code = String(new URL(req.url).searchParams.get('v') || '').toLowerCase()
+  // ITS OWN LINK ROW, ITS OWN PASSCODE (2026-09-18). /vendor/<code> is share_links row `<code>`:
+  // the four original boards keep their old codes (botanica, pt, amrit-capri-lucerne, salato) and
+  // any extra board minted on /links carries a random code with scope.vendor naming the crew. The
+  // vendor password every crew used to share is gone. A link may also be cut down to some of the
+  // scope's buildings (scope.buildings) so one crew's link shows one tower.
+  const gate = await linkGate(code, { kinds: ['vendor-board'] })
+  if (!gate.ok) return gate.res
+  const v = String(gate.link.scope?.vendor || code).toLowerCase()
   const scope = SCOPES[v]
   if (!scope) return NextResponse.json({ ok: false, error: 'Unknown link' }, { status: 404 })
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  const onlyBuildings = Array.isArray(gate.link.scope?.buildings) ? gate.link.scope.buildings.map((b: any) => String(b).toLowerCase()).filter(Boolean) : []
   // Signed-in Stayboard user (not just a share-password viewer)? Guest ID/selfie/signature photos
   // are shown ONLY to signed-in users; a share-only viewer never receives the image URLs.
-  let isAppUser = false
   // A LIGHTHOUSE user (allowlisted, active), the same bar as the field board: this flag now also
   // decides who sees guest names / phones on a crew board, so a bare Supabase session is not enough.
-  try { const a = await getAccess(); isAppUser = !!a.user && a.allowed } catch { isAppUser = false }
+  const isAppUser = gate.signedIn
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())
@@ -77,7 +81,10 @@ export async function GET(req: NextRequest) {
     // The Salato scope reads the team's editable unit set so a new building shows on the vendor
     // board the moment it is added at /salato → Units; every other scope stays on its name rule.
     const salatoIds = v === 'salato' ? (await salatoListings(db)).match : null
-    const inScope = (id: string, name: string, building: any) => salatoIds ? salatoIds[id] !== undefined : (scope.re.test(str(building)) || scope.re.test(name))
+    const inScope = (id: string, name: string, building: any) => {
+      if (onlyBuildings.length && onlyBuildings.indexOf(str(building).toLowerCase()) < 0) return false
+      return salatoIds ? salatoIds[id] !== undefined : (scope.re.test(str(building)) || scope.re.test(name))
+    }
     const match: Record<string, { name: string; bedrooms: number | null; doorCode: string | null; checkOutTime: string | null; checkInTime: string | null }> = {}
     const bannerCands: { name: string; url: string; count: number; full: boolean }[] = []
     for (const l of (listings || []) as any[]) {

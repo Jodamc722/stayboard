@@ -60,7 +60,7 @@ export default function DayLinkPage() {
 
   const signIn = async () => {
     setPwErr('')
-    const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+    const r = await fetch('/api/public/link-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'day', password: pw }) })
     const j = await r.json().catch(() => ({}))
     if (!r.ok || !j.ok) { setPwErr(j.error || 'Wrong password'); return }
     setPw(''); load(date)

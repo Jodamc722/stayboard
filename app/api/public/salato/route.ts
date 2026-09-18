@@ -1,10 +1,9 @@
 // PUBLIC, PII-SAFE Salato board data (sendable link like the vendor links).
 // No guest names / phone / email / notes / plates — only unit, dates, times, guest count, source, SDT.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { salatoListings } from '@/lib/salato-units'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
 import { salatoVerifyToken } from '@/lib/salato-verify-token'
 
 export const dynamic = 'force-dynamic'
@@ -19,8 +18,9 @@ export async function GET(req: NextRequest) {
   // GATED (2026-09-03). This feed is fifteen days of unit-level occupancy — which units are empty
   // tonight — and it answered anyone who had the URL. Same team share password + cookie as the
   // vendor boards and the ID viewer on this very page. Fail closed.
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  // share_links row 'salato-desk' (2026-09-18). The /vendor/salato board is a different row.
+  const gate = await linkGate('salato-desk', { kinds: ['salato-desk'] })
+  if (!gate.ok) return gate.res
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())

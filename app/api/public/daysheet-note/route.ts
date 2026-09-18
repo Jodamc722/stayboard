@@ -2,8 +2,7 @@
 // team sees in the app (and notifies whoever follows that task). No status changes, no
 // reassignment, no deletes — a phone in a pocket cannot close real work by accident.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
 
@@ -12,8 +11,8 @@ export const maxDuration = 30
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 export async function POST(req: NextRequest) {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  const gate = await linkGate('day', { kinds: ['day-sheet'], touch: false })
+  if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({} as any))
   const taskId = str(b.taskId)
   const unit = str(b.unit).slice(0, 120)

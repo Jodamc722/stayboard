@@ -2,10 +2,9 @@
 // vendor mashing the button can never hammer the Guesty API. Pulls INCREMENTALLY (only what
 // changed since the last sync) so it returns in seconds instead of sweeping every reservation.
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { syncReservations } from '@/lib/guesty'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { anyLinkGate } from '@/lib/passcode-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -13,8 +12,9 @@ export const maxDuration = 60
 const WINDOW_MS = 30 * 60 * 1000
 
 export async function POST() {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  // Any unlocked board link in this browser (or a signed-in user) may call this helper.
+  const gate = await anyLinkGate(['vendor-board', 'botanica', 'salato-desk'])
+  if (!gate.ok) return gate.res
   try {
     const db = supabaseAdmin()
     const { data: st } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()

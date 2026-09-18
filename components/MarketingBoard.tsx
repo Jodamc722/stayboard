@@ -490,7 +490,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const submitPw = async () => {
     setPwBusy(true); setPwErr('')
     try {
-      const r = await fetch('/api/public/marketing-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      const r = await fetch('/api/public/link-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'marketing', password: pw }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setPwErr(j.error || 'Wrong password'); setPwBusy(false); return }
       setPwBusy(false); setPw('')

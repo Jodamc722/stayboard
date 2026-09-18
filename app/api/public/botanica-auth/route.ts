@@ -1,19 +1,23 @@
-// Password check for the Botanica performance report (2026-09-18, P0-4). Public by design: the
-// hotel's Area GM posts the report's OWN password and gets a signed cookie. This is a DIFFERENT
-// credential from the vendor share password — a cleaning crew's password never opens owner money.
+// KEPT FOR OLD PAGES IN OLD BROWSER TABS (2026-09-18). The family password this route used to
+// check is retired; it now logs into the per-link row 'botanica-report' via lib/passcode-gate. New
+// code calls /api/public/link-auth with { code, password } directly.
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { BOT_COOKIE, botanicaCookieValid } from '@/lib/shareAuth'
-import { familyLogin } from '@/lib/passcode-gate'
+import { linkLogin, linkCookieName, linkCookieOk, signedInUser } from '@/lib/passcode-gate'
+import { getLink } from '@/lib/share-links-server'
 
 export const dynamic = 'force-dynamic'
+const CODE = 'botanica-report'
 
-export async function GET() {
-  const ok = await botanicaCookieValid(cookies().get(BOT_COOKIE)?.value)
-  return NextResponse.json({ ok: true, authed: ok })
+export async function GET(req: NextRequest) {
+  const code = CODE || String(req.nextUrl.searchParams.get('code') || '')
+  const link = await getLink(code)
+  if (!link) return NextResponse.json({ ok: true, authed: false })
+  const me = await signedInUser()
+  return NextResponse.json({ ok: true, authed: me.signedIn || linkCookieOk(link, cookies().get(linkCookieName(link.code))?.value) })
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}))
-  return familyLogin(req, 'botanica', String(body.password || ''), 'No Botanica report password is set yet. Set one in Users → share links.')
+  const body = await req.json().catch(() => ({} as any))
+  return linkLogin(req, CODE || String(body.code || ''), String(body.password || ''))
 }

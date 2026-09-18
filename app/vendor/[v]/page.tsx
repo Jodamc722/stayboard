@@ -67,7 +67,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
       setErr('')
       const res = await fetch('/api/public/board?v=' + encodeURIComponent(params.v), { cache: 'no-store' })
       const j: Data = await res.json()
-      if (res.status === 401 || (j as any).needsPassword) { setNeedsPw(true); setLoading(false); return }
+      if (res.status === 401 || (j as any).needsPassword) { setNeedsPw(true); if ((j as any).unset) setPwErr(String((j as any).error || '')); setLoading(false); return }
       if (!res.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
       setData(j)
       setLastUpdated(new Date())
@@ -165,7 +165,8 @@ export default function VendorPage({ params }: { params: { v: string } }) {
     e.preventDefault()
     setPwBusy(true); setPwErr('')
     try {
-      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      // This board's OWN passcode (2026-09-18): the row is share_links[params.v].
+      const r = await fetch('/api/public/link-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: params.v.toLowerCase(), password: pw }) })
       const jr = await r.json()
       if (!r.ok || !jr.ok) { setPwErr(jr.error || 'Wrong password'); setPwBusy(false); return }
       setNeedsPw(false); setPw(''); setLoading(true); await load()

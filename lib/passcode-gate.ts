@@ -1,4 +1,4 @@
-// ONE PASSCODE GATE FOR EVERY SHARE LINK (2026-09-18 audit, P0-5).
+// ONE PASSCODE GATE FOR EVERY SHARE LINK (2026-09-18 audit, P0-5; per-link the same evening).
 //
 // Six routes each checked a passcode their own way: `pw !== cur` (not constant-time), stored in
 // plaintext, no attempt limit, and a cookie that was sha256(prefix + password) — forgeable by
@@ -19,12 +19,22 @@
 //
 // Passcodes travel in a POST body. The `?pass=` query string the field board and scheduler used
 // to accept is gone: query strings end up in logs, history and referrers.
+//
+// PER LINK, NOT PER FAMILY (Jon, 2026-09-18: "should not be team password — individual password
+// per link"). The four family passwords in share_settings (1/3/4/7) are retired. Every shareable
+// page is now a share_links row with its own passcode_hash; the cookie is `lk_<code>`, and its
+// generation is derived from THAT row's hash, so rotating one link's passcode logs out only that
+// link's holders. See lib/share-links.ts for the model and migration 101 for the move.
 import 'server-only'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from './supabase-admin'
 import { hashPassword, verifyPassword } from './edit-access'
 import { hmacHex, safeEqual, sha256Hex } from './signing'
 import { logParking, tooManyWrong, LOCKOUT_MINUTES } from './parking'
+import { cookies } from 'next/headers'
+import { getAccess } from './access'
+import { linkUsable, type ShareLinkRow } from './share-links'
+import { getLink, touchLink } from './share-links-server'
 
 export const PASSCODE_COOKIE_DAYS = 30
 export { LOCKOUT_MINUTES }
@@ -87,78 +97,125 @@ async function upgradeRow(table: string, column: string, match: Record<string, a
   } catch { /* the upgrade is opportunistic; the next correct entry tries again */ }
 }
 
-// ── Family gates: one password per audience, in share_settings ────────────────────────────────
-export type Family = 'share' | 'marketing' | 'audit' | 'botanica'
-export const FAMILY: Record<Family, { id: number; cookie: string; label: string }> = {
-  share:     { id: 1, cookie: 'share_ok', label: 'share' },
-  marketing: { id: 3, cookie: 'mkt_ok',   label: 'marketing' },
-  audit:     { id: 4, cookie: 'oa_ok',    label: 'audit' },
-  // BOTANICA REPORT (P0-4): the owner money report used to open on the VENDOR password the
-  // cleaning crews hold. Its own row, its own cookie.
-  botanica:  { id: 7, cookie: 'bot_ok',   label: 'Botanica report' },
+// ── Per-link gates ────────────────────────────────────────────────────────────────────────────
+
+/** Cookie name for one link. Codes are [a-z0-9-]; anything else is stripped so the name is valid. */
+export const linkCookieName = (code: string) => 'lk_' + String(code || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')
+
+// cookie = "<expMs>.<gen>.<hmac>"; gen ties the cookie to the CURRENT passcode hash of THAT row.
+const linkGen = (code: string, stored: string) => sha256Hex('lkgen:' + code + ':' + stored).slice(0, 16)
+
+export function linkCookieToken(code: string, stored: string): string {
+  const payload = String(Date.now() + PASSCODE_COOKIE_DAYS * 86400000) + '.' + linkGen(code, stored)
+  return payload + '.' + hmacHex('lkcookie:' + code, payload)
 }
 
-/** The stored value (hash or legacy plaintext) for a family, '' when unset. */
-export async function familyStored(f: Family): Promise<string> {
-  try {
-    const { data, error } = await supabaseAdmin().from('share_settings').select('password').eq('id', FAMILY[f].id).maybeSingle()
-    if (error) { console.error(`share_settings ${f} read`, error.message); return '' }
-    return data && (data as any).password ? String((data as any).password) : ''
-  } catch (e) { console.error(`share_settings ${f} read`, e); return '' }
-}
-
-/** True when the row holds a hash (so the cleartext cannot be shown back in Settings). */
-export function isHashedPasscode(stored: string): boolean { return isHash(stored) }
-
-// cookie = "<expMs>.<gen>.<hmac>"; gen ties the cookie to the CURRENT stored value.
-const genOf = (f: Family, stored: string) => sha256Hex('pwgen:' + f + ':' + stored).slice(0, 16)
-
-export function familyCookieToken(f: Family, stored: string): string {
-  const payload = String(Date.now() + PASSCODE_COOKIE_DAYS * 86400000) + '.' + genOf(f, stored)
-  return payload + '.' + hmacHex('pwcookie:' + f, payload)
-}
-
-/** FAIL CLOSED: no cookie, no configured passcode, bad signature, expired or stale gen → false. */
-export async function familyCookieValid(f: Family, cookieVal: string | undefined | null): Promise<boolean> {
-  if (!cookieVal) return false
+/** FAIL CLOSED: no cookie, no passcode on the row, bad signature, expired or stale gen → false. */
+export function linkCookieOk(link: Pick<ShareLinkRow, 'code' | 'passcode_hash'>, cookieVal: string | undefined | null): boolean {
+  if (!cookieVal || !link.passcode_hash) return false
   const parts = String(cookieVal).split('.')
   if (parts.length !== 3) return false
   const [expStr, gen, sig] = parts
   const exp = Number(expStr)
   if (!exp || exp < Date.now()) return false
   let good = ''
-  try { good = hmacHex('pwcookie:' + f, expStr + '.' + gen) } catch { return false }
+  try { good = hmacHex('lkcookie:' + link.code, expStr + '.' + gen) } catch { return false }
   if (!safeEqual(sig, good)) return false
-  const stored = await familyStored(f)
-  if (!stored) return false
-  return safeEqual(gen, genOf(f, stored))
+  return safeEqual(gen, linkGen(link.code, String(link.passcode_hash)))
+}
+
+/** A signed-in LIGHTHOUSE user (allowlisted, active) — the office opens any link without its passcode. */
+export async function signedInUser(): Promise<{ signedIn: boolean; who: string | null }> {
+  try { const a = await getAccess(); return { signedIn: !!a.user && !!a.allowed, who: a.email ? String(a.email) : null } } catch { return { signedIn: false, who: null } }
+}
+
+export type LinkGate =
+  | { ok: true; link: ShareLinkRow; signedIn: boolean; who: string | null }
+  | { ok: false; res: NextResponse; link: ShareLinkRow | null; reason: 'unknown' | 'expired' | 'unset' | 'locked' }
+
+const gone = (msg: string, status = 404) => NextResponse.json({ ok: false, error: msg, gone: true }, { status })
+
+/**
+ * THE CHECK for a page that opens on a link row: resolve the code, refuse revoked / expired, let a
+ * signed-in user through, otherwise require this link's cookie. Bumps uses / last_used_at on a
+ * pass. `needsPassword: true` on the 401 is what every public page already looks for.
+ */
+export async function linkGate(code: string, opts: { kinds?: string[]; touch?: boolean } = {}): Promise<LinkGate> {
+  const link = await getLink(code)
+  if (!link || (opts.kinds && opts.kinds.indexOf(String(link.kind)) < 0)) return { ok: false, res: gone('This link is not active.'), link: null, reason: 'unknown' }
+  if (!linkUsable(link)) return { ok: false, res: gone(link.revoked_at ? 'This link was turned off.' : 'This link has expired.', 410), link, reason: 'expired' }
+  const me = await signedInUser()
+  if (me.signedIn) return { ok: true, link, signedIn: true, who: me.who }
+  if (link.open) { if (opts.touch !== false) touchLink(link); return { ok: true, link, signedIn: false, who: null } }
+  if (!link.passcode_hash) {
+    return { ok: false, link, reason: 'unset', res: NextResponse.json({ ok: false, needsPassword: true, unset: true, label: link.title || link.label || 'Shared page',
+      error: 'This link has no passcode yet. Ask the office to set one on the Share Links page.' }, { status: 401 }) }
+  }
+  let cookieVal: string | undefined
+  try { cookieVal = cookies().get(linkCookieName(link.code))?.value } catch { cookieVal = undefined }
+  if (!linkCookieOk(link, cookieVal)) {
+    return { ok: false, link, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, label: link.title || link.label || 'Shared page', hint: link.passcode_hint || null, error: 'Password required' }, { status: 401 }) }
+  }
+  if (opts.touch !== false) touchLink(link)
+  return { ok: true, link, signedIn: false, who: null }
 }
 
 /**
- * POST handler body for a family login: lockout → compare → upgrade → set cookie.
- * `unsetMsg` is what to say while no passcode is configured (the link stays shut).
+ * For the helper routes a board calls without knowing its own code (banner-set, board-note,
+ * board-resync, the Salato rules): pass if ANY live link of these kinds is unlocked in this
+ * browser, or the person is signed in.
  */
-export async function familyLogin(req: NextRequest, f: Family, pw: string, unsetMsg: string): Promise<NextResponse> {
-  const stored = await familyStored(f)
-  if (!stored) return NextResponse.json({ ok: false, error: unsetMsg }, { status: 503 })
-  const gate = 'pw:' + f
+export async function anyLinkGate(kinds: string[]): Promise<LinkGate> {
+  const me = await signedInUser()
+  if (me.signedIn) return { ok: true, link: null as any, signedIn: true, who: me.who }
+  let all: { name: string; value: string }[] = []
+  try { all = cookies().getAll() } catch { all = [] }
+  for (const c of all) {
+    if (c.name.indexOf('lk_') !== 0) continue
+    const link = await getLink(c.name.slice(3))
+    if (!link || kinds.indexOf(String(link.kind)) < 0 || !linkUsable(link)) continue
+    if (linkCookieOk(link, c.value)) return { ok: true, link, signedIn: false, who: null }
+  }
+  return { ok: false, link: null, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 }) }
+}
+
+/** True when the request may act as a holder of one of these link kinds (cookie) or is signed in. */
+export async function anyLinkAuthed(kinds: string[]): Promise<boolean> { return (await anyLinkGate(kinds)).ok }
+
+/**
+ * POST handler body for a per-link login: resolve → lockout → compare → set this link's cookie.
+ * The gate key is 'link:<code>' so five wrong guesses on one link do not lock the others.
+ */
+export async function linkLogin(req: NextRequest, code: string, pw: string): Promise<NextResponse> {
+  const link = await getLink(code)
+  if (!link) return NextResponse.json({ ok: false, error: 'This link is not active.' }, { status: 404 })
+  if (!linkUsable(link)) return NextResponse.json({ ok: false, error: link.revoked_at ? 'This link was turned off.' : 'This link has expired.' }, { status: 410 })
+  if (link.open) { const r = NextResponse.json({ ok: true, open: true }); return r }
+  if (!link.passcode_hash) return NextResponse.json({ ok: false, error: 'This link has no passcode yet. Ask the office to set one on the Share Links page.' }, { status: 503 })
+  const gate = 'link:' + link.code
   const ip = ipOf(req)
   if (await isLockedOut(gate, ip)) return lockedResponse()
-  if (!passcodeMatches(pw, stored)) {
+  if (!passcodeMatches(pw, String(link.passcode_hash))) {
     if (pw) await noteWrong(gate, ip)
-    return NextResponse.json({ ok: false, error: 'Wrong password' }, { status: 401 })
+    return NextResponse.json({ ok: false, error: 'Wrong passcode' }, { status: 401 })
   }
-  let current = stored
-  if (!isHash(stored)) {
-    // Compare-then-upgrade: the row becomes a hash on the first correct entry. Cookies are minted
-    // against the NEW value so this login does not immediately invalidate itself.
+  let current = String(link.passcode_hash)
+  if (!isHash(current)) {
+    // A legacy plaintext row (carried over by migration 101) becomes a hash on the first correct
+    // entry; the cookie is minted against the NEW value so this login does not invalidate itself.
     const hashed = hashPassword(pw)
     try {
-      const { error } = await supabaseAdmin().from('share_settings').update({ password: hashed }).eq('id', FAMILY[f].id)
+      const { error } = await supabaseAdmin().from('share_links').update({ passcode_hash: hashed, passcode_hint: pw.slice(-2) ? '••' + pw.slice(-2) : null }).eq('id', link.id)
       if (!error) current = hashed
     } catch { /* stays plaintext until the next correct entry */ }
   }
+  touchLink(link)
   const res = NextResponse.json({ ok: true })
-  res.cookies.set(FAMILY[f].cookie, familyCookieToken(f, current), { httpOnly: true, sameSite: 'lax', secure: true, path: '/', maxAge: 60 * 60 * 24 * PASSCODE_COOKIE_DAYS })
+  res.cookies.set(linkCookieName(link.code), linkCookieToken(link.code, current), { httpOnly: true, sameSite: 'lax', secure: true, path: '/', maxAge: 60 * 60 * 24 * PASSCODE_COOKIE_DAYS })
   return res
+}
+
+/** Per-request passcode check for a row (field board / scheduler / parking POST { pass }): lockout + compare + hash upgrade. */
+export async function checkRowPasscode(req: NextRequest | Request, link: Pick<ShareLinkRow, 'id' | 'code' | 'passcode_hash'>, pw: string): Promise<'ok' | 'wrong' | 'locked'> {
+  return checkLinkPasscode(req, 'link:' + link.code, pw, String(link.passcode_hash || ''), { table: 'share_links', column: 'passcode_hash', match: { id: link.id } })
 }

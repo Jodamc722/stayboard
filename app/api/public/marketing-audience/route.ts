@@ -10,10 +10,10 @@
 // this link, and audienceSummary() is built so there is no shape in which a name, an email address
 // or a phone number can come out of here — the contacts themselves never leave the server.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { MKT_COOKIE, marketingCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
+import type { LinkScope } from '@/lib/share-links'
 import { pageRows } from '@/lib/db-page'
 import { getRestrictedChannels } from '@/lib/contacts-load'
 import { buildContacts, audienceSummary } from '@/lib/guest-contacts'
@@ -31,9 +31,13 @@ export async function GET(_req: NextRequest) {
     const { data: { user } } = await sb.auth.getUser()
     internal = !!user
   } catch { internal = false }
+  // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
+  // range and switch dollars off for this link alone.
+  let linkScope: LinkScope = {}
   if (!internal) {
-    const ok = await marketingCookieValid(cookies().get(MKT_COOKIE)?.value)
-    if (!ok) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+    const gate = await linkGate('marketing', { kinds: ['marketing'] })
+    if (!gate.ok) return gate.res
+    linkScope = gate.link.scope || {}
   }
 
   try {

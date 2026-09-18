@@ -1,4 +1,5 @@
-// PUBLIC TEAM SCHEDULER (Jon, 2026-09-03). See supabase/migrations/067_team_schedule_links.sql.
+// PUBLIC TEAM SCHEDULER (Jon, 2026-09-03). Rows live in share_links (kind 'scheduler') since
+// migration 101; scope.market and scope.viewOnly say what the link does.
 //
 //   GET  /api/public/scheduler/<code>?weekStart=YYYY-MM-DD[&pass=]   → the market's week + cleaners
 //   POST /api/public/scheduler/<code>  { action:'stage',  listingId, date, cleanerId, cleanerName, who, pass }
@@ -8,16 +9,16 @@
 // The market is FORCED from the link — a request can never reach another market's cleans. Picks go
 // to schedule_staged (the board's "proposed" overlay); Submit snapshots the week and emails Jon.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { revalidateTag } from 'next/cache'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess } from '@/lib/access'
-import { checkLinkPasscode, lockedResponse } from '@/lib/passcode-gate'
+import { checkRowPasscode, lockedResponse } from '@/lib/passcode-gate'
+import { linkUsable } from '@/lib/share-links'
+import { getLink, touchLink } from '@/lib/share-links-server'
 import { buildSchedule } from '@/lib/schedule-build'
 import { getOpsPresets } from '@/lib/app-settings'
 import { clusterAreas } from '@/lib/geo-areas'
 import { planWeek } from '@/lib/team-plan'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
 import { sendGmail } from '@/lib/gmail-send'
 import { sendResendEmail } from '@/lib/resend-send'
 
@@ -29,21 +30,24 @@ const str = (v: any) => (v == null ? '' : String(v)).trim()
 const REVIEWER = 'jon@stay-hospitality.com'
 const addDay = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
 
-async function loadLink(code: string) {
+type SchedLink = { id: string; code: string; market: string; label: string; view_only: boolean; passcode_hash: string | null; open: boolean }
+async function loadLink(code: string): Promise<SchedLink | null> {
   if (!CODE_RE.test(code)) return null
-  const db = supabaseAdmin()
-  const { data } = await db.from('schedule_links').select('*').eq('code', code.toLowerCase()).maybeSingle()
-  if (!data || data.revoked_at) return null
-  return data
+  const row = await getLink(code.toLowerCase())
+  if (!row || row.kind !== 'scheduler' || !linkUsable(row)) return null
+  const market = str(row.scope?.market) || 'All'
+  return { id: row.id, code: row.code, market, label: str(row.title || row.label) || market + ' team schedule', view_only: row.scope?.viewOnly === true, passcode_hash: row.passcode_hash, open: row.open }
 }
 // 'ok' | 'wrong' | 'locked'. A signed-in LIGHTHOUSE user (allowlisted, active — not merely a
-// Supabase session) skips the passcode; the standing share cookie still opens it; otherwise the
-// link's own passcode, checked with lockout + constant-time compare (lib/passcode-gate).
-async function unlocked(req: NextRequest, link: any, pass: string | null): Promise<'ok' | 'wrong' | 'locked'> {
-  if (!link.passcode) return 'ok'
+// Supabase session) skips the passcode; otherwise the link's OWN passcode, checked with lockout +
+// constant-time compare (lib/passcode-gate). The standing share cookie no longer opens anything.
+async function unlocked(req: NextRequest, link: SchedLink, pass: string | null): Promise<'ok' | 'wrong' | 'locked'> {
   try { const a = await getAccess(); if (a.user && a.allowed) return 'ok' } catch {}
-  if (await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)) return 'ok'
-  return checkLinkPasscode(req, 'sched:' + String(link.code), pass || '', String(link.passcode))
+  if (link.open) { touchLink(link); return 'ok' }
+  if (!link.passcode_hash) return 'wrong'
+  const v = await checkRowPasscode(req, link, pass || '')
+  if (v === 'ok') touchLink(link)
+  return v
 }
 /** The week, cut down to one market — and to OUR cleans. Vendor-cleaned buildings (Botanica, Park
  *  Towers… — the list lives in /users → Ops presets, "Vendor-cleaned buildings") are not this team's

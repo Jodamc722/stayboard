@@ -100,7 +100,9 @@ export type ParkingLink = {
   id: string; code: string; label: string
   scope_type: string; scope_ids: string[]
   sections: Record<string, boolean>
-  passcode: string | null
+  passcode_hash: string | null
+  open: boolean
+  expires_at: string | null
   guest_names: boolean
   window_days: number
 }
@@ -116,7 +118,9 @@ export async function getParkingLink(code: string): Promise<ParkingLink | null> 
     scope_type: str(row.scope_type) || 'portfolio',
     scope_ids: Array.isArray(row.scope_ids) ? row.scope_ids.map(str) : [],
     sections: (row.sections || {}) as Record<string, boolean>,
-    passcode: row.passcode ? str(row.passcode) : null,
+    passcode_hash: row.passcode_hash ? str(row.passcode_hash) : null,
+    open: row.open === true,
+    expires_at: row.expires_at ? str(row.expires_at) : null,
     guest_names: row.guest_names === true,
     // The builder clamps this 7..120. A parking vendor works ahead, so the default leans long.
     window_days: Math.min(Math.max(Number(row.window_days) || 45, 7), 120),

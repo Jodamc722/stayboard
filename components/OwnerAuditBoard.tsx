@@ -356,7 +356,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const unlock = async () => {
     setPwBusy(true); setPwErr('')
     try {
-      const r = await fetch('/api/public/owner-audit-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      const r = await fetch('/api/public/link-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'owner-audit', password: pw }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setPwErr(j.error || 'Wrong password'); setPwBusy(false); return }
       setPw(''); setPwBusy(false)

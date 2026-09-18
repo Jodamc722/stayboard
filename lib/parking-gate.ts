@@ -1,28 +1,19 @@
-// THE DOOR ON A PARKING LINK — one implementation, used by every parking endpoint.
+// PARKING LINK GATE — who may open /parking/<code> and post to its API.
 //
-// The link IS the credential: no login stands behind it, so anyone holding the URL can reach these
-// endpoints directly. That is the same contract the scheduler link spells out, and it means the
-// check cannot live in the browser. Every route calls this first.
-//
-// THREE WAYS IN, in the order they are tried:
+// Three doors, in order:
 //   1. a signed-in Lighthouse user — the office opens the same link and skips the passcode
-//   2. the link's own passcode — what the vendor was given
-//   3. the standing share password cookie — only when the link has no passcode of its own
+//   2. the link's own passcode — what the vendor was given (per-request POST { pass })
+//   3. nothing else. The standing share password that used to be a fallback is gone (2026-09-18:
+//      every link has its own passcode); a parking row is REQUIRED to carry one at create time.
 //
-// THE PASSCODE TRAVELS IN A POST BODY, NEVER A URL. A query string lands in server logs, browser
-// history and any referrer header the page emits. The generic /share route made that choice and
-// wrote down why; a link that hands out garage credentials does not get to be laxer.
-//
-// WORTH KNOWING, AND WORTH FIXING SEPARATELY: passcodes in `share_links` are stored in PLAINTEXT,
-// for every link in the app, not just this one. This adds a wrong-attempt lockout so the code
-// cannot be walked digit by digit, but a stolen database row is still a stolen passcode. Hashing
-// them is a change to the whole share-link family and belongs in its own pass.
+// Passcodes are scrypt hashes on the row (passcode_hash); the compare is constant-time and
+// counted, five wrong in fifteen minutes locks the address (lib/passcode-gate).
 import 'server-only'
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from './shareAuth'
 import { getAccess } from './access'
-import { passcodeMatches } from './passcode-gate'
+import { passcodeMatches, checkRowPasscode } from './passcode-gate'
+import { linkUsable } from './share-links'
+import { touchLink } from './share-links-server'
 import { getParkingLink, logParking, tooManyWrong, LOCKOUT_MINUTES, type ParkingLink } from './parking'
 
 export type Gate =
@@ -42,6 +33,9 @@ export async function parkingGate(req: NextRequest, code: string, pass: string):
   // An unknown or revoked code says nothing about what it used to cover.
   if (!link) {
     return { ok: false, res: NextResponse.json({ ok: false, error: 'This parking link is not valid.' }, { status: 404 }) }
+  }
+  if (!linkUsable(link)) {
+    return { ok: false, res: NextResponse.json({ ok: false, error: 'This parking link has expired.' }, { status: 410 }) }
   }
 
   // A LIGHTHOUSE USER, NOT MERELY A SUPABASE ONE. `getUser()` on its own says "this person has a
@@ -71,17 +65,21 @@ export async function parkingGate(req: NextRequest, code: string, pass: string):
     }
   }
 
-  const shareOk = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value).catch(() => false)
-  const passOk = link.passcode ? passcodeMatches(pass, String(link.passcode)) : shareOk
+  // No passcode on the row and not open = shut. (The builder refuses to create a parking link
+  // without one, so this is a row edited by hand.)
+  const passOk = link.open ? true : (link.passcode_hash ? passcodeMatches(pass, String(link.passcode_hash)) : false)
   if (!passOk) {
     // A wrong attempt is counted; an empty one is just somebody arriving at the page.
     if (pass) await logParking({ code: link.code, action: 'denied', detail: 'wrong passcode', ip })
     return {
       ok: false,
       // Locked, and leaking only the label — never whose units or which building it covers.
-      res: NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: !!link.passcode,
+      res: NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: !link.open,
         error: pass ? 'That passcode did not match.' : undefined }, { status: pass ? 403 : 200 }),
     }
   }
+  // A legacy plaintext row (migration 101) becomes a hash on the first correct entry.
+  if (pass && link.passcode_hash && !/^s1\$/i.test(link.passcode_hash)) await checkRowPasscode(req, link, pass)
+  touchLink({ id: link.id, code: link.code })
   return { ok: true, link, signedIn: false, who: null, ip }
 }

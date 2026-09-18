@@ -7,10 +7,10 @@
 // EVERY number on this route is keyed on guesty_reservations.created_at (when the booking was
 // MADE), never on the stay date. Bucketed in Eastern time.
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { MKT_COOKIE, marketingCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
+import { stripMoney, type LinkScope } from '@/lib/share-links'
 import { parseListing, normalizeBuilding } from '@/lib/parse-listing'
 import {
   Bucket, Family, State, Pay,
@@ -120,15 +120,23 @@ export async function GET(req: NextRequest) {
     const { data: { user } } = await sb.auth.getUser()
     internal = !!user
   } catch { internal = false }
+  // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
+  // range and switch dollars off for this link alone.
+  let linkScope: LinkScope = {}
   if (!internal) {
-    const ok = await marketingCookieValid(cookies().get(MKT_COOKIE)?.value)
-    if (!ok) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+    const gate = await linkGate('marketing', { kinds: ['marketing'] })
+    if (!gate.ok) return gate.res
+    linkScope = gate.link.scope || {}
   }
 
   const today = etDay(new Date().toISOString())
   let to = str(url.searchParams.get('to')).slice(0, 10) || today
   let from = str(url.searchParams.get('from')).slice(0, 10) || addDaysIso(to, -29)
   if (from > to) { const t = from; from = to; to = t }
+  // A link built for one period cannot be widened from the address bar.
+  if (linkScope.from && from < linkScope.from) from = linkScope.from
+  if (linkScope.to && to > linkScope.to) to = linkScope.to
+  if (linkScope.from && to < linkScope.from) to = linkScope.from
 
   // Comparison = the equally long window immediately before `from`, so "+18% vs prior 30 days"
   // is always apples to apples whatever range is picked.
@@ -337,22 +345,24 @@ export async function GET(req: NextRequest) {
 
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
 
+    const noMoney = linkScope.showMoney === false
     return NextResponse.json({
       ok: true,
       internal,
+      showMoney: !noMoney,
       today,
       range: { from, to, span },
       compare: { from: prevFrom, to: prevTo },
       lastSync: syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null,
       truncated,
       unmapped,
-      current: cur,
-      previous: prev,
-      trend,
+      current: noMoney ? stripMoney(cur) : cur,
+      previous: noMoney ? stripMoney(prev) : prev,
+      trend: noMoney ? stripMoney(trend) : trend,
       // Aggregates always cover EVERY booking created in the window. The row list is capped only
       // so the payload stays sendable; the banner says so rather than quietly showing fewer.
       rowsTotal: rows.length,
-      rows: rows.slice(0, ROW_LIMIT),
+      rows: noMoney ? stripMoney(rows.slice(0, ROW_LIMIT)) : rows.slice(0, ROW_LIMIT),
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })

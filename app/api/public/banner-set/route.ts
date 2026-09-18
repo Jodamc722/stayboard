@@ -3,15 +3,15 @@
 // on the link, across devices. Share-password gated, same as the board notes endpoint.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { anyLinkGate } from '@/lib/passcode-gate'
 
 export const dynamic = 'force-dynamic'
 const KEY = 'banner_overrides'
 
 export async function POST(req: NextRequest) {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, error: 'Password required' }, { status: 401 })
+  // Any unlocked board link in this browser (or a signed-in user) may call this helper.
+  const gate = await anyLinkGate(['vendor-board', 'botanica', 'salato-desk'])
+  if (!gate.ok) return gate.res
   try {
     const body: any = await req.json().catch(() => ({}))
     const surface = typeof body?.surface === 'string' ? body.surface.trim().slice(0, 60) : ''

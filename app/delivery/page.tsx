@@ -38,7 +38,7 @@ export default function DeliveryPage() {
     if (pwBusy || !pw.trim()) return
     setPwBusy(true); setPwErr('')
     try {
-      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      const r = await fetch('/api/public/link-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'delivery', password: pw }) })
       const j = await r.json()
       if (!r.ok || !j.ok) { setPwErr(j.error || 'Wrong password'); setPwBusy(false); return }
       setPw(''); setLoading(true)

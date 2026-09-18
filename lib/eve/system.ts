@@ -17,6 +17,8 @@ import { lastRuns, runHistory } from '@/lib/automation-runs'
 import { getSlackRules, EVENT_LABELS, groupForBuilding, channelFor, type SlackRules } from '@/lib/slack-rules'
 import { getDirectory } from '@/lib/slack'
 import { pendingItems, recentItems } from '@/lib/slack-queue'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { describeLink, linkStatus, pathFor } from '@/lib/share-links'
 
 const minsToClock = (m: any): string => {
   const n = Number(m)
@@ -225,11 +227,49 @@ export const SYSTEM_TOOLS: EveTool[] = [
       }
     },
   },
+
+  // SHARE LINKS (2026-09-18). "Which links are still active?" has one answer: share_links. Every
+  // row is a page somebody outside the app can open — a vendor board, the marketing report, a
+  // scheduler link. NO PASSCODES, ever: the rows hold only scrypt hashes and Eve gets the hint at
+  // most. What she can say is who it is for, what it shows, whether it is live, and when it was
+  // last opened.
+  {
+    name: 'share_links',
+    description: 'EVERY share link the company has handed out — vendor boards, scheduler links, field boards, parking boards, the marketing / audit / Botanica reports, custom reports — with who it is for (audience), what it shows, whether it is live / expiring / expired / revoked / waiting for a passcode, when it was last opened and how often. Use for "which links are still active", "does Botanica have a link", "who has a link to X", "what expires this week". Never contains a passcode. Filters: audience (crew|vendor|owner|guest|partner|internal), kind, status (live|expiring|expired|revoked|unset), text.',
+    input_schema: obj({ audience: S.str, kind: S.str, status: S.str, text: S.str, include_revoked: S.bool }),
+    run: async (input) => {
+      const { data } = await supabaseAdmin().from('share_links')
+        .select('code, kind, title, label, audience, scope, passcode_hint, open, expires_at, revoked_at, created_by, created_at, last_used_at, uses, notes')
+        .order('created_at', { ascending: false }).limit(400)
+      const q = lc(input?.text)
+      const rows = ((data || []) as any[])
+        .map(r => ({ ...r, status: linkStatus(r), what: describeLink(r), path: pathFor(String(r.kind), String(r.code)) }))
+        .filter(r => input?.include_revoked === true || !r.revoked_at)
+        .filter(r => !input?.audience || r.audience === lc(input.audience))
+        .filter(r => !input?.kind || r.kind === lc(input.kind))
+        .filter(r => !input?.status || r.status === lc(input.status))
+        .filter(r => !q || has(String(r.title || r.label || '') + ' ' + r.what + ' ' + String(r.notes || '') + ' ' + r.kind, q))
+        .slice(0, clampLimit(input?.limit, 120))
+        .map(r => ({
+          title: r.title || r.label || r.code, kind: r.kind, for: r.audience, shows: r.what, page: r.path,
+          status: r.status, lock: r.open ? 'open link (no passcode)' : r.passcode_hint ? 'passcode set' : 'NO PASSCODE YET — shut until one is set on /links',
+          expires: r.expires_at || 'never', last_opened: r.last_used_at || 'never', opens: Number(r.uses) || 0,
+          made_by: r.created_by || null, made: r.created_at, notes: r.notes || undefined,
+        }))
+      return {
+        count: rows.length,
+        links: rows,
+        waiting_for_passcode: rows.filter(r => r.status === 'unset').map(r => r.title),
+        expiring_soon: rows.filter(r => r.status === 'expiring').map(r => r.title),
+        how_to_read_this: 'Every row is a page people outside the app can open. Passcodes are never available here — say "set or rotate it on the Share Links page" if asked. "Live" means not revoked, not expired and lockable; "unset" means nobody can open it until a passcode is set.',
+      }
+    },
+  },
 ]
 
 export const SYSTEM_DOMAIN: EveDomain = {
   key: 'system',
   label: 'Automations & Slack wiring',
-  blurb: 'every automated job and whether it is on, what email actually went out and to whom, how Slack alerts are routed, and what is waiting for approval',
+  blurb: 'every automated job and whether it is on, what email actually went out and to whom, how Slack alerts are routed, what is waiting for approval, and every share link handed out (who it is for, live or not)',
   tools: SYSTEM_TOOLS,
 }

@@ -14,12 +14,11 @@
 // anything else in the app — this route only reads the mirror and writes owner_audit_reviews
 // (plus, for 'stamp', one appended line on the booking's notes field, same as Claims).
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase-server'
 import { getAccess } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { OA_COOKIE, auditCookieValid } from '@/lib/shareAuth'
+import { linkGate } from '@/lib/passcode-gate'
 import { appendReservationNote } from '@/lib/claim-note'
 import { pullReservationsByIds } from '@/lib/guesty'
 import { syncOwners, syncOwnerStatements, syncLedgerMonth } from '@/lib/guesty-owner-sync'
@@ -51,8 +50,9 @@ async function whoAmI(): Promise<{ ok: boolean; internal: boolean; email: string
     // Signed in, but not for this. Fall through rather than returning early: a person can hold a
     // valid share cookie and a login that does not carry the feature.
   }
-  const shared = await auditCookieValid(cookies().get(OA_COOKIE)?.value)
-  return { ok: shared, internal: false, email: '' }
+  // share_links row 'owner-audit' (2026-09-18): the reviewer's own passcode, revocable on its own.
+  const gate = await linkGate('owner-audit', { kinds: ['owner-audit'] })
+  return { ok: gate.ok, internal: false, email: '' }
 }
 
 export async function GET(req: NextRequest) {

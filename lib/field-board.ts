@@ -32,7 +32,10 @@ export type BoardLink = {
   id: string; code: string; label: string
   scope_type: string; scope_ids: string[]
   sections: Record<string, boolean>
-  passcode: string | null
+  /** scrypt hash (never the cleartext); null + open = the code alone opens it; null + !open = shut until one is set. */
+  passcode_hash: string | null
+  open: boolean
+  expires_at: string | null
 }
 
 export async function getBoardLink(code: string): Promise<BoardLink | null> {
@@ -45,7 +48,9 @@ export async function getBoardLink(code: string): Promise<BoardLink | null> {
     scope_type: str(row.scope_type) || 'portfolio',
     scope_ids: Array.isArray(row.scope_ids) ? row.scope_ids.map(str) : [],
     sections: (row.sections || {}) as Record<string, boolean>,
-    passcode: row.passcode ? str(row.passcode) : null,
+    passcode_hash: row.passcode_hash ? str(row.passcode_hash) : null,
+    open: row.open === true,
+    expires_at: row.expires_at ? str(row.expires_at) : null,
   }
 }
 

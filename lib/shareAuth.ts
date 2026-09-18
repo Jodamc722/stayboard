@@ -1,31 +1,10 @@
-// Shared-password gate for the public vendor / front-desk share links.
-// One password for all share links (not user accounts). Stored in share_settings (RLS on,
-// service-role only). The browser only ever holds a signed, expiring cookie, never the password.
+// ADMIN / RULES / VAULT passwords — the in-app credentials that are NOT share links.
 //
-// 2026-09-18: the compare, the lockout, the hashing and the cookie all moved to
-// lib/passcode-gate.ts (one implementation for every family). The names below are kept so the
-// forty-odd routes that call shareCookieValid() and friends did not have to change.
+// 2026-09-18: the vendor / marketing / audit / Botanica FAMILY passwords that used to live here
+// are gone. Every shared page is now a share_links row with its own passcode; the gate is
+// linkGate() / linkLogin() in lib/passcode-gate.ts and the model is lib/share-links.ts.
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { familyCookieValid, familyStored, passcodeMatches, FAMILY } from '@/lib/passcode-gate'
-
-export const SHARE_COOKIE = FAMILY.share.cookie
-
-/** The STORED value (a scrypt hash once upgraded, legacy plaintext until then). '' = unset. */
-export async function currentSharePassword(): Promise<string> { return familyStored('share') }
-
-// Fail CLOSED: if no password is configured we deny rather than expose the board.
-export async function shareCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
-  return familyCookieValid('share', cookieVal)
-}
-
-// BOTANICA REPORT (2026-09-18, P0-4) — the owner money report for the hotel's Area GM used to open
-// on the VENDOR share password, i.e. the credential every cleaning crew holds. Its own row (id=7),
-// its own cookie. FAIL CLOSED while unset.
-export const BOT_COOKIE = FAMILY.botanica.cookie
-export async function currentBotanicaPassword(): Promise<string> { return familyStored('botanica') }
-export async function botanicaCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
-  return familyCookieValid('botanica', cookieVal)
-}
+import { passcodeMatches } from '@/lib/passcode-gate'
 
 // ADMIN password — gates destructive actions (e.g. deleting a clean from Breezeway).
 // Stored as share_settings row id=2. FAIL CLOSED: while no admin password is set,
@@ -37,31 +16,6 @@ export async function currentAdminPassword(): Promise<string> {
     if (error) { console.error('admin_settings read', error.message); return '' }
     return data && data.password ? String(data.password) : ''
   } catch (e) { console.error('admin_settings read', e); return '' }
-}
-
-// MARKETING password — its own credential for the partner-facing direct-booking report, kept
-// separate from the vendor share password on purpose: a marketing agency gets booking numbers,
-// NOT the ops boards. Stored as share_settings row id=3, cookie `mkt_ok`.
-// FAIL CLOSED: while no marketing password is set, the partner link stays shut.
-export const MKT_COOKIE = FAMILY.marketing.cookie
-
-export async function currentMarketingPassword(): Promise<string> { return familyStored('marketing') }
-
-export async function marketingCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
-  return familyCookieValid('marketing', cookieVal)
-}
-
-// OWNER AUDIT password — its own credential for the owner-statement audit share link, separate
-// from both the vendor and marketing passwords on purpose: whoever works the audit (a VA, an
-// accountant) sees owner-level money, NOT the ops boards and NOT the marketing report.
-// Stored as share_settings row id=4, cookie `oa_ok`.
-// FAIL CLOSED: while no audit password is set, the share link stays shut.
-export const OA_COOKIE = FAMILY.audit.cookie
-
-export async function currentAuditPassword(): Promise<string> { return familyStored('audit') }
-
-export async function auditCookieValid(cookieVal: string | undefined | null): Promise<boolean> {
-  return familyCookieValid('audit', cookieVal)
 }
 
 export async function adminPasswordOk(pw: string | undefined | null): Promise<{ ok: boolean; reason: string }> {

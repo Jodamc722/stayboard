@@ -111,7 +111,7 @@ export default function SalatoShare() {
     if (!pw.trim() || !viewRid) return
     setPwBusy(true); setViewErr('')
     try {
-      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      const r = await fetch('/api/public/link-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'salato-desk', password: pw }) })
       const j = await r.json()
       if (!r.ok || j.ok === false) { setViewErr(j.error || 'Wrong password'); setPwBusy(false); return }
       setPw(''); setPwBusy(false); await fetchView(viewRid)
@@ -128,7 +128,7 @@ export default function SalatoShare() {
     if (!boardPw.trim()) return
     setBoardPwBusy(true); setBoardPwErr('')
     try {
-      const r = await fetch('/api/public/share-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: boardPw }) })
+      const r = await fetch('/api/public/link-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'salato-desk', password: boardPw }) })
       const j = await r.json()
       if (!r.ok || j.ok === false) { setBoardPwErr(j.error || 'Wrong password'); setBoardPwBusy(false); return }
       setBoardPw(''); setBoardPwBusy(false); setLoading(true); await load()

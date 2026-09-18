@@ -7,8 +7,7 @@
 // field on the booking. That helper reads the booking back first and re-sends the complete set.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { cookies } from 'next/headers'
-import { SHARE_COOKIE, shareCookieValid } from '@/lib/shareAuth'
+import { anyLinkGate } from '@/lib/passcode-gate'
 import { getToken } from '@/lib/guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from '@/lib/guesty-custom-fields'
 
@@ -18,8 +17,9 @@ const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
 const isNotes = (c: any): boolean => String(fieldIdOf(c) || '') === RES_NOTES_FIELD || /reservation[_ ]?notes/i.test(String(c?.fieldName || ''))
 
 export async function POST(req: NextRequest) {
-  const authed = await shareCookieValid(cookies().get(SHARE_COOKIE)?.value)
-  if (!authed) return NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 })
+  // Any unlocked board link in this browser (or a signed-in user) may call this helper.
+  const gate = await anyLinkGate(['vendor-board', 'botanica', 'salato-desk'])
+  if (!gate.ok) return gate.res
   const body = await req.json().catch(() => ({} as any))
   const reservationId = String(body?.reservationId || '')
   const note = (typeof body?.note === 'string' ? body.note : '').trim().slice(0, 1000)

@@ -2,17 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Link2 } from 'lucide-react'
 
-type ShareLink = { v: string; label: string; path?: string }
-
 export function ShareLinksCard() {
-  const [links, setLinks] = useState<ShareLink[]>([])
-  const [password, setPassword] = useState('')
-  const [draft, setDraft] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState('')
-  const [err, setErr] = useState('')
-  const [origin, setOrigin] = useState('')
-  const [copied, setCopied] = useState('')
   const [adminSet, setAdminSet] = useState(false)
   const [adminCurrent, setAdminCurrent] = useState('')  // only ever sent to the Super Admin
   const [showAdminPw, setShowAdminPw] = useState(false)
@@ -20,30 +10,6 @@ export function ShareLinksCard() {
   const [adminMsg, setAdminMsg] = useState('')
   const [adminErr, setAdminErr] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
-  // Marketing partner link — its own password so an agency gets booking numbers, never the ops boards.
-  const [mktLinks, setMktLinks] = useState<ShareLink[]>([])
-  const [mktSet, setMktSet] = useState(false)
-  const [mktCurrent, setMktCurrent] = useState('')
-  const [mktDraft, setMktDraft] = useState('')
-  const [mktMsg, setMktMsg] = useState('')
-  const [mktErr, setMktErr] = useState('')
-  const [mktBusy, setMktBusy] = useState(false)
-  // Owner-audit reviewer link — its own password: the reviewer sees owner-level money, nothing else.
-  const [oaLinks, setOaLinks] = useState<ShareLink[]>([])
-  const [oaSet, setOaSet] = useState(false)
-  const [oaCurrent, setOaCurrent] = useState('')
-  const [oaDraft, setOaDraft] = useState('')
-  const [oaMsg, setOaMsg] = useState('')
-  const [oaErr, setOaErr] = useState('')
-  const [oaBusy, setOaBusy] = useState(false)
-  // Botanica report — the hotel GM's money report, on its own password (never the vendor one).
-  const [botLinks, setBotLinks] = useState<ShareLink[]>([])
-  const [botSet, setBotSet] = useState(false)
-  const [botDraft, setBotDraft] = useState('')
-  const [botMsg, setBotMsg] = useState('')
-  const [botErr, setBotErr] = useState('')
-  const [botBusy, setBotBusy] = useState(false)
-  const [pwSet, setPwSet] = useState(false)
   // Salato rules-editing password — lets front-desk staff (no app login) edit the Salato rules.
   const [rpSet, setRpSet] = useState(false)
   const [rpCurrent, setRpCurrent] = useState('')
@@ -59,25 +25,20 @@ export function ShareLinksCard() {
   const [vcMsg, setVcMsg] = useState('')
   const [vcErr, setVcErr] = useState('')
   const [vcBusy, setVcBusy] = useState(false)
+  // The share-link rows that used to live on this card (vendor boards, marketing, audit, Botanica)
+  // are on /links now, one passcode each. Listed here so the card still answers "where are they".
+  const [moved, setMoved] = useState<{ code: string; title: string; path: string; status: string }[]>([])
 
-  useEffect(() => { setOrigin(window.location.origin) }, [])
   useEffect(() => {
     fetch('/api/share-settings', { cache: 'no-store' })
       .then(r => r.json())
-      .then(j => { if (j.ok) { setLinks(j.links || []); setPassword(j.password || ''); setDraft(j.password || ''); setPwSet(!!j.passwordSet); setBotLinks(j.botanicaLinks || []); setBotSet(!!j.botanicaSet); setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setMktLinks(j.marketingLinks || []); setMktSet(!!j.marketingSet); setMktCurrent(j.marketingPassword || ''); setMktDraft(j.marketingPassword || ''); setOaLinks(j.auditLinks || []); setOaSet(!!j.auditSet); setOaCurrent(j.auditPassword || ''); setOaDraft(j.auditPassword || ''); setRpSet(!!j.rulesSet); setRpCurrent(j.rulesPassword || ''); setRpDraft(j.rulesPassword || ''); setVcSet(!!j.vaultSet); setVcCurrent(j.vaultCode || '') } })
+      .then(j => { if (j.ok) { setAdminSet(!!j.adminSet); setAdminCurrent(j.adminPassword || ''); setRpSet(!!j.rulesSet); setRpCurrent(j.rulesPassword || ''); setRpDraft(j.rulesPassword || ''); setVcSet(!!j.vaultSet); setVcCurrent(j.vaultCode || '') } })
+      .catch(() => {})
+    fetch('/api/share-links?lite=1', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (j.ok) setMoved((j.links || []).filter((l: any) => ['vendor-board', 'marketing', 'owner-audit', 'botanica', 'day-sheet', 'delivery', 'orders-live', 'salato-desk'].indexOf(l.kind) >= 0).map((l: any) => ({ code: l.code, title: l.title || l.code, path: l.path, status: l.status }))) })
       .catch(() => {})
   }, [])
-
-  const save = async () => {
-    setBusy(true); setErr(''); setMsg('')
-    try {
-      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: draft.trim() }) })
-      const j = await r.json()
-      if (!r.ok || !j.ok) { setErr(j.error || 'Could not save'); setBusy(false); return }
-      setPassword(j.password || ''); setDraft(''); setPwSet(true); setMsg('Password updated and stored hashed — write it down now, it cannot be shown again. Anyone using the old one will be asked to sign in again.')
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(false)
-  }
 
   const saveAdmin = async () => {
     setAdminBusy(true); setAdminErr(''); setAdminMsg('')
@@ -90,39 +51,7 @@ export function ShareLinksCard() {
     setAdminBusy(false)
   }
 
-  const saveMkt = async () => {
-    setMktBusy(true); setMktErr(''); setMktMsg('')
-    try {
-      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ marketingPassword: mktDraft.trim() }) })
-      const j = await r.json()
-      if (!r.ok || !j.ok) { setMktErr(j.error || 'Could not save'); setMktBusy(false); return }
-      setMktSet(true); setMktCurrent(''); setMktDraft(''); setMktMsg('Marketing password saved (stored hashed — write it down now). Send it with the link above.')
-    } catch (e: any) { setMktErr(String(e?.message || e)) }
-    setMktBusy(false)
-  }
-
-  const saveOa = async () => {
-    setOaBusy(true); setOaErr(''); setOaMsg('')
-    try {
-      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auditPassword: oaDraft.trim() }) })
-      const j = await r.json()
-      if (!r.ok || !j.ok) { setOaErr(j.error || 'Could not save'); setOaBusy(false); return }
-      setOaSet(true); setOaCurrent(''); setOaDraft(''); setOaMsg('Audit password saved (stored hashed — write it down now). Send it with the link above.')
-    } catch (e: any) { setOaErr(String(e?.message || e)) }
-    setOaBusy(false)
-  }
-
-    async function saveBot() {
-    setBotBusy(true); setBotMsg(''); setBotErr('')
-    try {
-      const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ botanicaPassword: botDraft.trim() }) })
-      const j = await r.json()
-      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not save')
-      setBotSet(true); setBotDraft(''); setBotMsg('Botanica report password saved (stored hashed — write it down now). Send it with the link above.')
-    } catch (e: any) { setBotErr(String(e?.message || e)) }
-    setBotBusy(false)
-  }
-const saveRp = async () => {
+  const saveRp = async () => {
     setRpBusy(true); setRpErr(''); setRpMsg('')
     try {
       const r = await fetch('/api/share-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rulesPassword: rpDraft.trim() }) })
@@ -145,92 +74,33 @@ const saveRp = async () => {
     setVcBusy(false)
   }
 
-  const copy = (v: string, url: string) => { try { navigator.clipboard.writeText(url); setCopied(v); setTimeout(() => setCopied(''), 1500) } catch {} }
 
   return (
     <div className="rounded-2xl border border-line bg-white p-5 mt-6">
-      <div className="flex items-center gap-2 mb-1"><Link2 size={16} className="text-muted" /><h2 className="font-semibold text-ink">Vendor share links</h2></div>
-      <p className="text-sm text-muted mb-4">Send these to vendors and the front desk. They open without a Lighthouse login — one shared password protects all of them.</p>
-      {/* Each row is label · URL · Copy. On a phone the 176px label plus the Copy button left about
-          90 pixels for the URL, so every link read "https://…". The label now takes the first line
-          and the URL and Copy share the second. */}
-      <div className="space-y-2 mb-5">
-        {links.map(l => { const href = l.path || '/vendor/' + l.v; const url = origin + href; return (
-          <div key={l.v} className="flex flex-wrap items-center gap-2 gap-y-1 text-sm">
-            <span className="w-full sm:w-44 shrink-0 font-medium text-ink">{l.label}</span>
-            <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
-            <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
-          </div>
-        )})}
-        {links.length === 0 && <div className="text-sm text-muted">Loading links…</div>}
-      </div>
+      <div className="flex items-center gap-2 mb-1"><Link2 size={16} className="text-muted" /><h2 className="font-semibold text-ink">Share links &amp; security</h2></div>
+      {/* ONE PLACE FOR EVERY SHARE LINK (2026-09-18). The vendor / marketing / audit / Botanica
+          passwords that used to be set here are gone: each of those pages is now a row on /links
+          with its own passcode, expiry and revoke. This card points there and keeps only the
+          in-app credentials that are not share links. */}
+      <p className="text-sm text-muted mb-3">
+        Every shareable page — vendor boards, the day sheet, the marketing and audit reports, the Botanica report,
+        scheduler links, field boards, custom reports — lives on the <a href="/links" className="font-semibold text-brand-700 underline">Share Links</a> page,
+        each with its <b>own</b> passcode. Set, rotate or turn one off there; the old shared team password no longer opens anything.
+      </p>
+      {moved.length > 0 && (
+        <div className="rounded-xl border border-line divide-y divide-line mb-4">
+          {moved.map(l => (
+            <div key={l.code} className="flex flex-wrap items-center gap-2 gap-y-1 px-3 py-2 text-sm">
+              <span className="font-medium text-ink flex-1 min-w-0 truncate">{l.title}</span>
+              <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + (l.status === 'live' ? 'bg-emerald-50 text-emerald-700' : l.status === 'unset' ? 'bg-amber-100 text-amber-800' : 'bg-app text-muted')}>
+                {l.status === 'unset' ? 'no passcode yet' : l.status}
+              </span>
+              <a href={'/links?q=' + encodeURIComponent(l.code)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">Manage</a>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="border-t border-line pt-4">
-        <label className="text-xs uppercase tracking-wide text-muted">Shared password</label>
-        <div className="flex gap-2 mt-1 max-w-md">
-          <input value={draft} onChange={e => setDraft(e.target.value)} placeholder={pwSet && !password ? 'Set (hidden) — type a new one to replace it' : 'Password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-          <button onClick={save} disabled={busy || draft.trim().length < 4 || draft === password} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Update'}</button>
-        </div>
-        {msg && <div className="text-xs text-emerald-700 mt-2">{msg}</div>}
-        {err && <div className="text-xs text-red-600 mt-2">{err}</div>}
-      </div>
-      <div className="border-t border-line pt-4 mt-4">
-        <label className="text-xs uppercase tracking-wide text-muted">Marketing partner link &mdash; separate password</label>
-        <p className="text-xs text-muted mt-0.5 mb-2">Direct-booking performance for marketing partners. Booking numbers only &mdash; guest names are shortened and this password does not open any ops board. {mktSet ? 'Currently SET.' : 'Not set yet — the link stays locked until you set one.'}</p>
-        <div className="space-y-2 mb-3">
-          {mktLinks.map(l => { const href = l.path || '/report/' + l.v; const url = origin + href; return (
-            <div key={l.v} className="flex flex-wrap items-center gap-2 gap-y-1 text-sm">
-              <span className="w-full sm:w-44 shrink-0 font-medium text-ink">{l.label}</span>
-              <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
-              <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
-            </div>
-          )})}
-        </div>
-        <div className="flex gap-2 mt-1 max-w-md">
-          <input value={mktDraft} onChange={e => setMktDraft(e.target.value)} placeholder={mktSet ? (mktCurrent ? 'Marketing password' : 'Set (hidden) — type a new one to replace it') : 'Create marketing password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-          <button onClick={saveMkt} disabled={mktBusy || mktDraft.trim().length < 4 || mktDraft.trim() === mktCurrent} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{mktBusy ? 'Saving…' : mktSet ? 'Update' : 'Set'}</button>
-        </div>
-        {mktMsg && <div className="text-xs text-emerald-700 mt-2">{mktMsg}</div>}
-        {mktErr && <div className="text-xs text-red-600 mt-2">{mktErr}</div>}
-      </div>
-      <div className="border-t border-line pt-4 mt-4">
-        <label className="text-xs uppercase tracking-wide text-muted">Owner statement audit &mdash; separate password</label>
-        <p className="text-xs text-muted mt-0.5 mb-2">The monthly statement review board. Reviewers on this link can mark rows and comment but see nothing else in the app. {oaSet ? 'Currently SET.' : 'Not set yet — the link stays locked until you set one.'}</p>
-        <div className="space-y-2 mb-3">
-          {oaLinks.map(l => { const href = l.path || '/report/' + l.v; const url = origin + href; return (
-            <div key={l.v} className="flex flex-wrap items-center gap-2 gap-y-1 text-sm">
-              <span className="w-full sm:w-44 shrink-0 font-medium text-ink">{l.label}</span>
-              <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
-              <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
-            </div>
-          )})}
-        </div>
-        <div className="flex gap-2 mt-1 max-w-md">
-          <input value={oaDraft} onChange={e => setOaDraft(e.target.value)} placeholder={oaSet ? (oaCurrent ? 'Audit password' : 'Set (hidden) — type a new one to replace it') : 'Create audit password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-          <button onClick={saveOa} disabled={oaBusy || oaDraft.trim().length < 4 || oaDraft.trim() === oaCurrent} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{oaBusy ? 'Saving…' : oaSet ? 'Update' : 'Set'}</button>
-        </div>
-        {oaMsg && <div className="text-xs text-emerald-700 mt-2">{oaMsg}</div>}
-        {oaErr && <div className="text-xs text-red-600 mt-2">{oaErr}</div>}
-      </div>
-      <div className="border-t border-line pt-4 mt-4">
-        <label className="text-xs uppercase tracking-wide text-muted">Botanica report &mdash; separate password</label>
-        <p className="text-xs text-muted mt-0.5 mb-2">The hotel GM&rsquo;s performance report carries owner money, so it no longer opens on the vendor password the cleaning crews hold. {botSet ? 'Currently SET.' : 'Not set yet — the link stays locked until you set one.'}</p>
-        <div className="space-y-2 mb-3">
-          {botLinks.map(l => { const href = l.path || '/report/' + l.v; const url = origin + href; return (
-            <div key={l.v} className="flex flex-wrap items-center gap-2 gap-y-1 text-sm">
-              <span className="w-full sm:w-44 shrink-0 font-medium text-ink">{l.label}</span>
-              <a href={href} target="_blank" rel="noreferrer" className="flex-1 truncate text-brand-600 hover:underline">{url}</a>
-              <button onClick={() => copy(l.v, url)} className="text-xs px-2 py-1 rounded-lg border border-line hover:bg-app">{copied === l.v ? 'Copied' : 'Copy'}</button>
-            </div>
-          )})}
-        </div>
-        <div className="flex gap-2 mt-1 max-w-md">
-          <input value={botDraft} onChange={e => setBotDraft(e.target.value)} placeholder={botSet ? 'Set (hidden) — type a new one to replace it' : 'Create Botanica report password'} className="flex-1 text-sm border border-line rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-          <button onClick={saveBot} disabled={botBusy || botDraft.trim().length < 4} className="text-sm font-medium px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">{botBusy ? 'Saving…' : botSet ? 'Update' : 'Set'}</button>
-        </div>
-        {botMsg && <div className="text-xs text-emerald-700 mt-2">{botMsg}</div>}
-        {botErr && <div className="text-xs text-red-600 mt-2">{botErr}</div>}
-      </div>
-      <div className="border-t border-line pt-4 mt-4">
         <label className="text-xs uppercase tracking-wide text-muted">Salato rules editing &mdash; separate password</label>
         <p className="text-xs text-muted mt-0.5 mb-2">Lets front-desk staff who don&rsquo;t sign into the app edit the Salato house &amp; building rules from the share link. Signed-in Stayboard users don&rsquo;t need it. {rpSet ? 'Currently SET.' : 'Not set yet — only signed-in users can edit rules until you set one.'}</p>
         <div className="flex gap-2 mt-1 max-w-md">
