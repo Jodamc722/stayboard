@@ -15,6 +15,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { isDepartureCleanName } from './breezeway'
+import { isTaskDone } from './task-categories'
 import { getEmployeeNames, nameMatchesRoster } from './homebase'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 
@@ -204,6 +205,11 @@ export async function rangeTasks(from: string, to: string): Promise<any[]> {
     // the replacement is its own row on the new date. Keeping both counted every moved clean
     // TWICE on this board: once on the day it was promised, once on the day it happened.
     if (String((t as any).status || '').toLowerCase() === 'deleted') continue
+    // ONLY COMPLETED WORK IS BILLABLE (Jon, 2026-09-18: "billable hours should only be completed").
+    // An open or in-progress task carried its rate and minutes onto the board and into the owner
+    // totals before anyone had finished it. It joins the month once Breezeway marks it done —
+    // still under the month it was scheduled in, so nothing is lost, only deferred.
+    if (!isTaskDone((t as any).status, (t as any).finished_at)) continue
     seen[id] = true
     out.push(t)
   }
