@@ -3714,6 +3714,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     unitName={String(((sec('listings').items || [])[0] || {}).name || 'Your unit')}
                     portalUrl={housePortalUrl(sec('guesty').portalUrl)}
                     ownerName={String(hero.title || sec('welcome').subtitle || '')}
+                    photos={(((sec('listings').items || [])[0] || {}).photos || []).slice(0, 3)}
                   />
                 </div>
                 <Foot label="Owner portal" />
