@@ -14,6 +14,7 @@ import {
   houseLine, houseRows, agendaStale, channelBodyStale, statementAlsoRowsStale, AGENDA_ROWS, HERO_HEADLINE,
   CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
   WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_BANDS_RETIRED_MARKS, RAMP_NOTE,
+  SECTION_HEAD, SECTION_SUB, SEASON_LABEL, houseAsk,
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
   houseBody, OVERVIEW_BODY, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS, COMPANY_STATS_RETIRED_MARK,
@@ -780,7 +781,7 @@ function AskBlock({ ask, live, set, t }: { ask: Any; live: boolean; set: (v: str
   const done = !!a.trim()
   return (
     <div className="pl-5" style={{ borderLeft: '2px solid ' + (done ? t.good : t.rule) }}>
-      <p className="text-[15.5px] font-bold leading-snug" style={{ color: t.ink }}>{ask.q}</p>
+      <p className="text-[15.5px] font-bold leading-snug" style={{ color: t.ink }}>{houseAsk(ask.q)}</p>
       {ask.hint ? <p className="text-[13px] mt-1 leading-relaxed" style={{ color: t.muted }}>{ask.hint}</p> : null}
       {live ? (
         <input
@@ -1158,6 +1159,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   // deck's own content. After this runs there is nothing left to substitute, every field reads
   // from storage, and edits behave like edits. It marks the deck dirty, which is honest -- the
   // document really did just change -- and it is idempotent, so it settles after one pass.
+  // Sections whose stored discussion questions still carry a retired wording.
+  const staleAsks = (cc: Any): Record<string, true> => {
+    const out: Record<string, true> = {}
+    for (const k of Object.keys(cc || {})) {
+      const as = ((cc as Any)[k] || {}).asks
+      if (Array.isArray(as) && as.some((a: Any) => a && houseAsk(a.q) !== String(a.q || ''))) out[k] = true
+    }
+    return out
+  }
   useEffect(() => {
     // Computed here rather than reusing the `isOnboarding` further down, which is declared after
     // this effect and would be a temporal-dead-zone reference.
@@ -1182,6 +1192,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       houseLine(g('welcome').body, WELCOME_BODY) !== (g('welcome').body || '') ||
       houseLine((g('team').support || {}).note, SUPPORT_NOTE) !== ((g('team').support || {}).note || '') ||
       seasonBodyStale(g('season').body) ||
+      houseLine(g('season').peakLabel, SEASON_LABEL) !== (g('season').peakLabel || '') ||
+      Object.keys(SECTION_HEAD).some(k => houseLine(g(k).headline, SECTION_HEAD[k]) !== (g(k).headline || '')) ||
+      Object.keys(SECTION_SUB).some(k => houseLine(g(k).subtitle, SECTION_SUB[k]) !== (g(k).subtitle || '')) ||
+      Object.keys(staleAsks(c)).length > 0 ||
       houseLine(g('checklist').headline, CHECKLIST_HEADLINE) !== (g('checklist').headline || '') ||
       houseLine(g('checklist').subtitle, CHECKLIST_SUBTITLE) !== (g('checklist').subtitle || '') ||
       houseRows<Any>(g('checklist').rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[]) !== g('checklist').rows ||
@@ -1215,6 +1229,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       if (tm2.support) tm2.support.note = houseLine(tm2.support.note, SUPPORT_NOTE)
       const sn = d.season || (d.season = {})
       if (seasonBodyStale(sn.body)) sn.body = SEASON_BODY
+      sn.peakLabel = houseLine(sn.peakLabel, SEASON_LABEL)
+      for (const k of Object.keys(SECTION_HEAD)) { const x = d[k] || (d[k] = {}); x.headline = houseLine(x.headline, SECTION_HEAD[k]) }
+      for (const k of Object.keys(SECTION_SUB)) { const x = d[k] || (d[k] = {}); x.subtitle = houseLine(x.subtitle, SECTION_SUB[k]) }
+      for (const k of Object.keys(d)) { const as = (d[k] || {}).asks; if (Array.isArray(as)) for (const a of as) if (a && a.q) a.q = houseAsk(a.q) }
       const cl = d.checklist || (d.checklist = {})
       cl.headline = houseLine(cl.headline, CHECKLIST_HEADLINE)
       cl.subtitle = houseLine(cl.subtitle, CHECKLIST_SUBTITLE)
@@ -2488,7 +2506,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           for (const x of askSecs) {
             if (hid(x.k)) continue
             const as: Any[] = Array.isArray(sec(x.k).asks) ? sec(x.k).asks : []
-            for (const a of as) if (!String(a.a || '').trim()) open.push({ label: x.label, q: a.q })
+            for (const a of as) if (!String(a.a || '').trim()) open.push({ label: x.label, q: houseAsk(a.q) })
           }
           const answered = askSecs.reduce((n, x) => n + (hid(x.k) ? 0 : (sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
           const totalAsks = answered + open.length
@@ -2526,8 +2544,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // HOUSE LINES THAT MOVED ON. Only the retired text verbatim is replaced, so a deck
           // whose headline was edited keeps the edit; see lib/onboarding-copy for why the test is
           // deliberately this blunt. Both of these used to assume the unit had not opened yet.
-          const HOUSE_HEAD: Record<string, typeof HERO_HEADLINE> = { checklist: CHECKLIST_HEADLINE, ramp: RAMP_HEADLINE }
-          const HOUSE_SUB: Record<string, typeof HERO_HEADLINE> = { checklist: CHECKLIST_SUBTITLE, ramp: RAMP_SUBTITLE }
+          const HOUSE_HEAD = SECTION_HEAD
+          const HOUSE_SUB = SECTION_SUB
           // The team line counts the cards rather than saying "four" — see lib/onboarding-copy.
           const teamCount = ((sec('team').people || []) as Any[]).length
           const Title = ({ k, dark, sub, rule, narrow }: { k: string; dark?: boolean; sub?: boolean; rule?: string; narrow?: boolean }) => (
@@ -2931,7 +2949,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         <path d={m.d} />
                       </svg>
                     ))}
-                    <span style={{ fontSize: 14, color: D.muted, maxWidth: '52ch' }}>+ Vrbo, Hopper, Blueground, Whimstay, Google Vacation Rentals — and the Expedia and Booking networks behind them</span>
+                    <span style={{ fontSize: 14, color: D.muted, maxWidth: '52ch' }}>+ Vrbo, Hopper, Blueground, Whimstay, Google Vacation Rentals</span>
                   </div>
                 </div>
                 <Foot label="Where it sells" dark />
@@ -3352,7 +3370,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           const seasonStale = seasonStored.length === 12 &&
             Math.max(0, ...seasonStored.map((m: Any) => Number(m.level) || 0)) <= 12
           const seasonShare = seasonStale ? SEASON_PEAK_SHARE : (sec('season').peakShare || '')
-          const seasonLabel = seasonStale ? SEASON_PEAK_LABEL : (sec('season').peakLabel || '')
+          const seasonLabel = seasonStale ? SEASON_PEAK_LABEL : houseLine(sec('season').peakLabel, SEASON_LABEL)
           // The paragraph makes the same claims in words, so it travels with them. On a stale
           // deck it still read "November through April... July and August are the floor",
           // printed under a chart banding December and dotting September.
@@ -3585,7 +3603,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         </div>
                         <div>
                           <p style={{ fontSize: 12, color: t.muted }}>Password</p>
-                          <p style={{ fontSize: 14.5, color: t.body, marginTop: 3 }}>You set it from the invite. We never hold it.</p>
+                          <p style={{ fontSize: 14.5, color: t.body, marginTop: 3 }}>Set from your invite email.</p>
                         </div>
                       </div>
                     </div>
@@ -3617,7 +3635,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div>
                     <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
                     <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>
-                      Your portal: the calendar, your own stay, the numbers
+                      Owner portal: calendar, owner stays, analytics
                     </p>
                   </div>
                   <p style={{ fontSize: 12.5, color: t.muted, whiteSpace: 'nowrap' }}>
@@ -3797,7 +3815,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         ) : null}
                       </div>
                       <p style={{ fontSize: 11, color: t.muted, paddingTop: 8, borderTop: '1px solid ' + t.rule }}>
-                        Example figures. Your statement carries every booking and every charge.
+                        Sample figures. Your statement lists every booking and charge.
                       </p>
                     </div>
                   </div>
@@ -3817,7 +3835,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div className="flex-1 min-h-0 flex flex-col justify-center">
                     <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 20 }} />
                     <p className="onb-h" style={{ fontSize: 34, color: D.ink, maxWidth: '24ch', lineHeight: 1.2 }}>
-                      Three rules decide everything on that statement.
+                      Three billing rules.
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 36, marginTop: 44 }}>
                       {hlRows.slice(0, 3).map((h: Any, i: number) => (
@@ -3861,7 +3879,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 <div className="flex flex-col h-full">
                   <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
                   <p className="onb-h" style={{ fontSize: 32, color: t.ink, maxWidth: '26ch', lineHeight: 1.2 }}>
-                    The lines owners ask about.
+                    Common statement questions.
                   </p>
                   {/* Two columns, content-height rows, scrolled rather than squeezed. No
                       gridTemplateRows here on purpose: this grid WANTS two auto rows, and pinning

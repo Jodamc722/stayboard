@@ -93,12 +93,12 @@ const KIND: Record<Kind, { fill: string; label: string; onDark: boolean }> = {
 type View = 'login' | 'dashboard' | 'properties' | 'calendar' | 'analytics' | 'report' | 'documents' | 'accounting' | 'help'
 
 const STEPS: { k: string; d: string; at: View[] }[] = [
-  { k: 'Sign in', d: 'Your own email and password at the address above. We never send you a code.', at: ['login'] },
-  { k: 'Your dashboard', d: 'What the portal opens on: how the last 30 days went across everything you own.', at: ['dashboard'] },
-  { k: 'My properties', d: 'Every unit you own. Open one to reach its calendar.', at: ['properties'] },
-  { k: 'The calendar', d: 'Green is a guest, blue is your own stay, amber is a request, grey is held by us. Tap any of them.', at: ['calendar'] },
-  { k: 'Book your own stay', d: 'The green button. Pick your nights, say how many are coming, create it.', at: ['calendar'] },
-  { k: 'Analytics', d: 'The year, and which of your units is earning what.', at: ['analytics'] },
+  { k: 'Sign in', d: 'Your email and password, at the address above.', at: ['login'] },
+  { k: 'Your dashboard', d: 'The last 30 days across all your units.', at: ['dashboard'] },
+  { k: 'My properties', d: 'Your units. Open one for its calendar.', at: ['properties'] },
+  { k: 'The calendar', d: 'Green: guest. Blue: your stay. Amber: request. Grey: held by Stay. Tap any for details.', at: ['calendar'] },
+  { k: 'Book your own stay', d: 'The green button. Choose nights and guests, then create.', at: ['calendar'] },
+  { k: 'Analytics', d: 'Year to date, by unit.', at: ['analytics'] },
 ]
 
 export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos }: Props) {
@@ -205,7 +205,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
                 <div style={{ textAlign: 'left', marginTop: 12 }}>
                   <p style={{ fontSize: 8, color: P.muted }}>Email</p>
                   <div style={{ border: '1px solid ' + P.line, borderRadius: 5, padding: '6px 8px', marginTop: 3, fontSize: 9, color: P.body, background: P.bg }}>
-                    the email we have on file for you
+                    your email on file
                   </div>
                   <p style={{ fontSize: 8, color: P.muted, marginTop: 8 }}>Password</p>
                   <div style={{ border: '1px solid ' + P.line, borderRadius: 5, padding: '6px 8px', marginTop: 3, fontSize: 9, color: P.muted, letterSpacing: 3, background: P.bg }}>
@@ -681,7 +681,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
           border: '1px solid ' + P.line, borderRadius: 6, padding: '5px 9px', cursor: 'pointer',
         }}>Start over</button>
         <p style={{ fontSize: 8, color: P.muted, lineHeight: 1.4, marginTop: 7 }}>
-          Illustration &mdash; figures and names are made up. The real portal is at {host}.
+          Demo with sample data. Live portal: {host}.
         </p>
       </div>
     </div>
