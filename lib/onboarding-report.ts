@@ -26,7 +26,7 @@ import { CHANNEL_BODY, CHANNEL_COUNT } from './channel-marks'
 import { STATEMENT_ALSO } from './statement-sample'
 import {
   AGENDA_ROWS, HERO_HEADLINE, CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
-  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL, teamSubtitle,
+  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL, teamSubtitle, WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_NOTE,
 } from './onboarding-copy'
 import 'server-only'
 import { getSetting } from './app-settings'
@@ -254,8 +254,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   // THE GREETING IS NOT A BRIEF. It is two sentences over a large photograph of their own unit,
   // read aloud in about fifteen seconds while everyone finishes joining the call. Everything that
   // used to be crammed in here is now section 4, where it belongs.
-  welcomeBody:
-    'This document is the call itself. We fill it in together as we talk, and it stays yours afterwards as the record of what we agreed.',
+  welcomeBody: WELCOME_BODY.current,
 
   overviewBody: OVERVIEW_BODY,
 
@@ -312,13 +311,8 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   // DRAFT DOCTRINE. Jon has the final word on this one — it is the part an owner will quote back
   // in February, so it belongs in the template where it can be rewritten once for everybody.
-  rampBands: [
-    { k: 'Days 1–30', v: 'Opening rate set below target to move the first bookings. Expect low occupancy and a rate you will not love. The goal is five completed stays and five reviews, not revenue.' },
-    { k: 'Days 31–60', v: 'Reviews start carrying placement. We begin closing the gap to market rate. Occupancy climbs faster than rate.' },
-    { k: 'Days 61–90', v: 'Enough history to price properly. This is the first month whose numbers mean anything, and the first owner report worth judging us on.' },
-  ],
-  rampNote:
-    'We would rather tell you this now than have you read month one as a failure. If month one looks like a normal month, we priced too high and left reviews on the table.',
+  rampBands: RAMP_BANDS,
+  rampNote: RAMP_NOTE.current,
 
   seasonBody: SEASON_BODY,
   // 65%, AND THE CURVE IN ./season-shape IS BUILT TO MATCH IT. Blending our own book with
@@ -354,7 +348,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   ],
 
   supportLabel: 'Support team',
-  supportNote: 'Anything that is not urgent, anything you would rather put in writing, and anything you want a record of. Watched every business day.',
+  supportNote: SUPPORT_NOTE.current,
   supportEmail: 'support@stay-hospitality.com',
 
   commsBody:

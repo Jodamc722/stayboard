@@ -62,4 +62,10 @@ export const SEASON_PEAK_LABEL = 'of the year\u2019s revenue lands December thro
  * statements, two of them contradicted by the picture above them.
  */
 export const SEASON_BODY =
-  'Your season is December through April, and it builds to a peak in March. That is when the demand is, that is when the rate is, and that is the window everything else in the year is preparing for. The year falls away from there through the summer; September is the floor, and the climb back starts in October.'
+  'December through April, peaking in March \u2014 that is where the demand and the rate are, and what the rest of the year is preparing for. Summer falls away; September is the floor, and the climb back starts in October.'
+/** Older paragraphs, by a phrase each one alone contained. A deck carrying one is repaired. */
+export const SEASON_BODY_RETIRED_MARKS = ['July and August are the floor', 'That is when the demand is, that is when the rate is']
+export function seasonBodyStale(body: unknown): boolean {
+  const s = String(body || '')
+  return !s.trim() || SEASON_BODY_RETIRED_MARKS.some(m => s.includes(m))
+}

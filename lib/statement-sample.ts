@@ -156,11 +156,11 @@ export function statementHasRows(st: unknown): boolean {
 // out of the rental line the owner receives. Left there, the owner would be paying the channel's
 // fee on a cleaning fee Stay keeps. The reimbursement puts that piece back.
 export const STATEMENT_ALSO: KV[] = [
-    { k: 'No cleaning line, no OTA fee line', v: 'You will not see either after a guest stay. We keep the cleaning fee and it pays for the turnover, and the channel’s commission is already out of your rental figure rather than shown again below it.' },
-  { k: 'Cleaning after your own stay', v: 'The one cleaning line you will ever see. When you use the unit yourself there is no guest fee covering the turnover, so that clean appears here at cost — no markup, same as any other material.' },
-    { k: 'Channel fee reimbursement', v: 'The channel charges its fee on the whole booking — the rent and the cleaning fee together — and the entire charge comes out of your rental line. Guesty cannot split it, so without this line you would be paying the fee on a cleaning fee we keep. We pay that part back to you: 15% of the cleaning fee.' },
+    { k: 'No cleaning line, no OTA fee line', v: 'Neither appears after a guest stay. We keep the cleaning fee and it pays for the turnover; the channel’s commission is already out of your rental figure.' },
+    { k: 'Cleaning after your own stay', v: 'The one cleaning line you will see. No guest fee covers that turnover, so it appears here at cost.' },
+    { k: 'Channel fee reimbursement', v: 'The channel takes its fee on rent and cleaning fee together, and Guesty cannot split it. We pay back the part charged on the cleaning fee we keep: 15% of it.' },
     { k: 'Revenue management', v: 'Appears only if you are on a revenue-management arrangement.' },
-    { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labeled with the month it belongs to.' },
+    { k: 'Adjustments', v: 'A cancellation, refund or late charge from a prior month, labeled with the month it belongs to.' },
 ]
 
 /**

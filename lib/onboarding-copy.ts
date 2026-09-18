@@ -37,8 +37,35 @@ export const RAMP_HEADLINE: CopyPair = {
 }
 
 export const RAMP_SUBTITLE: CopyPair = {
-  retired: ['A new listing has no reviews and no standing in any channel’s ranking.'],
-  current: 'It starts with no reviews and no standing in any channel’s ranking. If yours is already live, this is the curve you are on.',
+  retired: [
+    'A new listing has no reviews and no standing in any channel’s ranking.',
+    'It starts with no reviews and no standing in any channel’s ranking. If yours is already live, this is the curve you are on.',
+  ],
+  current: 'No reviews yet, no ranking yet. If yours is already live, this is the curve you are on.',
+}
+
+// Jon, 2026-09-18: "less wordy if possible, I can share more details on the call." The lines
+// below are the trimmed versions; each older one is retired by exact text or by a phrase it
+// alone contained, so decks already generated pick the short line up and edited ones are left.
+export const WELCOME_BODY: CopyPair = {
+  retired: ['This document is the call itself. We fill it in together as we talk, and it stays yours afterwards as the record of what we agreed.'],
+  current: 'We fill this in together on the call, and it stays yours afterwards.',
+}
+
+export const SUPPORT_NOTE: CopyPair = {
+  retired: ['Anything that is not urgent, anything you would rather put in writing, and anything you want a record of. Watched every business day.'],
+  current: 'Anything not urgent, or that you want in writing. Watched every business day.',
+}
+
+export const RAMP_BANDS_RETIRED_MARKS = ['Expect low occupancy and a rate you will not love', 'first owner report worth judging us on']
+export const RAMP_BANDS: { k: string; v: string }[] = [
+  { k: 'Days 1–30', v: 'Opening rate below target to move the first bookings. Low occupancy, a rate you will not love. The goal is five stays and five reviews, not revenue.' },
+  { k: 'Days 31–60', v: 'Reviews start carrying placement. We close the gap to market rate; occupancy climbs faster than rate.' },
+  { k: 'Days 61–90', v: 'Enough history to price properly. The first month whose numbers mean anything.' },
+]
+export const RAMP_NOTE: CopyPair = {
+  retired: ['We would rather tell you this now than have you read month one as a failure. If month one looks like a normal month, we priced too high and left reviews on the table.'],
+  current: 'If month one looks like a normal month, we priced too high and left reviews on the table.',
 }
 
 /** The stored line, unless it is empty or is verbatim a retired default. */
@@ -54,7 +81,7 @@ export function houseLine(stored: unknown, pair: CopyPair): string {
 // the team. Half-replacing a list that changed length would read worse than either version.
 // Two marks: the original agenda promised to "score" the listing; the next one counted the team
 // as four, which stopped being true the day the editor grew an "Add someone" button.
-export const AGENDA_RETIRED_MARKS = ['score it, and fix the weak parts', 'The four people who run your unit, what each']
+export const AGENDA_RETIRED_MARKS = ['score it, and fix the weak parts', 'The four people who run your unit, what each', 'what each of them owns, and the direct lines']
 
 /** True when a stored agenda is the retired one and should be replaced wholesale. */
 export function agendaStale(rows: unknown): boolean {
@@ -64,12 +91,12 @@ export function agendaStale(rows: unknown): boolean {
 
 /** The meeting, in order. Lives here so the staleness check and the default share one list. */
 export const AGENDA_ROWS: { k: string; v: string }[] = [
-    { k: 'Your team', v: 'The people who run your unit, what each of them owns, and the direct lines.' },
-    { k: 'Your listing', v: 'We open it live on every channel and go through it together — the photos, the words, the amenities.' },
-    { k: 'Your owner portal', v: 'Your own Guesty login: the live calendar, your statements, and the spend you approve.' },
-    { k: 'Revenue & strategy', v: 'Rate or occupancy, the season you are in, and what we are optimizing for month to month.' },
-    { k: 'What to expect from us', v: 'What we handle without you, what reaches you, and how billables work.' },
-    { k: 'What happens next', v: 'Anything still open on the unit, who owns it, and by when.' },
+    { k: 'Your team', v: 'Who runs your unit, and their direct lines.' },
+    { k: 'Your listing', v: 'The live listing, together — photos, words, amenities.' },
+    { k: 'Your owner portal', v: 'Your Guesty login: calendar, statements, the spend you approve.' },
+    { k: 'Revenue & strategy', v: 'Rate or occupancy, your season, and what we optimize for each month.' },
+    { k: 'What to expect from us', v: 'What we handle, what reaches you, how billables work.' },
+    { k: 'What happens next', v: 'What is still open, who owns it, and by when.' },
 ]
 
 // ── THE HOUSE LISTS, AND THE PHRASE THAT DATES EACH ONE ─────────────────────
@@ -86,20 +113,21 @@ export const AGENDA_ROWS: { k: string; v: string }[] = [
 // such owner exists today (no stored approval limits), and regenerating fixes it; the
 // alternative -- leaving old decks promising that a departure clean is NEVER billed, three
 // months before their first owner-stay statement says otherwise -- is the worse failure.
-export const MONEY_RULES_RETIRED_MARK = 'Never billed to you. The guest'
+export const MONEY_RULES_RETIRED_MARK = ['Never billed to you. The guest', 'that is our problem, not a line on your statement']
 // The mark must appear in the RETIRED list and NOT in the current one, or the repair fires
 // forever and no edit on this slide ever survives. 'the blocks you asked us to hold' was the old
 // calendar row and is gone from the new one; 'Every billed line traces to a job' -- my first
 // choice -- appears in both, which would have made this permanent.
-export const PORTAL_ITEMS_RETIRED_MARK = 'the blocks you asked us to hold'
+export const PORTAL_ITEMS_RETIRED_MARK = ['the blocks you asked us to hold', 'not a copy of it']
 export const CHECKLIST_RETIRED_MARK = 'W-9 and banking details for payouts'
 
 /** The stored rows, unless they are empty or carry `mark` -- in which case the house list. */
-export function houseRows<T>(stored: unknown, mark: string, current: T[]): T[] {
+export function houseRows<T>(stored: unknown, mark: string | string[], current: T[]): T[] {
   if (!Array.isArray(stored) || !stored.length) return current
+  const marks = Array.isArray(mark) ? mark : [mark]
   const hit = stored.some(r => {
     const o = (r || {}) as Record<string, unknown>
-    return [o.k, o.v, o.item].some(x => String(x || '').includes(mark))
+    return [o.k, o.v, o.item].some(x => marks.some(m => String(x || '').includes(m)))
   })
   return hit ? current : (stored as T[])
 }
@@ -113,23 +141,21 @@ export const CLEANS_HIGHLIGHT: CopyPair = {
 
 export const MONEY_RULES: { k: string; v: string }[] = [
     // THE OWNER STAY IS THE ONE EXCEPTION AND IT HAS TO BE STATED HERE (Jon, 2026-09-18:
-    // "owners will be charged a cleaning fee post stay"). Said as a flat "never billed to you",
-    // this rule is contradicted by the owner's own first statement after they use the unit --
-    // which is the worst possible place to discover a carve-out we knew about all along.
-    { k: 'Departure cleans', v: 'Never billed to you after a guest stay. The guest’s cleaning fee pays for the turnover, and if a clean costs us more than the fee collected that is our problem, not a line on your statement. The one exception is your own stay: there is no guest fee to cover it, so that clean is billed to you at cost.' },
-    { k: 'Labor', v: '$40 an hour, or a flat price agreed for a defined job. Time is the technician’s actual clock in and out on the task, not an estimate.' },
-    { k: 'Parts and supplies', v: 'At cost. No markup. A $19 faucet cartridge is $19 on your statement.' },
-    { k: 'Guest-caused damage', v: 'Billed to the guest or their channel, not to you. You only see it if we fail to recover it, and then you see why.' },
-    { k: 'Spending under $300', v: 'We handle it and it appears on your next statement. This threshold is yours to set — raise it, lower it, or set it to zero and see every item first.' },
-    { k: 'Spending over $300', v: 'It goes to your order sheet before anyone spends anything, with photos, the reason, and usually three options. Nothing over your limit gets bought without your yes.' },
-    { k: 'Emergencies', v: 'Active leak, no A/C, lockout, anything unsafe with a guest in house — we act first and tell you immediately. This is the one exception to the rule above, and we would rather explain a $600 invoice than a flooded unit.' },
+    // "owners will be charged a cleaning fee post stay").
+    { k: 'Departure cleans', v: 'Never billed to you after a guest stay — the guest’s cleaning fee pays for the turnover. The one exception is your own stay: no guest fee covers it, so that clean is billed at cost.' },
+    { k: 'Labor', v: '$40 an hour, or a flat price agreed for a defined job. Time is the technician’s actual clock, not an estimate.' },
+    { k: 'Parts and supplies', v: 'At cost, no markup. A $19 cartridge is $19 on your statement.' },
+    { k: 'Guest-caused damage', v: 'Billed to the guest or their channel. You only see it if we fail to recover it.' },
+    { k: 'Spending under $300', v: 'We handle it; it appears on your next statement. The threshold is yours to set.' },
+    { k: 'Spending over $300', v: 'Goes to your order sheet first, with photos, the reason and options. Nothing over your limit is bought without your yes.' },
+    { k: 'Emergencies', v: 'Active leak, no A/C, lockout, anything unsafe with a guest in house — we act first and tell you immediately.' },
 ]
 
 export const PORTAL_ITEMS: { k: string; v: string }[] = [
-    { k: 'Your calendar, and your own stays', v: 'Every reservation as it lands and the nights already sold — the same calendar we work from, not a copy of it. Block your own dates here and they become an owner stay that nothing can book over. Tell us early; the clean after an owner stay is billed to you at cost, since no guest fee covers it.' },
-    { k: 'Your monthly report', v: 'Occupancy, rate, revenue, what we did and what is booked ahead. One link, always the same link \u2014 and it comes from us, separately from the portal.' },
-    { k: 'Your order sheet', v: 'Anything we want to buy for the unit, with photos, the reason, price options, and four buttons: approve, I will supply it, not now, no.' },
-    { k: 'Your statement', v: 'Rental, less commission, less anything billed that month, equals what hits your account. Every billed line traces to a job with a date and a photo.' },
+    { k: 'Your calendar, and your own stays', v: 'Every reservation as it lands — the same calendar we work from. Block your own dates and they become an owner stay nothing can book over. The clean after an owner stay is billed at cost.' },
+    { k: 'Your monthly report', v: 'Occupancy, rate, revenue, what we did and what is booked ahead. One link, always the same link, sent by us.' },
+    { k: 'Your order sheet', v: 'Anything we want to buy for the unit: photos, reason, price options, and four buttons — approve, I will supply it, not now, no.' },
+    { k: 'Your statement', v: 'Rental, less commission, less anything billed that month, equals what hits your account. Every billed line traces to a job.' },
 ]
 
 export const CHECKLIST_ROWS: { item: string; who: string; by: string }[] = [
@@ -175,6 +201,7 @@ export const CHANNEL_BODY_RETIRED_MARKS = [
   'published everywhere, reconciled back to one place',  // the original one-liner
   'nine channel connections',                            // the 200+ version, retired same day
   'Being on thirty is what turns a slow Tuesday',        // the long template body
+  'Your calendar is one calendar',                       // the 2026-09-18 body, trimmed same day
 ]
 
 export const STATEMENT_ALSO_RETIRED_MARKS = [
@@ -182,6 +209,8 @@ export const STATEMENT_ALSO_RETIRED_MARKS = [
   'passing through to us',                               // the "Cleaning fee" row owners never see
   'shown so the rental line reads as a real number',     // reimbursement described as the OTA cut
   'Always labelled with the month',                      // British spelling, 2026-09-18
+  'You will not see either after a guest stay',          // long version, trimmed 2026-09-18
+  'Always labeled with the month',
 ]
 
 const hasMark = (text: unknown, marks: string[]): boolean => {
@@ -211,10 +240,10 @@ export function statementAlsoRowsStale(rows: unknown): boolean {
 // Matched on a phrase rather than the whole paragraph: the stored text is the evaluated string,
 // newlines and all, and pinning a repair to 300 characters of prose means it stops working the
 // first time someone fixes a comma.
-export const OVERVIEW_BODY_RETIRED_MARK = 'in Miami and Broward end to end'
+export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'not a marketplace of contractors we hope shows up']
 export const OVERVIEW_BODY =
-  'Stay Hospitality runs short-term rentals in Miami, Broward and West Palm Beach end to end: the listing and its pricing, the guest from inquiry to review, the turnover, and the maintenance in between. Housekeeping, maintenance and guest care are our own people on our own payroll \u2014 not a marketplace of contractors we hope shows up.\n\n' +
-  'What that buys you is a single accountable line. One team that knows your unit, one system every number comes out of, and one statement a month you can trace back to the job that caused it.'
+  'Stay Hospitality runs short-term rentals in Miami, Broward and West Palm Beach end to end \u2014 listing, pricing, guests, turnovers and maintenance. Housekeeping, maintenance and guest care are our own people, on our own payroll.\n\n' +
+  'One team that knows your unit, one system every number comes from, and one statement a month you can trace to the job behind it.'
 
 export const COMPANY_STATS_RETIRED_MARK = 'Miami & Broward'
 export const COMPANY_STATS: { k: string; v: string }[] = [
@@ -225,10 +254,10 @@ export const COMPANY_STATS: { k: string; v: string }[] = [
 ]
 
 /** The stored paragraph, unless it is empty or still carries `mark`. */
-export function houseBody(stored: unknown, mark: string, current: string): string {
+export function houseBody(stored: unknown, mark: string | string[], current: string): string {
   const s = String(stored || '')
   if (!s.trim()) return current
-  return s.includes(mark) ? current : s
+  return (Array.isArray(mark) ? mark : [mark]).some(m => s.includes(m)) ? current : s
 }
 
 // ── THE PORTAL, AS OUR ACCOUNT ACTUALLY HAS IT ──────────────────────────────
