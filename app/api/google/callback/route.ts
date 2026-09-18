@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAdmin } from '@/lib/access'
+import { setGoogleReadGrant } from '@/lib/google-read'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,13 +56,24 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* fall through to app login */ }
   const storeAs = googleEmail || String(user.email).toLowerCase()
-  const wanted = String(sp.get('state') || '').trim().toLowerCase()
+  // state is "mailbox;scopes=read" (either part optional) — see app/api/google/auth.
+  const stateParts = String(sp.get('state') || '').trim().toLowerCase().split(';').filter(Boolean)
+  const wanted = stateParts.find(p => /@/.test(p)) || ''
+  const wantedRead = stateParts.indexOf('scopes=read') >= 0
   const { error } = await supabaseAdmin().from('google_tokens').upsert({
     user_email: storeAs,
     refresh_token: d.refresh_token,
     updated_at: new Date().toISOString(),
   })
   if (error) return page('Could not save the Google connection (run migration 012_google_tokens.sql?).')
+  // Eve's read consent: record which read scopes Google actually granted (a person can untick
+  // them on the consent screen), keyed to the account that authorized. Ingest is a later step.
+  if (wantedRead) {
+    const grantedScopes = String(d.scope || '').split(/\s+/).filter(Boolean)
+    try { await setGoogleReadGrant(storeAs, grantedScopes, String(user.email).toLowerCase()) } catch { /* the token is saved; the flag is cosmetic */ }
+    const readOk = grantedScopes.some(s => /\.readonly$/.test(s))
+    if (!readOk) return page('Connected ' + storeAs + ', but the read permissions were not granted. Connect again and leave the read boxes ticked.')
+  }
   // If they meant to connect support@ but authorized a personal account, say so — the drafts
   // button would keep failing and nothing on screen would explain why.
   if (wanted && googleEmail && wanted !== googleEmail) {

@@ -36,6 +36,7 @@ import { scorecard, createRecommendation } from './recommendations'
 import { askQuestion, retireTemplateQuestions } from './questions'
 import { METRIC_BY_KEY } from './metrics'
 import { todayET, shiftDay, lc } from './ctx'
+import { agentAllowed } from './agent-mode'
 
 export type ReviewTrigger = 'weekly' | 'manual'
 export type ReviewArea = 'operations' | 'checklist' | 'app' | 'guest' | 'money' | 'people'
@@ -467,9 +468,11 @@ export async function runReview(opts: { trigger: ReviewTrigger; focus?: string; 
     if (!error) id = (data as any)?.id || null
   } catch { /* the review still returns; only the history is lost */ }
 
-  // Each plan becomes a recommendation the grader can measure.
+  // Each plan becomes a recommendation the grader can measure — unless Agent mode has the ledger
+  // at observe, in which case the review is still written but nothing is filed for a decision.
   let plans = 0
-  for (const p of body.plans) {
+  const recGate = await agentAllowed('recommendation')
+  for (const p of (recGate.mode === 'observe' ? [] : body.plans)) {
     const metric = metricFor(p)
     const detail = [
       `PROBLEM: ${p.problem}`, `CHANGE: ${p.change}`, `EXPECTED: ${p.expected_effect}`, `COST: ${p.cost}`,

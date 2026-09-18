@@ -24,6 +24,7 @@ import { doorCodePolicy } from '@/lib/access'
 import { postDoorCodeApproval } from './approvals'
 import { runAudit, listAudits } from './audit'
 import { askQuestion } from './questions'
+import { agentAllowed, recordAgentAction } from './agent-mode'
 
 const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 // What guesty_live may read with a raw path (first segment). Objects Eve already reasons about.
@@ -218,6 +219,12 @@ export const CORE_TOOLS: EveTool[] = [
     }, ['text']),
     run: async (input, ctx) => {
       const kinds = (MEMORY_KINDS as readonly string[]).join('|')
+      // Agent mode: memory_rule at rung 0 = she does not write to her own notebook unprompted.
+      const gate = await agentAllowed('memory_rule')
+      if (gate.mode === 'observe') {
+        await recordAgentAction('memory_rule', { rung: gate.rung, allowed: false, mode: 'observe', reason: gate.reason, summary: String(input?.text || '').slice(0, 200), by: 'chat', actor: ctx.email, countAs: 'none' })
+        return { saved: false, note: 'Not stored — memory writes are switched off in Agent mode (Settings → Eve → Agent mode). Say it to Jon; he can teach you directly.' }
+      }
       const res = await saveMemory({
         text: input?.text, kind: input?.kind, why: input?.why, scope: input?.scope,
         // `_source` / `_maxWeight` are stamped by run.ts for a Slack turn (never by the model in a
@@ -301,6 +308,11 @@ export const CORE_TOOLS: EveTool[] = [
       expect_direction: S.str, expect_pct: S.num, measure_in_days: S.num,
     }, ['title', 'metric']),
     run: async (input, ctx) => {
+      const gate = await agentAllowed('recommendation')
+      if (gate.mode === 'observe') {
+        await recordAgentAction('recommendation', { rung: gate.rung, allowed: false, mode: 'observe', reason: gate.reason, summary: String(input?.title || '').slice(0, 200), by: 'chat', actor: ctx.email, countAs: 'none' })
+        return { logged: false, note: 'Not logged — the recommendation ledger is switched off in Agent mode. Give the advice in words.' }
+      }
       const res = await createRecommendation({
         title: input?.title, detail: input?.detail, scope: input?.scope, metric: input?.metric,
         expect_direction: input?.expect_direction, expect_pct: input?.expect_pct,
@@ -369,8 +381,22 @@ export const CORE_TOOLS: EveTool[] = [
 
       // WHAT HAPPENS NOW IS THE PERSON'S SETTING, NOT EVE'S CHOICE (Jon, 2026-08-26). requestDoorCode
       // owns that decision for every entry point; this tool only reports what it did.
-      const policy = doorCodePolicy(ctx.access)
+      //
+      // AGENT MODE (door_code_release, welded at rung 2). A person set to Direct is their own
+      // approver — that entitlement is Jon's standing yes, so it still releases and is logged. OFF,
+      // or the rung set below 2, and Direct is downgraded to Ask: parked, admin releases in Settings.
+      const gate = await agentAllowed('door_code_release')
+      let policy = doorCodePolicy(ctx.access)
+      if (policy === 'direct' && gate.mode !== 'propose') {
+        policy = 'ask'
+        out.agent_mode_note = `Direct release is suspended (${gate.reason}); the request is parked for an admin instead.`
+      }
       const outcome = await requestDoorCode(c, { email: ctx.email, reason: input?.reason, policy })
+      await recordAgentAction('door_code_release', {
+        rung: gate.rung, allowed: outcome.kind === 'released', mode: outcome.kind === 'released' ? 'act' : outcome.kind === 'parked' ? 'propose' : 'observe',
+        reason: outcome.kind === 'released' ? `policy: direct (standing entitlement); ${gate.reason}` : outcome.kind === 'parked' ? `parked for approval; ${gate.reason}` : `${outcome.kind}: ${(outcome as any).message || ''}`.slice(0, 200),
+        summary: `door code for ${c.unit || input?.unit || 'unit'} — ${c.verdict}`, ref: (outcome as any).requestId || null, by: 'chat', actor: ctx.email, countAs: outcome.kind === 'released' ? 'action' : 'none',
+      })
 
       if (outcome.kind === 'denied') { out.release = outcome.message; return out }
       if (outcome.kind === 'error') { out.release = 'The check passed, but: ' + outcome.message; return out }

@@ -45,6 +45,7 @@ import { listQuestions, answerQuestion } from './questions'
 import { listAudits, decideAudit } from './audit'
 import { saveMemory } from './memory'
 import { pendingDrafts, sendApproved, declineDraft } from './ralph'
+import { agentAllowed, recordAgentAction, saveDraft, executeProposal, rejectProposal } from './agent-mode'
 
 export const ASK_SETTINGS_KEY = 'eve_ask'
 
@@ -93,7 +94,9 @@ export async function askSettings(): Promise<AskSettings> {
 // envelope rather than having an approval flow of its own — the whole point of one envelope is that
 // every new thing Eve wants permission for arrives the same way, in the same place, with the same
 // budget, instead of each feature inventing its own way to interrupt somebody.
-export type AskType = 'question' | 'finding' | 'ralph'
+// 'action' is a proposal from agent mode (lib/eve/agent-mode.ts proposeAction) — something Eve
+// wanted to DO and was told to ask first. Same envelope, same reply path: "yes" executes it.
+export type AskType = 'question' | 'finding' | 'ralph' | 'action'
 
 export type AskItem = {
   type: AskType
@@ -249,7 +252,7 @@ export async function recipients(): Promise<Recipient[]> {
 
 // ---- Sending -------------------------------------------------------------------------------------
 
-const ICON: Record<AskType, string> = { finding: '🔧', question: '🤔', ralph: '🤝' }
+const ICON: Record<AskType, string> = { finding: '🔧', question: '🤔', ralph: '🤝', action: '🤖' }
 
 /**
  * Send one item and remember exactly which Telegram message carried it. That message id is the
@@ -258,8 +261,17 @@ const ICON: Record<AskType, string> = { finding: '🔧', question: '🤔', ralph
  */
 async function deliverOne(to: Recipient, item: AskItem): Promise<boolean> {
   const text = `${ICON[item.type]} **${item.title}**\n\n${item.body}`
+  // AGENT MODE GATE. A Telegram ask is a message leaving the app. OFF, or the ask budget spent,
+  // and it is filed as a draft instead of sent — visible in Settings → Eve → Agent mode, not lost.
+  const gate = await agentAllowed('telegram_ask', { ask: true })
+  if (gate.mode === 'observe' || gate.mode === 'draft') {
+    if (gate.mode === 'draft') await saveDraft({ action: 'telegram_ask', summary: `${item.type}: ${item.title}`, exec: { chat_id: to.chatId, text }, why: gate.reason, by: 'cron:eve-ask', actor: to.email })
+    else await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: false, mode: 'observe', reason: gate.reason, summary: item.title, by: 'cron:eve-ask', countAs: 'none' })
+    return false
+  }
   const res = await sendMessage(to.chatId, text)
   if (!res.ok) return false
+  await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: true, mode: gate.mode, reason: gate.reason, summary: `${item.type}: ${item.title}`, ref: item.ref, by: 'cron:eve-ask', actor: to.email, countAs: 'ask' })
   const messageId = Number((res as any)?.result?.message_id) || null
   try {
     await db().from('eve_actions').insert({
@@ -343,9 +355,10 @@ export async function findAsk(chatId: string | number, replyToMessageId?: number
       if (plausible && recent && Date.now() - Date.parse(recent.created_at) < 30 * 60_000) row = recent
     }
     if (!row) return null
+    const t = String(row.payload?.type || '')
     return {
       id: String(row.id),
-      type: (row.payload?.type === 'finding' ? 'finding' : 'question'),
+      type: (t === 'finding' || t === 'ralph' || t === 'action') ? (t as AskType) : 'question',
       ref: String(row.payload?.ref || ''),
       email: String(row.created_by || ''),
     }
@@ -400,6 +413,16 @@ export async function resolveAsk(binding: AskBinding, reply: string, by: string)
     return res.ok
       ? `Sent to Ralphbot. I'll record whatever he says against that question — and I won't reply to him; if his answer raises something, I'll come back to you with it first.`
       : `I couldn't send it: ${res.error}`
+  }
+
+  // An agent-mode proposal. Same rule as Ralphbot: only a clear yes does anything.
+  if (binding.type === 'action') {
+    if (!AFFIRMATIVE.test(text)) {
+      await rejectProposal(binding.id, by, text)
+      return `Dropped — I won't do that.`
+    }
+    const res = await executeProposal(binding.id, by)
+    return res.ok ? `Done — ${res.done}. It's on my log.` : `I couldn't: ${res.error}`
   }
 
   if (binding.type === 'question') {

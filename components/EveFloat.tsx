@@ -50,6 +50,9 @@ export function EveFloat() {
   const [speak, setSpeak] = useState(false)
   const [listening, setListening] = useState(false)
   const [micOk, setMicOk] = useState(false)
+  // Agent mode pill: null until known. Re-read each time the panel opens, so an OFF flipped in
+  // Settings a moment ago shows here without a reload.
+  const [agentOn, setAgentOn] = useState<boolean | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const boxRef = useRef<HTMLTextAreaElement>(null)
   const recRef = useRef<any>(null)
@@ -58,6 +61,12 @@ export function EveFloat() {
   useEffect(() => { setMsgs(loadStored()) }, [])
   useEffect(() => { try { sessionStorage.setItem(STORE, JSON.stringify(msgs.slice(-40))) } catch { /* full */ } }, [msgs])
   useEffect(() => { if (open) { endRef.current?.scrollIntoView({ behavior: 'smooth' }); } }, [open, msgs, busy])
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    fetch('/api/eve/agent?pill=1').then(r => r.json()).then(d => { if (alive && d && typeof d.enabled === 'boolean') setAgentOn(d.enabled) }).catch(() => {})
+    return () => { alive = false }
+  }, [open])
 
   // Speech recognition, where the browser has it (Safari on iOS and Chrome both do). Absent
   // elsewhere, so the mic button only renders once we know it exists rather than failing on tap.
@@ -173,6 +182,12 @@ export function EveFloat() {
           <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-line bg-app/60 flex-shrink-0">
             <Sparkles size={15} className="text-brand-600" />
             <span className="text-sm font-semibold text-ink">Eve</span>
+            {agentOn != null && (
+              <span title={agentOn ? 'Agent mode is ON — she acts inside the fence set in Settings → Eve → Agent mode' : 'Agent mode is OFF — she observes and drafts only'}
+                className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border ${agentOn ? 'bg-[#E3F4EC] text-[#0F7B52] border-[#BFE5D2]' : 'bg-app text-muted border-line'}`}>
+                {agentOn ? 'agent ON' : 'agent OFF'}
+              </span>
+            )}
             <span className="text-[11px] text-muted hidden sm:inline">ops · money · quality · labor · guests</span>
             <div className="ml-auto flex items-center gap-0.5">
               <button onClick={() => { const n = !speak; setSpeak(n); if (!n && typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel() }}

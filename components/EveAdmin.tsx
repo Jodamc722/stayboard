@@ -5,10 +5,12 @@
 // head: everything she believes (editable, deletable, reweighable), how she sounds, what she has
 // recommended and how those calls actually graded, and a button to make her learn RIGHT NOW.
 import { useState, useEffect, useCallback } from 'react'
-import { Brain, Mic, Compass, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen, Sparkles } from 'lucide-react'
+import { Brain, Mic, Compass, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen, Sparkles, Power, GraduationCap } from 'lucide-react'
 import { TelegramAdmin } from '@/components/TelegramAdmin'
 import { EveDocsAdmin } from '@/components/EveDocsAdmin'
 import { EveReviewAdmin } from '@/components/EveReviewAdmin'
+import { EveAgentAdmin } from '@/components/EveAgentAdmin'
+import { EveLearningAdmin } from '@/components/EveLearningAdmin'
 
 type Memory = {
   id: string; kind: string; text: string; why: string | null; scope: string; weight: number
@@ -30,17 +32,19 @@ const card = 'bg-white border border-line rounded-2xl shadow-soft'
 const input = 'w-full text-sm text-ink bg-app border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200'
 
 export function EveAdmin({ canEdit }: { canEdit: boolean }) {
-  const [tab, setTab] = useState<'review' | 'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'>('review')
+  const [tab, setTab] = useState<'agent' | 'learning' | 'review' | 'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'>('agent')
   return (
     <div>
-      <div className="flex items-center gap-1 mb-3 border-b border-line">
-        {([['review', 'Review', Sparkles], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send], ['docs', 'Library', BookOpen]] as const).map(([k, label, Icon]) => (
+      <div className="flex items-center gap-1 mb-3 border-b border-line overflow-x-auto">
+        {([['agent', 'Agent mode', Power], ['learning', 'Learning', GraduationCap], ['review', 'Review', Sparkles], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send], ['docs', 'Library', BookOpen]] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors ${tab === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
             <Icon size={13} /> {label}
           </button>
         ))}
       </div>
+      {tab === 'agent' && <EveAgentAdmin canEdit={canEdit} />}
+      {tab === 'learning' && <EveLearningAdmin canEdit={canEdit} />}
       {tab === 'review' && <EveReviewAdmin canEdit={canEdit} />}
       {tab === 'memory' && <EveMemoryAdmin canEdit={canEdit} />}
       {tab === 'voice' && <EveVoiceAdmin canEdit={canEdit} />}

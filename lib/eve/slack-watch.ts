@@ -37,6 +37,7 @@ import { nameMatches } from '@/lib/person-name'
 import { saveMemory } from './memory'
 import { askQuestion } from './questions'
 import { aiFetch } from '@/lib/ai-usage'
+import { agentAllowed, stepDown } from './agent-mode'
 
 export const WATCH_KEY = 'eve_slack_watch'
 
@@ -417,7 +418,9 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
 
     // Facts → memory, at a weight below what a document says (7) and well below what Jon says (8).
     // saveMemory dedupes, so the same fact overheard twice reinforces rather than duplicates.
-    for (const f of (Array.isArray(res.facts) ? res.facts : []).slice(0, 6)) {
+    // Agent mode: memory_rule at rung 0 means she stops learning from rooms on her own.
+    const memGate = await agentAllowed('memory_rule')
+    for (const f of (memGate.mode === 'observe' ? [] : (Array.isArray(res.facts) ? res.facts : [])).slice(0, 6)) {
       const text = clean(f?.text).slice(0, 400)
       if (!text || /\$\s?\d|\b\d{4,6}\b/.test(text)) continue   // no money, nothing code-shaped
       const r = await saveMemory({ text, kind: ['rule', 'insight', 'person', 'issue', 'decision'].includes(String(f?.kind)) ? f.kind : 'insight', why: clean(f?.why).slice(0, 300) || `Overheard in #${ch.label}`, scope: String(f?.scope || 'portfolio').slice(0, 80), weight: 6, source: 'slack', created_by: 'slack-watch' })
@@ -443,8 +446,14 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       const text = it.kind === 'question'
         ? `${who ? who + ' — ' : ''}this one never got an answer. Still needed?`
         : `${who ? who + ' — ' : ''}is this still open? ${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''}. Reply "done" here and I'll close it, or tell me where it's being handled.`
-      const r = await postThreadReply(it.channel, it.thread_ts || it.msg_ts, text)
-      if (r.ok) { await db.from('eve_slack_items').update({ nudged_at: new Date().toISOString(), nudge_count: it.nudge_count + 1 }).eq('id', it.id); out.nudged++ }
+      // AGENT MODE GATE (slack_post). Below "act" the nudge is proposed or drafted instead.
+      const gate = await agentAllowed('slack_post')
+      const r = await stepDown(gate, { action: 'slack_post', summary: `nudge in #${it.channel_name}: ${text.slice(0, 160)}`, exec: { channel: it.channel, channel_name: it.channel_name, thread_ts: it.thread_ts || it.msg_ts, text }, why: it.summary.slice(0, 200), by: 'cron:slack-watch' },
+        async () => { const p = await postThreadReply(it.channel, it.thread_ts || it.msg_ts, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
+      // A proposed or drafted nudge still claims the slot: the proposal carries the text, and a
+      // yes posts it. Re-proposing the same nudge every twenty minutes is the flood this prevents.
+      if (r.ok && r.mode !== 'observe') { await db.from('eve_slack_items').update({ nudged_at: new Date().toISOString(), nudge_count: it.nudge_count + 1 }).eq('id', it.id); if (r.mode === 'act') out.nudged++ }
+      if (r.mode !== 'act') out.notes.push(`nudge ${r.mode}: ${gate.reason}`)
     }
   }
 
@@ -455,7 +464,11 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     const lines = urgentNew.slice(0, 12).map(it =>
       `• ${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''}${it.owner_name ? ` · ${it.owner_name}` : ''} — #${it.channel_name}`)
     const more = urgentNew.length > 12 ? `\n…and ${urgentNew.length - 12} more` : ''
-    await postToChannel(EVE_CHANNELS.approvals, `⚠️ *Affects a guest today (${urgentNew.length})*\n${lines.join('\n')}${more}`)
+    const text = `⚠️ *Affects a guest today (${urgentNew.length})*\n${lines.join('\n')}${more}`
+    const gate = await agentAllowed('slack_post')
+    const r = await stepDown(gate, { action: 'slack_post', summary: `urgent-today post in #vr-eve (${urgentNew.length} items)`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },
+      async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
+    if (r.mode !== 'act') out.notes.push(`urgent post ${r.mode}: ${gate.reason}`)
   }
 
   // ---- 6. The morning roll-up, once a day, in her room. ----------------------------------------
@@ -475,7 +488,11 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     if (closed.length) parts.push(`*Closed since yesterday (${closed.length})*\n${closed.slice(0, 6).map((c: any) => `• ${String(c.summary).slice(0, 90)} — ${String(c.closed_reason || '').slice(0, 60)}`).join('\n')}`)
     if (learnedTexts.length) parts.push(`*What I learned yesterday* — tell me if any of this is wrong\n${learnedTexts.slice(0, 5).map(t => `• ${t.slice(0, 140)}`).join('\n')}`)
     if (parts.length === 1) parts.push('Nothing open. Quiet day.')
-    const r = await postToChannel(EVE_CHANNELS.approvals, parts.join('\n\n'))
+    const gate = await agentAllowed('slack_post')
+    const text = parts.join('\n\n')
+    const stepped = await stepDown(gate, { action: 'slack_post', summary: `morning roll-up in #vr-eve (${openNow.length} open)`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },
+      async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
+    const r = stepped.mode === 'act' ? { ok: stepped.ok, error: stepped.error } : { ok: false, error: `${stepped.mode}: ${gate.reason}` }
     // A roll-up with nothing in it does not claim the day. The first live run was preceded by two
     // empty ones (the reads were failing) and each said "quiet day" and took today's slot — so the
     // real roll-up, with 30 open items, never went out. Only a digest with content counts.

@@ -45,6 +45,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { sendMessage } from '@/lib/telegram'
+import { agentAllowed, recordAgentAction } from './agent-mode'
 
 export const RALPH_SETTINGS_KEY = 'eve_ralph'
 
@@ -258,7 +259,16 @@ export async function sendApproved(id: string, by: string): Promise<{ ok: boolea
   const question = String(row.payload?.question || '')
   const addressed = settings.botUsername ? `@${settings.botUsername} ${question}` : question
 
+  // AGENT MODE GATE. Jon's yes is the approval; the master switch still decides whether anything
+  // leaves the app at all. OFF → the draft stays proposed and he is told why.
+  const gate = await agentAllowed('telegram_ask', { ask: true })
+  if (gate.mode === 'observe' || gate.mode === 'draft') {
+    await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: false, mode: gate.mode, reason: gate.reason, summary: `ask Ralphbot: ${question.slice(0, 120)}`, ref: id, by: 'chat', actor: by, countAs: 'none' })
+    return { ok: false, error: `not sent — ${gate.reason}. It stays on file; switch agent mode on and say yes again.` }
+  }
+
   const res = await sendMessage(settings.chatId, addressed, { preview: false })
+  await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: res.ok, mode: 'act', reason: res.ok ? `approved by ${by}` : `Telegram refused: ${res.error}`, summary: `ask Ralphbot: ${question.slice(0, 120)}`, ref: id, by: 'chat', actor: by, countAs: res.ok ? 'ask' : 'none' })
   if (!res.ok) {
     try { await db().from('eve_actions').update({ status: 'failed', result: { error: res.error } }).eq('id', id) } catch {}
     return { ok: false, error: String(res.error || 'Telegram refused the message') }

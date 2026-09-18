@@ -27,6 +27,7 @@ import { detectLanguage, languageNote, getLingo, lingoNote } from './voice'
 import { getOperatingModel, renderOperatingModel } from './operating-model'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
+import { getAgentSettings, normalizeAgentSettings, renderAgentModeForPrompt, agentAllowed } from './agent-mode'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
 
@@ -196,6 +197,10 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   // Who does what, per building. Goes in the STABLE block: it only changes when Jon answers a
   // calibration question, and a wrong answer here is the most expensive kind she can give.
   const operatingModel = await safe(getOperatingModel().then(renderOperatingModel), '')
+  // AGENT MODE, stated to her in one paragraph so she never claims she can or cannot act wrongly.
+  // Read fresh (no cache): the switch must be true in the very next answer after Jon flips it.
+  const agent = await safe(getAgentSettings(), normalizeAgentSettings(null))
+  const agentMode = renderAgentModeForPrompt(agent)
 
   const userName = String((access.profile as any)?.name || '') || (access.email ? access.email.split('@')[0] : '')
 
@@ -243,7 +248,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // derived from the feature and tool registries — byte-identical for the life of the process —
       // and it was being glued onto `memories`, which lands in the UNCACHED block. Every turn paid
       // list price to re-send a string that had not changed since the deploy.
-      const blocks = buildSystemBlocks({ headline, atlas: appAtlas(), memories: renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel })
+      const blocks = buildSystemBlocks({ headline, atlas: appAtlas(), memories: renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel, agentMode })
       // TWO BREAKPOINTS, NOT ONE. `stable` survives between conversations while the five-minute
       // window holds; `dynamic` (memories, headline, who is asking) is constant within ONE
       // conversation and different in the next, so it earns its own entry rather than riding free
@@ -368,7 +373,8 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     try {
       const cap = Number.isFinite(input.memoryWeightCap) ? Number(input.memoryWeightCap) : 10
       const directive = /\b(always|never|from now on|going forward|do not ever|don'?t ever|stop (?:doing|sending|creating|drafting)|make sure (?:to|you|we|it))\b/i
-      if (source !== 'slack' && cap >= 6 && directive.test(lastUser) && lastUser.length >= 25 && lastUser.length <= 600) {
+      const memGate = await agentAllowed('memory_rule')
+      if (memGate.mode !== 'observe' && source !== 'slack' && cap >= 6 && directive.test(lastUser) && lastUser.length >= 25 && lastUser.length <= 600) {
         const kind = /\b(always|never)\b/i.test(lastUser) ? 'rule' : 'preference'
         saveMemory({
           text: lastUser.trim(), kind, scope: 'portfolio', weight: 6, maxWeight: cap,

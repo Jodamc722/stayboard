@@ -18,6 +18,7 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { postToChannel, postThreadReply, getDirectory, inviteHint } from '@/lib/slack'
 import { EVE_CHANNELS } from '@/lib/slack-rules'
 import { lc } from './ctx'
+import { agentAllowed, recordAgentAction } from './agent-mode'
 
 export const APPROVALS_CHANNEL_KEY = 'eve_approvals_channel'
 
@@ -179,7 +180,16 @@ export async function postDoorCodeApproval(p: DoorApprovalPost): Promise<{ ok: b
   blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: 'Opens Lighthouse. The code is only revealed after you tap there — it is not in this message, and the link works once and expires in 4h.' }] })
 
   const fallback = `${header} — ${p.unit}: ${p.headline} (requested by ${p.requestedBy}). Release: ${p.link}`
+  // AGENT MODE GATE (slack_post, as an ask). This post IS the approval request, so "propose" is
+  // enough to send it; OFF or a spent ask budget keeps it inside the app — the request is still
+  // parked and an admin can release it from Settings → Eve → Approvals.
+  const gate = await agentAllowed('slack_post', { ask: true })
+  if (gate.mode === 'observe' || gate.mode === 'draft') {
+    await recordAgentAction('slack_post', { rung: gate.rung, allowed: false, mode: gate.mode, reason: gate.reason, summary: `door-code approval post for ${p.unit}`, by: 'eve', actor: p.requestedBy, countAs: 'none' })
+    return { ok: false, error: `not posted — ${gate.reason}. The request is parked; release it from Settings → Eve → Approvals.`, channel: '#' + ch.name }
+  }
   const r = await postToChannel(ch.id, fallback, blocks)
+  await recordAgentAction('slack_post', { rung: gate.rung, allowed: r.ok, mode: gate.mode, reason: r.ok ? gate.reason : `Slack refused: ${r.error}`, summary: `door-code approval post for ${p.unit} in #${ch.name}`, ref: r.ts || null, by: 'eve', actor: p.requestedBy, countAs: r.ok ? 'ask' : 'none' })
   return r.ok
     ? { ok: true, channel: '#' + ch.name, channelId: ch.id, ts: r.ts }
     : { ok: false, error: r.error, channel: '#' + ch.name }
