@@ -26,7 +26,7 @@ import { CHANNEL_BODY, CHANNEL_COUNT } from './channel-marks'
 import { STATEMENT_ALSO } from './statement-sample'
 import {
   AGENDA_ROWS, HERO_HEADLINE, CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
-  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL,
+  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL, teamSubtitle,
 } from './onboarding-copy'
 import 'server-only'
 import { getSetting } from './app-settings'
@@ -738,13 +738,16 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       lowNote: t.seasonLowNote,
       asks: asks('season'),
     },
-    team: {
+    team: (() => {
+      const people = t.team.filter(p => !p.market || !i.market || String(p.market).toLowerCase() === String(i.market).toLowerCase())
+        .map(p => ({ name: p.name, role: p.role, blurb: p.blurb, photo: p.photo || null, phone: p.phone || '', email: p.email || '' }))
+      return {
       headline: 'Meet your team',
-      subtitle: 'The four people who run your unit, and the inbox behind them.',
-      people: t.team.filter(p => !p.market || !i.market || String(p.market).toLowerCase() === String(i.market).toLowerCase())
-        .map(p => ({ name: p.name, role: p.role, blurb: p.blurb, photo: p.photo || null, phone: p.phone || '', email: p.email || '' })),
+      subtitle: teamSubtitle(people.length),
+      people,
       support: { label: t.supportLabel, note: t.supportNote, email: t.supportEmail },
-    },
+      }
+    })(),
     comms: {
       headline: 'How guests reach us, and how you reach us',
       subtitle: 'Guest messaging runs through Guesty and does not touch you.',

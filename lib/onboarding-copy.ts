@@ -52,17 +52,19 @@ export function houseLine(stored: unknown, pair: CopyPair): string {
 // deck does not do -- it offered to "score" the listing, which came off that slide months ago,
 // and sold "direct numbers, not a shared inbox" three slides before a shared inbox appears under
 // the team. Half-replacing a list that changed length would read worse than either version.
-export const AGENDA_RETIRED_MARK = 'score it, and fix the weak parts'
+// Two marks: the original agenda promised to "score" the listing; the next one counted the team
+// as four, which stopped being true the day the editor grew an "Add someone" button.
+export const AGENDA_RETIRED_MARKS = ['score it, and fix the weak parts', 'The four people who run your unit, what each']
 
 /** True when a stored agenda is the retired one and should be replaced wholesale. */
 export function agendaStale(rows: unknown): boolean {
   if (!Array.isArray(rows) || !rows.length) return true
-  return rows.some(r => String((r && (r as { v?: string }).v) || '').includes(AGENDA_RETIRED_MARK))
+  return rows.some(r => AGENDA_RETIRED_MARKS.some(m => String((r && (r as { v?: string }).v) || '').includes(m)))
 }
 
 /** The meeting, in order. Lives here so the staleness check and the default share one list. */
 export const AGENDA_ROWS: { k: string; v: string }[] = [
-    { k: 'Your team', v: 'The four people who run your unit, what each of them owns, and the direct lines.' },
+    { k: 'Your team', v: 'The people who run your unit, what each of them owns, and the direct lines.' },
     { k: 'Your listing', v: 'We open it live on every channel and go through it together — the photos, the words, the amenities.' },
     { k: 'Your owner portal', v: 'Your own Guesty login: the live calendar, your statements, and the spend you approve.' },
     { k: 'Revenue & strategy', v: 'Rate or occupancy, the season you are in, and what we are optimizing for month to month.' },
@@ -179,6 +181,7 @@ export const STATEMENT_ALSO_RETIRED_MARKS = [
   'as well as on the rent',                              // circular reimbursement wording
   'passing through to us',                               // the "Cleaning fee" row owners never see
   'shown so the rental line reads as a real number',     // reimbursement described as the OTA cut
+  'Always labelled with the month',                      // British spelling, 2026-09-18
 ]
 
 const hasMark = (text: unknown, marks: string[]): boolean => {
@@ -260,4 +263,43 @@ export function housePortalUrl(stored: unknown): string {
   // The retired value is a strict prefix of the correct one, so match on the host, not a substring.
   const host = s.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
   return host === PORTAL_URL_RETIRED_MARK ? PORTAL_URL : s
+}
+
+
+// ── THE TEAM SUBTITLE COUNTS THE CARDS ──────────────────────────────────────
+// "The four people who run your unit" was typed as a constant the day the team was four. The
+// editor has had "Add someone" since 2026-09-17, so a fifth card made the line wrong on the
+// slide it sits above. The number is now read from the cards at render time.
+const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight']
+export const TEAM_SUBTITLE_RETIRED = 'The four people who run your unit, and the inbox behind them.'
+export function teamSubtitle(count: number): string {
+  const n = Math.max(0, Math.round(count))
+  if (n === 1) return 'The person who runs your unit, and the inbox behind them.'
+  return 'The ' + (WORDS[n] || String(n)) + ' people who run your unit, and the inbox behind them.'
+}
+/** The stored subtitle unless it is blank or the retired hard-coded four, which is recounted. */
+export function houseTeamSubtitle(stored: unknown, count: number): string {
+  const v = String(stored || '').trim()
+  return (!v || v === TEAM_SUBTITLE_RETIRED) ? teamSubtitle(count) : v
+}
+
+// ── THE THREE STATEMENT RULES, REPAIRED BY MARK ──────────────────────────────
+// Slide 14 on a deck generated before today still read "Anything over $250" and a departure-
+// cleans rule with no owner-stay exception. The exact-match repair missed it because that deck
+// carried an even older wording than the one I had recorded as retired. Marks instead: a stale
+// dollar figure, or a cleans rule that never mentions the guest stay it applies to.
+export const STATEMENT_HIGHLIGHTS: { k: string; v: string }[] = [
+  { k: 'Departure cleans', v: 'Never billed to you after a guest stay \u2014 the guest\u2019s cleaning fee pays for the turnover. The clean after your own stay is the one exception, at cost.' },
+  { k: 'Labor $40/hr, parts at cost', v: 'The technician\u2019s actual clock. No markup, no trip charge.' },
+  { k: 'Anything over $300', v: 'Goes to you first, with photos and options. Nothing is bought without your yes.' },
+]
+export function statementHighlightsStale(rows: unknown): boolean {
+  if (!Array.isArray(rows) || !rows.length) return true
+  return rows.some(r => {
+    const o = (r || {}) as { k?: string; v?: string }
+    const k = String(o.k || ''), v = String(o.v || '')
+    if (/\$250\b/.test(k) || /\$250\b/.test(v)) return true
+    if (/^Departure cleans/i.test(k) && !/after a guest stay/.test(v)) return true
+    return false
+  })
 }

@@ -160,7 +160,7 @@ export const STATEMENT_ALSO: KV[] = [
   { k: 'Cleaning after your own stay', v: 'The one cleaning line you will ever see. When you use the unit yourself there is no guest fee covering the turnover, so that clean appears here at cost — no markup, same as any other material.' },
     { k: 'Channel fee reimbursement', v: 'The channel charges its fee on the whole booking — the rent and the cleaning fee together — and the entire charge comes out of your rental line. Guesty cannot split it, so without this line you would be paying the fee on a cleaning fee we keep. We pay that part back to you: 15% of the cleaning fee.' },
     { k: 'Revenue management', v: 'Appears only if you are on a revenue-management arrangement.' },
-    { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labelled with the month it belongs to.' },
+    { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labeled with the month it belongs to.' },
 ]
 
 /**
