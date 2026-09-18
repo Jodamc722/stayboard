@@ -9,9 +9,9 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
-import { SAMPLE_STATEMENT, statementHasRows, STATEMENT_ALSO, statementAlsoStale } from '@/lib/statement-sample'
+import { SAMPLE_STATEMENT, statementHasRows, STATEMENT_ALSO } from '@/lib/statement-sample'
 import {
-  houseLine, houseRows, agendaStale, AGENDA_ROWS, HERO_HEADLINE,
+  houseLine, houseRows, agendaStale, channelBodyStale, statementAlsoRowsStale, AGENDA_ROWS, HERO_HEADLINE,
   CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
@@ -1143,6 +1143,69 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   function mutate(fn: (draft: Any) => void) {
     setC((prev: Any) => { const next = JSON.parse(JSON.stringify(prev)); fn(next); return next })
   }
+
+  // ADOPT THE HOUSE COPY, ONCE, WHEN EDITING STARTS (Jon, 2026-09-18: "it's also not letting me
+  // edit the text"). The fallbacks further down draw current copy over retired copy, which is
+  // right for a reader and a trap for an editor: the typed value goes into the content, the
+  // staleness test still sees the old stored value, and the next render paints the house line
+  // back over the edit. The field looks like it refuses to take input.
+  //
+  // So on the way into edit mode, anything still carrying retired copy is written into this
+  // deck's own content. After this runs there is nothing left to substitute, every field reads
+  // from storage, and edits behave like edits. It marks the deck dirty, which is honest -- the
+  // document really did just change -- and it is idempotent, so it settles after one pass.
+  useEffect(() => {
+    // Computed here rather than reusing the `isOnboarding` further down, which is declared after
+    // this effect and would be a temporal-dead-zone reference.
+    const onb = String(((c || {}).meta || {}).kind || '') === 'onboarding'
+    if (!edit || !onb) return
+    // Only write when there is genuinely something retired to adopt. Without this the deck is
+    // marked unsaved every time it is opened for editing, and "you have unsaved changes" on a
+    // document nobody touched is how people learn to ignore that warning.
+    const g = (k: string) => (c as Any)[k] || {}
+    const stale =
+      houseLine(g('hero').headline, HERO_HEADLINE) !== (g('hero').headline || '') ||
+      CHANNEL_COUNT_RETIRED.indexOf(String(g('channels').count || '').trim()) >= 0 ||
+      channelBodyStale(g('channels').subtitle) ||
+      agendaStale(g('agenda').items) ||
+      statementAlsoRowsStale(g('statement').also) ||
+      (Array.isArray(g('statement').highlights) && g('statement').highlights[0] &&
+        houseLine(g('statement').highlights[0].v, CLEANS_HIGHLIGHT) !== (g('statement').highlights[0].v || '')) ||
+      houseLine(g('ramp').headline, RAMP_HEADLINE) !== (g('ramp').headline || '') ||
+      houseLine(g('ramp').subtitle, RAMP_SUBTITLE) !== (g('ramp').subtitle || '') ||
+      houseLine(g('checklist').headline, CHECKLIST_HEADLINE) !== (g('checklist').headline || '') ||
+      houseLine(g('checklist').subtitle, CHECKLIST_SUBTITLE) !== (g('checklist').subtitle || '') ||
+      houseRows<Any>(g('checklist').rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[]) !== g('checklist').rows ||
+      houseRows<Any>(g('money').rules, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[]) !== g('money').rules ||
+      houseRows<Any>(g('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]) !== g('guesty').items
+    if (!stale) return
+    mutate(d => {
+      const hero = d.hero || (d.hero = {})
+      hero.headline = houseLine(hero.headline, HERO_HEADLINE)
+      const ch = d.channels || (d.channels = {})
+      if (CHANNEL_COUNT_RETIRED.indexOf(String(ch.count || '').trim()) >= 0 || !String(ch.count || '').trim()) ch.count = CHANNEL_COUNT
+      if (channelBodyStale(ch.subtitle)) ch.subtitle = CHANNEL_BODY
+      const ag = d.agenda || (d.agenda = {})
+      if (agendaStale(ag.items)) ag.items = JSON.parse(JSON.stringify(AGENDA_ROWS))
+      const st = d.statement || (d.statement = {})
+      if (statementAlsoRowsStale(st.also)) st.also = JSON.parse(JSON.stringify(STATEMENT_ALSO))
+      if (Array.isArray(st.highlights) && st.highlights[0]) {
+        st.highlights[0].v = houseLine(st.highlights[0].v, CLEANS_HIGHLIGHT)
+      }
+      const rp = d.ramp || (d.ramp = {})
+      rp.headline = houseLine(rp.headline, RAMP_HEADLINE)
+      rp.subtitle = houseLine(rp.subtitle, RAMP_SUBTITLE)
+      const cl = d.checklist || (d.checklist = {})
+      cl.headline = houseLine(cl.headline, CHECKLIST_HEADLINE)
+      cl.subtitle = houseLine(cl.subtitle, CHECKLIST_SUBTITLE)
+      cl.rows = houseRows<Any>(cl.rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[])
+      const mn = d.money || (d.money = {})
+      mn.rules = houseRows<Any>(mn.rules, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[])
+      const gy = d.guesty || (d.guesty = {})
+      gy.items = houseRows<Any>(gy.items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[])
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edit])
   const omit: string[] = Array.isArray(c.omit) ? c.omit : []
   const isHidden = (k: string) => omit.indexOf(k) >= 0
   function toggleSection(k: string) {
@@ -2800,9 +2863,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // the season curve: the number and the paragraph are one claim, so they are substituted
           // together or not at all, and a deck edited on this slide keeps its edit because an
           // edited one will not still read exactly "30+".
-          const chanStale = CHANNEL_COUNT_RETIRED.indexOf(String(sec('channels').count || '').trim()) >= 0
-          const chanCount = chanStale ? CHANNEL_COUNT : (sec('channels').count || '')
-          const chanBody = chanStale ? CHANNEL_BODY : (sec('channels').subtitle || '')
+          // Each field judged on itself. The first version keyed the PARAGRAPH's staleness on the
+          // COUNT, so editing the paragraph changed nothing the test could see and the edit was
+          // painted over on the next render.
+          const chanCountStored = String(sec('channels').count || '').trim()
+          const chanCount = (!chanCountStored || CHANNEL_COUNT_RETIRED.indexOf(chanCountStored) >= 0) ? CHANNEL_COUNT : chanCountStored
+          const chanBody = channelBodyStale(sec('channels').subtitle) ? CHANNEL_BODY : (sec('channels').subtitle || '')
 
           if (!hid('channels')) slides.push({ key: 'channels', ai: true, node: (
             <Slide nav="Where it sells" warn={edit} ground={GROUND.dark} bleed>
@@ -3819,9 +3885,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             // the reimbursement the OTA commission, neither of which contained the phrase. Since
             // the rows were never rendered before today, nothing predating the slide can be an
             // edit worth keeping, so the cutoff replaces them outright and nothing after it.
+            // Judged on the rows themselves, not on the deck's generation date. The date test
+            // was true forever for every deck built before today, so every edit to these four
+            // rows was discarded on the next render no matter what was typed.
             const alsoStored: Any[] = sec('statement').also || []
-            const alsoRows: Any[] = (statementAlsoStale((c.meta || {}).generatedAt) || !alsoStored.length)
-              ? (STATEMENT_ALSO as Any[]) : alsoStored
+            const alsoRows: Any[] = statementAlsoRowsStale(alsoStored) ? (STATEMENT_ALSO as Any[]) : alsoStored
 
             if (alsoRows.length) slides.push({ key: 'statement', node: (
               <Slide nav="How to read it" warn={edit} ground={GROUND.tint}>
