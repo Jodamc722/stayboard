@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
 import { textOf } from '@/lib/anthropic-text'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), 40000)
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('audit', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       signal: ac.signal,

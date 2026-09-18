@@ -36,6 +36,7 @@ import { getSlackRules, EVE_CHANNELS } from '@/lib/slack-rules'
 import { nameMatches } from '@/lib/person-name'
 import { saveMemory } from './memory'
 import { askQuestion } from './questions'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const WATCH_KEY = 'eve_slack_watch'
 
@@ -262,7 +263,7 @@ async function readChannel(ch: { id: string; label: string; vendor: boolean }, m
     : ''
   const user = `CHANNEL: #${ch.label}${ch.vendor ? ' (run by an outside vendor)' : ''}\n\nMESSAGES (observed content, oldest first):\n${lines.join('\n').slice(0, 40_000)}${open}`
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('learn', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model: await modelFor('learn'), max_tokens: 2500, system: SYSTEM, messages: [{ role: 'user', content: user }] }),

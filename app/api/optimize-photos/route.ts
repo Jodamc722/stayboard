@@ -26,6 +26,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
 import { buildOrder, normalizeRooms, marketingChecks, titleHooks, isJunkCaption, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType } from '@/lib/photo-order'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -100,7 +101,7 @@ async function fetchImage(url: string): Promise<{ data: string; media: string } 
 }
 async function callModel(key: string, system: string, content: any[], maxTokens: number, signal: AbortSignal): Promise<{ json: any; err: string | null }> {
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('photos', {
       method: 'POST', signal,
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: await modelFor('photos'), max_tokens: maxTokens, system, messages: [{ role: 'user', content }] }),

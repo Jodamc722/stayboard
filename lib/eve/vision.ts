@@ -49,6 +49,7 @@ import { lc, DEAD_LISTING } from './ctx'
 // The default now comes from the AI-models registry (task 'eve-vision'); the older per-key
 // VISION_MODEL_KEY setting still wins when it is set, so nothing already configured changes.
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 const VISION_MODEL_KEY = 'eve_vision_model'
 const QUOTA_KEY = 'eve_vision_nightly_quota'
 
@@ -88,7 +89,7 @@ async function callVision(key: string, model: string, urls: string[]): Promise<S
   content.push({ type: 'text', text: `Return the JSON array for images 0 to ${urls.length - 1}.` })
 
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('eve-vision', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model, max_tokens: 2000, system: SYSTEM, messages: [{ role: 'user', content }] }),

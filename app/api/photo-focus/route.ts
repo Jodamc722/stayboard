@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     const instruction = `You are framing a short-term-rental HERO photo.${prompt ? ` The host wants to emphasize: "${prompt}".` : ''} Choose the most appealing, on-brand framing. Reply with ONLY compact JSON: {"cx":0-1,"cy":0-1,"zoom":1-3} where cx,cy is the focal point to center the crop on (as a fraction of width and height) and zoom is how tight to crop (1 = whole image, 2 = noticeably tighter on the subject, 3 = very tight). No prose.`
 
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('photos', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({

@@ -26,6 +26,7 @@ import { buildSystemBlocks, getVoiceProfile } from './prompt'
 import { detectLanguage, languageNote, getLingo, lingoNote } from './voice'
 import { getOperatingModel, renderOperatingModel } from './operating-model'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
 
@@ -258,7 +259,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       if (webOk) toolset.push(WEB_SEARCH_TOOL as any)
       const messages = withCacheBreakpoint(convo)
 
-      let r = await fetch('https://api.anthropic.com/v1/messages', {
+      let r = await aiFetch('eve', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({ model: await modelFor('eve'), max_tokens: 4096, system, tools: toolset, messages }),
@@ -268,7 +269,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // If this model/account cannot use the server-side search tool, lose the search — not the answer.
       if (!r.ok && webOk && /web_search/i.test(JSON.stringify(d?.error || ''))) {
         webOk = false
-        r = await fetch('https://api.anthropic.com/v1/messages', {
+        r = await aiFetch('eve', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
           body: JSON.stringify({ model: await modelFor('eve'), max_tokens: 4096, system, tools: allowed(wireTools(open)), messages }),

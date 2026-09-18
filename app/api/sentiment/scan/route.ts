@@ -10,6 +10,7 @@ import { markReservationSensitive } from '@/lib/sensitive'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -182,7 +183,7 @@ Return STRICT minified JSON only, no markdown:
 "dissatisfied" = true only if the guest expresses real frustration, a complaint, or an unresolved problem.`
       const USER = `Conversation (most recent last):\n"""${transcript.slice(0, 5000)}"""`
 
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
+      const r = await aiFetch('sentiment', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         // Sonnet 5 (2026-09-09), not Haiku. This is the one background job where a miss has a cost
@@ -197,7 +198,7 @@ Return STRICT minified JSON only, no markdown:
       // If the account cannot see the Sonnet 5 alias, fall back to yesterday's model rather than
       // skip the scan — the cost is the smaller problem.
       if (r.status === 404 || (r.status === 400 && /model/i.test(str(d?.error?.message)))) {
-        const r2 = await fetch('https://api.anthropic.com/v1/messages', {
+        const r2 = await aiFetch('sentiment', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
           body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),

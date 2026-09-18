@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -25,7 +26,7 @@ function parseJson(raw: string): any | null {
 
 async function anthropic(key: string, payload: any): Promise<string | null> {
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('guidebook', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify(payload),

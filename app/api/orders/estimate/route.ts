@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
 import { textOf } from '@/lib/anthropic-text'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
   const SYS = 'You price furnishing, appliance and supply purchases for a short-term rental property manager in South Florida. For each item return est = a realistic mid-range price in whole USD for ONE unit of the item (never multiply by quantity). Use the note and room for context. STRICT JSON ONLY, no markdown: {"estimates":[{"id":"","est":0}]}'
   const payload = need.map((x: any) => ({ id: String(x.id), title: String(x.title || ''), note: String(x.note || '').slice(0, 160), room: String(x.room || '') }))
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify({ model: await modelFor('orders'), max_tokens: 3000, system: SYS, messages: [{ role: 'user', content: 'Items: ' + JSON.stringify(payload) }] }) })
+    const r = await aiFetch('orders', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body: JSON.stringify({ model: await modelFor('orders'), max_tokens: 3000, system: SYS, messages: [{ role: 'user', content: 'Items: ' + JSON.stringify(payload) }] }) })
     const j = await r.json()
     const text = textOf(j)
     const m = text.match(/\{[\s\S]*\}/)

@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
 import { modelFor } from '@/lib/ai-models'
 import { textOf } from '@/lib/anthropic-text'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -28,7 +29,7 @@ async function analyze(b64: string): Promise<any | null> {
     const ac = new AbortController()
     const timer = setTimeout(() => ac.abort(), 25000)
     const SYS = 'You assist a short-term-rental property inspector during unit ONBOARDING. Identify the main furniture/fixture/appliance/amenity in the photo, assess visible condition, AND capture marketing + how-to detail for listings and guidebooks. Reply with STRICT JSON only: {"item":"short name e.g. Espresso machine","itemType":"category e.g. kitchen appliance","condition":"one concise sentence on visible wear or damage","severity":"low|medium|high","brand":"visible brand or model, else empty","tier":"luxury|high_end|standard|budget|unknown","features":["notable feature"],"amenity":true,"highlight":true,"howTo":"one short sentence on how a guest operates it, else empty"}. amenity=true if guest-facing and worth listing; highlight=true only if high-end or notable enough to feature in marketing. No markdown, no extra keys.'
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('audit', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       signal: ac.signal,

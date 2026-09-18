@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
 import { textOf } from '@/lib/anthropic-text'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
   if (!key) return NextResponse.json({ ok: true, suggestions: [] })
   try {
     const SYS = 'You advise a short-term-rental operations team inspecting units. Given a room type, suggest 5 concise, high-impact things worth checking or adding in that room (guest-experience upgrades, common wear points, safety). STRICT JSON only: [{"title":"2-5 words","why":"one short sentence"}]. No markdown.'
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('audit', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -25,6 +25,7 @@ import { requireLevel } from '@/lib/access'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
 import { SECTION_KEYS, TITLE_MAX, sectionRules, type SectionKey, type ListingAi, bannedRule, examplesRule } from '@/lib/listing-ai'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 // Was 45. Opus with ~10 vision images does comparable work to the photo analyst, which needs 120
@@ -307,7 +308,7 @@ ${JSON.stringify(reviewSignal)}
 CURRENT TEXT for this field (improve on it):
 ${JSON.stringify(currentDraft || (current as any)[sk] || '')}`
     try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
+      const r = await aiFetch('listing-copy', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }] }),
@@ -365,7 +366,7 @@ ${JSON.stringify(current)}`
   const ac = new AbortController()
   const acTimer = setTimeout(() => ac.abort(), 110_000)
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('listing-copy', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       signal: ac.signal,

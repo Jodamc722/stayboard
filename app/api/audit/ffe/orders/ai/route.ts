@@ -22,6 +22,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BEDROOM_NO } from '@/lib/ffe-checklist'
 import { categoryForItem } from '@/lib/ffe-catalog'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -33,7 +34,7 @@ async function anthropicJson(system: string, user: string, maxTokens = 4000): Pr
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return null
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('audit', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model: await modelFor('audit'), max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),

@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
       max_tokens: 1024,
       temperature: 0.2,
       messages: [{ role: 'user', content: prompt }],
-    })
+    }, undefined, 'polish')
     if (!r.ok) {
       return NextResponse.json({ error: `Model said ${r.status}: ${JSON.stringify(r.data?.error || r.data).slice(0, 200)}` }, { status: 502 })
     }

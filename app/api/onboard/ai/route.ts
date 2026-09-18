@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { CATEGORIES, CONDITIONS } from '@/lib/onboarding'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
     if (!item.photo_url) return NextResponse.json({ ok: false, error: 'Take a photo of the item first.' }, { status: 400 })
     let text = ''
     try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
+      const r = await aiFetch('onboard', {
         method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({ model: await modelFor('onboard'), max_tokens: 400, system: ITEM_SYSTEM, messages: [{ role: 'user', content: [
           { type: 'text', text: `The checklist calls this item "${item.name}"${item.brand && !['size', 'model'].includes(item.brand) ? ' (' + item.brand + ')' : ''}.` },
@@ -103,7 +104,7 @@ export async function POST(req: NextRequest) {
 
   let text = ''
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('onboard', {
       method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model: await modelFor('onboard'), max_tokens: 2500, system: SYSTEM, messages: [{ role: 'user', content }] }),
     })

@@ -27,6 +27,7 @@ import { modelFor } from '@/lib/ai-models'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { pageRows } from '@/lib/db-page'
 import { norm, sectionOf, allowedAt, type BulkSectionKey, type BulkScope } from '@/lib/listing-copy-bulk'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -181,7 +182,7 @@ Return ONLY JSON: {${want.map(k => `"${k}":"..."`).join(',')},"rationale":"one o
   ].filter(Boolean).join('\n')
 
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('listing-copy', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({

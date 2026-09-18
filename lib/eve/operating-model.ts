@@ -25,6 +25,7 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { KNOWN_BUILDINGS } from '@/lib/segments'
 import { modelFor } from '@/lib/ai-models'
 import { askQuestion } from './questions'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const OPERATING_MODEL_KEY = 'eve_operating_model'
 
@@ -202,7 +203,7 @@ export async function applyCalibrationAnswer(building: string, answer: string, b
 
   let parsed: any = null
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('learn', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({

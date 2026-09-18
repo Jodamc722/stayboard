@@ -11,6 +11,7 @@ import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -76,7 +77,7 @@ Maximum ${cfg.photos.captionMaxWords} words and ${cfg.photos.captionMaxChars} ch
       instruction ? `The host wants this emphasised: "${instruction}".` : '',
       'Caption this photo:',
     ].filter(Boolean).join(' ')
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('photos', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: JSON.stringify({

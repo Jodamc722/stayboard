@@ -42,6 +42,7 @@ import { modelFor } from '@/lib/ai-models'
 import { saveMemory, loadMemories } from './memory'
 import { askQuestion } from './questions'
 import { chunkDoc } from './docs'
+import { aiFetch } from '@/lib/ai-usage'
 
 const db = () => supabaseAdmin()
 
@@ -187,7 +188,7 @@ export async function studyDoc(docId: string, opts: { force?: boolean; by?: stri
 
   let parsed: any = null
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('learn', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({

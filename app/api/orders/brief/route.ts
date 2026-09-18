@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
 import { textOf } from '@/lib/anthropic-text'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
   }))
 
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('orders', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model: await modelFor('orders'), max_tokens: 8000, system: SYS, messages: [{ role: 'user', content: 'Items: ' + JSON.stringify(payload) }] }),

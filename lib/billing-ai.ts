@@ -54,7 +54,7 @@ export async function judgeRoutineTasks(month: string): Promise<JudgeResult> {
     const r = await anthropicMessages(key, {
       model, max_tokens: 4000, system: SYSTEM,
       messages: [{ role: 'user', content: 'Tasks: ' + JSON.stringify(payload) }],
-    }, fallback)
+    }, fallback, 'billing-judge')
     answered = r.model
     if (!r.ok) throw new Error(String(r.data?.error?.message || 'model call failed (' + r.status + ')'))
     const text = (r.data?.content || []).filter((c: any) => c.type === 'text').map((c: any) => String(c.text || '')).join('\n')

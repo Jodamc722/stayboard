@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     // modelPairFor, not modelFor: the helper's default fallback is a guess, and a Polish button
     // that fails because the account cannot see one alias is worse than one that costs more.
     const { model, fallback } = await modelPairFor('billing')
-    const r = await anthropicMessages(key, { model, max_tokens: 600, system: spelling ? SYS_SPELLING : SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] }, fallback)
+    const r = await anthropicMessages(key, { model, max_tokens: 600, system: spelling ? SYS_SPELLING : SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] }, fallback, 'billing')
     const j: any = r.data
     const text = textOf(j)
     // SAY WHAT WENT WRONG. "AI request failed." sent whoever hit it to the server logs, or more

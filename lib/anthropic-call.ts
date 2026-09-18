@@ -5,15 +5,15 @@
 // than a Polish button that costs 2.5x. So: try the model asked for; if the API says it does not
 // know it, try the fallback once, and say which one answered.
 import 'server-only'
+import { aiFetch } from '@/lib/ai-usage'
 export { textOf } from './anthropic-text'
-
-const URL = 'https://api.anthropic.com/v1/messages'
 
 export type AnthropicCall = { ok: boolean; status: number; data: any; model: string }
 
-export async function anthropicMessages(key: string, body: Record<string, any>, fallbackModel = 'claude-sonnet-4-6'): Promise<AnthropicCall> {
+/** `task` is the AI_TASKS key the call is billed to in the usage ledger (lib/ai-usage). */
+export async function anthropicMessages(key: string, body: Record<string, any>, fallbackModel = 'claude-sonnet-4-6', task = 'unknown'): Promise<AnthropicCall> {
   const call = async (model: string) => {
-    const r = await fetch(URL, {
+    const r = await aiFetch(task, {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ ...body, model }),

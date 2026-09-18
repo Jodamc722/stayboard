@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   if (!key) return NextResponse.json({ ok: true, options: fallback })
   try {
     const SYS = 'You suggest products for a short-term rental property manager restocking units. Given a need, return 2-3 concrete product suggestions a manager could buy today - durable, mid-range, guest-proof picks (not luxury, not bottom-tier). Each option: name (specific product or product type incl. brand when it matters, max 8 words), why (max 8 words - the reason this pick), searchTerm (the exact retailer search phrase), store (amazon or wayfair - wayfair only for furniture). STRICT JSON ONLY, no markdown: {"options":[{"name":"","why":"","searchTerm":"","store":""}]}'
-    const r = await anthropicMessages(key, { model: await modelFor('order-suggest'), max_tokens: 700, system: SYS, messages: [{ role: 'user', content: 'Need: ' + title + (note ? '. Detail: ' + note : '') + '. Quantity: ' + qty }] })
+    const r = await anthropicMessages(key, { model: await modelFor('order-suggest'), max_tokens: 700, system: SYS, messages: [{ role: 'user', content: 'Need: ' + title + (note ? '. Detail: ' + note : '') + '. Quantity: ' + qty }] }, undefined, 'order-suggest')
     const j = r.data
     const text = textOf(j)
     const m = text.match(/\{[\s\S]*\}/)

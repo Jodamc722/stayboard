@@ -29,6 +29,7 @@ import { getAccess, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeMultiple, REQUIRED_FIELDS, type RefundInput } from '@/lib/refund-policy'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -182,7 +183,7 @@ export async function POST(req: NextRequest) {
   ].join('\n')
 
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('glitch-advise', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({

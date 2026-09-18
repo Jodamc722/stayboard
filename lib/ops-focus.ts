@@ -251,7 +251,7 @@ Pick what is REAL and DOABLE today: a technician already in the building or unit
     const r = await anthropicMessages(key, {
       model, max_tokens: 4000, system,
       messages: [{ role: 'user', content: lines.join('\n') }],
-    }, fallback)
+    }, fallback, 'ops-focus')
     answeredBy = r.model
     if (!r.ok) throw new Error(str(r.data?.error?.message) || 'model call failed (' + r.status + ')')
     const text = (r.data?.content || []).filter((c: any) => c.type === 'text').map((c: any) => String(c.text || '')).join('\n')

@@ -27,6 +27,7 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { modelFor } from '@/lib/ai-models'
 import { getSlackRules } from '@/lib/slack-rules'
 import { channelHistory } from './slack-read'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const LINGO_KEY = 'eve_lingo'
 
@@ -236,7 +237,7 @@ export async function learnLingo(opts?: { days?: number; perChannel?: number }):
 
   let parsed: any = null
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await aiFetch('learn', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({

@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
+import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -203,7 +204,7 @@ export async function POST(req: NextRequest) {
     let overloaded = false
     for (let attempt = 0; attempt < 4; attempt++) {
       if (attempt > 0) await new Promise(res => setTimeout(res, 700 * Math.pow(2, attempt - 1)))
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
+      const r = await aiFetch('review-reply', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: reqBody,
