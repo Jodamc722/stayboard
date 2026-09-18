@@ -3386,10 +3386,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
               <div className="flex flex-col h-full">
                 <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
                 <p className="onb-h" style={{ fontSize: 34, color: t.ink, lineHeight: 1.15, maxWidth: '22ch' }}>
-                  <Ed v={sec('ramp').headline || ''} set={v => patch('ramp.headline', v)} edit={edit} multiline />
+                  {/* The ramp slide draws its own heading rather than going through Title, so the
+                      house repair has to be applied here too -- it was added to Title and silently
+                      did nothing for this one slide. */}
+                  <Ed v={houseLine(sec('ramp').headline, RAMP_HEADLINE)} set={v => patch('ramp.headline', v)} edit={edit} multiline />
                 </p>
                 <p style={{ fontSize: 15, color: t.muted, marginTop: 10, maxWidth: '62ch' }}>
-                  <Ed v={sec('ramp').subtitle || ''} set={v => patch('ramp.subtitle', v)} edit={edit} multiline />
+                  <Ed v={houseLine(sec('ramp').subtitle, RAMP_SUBTITLE)} set={v => patch('ramp.subtitle', v)} edit={edit} multiline />
                 </p>
 
                 <div className="flex-1 min-h-0 flex flex-col justify-center">
