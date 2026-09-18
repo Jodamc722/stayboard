@@ -285,6 +285,33 @@ export async function buildReviewPack(focus?: string): Promise<Pack> {
 
 const METRIC_KEYS = Object.keys(METRIC_BY_KEY)
 
+
+// The contract the model fills. Kept loose on purpose (strings, arrays of strings) — normalizeBody
+// still coerces, so a field the model leaves out becomes an empty list, never a crash.
+const S_ARR = { type: 'array', items: { type: 'string' } }
+const REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    headline: { type: 'string' },
+    movements: { type: 'array', items: { type: 'object', properties: {
+      metric: { type: 'string' }, what: { type: 'string' }, why_hypothesis: { type: 'string' }, evidence: S_ARR,
+      confidence: { type: 'string', enum: ['high', 'med', 'low'] } }, required: ['metric', 'what', 'why_hypothesis'] } },
+    plans: { type: 'array', items: { type: 'object', properties: {
+      area: { type: 'string', enum: ['operations', 'checklist', 'app', 'guest', 'money', 'people'] },
+      title: { type: 'string' }, problem: { type: 'string' }, evidence: S_ARR, change: { type: 'string' },
+      expected_effect: { type: 'string' }, cost: { type: 'string' }, first_step: { type: 'string' }, owner_suggestion: { type: 'string' },
+      metric: { type: 'string' } }, required: ['area', 'title', 'problem', 'change', 'expected_effect', 'first_step'] } },
+    critiques: { type: 'array', items: { type: 'object', properties: {
+      target: { type: 'string', enum: ['checklist', 'page', 'automation', 'rule', 'kpi'] }, name: { type: 'string' },
+      signal: { type: 'string' }, verdict: { type: 'string' }, change: { type: 'string' } }, required: ['target', 'name', 'signal', 'verdict'] } },
+    questions: { type: 'array', items: { type: 'object', properties: {
+      question: { type: 'string' }, why_it_matters: { type: 'string' }, what_i_will_assume: { type: 'string' }, evidence: S_ARR },
+      required: ['question', 'why_it_matters', 'what_i_will_assume'] } },
+    no_signal: S_ARR,
+  },
+  required: ['headline', 'movements', 'plans', 'questions'],
+}
+
 const SYSTEM = `You are Eve, chief of staff to the operations director of Stay Hospitality — about 230 short-term-rental units across Miami, Broward and West Palm Beach, run from a web app called Lighthouse (Guesty for bookings and guest messages, Breezeway for tasks, Homebase for the crew's hours, Slack for the team). You are writing the operator's review: the thing Jon reads on Monday to decide what to change this week.
 
 WHO YOU ARE WRITING FOR. Jon owns the company and runs operations. He has seen every number already. He does not need the numbers repeated; he needs to know WHAT MOVED, WHY, and WHAT TO DO. You reason from evidence to two things that matter: money (labor per clean, maintenance labor, billable recovery, claims, revenue) and guest experience (reviews, sentiment, glitches, response). Everything else is a means.
@@ -299,7 +326,7 @@ RULES.
 7. RESPECT WHO DOES WHAT. Buildings the beliefs mark as vendor-run or hotel-operated are not our labor: a late clean there is the vendor's, and cost per clean does not exist for us. Do not attribute hands-on work to our crew in those buildings.
 8. Be concrete and plain. No headings inside strings, no markdown, no emoji. British-free American spelling. Short sentences.
 
-Return ONLY a JSON object, no prose before or after:
+Deliver the review through the operator_review tool. Its fields:
 {"headline": "<one sentence: the week in one line — the biggest movement and its cause>",
  "movements": [{"metric": "<KPI or metric name>", "what": "<what changed, in plain words>", "why_hypothesis": "<the mechanism you believe explains it>", "evidence": ["<line from the pack>", "..."], "confidence": "high"|"med"|"low"}],
  "plans": [{"area": "operations"|"checklist"|"app"|"guest"|"money"|"people", "title": "<imperative, one line>", "problem": "<what is wrong and what it costs>", "evidence": ["..."], "change": "<the specific change>", "expected_effect": "<which number moves, which way, roughly how much, by when>", "cost": "<time, dollars or risk>", "first_step": "<something someone can do today>", "owner_suggestion": "<role or person>", "metric": "<one of: ${METRIC_KEYS.join(', ')}>", "expect_direction": "up"|"down", "scope": "portfolio"|"building:<Name>"}],
@@ -402,13 +429,22 @@ export async function runReview(opts: { trigger: ReviewTrigger; focus?: string; 
   let usage: any = null
   try {
     // No temperature: the Fable tier rejects it. max_tokens 6000 leaves room for six full plans.
-    const r = await anthropicMessages(key, { model, max_tokens: 6000, system: SYSTEM, messages: [{ role: 'user', content: user }] }, fallback, 'eve-review')
+    // STRUCTURED OUTPUT VIA A FORCED TOOL CALL (2026-09-18). The first live run came back as prose
+    // around the JSON and failed to parse. A tool_choice-forced call returns the object as
+    // tool input, validated against the schema, with no fences and no preamble to strip.
+    const r = await anthropicMessages(key, {
+      model, max_tokens: 6000, system: SYSTEM,
+      tools: [{ name: 'operator_review', description: 'Deliver the operator review as structured data.', input_schema: REVIEW_SCHEMA }],
+      tool_choice: { type: 'tool', name: 'operator_review' },
+      messages: [{ role: 'user', content: user }],
+    }, fallback, 'eve-review')
     answeredBy = r.model
     usage = usageOf(r.data)
     if (!r.ok) return { ok: false, error: clip(r.data?.error?.message, 200) || `model call failed (${r.status})`, pack: { tokens: pack.tokens, stats: pack.stats } }
+    const toolUse = (r.data?.content || []).find((c: any) => c.type === 'tool_use' && c.input && typeof c.input === 'object')
     const text = (r.data?.content || []).filter((c: any) => c.type === 'text').map((c: any) => String(c.text || '')).join('\n')
-    const parsed = parseJson(text)
-    if (!parsed) return { ok: false, error: 'model answer was not JSON', pack: { tokens: pack.tokens, stats: pack.stats } }
+    const parsed = toolUse ? toolUse.input : parseJson(text)
+    if (!parsed) return { ok: false, error: 'model answer was not JSON: ' + clip(text || r.data?.stop_reason, 160), pack: { tokens: pack.tokens, stats: pack.stats } }
     body = normalizeBody(parsed)
   } catch (e: any) {
     return { ok: false, error: clip(e?.message || e, 200), pack: { tokens: pack.tokens, stats: pack.stats } }

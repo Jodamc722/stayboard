@@ -106,6 +106,11 @@ function cellFor(entry: any, ch: ChannelKey, bookings: { last: string | null; n9
   if (up === 'COMPLETED') verdict = 'live'
   else if (up === 'FAILED') verdict = 'failed'
   else if (up === 'DISCONNECTED') verdict = 'disconnected'
+  // Expedia is the one channel whose Guesty entry carries no status field at all (verified live
+  // 2026-09-18: 238 entries, keys createdAt / cancellationPolicy / cancellationPenalty only). An
+  // entry with a live link is the only signal there is, so it reads as connected rather than
+  // painting 225 cells "unknown".
+  else if (!status && ch === 'expedia') verdict = url ? 'live' : 'missing'
   else verdict = 'unknown'
   // Airbnb's own verdict outranks the connection status: a COMPLETED sync to a suspended listing
   // is still a listing nobody can book.
