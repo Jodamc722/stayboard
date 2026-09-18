@@ -20,9 +20,12 @@
 import type { Notice } from './reservation-draft'
 import { prettyDate, AGENT } from './reservation-draft'
 
+// From the package, not a CDN (2026-09-18 audit): this used to `import('https://esm.sh/jspdf')`
+// at runtime, which ran third-party code straight off the network in the browser. jspdf is already
+// a dependency; a dynamic import keeps it out of the main bundle until a PDF is asked for.
 let _jsPdfMod: any = null
 async function loadJsPdf(): Promise<any> {
-  if (!_jsPdfMod) _jsPdfMod = await import(/* webpackIgnore: true */ 'https://esm.sh/jspdf@2.5.1' as any)
+  if (!_jsPdfMod) _jsPdfMod = await import('jspdf')
   return _jsPdfMod.jsPDF || _jsPdfMod.default?.jsPDF || _jsPdfMod.default
 }
 

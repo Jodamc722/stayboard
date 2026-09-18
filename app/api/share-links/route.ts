@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, MARKETS } from '@/lib/segments'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, canSeeMoney } from '@/lib/access'
 import { currentSharePassword, currentMarketingPassword, currentAuditPassword } from '@/lib/shareAuth'
 import { randomBytes } from 'crypto'
 
@@ -161,7 +161,9 @@ export async function POST(req: NextRequest) {
   const patch: any = {
     label: str(body.label).slice(0, 120) || null,
     scope_type: scopeType, scope_ids: scopeIds, sections,
-    show_money: body.showMoney === true,
+    // A link may carry dollars only if the person MAKING it may see dollars (2026-09-18 audit):
+    // otherwise share-links edit was a way to read revenue you cannot see, via a link to yourself.
+    show_money: body.showMoney === true && canSeeMoney(gate.access),
     guest_names: body.guestNames === true,
     window_days: Number.isFinite(Number(body.windowDays)) && Number(body.windowDays) >= 7 && Number(body.windowDays) <= 120 ? Number(body.windowDays) : 30,
     passcode: str(body.passcode).slice(0, 60) || null,
@@ -181,6 +183,9 @@ export async function POST(req: NextRequest) {
   if (action === 'update') {
     const id = str(body.id)
     if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
+    // An editor without money access must not be able to switch a money link off-then-on either;
+    // leave show_money as it was on the row.
+    if (!canSeeMoney(gate.access)) delete patch.show_money
     const { data, error } = await db.from('share_links').update(patch).eq('id', id).select('*').limit(1)
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     return NextResponse.json({ ok: true, link: (data || [])[0] })

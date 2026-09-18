@@ -15,7 +15,7 @@ import { unstable_cache } from 'next/cache'
 import { pageRows } from '@/lib/db-page'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAccess } from '@/lib/access'
+import { getAccess, canSeeMoney } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { Shell } from '@/components/Shell'
 import { computeScore, rollupBuilding, ratingToStars, scoreGaps, lastOptimizedOf } from '@/lib/optimize-score'
@@ -227,9 +227,12 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
     const { from, to } = windowRange(revWin.days, new Date().toISOString().slice(0, 10))
     try {
       const rev = await getRevenue(from, to, basis)
+      // ADR / RevPAR are dollar amounts: canSeeMoney only (2026-09-18 audit). Occupancy is a
+      // percentage and stays. Stripped HERE, server-side, so the amounts never reach the browser.
+      const showMoney = canSeeMoney(access)
       unitsWithMoney = units.map(u => {
         const r = rev[u.id]
-        return r ? { ...u, occupancy: r.occupancy, adr: r.adr, revpar: r.revpar } : u
+        return r ? { ...u, occupancy: r.occupancy, adr: showMoney ? r.adr : null, revpar: showMoney ? r.revpar : null } : u
       })
       const covered = units.filter(u => rev[u.id]).length
       if (covered === 0) revenueNote = 'No reservations found in this window — the occupancy, ADR and RevPAR columns are empty, not zero.'
@@ -365,6 +368,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
           revLabel={revWin.label.toLowerCase()}
           basisLabel={BASIS_SHORT[basis]}
           canEdit={canEdit}
+          showMoney={canSeeMoney(access)}
         />
       )}
 

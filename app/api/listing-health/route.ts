@@ -9,7 +9,7 @@ import { computeListingHealth, rollupBuildingHealth, channelKeyOfSource, channel
 import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf, isLux, isVendorManaged, MARKETS } from '@/lib/segments'
-import { requireUser } from '@/lib/access'
+import { requireUser, canSeeMoney } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -315,6 +315,13 @@ export async function GET(req: Request) {
         actions: (full.actions || []).slice(0, 12),
         buildings: (full.buildings || []).slice(0, 8),
       })
+    }
+    // DOLLARS ONLY FOR canSeeMoney (2026-09-18 audit). `pillars.revpar` is $/night; the INDEX
+    // (× building peers) is a ratio and stays. Blanked here so the amount never leaves the server.
+    if (!canSeeMoney(gate.access)) {
+      // Copy, never mutate: `full` may be the cache's own object on this instance.
+      const listings = (full.listings || []).map((l: any) => (l && l.pillars && l.pillars.revpar != null) ? { ...l, pillars: { ...l.pillars, revpar: null } } : l)
+      return NextResponse.json({ ...full, listings })
     }
     return NextResponse.json(full)
   } catch (e: any) {

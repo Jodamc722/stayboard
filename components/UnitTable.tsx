@@ -64,13 +64,15 @@ const shortDate = (iso: string | null) => {
   return Number.isNaN(d.getTime()) ? 'never' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel, canEdit }: {
+export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel, canEdit, showMoney = false }: {
   units: UnitRow[]
   buildings: string[]
   periodLabel: string
   revLabel: string
   basisLabel: string
   canEdit: boolean
+  /** canSeeMoney — the server already blanks adr/revpar when false; this hides the columns too. */
+  showMoney?: boolean
 }) {
   const [q, setQ] = useState('')
   const [building, setBuilding] = useState('')
@@ -144,9 +146,9 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
   }
 
   function exportCsv() {
-    const head = ['Unit', 'Listing title', 'Building', 'Score', 'Title chars', 'Sections', 'Photos', 'Photo quality', 'Amenities', 'Must fix', `Rating ${periodLabel}`, 'Reviews', `Occupancy ${revLabel}`, `ADR ${revLabel}`, `RevPAR ${revLabel}`, 'Basis', 'Last optimized']
+    const head = ['Unit', 'Listing title', 'Building', 'Score', 'Title chars', 'Sections', 'Photos', 'Photo quality', 'Amenities', 'Must fix', `Rating ${periodLabel}`, 'Reviews', `Occupancy ${revLabel}`, ...(showMoney ? [`ADR ${revLabel}`, `RevPAR ${revLabel}`] : []), 'Basis', 'Last optimized']
     const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const body = rows.map(u => [u.name, u.marketingTitle || '', u.building, u.score, u.titleLen, `${u.sections}/6`, u.photos, u.photoQuality ?? '', u.amenities, u.mustFix, u.rating ?? '', u.reviews, u.occupancy ?? '', u.adr ?? '', u.revpar ?? '', basisLabel, u.lastOptimized || ''].map(esc).join(','))
+    const body = rows.map(u => [u.name, u.marketingTitle || '', u.building, u.score, u.titleLen, `${u.sections}/6`, u.photos, u.photoQuality ?? '', u.amenities, u.mustFix, u.rating ?? '', u.reviews, u.occupancy ?? '', ...(showMoney ? [u.adr ?? '', u.revpar ?? ''] : []), basisLabel, u.lastOptimized || ''].map(esc).join(','))
     const csv = [head.map(esc).join(','), ...body].join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a')
@@ -263,8 +265,8 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
               <Cell label="Amen" value={`${u.amenities}${u.mustFix > 0 ? ' ⚠' : ''}`} tone={u.mustFix > 0 ? 'bad' : ''} />
               <Cell label="Rating" value={u.rating != null ? `${u.rating.toFixed(2)}★` : '—'} />
               <Cell label="Occ" value={pct(u.occupancy)} />
-              <Cell label="ADR" value={money(u.adr)} />
-              <Cell label="RevPAR" value={money(u.revpar)} />
+              {showMoney && <Cell label="ADR" value={money(u.adr)} />}
+              {showMoney && <Cell label="RevPAR" value={money(u.revpar)} />}
               <Cell label="Optimized" value={shortDate(u.lastOptimized)} tone={u.lastOptimized ? '' : 'warn'} />
             </dl>
             <div className="mt-2 text-[12px] text-muted">
@@ -295,8 +297,8 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
               <Th k="amenities" right>Amen</Th>
               <Th k="rating" right>Rating</Th>
               <Th k="occupancy" right>Occ</Th>
-              <Th k="adr" right>ADR</Th>
-              <Th k="revpar" right>RevPAR</Th>
+              {showMoney && <Th k="adr" right>ADR</Th>}
+              {showMoney && <Th k="revpar" right>RevPAR</Th>}
               <Th k="lastOptimized">Optimized</Th>
               <th className="px-2.5 py-2 text-left text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap">Next fix</th>
             </tr>
@@ -331,8 +333,8 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
                 </td>
                 <td className="px-2.5 py-2 text-right tabular-nums text-muted whitespace-nowrap">{u.rating != null ? `${u.rating.toFixed(2)}★` : '—'}</td>
                 <td className="px-2.5 py-2 text-right tabular-nums text-ink">{pct(u.occupancy)}</td>
-                <td className="px-2.5 py-2 text-right tabular-nums text-ink">{money(u.adr)}</td>
-                <td className="px-2.5 py-2 text-right tabular-nums text-ink">{money(u.revpar)}</td>
+                {showMoney && <td className="px-2.5 py-2 text-right tabular-nums text-ink">{money(u.adr)}</td>}
+                {showMoney && <td className="px-2.5 py-2 text-right tabular-nums text-ink">{money(u.revpar)}</td>}
                 <td className={`px-2.5 py-2 whitespace-nowrap ${u.lastOptimized ? 'text-muted' : 'text-amber-700 font-semibold'}`}>{shortDate(u.lastOptimized)}</td>
                 <td className="px-2.5 py-2 text-muted max-w-[220px]">
                   {u.topGap ? <span className="truncate block"><b className="text-ink tabular-nums">+{u.topGap.points.toFixed(1)}</b> {u.topGap.label}</span> : <span className="text-emerald-700">nothing</span>}
