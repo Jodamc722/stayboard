@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
-  const viaCron = cronAllowed(req).viaSecret || !!req.headers.get('x-vercel-cron')
+  const viaCron = cronAllowed(req).viaSecret
   if (!viaCron) {
     const g = await requireLevel('channels', 'full')
     if (!g.ok) return g.res

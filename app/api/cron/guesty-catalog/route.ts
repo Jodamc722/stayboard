@@ -16,7 +16,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function GET(req: NextRequest) {
-  const allowed = cronAllowed(req).ok || !!req.headers.get('x-vercel-cron')
+  // CRON_SECRET is set on this project, so the scheduler always carries the bearer; the
+  // x-vercel-cron header alone is spoofable and is not accepted (probed anonymously 2026-09-18).
+  const allowed = cronAllowed(req).viaSecret
   if (!allowed) {
     try {
       const { data: { user } } = await createClient().auth.getUser()

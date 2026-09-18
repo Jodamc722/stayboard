@@ -21,12 +21,16 @@ export const maxDuration = 300
 // or the bearer) now runs the watch; a person's GET still gets the list. The afternoon run skips
 // the digest: before 14:00 UTC (10am ET) it is the morning pass, after that the midday one.
 export async function GET(req: NextRequest) {
-  const scheduled = !!req.headers.get('x-vercel-cron') || cronAllowed(req).viaSecret
+  const scheduled = cronAllowed(req).viaSecret
   if (scheduled) {
     const digest = new Date().getUTCHours() < 14
     const url = new URL(req.url); url.searchParams.set('digest', digest ? '1' : '0')
     return POST(new NextRequest(url, { headers: req.headers }))
   }
+  // The open-items list names staff and quotes guest threads: signed-in Eve admins only. It
+  // answered anonymous GETs until 2026-09-18.
+  const gate = await eveGate()
+  if (!gate.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const items = await openItems(100).catch(() => [])
   return NextResponse.json({ ok: true, open: items.length, items })
 }

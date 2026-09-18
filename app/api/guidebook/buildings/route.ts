@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
+import { createClient } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,6 +9,11 @@ export const dynamic = 'force-dynamic'
 // Names are rolled up to the parent property (matching the Portfolio page),
 // and whole-unit "Full" combos are excluded so we don't build duplicate guidebooks.
 export async function GET() {
+  // Listing inventory is not public. Answered anonymous GETs until 2026-09-18.
+  try {
+    const { data: { user } } = await createClient().auth.getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  } catch { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
   const db = supabaseAdmin()
   const { data } = await db
     .from('guesty_listings')

@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { laborEconomics } from '@/lib/labor-econ'
 import { sendGmail } from '@/lib/gmail-send'
+import { cronAllowed } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -27,12 +28,14 @@ type Check = { key: string; ok: boolean; level: 'red' | 'amber'; what: string; f
 export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams
   const preview = sp.get('preview')
-  if (preview) {
+  // Scheduler bearer, or a signed-in person. This route emails the owner and answered anonymous
+  // callers with the full payroll check until 2026-09-18.
+  if (!cronAllowed(req).viaSecret) {
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return NextResponse.json({ error: 'sign in to preview' }, { status: 401 })
-    } catch { return NextResponse.json({ error: 'sign in to preview' }, { status: 401 }) }
+      if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    } catch { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
   }
 
   const yd = dISO(new Date(Date.now() - 864e5))
