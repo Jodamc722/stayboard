@@ -28,7 +28,6 @@ import { getStaff } from '@/lib/staffing'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
-import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -48,7 +47,7 @@ async function anthropic(payload: any): Promise<string | null> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return null
   try {
-    const r = await aiFetch('reports', {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -261,18 +260,27 @@ export async function POST(req: NextRequest) {
     // the backend"). Which means this branch no longer needs the reviews, the optimize score, or
     // the amenity diff it was computing — the owner's document is the photos, the links and
     // the copy, and the amenity work goes back to being an internal job on the unit page.
-    // NO COLLAGES ON A SLIDE (Jon, 2026-09-16). Guesty's picture array mixes real photographs
-    // with marketing collages the manager uploaded; on a listing thumbnail that is fine, on the
-    // cover of an owner's deck it lands as a four-up contact sheet under their name. Checked
-    // here, once, rather than in the renderer — the deck should never see one.
-    const cleaned = await Promise.all(rows.map(async l => ({
-      ...l,
-      // CHECK DEEPER THAN THE FIRST TEN. withoutCollages only decodes the first `limit`
-      // images and passes the rest through unverified, which was fine when the deck used five
-      // photos per listing and wrong now that the picker offers the whole set (Jon, 2026-09-17).
-      // Thirty covers a typical Guesty listing end to end.
-      pictures: await withoutCollages(Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : [], 30),
-    })))
+    // NO COLLAGES ON A DECORATIVE SLIDE, BUT THE LISTING SLIDE IS NOT DECORATION (Jon,
+    // 2026-09-16, corrected 2026-09-18: "I know I said not collage, but I meant on slides — not
+    // on the actual listing slide, the first-five-photo one"). Guesty's picture array mixes real
+    // photographs with marketing collages the manager uploaded. Under a section headline a
+    // collage lands as a four-up contact sheet, which is what we removed. On the listing review
+    // slide it is simply photo three of their gallery, and hiding it there means reviewing a
+    // listing the owner does not have.
+    //
+    // So the filtered list travels ALONGSIDE the pictures instead of replacing them: `pictures`
+    // stays exactly as Guesty holds it and feeds the review strip and the picker, `clean` feeds
+    // the auto-placement. It used to overwrite `pictures`, which is how one rule ended up
+    // governing two things that wanted opposite answers.
+    //
+    // CHECK DEEPER THAN THE FIRST TEN. withoutCollages only decodes the first `limit` images and
+    // passes the rest through unverified, which was fine when the deck used five photos per
+    // listing and wrong now that the picker offers the whole set (Jon, 2026-09-17). Thirty
+    // covers a typical Guesty listing end to end.
+    const cleaned = await Promise.all(rows.map(async l => {
+      const pictures = Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : []
+      return { ...l, pictures, clean: await withoutCollages(pictures, 30) }
+    }))
 
     // AMENITIES ARE BACK, AS A SLIDE OF THEIR OWN (Jon, 2026-09-16: "add the listed amenities,
     // have a list of recommended amenities, also non-selected amenities… option to select and
@@ -320,7 +328,7 @@ export async function POST(req: NextRequest) {
         if (Array.isArray(sc.amenities?.have) && sc.amenities.have.length) have = sc.amenities.have.map(String)
         suggest = (sc.amenities?.suggestions || []).map((x: any) => ({ name: String(x.name), reason: String(x.reason || '') }))
       } catch { /* the listing's own amenity array still stands */ }
-      return listingCardFrom(l, Array.from(new Set(have)).sort((a, b) => a.localeCompare(b)), suggest)
+      return listingCardFrom(l, Array.from(new Set(have)).sort((a, b) => a.localeCompare(b)), suggest, (l as any).clean)
     }).sort((a, b) => a.name.localeCompare(b.name))
 
     // Facts about the unit itself. The onboarding WALK is the better source when one exists —
