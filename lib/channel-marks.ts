@@ -45,6 +45,6 @@ export const CHANNEL_COUNT = '40+'
 // paragraph carries the reason breadth is worth anything, which is that the biggest names on the
 // list are networks rather than single websites.
 export const CHANNEL_BODY =
-  'One calendar, published everywhere that matters, every booking reconciled back to one place \u2014 which is why a unit can be priced for occupancy and never double-booked. The biggest names are networks: Expedia carries Hotels.com, Orbitz, Travelocity and Hotwire; Booking.com carries Priceline, Agoda and Kayak. Most owners arrive on one channel.'
+  'One calendar, published on 40+ channels and reconciled in one place: priced for occupancy, never double-booked. The largest are networks. Expedia includes Hotels.com, Orbitz, Travelocity and Hotwire; Booking.com includes Priceline, Agoda and Kayak.'
 /** Retired defaults. A deck still carrying one of these was never edited on this slide. */
 export const CHANNEL_COUNT_RETIRED = ['30+', '200+']

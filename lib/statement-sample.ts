@@ -156,11 +156,11 @@ export function statementHasRows(st: unknown): boolean {
 // out of the rental line the owner receives. Left there, the owner would be paying the channel's
 // fee on a cleaning fee Stay keeps. The reimbursement puts that piece back.
 export const STATEMENT_ALSO: KV[] = [
-    { k: 'No cleaning line, no OTA fee line', v: 'Neither appears after a guest stay. We keep the cleaning fee and it pays for the turnover; the channel’s commission is already out of your rental figure.' },
-    { k: 'Cleaning after your own stay', v: 'The one cleaning line you will see. No guest fee covers that turnover, so it appears here at cost.' },
-    { k: 'Channel fee reimbursement', v: 'The channel takes its fee on rent and cleaning fee together, and Guesty cannot split it. We pay back the part charged on the cleaning fee we keep: 15% of it.' },
-    { k: 'Revenue management', v: 'Appears only if you are on a revenue-management arrangement.' },
-    { k: 'Adjustments', v: 'A cancellation, refund or late charge from a prior month, labeled with the month it belongs to.' },
+    { k: 'No cleaning line, no OTA fee line', v: 'Neither appears after a guest stay. The guest’s cleaning fee covers the turnover, and channel commission is already deducted from the rental figure.' },
+    { k: 'Cleaning after your own stay', v: 'The only cleaning charge you will see, billed at cost.' },
+    { k: 'Channel fee reimbursement', v: 'Channels charge their fee on rent plus cleaning fee, and Guesty cannot separate them. We refund the fee charged on the cleaning fee: 15% of it.' },
+    { k: 'Revenue management', v: 'Only if you are on a revenue-management plan.' },
+    { k: 'Adjustments', v: 'Cancellations, refunds or late charges from a prior month, labeled by month.' },
 ]
 
 /**

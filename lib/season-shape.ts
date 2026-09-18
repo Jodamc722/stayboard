@@ -52,7 +52,7 @@ export const SEASON_SHAPE: { m: string; level: number; peak?: boolean }[] = [
 
 /** The headline beside the curve. Tied to the curve above: change one, change the other. */
 export const SEASON_PEAK_SHARE = '65%'
-export const SEASON_PEAK_LABEL = 'of the year\u2019s revenue lands December through April'
+export const SEASON_PEAK_LABEL = 'of annual revenue, December through April'
 
 /**
  * The paragraph under the curve. It lives here with the share and the shape because it makes the
@@ -62,9 +62,9 @@ export const SEASON_PEAK_LABEL = 'of the year\u2019s revenue lands December thro
  * statements, two of them contradicted by the picture above them.
  */
 export const SEASON_BODY =
-  'December through April, peaking in March \u2014 that is where the demand and the rate are, and what the rest of the year is preparing for. Summer falls away; September is the floor, and the climb back starts in October.'
+  'December through April is peak season, with March the high point. Demand and rates fall through summer; September is the low, and bookings recover from October.'
 /** Older paragraphs, by a phrase each one alone contained. A deck carrying one is repaired. */
-export const SEASON_BODY_RETIRED_MARKS = ['July and August are the floor', 'That is when the demand is, that is when the rate is']
+export const SEASON_BODY_RETIRED_MARKS = ['July and August are the floor', 'That is when the demand is, that is when the rate is', 'what the rest of the year is preparing for']
 export function seasonBodyStale(body: unknown): boolean {
   const s = String(body || '')
   return !s.trim() || SEASON_BODY_RETIRED_MARKS.some(m => s.includes(m))

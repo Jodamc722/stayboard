@@ -27,6 +27,7 @@ import { STATEMENT_ALSO } from './statement-sample'
 import {
   AGENDA_ROWS, HERO_HEADLINE, CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL, teamSubtitle, WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_NOTE,
+  CHANNELS_HEADLINE, SEASON_SUBTITLE, GUESTY_SUBTITLE, STATEMENT_HEADLINE, STATEMENT_SUBTITLE, NOTES_SUBTITLE,
 } from './onboarding-copy'
 import 'server-only'
 import { getSetting } from './app-settings'
@@ -384,33 +385,33 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   asks: {
     unit: [
-      { id: 'u1', q: 'Anything we got wrong, or that you are taking out?' },
-      { id: 'u2', q: 'Anything here you would be upset to see damaged?', hint: 'We will box it and store it rather than insure it by hope.' },
+      { id: 'u1', q: 'Anything incorrect, or being removed?' },
+      { id: 'u2', q: 'Anything you would not want damaged?', hint: 'We will box it and store it rather than insure it by hope.' },
       { id: 'u3', q: 'Who else holds keys or door codes?', hint: 'HOA, a cleaner you used before, family, a contractor.' },
     ],
     listings: [
-      { id: 'l1', q: 'Anything in the description that is not true, or that you would never say?' },
-      { id: 'l2', q: 'What does this unit have that the building’s other listings do not?', hint: 'The line that earns the booking. Owners usually know it and nobody ever asks.' },
+      { id: 'l1', q: 'Anything in the description that is inaccurate?' },
+      { id: 'l2', q: 'What sets this unit apart from others in the building?', hint: 'The line that earns the booking. Owners usually know it and nobody ever asks.' },
     ],
     strategy: [
-      { id: 's0', q: 'What does a good first year look like to you?', hint: 'The number, or the feeling. Both are useful and they are rarely the same.' },
+      { id: 's0', q: 'What does a good first year look like?', hint: 'The number, or the feeling. Both are useful and they are rarely the same.' },
       { id: 's1', q: 'Who is this unit for?', hint: 'Families · couples · business · snowbirds · long stays' },
-      { id: 's2', q: 'If we can only have one — higher rate, or higher occupancy?' },
+      { id: 's2', q: 'Priority: higher rate, or higher occupancy?' },
       { id: 's3', q: 'Minimum stay floor?', hint: 'Shorter fills faster and turns more; longer protects the unit.' },
       { id: 's4', q: 'Pets — yes, no, or case by case?' },
-      { id: 's5', q: 'Owner blocks — how often, and how much notice can you give us?', hint: 'Notice is the whole game. Two weeks costs nothing; two days costs a booking. The clean after an owner stay is billed at cost.' },
+      { id: 's5', q: 'Owner stays: how often, and with how much notice?', hint: 'Notice is the whole game. Two weeks costs nothing; two days costs a booking. The clean after an owner stay is billed at cost.' },
     ],
     ramp: [
-      { id: 'r1', q: 'Are you comfortable opening under target rate for the first 30–45 nights?' },
-      { id: 'r2', q: 'Is there a date this has to be earning by?', hint: 'Mortgage, assessment, a number you told someone.' },
+      { id: 'r1', q: 'Comfortable opening below target rate for the first 30–45 nights?' },
+      { id: 'r2', q: 'Any date this unit needs to be earning by?', hint: 'Mortgage, assessment, a number you told someone.' },
     ],
     season: [
-      { id: 'e1', q: 'Any dates you already know you are blocking this season?' },
+      { id: 'e1', q: 'Any owner dates to block this season?' },
       { id: 'e2', q: 'Any renovation, special assessment or HOA work coming?' },
     ],
     tech: [
-      { id: 't1', q: 'Is there anything already installed we should keep or work around?', hint: 'An HOA lock standard, a Ring, a Nest you like, a mesh network.' },
-      { id: 't2', q: 'Anything you would rather we did not put in?' },
+      { id: 't1', q: 'Anything already installed we should keep?', hint: 'An HOA lock standard, a Ring, a Nest you like, a mesh network.' },
+      { id: 't2', q: 'Anything you do not want installed?' },
     ],
     comms: [
       { id: 'c1', q: 'Best number and email — and how fast do you want to hear from us?' },
@@ -687,7 +688,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // SUBTITLE IS THE PARAGRAPH THE SLIDE RENDERS. The `body` field below is not drawn on this
     // layout at all, so the real copy has to live in `subtitle` or it is written for nobody.
     channels: {
-      headline: 'Your calendar, on every channel that matters',
+      headline: CHANNELS_HEADLINE.current,
       subtitle: t.channelsBody,
       body: t.channelsBody,
       primary: t.channelsPrimary,
@@ -723,7 +724,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     },
     season: {
       headline: 'South Florida pays in winter',
-      subtitle: 'December through April is the window everything else in the year prepares for.',
+      subtitle: SEASON_SUBTITLE.current,
       body: t.seasonBody,
       months: SEASON_SHAPE,
       note: [benchmarkLine(i.market, i.bedrooms), t.seasonNote].filter(Boolean).join(' '),
@@ -752,7 +753,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // 6 ── THE OWNER PORTAL. One address for the house, this owner's own login.
     guesty: {
       headline: 'Your Guesty owner portal',
-      subtitle: 'Your own login to the system we actually run on.',
+      subtitle: GUESTY_SUBTITLE.current,
       body: t.guestyBody,
       items: t.portalItems,
       portalUrl: t.portalUrl,
@@ -800,8 +801,8 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // 7 ── OWNER STATEMENTS. The worked month, then the rules that decide what can appear on
     // it — the billables doctrine folded in, because the statement is where an owner meets it.
     statement: {
-      headline: 'Your monthly owner statement',
-      subtitle: 'A worked sample, not your numbers \u2014 so you know how to read the real one.',
+      headline: STATEMENT_HEADLINE.current,
+      subtitle: STATEMENT_SUBTITLE.current,
       // THE SAMPLE IS THE SAME SAMPLE FOR EVERY OWNER (Jon, 2026-09-17: "the owner statement is
       // a sample one to show the owner and explain how to read \u2014 should be a standard slide, so
       // once we build it, it's the default one we use"). It lives in lib/statement-sample.ts as a
@@ -840,7 +841,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // still unanswered, so an onboarding is never "done" while questions are open.
     notes: {
       headline: 'Other notes',
-      subtitle: 'Anything else that came up, and anything still open.',
+      subtitle: NOTES_SUBTITLE.current,
       body: '',
     },
     photoPool: pool,
