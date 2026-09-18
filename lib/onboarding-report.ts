@@ -424,7 +424,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
       { id: 'c3', q: 'Anyone else on communications?', hint: 'Spouse, partner, accountant, property attorney.' },
     ],
     money: [
-      { id: 'm1', q: 'Your approval limit — keep $300, or change it?' },
+      { id: 'm1', q: 'Your spending limit — keep $300, or change it?' },
       { id: 'm2', q: 'Who approves when you are unreachable?' },
       { id: 'm3', q: 'Any vendor of your own we should use?', hint: 'An A/C contract, a plumber you trust, the HOA’s preferred list.' },
     ],
