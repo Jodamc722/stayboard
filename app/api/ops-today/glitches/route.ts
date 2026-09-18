@@ -1,12 +1,12 @@
 // GLITCHES — guest-reported problems logged in Breezeway ("Guest Reported / Glitch — ...").
 // These are the guest-impacting issues that need eyes fast, so they get their own tab.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { pageRows } from '@/lib/db-page'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -24,9 +24,9 @@ const COLS = 'id,reference_property_id,name,status,scheduled_date,finished_at,as
 const RECENT_DAYS = 14  // Today-in-Ops shows only CURRENT guest glitches; older ones are stale/closed. A full historical glitch page is separate future work.
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())

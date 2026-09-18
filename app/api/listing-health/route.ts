@@ -4,12 +4,12 @@
 // Reads persisted tables (fast, Guesty-independent). Logged-in users only.
 import { NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeListingHealth, rollupBuildingHealth, channelKeyOfSource, channelWeights, type HealthReview, type ChannelMix, type ChannelKey } from '@/lib/health-score'
 import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf, isLux, isVendorManaged, MARKETS } from '@/lib/segments'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -282,9 +282,9 @@ const computeHealth = unstable_cache(async () => {
 }, ['listing-health-v1'], { tags: ['listing-health'], revalidate: 300 })
 
 export async function GET(req: Request) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   try {
     const full: any = await computeHealth()
     // OPS — what Today in Ops needs: one small score per listing, keyed by id, so the board can

@@ -206,11 +206,38 @@ export function canApproveDoorCodes(access: Pick<Access, 'email' | 'features'>):
 // Usage:  const g = await requireLevel('glitches', 'edit'); if (!g.ok) return g.res
 // Semantics: signed-out → 401. Signed in but below the needed level on that feature → 403 with a
 // human message. Bootstrap/fail-open states resolve to full (never lock out on infra errors).
-export async function requireLevel(featureKey: string, need: 'view' | 'edit' | 'full'):
-  Promise<{ ok: true; access: Access; res?: undefined } | { ok: false; res: NextResponse; access: Access }> {
+export type Gate = { ok: true; access: Access; res?: undefined } | { ok: false; res: NextResponse; access: Access }
+
+// ---- THE ONE LOGIN CHECK FOR API ROUTES (2026-09-18 audit, P0-2). ---------------------------
+// `createClient().auth.getUser()` on its own proves only that the caller holds a Supabase session
+// for this project. It says nothing about whether they still work here: a deactivated employee
+// (app_users.status='disabled') keeps a valid session until it expires, and 86 routes let that
+// session through. Every page already goes through middleware that consults the allowlist; this
+// is the same bar for API routes. Signed-out → 401. Signed in but not on the allowlist, or on it
+// but disabled → 403. `access.user` is the same Supabase user object routes used to read.
+// Usage:  const g = await requireUser(); if (!g.ok) return g.res; const user = g.access.user
+export async function requireUser(): Promise<Gate> {
   const access = await getAccess()
   if (!access.user) return { ok: false, res: NextResponse.json({ error: 'unauthorized' }, { status: 401 }), access }
   if (!access.allowed) return { ok: false, res: NextResponse.json({ error: 'no-access' }, { status: 403 }), access }
+  return { ok: true, access }
+}
+
+// ---- THE ONE ADMIN CHECK. 'admin' = app_users.role === 'admin' (or the owner); 'owner' = the
+// superadmin email only. Settings routes used to spell this four different ways.
+export async function requireAdmin(need: 'admin' | 'owner' = 'admin'): Promise<Gate> {
+  const g = await requireUser()
+  if (!g.ok) return g
+  const isOwner = isSuperadmin(g.access.email)
+  if (need === 'owner' && !isOwner) return { ok: false, res: NextResponse.json({ error: 'forbidden', message: 'Only the owner can do this.' }, { status: 403 }), access: g.access }
+  if (need === 'admin' && !isOwner && g.access.role !== 'admin') return { ok: false, res: NextResponse.json({ error: 'forbidden', message: 'Admins only.' }, { status: 403 }), access: g.access }
+  return g
+}
+
+export async function requireLevel(featureKey: string, need: 'view' | 'edit' | 'full'): Promise<Gate> {
+  const g = await requireUser()
+  if (!g.ok) return g
+  const access = g.access
   const have = access.levels[featureKey]
   // ACTIVITY (Jon, 2026-08-22): every gated API call is one metadata row — who, which feature,
   // how much power, allowed or refused. This is THE choke point every protected endpoint passes

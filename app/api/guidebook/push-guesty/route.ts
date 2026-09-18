@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken } from '@/lib/guesty'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -12,9 +12,9 @@ const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 // "Guidebook" custom field in Guesty, per listing. Uses the dedicated
 // /custom-fields endpoint so it only updates that one field.
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('guidebooks', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const all = body?.all === true

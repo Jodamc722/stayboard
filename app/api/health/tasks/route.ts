@@ -2,17 +2,17 @@
 // each open task's live status in Breezeway, flipping completed/approved ones to "action taken".
 // Returns a map keyed by `${listing_id}__${issue_title}` for the UI.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, retrieveBreezewayTask, normalizeTaskStatus } from '@/lib/breezeway'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const db = supabaseAdmin()
   const { data: rows, error } = await db.from('breezeway_tasks')

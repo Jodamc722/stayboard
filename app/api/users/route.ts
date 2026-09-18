@@ -6,7 +6,7 @@
 // tolerantly so the page still works before the migration runs.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAccess } from '@/lib/access'
+import { requireAdmin as requireAdminGate, isSuperadmin } from '@/lib/access'
 import { normWorkspace, FEATURES, LEVELS, isExtraPerm, extraPermChoices } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
@@ -16,10 +16,21 @@ const OWNER = 'jon@stay-hospitality.com'
 function clean(v: any): string { return String(v ?? '').trim().toLowerCase() }
 
 async function requireAdmin() {
-  const access = await getAccess()
-  if (!access.user) return { error: NextResponse.json({ error: 'unauthorized' }, { status: 401 }), access }
-  if (access.role !== 'admin') return { error: NextResponse.json({ error: 'Admins only.' }, { status: 403 }), access }
-  return { error: null, access }
+  const g = await requireAdminGate('admin')
+  if (!g.ok) return { error: g.res, access: g.access }
+  return { error: null, access: g.access }
+}
+
+// PRIVILEGED TARGETS (2026-09-18 audit, P0-1). Any admin could PATCH the owner's password and sign
+// in as him, or promote/disable another admin, or mint a new admin. Touching the owner row or any
+// admin row — and creating an admin — is now the owner's alone. Ordinary admins keep everything
+// else: inviting members, editing member rows, profiles and prefs.
+async function isPrivilegedTarget(email: string): Promise<boolean> {
+  if (email === OWNER) return true
+  try {
+    const { data } = await supabaseAdmin().from('app_users').select('role').eq('email', email).maybeSingle()
+    return (data as any)?.role === 'admin'
+  } catch { return true }   // cannot tell → treat as protected
 }
 
 // Find an existing auth user's id by email (paged; the team is small so a few pages is plenty).
@@ -67,6 +78,12 @@ export async function POST(req: NextRequest) {
   const password = typeof body?.password === 'string' ? body.password : ''
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return NextResponse.json({ error: 'A valid email is required.' }, { status: 400 })
   if (password && password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
+  const isOwnerCall = isSuperadmin(access.email)
+  if (!isOwnerCall) {
+    if (role === 'admin' || body?.access_role === 'admin') return NextResponse.json({ error: 'Only the owner can make someone an admin.' }, { status: 403 })
+    // Re-inviting an existing admin (or the owner) would reset their password / re-upsert their row.
+    if (await isPrivilegedTarget(email)) return NextResponse.json({ error: 'Only the owner can change an admin account.' }, { status: 403 })
+  }
 
   const sb = supabaseAdmin()
   // Upsert the allowlist row first so access is granted even if the email can't be delivered.
@@ -126,7 +143,15 @@ export async function PATCH(req: NextRequest) {
   if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 })
   const password = typeof body?.password === 'string' ? body.password : ''
   if (password && password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
-  const isOwnerCall = clean(access.email) === OWNER
+  const isOwnerCall = isSuperadmin(access.email)
+  // Owner and admin rows: password, status and role changes are the owner's call only. A non-owner
+  // admin may still edit their OWN profile/prefs (below), never their own role or status.
+  if (!isOwnerCall) {
+    const privileged = await isPrivilegedTarget(email)
+    const touchesPower = !!password || body?.status !== undefined || body?.role !== undefined || body?.access_role !== undefined
+    if (privileged && touchesPower) return NextResponse.json({ error: 'Only the owner can change an admin account\u2019s password, status or role.' }, { status: 403 })
+    if (body?.role === 'admin' || body?.access_role === 'admin') return NextResponse.json({ error: 'Only the owner can make someone an admin.' }, { status: 403 })
+  }
   const patch: any = {}
   if (body?.role === 'admin' || body?.role === 'member') patch.role = body.role
   if (body?.status === 'active' || body?.status === 'disabled') patch.status = body.status
@@ -223,6 +248,7 @@ export async function DELETE(req: NextRequest) {
   if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 })
   if (email === access.email) return NextResponse.json({ error: 'You cannot delete your own account.' }, { status: 400 })
   if (email === OWNER) return NextResponse.json({ error: 'The owner account cannot be deleted.' }, { status: 400 })
+  if (!isSuperadmin(access.email) && await isPrivilegedTarget(email)) return NextResponse.json({ error: 'Only the owner can remove an admin.' }, { status: 403 })
   const sb = supabaseAdmin()
   const { error: dErr } = await sb.from('app_users').delete().eq('email', email)
   if (dErr) return NextResponse.json({ error: dErr.message }, { status: 500 })

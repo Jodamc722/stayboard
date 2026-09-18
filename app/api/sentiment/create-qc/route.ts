@@ -3,10 +3,10 @@
 // maintenance/housekeeping task with guest context, logs to qc_tasks (idempotent per conversation).
 // GET ?conversationIds=a,b,c returns existing QC tasks so the board can show created-state.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, createBreezewayTask } from '@/lib/breezeway'
 import { buildIntel, intelKindFor, INTEL_STRIP_RE } from '@/lib/listingIntel'
+import { requireLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -17,9 +17,9 @@ const PRIOS = ['urgent', 'high', 'normal', 'low']
 function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const ids = String(new URL(req.url).searchParams.get('conversationIds') || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 200)
   if (!ids.length) return NextResponse.json({ ok: true, tasks: [] })
   try {
@@ -29,9 +29,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('messages', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const body = await req.json().catch(() => ({} as any))
   const conversationId = String(body?.conversationId || '').trim()

@@ -2,8 +2,8 @@
 // upserts the refresh token into google_tokens keyed by the logged-in user's email.
 // Run supabase/migrations/012_google_tokens.sql once before first use.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireAdmin } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,9 +16,9 @@ function page(msg: string): NextResponse {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user || !user.email) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireAdmin('admin')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const sp = new URL(req.url).searchParams
   const code = sp.get('code')
   if (!code) return page('Google authorization was cancelled.')

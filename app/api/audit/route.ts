@@ -1,7 +1,7 @@
 // Property Audit API - audits + items. Mobile capture authenticates by share code (the link IS
 // the key); desktop management uses the app session. All DB access via service role (RLS on).
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { requireUser, requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFor } from '@/lib/approval'
 import { pageRows } from '@/lib/db-page'
@@ -22,8 +22,13 @@ async function carryForwardItems(db: any, listingId: string, newAuditId: string)
   if (rows.length) await db.from('audit_items').insert(rows)
 }
 
+// A Lighthouse user (on the allowlist, active) — not merely a Supabase session. Null otherwise.
 async function getUser() {
-  try { const supabase = createClient(); const { data } = await supabase.auth.getUser(); return data.user || null } catch { return null }
+  try { const g = await requireUser(); return g.ok ? g.access.user : null } catch { return null }
+}
+// Same, but the person must hold edit on Audits: every desk-side write goes through this.
+async function getEditor() {
+  try { const g = await requireLevel('audits', 'edit'); return g.ok ? g.access.user : null } catch { return null }
 }
 
 function listingMeta(row: any) {
@@ -118,7 +123,7 @@ export async function POST(req: NextRequest) {
   const action = String(body.action || '')
 
   if (action === 'createAll') {
-    const user = await getUser()
+    const user = await getEditor()
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const [lr2, ar2] = await Promise.all([
       db.from('guesty_listings').select('id,status').limit(2000),
@@ -138,7 +143,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'createAudit') {
-    const user = await getUser()
+    const user = await getEditor()
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const listingId = String(body.listingId || '')
     if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
@@ -159,7 +164,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'createProspectAudit') {
-    const user = await getUser()
+    const user = await getEditor()
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const name = String(body.name || '').slice(0, 120)
     if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 })
@@ -180,7 +185,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'mergeProspect') {
-    const user = await getUser()
+    const user = await getEditor()
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const target = body.code ? await auditByCode(db, String(body.code)) : (body.auditId ? ((await db.from('property_audits').select('*').eq('id', String(body.auditId)).limit(1)).data || [])[0] : null)
     if (!target) return NextResponse.json({ error: 'audit not found' }, { status: 404 })
@@ -192,7 +197,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'createBuildingAudit') {
-    const user = await getUser()
+    const user = await getEditor()
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const building = String(body.building || '').slice(0, 120)
     if (!building) return NextResponse.json({ error: 'building required' }, { status: 400 })
@@ -214,7 +219,7 @@ export async function POST(req: NextRequest) {
 
   const code = String(body.code || '')
   const audit = code ? await auditByCode(db, code) : null
-  const user = audit ? null : await getUser()
+  const user = audit ? null : await getEditor()
   if (!audit && !user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   if (action === 'learnTag') {

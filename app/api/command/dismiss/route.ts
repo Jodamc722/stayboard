@@ -10,9 +10,9 @@
 // DELETE { key }  → bring it back (omit key to bring back everything cleared today)
 // Days older than yesterday are pruned on every write so the setting never grows.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { DISMISS_KEY } from '@/lib/command-day'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,9 +21,9 @@ const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/N
 type Entry = { by: string; at: string; outcome?: 'done' | 'skipped'; title?: string; unit?: string }
 
 async function mutate(req: NextRequest, remove: boolean) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))
   const key = String(body?.key || '').slice(0, 200)
   if (!remove && !key) return NextResponse.json({ ok: false, error: 'key required' }, { status: 400 })

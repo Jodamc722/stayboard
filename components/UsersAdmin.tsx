@@ -193,6 +193,8 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
   onResetPw: () => void; onDelete: () => void
 }) {
   const isOwnerRow = u.email === OWNER
+  // A non-owner admin looking at the owner or at another admin.
+  const lockedRow = !isOwner && (isOwnerRow || u.role === 'admin')
   const name = String(u.profile?.name || '')
   const [pName, setPName] = useState(name)
   const [pTitle, setPTitle] = useState(String(u.profile?.title || ''))
@@ -237,13 +239,16 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
             className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-semibold transition-colors ${expanded ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-brand-300 text-brand-700 hover:bg-brand-50'}`}>
             <SlidersHorizontal size={13} /> {expanded ? 'Close' : 'Edit'}
           </button>
-          {u.status === 'active' ? (
+          {/* Owner and admin rows: password / status / delete are the owner's call (the API refuses
+              them for anyone else), so a non-owner admin does not get buttons that only 403. */}
+          {!lockedRow && (u.status === 'active' ? (
             <button onClick={() => onPatch(u.email, { status: 'disabled' })} disabled={me || isOwnerRow} className="inline-flex items-center gap-1 text-[12px] text-rose-600 hover:text-rose-700 disabled:opacity-40"><Ban size={13} /> Disable</button>
           ) : (
             <button onClick={() => onPatch(u.email, { status: 'active' })} className="inline-flex items-center gap-1 text-[12px] text-emerald-600 hover:text-emerald-700"><RotateCcw size={13} /> Re-enable</button>
-          )}
-          <button onClick={onResetPw} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-brand-700"><KeyRound size={13} /> Password</button>
-          <button onClick={onDelete} disabled={me || isOwnerRow} title={isOwnerRow ? 'The owner account cannot be deleted' : 'Delete user'} className="inline-flex items-center gap-1 text-[12px] text-rose-600 hover:text-rose-700 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 size={13} /> Delete</button>
+          ))}
+          {!lockedRow && <button onClick={onResetPw} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-brand-700"><KeyRound size={13} /> Password</button>}
+          {!lockedRow && <button onClick={onDelete} disabled={me || isOwnerRow} title={isOwnerRow ? 'The owner account cannot be deleted' : 'Delete user'} className="inline-flex items-center gap-1 text-[12px] text-rose-600 hover:text-rose-700 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 size={13} /> Delete</button>}
+          {lockedRow && <span className="text-[11px] text-muted">Only the owner can change an admin account.</span>}
         </div>
       </div>
 

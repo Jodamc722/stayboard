@@ -4,9 +4,9 @@
 //   POST { action:'unlock', password } -> anyone with the link + password gets a signed edit cookie
 //   POST { action:'clear' }            -> team members clear the edit cookie (lock again)
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { EDIT_COOKIE, EDIT_TTL_MS, signEditToken, hashPassword, verifyPassword } from '@/lib/edit-access'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,9 +31,9 @@ export async function POST(req: NextRequest) {
   const password = str(body?.password)
 
   if (action === 'set') {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    // Setting the password that lets a share-link holder EDIT owner reports is a full-access act.
+    const gate = await requireLevel('reports', 'full')
+    if (!gate.ok) return gate.res
     if (password.length < 4) return NextResponse.json({ error: 'Password must be at least 4 characters.' }, { status: 400 })
     const { error } = await supabaseAdmin().from('app_settings').upsert({ key: KEY, value: hashPassword(password), updated_at: new Date().toISOString() })
     if (error) return NextResponse.json({ error: 'Could not save the password (run migration 013_app_settings.sql?).' }, { status: 500 })

@@ -183,7 +183,7 @@ export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt'
 // matching single-quoted strings, so one stray apostrophe in a comment swallows every entry after
 // it and the build fails claiming a page is unregistered.
 export const OPEN_PREFIXES = [
-  '/login', '/auth', '/signup', '/api', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
+  '/login', '/auth', '/api', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
   '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/', '/share/',
   '/order/', '/orders-live',

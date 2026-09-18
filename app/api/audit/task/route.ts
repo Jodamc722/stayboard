@@ -5,9 +5,9 @@
 // Every task carries a STANDARDIZED brief (unit / room / task / done-when / photo) so the field
 // team gets clear instructions, not one line.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, createBreezewayTask, updateBreezewayTask, listBreezewayPeople } from '@/lib/breezeway'
+import { requireLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -47,9 +47,9 @@ function buildBrief(item: any, unit: string): string {
 }
 
 export async function GET() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ ok: true, people: [] })
   try { const people = await listBreezewayPeople(); return NextResponse.json({ ok: true, people: people || [] }) } catch { return NextResponse.json({ ok: true, people: [] }) }
 }
@@ -89,8 +89,9 @@ async function createTaskForItem(db: any, item: any, opts: { department?: string
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // A signed-in Lighthouse user needs edit on Audits; a walk share code is the other way in (below).
+  const gate = await requireLevel('audits', 'edit')
+  const user = gate.ok ? gate.access.user : null
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))
   // WALK AUTO-DISPATCH: the mobile walk finishes with no session, only its share code. A valid

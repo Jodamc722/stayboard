@@ -4,9 +4,9 @@
 // validates the sender) and upsert that copy. Plain GET answers Breezeway's URL-validation ping.
 // One-time setup (logged-in): GET ?subscribe=1 registers this URL for 'task' events.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, getBreezewayToken, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
+import { requireAdmin } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -17,9 +17,9 @@ const RECEIVER_URL = 'https://stayboard-three.vercel.app/api/breezeway/webhook'
 export async function GET(req: NextRequest) {
   const p = new URL(req.url).searchParams
   if (!p.get('subscribe') && !p.get('list')) return NextResponse.json({ ok: true }) // validation ping
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireAdmin('admin')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const token = await getBreezewayToken()
   if (p.get('list')) {

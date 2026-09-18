@@ -3,8 +3,8 @@
 // conversion to Google Slides and return the webViewLink. 428 { needAuth: true } when the
 // user hasn't connected Google yet (client then opens /api/google/auth in a popup).
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -34,9 +34,9 @@ async function accessTokenFor(email: string): Promise<string | null> {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user || !user.email) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('reports', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))
   const fileName = str(body?.fileName).replace(/\.pptx$/i, '').slice(0, 120) || 'Owner Review'
   const base64 = str(body?.base64)

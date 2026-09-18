@@ -3,8 +3,8 @@
 // tasks (with assignees + scheduled day), and recent completed history. Guest/review-driven
 // tasks are flagged. Logged-in users only. (No big portfolio sync — one unit, one call.)
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { breezewayConfigured, bzApi } from '@/lib/breezeway'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -21,9 +21,9 @@ function isCanceled(t: any) { const s = t?.type_task_status || {}; return /cance
 function isDone(t: any) { const st = stage(t); return !!t?.finished_at || st === 'finished' || st === 'done' || st.includes('clos') || st.includes('complet') || st.includes('approv') }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
 
   const listingId = String(new URL(req.url).searchParams.get('listingId') || '').trim()

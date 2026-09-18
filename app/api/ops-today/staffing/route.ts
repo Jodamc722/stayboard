@@ -5,11 +5,11 @@
 // ("Shaany Christian" is "shaany espinoza" in Breezeway; "Rodiguez" vs "Rodriguez"), so the
 // join uses the same fuzzy matcher as the labor KPIs — a spelling variant is NOT a gap.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getShifts, nameMatches, nameMatchesRoster } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
 import { isTaskGone } from '@/lib/task-categories'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -18,9 +18,9 @@ const TZ = 'America/New_York'
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   try {
     const qd = String(req.nextUrl.searchParams.get('date') || '')
     const today = /^\d{4}-\d{2}-\d{2}$/.test(qd) ? qd : ymd(new Date())

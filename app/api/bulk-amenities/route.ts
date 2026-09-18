@@ -3,8 +3,8 @@
 // sequentially to respect Guesty rate limits; returns a per-listing result. The human approves
 // the change in the UI before this is called. Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -13,9 +13,9 @@ const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('optimize', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const listingIds: string[] = Array.isArray(body?.listingIds) ? body.listingIds.filter((x: any) => typeof x === 'string') : []

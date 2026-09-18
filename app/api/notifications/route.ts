@@ -1,14 +1,14 @@
 // My notifications: unread count + latest 30 (GET); mark read / read all (POST).
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user || !user.email) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const db = supabaseAdmin()
   const me = user.email.toLowerCase()
   const { data, error } = await db.from('app_notifications')
@@ -22,9 +22,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user || !user.email) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const db = supabaseAdmin()
   const me = user.email.toLowerCase()
   const b = await req.json().catch(() => ({} as any))

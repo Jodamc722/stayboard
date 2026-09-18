@@ -6,16 +6,16 @@
 // the engines and never call the model. The tab's little number was mounting on every board view,
 // including Units, so simply looking at the board could cost a Fable-tier call (Jon, 2026-09-16).
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { buildOpsFocus } from '@/lib/ops-focus'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const sb = await createClient()
-  const { data: { user } } = await sb.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   const refresh = req.nextUrl.searchParams.get('refresh') === '1'
   const cachedOnly = req.nextUrl.searchParams.get('cached') === '1'

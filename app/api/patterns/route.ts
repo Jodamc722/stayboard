@@ -13,10 +13,10 @@
 //   - rising / falling vs the prior window, and the low-star trend by channel
 // Read-only, signed-in users. Nothing is created here.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { THEMES, looksNegative, sentenceAbout } from '@/lib/review-themes'
 import { marketOf, buildingOf } from '@/lib/segments'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -41,9 +41,9 @@ async function page(build: () => any, pages: number): Promise<any[]> {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   try {
     const sp = req.nextUrl.searchParams
     const days = Math.min(180, Math.max(14, Number(sp.get('days')) || 90))

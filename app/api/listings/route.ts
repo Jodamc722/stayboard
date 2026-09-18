@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   // ?slim=1 — id/name/building only. `select('*')` pulls the full Guesty `raw` blob for every
   // listing (tens of MB across 233 rows), which is wasteful for anything that just needs a picker.
   const slim = new URL(req.url).searchParams.get('slim') === '1'

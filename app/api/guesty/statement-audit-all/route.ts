@@ -23,10 +23,10 @@
 // GET ...&owner=<id>     restrict to one owner
 // GET ...&problemsOnly=1 return only the owner-months that fail to tie
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken } from '@/lib/guesty'
 import { hasEditCookie } from '@/lib/edit-access'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -82,9 +82,9 @@ function addTo(m: Agg, chargeCode: string, amount: number) {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok && !hasEditCookie()) return gate.res
+  const user = gate.access.user
 
   const qs = new URL(req.url).searchParams
   const mode = qs.get('mode') || 'sweep'

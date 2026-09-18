@@ -2,17 +2,17 @@
 // conversation (joined with listing name + rolled-up building + thread preview), plus
 // summary counts for the warning banner. Read-only; logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const sb = supabaseAdmin()
   const status = new URL(req.url).searchParams.get('status') || 'open'

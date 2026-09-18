@@ -13,7 +13,7 @@
 // FF&E IS A PURCHASING LIST. It writes to ffe_answers / ffe_unit_status and nothing else — no
 // Breezeway task, no work order, no maintenance cost. That separation is the point.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { requireUser } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, FFE_ACTIONS, BUYS, type FfeOverride } from '@/lib/ffe-checklist'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
@@ -153,9 +153,8 @@ export async function GET(req: NextRequest) {
 
     // ---- INDEX (signed in): the whole portfolio by owner, with every link already made ----
     if (sp.get('index')) {
-      const s = createClient()
-      const { data: u } = await s.auth.getUser()
-      if (!u.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+      const gate = await requireUser()
+      if (!gate.ok) return gate.res
       const ids = all.map(l => l.id)
       const [p, st, ov] = await Promise.all([progress(db, ids), todayStatus(db, ids), checklistOverrides(db)])
       const byOwner: Record<string, any> = {}
@@ -179,9 +178,8 @@ export async function GET(req: NextRequest) {
 
     // ---- CHECKLIST (signed in): the built-in list plus the overlay, for the editor tab ----
     if (sp.get('checklist')) {
-      const s2 = createClient()
-      const { data: u } = await s2.auth.getUser()
-      if (!u.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+      const gate = await requireUser()
+      if (!gate.ok) return gate.res
       const ov = await checklistOverrides(db)
       return NextResponse.json({
         ok: true,

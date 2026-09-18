@@ -3,10 +3,10 @@
 // empty or errors (e.g. before the SQL migration has been run), we FALL BACK to the live
 // Guesty pull so nothing breaks. Response shape is preserved exactly for ReviewsPanel.
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
 import { buildingOf, marketOf } from '@/lib/segments'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -45,9 +45,9 @@ export async function GET(req: Request) {
   const daysParam = Number(new URL(req.url).searchParams.get('days') || DEFAULT_DAYS)
   const days = Math.min(Math.max(Number.isFinite(daysParam) ? daysParam : DEFAULT_DAYS, 1), MAX_DAYS)
   const sinceIso = new Date(Date.now() - days * 86400000).toISOString()
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const sb = supabaseAdmin()
 

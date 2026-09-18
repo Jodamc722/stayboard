@@ -3,9 +3,9 @@
 // Probe-first: verify the token + property list + Guesty mapping, THEN the full task sync is
 // built on the verified response shapes (same pattern used for the Guesty integration).
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, getBreezewayToken, bzApi, mapBreezewayTask } from '@/lib/breezeway'
+import { requireAdmin } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -18,9 +18,9 @@ function asArray(d: any): any[] {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireAdmin('admin')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   if (!breezewayConfigured()) {
     return NextResponse.json({ error: 'Breezeway not configured — add BREEZEWAY_CLIENT_ID and BREEZEWAY_CLIENT_SECRET in Vercel env, then retry.' }, { status: 503 })

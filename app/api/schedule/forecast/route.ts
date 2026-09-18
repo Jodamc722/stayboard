@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createClient } from '@/lib/supabase-server'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -41,9 +41,9 @@ async function fetchCheckouts(db: any, from: string, to: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
   const HIST = 60
   const today = ymd(new Date())

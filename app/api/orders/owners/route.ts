@@ -3,9 +3,9 @@
 // owner-scoped share link. Stored as one JSON blob in app_settings (key 'guesty_owners') - no
 // migration needed. GET returns the stored owners (any signed-in user); POST re-syncs (admin).
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken } from '@/lib/guesty'
+import { requireAdmin, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -33,20 +33,17 @@ async function readStored(db: any): Promise<{ owners: Owner[]; syncedAt: string 
 }
 
 export async function GET() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const stored = await readStored(supabaseAdmin())
   return NextResponse.json({ ok: true, ...stored })
 }
 
 // Re-sync from Guesty. Admin only (it hits the Guesty API and rewrites the store).
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user || String(user.email || '').toLowerCase() !== 'jon@stay-hospitality.com') {
-    return NextResponse.json({ error: 'admin only' }, { status: 403 })
-  }
+  const gate = await requireAdmin('owner')
+  if (!gate.ok) return gate.res
   let token = ''
   try { token = await getToken() } catch (e: any) { return NextResponse.json({ error: 'guesty token: ' + String(e && e.message || e) }, { status: 502 }) }
 

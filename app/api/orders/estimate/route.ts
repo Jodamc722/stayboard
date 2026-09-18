@@ -2,19 +2,19 @@
 // unit, integer) for every line in scope that has no estimate yet - Jon can override any
 // price by hand afterwards. Estimates power the owner approval link totals.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
 import { textOf } from '@/lib/anthropic-text'
 import { aiFetch } from '@/lib/ai-usage'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('orders', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))
   const scope = String(body.scope || 'all')
   const db = supabaseAdmin()

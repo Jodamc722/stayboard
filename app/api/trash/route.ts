@@ -3,9 +3,9 @@
 //   POST {action:'restore', id} -> put it back
 //   POST {action:'purge',   id} -> forget it for good (admin, deliberate)
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { canDelete, canDeleteProject, restoreRecord } from '@/lib/trash'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,9 +13,9 @@ export const maxDuration = 30
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   try {
     const db = supabaseAdmin()
     const kind = str(req.nextUrl.searchParams.get('kind')).trim()

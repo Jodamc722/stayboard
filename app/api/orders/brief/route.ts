@@ -8,11 +8,11 @@
 // Everything it writes is an estimate and the desk can overwrite any of it by hand. It only ever
 // fills lines that have no brief yet, unless force=1.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
 import { textOf } from '@/lib/anthropic-text'
 import { aiFetch } from '@/lib/ai-usage'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -32,9 +32,9 @@ const SYS = [
 ].join(' ')
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('orders', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))
   const scope = String(body.scope || 'all')
   const force = !!body.force

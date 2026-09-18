@@ -6,22 +6,29 @@ type CookieToSet = { name: string; value: string; options: CookieOptions }
 
 const SUPERADMIN = 'jon@stay-hospitality.com'
 
-// Allowlist check via Supabase REST with the service key. FAIL-OPEN: any error, a missing table, or an
-// empty allowlist (no active members yet) returns true so nobody is ever locked out by accident.
-type Member = { allowed: boolean; features: Record<string, any> | null; workspace: string | null; role: string | null; access_role: string | null }
+// Allowlist check via Supabase REST with the service key.
+// FAIL CLOSED (2026-09-18 audit). This used to answer `allowed: true` on any REST error, a missing
+// key, or a non-array body, while getAccess() on the API side has denied on the same errors since
+// 2026-08-29 — so during a Supabase blip the pages opened for everyone and the data behind them
+// answered 401. The two layers now agree: an error is `error: true`, the request goes to /login,
+// and the result is NOT cached so the next request retries. The one deliberate fail-open that
+// remains is the empty allowlist (fresh install, nobody set up yet). The superadmin never reaches
+// this function at all.
+type Member = { allowed: boolean; features: Record<string, any> | null; workspace: string | null; role: string | null; access_role: string | null; error?: boolean }
+const DENY: Member = { allowed: false, features: null, workspace: null, role: null, access_role: null, error: true }
 const _memberCache = new Map<string, { at: number; val: Member }>()
 const _MEMBER_TTL = 60_000
 async function getMember(email: string): Promise<Member> {
   const _c = _memberCache.get(email)
   if (_c && Date.now() - _c.at < _MEMBER_TTL) return _c.val
   const _v = await getMemberRaw(email)
-  _memberCache.set(email, { at: Date.now(), val: _v })
+  if (!_v.error) _memberCache.set(email, { at: Date.now(), val: _v })
   return _v
 }
 async function getMemberRaw(email: string): Promise<Member> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY1 || process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_SERVICE_KEY
-  if (!url || !key) return { allowed: true, features: null, workspace: null, role: null, access_role: null }
+  if (!url || !key) return DENY
   try {
     const headers = { apikey: key, Authorization: `Bearer ${key}` }
     // select=* so optional columns (workspace, migration 013) are read when present and absent otherwise.
@@ -34,9 +41,9 @@ async function getMemberRaw(email: string): Promise<Member> {
       body: JSON.stringify({ last_seen_at: new Date().toISOString() }),
       signal: AbortSignal.timeout(2500),
     }).catch(() => {})
-    if (!r.ok) return { allowed: true, features: null, workspace: null, role: null, access_role: null }
+    if (!r.ok) return DENY
     const rows = await r.json().catch(() => null)
-    if (!Array.isArray(rows)) return { allowed: true, features: null, workspace: null, role: null, access_role: null }
+    if (!Array.isArray(rows)) return DENY
     if (rows.length > 0) {
       const row = rows[0] || {}
       return {
@@ -49,10 +56,11 @@ async function getMemberRaw(email: string): Promise<Member> {
     }
     // No row for this user. Allow only if the allowlist is still empty (pre-setup); otherwise deny.
     const r2 = await fetch(`${url}/rest/v1/app_users?select=email&status=eq.active&limit=1`, { headers, signal: AbortSignal.timeout(2500) })
-    if (!r2.ok) return { allowed: true, features: null, workspace: null, role: null, access_role: null }
+    if (!r2.ok) return DENY
     const any = await r2.json().catch(() => null)
-    return { allowed: !Array.isArray(any) || any.length === 0, features: null, workspace: null, role: null, access_role: null }
-  } catch { return { allowed: true, features: null, workspace: null, role: null, access_role: null } }
+    if (!Array.isArray(any)) return DENY
+    return { allowed: any.length === 0, features: null, workspace: null, role: null, access_role: null }
+  } catch { return DENY }
 }
 
 
@@ -109,7 +117,15 @@ export async function middleware(request: NextRequest) {
   if (user && !isOpenPath) {
     const email = String(user.email || '').toLowerCase()
     if (email && email !== SUPERADMIN) {
-      const { allowed, features, workspace, role, access_role } = await getMember(email)
+      const { allowed, features, workspace, role, access_role, error } = await getMember(email)
+      if (error) {
+        // The allowlist could not be read. Deny, like getAccess() does, and send them to /login
+        // rather than /no-access: this is not a verdict on the person, and a retry usually clears it.
+        const url = request.nextUrl.clone()
+        url.pathname = '/login'
+        url.search = ''
+        return NextResponse.redirect(url)
+      }
       if (!allowed) {
         const url = request.nextUrl.clone()
         url.pathname = '/no-access'

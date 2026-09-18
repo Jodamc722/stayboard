@@ -10,19 +10,19 @@
 // the acting is done through the routes that already exist for assigning and scheduling, so there
 // is exactly one code path that touches a task.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { buildReviewQueue } from '@/lib/review-queue'
 import { auditDuplicates, closeStrayInspections } from '@/lib/task-audit'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const sb = await createClient()
-  const { data: { user } } = await sb.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   // The board's date, when the pager has moved off today — the backlog's "next workable day" is

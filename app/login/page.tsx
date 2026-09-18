@@ -20,7 +20,6 @@
 // member of the Supabase organisation. Until custom SMTP is enabled in the Supabase dashboard,
 // magic links and password resets cannot be relied on. The copy below says so rather than
 // pretending otherwise.
-import Link from 'next/link'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
@@ -201,7 +200,7 @@ export default function LoginPage() {
               )}
 
               <p className="mt-6 text-xs text-muted text-center">
-                First time here? <Link href="/signup" className="text-brand-600 hover:text-brand-700 font-medium">Create an account</Link>
+                First time here? Ask Jon for an invite — accounts are created from the Users page, never self-served.
               </p>
             </>
           )}

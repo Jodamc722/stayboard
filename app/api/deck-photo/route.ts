@@ -19,9 +19,9 @@
 // an owner's deck forever; what comes out the other side is 100-200KB and renders the same on a
 // slide that shows it 132px tall.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -39,9 +39,9 @@ async function ensureBucket(sb: ReturnType<typeof supabaseAdmin>) {
 
 export async function POST(req: NextRequest) {
   // Signed in is the gate. This writes to our own storage and touches nothing live.
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('reports', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   let form: FormData
   try { form = await req.formData() } catch { return NextResponse.json({ error: 'multipart form-data required' }, { status: 400 }) }

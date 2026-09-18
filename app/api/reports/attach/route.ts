@@ -7,11 +7,11 @@
 //      the client patches it into the report content and saves via the normal PUT.
 // Parse helpers duplicated from /api/reports/generate on purpose - keep both in sync.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { hasEditCookie } from '@/lib/edit-access'
 import { resolveScope, pullTasks, weekBuckets, type ReportListing } from '@/lib/owner-report'
 import { aiFetch } from '@/lib/ai-usage'
+import { requireLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -190,9 +190,9 @@ async function loadReport(id: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok && !hasEditCookie()) return gate.res
+  const user = gate.access.user
   const sp = new URL(req.url).searchParams
   const reportId = str(sp.get('photos'))
   if (!reportId) return NextResponse.json({ error: 'photos=<reportId> required' }, { status: 400 })
@@ -217,9 +217,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('reports', 'edit')
+  if (!gate.ok && !hasEditCookie()) return gate.res
+  const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))
   const reportId = str(body?.reportId)
   const kind = str(body?.kind)

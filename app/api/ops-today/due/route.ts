@@ -2,8 +2,8 @@
 //   GET /api/ops-today/due?market=Miami&days=30
 // Read-only: this proposes nothing and creates nothing. Adding is the Add-task route, as ever.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { buildDueCalendar } from '@/lib/pm-calendar'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -11,9 +11,9 @@ export const maxDuration = 60
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
 export async function GET(req: NextRequest) {
-  const sb = await createClient()
-  const { data: { user } } = await sb.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   const days = Number(req.nextUrl.searchParams.get('days') || 30)
   const q = String(req.nextUrl.searchParams.get('date') || '')

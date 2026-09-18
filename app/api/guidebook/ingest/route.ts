@@ -2,10 +2,10 @@
 // How-To Guide items (with the photo pinned), and PDFs (manuals, building packets) are read and
 // their facts folded into whichever sections they inform. Internal _keys are preserved.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -38,9 +38,9 @@ async function anthropic(key: string, payload: any): Promise<string | null> {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('guidebooks', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const id = str(body?.id)

@@ -5,16 +5,16 @@
 // per-task API call, and a 60-unit day would be 200 calls against a rate-limited API to fill a
 // column most people scroll past.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { breezewayConfigured, listBreezewayComments } from '@/lib/breezeway'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ ok: true, comments: [] })
   const ids = String(new URL(req.url).searchParams.get('taskIds') || '')
     .split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).slice(0, 8)

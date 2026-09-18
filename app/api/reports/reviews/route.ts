@@ -2,10 +2,10 @@
 // Returns a KPI summary (avg rating, count) + the full review list for the report's listings in
 // that window, unit-labeled. The client stores the result in content.voices (kpi/all) and saves.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pullReviews, resolveScope } from '@/lib/owner-report'
 import { hasEditCookie } from '@/lib/edit-access'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -13,9 +13,9 @@ export const maxDuration = 60
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user && !hasEditCookie()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok && !hasEditCookie()) return gate.res
+  const user = gate.access.user
   const sp = new URL(req.url).searchParams
   const id = str(sp.get('id'))
   const from = str(sp.get('from'))

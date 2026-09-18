@@ -4,7 +4,7 @@
 // no deep reasoning; the bigger model produced the same list at 2.5x the price.
 import { NextRequest, NextResponse } from 'next/server'
 import { anthropicMessages } from '@/lib/anthropic-call'
-import { createClient } from '@/lib/supabase-server'
+import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
 import { textOf } from '@/lib/anthropic-text'
 
@@ -18,7 +18,8 @@ function searchUrl(store: string, q: string) {
 }
 
 export async function POST(req: NextRequest) {
-  try { const supabase = createClient(); const { data } = await supabase.auth.getUser(); if (!data.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) } catch { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
+  const gate = await requireLevel('orders', 'edit')
+  if (!gate.ok) return gate.res
   const body = await req.json().catch(() => ({} as any))
   const title = String(body.title || '').slice(0, 160)
   if (!title) return NextResponse.json({ error: 'title required' }, { status: 400 })

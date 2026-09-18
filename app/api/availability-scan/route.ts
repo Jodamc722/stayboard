@@ -4,10 +4,10 @@
 // a full ~600-day read to compute their exact bookable horizon. An internal deadline guarantees the
 // route always returns JSON (never a platform timeout). Does NOT change anything in Guesty.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getListingCalendar, dayIsAvailable, getToken } from '@/lib/guesty'
 import { unstable_cache } from 'next/cache'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -115,9 +115,9 @@ const cachedScan = unstable_cache(
 )
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const refresh = new URL(req.url).searchParams.get('refresh') === '1'
   try {

@@ -4,16 +4,16 @@
 // Logged-in users only; the human approves the change in the UI before this is called.
 // Mirrors the result into guesty_listings so StayBoard reflects it immediately.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('optimize', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const listingId = body?.listingId

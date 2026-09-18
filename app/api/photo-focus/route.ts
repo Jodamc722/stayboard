@@ -4,9 +4,9 @@
 // repaint pixels (that would need a generative image model + its own key). The component turns the
 // focal point + zoom into the same crop transform a human sets by dragging/zooming.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -18,9 +18,9 @@ function smallUrl(u: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('optimize', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI is not configured on this deployment.' }, { status: 503 })
 

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
-import { createClient } from '@/lib/supabase-server'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,10 +10,8 @@ export const dynamic = 'force-dynamic'
 // and whole-unit "Full" combos are excluded so we don't build duplicate guidebooks.
 export async function GET() {
   // Listing inventory is not public. Answered anonymous GETs until 2026-09-18.
-  try {
-    const { data: { user } } = await createClient().auth.getUser()
-    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  } catch { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
   const db = supabaseAdmin()
   const { data } = await db
     .from('guesty_listings')

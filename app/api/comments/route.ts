@@ -2,7 +2,6 @@
 // entity via (type, id): glitches, Breezeway tasks (type 'task'), anything else later. Mentioned teammates (picked in the
 // UI or typed as @name in the text) get a notification; on glitches the creator does too.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { notify } from '@/lib/notify'
 import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBreezewayComments, createBreezewayComment, matchBreezewayPerson, breezewayPeopleLite, breezewayPersonName, breezewayMention } from '@/lib/breezeway'
@@ -10,6 +9,7 @@ import { importTaskComments } from '@/lib/breezeway-comment-sync'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { getToken } from '@/lib/guesty'
 import { writeCustomFields } from '@/lib/guesty-custom-fields'
+import { requireLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -90,9 +90,9 @@ async function teamEmails(db: any): Promise<string[]> {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const type = str(req.nextUrl.searchParams.get('type'))
   const id = str(req.nextUrl.searchParams.get('id'))
   if (!type || !id) return NextResponse.json({ ok: false, error: 'type and id required.' }, { status: 400 })
@@ -149,9 +149,9 @@ export async function GET(req: NextRequest) {
 // "That is me in Breezeway." Saved once per user and reused for every comment afterwards, so a
 // name mismatch between the two systems can never silently swallow comments again.
 export async function PATCH(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user || !user.email) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('plan', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const me = user.email.toLowerCase()
   const b = await req.json().catch(() => ({} as any))
   const personId = Number(b.personId)
@@ -165,9 +165,9 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user || !user.email) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('plan', 'edit')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   const me = user.email.toLowerCase()
   const b = await req.json().catch(() => ({} as any))
   const type = str(b.type); const id = str(b.id); const body = str(b.body).trim()

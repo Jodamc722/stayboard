@@ -2,25 +2,25 @@
 //   GET  -> all rows (default + per market)
 //   POST -> upsert one market's settings  { market, pct_good, ... }
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAllLaborSettings } from '@/lib/labor-settings'
+import { requireLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
 const NUM_FIELDS = ['pct_good', 'pct_bad', 'grace_min', 'over_sched_min', 'ot_weekly_hours', 'attribution_min'] as const
 
 export async function GET() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
   return NextResponse.json({ ok: true, settings: await getAllLaborSettings() })
 }
 
 export async function POST(req: Request) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const gate = await requireLevel('labor-settings', 'full')
+  if (!gate.ok) return gate.res
+  const user = gate.access.user
 
   const body = await req.json().catch(() => null)
   const market = String(body?.market || '').toLowerCase().trim()
