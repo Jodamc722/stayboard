@@ -519,7 +519,10 @@ export function listingCardFrom(
   return {
     id: String(l.id),
     name: String(l.nickname || l.title || 'Unit'),
-    sub: [bits.join(' · '), links.length ? `live on ${links.length} channel${links.length === 1 ? '' : 's'}` : 'not yet live'].filter(Boolean).join(' · '),
+    // NO CHANNEL COUNT ON THE CARD (Jon, 2026-09-18: "the tab that says live on three channels,
+    // remove that"). The live channel buttons sit inches away on the same slide, so the count was
+    // restating what the owner can already see and count for themselves.
+    sub: bits.join(' · '),
     links,
     // THE FIRST FIVE, IN ORDER (Jon, 2026-09-16). Nobody scrolls past these on a phone, which is
     // why photos carry 18% of the optimize score on their own.
