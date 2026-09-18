@@ -15,6 +15,7 @@ import {
   CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
+  houseBody, OVERVIEW_BODY, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS, COMPANY_STATS_RETIRED_MARK,
 } from '@/lib/onboarding-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from '@/lib/season-shape'
@@ -1177,7 +1178,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       houseLine(g('checklist').subtitle, CHECKLIST_SUBTITLE) !== (g('checklist').subtitle || '') ||
       houseRows<Any>(g('checklist').rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[]) !== g('checklist').rows ||
       houseRows<Any>(g('money').rules, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[]) !== g('money').rules ||
-      houseRows<Any>(g('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]) !== g('guesty').items
+      houseRows<Any>(g('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]) !== g('guesty').items ||
+      houseBody(g('overview').body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY) !== (g('overview').body || '') ||
+      houseRows<Any>(g('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS as Any[]) !== g('overview').stats
     if (!stale) return
     mutate(d => {
       const hero = d.hero || (d.hero = {})
@@ -1203,6 +1206,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       mn.rules = houseRows<Any>(mn.rules, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[])
       const gy = d.guesty || (d.guesty = {})
       gy.items = houseRows<Any>(gy.items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[])
+      const ov = d.overview || (d.overview = {})
+      ov.body = houseBody(ov.body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY)
+      ov.stats = houseRows<Any>(ov.stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS as Any[])
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit])
@@ -2816,7 +2822,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div className="flex-1 min-h-0 onb-scroll">
                     <Title k="overview" dark sub={false} narrow />
                     {(() => {
-                      const full = String(sec('overview').body || '')
+                      const full = houseBody(sec('overview').body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY)
                       const cut = full.indexOf('\n\n')
                       const lead = cut > 0 ? full.slice(0, cut) : full
                       if (edit) {
@@ -2835,7 +2841,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       return <p style={{ marginTop: 22, fontSize: 19, lineHeight: 1.6, color: D.body, maxWidth: '42ch' }}>{lead}</p>
                     })()}
                     <div style={{ marginTop: 34, paddingTop: 22, borderTop: '1px solid ' + D.rule, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '20px 34px' }}>
-                      {(sec('overview').stats || []).slice(0, 4).map((f: Any, i: number) => (
+                      {houseRows<Any>(sec('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS as Any[]).slice(0, 4).map((f: Any, i: number) => (
                         <div key={i}>
                           <p style={{ fontSize: 21, fontWeight: 600, color: D.ink, letterSpacing: '-0.015em', lineHeight: 1.25 }}>
                             <Ed v={f.v || ''} set={v => patch('overview.stats.' + i + '.v', v)} edit={edit} multiline />
