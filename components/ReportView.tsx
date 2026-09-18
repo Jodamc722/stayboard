@@ -2776,7 +2776,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // the season curve: the number and the paragraph are one claim, so they are substituted
           // together or not at all, and a deck edited on this slide keeps its edit because an
           // edited one will not still read exactly "30+".
-          const chanStale = String(sec('channels').count || '').trim() === CHANNEL_COUNT_RETIRED
+          const chanStale = CHANNEL_COUNT_RETIRED.indexOf(String(sec('channels').count || '').trim()) >= 0
           const chanCount = chanStale ? CHANNEL_COUNT : (sec('channels').count || '')
           const chanBody = chanStale ? CHANNEL_BODY : (sec('channels').subtitle || '')
 
@@ -2800,7 +2800,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       <Ed v={chanCount} set={v => patch('channels.count', v)} edit={edit} />
                     </span>
                     <span style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em', color: D.ink, lineHeight: 1.2, paddingBottom: 6, maxWidth: '16ch' }}>
-                      booking sites.<br />One calendar.
+                      channels.<br />One calendar.
                     </span>
                   </div>
                   <p style={{ marginTop: 26, fontSize: 16.5, lineHeight: 1.65, color: D.body, maxWidth: '58ch' }}>
