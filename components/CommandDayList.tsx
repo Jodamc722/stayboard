@@ -80,9 +80,16 @@ const isOnTrackTurn = (i: NextItem) => i.kind === 'turn' && i.action?.type !== '
 /** Glitch rows: only overdue ones and incidents are exceptions; "no task yet" is the desk's routine. */
 const isGlitchException = (i: NextItem) => i.kind === 'glitch' && (i.severity === 'now' || /past its due date|incident/i.test(i.title))
 
-function isFixRow(i: NextItem): boolean {
+/** Task ids of cleans the engine already calls late or at risk — a same-day turn with a name on it
+ *  still belongs in Fix when the clock says it will not land (review found it hidden otherwise). */
+function troubledCleanIds(d: CommandDay): Record<string, true> {
+  const out: Record<string, true> = {}
+  for (const c of d.tiles.cleans.rows) if (c.status === 'late' || c.status === 'atRisk') out[c.taskId] = true
+  return out
+}
+function isFixRow(i: NextItem, troubled: Record<string, true>): boolean {
   if (i.kind === 'late' || i.kind === 'unassigned' || i.kind === 'guest' || i.kind === 'inspection') return true
-  if (i.kind === 'turn') return !isOnTrackTurn(i)
+  if (i.kind === 'turn') return !isOnTrackTurn(i) || !!(i.bzTaskId && troubled[i.bzTaskId])
   if (i.kind === 'glitch') return isGlitchException(i)
   if (i.kind === 'feedback') return !isCoveredFeedback(i) && !isVendorFeedback(i) && i.action?.type === 'create_task'
   return false
@@ -92,6 +99,7 @@ function fixLabel(i: NextItem): string {
   const a = i.action
   if (!a) return 'Open'
   if (a.type === 'assign') return 'Assign'
+  if (i.kind === 'turn') return 'Open task'
   if (a.type === 'create_task') return 'Create inspection'
   if (i.kind === 'guest') return 'Reply'
   if (i.kind === 'glitch') return 'Open'
@@ -129,7 +137,8 @@ export function CommandDayList() {
     )
   }
   const live = data.next.filter(i => !i.dismissed && !gone[i.key])
-  const fixRows = live.filter(isFixRow).sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.rank - b.rank)
+  const troubled = troubledCleanIds(data)
+  const fixRows = live.filter(i => isFixRow(i, troubled)).sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.rank - b.rank)
   const claims = live.filter(i => i.kind === 'claim')
   const dups = live.filter(i => i.kind === 'duplicate')
   const vendorNotes = live.filter(isVendorFeedback)
