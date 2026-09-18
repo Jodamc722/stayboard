@@ -109,8 +109,8 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName }: Prop
 
   const tile = (label: string, value: string, key?: string) => (
     <div key={key || label} style={{ border: '1px solid ' + P.line, borderRadius: 8, padding: '7px 9px', background: P.card, minWidth: 0 }}>
-      <p style={{ fontSize: 8.5, color: P.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
-      <p style={{ fontSize: 12.5, fontWeight: 600, color: P.ink, marginTop: 2 }}>{value}</p>
+      <p style={{ fontSize: 9.5, color: P.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</p>
+      <p style={{ fontSize: 14, fontWeight: 600, color: P.ink, marginTop: 2 }}>{value}</p>
     </div>
   )
 
@@ -130,7 +130,8 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName }: Prop
             return (
               <button key={x} onClick={() => { if (x === 'Analytics') { setTab('analytics'); setStep(4) } else if (x === 'My properties') setTab('cal') }}
                 style={{
-                  fontSize: 9, fontWeight: on ? 700 : 500, color: on ? P.blue : P.body,
+                  fontSize: 10, fontWeight: 600, letterSpacing: 'normal', fontFamily: 'inherit',
+                  color: on ? P.blue : P.body,
                   background: 'none', border: 0, padding: '9px 0 8px', cursor: live ? 'pointer' : 'default',
                   borderBottom: '2px solid ' + (on ? P.blue : 'transparent'), whiteSpace: 'nowrap',
                 }}>{x}</button>
@@ -192,14 +193,14 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName }: Prop
             // ── CALENDAR AND RESERVATIONS ────────────────────────────────
             <div>
               <div style={{ display: 'flex', alignItems: 'center' }}>
-                <p style={{ fontSize: 11, fontWeight: 700, color: P.ink }}>Calendar and reservations</p>
+                <p style={{ fontSize: 12.5, fontWeight: 700, color: P.ink }}>Calendar and reservations</p>
                 <button onClick={openDrawer}
                   style={{
                     marginLeft: 'auto', background: P.green, color: '#fff', border: 0, borderRadius: 6,
-                    fontSize: 9, fontWeight: 600, padding: '5px 10px', cursor: 'pointer',
+                    fontSize: 10.5, fontWeight: 600, padding: '6px 12px', cursor: 'pointer',
                   }}>+ New reservation</button>
               </div>
-              <p style={{ fontSize: 8.5, color: P.muted, textAlign: 'center', marginTop: 4 }}>&#8249;&ensp;September 2026&ensp;&#8250;</p>
+              <p style={{ fontSize: 10, color: P.muted, textAlign: 'center', marginTop: 5 }}>&#8249;&ensp;September 2026&ensp;&#8250;</p>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 6, marginTop: 7 }}>
                 {tile('Booked nights', done ? String(25 + nights) : '25')}
@@ -212,7 +213,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName }: Prop
               <div style={{ marginTop: 8, border: '1px solid ' + P.line, borderRadius: 8, background: P.card, padding: 7 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2 }}>
                   {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
-                    <div key={d} style={{ fontSize: 7, color: P.muted, textAlign: 'center', paddingBottom: 2 }}>{d}</div>
+                    <div key={d} style={{ fontSize: 8.5, color: P.muted, textAlign: 'center', paddingBottom: 3 }}>{d}</div>
                   ))}
                   {cells.map((d, i) => {
                     if (d == null) return <div key={'b' + i} />
@@ -222,16 +223,16 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName }: Prop
                       <button key={d} onClick={() => pick(d)} disabled={booked || done}
                         title={booked ? 'Guest reservation' : ours ? 'Your stay' : 'Available'}
                         style={{
-                          position: 'relative', height: 26, borderRadius: 3, border: '1px solid ' + P.line,
+                          position: 'relative', height: 40, borderRadius: 3, border: '1px solid ' + P.line,
                           background: ours ? P.ownerBlue : booked ? P.greenBar : P.card,
                           cursor: booked || done ? 'default' : 'pointer', padding: 0, overflow: 'hidden',
                         }}>
                         <span style={{
-                          position: 'absolute', top: 1, right: 3, fontSize: 7,
+                          position: 'absolute', top: 2, right: 4, fontSize: 8.5,
                           color: booked || ours ? '#fff' : P.body,
                         }}>{d}</span>
                         {!booked && !ours && RATES[d] ? (
-                          <span style={{ position: 'absolute', bottom: 1, left: 3, fontSize: 6.5, color: P.muted }}>{RATES[d]}</span>
+                          <span style={{ position: 'absolute', bottom: 2, left: 4, fontSize: 8, color: P.muted }}>{RATES[d]}</span>
                         ) : null}
                       </button>
                     )
@@ -241,7 +242,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName }: Prop
                 <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                   {[['Confirmed reservation', P.greenBar], ['Owner stay', P.ownerBlue], ['Other owner stay', '#1b365d'],
                     ['Available', P.card], ['Unavailable', P.unavail], ['Requested', P.amber]].map(([l, c]) => (
-                    <span key={l} style={{ fontSize: 6.5, color: P.muted, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                    <span key={l} style={{ fontSize: 8, color: P.muted, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <span style={{ width: 6, height: 6, borderRadius: 999, background: c, border: c === P.card ? '1px solid ' + P.line : 0, display: 'inline-block' }} />{l}
                     </span>
                   ))}
@@ -249,7 +250,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName }: Prop
               </div>
 
               {done ? (
-                <p style={{ fontSize: 8.5, color: P.green, marginTop: 7, fontWeight: 600 }}>
+                <p style={{ fontSize: 10, color: P.green, marginTop: 9, fontWeight: 600 }}>
                   Owner stay created &middot; Sept {from}&ndash;{to} &middot; {nights} {nights === 1 ? 'night' : 'nights'}
                   {ff ? ' · friends & family' : ''}. The clean afterwards is billed to you at cost.
                 </p>
