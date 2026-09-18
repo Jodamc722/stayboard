@@ -28,17 +28,19 @@ export const maxDuration = 120
 
 async function run(req: NextRequest) {
   const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const auth = req.headers.get('authorization') || ''
+  if (secret && auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // The queue fill stays open (see above); the Gmail drafting it now carries keeps the gate the old
+  // /api/cron/notice-drafts had — the scheduler's own call (x-vercel-cron) or the bearer — so an
+  // anonymous fetch in a drafting hour refills the desk and nothing more.
+  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
   const started = Date.now()
   try {
     // 30 days ahead: far enough that a long-lead booking is on the desk well before its lead-time
     // window opens, short enough that the list stays about today rather than about next quarter.
     const res = await pullNotices(30)
     let drafts: any = undefined
-    if (DRAFT_HOURS_UTC.indexOf(new Date().getUTCHours()) >= 0) {
+    if (isCron && DRAFT_HOURS_UTC.indexOf(new Date().getUTCHours()) >= 0) {
       try {
         const on = (await getTaskAutomation()).noticeDrafts.enabled
         drafts = on ? await runNoticeDrafts({}) : { skipped: 'notice drafts are off' }

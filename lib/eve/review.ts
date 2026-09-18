@@ -311,7 +311,22 @@ function parseJson(raw: string): any | null {
   const t = (s: string) => { try { return JSON.parse(s) } catch { return null } }
   let o = t(raw) || t(raw.replace(/```(?:json)?/gi, '').trim())
   if (!o) { const a = raw.indexOf('{'), b = raw.lastIndexOf('}'); if (a !== -1 && b > a) o = t(raw.slice(a, b + 1)) }
-  return o && typeof o === 'object' ? o : null
+  if (!o) {
+    // Prose after the object that itself contains a brace defeats lastIndexOf: walk from the first
+    // '{' to its matching '}' (string-aware) and parse just that.
+    const a = raw.indexOf('{')
+    if (a !== -1) {
+      let depth = 0, inStr = false, esc = false
+      for (let i = a; i < raw.length; i++) {
+        const ch = raw[i]
+        if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue }
+        if (ch === '"') inStr = true
+        else if (ch === '{') depth++
+        else if (ch === '}') { depth--; if (depth === 0) { o = t(raw.slice(a, i + 1)); break } }
+      }
+    }
+  }
+  return o && typeof o === 'object' && !Array.isArray(o) ? o : null
 }
 
 const AREAS: ReviewArea[] = ['operations', 'checklist', 'app', 'guest', 'money', 'people']
@@ -372,10 +387,6 @@ export async function runReview(opts: { trigger: ReviewTrigger; focus?: string; 
   const focus = clip(opts.focus, 300) || ''
   const pack = await buildReviewPack(focus || undefined)
 
-  // The template questions retire on the first review run, and any run after that finds nothing.
-  let retired = 0
-  try { retired = (await retireTemplateQuestions()).retired } catch { /* cosmetic */ }
-
   const { model, fallback } = await modelPairFor('eve-review')
   const user = [
     `DATE: ${pack.today} (week starting ${pack.weekStart}). TRIGGER: ${opts.trigger}.`,
@@ -402,6 +413,12 @@ export async function runReview(opts: { trigger: ReviewTrigger; focus?: string; 
   } catch (e: any) {
     return { ok: false, error: clip(e?.message || e, 200), pack: { tokens: pack.tokens, stats: pack.stats } }
   }
+
+  // Nothing below runs unless the model answered: a failed call persists no row, no plans, no
+  // questions, and leaves the template questions alone. The templates retire on the first review
+  // that actually lands, and any run after that finds nothing.
+  let retired = 0
+  try { retired = (await retireTemplateQuestions()).retired } catch { /* cosmetic */ }
 
   // Persist the review row first so plans and questions can point back at it.
   const db = supabaseAdmin()

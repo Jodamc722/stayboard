@@ -201,7 +201,9 @@ function emptyDuty(): DutyPicture { return { tasks: 0, inhouse: 0, outside: 0, u
 
 function judge(d: DutyPicture): { verdict: 'ours' | 'vendor' | 'mixed' | 'no signal'; contradiction: string | null } {
   const named = d.inhouse + d.outside
-  if (d.tasks < 5 || named < 3) return { verdict: 'no signal', contradiction: null }
+  // Under eight tasks (or five with a name on them) is not a picture, and three cleans split two
+  // ways must never read as a contradiction worth a question.
+  if (d.tasks < 8 || named < 5) return { verdict: 'no signal', contradiction: null }
   const inShare = d.inhouse / named, outShare = d.outside / named
   // Both sides over 30% is the one shape the data cannot settle: a vendor and our crew both
   // working the building, or a roster name the Homebase pull is missing.
@@ -233,7 +235,7 @@ export async function deriveOperatingPicture(days = 90): Promise<BuildingPicture
     getOpsPresets().catch(() => null),
     db.from('guesty_listings').select('id,building,nickname,title').limit(1000).then(r => (r.data || []) as any[]),
     pageRows((a, b) => db.from('breezeway_tasks_sync')
-      .select('reference_property_id,type_department,assignees,assignee_name,finished_by_name,status,scheduled_date')
+      .select('id,reference_property_id,type_department,assignees,assignee_name,finished_by_name,status,scheduled_date')
       .gte('scheduled_date', from).order('id').range(a, b), 15),
   ])
   const rollupOf: Record<string, string> = {}
@@ -253,7 +255,10 @@ export async function deriveOperatingPicture(days = 90): Promise<BuildingPicture
     const duty: DutyPicture | null = HK.test(dept) ? pic(b).cleaning : MT.test(dept) ? pic(b).maintenance : null
     if (!duty) continue
     duty.tasks++
-    const doer = (Array.isArray(t.assignees) && t.assignees[0] && t.assignees[0].name ? String(t.assignees[0].name) : '') || String(t.assignee_name || '') || String(t.finished_by_name || '')
+    // `assignees` is an array of {id,name} from the Breezeway mirror, but a string or a bare name
+    // has been seen in older rows — read whichever it is, same as lib/labor-econ's doer().
+    const listed = (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => String((a && typeof a === 'object' ? a.name : a) || '').trim()).filter(Boolean)
+    const doer = listed[0] || String(t.assignee_name || '').trim() || String(t.finished_by_name || '').trim()
     if (!doer) { duty.unassigned++; continue }
     if (roster.length && nameMatchesRoster(doer, roster)) {
       duty.inhouse++
@@ -272,7 +277,7 @@ export async function deriveOperatingPicture(days = 90): Promise<BuildingPicture
     if (!roster.length) { p.verdict = { cleaning: 'no signal', maintenance: 'no signal' }; continue }
     const c = judge(p.cleaning), m = judge(p.maintenance)
     p.verdict = { cleaning: c.verdict, maintenance: m.verdict }
-    if (p.presetVendor && p.cleaning.tasks < 5) p.verdict.cleaning = 'vendor'
+    if (p.presetVendor && c.verdict === 'no signal') p.verdict.cleaning = 'vendor'
     // A preset that says vendor while the roster is closing most of the cleans is its own contradiction.
     if (p.presetVendor && c.verdict === 'ours') p.contradiction = `the ops presets list ${p.building} as vendor-cleaned (${p.presetVendor}) but ${p.cleaning.inhouse} of ${p.cleaning.inhouse + p.cleaning.outside} named cleans in ${days} days were closed by roster names (${p.cleaning.inhouseNames.slice(0, 3).join(', ')})`
     else p.contradiction = c.contradiction ? `cleaning: ${c.contradiction}` : m.contradiction ? `maintenance: ${m.contradiction}` : null
