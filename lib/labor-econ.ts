@@ -44,7 +44,7 @@ import { getSalaried, weeklyCost, annualCost, windowCost, rateLabel, type Salary
 import { getCrew, type Dept, type DeptSource, DEPTS, DEPT_LABEL } from './crew'
 import { isDepartureCleanName } from './breezeway'
 import { resolveStaff, getAgencies } from './staffing'
-import { laborAmount } from './billing'
+import { laborAmount, isTaskDone } from './billing'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 const num = (v: any): number | null => { const n = Number(v); return Number.isFinite(n) ? n : null }
@@ -387,7 +387,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const qFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -1))
   const qTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 1))
   const taskRowsAll = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
-    .select('id,name,type_department,assignee_name,finished_by_name,assignees,reference_property_id,finished_at,total_minutes,rate_paid')
+    .select('id,name,type_department,assignee_name,finished_by_name,assignees,reference_property_id,finished_at,status,total_minutes,rate_paid')
     .gte('finished_at', qFrom).lte('finished_at', qTo + 'T23:59:59').order('id', { ascending: true }).range(a, b)))
     .filter(t => { const d = etDay(t.finished_at); return d >= from && d <= to })
   const taskRows = taskRowsAll.filter(t => inMarketListing(t.reference_property_id))
@@ -469,6 +469,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       d && d.rate_type ? String(d.rate_type) : null,
       num(t.total_minutes),
       a && a.billed_hours != null ? Number(a.billed_hours) : null,
+      isTaskDone(t.status, t.finished_at),
     )
   }
   const chargeOfRaw = (t: any): number => {

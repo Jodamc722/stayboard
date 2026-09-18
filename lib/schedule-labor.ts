@@ -33,7 +33,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { getShifts, type Shift } from '@/lib/homebase'
 import { isDepartureCleanName } from '@/lib/breezeway'
-import { laborAmount } from '@/lib/billing'
+import { laborAmount, isTaskDone } from '@/lib/billing'
 import { ownerTotal } from '@/lib/labor-econ'
 import { nameMatches } from '@/lib/person-name'
 import type { TeamSchedule } from '@/lib/team-schedule'
@@ -184,7 +184,7 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
     for (let i = 0; i < taskIds.length; i += 200) {
       const chunk = taskIds.slice(i, i + 200)
       const [a, b, c] = await Promise.all([
-        db.from('breezeway_tasks_sync').select('id,rate_paid,total_minutes').in('id', chunk),
+        db.from('breezeway_tasks_sync').select('id,rate_paid,total_minutes,status,finished_at').in('id', chunk),
         db.from('breezeway_billing_details').select('task_id,costs,rate_type').in('task_id', chunk),
         db.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk),
       ])
@@ -197,11 +197,14 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
       const a = aOf[id], d = dOf[id]
       if (a && a.excluded) { billableByTask[id] = 0; continue }
       if (a && a.override_amount != null) { billableByTask[id] = Number(a.override_amount) || 0; continue }
+      // Status and finished_at were not even selected here before, so this board could price a
+      // task the invoice would refuse to. Same helper, same answer.
       const rate = laborAmount(
         num(t.rate_paid),
         d && d.rate_type ? str(d.rate_type) : null,
         num(t.total_minutes),
         a && a.billed_hours != null ? Number(a.billed_hours) : null,
+        isTaskDone(t.status, t.finished_at),
       )
       billableByTask[id] = Math.round((rate + (d ? ownerTotal(d.costs, 'cost') : 0)) * 100) / 100
     }

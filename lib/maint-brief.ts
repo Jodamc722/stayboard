@@ -23,7 +23,7 @@ import { marketOf, buildingOf } from './segments'
 import { kindOfTask, SEVENTEEN_WEST_PAIR, seventeenWestCoverage } from './labor-econ'
 import { nameMatches } from './homebase'
 import { getTimecardsAudited } from './homebase-labor'
-import { laborAmount } from './billing'
+import { laborAmount, isTaskDone } from './billing'
 
 export type MaintMarket = 'Miami' | 'Broward'
 
@@ -134,11 +134,13 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
     if (a && a.override_amount != null) return Number(a.override_amount) || 0
     const d = details[String(t.id)]
     const rate = laborAmount(num(t.rate_paid), d && d.rate_type ? String(d.rate_type) : null,
-      num(t.total_minutes), a && a.billed_hours != null ? Number(a.billed_hours) : null)
+      num(t.total_minutes), a && a.billed_hours != null ? Number(a.billed_hours) : null,
+      isTaskDone(t.status, t.finished_at))
     return round2(rate + (d ? ownerTotal(d.costs, 'cost') : 0))
   }
 
-  const isDone = (t: any) => !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
+  // Was a fourth hand-written copy of the done test, and the only one spelling it 'complete'.
+  const isDone = (t: any) => isTaskDone(t.status, t.finished_at)
   const finishedDay = (t: any) => (t.finished_at ? str(t.finished_at).slice(0, 10) : null)
 
   // Billable buckets by the day the task FINISHED (that is when the charge exists); completion

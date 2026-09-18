@@ -112,11 +112,13 @@ export type BillingFlag =
   | 'no_owner'        // could not be attributed to an owner — will not reach a statement
   | 'ai_bill'         // unit check the model says involved real work — reason + suggested amount attached
   | 'ai_pending'      // unit check with a real description that the model has not judged yet
+  | 'not_done'        // hours or a rate on a task Breezeway does not call finished — held at $0
 
 export const FLAG_LABEL: Record<BillingFlag, string> = {
   over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
   no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
   ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
+  not_done: 'not finished in Breezeway',
 }
 export const OVER_LINE_USD = 150
 
@@ -278,8 +280,33 @@ function detailItems(costs: any, supplies: any, extras: any, overrides: any): Bi
   return items
 }
 
-/** The rate side of the bill: hourly rate × hours, or the flat piece rate. */
-export function laborAmount(ratePaid: number | null, rateType: string | null, actualMinutes: number | null, billedHours: number | null): number {
+// The one definition of "done", kept in its own import-free module so the client-side review
+// board can use the same rule without importing this file's admin Supabase client. Re-exported
+// here because every existing caller reaches for it via lib/billing.
+export { TASK_DONE_RE, isTaskDone } from './task-done'
+import { isTaskDone } from './task-done'
+
+
+/**
+ * The rate side of the bill: hourly rate × hours, or the flat piece rate.
+ *
+ * NOTHING BILLS OFF AN UNFINISHED TASK (Jon, 2026-09-18: "billable hours should only be
+ * completed, meaning the task in Breezeway should be a completed task"). Hours accrue on a task
+ * while it is still open — 21 in-progress tasks are carrying logged minutes right now — and a
+ * piece rate is worth its full amount from the moment it is set, so both could reach an owner's
+ * statement for work that is not finished. The charge is held at zero until Breezeway says the
+ * task is done, and the task is flagged rather than silently dropped so the hours are still
+ * visible on the board.
+ *
+ * `finished` is REQUIRED, not optional-defaulting-to-true, so that any new caller has to answer
+ * the question. An optional parameter here would mean the next call site written silently opts
+ * out of the rule, which is the failure this is meant to prevent.
+ *
+ * A human override still wins: every caller applies `override_amount` ahead of this, which is
+ * the escape hatch for a job that genuinely needs billing before Breezeway is tidied up.
+ */
+export function laborAmount(ratePaid: number | null, rateType: string | null, actualMinutes: number | null, billedHours: number | null, finished: boolean): number {
+  if (!finished) return 0
   const rate = ratePaid == null ? 0 : ratePaid
   if (!rate) return 0
   if (String(rateType || '').toLowerCase() === 'hourly') {
@@ -470,7 +497,8 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     const ratePaid = num(t.rate_paid)
     const rateType = d && d.rate_type ? String(d.rate_type) : null
     const billedHours = a && a.billed_hours != null ? Number(a.billed_hours) : null
-    const labor = laborAmount(ratePaid, rateType, t.total_minutes != null ? Number(t.total_minutes) : null, billedHours)
+    const done = isTaskDone(t.status, t.finished_at)
+    const labor = laborAmount(ratePaid, rateType, t.total_minutes != null ? Number(t.total_minutes) : null, billedHours, done)
     const itemsTotal = items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
     const excluded = !!(a && a.excluded)
     const override = a && a.override_amount != null ? Number(a.override_amount) : null
@@ -542,7 +570,6 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
 
   // ── WHAT LOOKS OFF ──────────────────────────────────────────────────────────────────────────
   // Computed over the whole window because one of the checks (duplicate) needs the neighbours.
-  const DONE_RE = /complet|close|approv|finish/i
   const seenKey: Record<string, number> = {}
   for (const t of tasks) {
     const k = (t.listingId || t.unit) + '|' + (t.scheduledDate || (t.finishedAt || '').slice(0, 10)) + '|' + t.name.trim().toLowerCase()
@@ -550,7 +577,7 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
   }
   for (const t of tasks) {
     const f: BillingFlag[] = []
-    const finished = DONE_RE.test(t.status) || !!t.finishedAt
+    const finished = isTaskDone(t.status, t.finishedAt)
     if (t.billedAmount > OVER_LINE_USD) f.push('over_150')
     if (finished && !t.excluded && t.billedAmount === 0 && t.overrideAmount == null && !isDepartureCleanName(t.name) && !t.routine) f.push('no_price')
     if (t.routine && t.reviewState === 'open' && t.overrideAmount == null && !t.excluded) {
@@ -566,6 +593,10 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     const k = (t.listingId || t.unit) + '|' + (t.scheduledDate || (t.finishedAt || '').slice(0, 10)) + '|' + t.name.trim().toLowerCase()
     if ((seenKey[k] || 0) > 1 && !isDepartureCleanName(t.name) && !t.routine) f.push('duplicate')
     if ((t.billedHours != null && t.billedHours > 8) || (t.actualMinutes != null && t.actualMinutes > 8 * 60)) f.push('long_hours')
+    // Work that WOULD have billed but is held back by the rule above. Flagged only when there is
+    // something to hold back, so the ordinary open task does not light up the board.
+    if (!finished && !t.excluded && t.overrideAmount == null &&
+        ((t.actualMinutes != null && t.actualMinutes > 0) || t.billedHours != null || (t.ratePaid != null && t.ratePaid > 0))) f.push('not_done')
     if (!t.ownerId && !t.excluded) f.push('no_owner')
     t.flags = f
   }
