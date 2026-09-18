@@ -3702,7 +3702,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div>
                     <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
                     <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>
-                      Booking your own stay, start to finish
+                      Your portal: the calendar, your own stay, the numbers
                     </p>
                   </div>
                   <p style={{ fontSize: 12.5, color: t.muted, whiteSpace: 'nowrap' }}>
@@ -3711,11 +3711,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 </div>
                 <div className="flex-1 min-h-0" style={{ marginTop: 20 }}>
                   <OwnerPortalDemo
-                    tone={{ ink: t.ink, body: t.body, muted: t.muted, rule: t.rule, accent: t.accent,
-                            card: t.card, cardBorder: t.cardBorder, chip: t.chip, bg: t.bg }}
                     unitName={String(((sec('listings').items || [])[0] || {}).name || 'Your unit')}
                     portalUrl={housePortalUrl(sec('guesty').portalUrl)}
-                    loginEmail={String(sec('guesty').loginEmail || '')}
+                    ownerName={String(hero.title || sec('welcome').subtitle || '')}
                   />
                 </div>
                 <Foot label="Owner portal" />
