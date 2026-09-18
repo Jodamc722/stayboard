@@ -7,7 +7,8 @@
 // button still runs the whole set through /api/sync/guesty.
 import { NextRequest, NextResponse } from 'next/server'
 import { runFullSync } from '@/lib/guesty'
-import { cronAllowed } from '@/lib/cron-auth'
+import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { recordRun } from '@/lib/automation-runs'
 import { createClient } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +22,11 @@ export async function GET(req: NextRequest) {
       if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     } catch { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
   }
+  // Whoever the caller is, the catalog does not change by the minute.
+  const skip = await tooSoon('guesty-catalog', 20)
+  if (skip) return NextResponse.json({ ok: true, ...skip })
   const started = Date.now()
   const result = await runFullSync(false, { catalogOnly: true })
+  recordRun({ name: 'guesty-catalog', ok: result.errors.length === 0, itemCount: result.listings + result.custom_fields, detail: result, error: result.errors.join('; ') || null, ms: Date.now() - started })
   return NextResponse.json({ ok: true, scope: 'catalog', elapsed_ms: Date.now() - started, ...result })
 }

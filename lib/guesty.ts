@@ -812,7 +812,9 @@ export async function syncReviewsDetailed(opts?: { maxPages?: number; budgetMs?:
   if (opts?.incremental) {
     try {
       const { data } = await sb.from('guesty_reviews').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle()
-      if (data?.created_at) stopBefore = new Date(new Date(data.created_at).getTime() - 2 * 86400_000).toISOString()
+      // Clamped to now: one row with a bogus future created_at must not park the watermark ahead
+      // of every real review and stop every incremental run at page 0.
+      if (data?.created_at) stopBefore = new Date(Math.min(Date.now(), new Date(data.created_at).getTime()) - 2 * 86400_000).toISOString()
     } catch { /* no watermark → full pass */ }
   }
 
@@ -853,9 +855,14 @@ export async function syncReviewsDetailed(opts?: { maxPages?: number; budgetMs?:
     }
     if (arr.length < 100) { st.exhausted = true; break }
     if (stopBefore && mapped.length >= 2) {
-      const first = String(mapped[0]?.created_at || ''), last = String(mapped[mapped.length - 1]?.created_at || '')
-      const newestFirst = !!first && !!last && first >= last
-      if (newestFirst && first < stopBefore) { st.exhausted = true; break }
+      // The whole page must be non-increasing, not just its ends — a feed ordered by something
+      // other than created_at can pass a first-vs-last check by chance.
+      let newestFirst = true
+      for (let k = 1; k < mapped.length; k++) {
+        if (String(mapped[k]?.created_at || '') > String(mapped[k - 1]?.created_at || '')) { newestFirst = false; break }
+      }
+      const first = String(mapped[0]?.created_at || '')
+      if (newestFirst && first && first < stopBefore) { st.exhausted = true; break }
     }
   }
 

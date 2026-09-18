@@ -28,7 +28,7 @@ import { staffByName, resolveStaff } from '@/lib/staffing'
 import { laborEconomics, kindOfTask } from '@/lib/labor-econ'
 import { unstable_cache } from 'next/cache'
 
-const cachedStripReads = unstable_cache(
+const cachedStripReadsRaw = unstable_cache(
   async (start: string, end: string, wStart: string, wEnd: string) => Promise.all([
     shiftsForRange(start, end),
     getTimecardsAudited(start, end),
@@ -36,6 +36,15 @@ const cachedStripReads = unstable_cache(
   ]),
   ['labor-strip-v1'], { revalidate: 120 },
 )
+// An incomplete Homebase read (429, a failed week) must not be served to every viewer for two
+// minutes: on `complete:false` the cached copy is skipped and the reads are made live.
+async function cachedStripReads(start: string, end: string, wStart: string, wEnd: string) {
+  const hit = await cachedStripReadsRaw(start, end, wStart, wEnd)
+  if (hit && hit[1] && hit[1].complete === false) {
+    return Promise.all([shiftsForRange(start, end), getTimecardsAudited(start, end), shiftsForRange(wStart, wEnd)])
+  }
+  return hit
+}
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
