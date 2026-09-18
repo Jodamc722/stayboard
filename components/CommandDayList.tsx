@@ -318,7 +318,7 @@ function EveRow({ q, act, busy }: { q: EveQ; act: (id: string, op: 'answer' | 'd
   const [draft, setDraft] = useState('')
   const [open, setOpen] = useState(false)
   const [err, setErr] = useState('')
-  const send = async () => { if (!draft.trim()) return; setErr(''); const ok = await act(q.id, 'answer', draft.trim()); if (!ok) setErr('Could not save that answer.') }
+  const send = async () => { if (!draft.trim() || busy) return; setErr(''); const ok = await act(q.id, 'answer', draft.trim()); if (!ok) setErr('Could not save that answer.') }
   const meta = [q.scope, Number(q.asked_count) > 1 ? 'asked ' + q.asked_count + ' times' : '', q.source === 'eve' ? 'came up in conversation' : ''].filter(Boolean).join(' · ')
   return (
     <Row sev={null} title={q.question} meta={open && q.why ? 'Why: ' + q.why : meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
@@ -459,6 +459,7 @@ function DupBatch({ rows, onCleared, onChanged }: { rows: NextItem[]; onCleared:
   const [receipts, setReceipts] = useState<Record<string, string>>({})
   const [summary, setSummary] = useState('')
   const cancelAll = async () => {
+    if (busy || !pw) return   // Enter twice / a double-tap must not run two batches over the same tasks
     setBusy(true); setSummary('')
     let ok = 0
     for (const i of rows) {
@@ -469,8 +470,10 @@ function DupBatch({ rows, onCleared, onChanged }: { rows: NextItem[]; onCleared:
         setReceipts(r => ({ ...r, [i.key]: 'ok' })); ok++
       } catch (e: any) {
         setReceipts(r => ({ ...r, [i.key]: String(e?.message || e) }))
-        // A wrong password fails every item the same way — stop after the first, keep the receipt.
-        if (/password|unauthori|forbidden/i.test(String(e?.message || e))) break
+        // A wrong (or unset) password fails every item the same way — stop after the first, keep
+        // the receipt. Only THOSE two: "Departure cleans can only be deleted … (admin password
+        // required)" also says "password" but is per-task, and must not stop the rest of the batch.
+        if (/wrong admin password|delete is locked/i.test(String(e?.message || e))) break
       }
     }
     setSummary(ok + ' of ' + rows.length + ' cancelled')
@@ -484,7 +487,7 @@ function DupBatch({ rows, onCleared, onChanged }: { rows: NextItem[]; onCleared:
       {open && (
         <>
           <div className="mt-2 ml-3.5 flex items-center gap-1.5">
-            <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Admin password" aria-label="Admin password" onKeyDown={e => { if (e.key === 'Enter' && pw) cancelAll() }}
+            <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Admin password" aria-label="Admin password" onKeyDown={e => { if (e.key === 'Enter' && pw && !busy) cancelAll() }}
               className="flex-1 min-w-0 rounded-lg border border-line px-2.5 py-1.5 text-[13px] min-h-[34px]" />
             <button onClick={cancelAll} disabled={busy || !pw} className={BTN + ' bg-rose-600 text-white whitespace-nowrap'}>{busy ? <Loader2 size={11} className="animate-spin" /> : null} Cancel {rows.length}</button>
           </div>
@@ -576,7 +579,7 @@ function YoursBand() {
     <div className="px-3 py-1.5 flex items-center gap-2 min-h-[44px]">
       <Plus size={13} className="text-muted shrink-0" />
       <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add() }} disabled={busy === 'add'}
-        placeholder="Add a task for yourself…" className="flex-1 min-w-0 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
+        placeholder="Add a task for yourself…" aria-label="Add a task for yourself" className="flex-1 min-w-0 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
       {draft.trim() && <button onClick={add} disabled={busy === 'add'} className={PRIMARY}>{busy === 'add' ? <Loader2 size={11} className="animate-spin" /> : 'Add'}</button>}
     </div>
   )
