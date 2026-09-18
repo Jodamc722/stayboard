@@ -30,10 +30,10 @@ async function open(req: NextRequest, code: string, pass: string) {
   // ITS OWN PASSCODE OR NOTHING (2026-09-18). The standing share password is gone; a board made
   // without a passcode is `open` (the code is the capability), otherwise the phone POSTs { pass }.
   if (!signedIn && !link.open) {
-    if (!link.passcode_hash) return NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: true, error: 'This board has no passcode yet — ask the office to set one on the Share Links page.' }, { status: 200 })
+    if (!link.passcode_hash) return NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: true, error: 'This board has no passcode yet — ask Jon for this link’s passcode.' }, { status: 200 })
     const verdict = await checkRowPasscode(req, link, pass)
     if (verdict === 'locked') return lockedResponse({ label: link.label, needsPasscode: true })
-    if (verdict !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: true, error: pass ? 'That passcode did not match.' : undefined }, { status: pass ? 403 : 200 })
+    if (verdict !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: true, error: pass ? 'That passcode did not match — ask Jon for this link’s passcode.' : undefined }, { status: pass ? 403 : 200 })
   }
   if (!signedIn) touchLink({ id: link.id, code: link.code })
 

@@ -1084,7 +1084,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="w-full max-w-sm rounded-2xl border border-line bg-white p-6 shadow-soft">
           <div className="flex items-center gap-2 mb-1"><Lock size={16} className="text-muted" /><h1 className="font-semibold text-ink">Owner statement audit</h1></div>
-          <p className="text-sm text-muted mb-4">Enter the audit password to review this month&rsquo;s statements.</p>
+          <p className="text-sm text-muted mb-4">Enter this link&rsquo;s passcode to review this month&rsquo;s statements. Don&rsquo;t have it? Ask Jon for this link&rsquo;s passcode.</p>
           <input
             type="password" value={pw} autoFocus
             onChange={e => setPw(e.target.value)}

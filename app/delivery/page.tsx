@@ -56,7 +56,8 @@ export default function DeliveryPage() {
         <h1 className="text-xl font-bold text-neutral-900 mb-3">Delivery plan</h1>
         <div className="rounded-xl border border-neutral-200 bg-white p-4">
           <div className="text-sm text-neutral-600 mb-2">Enter the team password to open the plan.</div>
-          <input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') unlock() }} placeholder="Team password" className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2" />
+          <input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') unlock() }} placeholder="Passcode" className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2" />
+          <p className="text-[11px] text-neutral-500">Don’t have it? Ask Jon for this link’s passcode.</p>
           {pwErr ? <div className="text-xs text-rose-600 mt-1.5">{pwErr}</div> : null}
           <button onClick={unlock} disabled={pwBusy || !pw.trim()} className="mt-2 w-full text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{pwBusy ? 'Checking…' : 'Open plan'}</button>
         </div>

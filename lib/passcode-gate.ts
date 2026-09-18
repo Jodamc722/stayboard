@@ -149,12 +149,12 @@ export async function linkGate(code: string, opts: { kinds?: string[]; touch?: b
   if (link.open) { if (opts.touch !== false) touchLink(link); return { ok: true, link, signedIn: false, who: null } }
   if (!link.passcode_hash) {
     return { ok: false, link, reason: 'unset', res: NextResponse.json({ ok: false, needsPassword: true, unset: true, label: link.title || link.label || 'Shared page',
-      error: 'This link has no passcode yet. Ask the office to set one on the Share Links page.' }, { status: 401 }) }
+      error: 'This link has no passcode yet — ask Jon for this link’s passcode.' }, { status: 401 }) }
   }
   let cookieVal: string | undefined
   try { cookieVal = cookies().get(linkCookieName(link.code))?.value } catch { cookieVal = undefined }
   if (!linkCookieOk(link, cookieVal)) {
-    return { ok: false, link, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, label: link.title || link.label || 'Shared page', hint: link.passcode_hint || null, error: 'Password required' }, { status: 401 }) }
+    return { ok: false, link, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, label: link.title || link.label || 'Shared page', hint: link.passcode_hint || null, error: 'This link needs its passcode — ask Jon for this link’s passcode.' }, { status: 401 }) }
   }
   if (opts.touch !== false) touchLink(link)
   return { ok: true, link, signedIn: false, who: null }
@@ -191,13 +191,13 @@ export async function linkLogin(req: NextRequest, code: string, pw: string): Pro
   if (!link) return NextResponse.json({ ok: false, error: 'This link is not active.' }, { status: 404 })
   if (!linkUsable(link)) return NextResponse.json({ ok: false, error: link.revoked_at ? 'This link was turned off.' : 'This link has expired.' }, { status: 410 })
   if (link.open) { const r = NextResponse.json({ ok: true, open: true }); return r }
-  if (!link.passcode_hash) return NextResponse.json({ ok: false, error: 'This link has no passcode yet. Ask the office to set one on the Share Links page.' }, { status: 503 })
+  if (!link.passcode_hash) return NextResponse.json({ ok: false, error: 'This link has no passcode yet — ask Jon for this link’s passcode.' }, { status: 503 })
   const gate = 'link:' + link.code
   const ip = ipOf(req)
   if (await isLockedOut(gate, ip)) return lockedResponse()
   if (!passcodeMatches(pw, String(link.passcode_hash))) {
     if (pw) await noteWrong(gate, ip)
-    return NextResponse.json({ ok: false, error: 'Wrong passcode' }, { status: 401 })
+    return NextResponse.json({ ok: false, error: 'Wrong passcode — ask Jon for this link’s passcode.' }, { status: 401 })
   }
   let current = String(link.passcode_hash)
   if (!isHash(current)) {

@@ -63,10 +63,10 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
   // without one is `open` — the code is the capability. A signed-in Lighthouse user walks in.
   const me = await signedInUser()
   if (!me.signedIn && !link.open) {
-    if (!link.passcode_hash) return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: 'This link has no passcode yet — ask the office to set one on the Share Links page.' }, { status: 200 })
+    if (!link.passcode_hash) return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: 'This link has no passcode yet — ask Jon for this link’s passcode.' }, { status: 200 })
     const verdict = await checkRowPasscode(req, link, pw)
     if (verdict === 'locked') return lockedResponse({ label: link.label || 'Shared data' })
-    if (verdict !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: pw ? 'Wrong passcode.' : undefined }, { status: pw ? 403 : 200 })
+    if (verdict !== 'ok') return NextResponse.json({ ok: false, locked: true, label: link.label || 'Shared data', error: pw ? 'Wrong passcode — ask Jon for this link’s passcode.' : undefined }, { status: pw ? 403 : 200 })
   }
   if (!me.signedIn) touchLink(link)
 

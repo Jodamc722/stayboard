@@ -28,7 +28,7 @@ const KIND_GUIDE: Record<string, string> = {
   'orders-live': 'today\'s guest orders for the field team (/orders-live). One fixed page.',
   marketing: 'the direct-bookings report for a marketing partner (/report/marketing). One fixed page; scope.from / scope.to can pin a date range, scope.showMoney=false hides dollars.',
   'owner-audit': 'the owner statement audit for a reviewer (/report/owner-audit). One fixed page.',
-  botanica: 'the Botanica performance report for the hotel GM (/report/botanica). One fixed page.',
+  botanica: 'the Stay report — the Botanica hotel performance report for the GM (/report/stay). One fixed page.',
   'custom-page': 'a custom live REPORT (reservations, revenue & ADR, booking sources, audience counts, contact list, cleaning & tasks, verification, notes, weekly cleaning planner "team", weekly maintenance planner "team_maint") scoped to a market, building, owner, units or the portfolio. Use scope.sections with those keys; showMoney / guestNames / windowDays as asked.',
 }
 

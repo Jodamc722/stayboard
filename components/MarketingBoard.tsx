@@ -575,7 +575,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
       <div className="min-h-[60vh] flex items-center justify-center p-6">
         <div className="w-full max-w-sm rounded-2xl border border-line bg-white p-6 shadow-lifted">
           <div className="flex items-center gap-2 mb-1"><Lock size={16} className="text-muted" /><h1 className="font-semibold text-ink">Direct booking report</h1></div>
-          <p className="text-sm text-muted mb-4">Enter the marketing password to view booking performance.</p>
+          <p className="text-sm text-muted mb-4">Enter this link’s passcode to view booking performance. Don’t have it? Ask Jon for this link’s passcode.</p>
           <input
             type="password" value={pw} autoFocus
             onChange={e => setPw(e.target.value)}

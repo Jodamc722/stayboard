@@ -81,7 +81,8 @@ export default function DayLinkPage() {
           <div className="dl-brand">STAY HOSPITALITY</div>
           <h1 className="dl-h1">Today in the field</h1>
           <p className="dl-muted">Enter the team password to see today&rsquo;s cleans and arrivals.</p>
-          <input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') signIn() }} placeholder="Password" className="dl-input" />
+          <input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') signIn() }} placeholder="Passcode" className="dl-input" />
+          <p className="text-[11px] text-neutral-500">Don’t have it? Ask Jon for this link’s passcode.</p>
           <button onClick={signIn} className="dl-btn dl-btn-dark">Open</button>
           {pwErr && <div className="dl-err">{pwErr}</div>}
         </div>

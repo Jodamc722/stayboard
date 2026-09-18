@@ -75,7 +75,7 @@ export async function parkingGate(req: NextRequest, code: string, pass: string):
       ok: false,
       // Locked, and leaking only the label — never whose units or which building it covers.
       res: NextResponse.json({ ok: false, locked: true, label: link.label, needsPasscode: !link.open,
-        error: pass ? 'That passcode did not match.' : undefined }, { status: pass ? 403 : 200 }),
+        error: pass ? 'That passcode did not match — ask Jon for this link’s passcode.' : undefined }, { status: pass ? 403 : 200 }),
     }
   }
   // A legacy plaintext row (migration 101) becomes a hash on the first correct entry.

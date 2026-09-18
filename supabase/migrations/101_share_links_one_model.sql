@@ -76,10 +76,11 @@ select s.code, 'scheduler', coalesce(s.label, s.market || ' team schedule'), coa
 from public.schedule_links s
 on conflict (code) do nothing;
 
--- THE FORMER FAMILY PAGES, one row each, on the same code the URL already carries. None of them is
--- open, and none has a passcode yet: each stays shut until Jon sets one on /links (the hub shows
--- the passcode once, then only its hint). The old family cookies stop working the moment this
--- ships; whoever holds a link types its new passcode once and gets a 30-day cookie for THAT link.
+-- THE FORMER FAMILY PAGES, one row each, on the same code the URL already carries. Each row STARTS
+-- WITH THE CREDENTIAL ITS FAMILY HAS TODAY (copied below from share_settings 1/3/4/7), so nobody is
+-- locked out the minute this ships: a cleaner opens /vendor/botanica, types the password they
+-- already use, and gets a 30-day cookie for that link. Jon then rotates each one at his own pace
+-- from /links (shown once, then only the hint).
 insert into public.share_links (code, kind, title, label, audience, scope, open, notes) values
   ('botanica',            'vendor-board', 'Botanica — cleaning board',                 'Botanica — cleaning board',                 'vendor',   '{"vendor":"botanica"}',           false, 'Today and tomorrow for the vendor crew. /vendor/botanica'),
   ('pt',                  'vendor-board', 'Park Towers — cleaning board',              'Park Towers — cleaning board',              'vendor',   '{"vendor":"pt"}',                 false, 'Today and tomorrow for the vendor crew. /vendor/pt'),
@@ -91,10 +92,29 @@ insert into public.share_links (code, kind, title, label, audience, scope, open,
   ('orders-live',         'orders-live',  'Guest orders — live',                       'Guest orders — live',                       'crew',     '{}',                              false, 'Today''s guest orders by building, one tap to mark delivered. /orders-live'),
   ('marketing',           'marketing',    'Direct bookings report — partners',         'Direct bookings report — partners',         'partner',  '{}',                              false, 'Month-by-month direct vs OTA for marketing partners. /report/marketing'),
   ('owner-audit',         'owner-audit',  'Owner statement audit — reviewers',         'Owner statement audit — reviewers',         'internal', '{}',                              false, 'Statement review for whoever works the audit. /report/owner-audit'),
-  ('botanica-report',     'botanica',     'Botanica performance report — Margaux',     'Botanica performance report — Margaux',     'owner',    '{}',                              false, 'Daily occupancy, ADR and revenue since opening. /report/botanica'),
+  ('botanica-report',     'botanica',     'Stay report — Margaux',                     'Stay report — Margaux',                     'owner',    '{}',                              false, 'Daily occupancy, ADR and revenue since opening. /report/stay (also /report/botanica)'),
   ('owner-orders',        'order-form',   'Owner order sheet',                         'Owner order sheet',                         'owner',    '{}',                              true,  'Owners approve spend item by item. Open link. /owner-orders'),
   ('new-order',           'order-form',   'New order request',                         'New order request',                         'crew',     '{}',                              true,  'Anyone on site can raise an order. Open link. /new-order')
 on conflict (code) do nothing;
+
+-- Copy each family's CURRENT credential onto the rows that replace it. share_settings holds
+-- either an scrypt hash ("s1$…", same format as passcode_hash — copied as is) or a legacy
+-- plaintext (copied as is; the app hashes it on first /links load and on first correct entry,
+-- exactly like every other legacy row). The hint is set only when the cleartext is known here.
+update public.share_links l set passcode_hash = s.password,
+  passcode_hint = case when s.password like 's1$%' then null else '••' || right(s.password, 2) end
+  from public.share_settings s
+  where s.id = 1 and s.password is not null and s.password <> '' and l.passcode_hash is null
+    and l.code in ('botanica', 'pt', 'amrit-capri-lucerne', 'salato', 'salato-desk', 'day', 'delivery', 'orders-live');
+update public.share_links l set passcode_hash = s.password,
+  passcode_hint = case when s.password like 's1$%' then null else '••' || right(s.password, 2) end
+  from public.share_settings s where s.id = 3 and s.password is not null and s.password <> '' and l.passcode_hash is null and l.code = 'marketing';
+update public.share_links l set passcode_hash = s.password,
+  passcode_hint = case when s.password like 's1$%' then null else '••' || right(s.password, 2) end
+  from public.share_settings s where s.id = 4 and s.password is not null and s.password <> '' and l.passcode_hash is null and l.code = 'owner-audit';
+update public.share_links l set passcode_hash = s.password,
+  passcode_hint = case when s.password like 's1$%' then null else '••' || right(s.password, 2) end
+  from public.share_settings s where s.id = 7 and s.password is not null and s.password <> '' and l.passcode_hash is null and l.code = 'botanica-report';
 
 create index if not exists share_links_kind_idx on public.share_links (kind) where revoked_at is null;
 create index if not exists share_links_audience_idx on public.share_links (audience) where revoked_at is null;

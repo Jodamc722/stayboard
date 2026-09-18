@@ -112,7 +112,7 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   const b = await req.json().catch(() => ({} as any))
   const v = await unlocked(req, link, str(b.pass) || null)
   if (v === 'locked') return lockedResponse({ label: link.label || link.market + ' team schedule' })
-  if (v !== 'ok') return NextResponse.json({ ok: false, locked: true, error: str(b.pass) ? 'That passcode did not match.' : undefined }, { status: 401 })
+  if (v !== 'ok') return NextResponse.json({ ok: false, locked: true, error: str(b.pass) ? 'That passcode did not match — ask Jon for this link’s passcode.' : undefined }, { status: 401 })
   // UNLOCK: the passcode was right — answer the same payload GET would, so the page loads.
   if (str(b.action) === 'unlock') {
     const ws = /^\d{4}-\d{2}-\d{2}$/.test(str(b.weekStart)) ? str(b.weekStart) : null

@@ -83,7 +83,7 @@ export function ShareLinksCard() {
           with its own passcode, expiry and revoke. This card points there and keeps only the
           in-app credentials that are not share links. */}
       <p className="text-sm text-muted mb-3">
-        Every shareable page — vendor boards, the day sheet, the marketing and audit reports, the Botanica report,
+        Every shareable page — vendor boards, the day sheet, the marketing and audit reports, the Stay report,
         scheduler links, field boards, custom reports — lives on the <a href="/links" className="font-semibold text-brand-700 underline">Share Links</a> page,
         each with its <b>own</b> passcode. Set, rotate or turn one off there; the old shared team password no longer opens anything.
       </p>

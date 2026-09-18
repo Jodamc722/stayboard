@@ -25,7 +25,7 @@ export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-b
 export const KIND_LABEL: Record<LinkKind, string> = {
   'vendor-board': 'Vendor cleaning board', scheduler: 'Team scheduler', 'field-board': 'Live field board', parking: 'Parking board',
   'day-sheet': 'Day sheet', delivery: 'Delivery log', 'orders-live': 'Guest orders — live', 'salato-desk': 'Salato desk board',
-  marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Botanica performance report',
+  marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Stay report',
   'owner-report': 'Owner report', guidebook: 'Guidebook', guide: 'Guest guide page', 'order-form': 'Order form', count: 'Inventory count', 'custom-page': 'Custom report',
 }
 export const AUDIENCE_LABEL: Record<Audience, string> = {
@@ -72,7 +72,7 @@ export function pathFor(kind: string, code: string): string {
     case 'salato-desk': return '/salato/share'
     case 'marketing': return '/report/marketing'
     case 'owner-audit': return '/report/owner-audit'
-    case 'botanica': return '/report/botanica'
+    case 'botanica': return '/report/stay'
     case 'owner-report': return '/r/' + code
     case 'guidebook': return '/g/' + code
     case 'guide': return '/guide/' + code
@@ -157,7 +157,7 @@ export function describeLink(l: Pick<ShareLinkRow, 'kind' | 'scope' | 'audience'
       parts.push(s.showMoney === false ? 'counts only, no dollars' : 'with revenue')
       break
     case 'owner-audit': parts.push('monthly statement review'); parts.push('owner-level money'); break
-    case 'botanica': parts.push('occupancy, ADR & revenue since opening'); break
+    case 'botanica': parts.push('Botanica occupancy, ADR & revenue since opening'); break
     case 'owner-report': parts.push('one owner report'); break
     case 'guidebook': parts.push('one guidebook'); break
     case 'guide': parts.push('guest guide page'); break

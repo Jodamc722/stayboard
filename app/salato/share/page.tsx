@@ -140,7 +140,8 @@ export default function SalatoShare() {
         <div className='w-full max-w-sm rounded-2xl bg-white shadow-lg p-5'>
           <div className='text-base font-bold mb-1'>Salato front desk</div>
           <div className='text-sm text-neutral-600 mb-3'>Enter the team password to open the board.</div>
-          <input type='password' value={boardPw} onChange={e => setBoardPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') unlockBoard() }} placeholder='Team password' autoFocus className='w-full text-sm border border-neutral-200 rounded-lg px-3 py-2' />
+          <input type='password' value={boardPw} onChange={e => setBoardPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') unlockBoard() }} placeholder='Passcode' autoFocus className='w-full text-sm border border-neutral-200 rounded-lg px-3 py-2' />
+          <p className='text-[11px] text-neutral-500'>Don’t have it? Ask Jon for this link’s passcode.</p>
           {boardPwErr && <div className='text-xs text-rose-600 mt-2'>{boardPwErr}</div>}
           <button onClick={unlockBoard} disabled={boardPwBusy || !boardPw.trim()} className='mt-3 w-full rounded-lg bg-neutral-900 text-white text-sm font-semibold py-2 disabled:opacity-40'>{boardPwBusy ? 'Checking…' : 'Open board'}</button>
         </div>
