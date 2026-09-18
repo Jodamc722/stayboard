@@ -9,7 +9,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
-import { SAMPLE_STATEMENT, statementHasRows, STATEMENT_ALSO, STATEMENT_ALSO_RETIRED_MARK } from '@/lib/statement-sample'
+import { SAMPLE_STATEMENT, statementHasRows, STATEMENT_ALSO, statementAlsoStale } from '@/lib/statement-sample'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
@@ -3771,14 +3771,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             // asks -- why there is no cleaning line, why a reimbursement appears as income --
             // existed only in the JSON. The explanation Jon kept correcting was invisible on the
             // one slide it belonged to, which is why it kept coming back wrong.
-            // A deck generated before today froze the retired reimbursement wording, which was
-            // circular ("the cleaning fee is ours, so that piece comes back to you" -- if it was
-            // never theirs, why is it income?). Those rows were never on screen, so nobody can
-            // have edited them deliberately: a deck still carrying the retired phrase gets the
-            // house set, same substitution pattern as the season curve and the sample statement.
+            // DATE, NOT TEXT-MATCHING. The first attempt keyed staleness on a retired phrase and
+            // missed, because these rows have been through more than one wrong version: the deck
+            // on screen was still explaining a "Cleaning fee" line owners never see and calling
+            // the reimbursement the OTA commission, neither of which contained the phrase. Since
+            // the rows were never rendered before today, nothing predating the slide can be an
+            // edit worth keeping, so the cutoff replaces them outright and nothing after it.
             const alsoStored: Any[] = sec('statement').also || []
-            const alsoStale = alsoStored.some((a: Any) => String(a && a.v || '').includes(STATEMENT_ALSO_RETIRED_MARK))
-            const alsoRows: Any[] = (alsoStale || !alsoStored.length) ? (STATEMENT_ALSO as Any[]) : alsoStored
+            const alsoRows: Any[] = (statementAlsoStale((c.meta || {}).generatedAt) || !alsoStored.length)
+              ? (STATEMENT_ALSO as Any[]) : alsoStored
 
             if (alsoRows.length) slides.push({ key: 'statement', node: (
               <Slide nav="How to read it" warn={edit} ground={GROUND.tint}>
