@@ -95,6 +95,8 @@ const ALERTS: { key: string; title: string; blurb: string; dest: Dest }[] = [
     blurb: 'System-health findings from the standing audit \u2014 unscored threads, missing metrics, gaps in door codes. Posts every 45 minutes when it has something, which is most of the time. Off by default.' },
   { key: 'notice_drafts', title: 'Front-desk notice drafts', dest: { kind: 'channel', field: 'opsChannel' },
     blurb: 'Tells a channel when arrival notices have been drafted into Gmail. The drafts are written either way \u2014 this is only the announcement.' },
+  { key: 'channel_health', title: 'Listing dropped off a channel', dest: { kind: 'channel', field: 'leadershipChannel' },
+    blurb: 'A listing that was live on Airbnb, Booking.com, Vrbo or Expedia now reads failed, disconnected, suspended or gone in Guesty. Checked after each listings sync; one message per run, only when something changed. The full picture is on Channel connections.' },
   { key: 'sync', title: 'A data feed stopped', dest: { kind: 'channel', field: 'defaultChannel' },
     blurb: 'Bookings or tasks stopped syncing. Sends immediately — never waits for approval.' },
   { key: 'digest', title: 'Morning summary', dest: { kind: 'channel', field: 'defaultChannel' },

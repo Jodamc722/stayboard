@@ -10,6 +10,7 @@ import { runFullSync } from '@/lib/guesty'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { createClient } from '@/lib/supabase-server'
+import { runChannelCheck } from '@/lib/channel-check'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -28,5 +29,12 @@ export async function GET(req: NextRequest) {
   const started = Date.now()
   const result = await runFullSync(false, { catalogOnly: true })
   recordRun({ name: 'guesty-catalog', ok: result.errors.length === 0, itemCount: result.listings + result.custom_fields, detail: result, error: result.errors.join('; ') || null, ms: Date.now() - started })
-  return NextResponse.json({ ok: true, scope: 'catalog', elapsed_ms: Date.now() - started, ...result })
+  // THE CHANNEL TRIGGER RIDES ON THIS SYNC (Jon, 2026-09-18). raw.integrations only changes when
+  // the listings were just re-pulled, so this is the one moment a comparison with the last snapshot
+  // can find anything — and vercel.json is at its cron cap. Never allowed to fail the sync.
+  let channels: any = 'skipped — the listings did not sync, so there is nothing new to compare'
+  if (result.listings > 0 || result.errors.length === 0) {
+    channels = await runChannelCheck().catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))
+  }
+  return NextResponse.json({ ok: true, scope: 'catalog', elapsed_ms: Date.now() - started, ...result, channels })
 }

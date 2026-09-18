@@ -50,6 +50,8 @@ import { isLiveStay } from './stay-status'
 import { STAGE_LABEL as CLAIM_STAGE_LABEL } from './claims'
 import { ratingDisplay } from './review-scale'
 import { COMPLETED } from './call-desk'
+import { readSnapshot, problemsFromSnapshot } from './channel-health'
+import { CHANNEL_LABEL, VERDICT_LABEL } from './channel-types'
 
 const str = (v: any) => String(v ?? '').trim()
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -78,7 +80,7 @@ const daysBetween = (fromIso: string, toYmd: string) => Math.round((Date.parse(t
 
 export const DISMISS_KEY = 'command_dismissed'
 
-export type NextKind = 'turn' | 'late' | 'inspection' | 'feedback' | 'pending' | 'duplicate' | 'glitch' | 'claim' | 'guest' | 'unassigned'
+export type NextKind = 'turn' | 'late' | 'inspection' | 'feedback' | 'pending' | 'duplicate' | 'glitch' | 'claim' | 'guest' | 'unassigned' | 'channel'
 /** Who owns clearing it. The lane a supervisor filters to. Lives in lib/command-types (client-safe). */
 export type { Owner } from './command-types'
 export { OWNER_LABEL } from './command-types'
@@ -576,6 +578,31 @@ export async function buildCommandDay(): Promise<CommandDay> {
       })
     }
   }
+
+  // ── 5b. CHANNELS: a listing off Airbnb / Booking.com / Vrbo / Expedia (Jon, 2026-09-18) ───────
+  // Read from the snapshot the listings sync writes, never recomputed here — 290 listings × 9
+  // channels is the check's job, and the Command Center only needs the rows that are red today.
+  // One row per listing (its worst channel first, the rest named), GM-owned: reconnecting is a
+  // Guesty job, not a field one.
+  try {
+    const snap = await readSnapshot()
+    const byListing: Record<string, ReturnType<typeof problemsFromSnapshot>> = {}
+    for (const p of problemsFromSnapshot(snap)) (byListing[p.listingId] ||= []).push(p)
+    for (const lid of Object.keys(byListing)) {
+      const rows = byListing[lid]
+      const lead = rows[0]
+      const unit = lead.unit || nameOf(lid) || 'Unit'
+      const chans = rows.map(r => CHANNEL_LABEL[r.platform] || r.platform)
+      push({
+        key: 'channel:' + lid, kind: 'channel', severity: 'today', rank: 5, owner: 'gm',
+        due: 'today',
+        unit, listingId: lid, market: lead.market || marketOfId(lid),
+        title: (VERDICT_LABEL[lead.verdict] || lead.verdict) + ' on ' + (chans.length === 1 ? chans[0] : chans.slice(0, -1).join(', ') + ' and ' + chans[chans.length - 1]),
+        why: 'Guesty reports the listing ' + rows.map(r => (VERDICT_LABEL[r.verdict] || r.verdict).toLowerCase() + ' on ' + (CHANNEL_LABEL[r.platform] || r.platform)).join(', ') + ' — guests cannot book it there until it is reconnected.',
+        action: { type: 'open', href: '/channels?listing=' + lid, label: 'Open channels' }, href: '/channels?listing=' + lid,
+      })
+    }
+  } catch (e: any) { degraded.push('channel connections — ' + String(e?.message || e).slice(0, 80)) }
 
   // ── 6. GUESTS: sentiment scan ───────────────────────────────────────────────────────────────
   for (const s of guard<any[]>('sentiment', sentimentRes as any, [])) {

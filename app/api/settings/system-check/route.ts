@@ -231,7 +231,22 @@ export async function GET() {
     } catch { /* treat an unknown failure as "not a finding" rather than crying wolf */ }
   }))
 
-  const all = env.concat(jobs).concat(reviewChecks).concat(tableChecks)
+  // ── CHANNEL CONNECTIONS. The check rides on the listings sync; a stale snapshot means the trigger
+  // behind "a listing dropped off a channel" is not looking. ──
+  const channelChecks: Check[] = []
+  try {
+    const { readSnapshot } = await import('@/lib/channel-health')
+    const snap = await readSnapshot()
+    const ageH = snap && snap.at ? (Date.now() - Date.parse(snap.at)) / 3600000 : null
+    channelChecks.push({
+      key: 'channels', label: 'Channel connections check', ok: ageH != null && ageH < 36, area: 'Channel connections',
+      breaks: ageH == null ? 'The check has never run, so nothing will say when a listing drops off Airbnb or Booking.com.'
+        : ageH >= 36 ? 'Last compared ' + Math.round(ageH) + ' hours ago; the trigger runs inside the twice-daily listings sync, which has not completed since.' : 'Nothing — last compared ' + Math.round(ageH) + ' h ago.',
+      fix: 'Open Channel connections and press Refresh, or run /api/cron/guesty-catalog while signed in and read its `channels` field.',
+    })
+  } catch { /* never let a bonus row take the screen down */ }
+
+  const all = env.concat(jobs).concat(reviewChecks).concat(tableChecks).concat(channelChecks)
   return NextResponse.json({
     ok: true,
     checkedAt: new Date().toISOString(),

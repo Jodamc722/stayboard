@@ -92,6 +92,8 @@ function troubledCleanIds(d: CommandDay): Record<string, true> {
 }
 function isFixRow(i: NextItem, troubled: Record<string, true>): boolean {
   if (i.kind === 'late' || i.kind === 'unassigned' || i.kind === 'guest' || i.kind === 'inspection') return true
+  // A listing off a major channel (Jon, 2026-09-18): unbookable there until somebody reconnects it.
+  if (i.kind === 'channel') return true
   if (i.kind === 'turn') return !isOnTrackTurn(i) || !!(i.bzTaskId && troubled[i.bzTaskId])
   if (i.kind === 'glitch') return isGlitchException(i)
   if (i.kind === 'feedback') return !isCoveredFeedback(i) && !isVendorFeedback(i) && i.action?.type === 'create_task'

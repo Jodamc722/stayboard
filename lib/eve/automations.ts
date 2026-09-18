@@ -76,6 +76,10 @@ export const AUTOMATIONS: AutomationDef[] = [
     what: 'Walks Breezeway task cost and supply detail into the billing mirror, current month first then backwards.', receipt: 'automation_runs',
     notes: 'Until it catches up, every maintenance recovery rate reads LOWER than reality.' },
 
+  { key: 'channel-check', label: 'Channel connections check', area: 'sync', trigger: 'chained — runs inside the listings sync (/api/cron/guesty-catalog), twice a day',
+    what: 'Reads every listing\u2019s channel connections from the fresh Guesty pull, compares them with the last snapshot, and says in Slack when a listing has dropped off Airbnb, Booking.com, Vrbo or Expedia. Opens an audit finding per listing until it is live again.', receipt: 'automation_runs',
+    settingsPath: '/users \u2192 Settings \u2192 Slack alerts \u2192 Listing dropped off a channel' },
+
   // ---- Watching the machine ------------------------------------------------------------------
   { key: 'watchdog', label: 'Sync watchdog', area: 'sync', path: '/api/cron/watchdog',
     what: 'Checks that each feed actually ran, per channel, and says so in Slack when one dies or recovers.', receipt: 'slack_outbox' },

@@ -33,6 +33,8 @@ import { auditCodes } from './code-integrity'
 import { visionCoverage } from './vision'
 import { crewScorecard } from './accountability'
 import { expectedCronPaths } from './automations'
+import { readSnapshot } from '@/lib/channel-health'
+import { channelFindings } from '@/lib/channel-check'
 
 export type Severity = 'critical' | 'warn' | 'info'
 export type Area = 'pipeline' | 'guests' | 'reviews' | 'ops' | 'listings' | 'money' | 'eve'
@@ -476,6 +478,16 @@ async function auditVisionProgress(): Promise<AuditFinding[]> {
   } catch { return [] }
 }
 
+/**
+ * Listings off a major channel (Jon, 2026-09-18). Read from the channel snapshot the listings sync
+ * writes, never recomputed here: the check itself upserts these same rows the moment it runs, and
+ * this line exists so the standing audit OWNS them — otherwise its close-the-tab sweep would resolve
+ * a `channel:` finding within the hour because this runner did not produce it.
+ */
+async function auditChannels(): Promise<AuditFinding[]> {
+  try { return channelFindings(await readSnapshot()) } catch { return [] }
+}
+
 // =================================================================================================
 // EVE AUDITING HERSELF — the recommendations nobody answered, and the approvals nobody tapped.
 // A proposal that expires unread is a broken loop, and a broken loop is worth a line on this screen
@@ -527,6 +539,7 @@ export const CHECKS: { key: string; run: (c: Row) => Promise<AuditFinding[]> }[]
   { key: 'arrivals_no_clean', run: auditArrivalsWithoutCleans },
   { key: 'listing_gaps', run: auditListingGaps },
   { key: 'guest_content', run: auditGuestContent },
+  { key: 'channels', run: async () => auditChannels() },
   { key: 'reported_not_fixed', run: async () => auditUnfixedBeforeArrival() },
   { key: 'billing_detail_gap', run: auditBillingDetailGap },
   { key: 'vision_progress', run: async () => auditVisionProgress() },

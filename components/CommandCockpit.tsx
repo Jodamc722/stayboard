@@ -207,7 +207,7 @@ const SEV: { key: NextItem['severity']; label: string; dot: string }[] = [
   { key: 'today', label: 'Before the day ends', dot: 'bg-amber-400' },
   { key: 'soon', label: 'Next 48 hours', dot: 'bg-sky-400' },
 ]
-const KIND_LABEL: Record<NextItem['kind'], string> = { turn: 'Same-day turn', late: 'Late clean', inspection: 'Inspection', feedback: 'Guest feedback', pending: 'Backlog', duplicate: 'Duplicate', glitch: 'Guest issue', claim: 'Claim', guest: 'Guest', unassigned: 'Unowned' }
+const KIND_LABEL: Record<NextItem['kind'], string> = { turn: 'Same-day turn', late: 'Late clean', inspection: 'Inspection', feedback: 'Guest feedback', pending: 'Backlog', duplicate: 'Duplicate', glitch: 'Guest issue', claim: 'Claim', guest: 'Guest', unassigned: 'Unowned', channel: 'Channel' }
 
 function ListSection({ title, count, empty, rows, allRows, roster, onChanged, d, owner, setOwner, showOwnerFilter, handoff, hiddenSoon }: {
   title: string; count: number; empty: string; rows: NextItem[]; allRows: NextItem[]; roster: Roster[]; onChanged: () => void; d: CommandDay

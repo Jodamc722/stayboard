@@ -35,6 +35,8 @@ export type EventKey =
   // Direct posters that never went through the rules engine, named here so they can be turned off
   // from the same place as everything else (2026-08-27).
   | 'eve_audit' | 'notice_drafts'
+  // Channel connections (2026-09-18): a listing dropped off Airbnb / Booking.com / Vrbo / Expedia.
+  | 'channel_health'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -56,6 +58,7 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   notable_arrivals: 'Owner stays & big bookings',
   eve_audit: 'Eve audit findings (system health)',
   notice_drafts: 'Front-desk notice drafts',
+  channel_health: 'Listing dropped off a channel',
 }
 
 /** The two rooms every area has. Safety issues ride with maintenance — there is no third channel. */
@@ -305,6 +308,14 @@ export const DEFAULT_RULES: SlackRules = {
     // Off on its own account as well as behind the master mute — this one posted every 45 minutes.
     eve_audit: { enabled: false, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 12 * 60 },
     notice_drafts: { enabled: false, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 60 },
+    // A LISTING FELL OFF A CHANNEL (Jon, 2026-09-18: "creates a trigger if a listing is suspended").
+    // Sends without approval: it only fires on a CHANGE (live yesterday, failed / disconnected /
+    // suspended / gone today) on one of the four channels that carry the bookings, and every day it
+    // waits is a day the unit is unbookable there. One message per run carries every transition, so
+    // there is nothing to cool down. NO quiet window on purpose: the listings sync it rides on runs
+    // at 00:21 ET, and a window would silently drop that run's message (the outbox does not queue
+    // past a window, and the snapshot has already moved on by the next run).
+    channel_health: { enabled: true, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 0 },
   },
   approvers: [JON_SLACK_ID],
   approvalExpiryMin: 240,

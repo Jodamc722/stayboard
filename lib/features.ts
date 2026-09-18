@@ -90,6 +90,10 @@ export const FEATURES: Feature[] = [
   // Health Score is a view on /buildings since 2026-09-03 (/buildings?v=health); /health redirects
   // there. The KEY stays so every role's setting still decides who sees the tab.
   { key: 'health',        label: 'Health Score',      path: '/health', group: 'Portfolio' },
+  // Channel connections (Jon, 2026-09-18): every listing × every channel — live, failed,
+  // disconnected, suspended or simply not connected — and the daily trigger behind it. View reads
+  // the matrix; full runs the check by hand (Refresh). Admin/manager inherit full through '*'.
+  { key: 'channels',      label: 'Channel connections', path: '/channels', group: 'Portfolio' },
   // Lighthouse checking itself. Under Settings rather than Portfolio: it is about the app, not the
   // buildings, and the whole point of moving it off Slack and out of email was to stop app-health
   // noise landing where operational information lives.
@@ -341,7 +345,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts'] },
+    pages: ['home', 'revenue', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels'] },
 ]
 
 export function normWorkspace(v: any): Workspace {

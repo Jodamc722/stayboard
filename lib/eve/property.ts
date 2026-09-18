@@ -278,9 +278,44 @@ export const PROPERTY_TOOLS: EveTool[] = [
   },
 ]
 
+// ── CHANNEL CONNECTIONS (Jon, 2026-09-18) ───────────────────────────────────────────────────────
+// Read-only, from the same snapshot the page and the Command Center use. Eve answers "which
+// listings are not on Airbnb" from the deterministic verdicts, never by reading raw Guesty JSON.
+const CHANNEL_TOOL: EveTool = {
+  name: 'channel_health',
+  description: 'WHICH LISTINGS ARE CONNECTED TO WHICH CHANNELS, and which are not. Per channel (Airbnb, Booking.com, Vrbo, Expedia, Google VR, Hopper, Blueground, Whimstay, Marriott HVMI): how many active listings are live, failed, disconnected, suspended, not connected, or unknown — plus the list of listings with a problem on a MAJOR channel (Airbnb / Booking.com / Vrbo / Expedia). Use it for "which listings are not on Airbnb", "is 3707 live on Booking.com", "how many units are suspended", "what dropped off a channel". Filter with `channel` (a channel name) and/or `name` (part of a unit name). The verdicts come from Guesty\u2019s own integration status; "stale" means connected but no booking from that channel in 90 days. Reconnecting is done in Guesty \u2192 Listings \u2192 Channels; the full matrix is on /channels.',
+  input_schema: obj({ channel: S.str, name: S.str, include_inactive: S.bool, limit: S.num }),
+  run: async (input: any) => {
+    const { buildChannelHealth } = await import('@/lib/channel-health')
+    const { CHANNELS, VERDICT_LABEL, isProblem } = await import('@/lib/channel-types')
+    const h = await buildChannelHealth()
+    const want = lc(input?.channel)
+    const chan = want ? CHANNELS.find(c => lc(c.label).indexOf(want) >= 0 || lc(c.key).indexOf(want) >= 0 || (want === 'vrbo' && c.key === 'homeaway2') || (want.indexOf('booking') === 0 && c.key === 'bookingCom')) : null
+    const rows = (input?.include_inactive === true ? h.listings.concat(h.inactive) : h.listings)
+      .filter(l => !input?.name || has(l.name, input.name))
+    const lim = clampLimit(input?.limit, 60, 200)
+    const problems = rows.filter(l => chan ? isProblem(l.cells[chan.key].verdict) : l.missingMajor.length > 0)
+      .map(l => ({
+        unit: l.name, building: l.building, market: l.market, active: l.active,
+        problems: (chan ? [chan] : CHANNELS.filter(c => c.major)).filter(c => isProblem(l.cells[c.key].verdict))
+          .map(c => c.label + ': ' + VERDICT_LABEL[l.cells[c.key].verdict] + (l.cells[c.key].approval ? ' (' + l.cells[c.key].approval + ')' : '')).join('; '),
+        bookings_90d: l.bookings90d,
+      }))
+    const totals: Record<string, any> = {}
+    for (const c of (chan ? [chan] : CHANNELS)) totals[c.label] = h.totals[c.key]
+    return {
+      checked_at: h.at, active_listings: h.listings.length, inactive_listings: h.inactive.length,
+      totals_by_channel: totals,
+      ...(chan && input?.name ? { matches: rows.slice(0, lim).map(l => ({ unit: l.name, building: l.building, [chan.label]: VERDICT_LABEL[l.cells[chan.key].verdict], status: l.cells[chan.key].status, approval: l.cells[chan.key].approval, url: l.cells[chan.key].url, bookings_90d_from_channel: l.cells[chan.key].bookings90d })) } : {}),
+      ...cap(problems, lim),
+      note: 'Totals count ACTIVE listings only. "Not connected" = no integration on that channel in Guesty; "stale" is connected but unproductive, not broken. Point people at /channels for the matrix and Guesty \u2192 Listings \u2192 Channels to reconnect.',
+    }
+  },
+}
+
 export const PROPERTY_DOMAIN: EveDomain = {
   key: 'property',
   label: 'Properties & guest knowledge',
-  blurb: 'What we tell guests and what the units are: house rules and arrival instructions, the FAQ answer bank the team has built, the published guest guidebooks, and what each unit physically contains — she can LOOK AT the photos directly, plus amenities and the room-by-room FF&E inventory. Open this for any policy question, any "what does the guest see", and anything about what is actually IN a unit.',
-  tools: PROPERTY_TOOLS,
+  blurb: 'What we tell guests and what the units are: house rules and arrival instructions, the FAQ answer bank the team has built, the published guest guidebooks, and what each unit physically contains — she can LOOK AT the photos directly, plus amenities and the room-by-room FF&E inventory — and which channels (Airbnb, Booking.com, Vrbo, Expedia…) each listing is actually connected to. Open this for any policy question, any "what does the guest see", anything about what is actually IN a unit, and "which listings are not on Airbnb".',
+  tools: PROPERTY_TOOLS.concat([CHANNEL_TOOL]),
 }

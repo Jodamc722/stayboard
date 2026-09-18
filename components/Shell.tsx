@@ -13,7 +13,7 @@ import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -124,6 +124,8 @@ export const SECTIONS: NavSection[] = [
       // Health Score is the fourth Properties view since the September audit (/buildings?v=health).
       // Nav diet 2026-08-11 (Jon): Patterns folded into Guest Issues (/glitches → Patterns tab).
       { to: '/blocked',   label: 'Blocked Units', Icon: CalendarOff }, // 2026-08-10 - inventory off the calendar
+      // Channel connections (Jon, 2026-09-18): which listings are actually live on which channel.
+      { to: '/channels',  label: 'Channels', Icon: Plug },
     ],
   },
   {
