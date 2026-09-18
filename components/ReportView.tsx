@@ -16,11 +16,13 @@ import {
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
   houseBody, OVERVIEW_BODY, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS, COMPANY_STATS_RETIRED_MARK,
+  housePortalUrl,
 } from '@/lib/onboarding-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
+import OwnerPortalDemo from '@/components/OwnerPortalDemo'
 
 type Any = any
 /** Drop a trailing "· live on N channels" / "· not yet live" from a stored listing sub-line. */
@@ -1179,6 +1181,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       houseRows<Any>(g('checklist').rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[]) !== g('checklist').rows ||
       houseRows<Any>(g('money').rules, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[]) !== g('money').rules ||
       houseRows<Any>(g('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]) !== g('guesty').items ||
+      housePortalUrl(g('guesty').portalUrl) !== (g('guesty').portalUrl || '') ||
       houseBody(g('overview').body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY) !== (g('overview').body || '') ||
       houseRows<Any>(g('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS as Any[]) !== g('overview').stats
     if (!stale) return
@@ -1206,6 +1209,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
       mn.rules = houseRows<Any>(mn.rules, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[])
       const gy = d.guesty || (d.guesty = {})
       gy.items = houseRows<Any>(gy.items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[])
+      gy.portalUrl = housePortalUrl(gy.portalUrl)
       const ov = d.overview || (d.overview = {})
       ov.body = houseBody(ov.body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY)
       ov.stats = houseRows<Any>(ov.stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS as Any[])
@@ -3550,9 +3554,9 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           style={{ width: '100%', fontSize: 24, fontWeight: 500, letterSpacing: '-0.02em', color: t.accent, background: 'transparent', border: '1px solid transparent', borderRadius: 8, padding: '4px 8px', marginLeft: -8, fontFamily: 'inherit' }}
                         />
                       ) : (
-                        <a href={String(sec('guesty').portalUrl || '#')} target="_blank" rel="noopener noreferrer"
+                        <a href={housePortalUrl(sec('guesty').portalUrl) || '#'} target="_blank" rel="noopener noreferrer"
                           className="onb-link" style={{ fontSize: 24, fontWeight: 500, letterSpacing: '-0.02em', color: t.accent, wordBreak: 'break-word' }}>
-                          {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '') || 'Portal address to be set'}
+                          {housePortalUrl(sec('guesty').portalUrl).replace(/^https?:\/\//, '') || 'Portal address to be set'}
                         </a>
                       )}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 26, marginTop: 20, paddingTop: 18, borderTop: '1px solid ' + t.rule }}>
@@ -3593,7 +3597,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </p>
                   </div>
                   <p style={{ fontSize: 12.5, color: t.muted, whiteSpace: 'nowrap' }}>
-                    {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '')}
+                    {housePortalUrl(sec('guesty').portalUrl).replace(/^https?:\/\//, '')}
                   </p>
                 </div>
 
@@ -3615,7 +3619,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           <span style={{ width: 8, height: 8, borderRadius: 999, background: t.rule }} />
                           <span style={{ width: 8, height: 8, borderRadius: 999, background: t.rule }} />
                           <span style={{ fontSize: 11, color: t.muted, marginLeft: 10 }}>
-                            {String(sec('guesty').portalUrl || '').replace(/^https?:\/\//, '')}
+                            {housePortalUrl(sec('guesty').portalUrl).replace(/^https?:\/\//, '')}
                           </span>
                         </div>
                         <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '116px 1fr', minHeight: 0 }}>
@@ -3677,6 +3681,42 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       </div>
                     </div>
                   )}
+                </div>
+                <Foot label="Owner portal" />
+              </div>
+            </Slide>
+          ) })
+
+          // MAKING AN OWNER STAY, AS A THING YOU DO RATHER THAN READ ABOUT (Jon, 2026-09-18:
+          // "show them how to actually make an owner reservation… make it real and interactive").
+          // The two slides above tell an owner the portal exists and what is on it. Neither gets
+          // them through the one task they will actually need on their own, in December, without
+          // us. This one is clickable: pick real dates on a calendar that refuses the nights a
+          // guest already has, choose whether it is friends and family, press Create reservation.
+          // Every control is named as our Guesty account actually names it — see the header of
+          // components/OwnerPortalDemo for the settings this was read from.
+          if (!hid('guesty')) slides.push({ key: 'guesty', node: (
+            <Slide nav="Make an owner stay" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col h-full">
+                <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
+                  <div>
+                    <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
+                    <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>
+                      Booking your own stay, start to finish
+                    </p>
+                  </div>
+                  <p style={{ fontSize: 12.5, color: t.muted, whiteSpace: 'nowrap' }}>
+                    {housePortalUrl(sec('guesty').portalUrl).replace(/^https?:\/\//, '')}
+                  </p>
+                </div>
+                <div className="flex-1 min-h-0" style={{ marginTop: 20 }}>
+                  <OwnerPortalDemo
+                    tone={{ ink: t.ink, body: t.body, muted: t.muted, rule: t.rule, accent: t.accent,
+                            card: t.card, cardBorder: t.cardBorder, chip: t.chip, bg: t.bg }}
+                    unitName={String(((sec('listings').items || [])[0] || {}).name || 'Your unit')}
+                    portalUrl={housePortalUrl(sec('guesty').portalUrl)}
+                    loginEmail={String(sec('guesty').loginEmail || '')}
+                  />
                 </div>
                 <Foot label="Owner portal" />
               </div>
