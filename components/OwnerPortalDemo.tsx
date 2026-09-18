@@ -110,6 +110,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
   const [adults, setAdults] = useState(2)
   const [ff, setFf] = useState(false)
   const [mine, setMine] = useState<{ from: number; to: number } | null>(null)
+  const [picker, setPicker] = useState(false)
 
   const host = String(portalUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '')
   const who = String(ownerName || '').trim() || 'there'
@@ -118,7 +119,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
 
   const reset = () => {
     setView('login'); setOpen(null); setDrawer(false)
-    setFrom(null); setTo(null); setAdults(2); setFf(false); setMine(null)
+    setFrom(null); setTo(null); setAdults(2); setFf(false); setMine(null); setPicker(false)
   }
 
   const step = useMemo(() => {
@@ -430,7 +431,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center' }}>
                   <p style={{ fontSize: 12, fontWeight: 700, color: P.ink }}>Calendar and reservations</p>
-                  <button onClick={() => { setDrawer(true); setOpen(null) }} style={{
+                  <button onClick={() => { setDrawer(true); setOpen(null); setPicker(true) }} style={{
                     marginLeft: 'auto', background: P.green, color: '#fff', border: 0, borderRadius: 6,
                     fontSize: 10, fontWeight: 600, padding: '6px 11px', cursor: 'pointer',
                   }}>+ New reservation</button>
@@ -567,13 +568,49 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
 
               <p style={{ fontSize: 8, fontWeight: 700, color: P.ink, marginTop: 9 }}>Reservation details</p>
               <p style={{ fontSize: 7.5, color: P.muted, marginTop: 5 }}>Check-in and check-out dates</p>
-              <div style={{ border: '1px solid ' + (from != null ? P.blue : P.line), borderRadius: 5, padding: '5px 8px', marginTop: 3, fontSize: 8.5, color: from != null ? P.ink : P.muted }}>
+              {/* THE DATES ARE PICKED IN HERE, THE WAY THE REAL DRAWER DOES IT. The first version
+                  told the owner to tap the month behind this panel, and the panel covers the right
+                  54% of it — so Saturdays and Sundays were literally unclickable and the
+                  instruction could not be followed. Guesty's own drawer opens its own little month
+                  on this field, with the taken nights greyed, so that is what this does now. */}
+              <button onClick={() => setPicker(!picker)}
+                style={{
+                  width: '100%', textAlign: 'left', cursor: 'pointer', background: P.card,
+                  border: '1px solid ' + (from != null ? P.blue : P.line), borderRadius: 5,
+                  padding: '5px 8px', marginTop: 3, fontSize: 8.5, color: from != null ? P.ink : P.muted,
+                }}>
                 {from == null ? 'Start Date  -  End Date'
-                  : to == null ? `Sept ${from}  -  now pick the last night`
-                  : `Sept ${from}  -  Sept ${to} · ${nights} ${nights === 1 ? 'night' : 'nights'}`}
-              </div>
+                  : to == null ? `Sept ${from}  -  End Date`
+                  : `Sept ${from}  -  Sept ${to} \u00b7 ${nights} ${nights === 1 ? 'night' : 'nights'}`}
+              </button>
+              {picker ? (
+                <div style={{ border: '1px solid ' + P.line, borderRadius: 6, background: P.card, padding: 6, marginTop: 4 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2 }}>
+                    {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+                      <div key={i} style={{ fontSize: 6.5, color: P.muted, textAlign: 'center' }}>{d}</div>
+                    ))}
+                    {Array.from({ length: 30 }, (_, i) => i + 1).map(d => {
+                      const taken = !!resvOn(d) || isMine(d)
+                      const sel = isPicking(d)
+                      const edge = d === from || d === to
+                      return (
+                        <button key={d} disabled={taken}
+                          onClick={() => { pick(d); if (from != null && to == null && d > from) setPicker(false) }}
+                          style={{
+                            fontSize: 7, padding: '3px 0', borderRadius: 3, cursor: taken ? 'default' : 'pointer',
+                            border: '1px solid ' + (edge ? P.blue : 'transparent'),
+                            background: sel ? '#cfe0fb' : 'transparent',
+                            color: taken ? '#c3cbdb' : P.body,
+                            textDecoration: taken ? 'line-through' : 'none',
+                          }}>{d}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <p style={{ fontSize: 7, color: P.blue, marginTop: 4 }}>
-                {to == null ? 'Tap the nights on the calendar behind this panel.' : 'Looks right? Create it.'}
+                {from == null ? 'Tap the field above to choose your nights.'
+                  : to == null ? 'Now pick the last night.' : 'Looks right? Create it.'}
               </p>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
