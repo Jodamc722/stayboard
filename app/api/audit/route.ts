@@ -1,7 +1,7 @@
 // Property Audit API - audits + items. Mobile capture authenticates by share code (the link IS
 // the key); desktop management uses the app session. All DB access via service role (RLS on).
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser, requireLevel } from '@/lib/access'
+import { requireUser, requireAnyLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFor } from '@/lib/approval'
 import { pageRows } from '@/lib/db-page'
@@ -28,7 +28,8 @@ async function getUser() {
 }
 // Same, but the person must hold edit on Audits: every desk-side write goes through this.
 async function getEditor() {
-  try { const g = await requireLevel('audits', 'edit'); return g.ok ? g.access.user : null } catch { return null }
+  // (The Order desk on the Orders tab edits audit items through this route as well.)
+  try { const g = await requireAnyLevel(['audits', 'orders'], 'edit'); return g.ok ? g.access.user : null } catch { return null }
 }
 
 function listingMeta(row: any) {

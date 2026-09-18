@@ -246,9 +246,9 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
           ) : (
             <button onClick={() => onPatch(u.email, { status: 'active' })} className="inline-flex items-center gap-1 text-[12px] text-emerald-600 hover:text-emerald-700"><RotateCcw size={13} /> Re-enable</button>
           ))}
-          {!lockedRow && <button onClick={onResetPw} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-brand-700"><KeyRound size={13} /> Password</button>}
+          {(!lockedRow || me) && <button onClick={onResetPw} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-brand-700"><KeyRound size={13} /> Password</button>}
           {!lockedRow && <button onClick={onDelete} disabled={me || isOwnerRow} title={isOwnerRow ? 'The owner account cannot be deleted' : 'Delete user'} className="inline-flex items-center gap-1 text-[12px] text-rose-600 hover:text-rose-700 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 size={13} /> Delete</button>}
-          {lockedRow && <span className="text-[11px] text-muted">Only the owner can change an admin account.</span>}
+          {lockedRow && !me && <span className="text-[11px] text-muted">Only the owner can change an admin account.</span>}
         </div>
       </div>
 

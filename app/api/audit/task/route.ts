@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, createBreezewayTask, updateBreezewayTask, listBreezewayPeople } from '@/lib/breezeway'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireAnyLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -90,7 +90,8 @@ async function createTaskForItem(db: any, item: any, opts: { department?: string
 
 export async function POST(req: NextRequest) {
   // A signed-in Lighthouse user needs edit on Audits; a walk share code is the other way in (below).
-  const gate = await requireLevel('audits', 'edit')
+  // The Order desk (orders tab) dispatches audit items to Breezeway from here too.
+  const gate = await requireAnyLevel(['audits', 'orders'], 'edit')
   const user = gate.ok ? gate.access.user : null
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))

@@ -4,7 +4,7 @@
 // the change in the UI before this is called. Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -13,7 +13,8 @@ const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('optimize', 'edit')
+  // The bulk panels sit on the Property page (/buildings/[slug]); edit there or on the Optimizer.
+  const gate = await requireAnyLevel(['optimize', 'buildings'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
 

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
-import { requireLevel } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -18,7 +18,8 @@ function smallUrl(u: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('optimize', 'edit')
+  // HeroCollage lives on the Listing page; edit on Listings or the Optimizer is the bar.
+  const gate = await requireAnyLevel(['optimize', 'listings'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
   const key = process.env.ANTHROPIC_API_KEY

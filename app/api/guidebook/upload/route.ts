@@ -3,7 +3,7 @@
 // Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -14,7 +14,9 @@ const OK_TYPES: Record<string, string> = {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('guidebooks', 'edit')
+  // This is the generic file upload: Guidebooks, and the Reports desk (pacing sheet, hero photo,
+  // report attachments) use it too. Edit on either tab is the bar.
+  const gate = await requireAnyLevel(['guidebooks', 'reports'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
 

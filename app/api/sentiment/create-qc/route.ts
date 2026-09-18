@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, createBreezewayTask } from '@/lib/breezeway'
 import { buildIntel, intelKindFor, INTEL_STRIP_RE } from '@/lib/listingIntel'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireAnyLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -29,7 +29,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('messages', 'edit')
+  // Called from the Sentiment board (messages), the Turnover/Weekly schedule boards and the
+  // listing ops panel (schedule / forecast / plan) — edit on any of those tabs is the bar.
+  const gate = await requireAnyLevel(['messages', 'schedule', 'forecast', 'plan', 'reviews'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })

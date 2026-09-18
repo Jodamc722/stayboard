@@ -5,7 +5,7 @@
 // Logged-in users only; the human approves the push in the UI.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,7 +13,8 @@ const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const BUCKET = 'hero-images'
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('optimize', 'edit')
+  // HeroCollage lives on the Listing page; edit on Listings or the Optimizer is the bar.
+  const gate = await requireAnyLevel(['optimize', 'listings'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
 

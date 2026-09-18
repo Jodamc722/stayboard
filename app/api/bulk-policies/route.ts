@@ -6,7 +6,7 @@
 // The human approves in the UI before POST. Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireAnyLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -93,7 +93,8 @@ export async function GET(req: NextRequest) {
 
 // ---- POST: bulk-apply a partial policy change ----
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('optimize', 'edit')
+  // The bulk panels sit on the Property page (/buildings/[slug]); edit there or on the Optimizer.
+  const gate = await requireAnyLevel(['optimize', 'buildings'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
 

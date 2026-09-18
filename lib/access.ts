@@ -255,3 +255,28 @@ export async function requireLevel(featureKey: string, need: 'view' | 'edit' | '
   }
   return { ok: true, access }
 }
+
+// ---- A ROUTE SEVERAL PAGES SHARE (2026-09-18 review). /api/comments is posted from Glitches,
+// Today in Ops and Command; /api/guidebook/upload is the generic file upload the Reports desk uses;
+// the amenity / hero routes are called from Listings, Properties and Reports as well as the
+// Optimizer. Gating those on ONE tab's level locks out people who reach them from another tab
+// they legitimately hold (a CS agent with glitches:edit and plan:off could not comment on a
+// glitch). This passes when the person holds `need` on ANY of the listed features. Logging goes
+// under the first key that satisfies, or the first key when refused.
+export async function requireAnyLevel(featureKeys: string[], need: 'view' | 'edit' | 'full'): Promise<Gate> {
+  const g = await requireUser()
+  if (!g.ok) return g
+  const access = g.access
+  const hit = featureKeys.find(k => atLeast(access.levels[k], need)) || null
+  const logKey = hit || featureKeys[0]
+  try {
+    const { logActivity } = await import('./activity')
+    logActivity({ email: access.email || '', kind: 'api', feature: logKey, need, allowed: !!hit })
+  } catch { /* logging never blocks access */ }
+  if (!hit) {
+    const labels = featureKeys.map(k => FEATURES.find(f => f.key === k)?.label || k).join(' / ')
+    const msg = `Your role does not have ${need} access on ${labels} — this action needs ${need} access on one of them. Ask Jon to adjust your role.`
+    return { ok: false, res: NextResponse.json({ error: 'forbidden', message: msg }, { status: 403 }), access }
+  }
+  return { ok: true, access }
+}

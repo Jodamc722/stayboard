@@ -148,7 +148,10 @@ export async function PATCH(req: NextRequest) {
   // admin may still edit their OWN profile/prefs (below), never their own role or status.
   if (!isOwnerCall) {
     const privileged = await isPrivilegedTarget(email)
-    const touchesPower = !!password || body?.status !== undefined || body?.role !== undefined || body?.access_role !== undefined
+    // A non-owner admin changing their OWN password is not an escalation (they already hold the
+    // session) and it is the only place in the app that resets one — so it stays open to them.
+    const self = email === clean(access.email)
+    const touchesPower = (!!password && !self) || body?.status !== undefined || body?.role !== undefined || body?.access_role !== undefined
     if (privileged && touchesPower) return NextResponse.json({ error: 'Only the owner can change an admin account\u2019s password, status or role.' }, { status: 403 })
     if (body?.role === 'admin' || body?.access_role === 'admin') return NextResponse.json({ error: 'Only the owner can make someone an admin.' }, { status: 403 })
   }

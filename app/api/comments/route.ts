@@ -9,7 +9,7 @@ import { importTaskComments } from '@/lib/breezeway-comment-sync'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { getToken } from '@/lib/guesty'
 import { writeCustomFields } from '@/lib/guesty-custom-fields'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireAnyLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -149,7 +149,7 @@ export async function GET(req: NextRequest) {
 // "That is me in Breezeway." Saved once per user and reused for every comment afterwards, so a
 // name mismatch between the two systems can never silently swallow comments again.
 export async function PATCH(req: NextRequest) {
-  const gate = await requireLevel('plan', 'edit')
+  const gate = await requireUser()   // saving your OWN Breezeway identity needs no tab level
   if (!gate.ok) return gate.res
   const user = gate.access.user
   const me = user.email.toLowerCase()
@@ -165,7 +165,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('plan', 'edit')
+  // Comments are posted from Glitches, Today in Ops, Command and Maintenance — edit on any of them.
+  const gate = await requireAnyLevel(['plan', 'glitches', 'command', 'maintenance'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
   const me = user.email.toLowerCase()

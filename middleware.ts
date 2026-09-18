@@ -18,11 +18,18 @@ type Member = { allowed: boolean; features: Record<string, any> | null; workspac
 const DENY: Member = { allowed: false, features: null, workspace: null, role: null, access_role: null, error: true }
 const _memberCache = new Map<string, { at: number; val: Member }>()
 const _MEMBER_TTL = 60_000
+// STALE-ON-ERROR (2026-09-18 review). Fail-closed is right, but a 2.5s REST timeout during a deploy
+// or a Supabase blip used to bounce every page for everyone to /login at once. A verdict this
+// instance reached in the last ten minutes is a better answer than "try again" — it is the same
+// row the person was just allowed (or refused) on. Beyond that window, or with no prior verdict,
+// the error stands and the request goes to /login.
+const _MEMBER_STALE_OK = 10 * 60_000
 async function getMember(email: string): Promise<Member> {
   const _c = _memberCache.get(email)
   if (_c && Date.now() - _c.at < _MEMBER_TTL) return _c.val
   const _v = await getMemberRaw(email)
   if (!_v.error) _memberCache.set(email, { at: Date.now(), val: _v })
+  else if (_c && Date.now() - _c.at < _MEMBER_STALE_OK) return _c.val
   return _v
 }
 async function getMemberRaw(email: string): Promise<Member> {

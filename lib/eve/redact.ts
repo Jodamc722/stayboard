@@ -18,10 +18,15 @@ export const RES_CODE_FIELD = '693adec2ab73940025856e56'
 
 export const REDACTED = '[redacted — ask for the code through the door-code flow]'
 
-const KEY_RE = /door|entry|access\s*code|keypad|lock\s*code/i
+// Field NAMES that hold a code. `door` and `entry` on their own were too broad — "Doorman",
+// "Outdoor space", "Entry instructions", "Country" are not codes — so both must be followed by
+// code / pin / combo. `keypad` alone stays: that is what the Guesty field is called.
+const KEY_RE = /(door|entry|access|gate|lock|garage)\W{0,3}(code|pin|combo)|keypad|^\s*door\s*$/i
 // Keys that mention a code by NAME. `access` on its own is too broad (accessRole, access_role,
-// "accessible"), so the bare-key test is narrower than the free-text test above.
-const BARE_KEY_RE = /door|keypad|lock\s*_?code|entry\s*_?code|access\s*_?code|res(ervation)?_?code|access_?secret/i
+// "accessible"), and `door` on its own catches doorman / outdoor / indoor, so every word here has to
+// be paired with code / pin / secret. `res_code` is the per-stay Guesty field, not a confirmation
+// code (confirmationCode does not match).
+const BARE_KEY_RE = /(door|keypad|lock|entry|access|gate|garage)[\s_-]?(code|pin)|^door$|^res(ervation)?[\s_-]?code$|access[\s_-]?secret/i
 // Free text that STATES a code: "door code 1234", "keypad: 5678#", "lock code is 4321".
 const TEXT_RE = /\b(door|entry|access|keypad|lock|gate)\s*code\b[^0-9#*]{0,20}[0-9#*]{3,}/gi
 

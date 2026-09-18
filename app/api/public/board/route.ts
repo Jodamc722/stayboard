@@ -63,7 +63,9 @@ export async function GET(req: NextRequest) {
   // Signed-in Stayboard user (not just a share-password viewer)? Guest ID/selfie/signature photos
   // are shown ONLY to signed-in users; a share-only viewer never receives the image URLs.
   let isAppUser = false
-  try { isAppUser = !!(await getAccess()).user } catch { isAppUser = false }
+  // A LIGHTHOUSE user (allowlisted, active), the same bar as the field board: this flag now also
+  // decides who sees guest names / phones on a crew board, so a bare Supabase session is not enough.
+  try { const a = await getAccess(); isAppUser = !!a.user && a.allowed } catch { isAppUser = false }
   try {
     const db = supabaseAdmin()
     const today = ymd(new Date())

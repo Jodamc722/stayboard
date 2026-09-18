@@ -5,13 +5,14 @@
 // Mirrors the result into guesty_listings so StayBoard reflects it immediately.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('optimize', 'edit')
+  // Called from the Listing page (AmenityEditor) and from Owner Reports as well as the Optimizer.
+  const gate = await requireAnyLevel(['optimize', 'listings', 'reports'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
 
