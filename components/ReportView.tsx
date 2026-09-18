@@ -9,11 +9,11 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
-import { SAMPLE_STATEMENT, statementHasRows } from '@/lib/statement-sample'
+import { SAMPLE_STATEMENT, statementHasRows, STATEMENT_ALSO, STATEMENT_ALSO_RETIRED_MARK } from '@/lib/statement-sample'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
-import { CHANNEL_MARKS } from '@/lib/channel-marks'
+import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 
 type Any = any
 // Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
@@ -2760,26 +2760,40 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // count is the argument, so the count is set at display size and the logos-as-words
           // wall does the rest. No logo files: wordmarks we do not have licences for would look
           // worse than clean type, and type is what the rest of this deck is made of.
+          // A DECK GENERATED BEFORE 2026-09-18 FROZE THE RETIRED PAIR. It carries "30+" as the
+          // count and a one-line subtitle, over a wall the count does not match. Same treatment as
+          // the season curve: the number and the paragraph are one claim, so they are substituted
+          // together or not at all, and a deck edited on this slide keeps its edit because an
+          // edited one will not still read exactly "30+".
+          const chanStale = String(sec('channels').count || '').trim() === CHANNEL_COUNT_RETIRED
+          const chanCount = chanStale ? CHANNEL_COUNT : (sec('channels').count || '')
+          const chanBody = chanStale ? CHANNEL_BODY : (sec('channels').subtitle || '')
+
           if (!hid('channels')) slides.push({ key: 'channels', ai: true, node: (
             <Slide nav="Where it sells" warn={edit} ground={GROUND.dark} bleed>
               {/* BIG PICTURE, NOT AN INVENTORY (Jon, 2026-09-16: "prefer not list them all,
                   more big picture"). The old version was two columns of wordmarks and a tail of
                   sixteen more names — a directory. The argument is the count and the fact that
                   it is ONE calendar; the marks are there to be recognised in a glance, not
-                  read. Six of them, one ink, on the brand ground. */}
+                  read. Five of them, one ink, on the brand ground.
+
+                  THE BIG NUMBER IS REACH, NOT CONNECTIONS (Jon, 2026-09-18). We hold nine
+                  channel connections; those nine reach 200+ booking sites, because Expedia and
+                  Booking are networks rather than websites. The number carries the reach and
+                  the paragraph carries the mechanism, so neither one has to be rounded up. */}
               <div style={{ position: 'absolute', inset: 0, background: t.band, padding: 64 }} className="flex flex-col">
                 <div className="flex-1 min-h-0 flex flex-col justify-center">
                   <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 22 }} />
                   <div className="flex items-end" style={{ gap: 26 }}>
                     <span style={{ fontSize: 96, fontWeight: 600, letterSpacing: '-0.045em', color: D.ink, lineHeight: 0.86 }}>
-                      <Ed v={sec('channels').count || ''} set={v => patch('channels.count', v)} edit={edit} />
+                      <Ed v={chanCount} set={v => patch('channels.count', v)} edit={edit} />
                     </span>
                     <span style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em', color: D.ink, lineHeight: 1.2, paddingBottom: 6, maxWidth: '16ch' }}>
-                      channels.<br />One calendar.
+                      booking sites.<br />One calendar.
                     </span>
                   </div>
                   <p style={{ marginTop: 26, fontSize: 16.5, lineHeight: 1.65, color: D.body, maxWidth: '58ch' }}>
-                    <Ed v={sec('channels').subtitle || ''} set={v => patch('channels.subtitle', v)} edit={edit} multiline />
+                    <Ed v={chanBody} set={v => patch('channels.subtitle', v)} edit={edit} multiline />
                   </p>
 
                   <div style={{ marginTop: 40, paddingTop: 30, borderTop: '1px solid ' + D.rule, display: 'flex', alignItems: 'center', gap: 52, flexWrap: 'wrap' }}>
@@ -2790,7 +2804,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         <path d={m.d} />
                       </svg>
                     ))}
-                    <span style={{ fontSize: 14, color: D.muted }}>+ Vrbo, Blueground, Whimstay and the rest</span>
+                    <span style={{ fontSize: 14, color: D.muted, maxWidth: '52ch' }}>+ Vrbo, Hopper, Blueground, Whimstay, Google Vacation Rentals — and the Expedia and Booking networks behind them</span>
                   </div>
                 </div>
                 <Foot label="Where it sells" dark />
@@ -3746,6 +3760,49 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     </div>
                   </div>
                   <Foot label="Owner statements" dark />
+                </div>
+              </Slide>
+            ) })
+
+            // ── THE READING GUIDE. `statement.also` was authored in the template and rendered
+            // NOWHERE (Jon, 2026-09-18, on the reimbursement line: "if not the owner is paying
+            // the fee on the Airbnb… Guesty does not give us ability to separate so we
+            // reimburse that RM"). The four rows that answer the questions an owner actually
+            // asks -- why there is no cleaning line, why a reimbursement appears as income --
+            // existed only in the JSON. The explanation Jon kept correcting was invisible on the
+            // one slide it belonged to, which is why it kept coming back wrong.
+            // A deck generated before today froze the retired reimbursement wording, which was
+            // circular ("the cleaning fee is ours, so that piece comes back to you" -- if it was
+            // never theirs, why is it income?). Those rows were never on screen, so nobody can
+            // have edited them deliberately: a deck still carrying the retired phrase gets the
+            // house set, same substitution pattern as the season curve and the sample statement.
+            const alsoStored: Any[] = sec('statement').also || []
+            const alsoStale = alsoStored.some((a: Any) => String(a && a.v || '').includes(STATEMENT_ALSO_RETIRED_MARK))
+            const alsoRows: Any[] = (alsoStale || !alsoStored.length) ? (STATEMENT_ALSO as Any[]) : alsoStored
+
+            if (alsoRows.length) slides.push({ key: 'statement', node: (
+              <Slide nav="How to read it" warn={edit} ground={GROUND.tint}>
+                <div className="flex flex-col h-full">
+                  <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
+                  <p className="onb-h" style={{ fontSize: 32, color: t.ink, maxWidth: '26ch', lineHeight: 1.2 }}>
+                    The lines owners ask about.
+                  </p>
+                  {/* Two columns, content-height rows, scrolled rather than squeezed. No
+                      gridTemplateRows here on purpose: this grid WANTS two auto rows, and pinning
+                      it to one is the bug that emptied the amenity column. */}
+                  <div className="flex-1 min-h-0" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 44, rowGap: 24, marginTop: 30, alignContent: 'start', overflowY: 'auto' }}>
+                    {alsoRows.slice(0, 6).map((a: Any, i: number) => (
+                      <div key={i} style={{ paddingTop: 16, borderTop: '1px solid ' + t.rule }}>
+                        <p style={{ fontSize: 16, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                          <Ed v={a.k || ''} set={v => patch('statement.also.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ fontSize: 13.5, marginTop: 9, lineHeight: 1.6, color: t.body }}>
+                          <Ed v={a.v || ''} set={v => patch('statement.also.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <Foot label="Owner statements" />
                 </div>
               </Slide>
             ) })
