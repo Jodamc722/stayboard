@@ -3580,112 +3580,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             </Slide>
           ) })
 
-          // WHAT THE PORTAL ACTUALLY LOOKS LIKE (Jon, 2026-09-16: "can we show a preview of
-          // the owner portal on that page, what they can see"). Telling an owner they have a
-          // portal is worth very little. Real screenshots are best and drop straight in the
-          // moment they exist on the template; until then this is a drawing of the thing —
-          // clearly our own styling, labelled as a preview, never passed off as a screenshot —
-          // showing the four screens they will actually land on.
-          if (!hid('guesty')) slides.push({ key: 'guesty', node: (
-            <Slide nav="Portal — a look inside" warn={edit} ground={GROUND.light}>
-              <div className="flex flex-col h-full">
-                <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
-                  <div>
-                    <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 14 }} />
-                    <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>
-                      What you will see when you log in
-                    </p>
-                  </div>
-                  <p style={{ fontSize: 12.5, color: t.muted, whiteSpace: 'nowrap' }}>
-                    {housePortalUrl(sec('guesty').portalUrl).replace(/^https?:\/\//, '')}
-                  </p>
-                </div>
-
-                <div className="flex-1 min-h-0" style={{ marginTop: 22 }}>
-                  {(sec('guesty').shots || []).length > 1 ? (
-                    <div style={{ height: '100%', display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16 }}>
-                      {(sec('guesty').shots || []).slice(1, 3).map((src: string, si: number) => (
-                        <Pick key={si} title={'Portal screenshot ' + (si + 2)} cur={src}
-                          set={u => patch('guesty.shots.' + (si + 1), u)}
-                          style={{ width: '100%', height: '100%', borderRadius: 12, border: '1px solid ' + t.cardBorder }} />
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ height: '100%', display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 20 }}>
-                      {/* the window */}
-                      <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid ' + t.cardBorder, background: t.card, display: 'flex', flexDirection: 'column' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 14px', background: t.chip, borderBottom: '1px solid ' + t.rule }}>
-                          <span style={{ width: 8, height: 8, borderRadius: 999, background: t.rule }} />
-                          <span style={{ width: 8, height: 8, borderRadius: 999, background: t.rule }} />
-                          <span style={{ width: 8, height: 8, borderRadius: 999, background: t.rule }} />
-                          <span style={{ fontSize: 11, color: t.muted, marginLeft: 10 }}>
-                            {housePortalUrl(sec('guesty').portalUrl).replace(/^https?:\/\//, '')}
-                          </span>
-                        </div>
-                        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '116px 1fr', minHeight: 0 }}>
-                          <div style={{ borderRight: '1px solid ' + t.rule, padding: '14px 12px' }}>
-                            {['Calendar', 'Reservations', 'Statements', 'Documents'].map((n, i) => (
-                              <p key={n} style={{
-                                fontSize: 11.5, padding: '7px 9px', borderRadius: 6, marginBottom: 3,
-                                color: i === 0 ? t.bg : t.sub, background: i === 0 ? t.band : 'transparent',
-                              }}>{n}</p>
-                            ))}
-                          </div>
-                          <div style={{ padding: 14, minHeight: 0 }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 3 }}>
-                              {Array.from({ length: 28 }).map((_x, i) => {
-                                const booked = [3,4,5,9,10,11,12,16,17,18,22,23,24,25,26].indexOf(i) >= 0
-                                return <div key={i} style={{ height: 19, borderRadius: 3, background: booked ? hexA(t.accent, 0.5) : t.chip }} />
-                              })}
-                            </div>
-                            <div style={{ display: 'flex', gap: 16, marginTop: 13 }}>
-                              <span style={{ fontSize: 10.5, color: t.muted }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: hexA(t.accent, 0.5), marginRight: 5 }} />Booked</span>
-                              <span style={{ fontSize: 10.5, color: t.muted }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: t.chip, marginRight: 5 }} />Open</span>
-                            </div>
-                            {/* the reservation list under the month, so the window looks like a
-                                screen rather than a calendar floating in white space */}
-                            <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid ' + t.rule }}>
-                              {[['Oct 3 \u2013 7', '4 nights', 'Airbnb'], ['Oct 11 \u2013 15', '4 nights', 'Booking.com'], ['Oct 22 \u2013 27', '5 nights', 'Vrbo']].map((r, i) => (
-                                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 12, padding: '7px 0', borderBottom: i < 2 ? '1px solid ' + t.rule : 'none', alignItems: 'baseline' }}>
-                                  <span style={{ fontSize: 11, color: t.ink }}>{r[0]}</span>
-                                  <span style={{ fontSize: 10.5, color: t.muted }}>{r[1]}</span>
-                                  <span style={{ fontSize: 10.5, color: t.muted }}>{r[2]}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* WHAT EACH SCREEN GIVES THEM. `justify-center` centred four items plus
-                          the caption inside a box too short for them, which pushed the caption
-                          out of the bottom and printed it through the footer rule. It flows from
-                          the top now, with the caption held at the bottom of the column. */}
-                      <div className="flex flex-col" style={{ minHeight: 0, overflow: 'hidden' }}>
-                        {houseRows<Any>(sec('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]).slice(0, 4).map((it: Any, ii: number) => (
-                          <div key={ii} style={{ padding: '9px 0', borderTop: ii === 0 ? 'none' : '1px solid ' + t.rule }}>
-                            <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
-                              <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
-                            </p>
-                            <p style={{
-                              fontSize: 12.5, lineHeight: 1.5, color: t.muted, marginTop: 3,
-                              display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                            } as Any}>
-                              <Ed v={it.v || ''} set={v => patch('guesty.items.' + ii + '.v', v)} edit={edit} multiline />
-                            </p>
-                          </div>
-                        ))}
-                        <p style={{ fontSize: 11, color: t.muted, marginTop: 'auto', paddingTop: 12, fontStyle: 'italic', flex: '0 0 auto' }}>
-                          Illustration of the portal layout &mdash; not a screenshot.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <Foot label="Owner portal" />
-              </div>
-            </Slide>
-          ) })
+          // THE DRAWN PREVIEW IS GONE (Jon, 2026-09-18: "we can get rid of the what you will see
+          // when you log in"). It was a static sketch of four portal screens, built when we had
+          // no better option. The interactive walkthrough below is the same idea done properly —
+          // the real screens, in the real order, that an owner can actually click — so keeping
+          // both meant showing a drawing of a thing immediately before showing the thing.
 
           // MAKING AN OWNER STAY, AS A THING YOU DO RATHER THAN READ ABOUT (Jon, 2026-09-18:
           // "show them how to actually make an owner reservation… make it real and interactive").

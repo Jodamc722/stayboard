@@ -55,27 +55,48 @@ const P = {
   ownerBlue: '#2f80ed', amber: '#f2b93b', unavail: '#dbe6f7',
 }
 
-type Resv = { id: string; guest: string; from: number; to: number; rate: string }
-/** Three invented bookings. Twelve nights of thirty — enough to click, enough room to book. */
+// ── THE MONTH, AND WHY IT IS DRAWN THIS WAY ─────────────────────────────────
+// Jon, 2026-09-18: "more gaps in the calendar, and multiple reservations to show the
+// distinctions." The legend under the real calendar has six keys and the first draft only ever
+// showed one of them, so five sixths of it was decoration. Every kind now appears once, with
+// space between them: a guest booking, a second guest booking, a stay the owner already has, a
+// CO-OWNER's stay, a request still waiting, and a night we have blocked. Tapping any of them
+// opens the detail, and the six panels are not the same — which is the distinction being taught.
+//
+// Fourteen of thirty nights are open, deliberately. The live month was 25 of 30 sold, which is
+// true and useless to demonstrate with: it left five pickable nights in one corner.
+type Kind = 'guest' | 'owner' | 'coowner' | 'requested' | 'blocked'
+type Resv = { id: string; kind: Kind; guest?: string; from: number; to: number; rate?: string }
+
 const RESV: Resv[] = [
-  { id: 'r1', guest: 'Maria Alvarez', from: 4, to: 7, rate: '$182' },
-  { id: 'r2', guest: 'Robert Whitfield', from: 12, to: 15, rate: '$176' },
-  { id: 'r3', guest: 'Daniel Okafor', from: 22, to: 25, rate: '$194' },
+  { id: 'r1', kind: 'guest', guest: 'Maria Alvarez', from: 2, to: 6, rate: '$182' },
+  { id: 'r2', kind: 'guest', guest: 'Robert Whitfield', from: 10, to: 13, rate: '$176' },
+  { id: 'r3', kind: 'owner', from: 17, to: 18 },
+  { id: 'r4', kind: 'coowner', from: 21, to: 22 },
+  { id: 'r5', kind: 'requested', guest: 'Priya Raman', from: 26, to: 27, rate: '$188' },
+  { id: 'r6', kind: 'blocked', from: 29, to: 29 },
 ]
 const RATES: Record<number, string> = {
-  1: '$168', 2: '$168', 3: '$172', 8: '$170', 9: '$166', 10: '$166', 11: '$174',
-  16: '$178', 17: '$172', 18: '$170', 19: '$176', 20: '$188', 21: '$188',
-  26: '$164', 27: '$162', 28: '$170', 29: '$174', 30: '$178',
+  1: '$168', 7: '$170', 8: '$166', 9: '$166', 14: '$174', 15: '$178', 16: '$172',
+  19: '$176', 20: '$188', 23: '$184', 24: '$180', 25: '$174', 28: '$170', 30: '$178',
 }
 const resvOn = (d: number) => RESV.find(r => d >= r.from && d <= r.to) || null
 
-type View = 'login' | 'dashboard' | 'properties' | 'calendar' | 'analytics'
+const KIND: Record<Kind, { fill: string; label: string; onDark: boolean }> = {
+  guest: { fill: '#6cc08b', label: 'Confirmed reservation', onDark: true },
+  owner: { fill: '#2f80ed', label: 'Owner stay', onDark: true },
+  coowner: { fill: '#1b365d', label: 'Other owner stay', onDark: true },
+  requested: { fill: '#f2b93b', label: 'Requested reservation', onDark: true },
+  blocked: { fill: '#dbe6f7', label: 'Unavailable', onDark: false },
+}
+
+type View = 'login' | 'dashboard' | 'properties' | 'calendar' | 'analytics' | 'report' | 'documents' | 'accounting' | 'help'
 
 const STEPS: { k: string; d: string; at: View[] }[] = [
   { k: 'Sign in', d: 'Your own email and password at the address above. We never send you a code.', at: ['login'] },
   { k: 'Your dashboard', d: 'What the portal opens on: how the last 30 days went across everything you own.', at: ['dashboard'] },
   { k: 'My properties', d: 'Every unit you own. Open one to reach its calendar.', at: ['properties'] },
-  { k: 'The calendar', d: 'Guest bookings in green, the nightly rate on the open nights. Tap a booking to see who is in.', at: ['calendar'] },
+  { k: 'The calendar', d: 'Green is a guest, blue is your own stay, amber is a request, grey is held by us. Tap any of them.', at: ['calendar'] },
   { k: 'Book your own stay', d: 'The green button. Pick your nights, say how many are coming, create it.', at: ['calendar'] },
   { k: 'Analytics', d: 'The year, and which of your units is earning what.', at: ['analytics'] },
 ]
@@ -112,7 +133,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
   // The one place with real rules: a night a guest has cannot be picked, and a range cannot jump
   // one. Teaching otherwise sets an owner up to fail on the real screen.
   const pick = (d: number) => {
-    if (resvOn(d) || isMine(d)) return
+    if (resvOn(d) || isMine(d)) return  // any hold blocks it, not just a guest booking
     if (from == null || to != null) { setFrom(d); setTo(null); return }
     if (d <= from) { setFrom(d); setTo(null); return }
     for (let x = from; x <= d; x++) if (resvOn(x)) return
@@ -123,13 +144,20 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
     setMine({ from, to }); setDrawer(false); setFrom(null); setTo(null)
   }
 
-  const TABS: { label: string; to?: View }[] = [
+  // EVERY TAB GOES SOMEWHERE (Jon, 2026-09-18: "can we have all the tabs working, can be just a
+  // visual of the page, not have to click into anything"). Four of the seven used to be dead
+  // type, which on a walkthrough reads as "that part is not for you" rather than "we did not
+  // draw it". They are static pages — enough to recognise the screen when they land on it.
+  const TABS: { label: string; to: View }[] = [
     { label: 'Dashboard', to: 'dashboard' }, { label: 'My properties', to: 'properties' },
-    { label: 'Analytics', to: 'analytics' }, { label: 'Reservation report' },
-    { label: 'Documents' }, { label: 'Accounting' }, { label: 'Help center' },
+    { label: 'Analytics', to: 'analytics' }, { label: 'Reservation report', to: 'report' },
+    { label: 'Documents', to: 'documents' }, { label: 'Accounting', to: 'accounting' },
+    { label: 'Help center', to: 'help' },
   ]
   const activeTab = view === 'analytics' ? 'Analytics' : view === 'dashboard' ? 'Dashboard'
-    : (view === 'properties' || view === 'calendar') ? 'My properties' : ''
+    : (view === 'properties' || view === 'calendar') ? 'My properties'
+    : view === 'report' ? 'Reservation report' : view === 'documents' ? 'Documents'
+    : view === 'accounting' ? 'Accounting' : view === 'help' ? 'Help center' : ''
 
   const tile = (label: string, value: string) => (
     <div key={label} style={{ border: '1px solid ' + P.line, borderRadius: 8, padding: '7px 9px', background: P.card, minWidth: 0 }}>
@@ -300,6 +328,87 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
                 </div>
               </div>
             </div>
+          ) : view === 'report' ? (
+            /* ── RESERVATION REPORT ────────────────────────────────────────── */
+            <div>
+              <p style={{ fontSize: 12.5, fontWeight: 700, color: P.ink }}>Reservation report</p>
+              <div style={{ border: '1px solid ' + P.line, borderRadius: 8, background: P.card, marginTop: 8, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 0.6fr 0.9fr', padding: '6px 9px', background: P.bg, borderBottom: '1px solid ' + P.line }}>
+                  {['Guest', 'Check-in', 'Check-out', 'Nights', 'Status'].map(h => (
+                    <span key={h} style={{ fontSize: 7.5, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: P.muted }}>{h}</span>
+                  ))}
+                </div>
+                {RESV.filter(r => r.kind !== 'blocked').map(r => (
+                  <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 0.6fr 0.9fr', padding: '7px 9px', borderBottom: '1px solid ' + P.line, alignItems: 'center' }}>
+                    <span style={{ fontSize: 8.5, color: P.ink }}>{r.guest || (r.kind === 'owner' ? 'You' : 'Another owner')}</span>
+                    <span style={{ fontSize: 8.5, color: P.body }}>Sept {r.from}</span>
+                    <span style={{ fontSize: 8.5, color: P.body }}>Sept {r.to + 1}</span>
+                    <span style={{ fontSize: 8.5, color: P.body }}>{r.to - r.from + 1}</span>
+                    <span style={{ fontSize: 7.5, fontWeight: 600, color: KIND[r.kind].fill }}>{KIND[r.kind].label}</span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: 8.5, color: P.muted, marginTop: 8 }}>Every reservation on your units, exportable.</p>
+            </div>
+          ) : view === 'documents' ? (
+            /* ── DOCUMENTS ─────────────────────────────────────────────────── */
+            <div>
+              <p style={{ fontSize: 12.5, fontWeight: 700, color: P.ink }}>Documents</p>
+              <div style={{ border: '1px solid ' + P.line, borderRadius: 8, background: P.card, marginTop: 8, overflow: 'hidden' }}>
+                {['Management agreement.pdf', 'W-9 (signed).pdf', 'ACH authorization.pdf', 'Insurance rider.pdf'].map((f, i) => (
+                  <div key={f} style={{ display: 'flex', alignItems: 'center', padding: '8px 10px', borderBottom: i < 3 ? '1px solid ' + P.line : 'none' }}>
+                    <span style={{ fontSize: 8.5, color: P.ink }}>{f}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 8, color: P.blue, fontWeight: 600 }}>Download</span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: 8.5, color: P.muted, marginTop: 8 }}>Anything you have signed with us, kept in one place.</p>
+            </div>
+          ) : view === 'accounting' ? (
+            /* ── ACCOUNTING ────────────────────────────────────────────────── */
+            <div>
+              <p style={{ fontSize: 12.5, fontWeight: 700, color: P.ink }}>Accounting</p>
+              <div style={{ display: 'flex', gap: 13, marginTop: 7, borderBottom: '1px solid ' + P.line }}>
+                {['Monthly statements', '1099 files'].map((x, i) => (
+                  <span key={x} style={{ fontSize: 9, fontWeight: 600, color: i === 0 ? P.blue : P.muted, paddingBottom: 5, borderBottom: '2px solid ' + (i === 0 ? P.blue : 'transparent') }}>{x}</span>
+                ))}
+              </div>
+              <div style={{ border: '1px solid ' + P.line, borderRadius: 8, background: P.card, marginTop: 8, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.1fr', padding: '6px 9px', background: P.bg, borderBottom: '1px solid ' + P.line }}>
+                  {['Period start', 'Period end', 'Actions'].map(h => (
+                    <span key={h} style={{ fontSize: 7.5, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: P.muted }}>{h}</span>
+                  ))}
+                </div>
+                {[['Aug 1, 2026', 'Aug 31, 2026'], ['Jul 1, 2026', 'Jul 31, 2026'], ['Jun 1, 2026', 'Jun 30, 2026']].map((r, i) => (
+                  <div key={r[0]} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.1fr', padding: '7px 9px', borderBottom: i < 2 ? '1px solid ' + P.line : 'none', alignItems: 'center' }}>
+                    <span style={{ fontSize: 8.5, color: P.ink }}>{r[0]}</span>
+                    <span style={{ fontSize: 8.5, color: P.body }}>{r[1]}</span>
+                    <span style={{ display: 'flex', gap: 6 }}>
+                      {['View document', 'Download'].map(a => (
+                        <span key={a} style={{ fontSize: 7.5, color: P.body, border: '1px solid ' + P.line, borderRadius: 4, padding: '2px 6px' }}>{a}</span>
+                      ))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: 8.5, color: P.muted, marginTop: 8 }}>Your monthly owner statement lands here the moment it is issued.</p>
+            </div>
+          ) : view === 'help' ? (
+            /* ── HELP CENTER ───────────────────────────────────────────────── */
+            <div>
+              <p style={{ fontSize: 12.5, fontWeight: 700, color: P.ink }}>Help center</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8, marginTop: 9 }}>
+                {['How do I book my own stay?', 'How do I read my statement?', 'Where do I update my payout details?', 'Who do I call about the unit?'].map(q => (
+                  <div key={q} style={{ border: '1px solid ' + P.line, borderRadius: 8, background: P.card, padding: '10px 11px' }}>
+                    <p style={{ fontSize: 9, fontWeight: 600, color: P.ink, lineHeight: 1.35 }}>{q}</p>
+                    <p style={{ fontSize: 8, color: P.blue, marginTop: 4 }}>Read &#8594;</p>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: 8.5, color: P.muted, marginTop: 9 }}>
+                And if the answer is not here, your team&rsquo;s numbers are two slides back.
+              </p>
+            </div>
           ) : (
             /* ── 4 · CALENDAR AND RESERVATIONS ─────────────────────────────── */
             <div style={{ display: 'grid', gridTemplateColumns: '98px 1fr', columnGap: 10, minHeight: 0 }}>
@@ -329,11 +438,14 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
                 <p style={{ fontSize: 9, color: P.muted, textAlign: 'center', marginTop: 4 }}>&#8249;&ensp;September 2026&ensp;&#8250;</p>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 5, marginTop: 6 }}>
-                  {tile('Booked nights', String(12 + (mine ? mine.to - mine.from + 1 : 0)))}
-                  {tile("Estimated owner's revenue", '$2,140')}
-                  {tile('Occupancy', mine ? '53%' : '40%')}
-                  {tile('Revenue PAL', '$71.30')}
-                  {tile('Net rental income', '$1,712')}
+                  {/* Nine guest nights of thirty. The figures agree with the calendar below
+                      them, because an owner who counts the green squares should not find a
+                      different answer in the tile. */}
+                  {tile('Booked nights', '9')}
+                  {tile("Estimated owner's revenue", '$1,604')}
+                  {tile('Occupancy', '30%')}
+                  {tile('Revenue PAL', '$53.47')}
+                  {tile('Net rental income', '$1,283')}
                 </div>
 
                 <div style={{ marginTop: 7, border: '1px solid ' + P.line, borderRadius: 8, background: P.card, padding: 7 }}>
@@ -345,17 +457,19 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
                       const r = resvOn(d)
                       const ours = isMine(d)
                       const picking = isPicking(d)
-                      const bg = ours ? P.ownerBlue : r ? P.greenBar : picking ? '#cfe0fb' : P.card
+                      const k = r ? KIND[r.kind] : null
+                      const bg = ours ? P.ownerBlue : k ? k.fill : picking ? '#cfe0fb' : P.card
+                      const light = ours ? true : k ? k.onDark : false
                       return (
                         <button key={d}
                           onClick={() => { if (r) { setOpen(r); setDrawer(false) } else pick(d) }}
-                          title={r ? r.guest : ours ? 'Your stay' : 'Available'}
+                          title={r ? k!.label + (r.guest ? ' \u2014 ' + r.guest : '') : ours ? 'Your stay' : 'Available'}
                           style={{
                             position: 'relative', height: 34, borderRadius: 3,
                             border: '1px solid ' + (picking ? P.blue : P.line),
                             background: bg, cursor: 'pointer', padding: 0, overflow: 'hidden',
                           }}>
-                          <span style={{ position: 'absolute', top: 2, right: 4, fontSize: 8, color: r || ours ? '#fff' : P.body }}>{d}</span>
+                          <span style={{ position: 'absolute', top: 2, right: 4, fontSize: 8, color: light ? '#fff' : P.body }}>{d}</span>
                           {!r && !ours && RATES[d] ? (
                             <span style={{ position: 'absolute', bottom: 2, left: 4, fontSize: 7.5, color: P.muted }}>{RATES[d]}</span>
                           ) : null}
@@ -390,21 +504,40 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
               position: 'absolute', top: 0, right: 0, bottom: 0, width: '46%', background: P.card, padding: 12,
             }}>
               <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-                <p style={{ fontSize: 11.5, fontWeight: 700, color: P.ink }}>Reservation</p>
+                <p style={{ fontSize: 11.5, fontWeight: 700, color: P.ink }}>
+                  {open.kind === 'blocked' ? 'Blocked night' : 'Reservation'}
+                </p>
                 <button onClick={() => setOpen(null)} style={{ marginLeft: 'auto', background: 'none', border: 0, fontSize: 13, color: P.muted, cursor: 'pointer', lineHeight: 1 }}>&times;</button>
               </div>
-              <span style={{ display: 'inline-block', marginTop: 7, fontSize: 7.5, fontWeight: 600, background: '#e7f5ee', color: '#1a7f5a', borderRadius: 4, padding: '2px 6px' }}>Confirmed</span>
+              <span style={{
+                display: 'inline-block', marginTop: 7, fontSize: 7.5, fontWeight: 600, borderRadius: 4,
+                padding: '2px 6px', color: '#fff', background: KIND[open.kind].fill,
+                ...(open.kind === 'blocked' ? { color: P.body } : null),
+              }}>{KIND[open.kind].label}</span>
               {/* Guest FULL NAME is on in our settings; email, phone, booking source and total
-                  payout are all off, so this panel stops where the real one stops. */}
-              {[['Guest', open.guest], ['Check-in', 'Sept ' + open.from], ['Check-out', 'Sept ' + (open.to + 1)],
-                ['Nights', String(open.to - open.from + 1)], ['Nightly rate', open.rate]].map(([k, v]) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid ' + P.line }}>
+                  payout are all off, so a guest panel stops where the real one stops. The other
+                  four kinds carry less again, which is the point of showing them side by side. */}
+              {([
+                open.guest ? ['Guest', open.guest] : null,
+                open.kind === 'owner' ? ['Booked by', 'You'] : null,
+                open.kind === 'coowner' ? ['Booked by', 'Another owner of this unit'] : null,
+                open.kind === 'blocked' ? ['Reason', 'Held by Stay'] : null,
+                ['Check-in', 'Sept ' + open.from],
+                ['Check-out', 'Sept ' + (open.to + 1)],
+                ['Nights', String(open.to - open.from + 1)],
+                open.rate ? ['Nightly rate', open.rate] : null,
+              ].filter(Boolean) as string[][]).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid ' + P.line }}>
                   <span style={{ fontSize: 8.5, color: P.muted }}>{k}</span>
                   <span style={{ fontSize: 9, color: P.ink, fontWeight: 600 }}>{v}</span>
                 </div>
               ))}
-              <p style={{ fontSize: 8, color: P.muted, marginTop: 9, lineHeight: 1.45 }}>
-                Guest contact details stay with us &mdash; you never have to handle a guest.
+              <p style={{ fontSize: 8, color: P.muted, marginTop: 8, lineHeight: 1.45 }}>
+                {open.kind === 'guest' ? 'Guest contact details stay with us \u2014 you never have to handle a guest.'
+                  : open.kind === 'owner' ? 'Your own stay. The clean afterwards is billed to you at cost.'
+                  : open.kind === 'coowner' ? 'Another owner of this unit has these nights. You can see that they are taken, not who is in.'
+                  : open.kind === 'requested' ? 'Not confirmed yet. It holds the nights until it is accepted or it expires.'
+                  : 'We have held this night \u2014 usually maintenance, or a turnover that needs the extra day.'}
               </p>
             </div>
           </div>
