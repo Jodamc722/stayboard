@@ -149,3 +149,50 @@ export const CHECKLIST_ROWS: { item: string; who: string; by: string }[] = [
     { item: 'Wi-Fi in the unit’s name, password into the guidebook', who: 'Owner', by: '' },
     { item: 'Parking spot or guest parking rules confirmed', who: 'Owner', by: '' },
 ]
+
+// ── ADOPTING THE HOUSE COPY INTO A DECK ─────────────────────────────────────
+//
+// THE BUG THIS EXISTS TO FIX (Jon, 2026-09-18: "it's also not letting me edit the text").
+// The repairs above began life as render-time substitutions: if the stored line is the retired
+// one, draw the house one instead. That is correct for a reader and quietly broken for an
+// editor. Typing into a substituted field writes the new text to the deck's content, but the
+// staleness test still looks at the OLD stored value -- or, worse, at a sibling field or the
+// deck's generation date, neither of which the edit changes -- so the very next render throws
+// the edit away and paints the house copy back. From the outside the field simply refuses to
+// take input.
+//
+// A substitution that outlives the edit is not a repair, it is a lock. So the substitution is
+// now write-once: the moment a deck is opened for editing, anything still carrying retired copy
+// is ADOPTED into the deck's own content, and from then on there is nothing to substitute --
+// every field reads from storage and every edit sticks. Readers still get the render-time
+// fallback, because a reader never edits and their deck is never written to.
+//
+// Each test below looks at the field it repairs, never at a neighbour, so that adopting one
+// thing cannot mask another.
+export const CHANNEL_BODY_RETIRED_MARKS = [
+  'published everywhere, reconciled back to one place',  // the original one-liner
+  'nine channel connections',                            // the 200+ version, retired same day
+  'Being on thirty is what turns a slow Tuesday',        // the long template body
+]
+
+export const STATEMENT_ALSO_RETIRED_MARKS = [
+  'as well as on the rent',                              // circular reimbursement wording
+  'passing through to us',                               // the "Cleaning fee" row owners never see
+  'shown so the rental line reads as a real number',     // reimbursement described as the OTA cut
+]
+
+const hasMark = (text: unknown, marks: string[]): boolean => {
+  const s = String(text || '')
+  return marks.some(m => s.includes(m))
+}
+
+/** True when a stored channels paragraph is one of ours from before today. */
+export function channelBodyStale(subtitle: unknown): boolean {
+  return !String(subtitle || '').trim() || hasMark(subtitle, CHANNEL_BODY_RETIRED_MARKS)
+}
+
+/** True when stored reading-guide rows are one of the retired sets. */
+export function statementAlsoRowsStale(rows: unknown): boolean {
+  if (!Array.isArray(rows) || !rows.length) return true
+  return rows.some(r => hasMark((r as { v?: string } | null)?.v, STATEMENT_ALSO_RETIRED_MARKS))
+}
