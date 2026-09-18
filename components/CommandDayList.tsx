@@ -3,8 +3,10 @@
 // content/noise, visual/layout bad, rethink from scratch").
 //
 // ONE ranked list of everything that needs JON today, in four bands, each row with its one-tap
-// action. Nothing informational above the fold — the numbers strip and the tile drawers still
-// exist, behind "How's the day".
+// action. Nothing informational about THE DAY above the fold — the numbers strip and the tile
+// drawers still exist, behind "How's the day". THE WEEK's KPIs (welcome calls, claims, glitches,
+// labor per clean, maintenance/billable labor, checklist) are the Scoreboard strip under the
+// verdict line (components/command/Scoreboard, /api/command/scoreboard) — Jon, 2026-09-18.
 //
 //   DECIDE  things only Jon can do: Eve's questions (answer in place), spend approvals (approve /
 //           reject), claims in his review or near a filing deadline (review), Slack messages waiting
@@ -44,6 +46,7 @@ import {
 } from '@/components/CommandCockpit'
 import { useSlackQueue, EVENT_LABEL, expiresIn, type Pending as SlackPending } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
+import { Scoreboard } from '@/components/command/Scoreboard'
 
 type Sev = NextItem['severity']
 type Ranked = { key: string; sev: Sev; rank: number; node: ReactNode }
@@ -148,6 +151,8 @@ export function CommandDayList() {
   return (
     <div className="max-w-[760px] mx-auto space-y-5">
       <DayLine d={data} loading={loading} tick={tick} reload={reload} roster={roster} vendorsOnSite={vendorsOnSite} />
+      {/* THE WEEK — the KPI strip (Jon, 2026-09-18). The day's numbers stay behind "How's the day". */}
+      <Scoreboard />
       <DecideBand d={data} claims={claims} approvals={approvals} onCleared={hide} onChanged={reload} />
       <FixBand rows={fixRows} roster={roster} onCleared={hide} onChanged={reload} />
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
@@ -275,8 +280,11 @@ function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: Command
   const slack = useSlackQueue()
   const [allEve, setAllEve] = useState(false)
   const slackLive = slack.live || []
-  const eveShown = allEve ? eve.rows : eve.rows.slice(0, 5)
-  const eveMore = eve.rows.length - eveShown.length
+  // Questions cut from one template ("Who does what at Amrit?", "…at Lucerne?", …) are ONE row that
+  // expands; and the band never shows more than 3 Eve rows collapsed.
+  const eveGroups = useMemo(() => groupEve(eve.rows), [eve.rows])
+  const eveShown = allEve ? eveGroups : eveGroups.slice(0, EVE_COLLAPSED)
+  const eveMore = eveGroups.slice(eveShown.length).reduce((a, g) => a + g.qs.length, 0)
   const eveCount = eve.rows.length || (eve.loaded ? 0 : eve.count)
   const approvalsHidden = Math.max(0, d.tiles.guestDesk.approvals - d.tiles.guestDesk.rows.filter(r => r.kind === 'approval').length)
   const count = slackLive.length + approvals.length + claims.length + eveCount
@@ -286,7 +294,7 @@ function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: Command
   for (const c of claims) rows.push({ key: c.key, sev: c.severity, rank: c.rank, node: <ClaimRow item={c} onCleared={onCleared} /> })
   for (const a of approvals) rows.push({ key: a.key, sev: 'today', rank: 3, node: <ApprovalRow row={a} onCleared={onCleared} onChanged={onChanged} /> })
   if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} meta="Only the first few are listed here" primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
-  for (const q of eveShown) rows.push({ key: 'eve:' + q.id, sev: 'today', rank: 9, node: <EveRow q={q} act={eve.act} busy={eve.busy === q.id} /> })
+  for (const g of eveShown) rows.push({ key: 'eve:' + g.key, sev: 'today', rank: 9, node: g.qs.length > 1 ? <EveGroupRow g={g} act={eve.act} busy={eve.busy} /> : <EveRow q={g.qs[0]} act={eve.act} busy={eve.busy === g.qs[0].id} /> })
   if (!eve.loaded && eve.count > 0) rows.push({ key: 'eve:loading', sev: 'today', rank: 9, node: <Row sev={null} title={'Eve is asking you ' + eve.count} meta={<span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> getting them</span>} /> })
   if (eveMore > 0) rows.push({ key: 'eve:more', sev: 'today', rank: 9.5, node: <button onClick={() => setAllEve(true)} className="w-full text-left px-3 py-2 min-h-[40px] text-[12px] font-semibold text-muted hover:text-ink">{eveMore} more from Eve</button> })
   rows.sort((a, b) => SEV_RANK[a.sev] - SEV_RANK[b.sev] || a.rank - b.rank)
@@ -323,21 +331,73 @@ function useEveQuestions() {
   return { count, rows: qs || [], loaded: qs !== null || count === 0, busy, act }
 }
 
-function EveRow({ q, act, busy }: { q: EveQ; act: (id: string, op: 'answer' | 'dismiss', answer: string) => Promise<boolean>; busy: boolean }) {
+// ── EVE'S QUESTIONS: grouped by template, compact until tapped (Jon, 2026-09-18) ────────────────
+// Five "Who does what at <building>?" rows, each ~110px with an always-open input, ate the first
+// screen. Now: same-template questions are ONE row that expands; a question row is title + meta
+// (44px) and the answer box appears only when tapped; at most EVE_COLLAPSED Eve rows show
+// collapsed — "N more from Eve" opens the rest.
+const EVE_COLLAPSED = 3
+type EveGroup = { key: string; title: string; qs: EveQ[] }
+
+/** The template a question was cut from: first sentence, the name after "at " dropped, 40 chars. */
+function eveTemplate(question: string): string {
+  const first = String(question || '').split(/[?.!]/)[0] || String(question || '')
+  return first.replace(/\bat\s+.*$/i, 'at').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 40)
+}
+function groupEve(rows: EveQ[]): EveGroup[] {
+  const byKey: Record<string, EveGroup> = {}
+  const order: string[] = []
+  for (const q of rows) {
+    const tpl = eveTemplate(q.question)
+    const key = tpl || q.id
+    if (!byKey[key]) { byKey[key] = { key, title: '', qs: [] }; order.push(key) }
+    byKey[key].qs.push(q)
+  }
+  return order.map(k => {
+    const g = byKey[k]
+    if (g.qs.length === 1) return { ...g, key: g.qs[0].id, title: g.qs[0].question }
+    const stem = k.replace(/\s+at$/, '')
+    const places = plural(g.qs.length, /\bunit\b/i.test(stem) ? 'unit' : 'building')
+    g.title = 'Eve: ' + (k.endsWith('at') ? stem + ' at ' + places : plural(g.qs.length, 'question') + ' — ' + stem + '…')
+    return g
+  })
+}
+
+function EveGroupRow({ g, act, busy }: { g: EveGroup; act: (id: string, op: 'answer' | 'dismiss', answer: string) => Promise<boolean>; busy: string }) {
+  const [open, setOpen] = useState(false)
+  const scopes = g.qs.map(q => q.scope).filter(Boolean)
+  const meta = (scopes.length ? scopes.slice(0, 4).join(', ') + (scopes.length > 4 ? ' +' + (scopes.length - 4) : '') : plural(g.qs.length, 'question')) + ' · tap to answer each'
+  return (
+    <Row sev={null} title={g.title} meta={meta} onTap={() => setOpen(o => !o)} expanded={open}
+      secondary={<button onClick={() => setOpen(o => !o)} className={SECONDARY} aria-label={open ? 'Collapse' : 'Expand'} title={open ? 'Collapse' : 'Show each question'}>{open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button>}>
+      {open && (
+        <div className="mt-1.5 ml-3.5 border-l-2 border-line divide-y divide-line/70">
+          {g.qs.map(q => <EveRow key={q.id} q={q} act={act} busy={busy === q.id} nested />)}
+        </div>
+      )}
+    </Row>
+  )
+}
+
+function EveRow({ q, act, busy, nested }: { q: EveQ; act: (id: string, op: 'answer' | 'dismiss', answer: string) => Promise<boolean>; busy: boolean; nested?: boolean }) {
   const [draft, setDraft] = useState('')
   const [open, setOpen] = useState(false)
   const [err, setErr] = useState('')
   const send = async () => { if (!draft.trim() || busy) return; setErr(''); const ok = await act(q.id, 'answer', draft.trim()); if (!ok) setErr('Could not save that answer.') }
   const meta = [q.scope, Number(q.asked_count) > 1 ? 'asked ' + q.asked_count + ' times' : '', q.source === 'eve' ? 'came up in conversation' : ''].filter(Boolean).join(' · ')
   return (
-    <Row sev={null} title={q.question} meta={open && q.why ? 'Why: ' + q.why : meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
+    <Row sev={null} title={nested ? (q.scope || 'Question') : q.question} meta={nested && !open ? q.question : open && q.why ? 'Why: ' + q.why : meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
       secondary={<button onClick={() => act(q.id, 'dismiss', '')} disabled={busy} className={SECONDARY} aria-label="Later" title="Later — not worth answering now"><X size={14} /></button>}>
-      {open && <p className="text-[12.5px] text-ink/80 mt-1 pl-3.5 leading-snug">{q.question}</p>}
-      <div className="mt-1.5 pl-3.5 flex items-center gap-1.5">
-        <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') send() }} placeholder="Tell her…" aria-label={'Answer: ' + q.question}
-          className="flex-1 min-w-0 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] min-h-[34px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
-        <button onClick={send} disabled={busy || !draft.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>
-      </div>
+      {open && (
+        <>
+          <p className="text-[12.5px] text-ink/80 mt-1 pl-3.5 leading-snug">{q.question}</p>
+          <div className="mt-1.5 pl-3.5 flex items-center gap-1.5">
+            <input autoFocus value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') send() }} placeholder="Tell her…" aria-label={'Answer: ' + q.question}
+              className="flex-1 min-w-0 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] min-h-[34px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            <button onClick={send} disabled={busy || !draft.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>
+          </div>
+        </>
+      )}
     </Row>
   )
 }
