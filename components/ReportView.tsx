@@ -3697,13 +3697,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <div>
                       <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 12 }} />
                       <p className="onb-h" style={{ fontSize: 28, color: t.ink, lineHeight: 1.2 }}>
-                        <Ed v={sec('statement').headline || ''} set={v => patch('statement.headline', v)} edit={edit} />
+                        <Ed v={houseLine(sec('statement').headline, SECTION_HEAD.statement)} set={v => patch('statement.headline', v)} edit={edit} />
                       </p>
                       {/* SAID OUT LOUD, ON THE SLIDE. This is the one slide in the deck whose
                           numbers are not the owner's, and an owner reading a figure as theirs is
                           the single worst thing this document could do. */}
                       <p style={{ fontSize: 11.5, lineHeight: 1.45, color: t.muted, marginTop: 6, maxWidth: '62ch' }}>
-                        <Ed v={sec('statement').subtitle || ''} set={v => patch('statement.subtitle', v)} edit={edit} multiline />
+                        <Ed v={houseLine(sec('statement').subtitle, SECTION_SUB.statement)} set={v => patch('statement.subtitle', v)} edit={edit} multiline />
                       </p>
                     </div>
                     <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
