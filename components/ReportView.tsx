@@ -10,6 +10,12 @@ import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, P
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 import { SAMPLE_STATEMENT, statementHasRows, STATEMENT_ALSO, statementAlsoStale } from '@/lib/statement-sample'
+import {
+  houseLine, houseRows, agendaStale, AGENDA_ROWS, HERO_HEADLINE,
+  CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
+  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
+  MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
+} from '@/lib/onboarding-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, type SlideTone } from '@/lib/deck'
@@ -2235,7 +2241,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                     <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
                   </h1>
                   <p className="mt-4 text-[16px] sm:text-[18px] leading-[1.5]" style={{ color: 'rgba(255,255,255,0.86)', maxWidth: '42ch' }}>
-                    <Ed v={hero.headline || ''} set={v => patch('hero.headline', v)} edit={edit} multiline />
+                    <Ed v={isOnboarding ? houseLine(hero.headline, HERO_HEADLINE) : (hero.headline || '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
                   </p>
                   <p className="mt-7 text-[11.5px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
                     <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />
@@ -2282,7 +2288,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
           </h1>
           <p className="mt-5 text-lg sm:text-xl font-medium max-w-2xl mx-auto" style={{ color: t.body }}>
-            <Ed v={hero.headline || ''} set={v => patch('hero.headline', v)} edit={edit} multiline />
+            <Ed v={isOnboarding ? houseLine(hero.headline, HERO_HEADLINE) : (hero.headline || '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
           </p>
           {hero.heroImage && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -2406,6 +2412,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           // Title block. An accent hairline sits under the eyebrow — the one place the brand
           // colour appears on a light slide, which is what makes it read as a mark rather than
           // as decoration sprayed across every label.
+          // HOUSE LINES THAT MOVED ON. Only the retired text verbatim is replaced, so a deck
+          // whose headline was edited keeps the edit; see lib/onboarding-copy for why the test is
+          // deliberately this blunt. Both of these used to assume the unit had not opened yet.
+          const HOUSE_HEAD: Record<string, typeof HERO_HEADLINE> = { checklist: CHECKLIST_HEADLINE, ramp: RAMP_HEADLINE }
+          const HOUSE_SUB: Record<string, typeof HERO_HEADLINE> = { checklist: CHECKLIST_SUBTITLE, ramp: RAMP_SUBTITLE }
           const Title = ({ k, dark, sub, rule, narrow }: { k: string; dark?: boolean; sub?: boolean; rule?: string; narrow?: boolean }) => (
             <div>
               <div style={{ width: 30, height: 2, background: rule || (dark ? D.ink : t.accent), marginBottom: 18 }} />
@@ -2413,11 +2424,11 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 fontSize: narrow ? 34 : TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track,
                 fontWeight: 600, color: dark ? D.ink : t.ink, maxWidth: narrow ? '15ch' : '17ch', margin: 0,
               }}>
-                <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
+                <Ed v={HOUSE_HEAD[k] ? houseLine(sec(k).headline, HOUSE_HEAD[k]) : (sec(k).headline || '')} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
               {sub !== false && (sec(k).subtitle || edit) ? (
                 <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: dark ? D.muted : t.muted, maxWidth: '50ch' }}>
-                  <Ed v={sec(k).subtitle || ''} set={v => patch(k + '.subtitle', v)} edit={edit} multiline />
+                  <Ed v={HOUSE_SUB[k] ? houseLine(sec(k).subtitle, HOUSE_SUB[k]) : (sec(k).subtitle || '')} set={v => patch(k + '.subtitle', v)} edit={edit} multiline />
                 </p>
               ) : null}
             </div>
@@ -2522,7 +2533,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 <Title k="agenda" sub={false} rule={brass} />
                 <div className="flex-1 min-h-0" style={{ marginTop: 30 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 52, rowGap: 0 }}>
-                    {(sec('agenda').items || []).slice(0, 8).map((it: Any, i: number) => (
+                    {(agendaStale(sec('agenda').items) ? (AGENDA_ROWS as Any[]) : (sec('agenda').items || [])).slice(0, 8).map((it: Any, i: number) => (
                       <div key={i} style={{ display: 'grid', gridTemplateColumns: '30px 1fr', columnGap: 14, padding: '14px 0', borderTop: '1px solid ' + t.rule, alignItems: 'baseline' }}>
                         <span style={{ fontSize: 12.5, color: brass, fontWeight: 600 }}>{String(i + 1).padStart(2, '0')}</span>
                         <div>
@@ -3544,7 +3555,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                           out of the bottom and printed it through the footer rule. It flows from
                           the top now, with the caption held at the bottom of the column. */}
                       <div className="flex flex-col" style={{ minHeight: 0, overflow: 'hidden' }}>
-                        {(sec('guesty').items || []).slice(0, 4).map((it: Any, ii: number) => (
+                        {houseRows<Any>(sec('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]).slice(0, 4).map((it: Any, ii: number) => (
                           <div key={ii} style={{ padding: '9px 0', borderTop: ii === 0 ? 'none' : '1px solid ' + t.rule }}>
                             <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
                               <Ed v={it.k || ''} set={v => patch('guesty.items.' + ii + '.k', v)} edit={edit} />
@@ -3753,7 +3764,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                             <Ed v={h.k || ''} set={v => patch('statement.highlights.' + i + '.k', v)} edit={edit} multiline />
                           </p>
                           <p style={{ fontSize: 13.5, marginTop: 10, lineHeight: 1.6, color: D.muted }}>
-                            <Ed v={h.v || ''} set={v => patch('statement.highlights.' + i + '.v', v)} edit={edit} multiline />
+                            <Ed v={i === 0 ? houseLine(h.v, CLEANS_HIGHLIGHT) : (h.v || '')} set={v => patch('statement.highlights.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
                       ))}
@@ -3809,6 +3820,41 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             ) })
           }
 
+          // ── WHAT IS STILL OPEN. Its own slide, because it is fourteen short rows and the
+          // generic RowSlide is a single scrolling column: on screen it would need scrolling and
+          // in the PDF it would simply be cut. Two columns, the owner/Stay tag beside each item,
+          // so the split of responsibility is the thing you see first.
+          if (!hid('checklist')) {
+            const clRows: Any[] = houseRows<Any>(sec('checklist').rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[])
+            const half = Math.ceil(clRows.length / 2)
+            const cols = [clRows.slice(0, half), clRows.slice(half)]
+            const tagTone = (who: string) => (String(who).toLowerCase() === 'owner' ? t.accent : t.sub)
+            slides.push({ key: 'checklist', ai: true, node: (
+              <Slide nav="Still open" warn={edit} ground={GROUND.light}>
+                <div className="flex flex-col h-full">
+                  <Title k="checklist" />
+                  <div className="flex-1 min-h-0" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 40, marginTop: 20, alignContent: 'start', overflowY: 'auto' }}>
+                    {cols.map((col, ci) => (
+                      <div key={ci}>
+                        {col.map((r: Any, i: number) => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 54px', columnGap: 12, alignItems: 'baseline', padding: '8px 0', borderTop: '1px solid ' + t.rule }}>
+                            <div style={{ fontSize: 13, lineHeight: 1.45, color: t.body }}>
+                              <Ed v={r.item || ''} set={v => patch('checklist.rows.' + (ci * half + i) + '.item', v)} edit={edit} multiline />
+                            </div>
+                            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: tagTone(r.who), textAlign: 'right' }}>
+                              <Ed v={r.who || ''} set={v => patch('checklist.rows.' + (ci * half + i) + '.who', v)} edit={edit} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                  <Foot label="Still open" />
+                </div>
+              </Slide>
+            ) })
+          }
+
           // ── the off-by-default sections, one slide each ────────────────────
           const RowSlide = ({ k, label, rows, kw, tone }: { k: string; label: string; rows: Any[]; kw?: number; tone?: SlideTone }) => (
             <Slide nav={label} warn={edit} ground={GROUND[tone || 'light']}>
@@ -3816,9 +3862,17 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 <Title k={k} />
                 <div className="flex-1 min-h-0" style={{ marginTop: 22, overflowY: 'auto' }}>
                   {(rows || []).map((r: Any, i: number) => (
+                    // THE CHECKLIST IS SHAPED { item, who, by }, NOT { k, v }. It has always been,
+                    // and this row only ever read k and v -- which did not matter while the
+                    // section was hidden by default and would have rendered as a slide of empty
+                    // rules the moment anyone switched it on. The owner/Stay column is the whole
+                    // point of that slide, so it leads.
                     <div key={i} style={{ display: 'grid', gridTemplateColumns: (kw || 180) + 'px 1fr', columnGap: 24, padding: '12px 0', borderTop: '1px solid ' + t.rule }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: t.sub }}>{r.k}</div>
-                      <div style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body }}>{r.v}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: t.sub }}>{r.k != null ? r.k : (r.who || '')}</div>
+                      <div style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body }}>
+                        {r.v != null ? r.v : (r.item || '')}
+                        {r.v == null && r.by ? <span style={{ color: t.muted }}>{' \u00b7 ' + r.by}</span> : null}
+                      </div>
                     </div>
                   ))}
                   <Asks k={k} />
@@ -3830,7 +3884,12 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           for (const x of EXTRA) {
             if (hid(x.k)) continue
             const S = sec(x.k)
-            const rows: Any[] = S.rows || S.facts || S.bands || S.rules || (S.months ? [] : [])
+            // MONEY AND CHECKLIST ARE HOUSE DOCTRINE, so a deck generated before the owner-stay
+            // carve-out is repaired on the way to the slide rather than left promising that a
+            // departure clean is never billed. Everything else passes through untouched.
+            let rows: Any[] = S.rows || S.facts || S.bands || S.rules || (S.months ? [] : [])
+            if (x.k === 'money') rows = houseRows<Any>(rows, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[])
+            if (x.k === 'checklist') rows = houseRows<Any>(rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[])
             slides.push({ key: x.k, ai: true, node: (
               rows && rows.length
                 ? <RowSlide k={x.k} label={x.label} rows={rows} tone={EXTRA.indexOf(x) % 2 ? 'tint' : 'light'} />
