@@ -325,17 +325,24 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   seasonNote:
     'Shape from our own book across 400+ units, cross-checked against Miami market data — the year’s shape, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
 
+  // CONTACTS LIVE IN THE DEFAULTS TOO (Jon, 2026-09-18: "share email and phone number for about
+  // team, numbers for Roberto and I"). The saved template in app_settings is what a generated
+  // deck actually uses and it already carries these, so this is the floor rather than the source:
+  // if that row is ever cleared or reset, an owner still gets four reachable people instead of
+  // four names. Phone numbers only for Jon and Roberto, deliberately -- the other two are reached
+  // by email, and publishing a mobile to every owner is a decision each person gets to make.
+  //
   // THE FOUR PEOPLE AN OWNER MEETS (Jon, 2026-09-16: "the about the team should be Roberto,
   // Karla, Jonathan (me) and Bernadette"). Written once here rather than pulled from the staff
   // roster: the roster is a payroll list of 58 and it was seeding the deck with whoever happened
   // to sort first. Edit these four in settings and every future deck follows.
   team: [
-    { name: 'Jonathan', role: 'General Manager', blurb: 'Runs Stay Hospitality day to day. On your onboarding call, and the person to call when something matters more than a ticket.', photo: null, phone: '', email: '' },
-    { name: 'Roberto Chiriboga', role: 'Operations Manager', blurb: 'Owns what happens in the unit \u2014 turnovers, inspections and the maintenance calendar. Your day-to-day answer.', photo: null, phone: '', email: '' },
-    { name: 'Karla Valle', role: 'Field Coordinator', blurb: 'Coordinates what happens on the ground \u2014 turnovers, inspections and the daily schedule across every unit.', photo: null, phone: '', email: '' },
+    { name: 'Jonathan McGill', role: 'General Manager', blurb: 'Runs Stay Hospitality day to day. On your onboarding call, and the person to call when something matters more than a ticket.', photo: null, phone: '(954) 391-2116', email: 'jon@stay-hospitality.com' },
+    { name: 'Roberto Chiriboga', role: 'Operations Manager', blurb: 'Owns what happens in the unit \u2014 turnovers, inspections and the maintenance calendar. Your day-to-day answer.', photo: null, phone: '(954) 465-0095', email: 'roberto@stay-hospitality.com' },
+    { name: 'Karla Valle', role: 'Field Coordinator', blurb: 'Coordinates what happens on the ground \u2014 turnovers, inspections and the daily schedule across every unit.', photo: null, phone: '', email: 'karla@stay-hospitality.com' },
     // "Administration and team support" is the job; "Administration Lead" is the title, because
     // a card that lists two functions reads as someone who does neither.
-    { name: 'Bernadette', role: 'Administration Lead', blurb: 'Owner paperwork, statements and payouts, and keeping the field team scheduled and supplied.', photo: null, phone: '', email: '' },
+    { name: 'Bernadette Tan', role: 'Administration Lead', blurb: 'Owner paperwork, statements and payouts, and keeping the field team scheduled and supplied.', photo: null, phone: '', email: 'bernadette@stay-hospitality.com' },
   ],
 
   supportLabel: 'Support team',

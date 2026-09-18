@@ -38,8 +38,13 @@ export const CHANNEL_MARKS: ChannelMark[] = [
 // Sourced, not recalled. Nine connections is ours (guesty_listings.raw.integrations, 290
 // listings, 8.0 average). 200+ is Expedia Group's own published figure for the websites it
 // operates; Booking.com's parent adds Priceline, Agoda, Kayak and Momondo on top of it.
-export const CHANNEL_COUNT = '200+'
+export const CHANNEL_COUNT = '40+'
+// THE PARAGRAPH CANNOT NAME A DIFFERENT NUMBER THAN THE ONE PRINTED BESIDE IT. A draft of this
+// said "nine channel connections" under a 40+ headline, which is the season-slide mistake again:
+// two numbers arguing with each other in front of an owner. The count carries the breadth; the
+// paragraph carries the reason breadth is worth anything, which is that the biggest names on the
+// list are networks rather than single websites.
 export const CHANNEL_BODY =
-  'Your calendar is published to nine channel connections, and every booking reconciles back to one place \u2014 which is the only reason a unit can be priced for occupancy and still never be double-booked. Four of those nine are networks rather than websites: a listing on Expedia is a listing on Hotels.com, Orbitz, Travelocity and Hotwire, and Booking.com carries Priceline, Agoda and Kayak behind it. Most owners arrive on one channel.'
-/** The retired default. A deck still carrying it has never been edited on this slide. */
-export const CHANNEL_COUNT_RETIRED = '30+'
+  'Your calendar is one calendar. We publish it everywhere that matters and reconcile every booking back to a single place, which is the only reason a unit can be priced for occupancy and still never be double-booked. The biggest names on that list are networks rather than websites: a listing on Expedia is a listing on Hotels.com, Orbitz, Travelocity and Hotwire, and Booking.com carries Priceline, Agoda and Kayak behind it. Most owners arrive on one channel.'
+/** Retired defaults. A deck still carrying one of these was never edited on this slide. */
+export const CHANNEL_COUNT_RETIRED = ['30+', '200+']
