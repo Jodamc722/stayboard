@@ -6,6 +6,7 @@
 // The clock that matters: DEPARTURE CLEANS must be finished by 4pm, because that's when the
 // next guest can check in. Strips / PM / inspections don't carry that deadline.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { unstable_cache, revalidateTag } from 'next/cache'
 import { marketOf, MARKETS } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, untrackedRegex, noBreezewayRegex } from '@/lib/ops-presets'
@@ -72,8 +73,27 @@ export type OpsDay = Awaited<ReturnType<typeof buildOpsDay>>
 export const NO_UNIT = '__no_unit__'
 export const NO_UNIT_LABEL = 'Building & common areas'
 
-/** Build the Today-in-Ops picture for a date (YYYY-MM-DD, ET) — today when null/invalid. */
-export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?: boolean } = {}) {
+/**
+ * Build the Today-in-Ops picture for a date (YYYY-MM-DD, ET) — today when null/invalid.
+ *
+ * SHARED FOR 45 SECONDS (2026-09-18). Four readers built the same morning independently — the
+ * board (every viewer, on a timer), /api/command/day, the capacity chip and the Focus cron — each
+ * a dozen queries. One build now serves them all until the day tag is bumped: the reservations
+ * and Breezeway crons, and every write from the board (add task, task action, assign), do that,
+ * so a change you make shows on the next read; a change made in Breezeway shows within the
+ * mirror's cadence exactly as before.
+ */
+export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?: boolean; fresh?: boolean } = {}) {
+  if (opts.fresh) return buildOpsDayFresh(dateParam, opts)
+  return cachedOpsDay(dateParam || '', !!opts.includeMeta)
+}
+const cachedOpsDay = unstable_cache(
+  async (dateParam: string, includeMeta: boolean) => buildOpsDayFresh(dateParam || null, { includeMeta }),
+  ['ops-day-v1'], { tags: ['day'], revalidate: 45 },
+)
+export function bustOpsDay() { try { revalidateTag('day') } catch { /* best-effort */ } }
+
+async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: boolean; fresh?: boolean } = {}) {
   const db = supabaseAdmin()
   // Vendor buildings + the 4pm deadline are operator-editable (/users -> Ops presets).
   // THE TAXONOMY IS DECIDED HERE, ONCE. The board used to classify tasks in the browser from its

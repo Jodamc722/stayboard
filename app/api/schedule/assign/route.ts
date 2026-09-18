@@ -9,6 +9,7 @@ import { breezewayConfigured, listPropertyHousekeeping, pickDepartureClean, upda
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadIntel, renderIntel, INTEL_STRIP_RE, type IntelCtx } from '@/lib/listingIntel'
 import { requireLevel } from '@/lib/access'
+import { bustOpsDay } from '@/lib/ops-day'
 
 // STAY INTEL now lives in lib/listingIntel.ts and is written FOR THE CLEANER: the deadline, how
 // long the stay that just ended was, what guests keep saying about this unit, and what the last
@@ -19,7 +20,7 @@ import { requireLevel } from '@/lib/access'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   // Roles+levels write gate (2026-08-04): below-edit access on 'schedule' is rejected here,
   // whatever the UI shows. requireLevel also covers the signed-out 401.
   const __gate = await requireLevel('schedule', 'edit')
@@ -102,4 +103,11 @@ export async function POST(req: NextRequest) {
   // Bust the schedule cache so the next load reflects the fresh assignment right away.
   if (pushed > 0) { try { revalidateTag('schedule') } catch (e) { console.error('assign: revalidateTag failed', e) } }
   return NextResponse.json({ ok: true, pushed, failed: results.length - pushed, results })
+}
+
+// Every write from the board invalidates the shared 45-second day picture (lib/ops-day).
+export async function POST(req: NextRequest) {
+  const res = await handlePost(req)
+  bustOpsDay()
+  return res
 }

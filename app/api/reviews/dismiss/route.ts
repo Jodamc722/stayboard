@@ -2,6 +2,7 @@
 // Reversible; does NOT post anything to the channel and does NOT affect scores. Logged-in users only.
 // Requires the guesty_reviews.dismissed column (migration 004_review_dismiss.sql).
 import { NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
@@ -28,5 +29,6 @@ export async function POST(req: Request) {
     : { dismissed: true, dismissed_by: String(user.email || '').toLowerCase(), dismissed_at: new Date().toISOString() }
   const { error } = await sb.from('guesty_reviews').update(patch).eq('id', reviewId)
   if (error) return NextResponse.json({ error: `Could not ${undo ? 'restore' : 'dismiss'} the review: ${error.message}. Has migration 004 (the dismissed column) been run?` }, { status: 500 })
+  try { revalidateTag('reviews') } catch {}
   return NextResponse.json({ ok: true, dismissed: !undo })
 }

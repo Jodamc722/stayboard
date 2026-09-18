@@ -55,7 +55,7 @@ export function StayWindowPanel() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
-    fetch('/api/listings', { cache: 'no-store' })
+    fetch('/api/listings?slim=1', { cache: 'no-store' })
       .then(r => r.json())
       .then(j => setAll(Array.isArray(j?.results) ? j.results : []))
       .catch(() => setAll([]))

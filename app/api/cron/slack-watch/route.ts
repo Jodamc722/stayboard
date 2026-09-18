@@ -16,7 +16,17 @@ import { eveGate } from '../../agent/route'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-export async function GET() {
+// VERCEL CRON SENDS GET (2026-09-18). This handler only listed open items, so the scheduled watch
+// had never actually run — both entries in vercel.json were no-ops. A scheduler call (x-vercel-cron
+// or the bearer) now runs the watch; a person's GET still gets the list. The afternoon run skips
+// the digest: before 14:00 UTC (10am ET) it is the morning pass, after that the midday one.
+export async function GET(req: NextRequest) {
+  const scheduled = !!req.headers.get('x-vercel-cron') || cronAllowed(req).viaSecret
+  if (scheduled) {
+    const digest = new Date().getUTCHours() < 14
+    const url = new URL(req.url); url.searchParams.set('digest', digest ? '1' : '0')
+    return POST(new NextRequest(url, { headers: req.headers }))
+  }
   const items = await openItems(100).catch(() => [])
   return NextResponse.json({ ok: true, open: items.length, items })
 }

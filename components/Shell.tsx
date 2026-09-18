@@ -169,6 +169,29 @@ export const SECTIONS: NavSection[] = [
   },
 ]
 
+// PER-TAB CACHE FOR THE SHELL'S OWN READS (2026-09-18). The Shell is rendered inside every page,
+// so it remounts on every navigation and asked /api/access/me and /api/access/prefs again each
+// time — two auth'd round-trips (getUser + app_users + roles + settings) before the sidebar could
+// settle, on every click. Access and pins change rarely; a tab keeps the last answer for two
+// minutes and refreshes it in the background after that. A prefs write clears it, and a fresh tab
+// or a sign-in always asks the server.
+const SHELL_CACHE_TTL = 120_000
+function cachedJson(url: string, ttl = SHELL_CACHE_TTL): Promise<any> {
+  const key = 'shell:' + url
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (raw) {
+      const hit = JSON.parse(raw)
+      if (hit && typeof hit.at === 'number' && Date.now() - hit.at < ttl) return Promise.resolve(hit.v)
+    }
+  } catch { /* private mode or blocked storage */ }
+  return fetch(url, { cache: 'no-store' }).then(r => r.json()).then(v => {
+    try { if (v && (v.ok || v.isAdmin != null || v.features)) sessionStorage.setItem(key, JSON.stringify({ at: Date.now(), v })) } catch { /* fine */ }
+    return v
+  })
+}
+function forgetCached(url: string) { try { sessionStorage.removeItem('shell:' + url) } catch { /* fine */ } }
+
 function readLocal(key: string): any {
   if (typeof window === 'undefined') return null
   try {
@@ -226,14 +249,18 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email || null))
+    const who = supabase.auth.getUser().then(({ data }) => {
+      const e = data.user?.email || null
+      setEmail(e)
+      try { const prev = sessionStorage.getItem('shell:who'); if (prev !== (e || '')) { forgetCached('/api/access/me'); forgetCached('/api/access/prefs'); sessionStorage.setItem('shell:who', e || '') } } catch { /* fine */ }
+    })
     // Paint the device copy immediately; the fetch below corrects it a moment later.
     const local = readLocal(PINS_LS_KEY)
     if (Array.isArray(local) && local.length) setPins(cleanPins(local))
     const groups = readLocal(GROUPS_LS_KEY)
     setOpenGroups(groups && typeof groups === 'object' && !Array.isArray(groups) ? groups : {})
 
-    fetch('/api/access/me').then(r => r.json()).then(j => {
+    who.then(() => cachedJson('/api/access/me')).then(j => {
       setIsAdmin(!!j?.isAdmin); setIsOwner(!!j?.isOwner)
       setFeatures(j?.features && typeof j.features === 'object' ? j.features : {})
       setWorkspace(typeof j?.workspace === 'string' ? j.workspace : null)
@@ -244,7 +271,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
       const roleKey = typeof j?.accessRole === 'string' && j.accessRole ? j.accessRole : (j?.isOwner ? 'admin' : null)
       // The saved copy wins over the device copy, but only on this first pass — after that the
       // user's own clicks are the truth.
-      fetch('/api/access/prefs', { cache: 'no-store' }).then(r => r.json()).then(p => {
+      cachedJson('/api/access/prefs').then(p => {
         if (pinsLoaded.current) return
         pinsLoaded.current = true
         if (p && p.ok && Array.isArray(p.pins) && p.pins.length) {
@@ -278,6 +305,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   }, [])
 
   async function signOut() {
+    forgetCached('/api/access/me'); forgetCached('/api/access/prefs')
     const supabase = createClient()
     await supabase.auth.signOut()
     window.location.href = '/login'
@@ -377,6 +405,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   function savePins(next: string[]) {
     setPins(next)
     writeLocal(PINS_LS_KEY, next)
+    forgetCached('/api/access/prefs')
     fetch('/api/access/prefs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pins: next }),
     }).catch(() => { /* the device copy already holds it */ })

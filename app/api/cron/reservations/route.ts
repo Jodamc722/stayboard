@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncReservations } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { bustOpsDay } from '@/lib/ops-day'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -40,5 +41,6 @@ async function run(req: NextRequest) {
   }
 }
 
-export async function GET(req: NextRequest) { return run(req) }
-export async function POST(req: NextRequest) { return run(req) }
+async function runAndBust(req: NextRequest) { const res = await run(req); bustOpsDay(); return res }
+export async function GET(req: NextRequest) { return runAndBust(req) }
+export async function POST(req: NextRequest) { return runAndBust(req) }

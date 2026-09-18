@@ -440,7 +440,7 @@ totals: { cleans: cleans.filter((c) => !c.movedTo).length, feeTotal: cleans.filt
 days, housekeepers, units, breezeway: breezewayConfigured(),
 syncedAt: new Date().toISOString(),
 }
-}, ['schedule-v2'], { tags: ['schedule'], revalidate: 86400 })
+}, ['schedule-v2'], { tags: ['schedule'], revalidate: 300 })
 
 const payload = await compute(view, start, end, today, vendorKey)
 // LIVE staged-assignment overlay (uncached): server-saved cleaner picks survive refresh/tab-switch

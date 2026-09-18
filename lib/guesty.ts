@@ -796,12 +796,25 @@ export type ReviewSyncStats = {
   oldest: string | null
 }
 
-export async function syncReviewsDetailed(opts?: { maxPages?: number; budgetMs?: number }): Promise<ReviewSyncStats> {
+// INCREMENTAL (2026-09-18). This paged the ENTIRE review history — ~38 Guesty calls and ~3,800
+// upserts — on every run, and it ran 24 times a day from two different crons. With `incremental`
+// it reads the newest review we hold and stops as soon as a whole page is older than that minus
+// two days (reviews can be edited or arrive late). The stop only fires when the page is visibly
+// newest-first (first row ≥ last row); if Guesty ever returns pages unsorted, the loop falls
+// through to the full pass exactly as before — no regression, just no saving.
+export async function syncReviewsDetailed(opts?: { maxPages?: number; budgetMs?: number; incremental?: boolean }): Promise<ReviewSyncStats> {
   const sb = supabaseAdmin()
   const maxPages = opts?.maxPages ?? 400          // 40,000 reviews — a runaway guard, not a policy
   const budgetMs = opts?.budgetMs ?? 240_000
   const startedAt = Date.now()
   const st: ReviewSyncStats = { fetched: 0, kept: 0, skipped: 0, pages: 0, exhausted: false, newest: null, oldest: null }
+  let stopBefore: string | null = null
+  if (opts?.incremental) {
+    try {
+      const { data } = await sb.from('guesty_reviews').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle()
+      if (data?.created_at) stopBefore = new Date(new Date(data.created_at).getTime() - 2 * 86400_000).toISOString()
+    } catch { /* no watermark → full pass */ }
+  }
 
   for (let page = 0; page < maxPages; page++) {
     if (Date.now() - startedAt > budgetMs) break     // out of time, not out of data — say so below
@@ -839,6 +852,11 @@ export async function syncReviewsDetailed(opts?: { maxPages?: number; budgetMs?:
       st.kept += rows.length
     }
     if (arr.length < 100) { st.exhausted = true; break }
+    if (stopBefore && mapped.length >= 2) {
+      const first = String(mapped[0]?.created_at || ''), last = String(mapped[mapped.length - 1]?.created_at || '')
+      const newestFirst = !!first && !!last && first >= last
+      if (newestFirst && first < stopBefore) { st.exhausted = true; break }
+    }
   }
 
   await recordSync('reviews', st.kept)
@@ -932,7 +950,7 @@ export async function syncRecentMessages(maxConversations = 150, opts?: { budget
 }
 
 
-export async function runFullSync(full = false): Promise<{ reservations: number; listings: number; custom_fields: number; conversations: number; reviews: number; messages: number; errors: string[] }> {
+export async function runFullSync(full = false, opts?: { catalogOnly?: boolean }): Promise<{ reservations: number; listings: number; custom_fields: number; conversations: number; reviews: number; messages: number; errors: string[] }> {
   const errors: string[] = []
   const result = { reservations: 0, listings: 0, custom_fields: 0, conversations: 0, reviews: 0, messages: 0, errors }
   // Warm the shared token ONCE up front. If Guesty's auth endpoint is throttled (429),
@@ -956,6 +974,7 @@ export async function runFullSync(full = false): Promise<{ reservations: number;
   const lstSince = full ? null : await getSince('listings')
   await safe('custom_fields', syncCustomFields,  v => result.custom_fields = v)
   await safe('listings',      () => syncListings(20, lstSince),      v => result.listings      = v)
+  if (opts?.catalogOnly) return result
   await safe('reservations',  () => syncReservations(40, resSince),  v => result.reservations  = v)
   await safe('conversations', syncConversations, v => result.conversations = v)
   await safe('reviews', syncReviews, v => result.reviews = v)

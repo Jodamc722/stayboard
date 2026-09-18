@@ -27,6 +27,7 @@
 // on this page and the feed below it can never disagree (Jon, 2026-09-09: "I should be able to
 // select by owner, building etc to see reviews").
 import { NextRequest, NextResponse } from 'next/server'
+import { unstable_cache } from 'next/cache'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, buildingOf } from '@/lib/segments'
@@ -187,22 +188,35 @@ function replyMinutes(raw: any): number | null {
   return Math.round((b - a) / 60000)
 }
 
+// CACHED FOR FIVE MINUTES PER FILTER SET (2026-09-18). This is the heaviest read in the app — every
+// review in the window with its raw jsonb, a second lifetime pass, every listing, owner and stay —
+// and Reviews is the most-visited page. Auth stays outside the cache; the payload is keyed by the
+// query string and whether the viewer may see cleaner names. The review sync bumps the tag, so a
+// fresh review shows within a minute of landing, not five.
+const cachedBuild = unstable_cache(
+  async (qs: string, canSeeCleaners: boolean) => build(new URLSearchParams(qs), canSeeCleaners),
+  ['reviews-kpi-v1'], { tags: ['reviews'], revalidate: 300 },
+)
+
 export async function GET(req: NextRequest) {
   try {
-    return await build(req)
+    const access = await getAccess()
+    if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    // Cleanliness by cleaner is a coaching tool, not a leaderboard: owner + GM workspaces only.
+    const canSeeCleaners = access.role === 'admin' || access.workspace === 'gm' || access.workspace === 'admin'
+    const sp = req.nextUrl.searchParams
+    const keys = ['market', 'building', 'owner', 'channel', 'days', 'from', 'to']
+    const qs = keys.filter(k => sp.get(k) != null).map(k => k + '=' + encodeURIComponent(String(sp.get(k)))).join('&')
+    const fresh = sp.get('refresh') === '1'
+    const payload = fresh ? await build(sp, canSeeCleaners) : await cachedBuild(qs, canSeeCleaners)
+    return NextResponse.json(payload)
   } catch (e: any) {
     // Honest failure. The page shows the reason; it does not show a plausible 4.7 out of nothing.
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
 }
 
-async function build(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  // Cleanliness by cleaner is a coaching tool, not a leaderboard: owner + GM workspaces only.
-  const canSeeCleaners = access.role === 'admin' || access.workspace === 'gm' || access.workspace === 'admin'
-
-  const sp = req.nextUrl.searchParams
+async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any> {
   const market = str(sp.get('market')) || 'all'
   const building = str(sp.get('building')) || 'all'
   const owner = str(sp.get('owner')) || 'all'
@@ -944,7 +958,7 @@ async function build(req: NextRequest) {
   const belowPar = units.filter(u => u.ranked && u.vsPar != null && (u.vsPar as number) <= -BELOW_PAR)
   const inRecovery = units.filter(u => u.ranked && u.recoveryDays != null).concat(recoveryOnly as any[])
 
-  return NextResponse.json({
+  return ({
     ok: true, days, from, to, market, building, owner, channel,
     channelList: Array.from(new Set(windowed.map(r => str(r.channel)).filter(Boolean))).sort(),
     markets: Array.from(new Set(Object.values(lmap).filter((l: any) => !l.waves).map((l: any) => l.market).filter(Boolean))).sort(),

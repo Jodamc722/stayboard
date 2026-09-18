@@ -40,7 +40,11 @@ export async function GET(req: NextRequest) {
 
   const startedAt = Date.now()
   try {
-    const st = await syncReviewsDetailed()
+    // Incremental by default (stops once a page is older than what we hold); the first run on a
+    // Sunday walks the whole feed so an edited or late-arriving old review is never missed for long.
+    const now = new Date()
+    const fullPass = req.nextUrl.searchParams.get('full') === '1' || (now.getUTCDay() === 0 && now.getUTCHours() < 6)
+    const st = await syncReviewsDetailed({ incremental: !fullPass })
 
     // What actually landed, per channel — the number that matters when somebody says "we got
     // reviews and they are not in the app". A total across all channels is exactly the figure that

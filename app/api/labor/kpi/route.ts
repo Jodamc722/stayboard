@@ -26,6 +26,16 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { staffByName, resolveStaff } from '@/lib/staffing'
 import { laborEconomics, kindOfTask } from '@/lib/labor-econ'
+import { unstable_cache } from 'next/cache'
+
+const cachedStripReads = unstable_cache(
+  async (start: string, end: string, wStart: string, wEnd: string) => Promise.all([
+    shiftsForRange(start, end),
+    getTimecardsAudited(start, end),
+    shiftsForRange(wStart, wEnd),
+  ]),
+  ['labor-strip-v1'], { revalidate: 120 },
+)
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -110,11 +120,9 @@ export async function GET(req: Request) {
     // threaded through the body below: the full response keeps exactly the shape it had, so the
     // labor board, the briefs and the reports cannot be affected by a change made for a strip.
     if (url.searchParams.get('summary') === '1') {
-      const [dayShifts, tcAudit, weekShifts] = await Promise.all([
-        shiftsForRange(start, end),
-        getTimecardsAudited(start, end),
-        shiftsForRange(week.start, week.end),
-      ])
+      // The strip sits on /plan and /schedule for every viewer on a five-minute timer; three
+      // Homebase reads per viewer per tick is the same answer fetched N times. Shared for 2 minutes.
+      const [dayShifts, tcAudit, weekShifts] = await cachedStripReads(start, end, week.start, week.end)
       const timecards = tcAudit.cards
       const kpis = computeLaborKpis({
         start, end, shifts: dayShifts, timecards, weekShifts,

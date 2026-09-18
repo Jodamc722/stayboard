@@ -374,10 +374,11 @@ export function Reputation({ f, setF, onFocusUnit }: {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     setLoading(true); setErr('')
     try {
       const qs = new URLSearchParams({ days: String(days), market, building, owner, channel })
+      if (fresh) qs.set('refresh', '1')
       const r = await fetch('/api/reviews/kpi?' + qs.toString(), { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load the reputation numbers')
@@ -464,7 +465,7 @@ export function Reputation({ f, setF, onFocusUnit }: {
               <X size={11} /> Clear
             </button>
           )}
-          <button onClick={() => load()} disabled={loading} title="Recalculate"
+          <button onClick={() => load(true)} disabled={loading} title="Recalculate"
             className="ml-auto inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line text-muted hover:text-ink hover:bg-app disabled:opacity-50">
             <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>

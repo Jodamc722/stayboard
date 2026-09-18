@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
 import { buildIntel, intelKindFor, INTEL_STRIP_RE } from '@/lib/listingIntel'
 import { requireLevel } from '@/lib/access'
+import { bustOpsDay } from '@/lib/ops-day'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -46,7 +47,7 @@ async function auditLinkFor(db: any, listingId: string, origin: string, createdB
   return origin + '/audit/' + audit.share_code
 }
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   // Roles+levels write gate (2026-08-04): below-edit access on 'plan' is rejected here,
   // whatever the UI shows. requireLevel also covers the signed-out 401.
   const __gate = await requireLevel('plan', 'edit')
@@ -132,4 +133,11 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
+}
+
+// Every write from the board invalidates the shared 45-second day picture (lib/ops-day).
+export async function POST(req: NextRequest) {
+  const res = await handlePost(req)
+  bustOpsDay()
+  return res
 }

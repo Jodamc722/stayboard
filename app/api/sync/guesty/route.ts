@@ -184,6 +184,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, reviewsOnly: n, elapsed_ms: Date.now() - started })
     }
 
+    // ?scope=catalog (2026-09-18) — what the 2-hourly cron now asks for. Reservations run every 5
+    // minutes, conversations every 15, reviews on their own job; re-running them here was the same
+    // work three times over. Listings + custom fields are the only entities nothing else syncs.
+    if (params.get('scope') === 'catalog') {
+      const result = await runFullSync(false, { catalogOnly: true })
+      return NextResponse.json({ ok: true, scope: 'catalog', elapsed_ms: Date.now() - started, ...result })
+    }
     const full = params.get('full') === '1'
     const result = await runFullSync(full)
     return NextResponse.json({ ok: true, elapsed_ms: Date.now() - started, ...result })

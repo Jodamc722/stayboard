@@ -1,6 +1,7 @@
 // Post a host reply to a Guesty review. PUT /reviews/{id}/reply { reviewReply }.
 // Uses the shared cached Guesty token. Requires a logged-in user (the human approves each post).
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
@@ -75,5 +76,6 @@ export async function POST(req: NextRequest) {
     await sb.from('guesty_reviews').update({ reply: String(reviewReply), has_reply: true }).eq('id', reviewId)
   }
 
+  try { revalidateTag('reviews') } catch {}
   return NextResponse.json({ ok: true, reply: String(reviewReply) })
 }

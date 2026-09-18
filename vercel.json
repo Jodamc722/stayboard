@@ -6,7 +6,7 @@
   "crons": [
     {
       "path": "/api/cron/parking-guesty",
-      "schedule": "27 * * * *"
+      "schedule": "27 */4 * * *"
     },
     {
       "path": "/api/cron/reservations",
@@ -14,11 +14,11 @@
     },
     {
       "path": "/api/cron/guest-comms",
-      "schedule": "9,24,39,54 * * * *"
+      "schedule": "9,39 * * * *"
     },
     {
       "path": "/api/cron/reservation-notices",
-      "schedule": "13,33,53 * * * *"
+      "schedule": "13 * * * *"
     },
     {
       "path": "/api/cron/breezeway-tasks",
@@ -30,35 +30,31 @@
     },
     {
       "path": "/api/cron/watchdog",
-      "schedule": "26,56 * * * *"
+      "schedule": "26 * * * *"
     },
     {
       "path": "/api/sentiment/scan",
-      "schedule": "11,41 * * * *"
+      "schedule": "19,49 * * * *"
     },
     {
       "path": "/api/sync/owner-statements",
-      "schedule": "44 * * * *"
+      "schedule": "44 5,17 * * *"
     },
     {
       "path": "/api/cron/stay-window",
-      "schedule": "36 * * * *"
+      "schedule": "36 21,22,10,11 * * *"
     },
     {
       "path": "/api/cron/notice-drafts",
-      "schedule": "6 11-23 * * *"
+      "schedule": "6 3,11,15,19,23 * * *"
     },
     {
-      "path": "/api/cron/notice-drafts",
-      "schedule": "6 0-4 * * *"
-    },
-    {
-      "path": "/api/sync/guesty",
-      "schedule": "21 */2 * * *"
+      "path": "/api/cron/guesty-catalog",
+      "schedule": "21 4,16 * * *"
     },
     {
       "path": "/api/cron/sync-reviews",
-      "schedule": "37 */2 * * *"
+      "schedule": "37 */6 * * *"
     },
     {
       "path": "/api/cron/auto-inspections",
@@ -117,24 +113,16 @@
       "schedule": "8 12 * * *"
     },
     {
-      "path": "/api/schedule/sync",
-      "schedule": "23 10 * * *"
-    },
-    {
-      "path": "/api/schedule/sync",
-      "schedule": "23 16 * * *"
-    },
-    {
       "path": "/api/cron/weekly-planner",
       "schedule": "29 22 * * 0"
     },
     {
       "path": "/api/cron/revenue-sync",
-      "schedule": "38 * * * *"
+      "schedule": "38 */4 * * *"
     },
     {
       "path": "/api/cron/guest-orders",
-      "schedule": "8 * * * *"
+      "schedule": "8 */2 * * *"
     },
     {
       "path": "/api/cron/eve-audit",
@@ -143,10 +131,6 @@
     {
       "path": "/api/cron/ops-focus",
       "schedule": "5 0,1,11,12,16,17,19,20 * * *"
-    },
-    {
-      "path": "/api/cron/maint-brief",
-      "schedule": "46 11 * * *"
     },
     {
       "path": "/api/cron/labor-integrity",
@@ -158,7 +142,7 @@
     },
     {
       "path": "/api/cron/project-notify",
-      "schedule": "7,22,37,52 * * * *"
+      "schedule": "7,37 * * * *"
     },
     {
       "path": "/api/cron/project-digest",
@@ -174,11 +158,7 @@
     },
     {
       "path": "/api/cron/slack-watch",
-      "schedule": "20 9 * * *"
-    },
-    {
-      "path": "/api/cron/slack-watch?digest=0",
-      "schedule": "20 17 * * *"
+      "schedule": "20 9,17 * * *"
     },
     {
       "path": "/api/cron/trash-sweep",

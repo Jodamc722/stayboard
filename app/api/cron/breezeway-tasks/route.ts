@@ -3,6 +3,7 @@ import { syncBreezewayTasks } from '@/lib/breezeway-sync'
 import { syncBreezewayComments } from '@/lib/breezeway-comment-sync'
 import { runBehindAlert } from '@/lib/ops-behind'
 import { revalidateTag } from 'next/cache'
+import { bustOpsDay } from '@/lib/ops-day'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -26,6 +27,7 @@ async function run(req: NextRequest) {
   let comments: any = null
   try { comments = await syncBreezewayComments(120) } catch (e) { comments = { error: String((e as any)?.message || e).slice(0, 120) } }
   try { revalidateTag('schedule') } catch {}
+  bustOpsDay()
   // The mirror is now fresh, so this is the right moment to ask "are the cleans running behind?"
   // and tell the ops team once (see lib/ops-behind.ts for the clock rule and the once-a-day gate).
   // Best effort - an alert failure must never fail the task mirror.

@@ -82,7 +82,8 @@ export async function syncBreezewayTasks(
   // ("when was anyone last in here?"), and a mirror gap there reads as neglect. So after the urgent
   // properties, each run also sweeps the next slice of the whole portfolio, round-robin via a
   // cursor. 30 per run on a 30-minute cron covers all ~232 units roughly every 4 hours.
-  const SWEEP = 30
+  const SWEEP = 40
+  const windowed = new Set<string>()
   const all = (active.length ? active : Array.from(propByRef.values()))
     .slice()
     .sort((a, b) => String(a.home_id).localeCompare(String(b.home_id)))
@@ -91,6 +92,7 @@ export async function syncBreezewayTasks(
     cursor = Number(await getSetting<number>('breezeway_sweep_cursor', 0)) || 0
     if (!Number.isFinite(cursor) || cursor < 0 || cursor >= all.length) cursor = 0
     const inOrder = new Set(ordered.map((p: any) => String(p.home_id)))
+    for (let n = 0; n < ordered.length; n++) windowed.add(String(ordered[n].home_id))
     for (let n = 0; n < SWEEP; n++) {
       const p = all[(cursor + n) % all.length]
       if (p && !inOrder.has(String(p.home_id))) { ordered.push(p); inOrder.add(String(p.home_id)) }
@@ -100,6 +102,15 @@ export async function syncBreezewayTasks(
     try { await setSetting('breezeway_sweep_cursor', (cursor + SWEEP) % all.length, 'cron') } catch {}
   }
 
+  // SCOPED PULL (2026-09-18). Every 30 minutes this fetched and upserted the ENTIRE task history of
+  // every property with a checkout in the window — up to 500 rows a property, almost all of them
+  // finished months ago and unchanged. That was the largest single source of Supabase writes. The
+  // window properties now pull scheduled_date −60d..+60d (everything a board, the PM ledger or the
+  // labor week reads live); older rows stay in the mirror from when they were first pulled. The
+  // sweep slice still pulls a property's whole history, so an unscheduled task or a very old row
+  // is refreshed within ~3 hours instead of never.
+  const dISO = (n: number) => new Date(Date.now() + n * 86400_000).toISOString().slice(0, 10)
+  const scopedRange = `&scheduled_date=${dISO(-60)},${dISO(60)}`
   const started = Date.now()
   let i = 0
   let upserted = 0
@@ -108,7 +119,8 @@ export async function syncBreezewayTasks(
     const p: any = ordered[i]
     let r: any
     try {
-      r = await bzApi('/task/?home_id=' + encodeURIComponent(String(p.home_id)) + '&limit=500')
+      const scoped = windowed.has(String(p.home_id))
+      r = await bzApi('/task/?home_id=' + encodeURIComponent(String(p.home_id)) + (scoped ? scopedRange : '') + '&limit=500')
     } catch {
       continue
     }
