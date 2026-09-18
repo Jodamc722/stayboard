@@ -140,3 +140,27 @@ export function statementHasRows(st: unknown): boolean {
   const arr = (x: unknown) => Array.isArray(x) && x.length > 0
   return arr(s.summary) && arr(s.reservations)
 }
+
+// ── THE READING GUIDE ───────────────────────────────────────────────────────
+// The four lines an owner asks about, and the reason each one looks the way it does. House
+// doctrine: identical for every owner, so it lives here with the sample it explains rather than
+// being frozen into each deck's content JSON. ReportView draws it as its own slide.
+//
+// THE REIMBURSEMENT IS THE ONE THAT NEEDS THE MECHANIC, NOT THE RULE (Jon, 2026-09-18: "if not
+// the owner is paying the fee on the Airbnb, that's why we reimburse -- Guesty does not give us
+// ability to separate so we reimburse that RM, we reimburse fees that we charge guests"). The
+// previous wording said the cleaning fee is ours and therefore the fee on it "comes back to
+// you", which reads as circular: if it was never theirs, why is it landing on their statement as
+// income? The answer is the plumbing. Airbnb charges its fee against the whole booking, rent and
+// cleaning together; Guesty cannot apportion that charge across the two, so all of it is netted
+// out of the rental line the owner receives. Left there, the owner would be paying the channel's
+// fee on a cleaning fee Stay keeps. The reimbursement puts that piece back.
+export const STATEMENT_ALSO: KV[] = [
+    { k: 'No cleaning line, no OTA fee line', v: 'You will not see either. We keep the cleaning fee and it pays for the turnover, and the channel’s commission is already out of your rental figure rather than shown again below it.' },
+    { k: 'Channel fee reimbursement', v: 'The channel charges its fee on the whole booking — the rent and the cleaning fee together — and the entire charge comes out of your rental line. Guesty cannot split it, so without this line you would be paying the fee on a cleaning fee we keep. We pay that part back to you: 15% of the cleaning fee.' },
+    { k: 'Revenue management', v: 'Appears only if you are on a revenue-management arrangement.' },
+    { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labelled with the month it belongs to.' },
+]
+
+/** The retired wording of the reimbursement row. A deck carrying it was never edited here. */
+export const STATEMENT_ALSO_RETIRED_MARK = 'as well as on the rent'

@@ -10,8 +10,14 @@
 // that host changes a filename. Monochrome is also the design answer: six brand palettes at full
 // saturation is a sticker sheet, and one ink colour reads as a partner wall.
 //
-// Vrbo, Blueground and Whimstay have no glyph in the set, so they carry as type in the tail line
-// under the wall — which is the honest way round, since the count is the argument, not the logos.
+// Vrbo, Hopper, Blueground, Whimstay and Google Vacation Rentals have no glyph in the set, so
+// they carry as type in the tail line under the wall — which is the honest way round, since the
+// reach is the argument, not the logos.
+//
+// TRIP.COM WAS REMOVED (Jon, 2026-09-18). Every other mark here is a channel we actually hold
+// a connection to, or a storefront one of them feeds -- Hotels.com sells through Expedia, so
+// its mark is earned. Trip.com was neither: no integration on any of the 290 listings. A logo
+// wall an owner could disprove by clicking one of them is worse than a shorter wall.
 export type ChannelMark = { name: string; d: string }
 
 export const CHANNEL_MARKS: ChannelMark[] = [
@@ -20,5 +26,20 @@ export const CHANNEL_MARKS: ChannelMark[] = [
   { name: "Expedia", d: "M19.067 0H4.933A4.94 4.94 0 0 0 0 4.933v14.134A4.932 4.932 0 0 0 4.933 24h14.134A4.932 4.932 0 0 0 24 19.067V4.933C24.01 2.213 21.797 0 19.067 0ZM7.336 19.341c0 .19-.148.337-.337.337h-2.33a.333.333 0 0 1-.337-.337v-2.33c0-.189.148-.336.337-.336H7c.19 0 .337.147.337.337zm12.121-1.486-2.308 2.298c-.169.168-.422.053-.422-.2V9.57l-6.44 6.44a.533.533 0 0 1-.421.17H8.169a.32.32 0 0 1-.338-.338v-1.697c0-.2.053-.316.169-.422l6.44-6.44H4.058c-.253 0-.369-.253-.2-.421l2.297-2.309c.137-.137.285-.232.517-.232H18.15c.854 0 1.539.686 1.539 1.54v11.478c-.01.231-.095.368-.232.516z" },
   { name: "Marriott", d: "M8.802 11.083l-1.178 2.41c-.8 1.425-1.931 3.167-3.646 3.603-.668.232-1.255.023-1.9-.023L0 20.476a1.626 1.626 0 0 0 .59.386c3.647 1.39 5.122-.1 8.722-8.238l3.403 7.249h4.53l-2.14-4.893 1.213-2.53 3.345 7.311 4.337.027-7.59-16.677-3.475 1.738 2.738 6.222-1.201 2.445L9.45 2.678l-3.7 1.877Z" },
   { name: "Hotels.com", d: "M19.064 0H4.936a4.937 4.937 0 0 0-4.93 4.93V19.06A4.94 4.94 0 0 0 4.935 24h14.128a4.926 4.926 0 0 0 4.93-4.941V4.93A4.93 4.93 0 0 0 19.065 0zM8.55 10.63v2.329a.32.32 0 0 1-.337.337H5.884a.32.32 0 0 1-.337-.337V10.63c0-.2.137-.337.337-.337h2.34c.2 0 .336.137.336.337h-.01zm5.162 7.491a.32.32 0 0 1-.337.337h-2.328a.32.32 0 0 1-.337-.337v-2.328c0-.2.136-.337.337-.337h2.328c.19 0 .337.136.337.337v2.328zm0-5.162a.32.32 0 0 1-.337.337h-2.328a.32.32 0 0 1-.337-.337V10.63c0-.2.136-.337.337-.337h2.328c.2 0 .337.137.337.337v2.329zm5.974 4.372a.654.654 0 0 1-.22.516l-2.308 2.297c-.18.168-.432.052-.432-.2V7.28H4.062c-.253 0-.369-.264-.2-.432L6.169 4.55c.137-.147.274-.232.506-.232h11.473c.854 0 1.538.685 1.538 1.539V17.33z" },
-  { name: "Trip.com", d: "M17.834 9.002c-.68 0-1.29.31-1.707.799v-.514h-1.708v8.348h1.897v-2.923c.416.344.943.551 1.518.551 1.677 0 3.036-1.401 3.036-3.13s-1.36-3.13-3.036-3.13zm-.19 4.516c-.733 0-1.328-.62-1.328-1.385s.595-1.385 1.328-1.385c.734 0 1.328.62 1.328 1.385s-.594 1.385-1.328 1.385zm6.356.607a1.138 1.138 0 1 1-2.277 0 1.138 1.138 0 0 1 2.277 0zM13.205 7.428a1.062 1.062 0 1 1-2.125 0 1.062 1.062 0 0 1 2.125 0zm-2.011 1.859h1.897v5.692h-1.897V9.287zM6.83 8.225H4.364v6.754H2.466V8.225H0V6.63h6.83v1.594zm3.035 1.033c.13 0 .255.012.38.03v1.74a1.55 1.55 0 0 0-.297-.031c-.88 0-1.594.612-1.594 1.593v2.389H6.451V9.287h1.707v.9c.363-.558.991-.93 1.707-.93z" },
 ]
+
+// ── THE REACH, IN ONE PLACE ─────────────────────────────────────────────────
+// These two live beside the marks, and in a client-safe module, for the same reason the season
+// curve lives beside its headline: the slide prints them next to each other, and a deck
+// generated before 2026-09-18 froze the retired pair ("30+" over a wall of 22 names, two of them
+// duplicates) into its own content JSON. ReportView substitutes BOTH on a stale deck or neither,
+// so the number beside the paragraph can never contradict it.
+//
+// Sourced, not recalled. Nine connections is ours (guesty_listings.raw.integrations, 290
+// listings, 8.0 average). 200+ is Expedia Group's own published figure for the websites it
+// operates; Booking.com's parent adds Priceline, Agoda, Kayak and Momondo on top of it.
+export const CHANNEL_COUNT = '200+'
+export const CHANNEL_BODY =
+  'Your calendar is published to nine channel connections, and every booking reconciles back to one place \u2014 which is the only reason a unit can be priced for occupancy and still never be double-booked. Four of those nine are networks rather than websites: a listing on Expedia is a listing on Hotels.com, Orbitz, Travelocity and Hotwire, and Booking.com carries Priceline, Agoda and Kayak behind it. Most owners arrive on one channel.'
+/** The retired default. A deck still carrying it has never been edited on this slide. */
+export const CHANNEL_COUNT_RETIRED = '30+'

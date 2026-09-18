@@ -22,6 +22,8 @@
 //    the closing section, so the unanswered questions ARE the follow-up agenda and an onboarding
 //    is never "done" while fields are empty.
 import { SAMPLE_STATEMENT } from './statement-sample'
+import { CHANNEL_BODY, CHANNEL_COUNT } from './channel-marks'
+import { STATEMENT_ALSO } from './statement-sample'
 import 'server-only'
 import { getSetting } from './app-settings'
 import { otaLinksFrom, type OtaLink } from './ota-links'
@@ -223,7 +225,7 @@ export type OnboardingTemplate = {
 
 export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   laborRate: 40,
-  approvalLimit: 250,
+  approvalLimit: 300,
   mgmtPct: 20,
 
   logoUrl: '',
@@ -248,23 +250,44 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   portalUrl: 'https://stay.guestyowners.com',
   portalShots: [],
 
-  channelsBody:
-    'Your calendar is one calendar. We publish it to every channel that matters and reconcile the bookings back into a single place, which is the only reason a unit can be priced for occupancy without ever being double-booked.\n\n' +
-    'Most owners arrive on one channel. Being on thirty is what turns a slow Tuesday in September into a booking.',
+  // NINE CONNECTIONS, HUNDREDS OF STOREFRONTS (Jon, 2026-09-18: "Expedia has a ton of
+  // affiliates like Hotels.com etc — do a real count… we just want to list more but highlight
+  // the big ones").
+  //
+  // THE OLD SLIDE DID NOT SURVIVE COUNTING. It claimed "30+" over a wall of 22 names, two of
+  // which were the same brand twice (Whimstay appeared in both lists; HomeToGo appeared as
+  // itself and as "Hometogo partners"). An owner on a trust deck counts.
+  //
+  // WHAT IS ACTUALLY TRUE, from guesty_listings.raw.integrations across all 290 listings:
+  // nine distinct channel connections, averaging 8.0 per listing, 237 of 290 on at least eight.
+  //   hopper 285 · blueground/Nestpick 285 · whimstay 283 · googleVacationRentals 273
+  //   bookingCom 270 · homeaway2 (Vrbo) 269 · expedia 237 · airbnb2 233 · homesVillasByMarriott 198
+  //
+  // NINE IS THE HONEST NUMBER AND IT IS THE WRONG ARGUMENT. Four of the nine are distribution
+  // networks, not websites. Expedia Group states 200+ websites in 40 languages across 75+
+  // markets plus 70,000+ businesses in its B2B network, and it owns Hotels.com, Orbitz,
+  // Travelocity, Hotwire, CheapTickets, ebookers, Wotif and Vrbo. Booking.com's parent carries
+  // Priceline, Agoda, Kayak, Momondo, HotelsCombined and Cheapflights across 220+ countries.
+  // So the count on the slide is the reach (200+ booking sites) and the paragraph is the
+  // mechanism (nine connections, one calendar). Both are checkable, which the old 30+ was not.
+  channelsBody: CHANNEL_BODY,
+  // The nine we actually hold a connection to. Verified against raw.integrations, not recalled.
   channelsPrimary: [
-    'Airbnb', 'Vrbo', 'Booking.com', 'Expedia',
-    'Hotels.com', 'Marriott Homes & Villas', 'Blueground', 'Whimstay',
+    'Airbnb', 'Vrbo', 'Booking.com', 'Expedia', 'Marriott Homes & Villas',
+    'Blueground', 'Hopper', 'Whimstay', 'Google Vacation Rentals',
   ],
+  // Not extra connections — the storefronts the nine above already reach. Kept separate for
+  // exactly that reason: presenting these as channels we plug into would be the overclaim.
   channelsMore: [
-    'Expedia partner network', 'Orbitz', 'Travelocity', 'Wotif', 'ebookers',
-    'Agoda', 'Trip.com', 'Google Vacation Rentals', 'HomeToGo', 'Holidu', 'Hometogo partners',
-    'Whimstay', 'Houfy', 'Plum Guide', 'Corporate & relocation partners',
+    'Hotels.com', 'Orbitz', 'Travelocity', 'Hotwire', 'CheapTickets', 'ebookers', 'Wotif',
+    'trivago', 'Priceline', 'Agoda', 'Kayak', 'Momondo', 'HotelsCombined', 'Cheapflights',
+    'Expedia Partner Solutions — 70,000+ partner businesses',
   ],
-  channelsCount: '30+',
+  channelsCount: CHANNEL_COUNT,
   channelsLogos: [],
 
   agenda: [
-    { k: 'Your listings', v: 'We open the live listing on every channel, score it, and fix the weak parts while you watch.' },
+    { k: 'Your listings', v: 'We open the live listing on every channel, review it together, and fix the weak parts while you watch.' },
     { k: 'Goals & strategy', v: 'Who the unit is for, and the one trade-off every pricing decision comes from.' },
     { k: 'The first 90 days', v: 'What a brand-new listing actually does, and why month one is bought rather than earned.' },
     { k: 'Your portal & statements', v: 'Where you see performance, approve spend, and read what you were paid.' },
@@ -351,17 +374,12 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
     { k: 'Labor', v: '$40 an hour, or a flat price agreed for a defined job. Time is the technician’s actual clock in and out on the task, not an estimate.' },
     { k: 'Parts and supplies', v: 'At cost. No markup. A $19 faucet cartridge is $19 on your statement.' },
     { k: 'Guest-caused damage', v: 'Billed to the guest or their channel, not to you. You only see it if we fail to recover it, and then you see why.' },
-    { k: 'Under $250', v: 'We handle it and it appears on your next statement. This threshold is yours to set — raise it, lower it, or set it to zero and see every item first.' },
-    { k: 'Over $250', v: 'It goes to your order sheet before anyone spends anything, with photos, the reason, and usually three options. Nothing over your limit gets bought without your yes.' },
+    { k: 'Under $300', v: 'We handle it and it appears on your next statement. This threshold is yours to set — raise it, lower it, or set it to zero and see every item first.' },
+    { k: 'Over $300', v: 'It goes to your order sheet before anyone spends anything, with photos, the reason, and usually three options. Nothing over your limit gets bought without your yes.' },
     { k: 'Emergencies', v: 'Active leak, no A/C, lockout, anything unsafe with a guest in house — we act first and tell you immediately. This is the one exception to the rule above, and we would rather explain a $600 invoice than a flooded unit.' },
   ],
 
-  statementAlso: [
-    { k: 'No cleaning line, no OTA fee line', v: 'You will not see either. We keep the cleaning fee and it pays for the turnover, and the channel’s commission is already out of your rental figure rather than shown again below it.' },
-    { k: 'Channel fee reimbursement', v: 'The channel charges a fee on the cleaning fee as well as on the rent — 15% of it. The cleaning fee is ours, so that piece is not yours to carry — it comes back to you as this line.' },
-    { k: 'Revenue management', v: 'Appears only if you are on a revenue-management arrangement.' },
-    { k: 'Adjustments', v: 'A cancellation, a refund, or a late-landing charge from a prior month. Always labelled with the month it belongs to.' },
-  ],
+  statementAlso: STATEMENT_ALSO,
 
   checklist: [
     { item: 'W-9 and banking details for payouts', who: 'Owner', by: '' },
@@ -414,7 +432,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
       { id: 'c3', q: 'Anyone else on communications?', hint: 'Spouse, partner, accountant, property attorney.' },
     ],
     money: [
-      { id: 'm1', q: 'Your approval limit — keep $250, or change it?' },
+      { id: 'm1', q: 'Your approval limit — keep $300, or change it?' },
       { id: 'm2', q: 'Who approves when you are unreachable?' },
       { id: 'm3', q: 'Any vendor of your own we should use?', hint: 'An A/C contract, a plumber you trust, the HOA’s preferred list.' },
     ],
@@ -559,7 +577,9 @@ export type BuildInput = {
  * report's own content JSON and is editable in place afterwards.
  */
 export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): OnboardingContent {
-  const asks = (k: string): Ask[] => (t.asks[k] || []).map(a => ({ ...a, a: '' }))
+  // Questions carry the live numbers for the same reason the rules do: 'keep $300, or change
+  // it?' has to ask about the limit this owner is actually on.
+  const asks = (k: string): Ask[] => (t.asks[k] || []).map(a => ({ ...a, a: '', q: subMoney(a.q) }))
   // THE OWNER'S OWN UNIT, THROUGHOUT (Jon, 2026-09-16: "use their listing, especially if we have
   // photos of the listing throughout the presentation"). Sections draw from the pool in rotation
   // so a deck about their property actually looks like their property; each one is swappable in
@@ -581,10 +601,18 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
 
   // The money rules carry the live numbers rather than hard-coded ones, so changing the charge
   // rate or an owner's ceiling in settings changes what the next owner is promised.
-  const rules = t.moneyRules.map(r => ({
-    k: r.k.replace(/\$250/g, money0(limit)),
-    v: r.v.replace(/\$40 an hour/g, money0(rate) + ' an hour').replace(/\$250/g, money0(limit)),
-  }))
+  //
+  // THE PATTERNS ARE BUILT FROM THE DEFAULTS, NOT TYPED (Jon, 2026-09-18: "change the amount to
+  // 300 for approval"). These used to be literal /\$250/ and /\$40 an hour/, which meant that
+  // raising the house default to $300 silently broke the substitution for every owner on a
+  // custom limit: the rule still said $300 because the default text said $300, but an owner set
+  // to $500 kept reading $300. Deriving the needle from DEFAULT_TEMPLATE means the default text
+  // and the pattern can never drift apart again.
+  const moneyRe = (n: number) => new RegExp('\\$' + n + '\\b', 'g')
+  const subMoney = (x: string) => x
+    .replace(moneyRe(DEFAULT_TEMPLATE.approvalLimit), money0(limit))
+    .replace(moneyRe(DEFAULT_TEMPLATE.laborRate), money0(rate))
+  const rules = t.moneyRules.map(r => ({ k: subMoney(r.k), v: subMoney(r.v) }))
 
   // A worked month, so the statement is not the first one they have ever seen. Numbers tie.
   const nights = 19, adr = 286
@@ -647,10 +675,12 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       facts: i.unitFacts,
       asks: asks('unit'),
     },
-    // 5 ── WHERE IT SELLS. The breadth slide: the six names they know, then the count.
+    // 5 ── WHERE IT SELLS. The breadth slide: the names they know, then the reach.
+    // SUBTITLE IS THE PARAGRAPH THE SLIDE RENDERS. The `body` field below is not drawn on this
+    // layout at all, so the real copy has to live in `subtitle` or it is written for nobody.
     channels: {
-      headline: 'Your calendar, live on thirty channels',
-      subtitle: 'One calendar, published everywhere, reconciled back to one place.',
+      headline: 'Your calendar, on every channel that matters',
+      subtitle: t.channelsBody,
       body: t.channelsBody,
       primary: t.channelsPrimary,
       more: t.channelsMore,

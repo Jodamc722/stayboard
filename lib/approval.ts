@@ -23,7 +23,11 @@ export type OwnerRef = { id: string; name: string }
 export type RouteDecision = { approval: 'gm_approved' | 'owner_pending'; limit: number; amount: number; owner: OwnerRef | null }
 
 /** $250 is roughly a linen/kitchenware restock — small enough to be routine, big enough to matter. */
-export const DEFAULT_LIMITS: ApprovalLimits = { default: 250, owners: {} }
+// $300 (Jon, 2026-09-18: "change the amount to 300 for approval"). This and
+// DEFAULT_TEMPLATE.approvalLimit in lib/onboarding-report are the same promise seen from two
+// sides -- what the system auto-approves, and what the onboarding deck tells the owner we will
+// auto-approve. They must move together or the deck is lying to the owner in writing.
+export const DEFAULT_LIMITS: ApprovalLimits = { default: 300, owners: {} }
 
 const clampMoney = (n: any): number => {
   const v = Math.round(Number(n))
