@@ -1657,7 +1657,49 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     </div>`
   })()
 
-  const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
+  /**
+   * THE SCOREBOARD, AND THE GUARANTEE THAT THE WORK ABOVE IT SURVIVES.
+   *
+   * Yesterday's counts, new reviews, vacant units and reputation are the "good to know" tail Jon
+   * asked to keep at the bottom. They are also what Gmail eats first: a 170 KB Ops Command was
+   * being cut at 102 KB, and everything from the maintenance card down had been invisible for
+   * weeks without anyone knowing.
+   *
+   * Trimming rows got it close, but "close" is a promise that breaks on a heavy morning — today
+   * had 38 checkouts and it still ran over. So the email measures itself: if the act-today half
+   * plus the scoreboard would cross the clip, the SCOREBOARD is what goes, replaced by one line
+   * that says so and points at the board. The rule is simple and it never inverts — nothing a
+   * supervisor must act on today is ever dropped to make room for yesterday's numbers.
+   */
+  const scoreboardFull = `${eyebrow(isField ? t('Yesterday') : 'Good to know')}
+  ${card(t('Yesterday — what the team got done'), null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
+  ${!isField && d.newReviews.length ? card(d.newSinceYesterday ? 'New reviews' : 'Reviews — nothing new', d.newSinceYesterday || null,
+      (lowNew.length ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${S.red}">${lowNew.length} at 3&#9733; or below</span> — answer these first.</p>` : '') +
+      (d.newSinceYesterday ? '' : `<p style="margin:0 0 8px;font-size:12.5px;color:#6b7280">Nothing since the last brief. The most recent one, for context:</p>`) +
+      table(['Unit', 'Score'], newRevRows),
+      lowNew.length ? '#dc2626' : '#059669',
+      d.newSinceYesterday
+        ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
+        : `Last checked ${niceDay(d.today)}`) : ''}
+  ${card(t('Vacant units — what to slot in'), vacants.length,
+      `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`
+      + (workRows
+        ? `<p style="font-size:12px;margin:10px 0 2px;color:#6b7280">${esc(vacantWorkSummary(vacWork))}. An empty unit is the only window some of this work has.</p>`
+          + table(['Unit · window', 'Best use of it'], workRows)
+          + (vacWorkCount > workLimit ? `<p style="font-size:12px;margin:8px 0 0;color:#6b7280">+${vacWorkCount - workLimit} more empty ${vacWorkCount - workLimit === 1 ? 'unit has' : 'units have'} work outstanding — ${isField ? 'the full list is on the board' : 'not listed here'}.</p>` : '')
+        : (vacants.length ? `<p style="font-size:12px;margin:10px 0 2px;color:#059669">Nothing outstanding on any of them — audits, inspections and open work are all current.</p>` : '')),
+      vacUrgent ? '#d97706' : '#6366f1')}
+  ${!isField && d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
+  ${!isField ? card('Reputation — last 30 days', low30Total || null,
+      repHeadline + (low30Rows ? table(['Unit', 'What they said'], low30Rows) : '') + moreLow + repeatLine + themeLine,
+      low30Total ? '#dc2626' : '#059669',
+      `Last 30 days · since ${niceDay(w30.since)}`) : ''}
+
+`
+
+  // Gmail clips at ~102 KB; 96 KB leaves room for the encoding a real send adds on top.
+  const CLIP_BUDGET = 96_000
+  const render = (scoreboard: string) => `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
     <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
     <p style="${S.bandTitle}">${title}</p>
@@ -1734,32 +1776,15 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
 
   ${!isField && (paperCard || laborCard) ? eyebrow('The shop — paperwork, labor') + paperCard + laborCard : ''}
 
-  ${eyebrow(isField ? t('Yesterday') : 'Good to know')}
-  ${card(t('Yesterday — what the team got done'), null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
-  ${!isField && d.newReviews.length ? card(d.newSinceYesterday ? 'New reviews' : 'Reviews — nothing new', d.newSinceYesterday || null,
-      (lowNew.length ? `<p style="margin:0 0 8px;font-size:12.5px"><span style="${S.red}">${lowNew.length} at 3&#9733; or below</span> — answer these first.</p>` : '') +
-      (d.newSinceYesterday ? '' : `<p style="margin:0 0 8px;font-size:12.5px;color:#6b7280">Nothing since the last brief. The most recent one, for context:</p>`) +
-      table(['Unit', 'Score'], newRevRows),
-      lowNew.length ? '#dc2626' : '#059669',
-      d.newSinceYesterday
-        ? `Since the last brief · ${d.reviewsSince ? niceDay(String(d.reviewsSince).slice(0, 10)) : 'yesterday'}`
-        : `Last checked ${niceDay(d.today)}`) : ''}
-  ${card(t('Vacant units — what to slot in'), vacants.length,
-      `<p style="font-size:13px;margin:8px 0 2px;line-height:1.8">${vacantLine}</p>`
-      + (workRows
-        ? `<p style="font-size:12px;margin:10px 0 2px;color:#6b7280">${esc(vacantWorkSummary(vacWork))}. An empty unit is the only window some of this work has.</p>`
-          + table(['Unit · window', 'Best use of it'], workRows)
-          + (vacWorkCount > workLimit ? `<p style="font-size:12px;margin:8px 0 0;color:#6b7280">+${vacWorkCount - workLimit} more empty ${vacWorkCount - workLimit === 1 ? 'unit has' : 'units have'} work outstanding — ${isField ? 'the full list is on the board' : 'not listed here'}.</p>` : '')
-        : (vacants.length ? `<p style="font-size:12px;margin:10px 0 2px;color:#059669">Nothing outstanding on any of them — audits, inspections and open work are all current.</p>` : '')),
-      vacUrgent ? '#d97706' : '#6366f1')}
-  ${!isField && d.inspect.length ? card('Units to inspect — recent guest feedback', d.inspect.length, table(['Unit · why', 'What to do'], inspectRows), '#d97706') : ''}
-  ${!isField ? card('Reputation — last 30 days', low30Total || null,
-      repHeadline + (low30Rows ? table(['Unit', 'What they said'], low30Rows) : '') + moreLow + repeatLine + themeLine,
-      low30Total ? '#dc2626' : '#059669',
-      `Last 30 days · since ${niceDay(w30.since)}`) : ''}
-
+  ${scoreboard}
   <p style="${S.foot}">${isField ? t('Sent automatically every morning · your supervisor has the live board.') : 'Ops Command · sent automatically every morning · labor deep-dive in the Daily Labor email · the boards have the live picture.'}</p>
   </div></body></html>`
+
+  const scoreboardTrimmed = `${eyebrow(isField ? t('Yesterday') : 'Good to know')}
+  ${card(t('Yesterday — what the team got done'), null, bare(yesterdayRows), y.inspections ? '#059669' : '#6366f1')}
+  <p style="font-size:12px;color:#6b7280;margin:8px 4px 0;line-height:1.7">Today's list ran long, so the rest of this section — ${isField ? 'vacant units' : 'reviews, vacant units and the 30-day reputation'} — is on the boards this morning rather than in this email, which Gmail would have cut off anyway.</p>`
+  const full = render(scoreboardFull)
+  const html = full.length <= CLIP_BUDGET ? full : render(scoreboardTrimmed)
 
   return {
     date: d.today, variant, subject, html,
