@@ -530,9 +530,10 @@ export async function GET(req: Request) {
       payrollFailedWeeks: Array.from(new Set([...(tcAudit.failedWeeks || []), ...(((econ as any)?.payrollAudit?.failedWeeks) || [])])),
       ...kpis, tasks, payroll, today: todayBlock,
       // ONE hours-per-turn (labor audit 2026-09-21): computeLaborKpis divides EVERY crew's hours by
-      // the clean count (3.05h) while the HK card says 2.4h. The engine's HK-only figure is the KPI.
+      // the clean count (3.05h) while the HK card says 2.4h. The engine's HK-wage figure is the KPI.
       hoursPerClean: econ.hoursPerClean,
-      hoursPerCleanAllCrews: kpis.hoursPerClean,
+      hoursPerCleanHkOnly: econ.kpi?.housekeeping?.hoursPerCleanHkOnly ?? null,
+      hoursPerCleanEveryCrewsHours: kpis.hoursPerClean,
       cleansCompleted: econ.kpi?.housekeeping?.cleans ?? kpis.cleansCompleted,
       // The three housekeeping categories and the layer stack, straight off the shared engine.
       buckets: econ.buckets,

@@ -11,8 +11,9 @@
 //
 // THE RULES (feedback-labor-truth-source + the audit decisions):
 //   • Hours and wages: Homebase punches. Salaried people carry salary ÷ days, punches shown beside.
-//   • Volume: departure cleans, on the ET day they landed. HK-ONLY for cost/hours per turn —
-//     a turn a supervisor, a tech or a vendor cleaner covered is counted under "covered by others".
+//   • Volume: departure cleans, on the ET day they landed. Cost and hours per turn come TWO ways:
+//     HK wages ÷ every turn (a supervisor covering one is a saving — the number that matters) and
+//     HK wages ÷ housekeepers' own turns (the scheduling check). Both always shown.
 //   • Revenue: net cleaning fees on confirmed checkouts only. Owner / F&F stays earn $0.
 //   • Billable: what the team ENTERED on Breezeway tasks (a manual process, never task clock
 //     time), on the ET day the task was finished, credited by the same person→crew rule as wages.
@@ -59,14 +60,24 @@ export type LaborDayRow = {
   d: string
   dow: string
   crews: Record<CrewKey, CrewDay>
-  /** Housekeeping's own KPI — HK wages over the turns HK did. */
+  /** Housekeeping's KPI, two ways (Jon 2026-09-21): wages ÷ EVERY turn (a supervisor covering a
+   *  turn is a saving — the number that matters) and wages ÷ the turns housekeepers themselves did
+   *  (is the controllable team scheduled well). */
   hk: {
+    /** Turns housekeepers did. */
     cleans: number
+    /** Turns a supervisor / tech / vendor cleaner covered. */
     coveredByOthers: number
+    /** cleans + coveredByOthers. */
+    cleansTotal: number
     /** Net cleaning fees on every in-house departure turn that landed today (any crew). */
     fees: number
+    /** HK wages ÷ every turn — THE number. */
     hoursPerClean: number | null
     costPerClean: number | null
+    /** HK wages ÷ housekeepers' own turns — the scheduling check. */
+    hoursPerCleanHkOnly: number | null
+    costPerCleanHkOnly: number | null
     margin: number
     marginPct: number | null
   }
@@ -110,7 +121,7 @@ const blankCrew = (): CrewDay => ({ people: 0, hours: 0, payroll: 0, punchPayrol
 const blankRow = (d: string): LaborDayRow => ({
   d, dow: d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }) : '',
   crews: { housekeeping: blankCrew(), supervision: blankCrew(), maintenance: blankCrew(), other: blankCrew() },
-  hk: { cleans: 0, coveredByOthers: 0, fees: 0, hoursPerClean: null, costPerClean: null, margin: 0, marginPct: null },
+  hk: { cleans: 0, coveredByOthers: 0, cleansTotal: 0, fees: 0, hoursPerClean: null, costPerClean: null, hoursPerCleanHkOnly: null, costPerCleanHkOnly: null, margin: 0, marginPct: null },
   total: { hours: 0, payroll: 0, cleans: 0, fees: 0, billable: 0, billedHours: null, margin: 0 },
 })
 
@@ -124,8 +135,11 @@ function finish(row: LaborDayRow, rate: number) {
   }
   const hk = row.crews.housekeeping
   row.hk.fees = round2(row.hk.fees)
-  row.hk.hoursPerClean = row.hk.cleans > 0 && hk.hours > 0 ? round2(hk.hours / row.hk.cleans) : null
-  row.hk.costPerClean = row.hk.cleans > 0 && hk.payroll > 0 ? round2(hk.payroll / row.hk.cleans) : null
+  row.hk.cleansTotal = row.hk.cleans + row.hk.coveredByOthers
+  row.hk.hoursPerClean = row.hk.cleansTotal > 0 && hk.hours > 0 ? round2(hk.hours / row.hk.cleansTotal) : null
+  row.hk.costPerClean = row.hk.cleansTotal > 0 && hk.payroll > 0 ? round2(hk.payroll / row.hk.cleansTotal) : null
+  row.hk.hoursPerCleanHkOnly = row.hk.cleans > 0 && hk.hours > 0 ? round2(hk.hours / row.hk.cleans) : null
+  row.hk.costPerCleanHkOnly = row.hk.cleans > 0 && hk.payroll > 0 ? round2(hk.payroll / row.hk.cleans) : null
   row.hk.margin = round2(row.hk.fees - hk.payroll)
   row.hk.marginPct = row.hk.fees > 0 ? Math.round((row.hk.margin / row.hk.fees) * 100) : null
   const t = row.total
@@ -230,6 +244,6 @@ export async function laborDays(opts: { from: string; to: string; market?: strin
       tasksNoCharge: mt ? Number((mt as any).tasksNoCharge || 0) : 0,
       salaried: salariedNames,
     },
-    basis: 'Homebase punches for hours and wages (salaries by the day) · departure turns on the day they landed, HK-only for cost and hours per turn · net cleaning fees on confirmed checkouts · charges the team entered on tasks, ÷ $' + rate + '/h for billed hours. Breezeway colours, never decides.',
+    basis: 'Homebase punches for hours and wages (salaries by the day) \u00b7 departure turns on the day they landed \u2014 HK wages over every turn (the number) and over housekeepers\u2019 own turns (the scheduling check) \u00b7 net cleaning fees on confirmed checkouts \u00b7 charges the team entered on tasks, \u00f7 $' + rate + '/h for billed hours. Breezeway colours, never decides.',
   }
 }

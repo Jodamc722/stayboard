@@ -254,7 +254,8 @@ async function send(req: NextRequest) {
         cleansHk: Number(hk.cleansByHousekeepers ?? hk.cleans) || 0,
         cleansOthers: Number(hk.cleansByOtherCrews) || 0,
         hkHours: Number(hk.hours) || 0, hkPay: Number(hk.payroll) || 0,
-        cpc: hk.costPerClean, hpc: hk.hoursPerClean,
+        cpc: hk.costPerClean, hpc: hk.hoursPerClean,                 // HK wages ÷ every turn — the number
+        cpcOwn: hk.costPerCleanHkOnly, hpcOwn: hk.hoursPerCleanHkOnly, // ÷ housekeepers' own turns
         hkFees: Number(hk.revenue) || 0, hkCharged: Number(hk.chargedCleans) || 0,
         byMk: (ec.costPerCleanByMarket || {}) as Record<string, number | null>,
         sup: { n: Number(sup.people) || 0, names: sup.names || [], hours: Number(sup.hours) || 0, pay: Number(sup.payroll) || 0,
@@ -304,10 +305,11 @@ async function send(req: NextRequest) {
       '<th style="' + th + ';text-align:right">Last 7 days</th><th style="' + th + ';text-align:right">Last 30 days</th></tr>' +
       // ── tier 1
       band('1 &middot; Housekeeping', 'cost per clean &mdash; housekeeper wages only') +
-      tRow('Cost per turn', 'housekeeper payroll &divide; the turns housekeepers did', x => x.cpc != null ? '<b style="font-size:17px">' + rate(x.cpc) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>', { strong: true }) +
+      tRow('Cost per turn', 'housekeeper payroll &divide; every turn &mdash; a turn a supervisor covered is a saving', x => x.cpc != null ? '<b style="font-size:17px">' + rate(x.cpc) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>', { strong: true }) +
+      tRow('&nbsp;&nbsp;on housekeepers&rsquo; own turns', 'the same wages &divide; only the turns they did &mdash; are they scheduled well', x => x.cpcOwn != null ? rate(x.cpcOwn) + (x.hpcOwn != null ? ' <span style="' + MUTED + ';font-size:11px">' + x.hpcOwn + 'h</span>' : '') : '<span style="' + MUTED + '">&mdash;</span>') +
       tRow('By market', '', mkLine) +
-      tRow('Turns by housekeepers', 'the denominator', x => '<b>' + x.cleansHk + '</b>' +
-        (x.cleansOthers ? '<br><span style="' + GREEN + ';font-size:11px;font-weight:400">+ ' + x.cleansOthers + ' covered by other crews (' + x.cleans + ' in all)</span>' : '')) +
+      tRow('Departure turns', 'every turn &mdash; the denominator', x => '<b>' + x.cleans + '</b>' +
+        '<br><span style="' + MUTED + ';font-size:11px">' + x.cleansHk + ' by housekeepers' + (x.cleansOthers ? '</span> <span style="' + GREEN + ';font-size:11px;font-weight:400">+ ' + x.cleansOthers + ' covered by supervisors / techs</span>' : '</span>')) +
       tRow('Housekeeper hours &middot; payroll', 'Homebase punches', x => r1(x.hkHours) + 'h &middot; ' + money(x.hkPay) + (x.hpc != null ? '<br><span style="' + MUTED + ';font-size:11px">' + x.hpc + 'h per turn</span>' : '')) +
       tRow('Cleaning fees earned', 'net of the channel cut' , x => money(x.hkFees) + (x.hkCharged ? '<br><span style="' + MUTED + ';font-size:11px">+ ' + money(x.hkCharged) + ' charged cleaning work</span>' : '')) +
       tRow('Housekeeping net', 'fees minus housekeeper payroll', x => net(x.hkFees + x.hkCharged - x.hkPay)) +
@@ -337,7 +339,7 @@ async function send(req: NextRequest) {
       tRow('Loaded cost per turn', 'all payroll &divide; every departure turn, any crew', x => x.cleans > 0 && x.allPay > 0 ? '<b>' + rate(x.allPay / x.cleans) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>') +
       '</table>' + dayStrip +
       '<p style="margin:10px 0 0;font-size:11px;color:#9ca3af;line-height:1.7">' +
-      '<b>Cost per turn</b> is housekeeper wages only, divided by the turns housekeepers did (HK-only, Jon 2026-09-21) &mdash; a turn a technician or supervisor covered is counted beside it and its fee is cleaning revenue, but it never lowers the rate. ' +
+      '<b>Cost per turn</b> is housekeeper wages only, divided by every departure turn &mdash; a turn a supervisor or technician covered is a saving on housekeeping labor, so it counts (Jon, 2026-09-21). The line under it divides the same wages by the turns housekeepers themselves did, which is the scheduling check. ' +
       'Cleaning revenue counts confirmed checkouts only; inquiries, expired requests and owner / friends-&amp;-family stays earn $0. ' +
       'A shared Breezeway task is credited to the first field person on it; office staff are never credited. ' +
       'Every dollar of payroll is a Homebase punch, or the stated salary for salaried people, pro-rated to the window.</p>' +
@@ -458,7 +460,7 @@ async function send(req: NextRequest) {
 
     // ── header + verdict ──────────────────────────────────────────────────────────────────────
     const verdict =
-      'Yesterday: <b>' + TY.cleansHk + ' turns</b> by housekeepers' + (TY.cleansOthers ? ' (+' + TY.cleansOthers + ' covered by others)' : '') + (TY.cpc != null ? ' at <b>' + rate(TY.cpc) + '</b> of housekeeper pay each' : '') +
+      'Yesterday: <b>' + TY.cleans + ' turns</b>' + (TY.cleansOthers ? ' (' + TY.cleansHk + ' by housekeepers, ' + TY.cleansOthers + ' covered)' : '') + (TY.cpc != null ? ' at <b>' + rate(TY.cpc) + '</b> of housekeeper pay each' : '') +
       ' &middot; all crews: ' + money(TY.allRev) + ' earned against ' + money(TY.allPay) + ' payroll &rarr; <b style="' + (TY.profit < 0 ? RED : GREEN) + '">' + money(TY.profit) + (TY.profit < 0 ? ' loss' : ' profit') + '</b>' +
       (TY.marginPct != null ? ' (' + pctTxt(TY.marginPct) + ')' : '') + '.' +
       (T30.cpc != null ? ' 30-day cost per clean <b>' + rate(T30.cpc) + '</b>.' : '') +

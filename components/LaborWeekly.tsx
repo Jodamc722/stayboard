@@ -18,6 +18,7 @@ type Row = {
   cleaningRevenue: number | null; hkPayroll: number | null; hkHours: number
   housekeepers: number
   hoursPerClean: number | null; costPerClean: number | null; revPerClean: number | null
+  hoursPerCleanHkOnly?: number | null; costPerCleanHkOnly?: number | null; coveredByOthers?: number
   hkMargin: number | null; hkMarginPct: number | null
   vendorRevenue: number | null
   cleansUnassigned: number; unrosteredPeople: number; unrosteredPayroll: number | null
@@ -87,7 +88,7 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
         {/* The negative margin lets the scroller reach the edge of the glass, so an 860px table does
             not look clipped inside the card's 12px gutter. Restored to nothing at sm and up. */}
         <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
-          <table className="w-full text-[12.5px] min-w-[860px]">
+          <table className="w-full text-[12.5px] min-w-[940px]">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-[0.09em] text-muted border-b border-line">
                 <th className="py-1.5 pr-3">Week of</th>
@@ -98,6 +99,7 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
                 <th className="py-1.5 pr-3 text-right">HK hours</th>
                 <th className="py-1.5 pr-3 text-right">Hours / clean</th>
                 <th className="py-1.5 pr-3 text-right">Cost / clean</th>
+                <th className="py-1.5 pr-3 text-right font-normal">HK own</th>
                 <th className="py-1.5 pr-3 text-right">Rev / clean</th>
                 <th className="py-1.5 pr-3 text-right">Crew</th>
                 <th className="py-1.5 text-left font-normal normal-case tracking-normal text-[10.5px]">Worth knowing</th>
@@ -108,7 +110,7 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
                 if (r.error) return (
                   <tr key={r.start} className="border-b border-line/60">
                     <td className="py-1.5 pr-3 font-medium text-ink">{r.label}</td>
-                    <td colSpan={10} className="py-1.5 text-[12px] text-rose-700">Could not build this week — {r.error}</td>
+                    <td colSpan={11} className="py-1.5 text-[12px] text-rose-700">Could not build this week — {r.error}</td>
                   </tr>
                 )
                 const hpc = drift(r.hoursPerClean, a.hoursPerClean)
@@ -118,6 +120,7 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
                 if (!r.payrollComplete) notes.push('Homebase week incomplete — payroll understated')
                 if (r.unrosteredPeople > 0) notes.push(`${r.unrosteredPeople} on payroll with no crew${r.unrosteredPayroll ? ` (${money(r.unrosteredPayroll)})` : ''}`)
                 if (r.cleansUnassigned > 0) notes.push(`${r.cleansUnassigned} cleans with nobody named`)
+                if (r.coveredByOthers) notes.push(`${r.coveredByOthers} turns covered by supervisors / techs`)
                 if (r.vendorRevenue) notes.push(`${money(r.vendorRevenue)} vendor-cleaned, kept out of the above`)
                 return (
                   <tr key={r.start} className={`border-b border-line/60 last:border-b-0 ${r.partial ? 'opacity-70' : ''}`}>
@@ -142,6 +145,9 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
                     <td className={'py-1.5 pr-3 text-right tabular-nums ' + (cpc === 'high' ? 'text-rose-700 font-semibold' : cpc === 'low' ? 'text-emerald-700 font-semibold' : 'text-ink')}>
                       {money(r.costPerClean)}
                     </td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums text-muted" title="the same wages over the turns housekeepers themselves did">
+                      {money(r.costPerCleanHkOnly)}{r.hoursPerCleanHkOnly != null && <span className="text-[10.5px]"> · {r.hoursPerCleanHkOnly}h</span>}
+                    </td>
                     <td className="py-1.5 pr-3 text-right tabular-nums text-muted">{money(r.revPerClean)}</td>
                     <td className="py-1.5 pr-3 text-right tabular-nums text-muted">{r.housekeepers || '—'}</td>
                     <td className="py-1.5 text-[11px] text-muted">{notes.join(' · ')}</td>
@@ -157,6 +163,7 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
                 <td className="py-1.5 pr-3 text-right tabular-nums text-muted">{a.hkHours == null ? '—' : Math.round(a.hkHours) + 'h'}</td>
                 <td className="py-1.5 pr-3 text-right tabular-nums text-ink font-semibold">{a.hoursPerClean == null ? '—' : a.hoursPerClean + 'h'}</td>
                 <td className="py-1.5 pr-3 text-right tabular-nums text-ink font-semibold">{money(a.costPerClean)}</td>
+                <td className="py-1.5 pr-3"></td>
                 <td className="py-1.5 pr-3 text-right tabular-nums text-muted">{money(a.revPerClean)}</td>
                 <td className="py-1.5 pr-3"></td>
                 <td className="py-1.5 text-[11px] text-muted">bold = more than 12% off this average</td>

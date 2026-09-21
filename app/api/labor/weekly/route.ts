@@ -67,8 +67,8 @@ export async function GET(req: NextRequest) {
       // read materially cheaper than the board's own tile, directly above it on the same screen.
       // ONE ANSWER (labor audit 2026-09-21): this route used to divide HK payroll by every in-house
       // clean and pair it with ALL checkout fees, so the trend disagreed with the board's HK card
-      // above it. It now reads the engine's own HK-only KPI — wages over the turns housekeepers
-      // did, against the fees on the turns that actually landed — and never re-derives.
+      // above it. It now reads the engine's own KPI (both ways: wages over every turn, and over
+      // housekeepers' own turns) against the fees on the turns that landed — never re-derives.
       const k = e.kpi.housekeeping
       const cleans = Number(k.cleans) || 0                       // every in-house turn, any crew
       const cleansByHk = Number(k.cleansByHousekeepers) || 0
@@ -86,8 +86,10 @@ export async function GET(req: NextRequest) {
         hkPayroll: money ? round2(hkPayroll) : null,
         hkHours: round1(hkHours),
         housekeepers: Number(hk?.people) || 0,
-        hoursPerClean: k.hoursPerClean,
+        hoursPerClean: k.hoursPerClean,                            // HK wages ÷ every turn — the number
         costPerClean: money ? k.costPerClean : null,
+        hoursPerCleanHkOnly: k.hoursPerCleanHkOnly,                // ÷ housekeepers' own turns — the scheduling check
+        costPerCleanHkOnly: money ? k.costPerCleanHkOnly : null,
         revPerClean: money && cleans > 0 && revenue > 0 ? round2(revenue / cleans) : null,
         hkMargin: money ? round2(revenue - hkPayroll) : null,
         hkMarginPct: revenue > 0 ? round1(((revenue - hkPayroll) / revenue) * 100) : null,
@@ -124,7 +126,7 @@ export async function GET(req: NextRequest) {
       costPerClean: avg(r => r.costPerClean),
       revPerClean: avg(r => r.revPerClean),
     },
-    basis: 'Homebase timecards for hours and payroll · departure turns housekeepers did for cost and hours per turn (turns covered by other crews shown apart) · net cleaning fees on confirmed checkouts for revenue. Breezeway task counts are context, never the calculation.',
+    basis: 'Homebase timecards for hours and payroll \u00b7 HK wages over every departure turn for cost and hours per turn, and over housekeepers\u2019 own turns beside it \u00b7 net cleaning fees on confirmed checkouts for revenue. Breezeway task counts are context, never the calculation.',
     failedWeeks: rows.filter(r => r.error).map(r => r.label),
   })
 }

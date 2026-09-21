@@ -298,7 +298,7 @@ export type LaborEcon = {
     key: string; label: string; inHouse: boolean; people: number
     cleans: number; cleansByHk: number; cleansByOthers: number; cleaningRevenue: number; payroll: number; hours: number
     laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
-    laborCostPerCleanAllCrews: number | null; hoursPerCleanAllCrews: number | null
+    laborCostPerCleanHkOnly: number | null; hoursPerCleanHkOnly: number | null
     margin: number; marginPct: number | null
   }>
   /** The stack: housekeeping labor, maintenance billables, maintenance cleans, supervisor overhead. */
@@ -1323,7 +1323,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     key: string; label: string; inHouse: boolean
     cleans: number; cleansByHk: number; cleansByOthers: number; cleaningRevenue: number; payroll: number; hours: number
     laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
-    laborCostPerCleanAllCrews: number | null; hoursPerCleanAllCrews: number | null
+    laborCostPerCleanHkOnly: number | null; hoursPerCleanHkOnly: number | null
     margin: number; marginPct: number | null; people: number
   }
   // 'vendor-inhouse' is OUR crew cleaning inside a vendor-managed building — our hours, our cost,
@@ -1339,7 +1339,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     key, label: BUCKET_LABEL[key] || (key.charAt(0).toUpperCase() + key.slice(1)), inHouse,
     cleans: 0, cleansByHk: 0, cleansByOthers: 0, cleaningRevenue: 0, payroll: 0, hours: 0,
     laborCostPerClean: null, hoursPerClean: null, feePerClean: null,
-    laborCostPerCleanAllCrews: null, hoursPerCleanAllCrews: null,
+    laborCostPerCleanHkOnly: null, hoursPerCleanHkOnly: null,
     margin: 0, marginPct: null, people: 0,
   })
   const buckets: Record<string, Bucket> = {}
@@ -1460,20 +1460,18 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     v.cleans = vendorCleans
     v.cleaningRevenue = round2(cleaningVendor)
   }
-  // HK-ONLY IS THE RULE (Jon, 2026-09-21 labor audit, chose "HK-only"): housekeeper wages over the
-  // turns HOUSEKEEPERS did. A turn a supervisor, a tech or a vendor cleaner covered is still a clean
-  // and its fee is still cleaning revenue — but it goes in `cleansByOthers`, never under HK wages.
-  // The audit measured the old way flattering cost per turn by ~12% (255 of 282 turns were
-  // housekeepers'; $43.96 shown vs $48.60 real) and hours per turn by the same (2.42 vs 2.67).
+  // TWO NUMBERS PER BUCKET (Jon, 2026-09-21): wages ÷ every turn (a supervisor covering a turn is
+  // a saving — the number that matters) AND wages ÷ the turns housekeepers themselves did (are
+  // they scheduled well). Over Sep 7–20 these were $43.96 vs $48.60 — 30 of 282 turns were covered.
   for (const k of Object.keys(buckets)) {
     const b = buckets[k]
     b.people = Object.keys(bucketNames[k] || {}).length
     b.cleansByOthers = depCleansByOthersMk[k] || 0
     b.cleansByHk = Math.max(0, b.cleans - b.cleansByOthers)
-    b.laborCostPerClean = b.inHouse && b.cleansByHk > 0 && b.payroll > 0 ? round2(b.payroll / b.cleansByHk) : null
-    b.hoursPerClean = b.inHouse && b.cleansByHk > 0 && b.hours > 0 ? round2(b.hours / b.cleansByHk) : null
-    b.laborCostPerCleanAllCrews = b.inHouse && b.cleans > 0 && b.payroll > 0 ? round2(b.payroll / b.cleans) : null
-    b.hoursPerCleanAllCrews = b.inHouse && b.cleans > 0 && b.hours > 0 ? round2(b.hours / b.cleans) : null
+    b.laborCostPerClean = b.inHouse && b.cleans > 0 && b.payroll > 0 ? round2(b.payroll / b.cleans) : null
+    b.hoursPerClean = b.inHouse && b.cleans > 0 && b.hours > 0 ? round2(b.hours / b.cleans) : null
+    b.laborCostPerCleanHkOnly = b.inHouse && b.cleansByHk > 0 && b.payroll > 0 ? round2(b.payroll / b.cleansByHk) : null
+    b.hoursPerCleanHkOnly = b.inHouse && b.cleansByHk > 0 && b.hours > 0 ? round2(b.hours / b.cleansByHk) : null
     b.feePerClean = b.cleans > 0 && b.cleaningRevenue > 0 ? round2(b.cleaningRevenue / b.cleans) : null
     b.margin = round2(b.cleaningRevenue - b.payroll)
     b.marginPct = b.cleaningRevenue > 0 ? round2((b.margin / b.cleaningRevenue) * 100) : null
@@ -1508,11 +1506,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const hkCleansInHouse = inHouseB.reduce((a, b) => a + b.cleans, 0)
   const hkCleansByOthersInHouse = inHouseB.reduce((a, b) => a + (b.cleansByOthers || 0), 0)
   const hkCleansByHkInHouse = Math.max(0, hkCleansInHouse - hkCleansByOthersInHouse)
-  // HK-ONLY (see the bucket loop above): wages ÷ turns housekeepers did.
-  const costPerClean = hkCleansByHkInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansByHkInHouse) : null
-  const hoursPerClean = hkCleansByHkInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansByHkInHouse) : null
-  const costPerCleanAllCrews = hkCleansInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansInHouse) : null
-  const hoursPerCleanAllCrews = hkCleansInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansInHouse) : null
+  // TWO NUMBERS, BOTH KEPT (Jon, 2026-09-21): "I do want to see the cost per labor for the
+  // assigned cleans and for the total cleans, because that's the most important number."
+  //   costPerClean / hoursPerClean     — HK wages ÷ EVERY departure turn in the market. A turn a
+  //                                       supervisor covered is a real saving (Yoslenis is a static
+  //                                       cost), so this is THE number.
+  //   costPerCleanHkOnly / hoursPerCleanHkOnly — HK wages ÷ the turns housekeepers themselves did:
+  //                                       whether the controllable team is scheduled effectively.
+  const costPerClean = hkCleansInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansInHouse) : null
+  const hoursPerClean = hkCleansInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansInHouse) : null
+  const costPerCleanHkOnly = hkCleansByHkInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansByHkInHouse) : null
+  const hoursPerCleanHkOnly = hkCleansByHkInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansByHkInHouse) : null
   // ONE ANSWER PER QUESTION. The housekeeping department row used to divide a person's FULL
   // window payroll by their MARKET-filtered cleans, so on a market tab the row disagreed with the
   // tile printed directly above it. The bucket figures already allocate a housekeeper's wages
@@ -1635,8 +1639,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
         cleans: inHouseB.reduce((a, b) => a + (depCleansByOthersMk[b.key] || 0), 0),
         fees: round2(inHouseB.reduce((a, b) => a + (feesByOthersMk[b.key] || 0), 0)),
       },
-      basisNote: 'housekeeper wages over the turns housekeepers did (HK-only, Jon 2026-09-21). A turn covered by a supervisor, a tech or a vendor cleaner is counted and its fee is cleaning revenue, but it never dilutes cost or hours per turn — see cleansByOtherCrews and costPerCleanAllCrews',
-      costPerCleanAllCrews, hoursPerCleanAllCrews,
+      basisNote: 'housekeeper wages over every departure turn in the market (a turn a supervisor covered is a saving) — THE number; costPerCleanHkOnly divides the same wages by the turns housekeepers themselves did, the scheduling check (Jon, 2026-09-21)',
+      costPerCleanHkOnly, hoursPerCleanHkOnly,
       // Gross guest cleaning fees before the OTA cut, so the difference is visible.
       revenueGross: cleaningGrossAll,
       channelCut: round2(Math.max(0, cleaningGrossAll - cleaningInhouse)),

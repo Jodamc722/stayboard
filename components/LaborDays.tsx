@@ -18,7 +18,7 @@ type Crew = { people: number; hours: number; payroll: number | null; punchPayrol
 type Row = {
   d: string; dow: string
   crews: { housekeeping: Crew; supervision: Crew; maintenance: Crew; other: Crew }
-  hk: { cleans: number; coveredByOthers: number; fees: number | null; hoursPerClean: number | null; costPerClean: number | null; margin: number | null; marginPct: number | null }
+  hk: { cleans: number; coveredByOthers: number; cleansTotal: number; fees: number | null; hoursPerClean: number | null; costPerClean: number | null; hoursPerCleanHkOnly: number | null; costPerCleanHkOnly: number | null; margin: number | null; marginPct: number | null }
   total: { hours: number; payroll: number | null; cleans: number; fees: number | null; billable: number | null; billedHours: number | null; margin: number | null }
 }
 type Data = {
@@ -71,7 +71,7 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
   useEffect(() => { load() }, [load])
 
   const sum = d?.sum
-  const avgHpc = sum?.hk.hoursPerClean ?? null
+  const avgHpc = sum?.hk.hoursPerCleanHkOnly ?? null
   const avgCpc = sum?.hk.costPerClean ?? null
   const h = d?.health
 
@@ -133,17 +133,19 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
               <thead>
                 <tr className="text-[10px] uppercase tracking-[0.09em] text-muted border-b border-line">
                   <th className="py-1 pr-3 text-left" rowSpan={2}>Day</th>
-                  <th className="py-1 pr-3 text-center border-l border-line/70 bg-emerald-50/40" colSpan={6}>Housekeeping · alone</th>
+                  <th className="py-1 pr-3 text-center border-l border-line/70 bg-emerald-50/40" colSpan={8}>Housekeeping · alone</th>
                   <th className="py-1 pr-3 text-center border-l border-line/70 bg-sky-50/40" colSpan={4}>Supervisors · alone</th>
                   <th className="py-1 pr-3 text-center border-l border-line/70 bg-amber-50/40" colSpan={4}>Maintenance · alone</th>
                   <th className="py-1 pr-3 text-center border-l border-line/70" colSpan={3}>All crews</th>
                 </tr>
                 <tr className="text-[10px] uppercase tracking-[0.09em] text-muted border-b border-line">
-                  <th className="py-1 pr-3 text-right border-l border-line/70 bg-emerald-50/40">Turns</th>
+                  <th className="py-1 pr-3 text-right border-l border-line/70 bg-emerald-50/40">Turns · total</th>
+                  <th className="py-1 pr-3 text-right bg-emerald-50/40">HK own</th>
                   <th className="py-1 pr-3 text-right bg-emerald-50/40">Hours</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">h / turn</th>
                   <th className="py-1 pr-3 text-right bg-emerald-50/40">Payroll</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">$ / turn</th>
+                  <th className="py-1 pr-3 text-right bg-emerald-50/40">$ / turn · total</th>
+                  <th className="py-1 pr-3 text-right bg-emerald-50/40">$ / own</th>
+                  <th className="py-1 pr-3 text-right bg-emerald-50/40">h / turn · own</th>
                   <th className="py-1 pr-3 text-right bg-emerald-50/40">Fees · margin</th>
                   <th className="py-1 pr-3 text-right border-l border-line/70 bg-sky-50/40">Paid h</th>
                   <th className="py-1 pr-3 text-right bg-sky-50/40">Payroll</th>
@@ -162,7 +164,7 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
                 {[...d.rows, sum].map((r, i) => {
                   const isSum = i === d.rows.length
                   const hk = r.crews.housekeeping, sp = r.crews.supervision, mt = r.crews.maintenance
-                  const hpc = isSum ? null : drift(r.hk.hoursPerClean, avgHpc)
+                  const hpc = isSum ? null : drift(r.hk.hoursPerCleanHkOnly, avgHpc)
                   const cpc = isSum ? null : drift(r.hk.costPerClean, avgCpc)
                   const quiet = !isSum && r.total.hours === 0 && r.total.cleans === 0
                   const billedCls = (c: Crew) => c.hours > 0 && c.billedPct != null ? (c.billedPct >= 60 ? 'text-emerald-700' : c.billedPct >= 30 ? 'text-ink' : 'text-rose-700') : 'text-muted'
@@ -178,14 +180,16 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
                           </>
                         )}
                       </td>
-                      <td className="py-1.5 pr-3 text-right tabular-nums border-l border-line/70">
-                        <button onClick={() => setShowNames(showNames === r.d + 'hk' ? null : r.d + 'hk')} className="font-semibold text-ink hover:text-brand-700" title={hk.names.join(', ') || 'nobody'}>{r.hk.cleans}</button>
-                        {r.hk.coveredByOthers > 0 && <span className="text-[10.5px] text-muted font-normal"> +{r.hk.coveredByOthers} by others</span>}
+                      <td className="py-1.5 pr-3 text-right tabular-nums border-l border-line/70 font-semibold text-ink">{r.hk.cleansTotal}</td>
+                      <td className="py-1.5 pr-3 text-right tabular-nums">
+                        <button onClick={() => setShowNames(showNames === r.d + 'hk' ? null : r.d + 'hk')} className="text-ink hover:text-brand-700" title={hk.names.join(', ') || 'nobody'}>{r.hk.cleans}</button>
+                        {r.hk.coveredByOthers > 0 && <span className="text-[10.5px] text-emerald-700 font-normal"> +{r.hk.coveredByOthers} covered</span>}
                       </td>
                       {cell(hrs(hk.hours), 'text-muted')}
-                      {cell(r.hk.hoursPerClean == null ? '—' : r.hk.hoursPerClean + 'h', hpc === 'high' ? 'text-rose-700 font-semibold' : hpc === 'low' ? 'text-emerald-700 font-semibold' : 'text-ink font-semibold')}
                       {cell(money(hk.payroll), 'text-muted')}
                       {cell(money(r.hk.costPerClean), cpc === 'high' ? 'text-rose-700 font-semibold' : cpc === 'low' ? 'text-emerald-700 font-semibold' : 'text-ink font-semibold')}
+                      {cell(money(r.hk.costPerCleanHkOnly), 'text-muted')}
+                      {cell(r.hk.hoursPerCleanHkOnly == null ? '—' : r.hk.hoursPerCleanHkOnly + 'h', hpc === 'high' ? 'text-rose-700 font-semibold' : hpc === 'low' ? 'text-emerald-700 font-semibold' : 'text-ink')}
                       <td className="py-1.5 pr-3 text-right tabular-nums whitespace-nowrap">
                         <span className="text-muted">{money(r.hk.fees)}</span>
                         {r.hk.margin != null && <span className={'ml-1 ' + (r.hk.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{money(r.hk.margin)}{r.hk.marginPct != null && <span className="text-[10.5px] font-normal"> · {r.hk.marginPct}%</span>}</span>}
@@ -208,7 +212,7 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
             </table>
           </div>
           <p className="text-[10.5px] text-muted px-2 mt-2">
-            Housekeeping is judged per turn — its wages over the turns housekeepers did; a turn a supervisor, a tech or a vendor cleaner covered is counted beside it, never divided in. Supervisors and maintenance are judged on paid hours vs the charges the team entered on their tasks (÷ ${d.chargeRate}/h) — a low billed-to-paid % is either work that was never priced or hours that produced nothing billable. Bold red/green = more than 15% off the {d.rows.length}-day average. Salaries are spread by the day; agency markups ride on the wages they were computed on.
+            Housekeeping, two ways: <b>$ / turn · total</b> is housekeeper wages over every turn in the market — a turn Yoslenis or a tech covered is a saving, so this is the number. <b>$ / own</b> and <b>h / turn · own</b> divide the same wages by the turns housekeepers themselves did — whether the controllable team is scheduled well. Supervisors and maintenance are judged on paid hours vs the charges the team entered on their tasks (÷ ${d.chargeRate}/h) — a low billed-to-paid % is either work that was never priced or hours that produced nothing billable. Bold red/green = more than 15% off the {d.rows.length}-day average. Salaries are spread by the day; agency markups ride on the wages they were computed on.
           </p>
           {showNames && (() => {
             const r = d.rows.find(x => x.d + 'hk' === showNames)

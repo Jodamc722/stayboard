@@ -166,7 +166,7 @@ export function LaborPanel() {
       const k = keyOf(r.d)
       if (!(k in idx)) { idx[k] = buckets.length; buckets.push({ label: k, cleans: 0, fee: 0, wages: 0 }) }
       const b = buckets[idx[k]]
-      b.cleans += r.cleans; b.fee += r.fee; b.wages += r.hkWages
+      b.cleans += r.cleans + (r.cleansByOthers || 0); b.fee += r.fee; b.wages += r.hkWages
     }
     const rows = buckets.filter(b => b.cleans > 0).map(b => ({
       label: b.label, cleans: b.cleans,
@@ -212,7 +212,7 @@ export function LaborPanel() {
       <div className="rounded-xl border border-line bg-white px-4 py-3 relative">
         <p className="text-[10px] uppercase tracking-wide text-muted font-bold mb-2">Trend <span className="normal-case font-normal">· {weekly ? 'by week (Sun–Sat)' : 'by day'} · housekeepers only, engine numbers — hover any bar</span></p>
         <div className="flex flex-wrap gap-6">
-          <Panel title="Cost per turn" sub="housekeeper wages ÷ the turns housekeepers did — lower is better" val={r => r.cpc} fmtV={n => '$' + n.toFixed(0)} color={() => '#6366f1'} />
+          <Panel title="Cost per turn" sub="housekeeper wages ÷ every turn, covered ones included — lower is better" val={r => r.cpc} fmtV={n => '$' + n.toFixed(0)} color={() => '#6366f1'} />
           <Panel title="HK margin %" sub="net fees kept after loaded wages" val={r => r.marginPct} fmtV={n => n.toFixed(0) + '%'} color={v => (v >= 0 ? '#059669' : '#e11d48')} />
         </div>
         {tip && (
