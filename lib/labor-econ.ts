@@ -74,7 +74,11 @@ async function pageAll(q: (a: number, b: number) => any, pages = 30): Promise<an
   const out: any[] = []
   const seen: Record<string, boolean> = {}
   for (let p = 0; p < pages; p++) {
-    const { data } = await q(p * 1000, p * 1000 + 999)
+    const { data, error } = await q(p * 1000, p * 1000 + 999)
+    // A QUERY ERROR IS NOT AN EMPTY TABLE (labor audit 2026-09-21): this used to drop the error
+    // and return nothing, so a bad column name reported $0 cleaning revenue as a fact. Fail loud;
+    // every caller already handles an engine failure as "withheld", never as zero.
+    if (error) throw new Error('labor engine query failed: ' + String(error.message || error))
     if (!data?.length) break
     // Belt and braces: even ordered, never let the same row land twice.
     for (const row of data) {
@@ -556,7 +560,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // guests (lib/owner-audit.ts isOwnerOrFriendsFamily), so they earn no cleaning revenue here
   // either — their clean still counts as a clean, it just carries $0.
   const resRowsRaw = await pageAll((a, b) => sb.from('guesty_reservations')
-    .select('listing_id,check_out,status,source,confirmation_code,guest_name,tags,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
+    .select('listing_id,check_out,status,source,confirmation_code,guest_name,tags:raw->tags,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
     .gte('check_out', resFrom).lte('check_out', to)
     .not('status', 'in', '("canceled","cancelled","declined")').order('id', { ascending: true }).range(a, b))
   let resNonLive = 0, resNonLiveFees = 0, resOwnerFF = 0, resOwnerFFFees = 0
