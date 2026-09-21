@@ -427,6 +427,32 @@ const proofOf = (lg: CallLog | null, note?: CallNote | null): PhoneProof => ({
 export type CallNote = { id: string; summary: string; promised: string[]; issues: string[]; sentiment: string; at: string; caller: string }
 
 /**
+ * WHO MAKES THESE CALLS (2026-09-21, Jon: "we can add who called").
+ *
+ * Talkroute names nobody on an outbound call — it attaches no events at all — so the caller has to
+ * come from the person closing the card. This is the list the picker offers: everyone who has
+ * closed a call in the last ninety days, plus anyone named on the Talkroute device map. Free text
+ * is still allowed, so a new starter is never blocked by not being on a list.
+ */
+async function knownCallers(sb: any): Promise<string[]> {
+  const set = new Set<string>()
+  try {
+    const since = new Date(Date.now() - 90 * 86400_000).toISOString()
+    const { data } = await sb.from('guest_calls').select('called_by').gte('called_at', since).limit(1000)
+    for (const r of ((data as any[]) || [])) {
+      const n = String(r.called_by || '').trim()
+      // 'Talkroute' is the system, not a colleague, and an email is not how anyone refers to a person.
+      if (n && n.toLowerCase() !== 'talkroute' && n.indexOf('@') < 0) set.add(n)
+    }
+  } catch { /* the picker works as free text without it */ }
+  try {
+    const { getPeopleMap } = await import('./talkroute-people')
+    for (const v of Object.values(await getPeopleMap())) if (v) set.add(String(v))
+  } catch { /* … */ }
+  return Array.from(set).sort((a, b) => a.localeCompare(b)).slice(0, 40)
+}
+
+/**
  * The newest call note per reservation, for the desk. One query for the whole board rather than one
  * per card; missing table or RLS hiccup reads as "no notes", never as a broken desk.
  */
@@ -482,6 +508,8 @@ export type PostRow = {
 }
 export type DeskData = {
   today: string
+  /** Names to offer in the "who called" picker — who has actually been making these calls. */
+  callers: string[]
   /** Talkroute is connected: the desk shows phone-proven outcomes and folds the manual buttons away. */
   talkroute: boolean
   rows: WelcomeRow[]
@@ -525,6 +553,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
     .select('reservation_id,kind,outcome,note,called_by,caller_email,called_at,attempts,tier,source,last_attempt_at,last_result,talk_seconds')
     .in('reservation_id', chunk).then((r: any) => r.data || [])))).flat()
   const notes = await callNotes(sb, callIds)
+  const callers = await knownCallers(sb)
   const callLog = new Map<string, CallLog>()
   for (const c of logs) callLog.set(String(c.reservation_id) + '|' + String(c.kind), c)
   const logOf = (id: any, kind: 'welcome' | 'post_checkout') => callLog.get(String(id) + '|' + kind) || null
@@ -663,7 +692,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
   // short-circuits it. Read here, not in the component, so the close-out and the page agree.
   let talkroute = !!String(process.env.TALKROUTE_API_KEY || '').trim()
   if (!talkroute) { try { const { talkrouteConfigured } = await import('./talkroute'); talkroute = await talkrouteConfigured() } catch { talkroute = false } }
-  return { today, talkroute, rows, outRows, recoveryFailed: rec.failed, kpis }
+  return { today, talkroute, callers, rows, outRows, recoveryFailed: rec.failed, kpis }
 }
 
 // ── THE RECOVERY BOARD (Reviews page) ───────────────────────────────────────────────────────────
