@@ -2629,12 +2629,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           ]
           const askSecs = CORE.concat(EXTRA)
           const open: { label: string; q: string }[] = []
+          // The communication slide no longer shows its questions (Jon, 2026-09-21), so they
+          // neither count nor appear as open on the last slide.
+          const asksShown = (k: string) => !hid(k) && k !== 'comms'
           for (const x of askSecs) {
-            if (hid(x.k)) continue
+            if (!asksShown(x.k)) continue
             const as: Any[] = Array.isArray(sec(x.k).asks) ? sec(x.k).asks : []
             for (const a of as) if (!String(a.a || '').trim()) open.push({ label: x.label, q: houseAsk(a.q) })
           }
-          const answered = askSecs.reduce((n, x) => n + (hid(x.k) ? 0 : (sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
+          const answered = askSecs.reduce((n, x) => n + (!asksShown(x.k) ? 0 : (sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
           const totalAsks = answered + open.length
 
           // ── slide furniture ────────────────────────────────────────────────
