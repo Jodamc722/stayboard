@@ -61,12 +61,16 @@ async function freshRecordingUrl(callId: string, callAt: string): Promise<string
   } catch { return '' }
 }
 
-/** The one line that goes into Guesty's reservation notes for a connected call. */
+/**
+ * The one line that goes into Guesty's reservation notes for a connected call.
+ *
+ * It does NOT repeat the call kind: appendReservationNote already writes "[date] <label> by
+ * Talkroute: …", so a body starting "Guest call ·" produced "Guest call by Talkroute: Guest call ·"
+ * in the live notes. The body opens with the direction and the length instead.
+ */
 export function noteLineFor(call: any, intel: CallIntel | null): string {
-  const kind = MATCH_LABEL[String(call.match_kind || '')] || 'Guest call'
   const dir = call.direction === 'inbound' ? 'guest called in' : 'we called'
-  const len = mins(Number(call.duration) || 0)
-  const head = `${kind} · ${dir} · ${len}`
+  const head = `${dir} · ${mins(Number(call.duration) || 0)}`
   const body = intel?.summary ? intel.summary : 'Connected; no note recorded.'
   const promised = intel?.promised?.length ? ` · We promised: ${intel.promised.join('; ')}.` : ''
   const issues = intel?.issues?.length ? ` · Flagged: ${intel.issues.join('; ')}.` : ''
