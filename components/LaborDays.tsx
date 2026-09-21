@@ -133,31 +133,31 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
               <thead>
                 <tr className="text-[10px] uppercase tracking-[0.09em] text-muted border-b border-line">
                   <th className="py-1 pr-3 text-left" rowSpan={2}>Day</th>
-                  <th className="py-1 pr-3 text-center border-l border-line/70 bg-emerald-50/40" colSpan={8}>Housekeeping · alone</th>
-                  <th className="py-1 pr-3 text-center border-l border-line/70 bg-sky-50/40" colSpan={4}>Supervisors · alone</th>
-                  <th className="py-1 pr-3 text-center border-l border-line/70 bg-amber-50/40" colSpan={4}>Maintenance · alone</th>
-                  <th className="py-1 pr-3 text-center border-l border-line/70" colSpan={3}>All crews</th>
+                  <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70 bg-emerald-50/40" colSpan={8}>Housekeeping · alone</th>
+                  <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70 bg-sky-50/40" colSpan={4}>Supervisors · alone</th>
+                  <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70 bg-amber-50/40" colSpan={4}>Maintenance · alone</th>
+                  <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70" colSpan={3}>All crews</th>
                 </tr>
                 <tr className="text-[10px] uppercase tracking-[0.09em] text-muted border-b border-line">
-                  <th className="py-1 pr-3 text-right border-l border-line/70 bg-emerald-50/40">Turns · total</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">HK own</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">Hours</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">Payroll</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">$ / turn · total</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">$ / own</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">h / turn · own</th>
-                  <th className="py-1 pr-3 text-right bg-emerald-50/40">Fees · margin</th>
-                  <th className="py-1 pr-3 text-right border-l border-line/70 bg-sky-50/40">Paid h</th>
-                  <th className="py-1 pr-3 text-right bg-sky-50/40">Payroll</th>
-                  <th className="py-1 pr-3 text-right bg-sky-50/40">Billed</th>
-                  <th className="py-1 pr-3 text-right bg-sky-50/40">Turns</th>
-                  <th className="py-1 pr-3 text-right border-l border-line/70 bg-amber-50/40">Paid h</th>
-                  <th className="py-1 pr-3 text-right bg-amber-50/40">Payroll</th>
-                  <th className="py-1 pr-3 text-right bg-amber-50/40">Billed</th>
-                  <th className="py-1 pr-3 text-right bg-amber-50/40">Billed / paid</th>
-                  <th className="py-1 pr-3 text-right border-l border-line/70">Hours</th>
-                  <th className="py-1 pr-3 text-right">Payroll</th>
-                  <th className="py-1 pr-3 text-right">Rev − payroll</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap border-l border-line/70 bg-emerald-50/40">Turns · total</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">HK own</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">Hours</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">Payroll</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">$ / turn · total</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">$ / own</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">h / turn · own</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">Fees · margin</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap border-l border-line/70 bg-sky-50/40">Paid h</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-sky-50/40">Payroll</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-sky-50/40">Billed</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-sky-50/40">Turns</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap border-l border-line/70 bg-amber-50/40">Paid h</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-amber-50/40">Payroll</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-amber-50/40">Billed</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap bg-amber-50/40">Billed / paid</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap border-l border-line/70">Hours</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap">Payroll</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap">Rev − payroll</th>
                 </tr>
               </thead>
               <tbody>

@@ -195,7 +195,9 @@ export async function laborDays(opts: { from: string; to: string; market?: strin
       c.hours += hours
       c.payroll += wages
       c.punchPayroll += punch
-      if (c.names.indexOf(p.name) < 0) c.names.push(p.name)
+      // Head-count = people who actually punched or did work today; a salary lands on every day
+      // (it is a fixed cost) but does not make someone "on" a day they never clocked.
+      if ((hours > 0 || (r && (r.depCleans > 0 || r.billable > 0))) && c.names.indexOf(p.name) < 0) c.names.push(p.name)
       if (r) {
         c.cleans += r.depCleans
         // A charged cleaning task (mid-stay, linen refresh) is revenue for housekeeping; for every
