@@ -19,6 +19,7 @@ import { getDirectory } from '@/lib/slack'
 import { pendingItems, recentItems } from '@/lib/slack-queue'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { describeLink, linkStatus, pathFor } from '@/lib/share-links'
+import { myLearning } from './learning-audit'
 
 const minsToClock = (m: any): string => {
   const n = Number(m)
@@ -38,6 +39,13 @@ async function channelNames(): Promise<Record<string, { name: string; isPrivate:
 }
 
 export const SYSTEM_TOOLS: EveTool[] = [
+  {
+    name: 'my_learning',
+    description: 'Your own learning audit — the honest answer to "are you actually learning?". The latest run of the self-test: a 0–100 learning score and its four parts (retention of things Jon taught you, asked back with NO tools; how often your memories actually shape an answer; how often you re-propose something Jon already declined; your recommendation hit rate), the probes you failed with the expected answer next to yours, the honesty check, and the memories that never earn their place. Use it whenever someone asks whether you learn, remember, improve, or repeat mistakes. Quote the misses.',
+    input_schema: obj({}),
+    run: async () => myLearning(),
+  },
+
   {
     name: 'automations',
     description: 'EVERY automated thing this app does — what it is, when it runs, whether it is switched ON, who its emails go to, and when it last actually ran. Use this for any "is X on", "why did/didn\'t X happen", "what runs at 7am", "what am I not seeing" question. Optional area filter: sync, guests, ops, money, slack, eve. This is the authoritative list; never guess whether an automation exists.',

@@ -10,6 +10,7 @@ import { generateQuestions } from '@/lib/eve/questions'
 import { studyPending } from '@/lib/eve/study'
 import { learnLingo } from '@/lib/eve/voice'
 import { askCalibrationQuestions } from '@/lib/eve/operating-model'
+import { runLearningAudit } from '@/lib/eve/learning-audit'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { recordRun } from '@/lib/automation-runs'
@@ -114,8 +115,17 @@ export async function POST(req: NextRequest) {
   try { lingo = await learnLingo() }
   catch (e: any) { lingo = { ok: false, error: String(e?.message || e).slice(0, 200) } }
 
+  // DID ANY OF THAT TAKE? (2026-09-21, Jon: "audit and ensure Eve is really learning"). After the
+  // learning, the test: up to ten due probes asked through the real loop with tools off and judged,
+  // then the four learning numbers and the score, stored as tonight's run (lib/eve/learning-audit).
+  // Runs after everything above so a probe never competes with the learning for the request budget,
+  // and its spend is a few cents: the system prompt caches across the probes.
+  let audit: any = null
+  try { const r = await runLearningAudit({ kind: 'nightly', limit: 10 }); audit = r.ok ? { ok: true, score: r.run?.score, probes: r.run?.probes, failed: r.run?.failed, usd: r.run?.usage?.usd } : { ok: false, error: r.error } }
+  catch (e: any) { audit = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
+  if (!key) return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, audit, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
 
   const cutoff = new Date(Date.now() - days * 86400000).toISOString()
   const sb = supabaseAdmin()
@@ -145,7 +155,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (guestMsgs.length === 0 && reviewText.length === 0) {
-    return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
+    return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, audit, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
   }
 
   const SYSTEM = `You analyze a short-term-rental manager's recent GUEST MESSAGES and REVIEWS to extract reusable operational knowledge. Return STRICT minified JSON only:
@@ -187,7 +197,7 @@ Generalize (don't repeat one guest's wording). Max 12 faqs, max 10 complaints. B
     if (error) return NextResponse.json({ error: `eve_knowledge upsert: ${error.message}. Run migration 008.` }, { status: 200 })
     learned = rows.length
   }
-  recordRun({ name: 'eve-learn', ok: true, itemCount: learned, detail: { sweep, studied, vision, questions, learned } })
-  return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
+  recordRun({ name: 'eve-learn', ok: true, itemCount: learned, detail: { sweep, studied, vision, questions, learned, audit } })
+  return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, audit, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
 }
 export const GET = POST

@@ -156,6 +156,11 @@ export async function answerQuestion(id: string, answer: string, by: string): Pr
         await applyCalibrationAnswer(String(q.evidence.building), text, by, q.evidence.assumed)
       } catch { /* the memory is saved either way; the model catches up on the next answer */ }
     }
+    // Every answer a person gives becomes a probe: tomorrow, then in a week, then in a month, the
+    // audit asks her the same thing with no tools and checks she still knows (learning-audit.ts).
+    if (saved.id && !saved.deduped) {
+      try { const { probeForMemory } = await import('./learning-audit'); await probeForMemory(saved.id, 'answered') } catch { /* the answer is filed either way */ }
+    }
     return { ok: true, memoryId: saved.id }
   } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 200) } }
 }

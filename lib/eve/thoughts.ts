@@ -24,6 +24,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ACTIONS, recommendedRungs, modeOf, logAgent, recordAgentAction, afterAct, type ActionType, type AgentSettings } from './agent-mode'
+import { buildingOf } from '@/lib/segments'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const clip = (v: any, n: number) => str(v).replace(/\s+/g, ' ').trim().slice(0, n)
@@ -58,11 +59,33 @@ export type ThoughtInput = {
 
 export type ThoughtRow = {
   id: string; createdAt: string; status: string
+  shape: string
   action: string; payload: any; why: string; ask: string; headline: string
   source: string; subject: string | null; rungNow: number; wouldHaveBeen: WouldHaveBeen
   evidence: string[]; snippet: string | null; note: string | null; by: string
   decidedBy: string | null; decidedAt: string | null; result: any
   draft: string | null
+}
+
+/**
+ * THE SHAPE OF A THOUGHT (2026-09-21, the learning audit). `action:watchKey:subject-class` —
+ * "task_note:no_show_risk:Lucerne". Two thoughts with the same shape are the same KIND of
+ * proposal, whatever the unit number or the guest's name. When Jon dismisses one with a reason,
+ * the shape is what he declined; a new thought with a declined shape is a correction she did not
+ * take, and that recurrence rate is one of the four numbers the audit lives on. Deterministic —
+ * the subject class is the building the unit rolls up to, else the subject's prefix (task, thread,
+ * res, rev, glitch, listings), else the source.
+ */
+export function shapeOf(action: string, source: string, payload: any, subject: string | null | undefined): string {
+  const watch = String(source || '').startsWith('watch:') ? String(source).slice(6) : String(source || 'chat')
+  const p = payload && typeof payload === 'object' ? payload : {}
+  const unit = str(p.unit || p.listing_name || p.building).trim()
+  let cls = unit ? (buildingOf(str(p.building) || null, unit) || unit) : ''
+  if (!cls) {
+    const m = str(subject).match(/^([a-z]+):/i)
+    cls = m ? m[1].toLowerCase() : (str(subject).trim() ? 'subject' : 'none')
+  }
+  return `${str(action) || 'unknown'}:${watch}:${cls.replace(/\s+/g, '_').slice(0, 40)}`
 }
 
 /** "I would put Dayrene on the late clean at 4105" — the ask, turned into a first-person line. */
@@ -123,6 +146,8 @@ export async function recordThought(t: ThoughtInput): Promise<{ ok: boolean; id?
       draft: draftOf(t.action, t.payload),
       // The watches' second cooldown lock reads these two off any eve_actions row.
       watchKey: t.source.startsWith('watch:') ? t.source.slice(6) : null,
+      // The learning audit's recurrence check reads this (lib/eve/learning-audit.ts).
+      shape: shapeOf(t.action, t.source, t.payload, subject),
     }
     const { data, error } = await db.from('eve_actions').insert({
       created_by: t.actor || t.by || 'eve', kind: 'thought', payload, why: clip(t.why, 400) || null, status: 'open',
@@ -140,6 +165,7 @@ function rowOf(r: any): ThoughtRow {
   const pl = r.payload || {}
   return {
     id: str(r.id), createdAt: str(r.created_at), status: str(r.status),
+    shape: str(pl.shape) || shapeOf(str(pl.action), str(pl.source) || 'eve', pl.payload, pl.subject || null),
     action: str(pl.action), payload: pl.payload ?? null, why: str(pl.why || r.why), ask: str(pl.ask), headline: str(pl.headline) || headlineOf(str(pl.action), str(pl.ask), pl.payload),
     source: str(pl.source) || 'eve', subject: pl.subject || null, rungNow: Number(pl.rungNow) || 0, wouldHaveBeen: pl.wouldHaveBeen || 'propose',
     evidence: Array.isArray(pl.evidence) ? pl.evidence.map(str) : [], snippet: pl.snippet || null, note: pl.note || null, by: str(pl.by || r.created_by || 'eve'),
@@ -269,6 +295,11 @@ export async function dismissThought(id: string, by: string, reason?: string): P
         evidence: { thought_id: id, source: t.source, subject: t.subject, ask: t.ask },
       })
       memoryId = r.ok ? (r.id || null) : null
+      // A declined shape becomes a probe: tomorrow the audit asks her, with no tools, whether she
+      // knows Jon declined this — and fails her if she does not (lib/eve/learning-audit.ts).
+      if (memoryId) {
+        try { const { probeForMemory } = await import('./learning-audit'); await probeForMemory(memoryId, 'declined') } catch { /* never block a dismissal on the audit */ }
+      }
     } catch { memoryId = null }
   }
   await logAgent({ action: (ACTIONS.some(a => a.key === t.action) ? t.action : 'memory_rule') as ActionType, rung: t.rungNow as any, allowed: false, mode: 'observe', reason: why ? `declined by ${by}: ${why}` : `declined by ${by}`, summary: t.headline, ref: id, by: 'chat', actor: by })

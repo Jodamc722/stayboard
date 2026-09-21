@@ -23,6 +23,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { agentAllowed, stepDown, getAgentSettings, logAgent, OWNER, type ActionType, type AgentSettings, type AgentVerdict, type Mode } from './agent-mode'
 import type { CommandDay } from '@/lib/command-day'
 import type { DayPicture } from '@/lib/capacity-day'
+import { shapeOf, recordThought } from './thoughts'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const ymdET = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -69,14 +70,22 @@ export type WatchEnv = {
   dayPicture: () => Promise<DayPicture | null>
   automation: () => Promise<any>
   db: ReturnType<typeof supabaseAdmin>
+  /**
+   * The last five reasons Jon gave when he declined this SHAPE of proposal (lib/eve/thoughts.ts
+   * shapeOf; lib/eve/learning-audit.ts declinedShapes). Empty means never declined. A trigger
+   * that drafts with a model can read these into its prompt; the run loop below also skips a
+   * declined shape outright and records the skip as a thought, so the correction is visible.
+   */
+  declinedReasons: (shape: string) => string[]
 }
 
-function makeEnv(settings: AgentSettings): WatchEnv {
+function makeEnv(settings: AgentSettings, declined: Record<string, { reasons: string[] }> = {}): WatchEnv {
   let cd: Promise<CommandDay | null> | null = null
   let dp: Promise<DayPicture | null> | null = null
   let au: Promise<any> | null = null
   return {
     today: ymdET(), now: new Date(), settings, db: supabaseAdmin(),
+    declinedReasons: (shape: string) => (declined[shape]?.reasons || []).slice(0, 5),
     commandDay: () => cd || (cd = import('@/lib/command-day').then(m => m.buildCommandDay()).catch(() => null)),
     dayPicture: () => dp || (dp = import('@/lib/capacity-day').then(m => m.buildDayPicture(ymdET())).catch(() => null)),
     automation: () => au || (au = import('@/lib/auto-inspections').then(m => m.getTaskAutomation()).catch(() => null)),
@@ -464,7 +473,12 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
   const rows = await listWatches()
   if (!rows.some(r => r.migrated)) return { ok: false, skipped: 'migration 102 has not run — eve_watches has no key column', ranAt, watches: [] }
   const settings = await getAgentSettings()
-  const env = makeEnv(settings)
+  // WHAT JON ALREADY SAID NO TO (2026-09-21, the learning audit). One read per run: every shape of
+  // proposal he dismissed with a reason. A watch that would raise a declined shape skips it and
+  // says so — the visible form of "she learned from the correction".
+  let declined: Record<string, { reasons: string[]; lastAt: string; firstAt: string }> = {}
+  try { const { declinedShapes } = await import('./learning-audit'); declined = await declinedShapes() } catch { declined = {} }
+  const env = makeEnv(settings, declined)
   const out: WatchRun = { ok: true, ranAt, watches: [] }
   const db = supabaseAdmin()
   // AI drafts cost money at every rung — including observe, now that the draft IS the thought
@@ -519,6 +533,23 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
       if (tries >= MAX_PER_WATCH) break
       tries++
       const byLabel = `watch:${row.key}`
+      // A DECLINED SHAPE IS SKIPPED, AND THE SKIP IS ON THE RECORD. Checked on the prepared action
+      // before any model draft is built (no spend on something she will not raise), and the reasons
+      // Jon gave ride along as evidence so the Thinking tab shows what she consulted.
+      const preShape = shapeOf(f.action, byLabel, typeof f.exec === 'function' ? null : f.exec, f.subject)
+      const saidNo = declined[preShape]
+      if (saidNo && saidNo.reasons.length) {
+        rec.modes.skipped_declined = (rec.modes.skipped_declined || 0) + 1
+        try {
+          await recordThought({
+            action: f.action, payload: typeof f.exec === 'function' ? null : f.exec, why: f.why, ask: f.ask, source: byLabel, subject: f.subject,
+            rungNow: effectiveRung, wouldHaveBeen: 'observe', evidence: saidNo.reasons.map(r => `Jon: ${r}`),
+            note: 'skipped — Jon declined this shape before', by: byLabel, cooldownHours: opts.force ? 0 : row.cooldownHours,
+          })
+        } catch { /* the skip stands either way */ }
+        try { await db.from('eve_watch_fires').upsert({ watch_key: row.key, subject: f.subject, fired_at: new Date().toISOString(), mode: 'observe', ref: null }, { onConflict: 'watch_key,subject' }) } catch { /* fine */ }
+        continue
+      }
       let mode: Mode = 'observe'
       let ref: string | null = null
       try {

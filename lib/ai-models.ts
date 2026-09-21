@@ -87,6 +87,16 @@ export const AI_TASKS: AiTask[] = [
   { key: 'learn', title: 'Eve — nightly learning pass', group: 'Background', def: 'sonnet', background: true,
     what: 'Summarises 30 days of guest messages and reviews into FAQs and complaint themes.',
     matters: 'Shapes what Eve knows tomorrow. Runs once a night.' },
+  // THE LEARNING AUDIT (2026-09-21). Jon: "how do we audit and ensure Eve is really learning?"
+  // Two tiny calls per taught fact: one turns the memory into a question with an expected answer
+  // when it is filed, one judges her tool-less answer against it when the probe comes due. Both
+  // are classification-sized; the expensive part (her own answer) is billed to 'eve'.
+  { key: 'probe-writer', title: 'Eve — learning probe writer', group: 'Background', def: 'haiku', background: true,
+    what: 'Turns a memory Jon taught her into one test question and the answer it should get ("Who cleans Park Towers?" → "an outside vendor crew, not our roster").',
+    matters: 'One call per taught fact, a few hundred tokens. A weak question makes a probe too easy; nothing reaches a person.' },
+  { key: 'probe-judge', title: 'Eve — learning probe judge', group: 'Background', def: 'haiku', background: true,
+    what: 'Reads her tool-less answer to a probe next to the expected answer and says pass or fail, with one line why.',
+    matters: 'Decides the retention number on the Learning tab. Up to fifteen calls a night, each a few hundred tokens.' },
   // ── Guests ──
   { key: 'sentiment', title: 'Guest sentiment scan', group: 'Background', def: 'sonnet', background: true,
     what: 'Rates each guest thread 1-5 and flags dissatisfaction. Every 30 minutes, guest messages only.',

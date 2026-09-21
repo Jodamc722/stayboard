@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { runReview } from '@/lib/eve/review'
+import { runLearningAudit } from '@/lib/eve/learning-audit'
 import { eveGate } from '../../agent/route'
 
 export const dynamic = 'force-dynamic'
@@ -35,10 +36,18 @@ async function run(req: NextRequest) {
 
   const focus = String(new URL(req.url).searchParams.get('focus') || '').trim().slice(0, 300)
   const res = await runReview({ trigger: (focus || human) ? 'manual' : 'weekly', focus: focus || undefined, by: human || 'cron' })
+  // THE WEEKLY LEARNING RUN rides with the review (2026-09-21): the Monday number for "is she
+  // learning", with the same four parts as the nightly one, so the Learning tab has a weekly point
+  // whatever the nightly pass did. Never fails the review.
+  let learning: any = null
+  if (!focus) {
+    try { const r = await runLearningAudit({ kind: 'weekly', limit: 15, by: human || 'cron' }); learning = r.ok ? { score: r.run?.score, probes: r.run?.probes, failed: r.run?.failed } : { error: r.error } }
+    catch (e: any) { learning = { error: String(e?.message || e).slice(0, 160) } }
+  }
   await recordRun({
     name: 'eve-review', ok: res.ok, itemCount: res.ok ? res.review.plans.length : 0,
     error: res.ok ? undefined : res.error,
-    detail: res.ok ? { id: res.id, headline: res.review.headline, plans: res.persisted.plans, questions: res.persisted.questions, retired: res.persisted.retired, packTokens: res.pack.tokens } : { pack: res.pack },
+    detail: res.ok ? { id: res.id, headline: res.review.headline, plans: res.persisted.plans, questions: res.persisted.questions, retired: res.persisted.retired, packTokens: res.pack.tokens, learning } : { pack: res.pack, learning },
   })
-  return NextResponse.json(res, { status: res.ok ? 200 : 500 })
+  return NextResponse.json({ ...res, learning }, { status: res.ok ? 200 : 500 })
 }

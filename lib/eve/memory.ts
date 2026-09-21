@@ -83,8 +83,66 @@ export function scopesForText(text: string, listingMeta: Record<string, { name: 
 // Tokenise for relevance scoring: lowercase words of 3+ chars, minus glue words that carry no
 // signal. Deterministic and cheap — this runs on every turn, so no model call and no regex storms.
 const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'what', 'when', 'where', 'which', 'have', 'has', 'are', 'was', 'were', 'you', 'your', 'her', 'she', 'about', 'should', 'would', 'could', 'from', 'into', 'they', 'them', 'there', 'their', 'been', 'being', 'not', 'can', 'will', 'why', 'how', 'who', 'all', 'any', 'our', 'out', 'get', 'got'])
-function words(s: string): string[] {
+export function words(s: string): string[] {
   return lc(s).split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !STOP.has(w))
+}
+
+/**
+ * WHICH INJECTED MEMORIES DID THE ANSWER ACTUALLY USE (2026-09-21, the learning audit). Loading a
+ * memory into the prompt is not the same as it changing the answer, and use_count only ever
+ * measured the first. This is the cheap second measure: a memory counts as USED when the answer's
+ * words cover at least 40% of the memory's distinctive words, or the answer quotes a run of it.
+ * Deterministic, no model call, so it can run on every turn. Memories with fewer than three
+ * distinctive words are skipped — "Eden: 2-beds" would match half of everything.
+ */
+export function memoryHitsFor(rows: Array<{ id: string; text: string }>, answer: string): string[] {
+  const aWords = new Set(words(answer))
+  const aLc = lc(answer)
+  if (!aWords.size) return []
+  const used: string[] = []
+  for (const r of rows) {
+    const mw = Array.from(new Set(words(String(r.text || ''))))
+    if (mw.length < 3) continue
+    let inter = 0
+    for (const w of mw) if (aWords.has(w)) inter++
+    if (inter / mw.length >= 0.4) { used.push(r.id); continue }
+    // A quoted run: any 6-word window of the memory appearing verbatim in the answer.
+    const raw = lc(String(r.text || '')).split(/\s+/).filter(Boolean)
+    for (let i = 0; i + 6 <= raw.length; i++) {
+      if (aLc.includes(raw.slice(i, i + 6).join(' '))) { used.push(r.id); break }
+    }
+  }
+  return used
+}
+
+/** Stamp the memories an answer actually drew on (hit_count / last_hit_at, migration 103). Degrades silently before it. */
+export async function recordMemoryHits(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const db = supabaseAdmin()
+  try {
+    const { data } = await db.from('eve_memory').select('id,hit_count').in('id', ids)
+    for (const r of ((data as any[]) || [])) {
+      await db.from('eve_memory').update({ hit_count: Number(r.hit_count || 0) + 1, last_hit_at: new Date().toISOString() }).eq('id', r.id)
+    }
+  } catch { /* column not there yet — the audit shows "no telemetry" rather than breaking a turn */ }
+}
+
+/**
+ * Memories that are loaded into prompts and never once shape an answer — the dead weight the
+ * audit shows first, most-injected first. Only rows that have been injected at least `minInjected`
+ * times qualify: a memory nobody has asked about yet is untested, not dead.
+ */
+export async function neverUsedMemories(limit = 10, minInjected = 5): Promise<Array<{ id: string; text: string; kind: string; scope: string; weight: number; source: string; use_count: number; created_at: string }>> {
+  const db = supabaseAdmin()
+  const today = new Date().toISOString().slice(0, 10)
+  try {
+    const { data, error } = await db.from('eve_memory')
+      .select('id,text,kind,scope,weight,source,use_count,created_at,hit_count,expires_on')
+      .is('superseded_by', null).gte('use_count', minInjected).eq('hit_count', 0)
+      .order('use_count', { ascending: false }).limit(limit * 3)
+    if (error) return []
+    return ((data as any[]) || []).filter(r => !r.expires_on || String(r.expires_on) >= today).slice(0, limit)
+  } catch { return [] }
 }
 
 /**

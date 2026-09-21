@@ -20,7 +20,7 @@ import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildCtx, todayET, daysAgoISO, safe, count as cnt, lc } from './ctx'
 import { wireTools, runTool, DOMAIN_KEYS } from './registry'
-import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory } from './memory'
+import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory, memoryHitsFor, recordMemoryHits } from './memory'
 import { appAtlas } from './atlas'
 import { buildSystemBlocks, getVoiceProfile } from './prompt'
 import { detectLanguage, languageNote, getLingo, lingoNote } from './voice'
@@ -93,9 +93,17 @@ export type RunEveInput = {
   /** Domains to pre-open so she does not spend a turn on it (the /eve page does this). */
   domains?: string[]
   /** Where the question came from. Logged, and it slightly changes how she writes. */
-  source?: 'web' | 'telegram' | 'slack' | 'api'
+  source?: 'web' | 'telegram' | 'slack' | 'api' | 'probe'
   /** Extra situational line for the system prompt (e.g. "you are in a Telegram group"). */
   surfaceNote?: string
+  /**
+   * NO TOOLS AT ALL — not even open_domain or web search. The learning audit (lib/eve/learning-audit.ts)
+   * uses this to ask her what she was TAUGHT: with tools she would look it up, and looking it up
+   * proves nothing about whether the memory took. Memory still loads. A 'probe' source is also not
+   * logged to eve_chats as a user chat and does not bump memory use counts, so the self-test never
+   * pollutes the telemetry it is measuring.
+   */
+  noTools?: boolean
   /**
    * Tools removed before the model is even told they exist, and refused if a name slips through.
    * Used by the Slack surface, where the room decides what an answer may contain — see
@@ -119,7 +127,12 @@ export type RunEveOk = {
   ok: true
   reply: string
   chatId: string | null
-  meta: { turns: number; ms: number; tools: string[]; domains: string[]; memories: number; moneyRedacted: boolean; webSearch: string }
+  meta: {
+    turns: number; ms: number; tools: string[]; domains: string[]; memories: number; moneyRedacted: boolean; webSearch: string
+    usage: { input: number; output: number; cacheRead: number; cacheWrite: number }
+    /** Which injected memories the answer actually drew on (lib/eve/memory.ts memoryHitsFor). */
+    memoryHits: { injected: number; used: string[] }
+  }
 }
 export type RunEveErr = { ok: false; status: number; error: string }
 export type RunEveResult = RunEveOk | RunEveErr
@@ -150,6 +163,8 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
 
   const startedAt = Date.now()
   const source = input.source || 'web'
+  const noTools = !!input.noTools
+  const isProbe = source === 'probe'
   // A ROOM CAN ONLY NARROW THIS, NEVER WIDEN IT. Someone cleared for money in Lighthouse still does
   // not get dollar amounts read out in a channel with eleven other people in it.
   const canMoney = input.forceNoMoney ? false : canSeeMoney(access)
@@ -261,14 +276,16 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       ]
       // Keep the SAME tools array across the whole conversation. If a resume request drops a server
       // tool the API is still waiting on, it 400s with "but no web_search tool was provided".
-      const toolset: any[] = allowed(wireTools(open))
-      if (webOk) toolset.push(WEB_SEARCH_TOOL as any)
+      // noTools: the model is never told a tool exists (the only reliable way to keep one from
+      // being used), and the tools key is left off the request entirely.
+      const toolset: any[] = noTools ? [] : allowed(wireTools(open))
+      if (webOk && !noTools) toolset.push(WEB_SEARCH_TOOL as any)
       const messages = withCacheBreakpoint(convo)
 
       let r = await aiFetch('eve', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: await modelFor('eve'), max_tokens: 4096, system, tools: toolset, messages }),
+        body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }),
       })
       let d: any = await r.json()
 
@@ -278,7 +295,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
         r = await aiFetch('eve', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: await modelFor('eve'), max_tokens: 4096, system, tools: allowed(wireTools(open)), messages }),
+          body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(noTools ? {} : { tools: allowed(wireTools(open)) }), messages }),
         })
         d = await r.json()
       }
@@ -330,8 +347,15 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
 
     if (!finalText) finalText = 'I ran out of steps before I got to an answer. Ask me again and narrow it a little — a building, a date range, or one unit.'
 
+    // APPLICATION TELEMETRY (2026-09-21). Which of the injected memories did this answer actually
+    // use? Deterministic word overlap, so it costs nothing and runs on every turn. This is the
+    // number that separates "she has 300 memories" from "her memories change her answers".
+    const usedIds = memoryHitsFor(memories, finalText)
+    const memoryHits = { injected: memories.length, used: usedIds }
+
     // Log the exchange. This is the substrate the improvement loop runs on; without it a thumbs-down
-    // is just a feeling. Never let a logging failure break the answer.
+    // is just a feeling. Never let a logging failure break the answer. A probe (the learning
+    // audit's self-test) is not a user chat and is not logged here — it lives in eve_probes.
     let chatId: string | null = null
     const row: any = {
       user_email: ctx.email,
@@ -342,26 +366,22 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       turns,
       ms: Date.now() - startedAt,
     }
-    try {
-      const { data, error } = await db.from('eve_chats').insert({ ...row, source, usage }).select('id').maybeSingle()
-      if (error) throw error
-      chatId = (data as any)?.id || null
-    } catch {
-      // `usage` arrived with migration 075 and `source` with 055. Before either runs, log the
-      // exchange with what the table has rather than losing it from the learning loop.
-      try {
-        const { data, error } = await db.from('eve_chats').insert({ ...row, source }).select('id').maybeSingle()
-        if (error) throw error
-        chatId = (data as any)?.id || null
-      } catch {
+    if (!isProbe) {
+      // `memory_hits` arrived with migration 103, `usage` with 075 and `source` with 055. Before
+      // any of them runs, log the exchange with what the table has rather than losing it from the
+      // learning loop — each attempt drops the newest column.
+      const attempts: any[] = [{ ...row, source, usage, memory_hits: memoryHits }, { ...row, source, usage }, { ...row, source }, row]
+      for (const attempt of attempts) {
         try {
-          const { data } = await db.from('eve_chats').insert(row).select('id').maybeSingle()
+          const { data, error } = await db.from('eve_chats').insert(attempt).select('id').maybeSingle()
+          if (error) throw error
           chatId = (data as any)?.id || null
-        } catch { /* migration 045 may not be run yet */ }
+          break
+        } catch { /* try the next, narrower shape; migration 045 may not be run yet */ }
       }
+      touchMemories(memories.map(m => m.id)).catch(() => {})
+      recordMemoryHits(usedIds).catch(() => {})
     }
-
-    touchMemories(memories.map(m => m.id)).catch(() => {})
 
     // CONSTANT LEARNING, ZERO CEREMONY (Jon, 2026-08-19: "read and learn and update constantly").
     // When the user speaks in standing-instruction form — always / never / from now on / stop
@@ -375,7 +395,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       const cap = Number.isFinite(input.memoryWeightCap) ? Number(input.memoryWeightCap) : 10
       const directive = /\b(always|never|from now on|going forward|do not ever|don'?t ever|stop (?:doing|sending|creating|drafting)|make sure (?:to|you|we|it))\b/i
       const memGate = await agentAllowed('memory_rule')
-      if (memGate.mode !== 'observe' && source !== 'slack' && cap >= 6 && directive.test(lastUser) && lastUser.length >= 25 && lastUser.length <= 600) {
+      if (!isProbe && memGate.mode !== 'observe' && source !== 'slack' && cap >= 6 && directive.test(lastUser) && lastUser.length >= 25 && lastUser.length <= 600) {
         const kind = /\b(always|never)\b/i.test(lastUser) ? 'rule' : 'preference'
         saveMemory({
           text: lastUser.trim(), kind, scope: 'portfolio', weight: 6, maxWeight: cap,
@@ -391,7 +411,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       ok: true,
       reply: finalText,
       chatId,
-      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model' },
+      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model', usage, memoryHits },
     }
   } catch (e: any) {
     return { ok: false, status: 500, error: e?.message || String(e) }

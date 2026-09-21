@@ -16,6 +16,7 @@ import { generateQuestions } from '@/lib/eve/questions'
 import { WATCH_KEY } from '@/lib/eve/slack-watch'
 import { getGoogleReadGrant } from '@/lib/google-read'
 import { getSetting } from '@/lib/app-settings'
+import { probeForMemory, runLearningAudit, learningSnapshot, setProbeActive, pruneMemory } from '@/lib/eve/learning-audit'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -126,7 +127,11 @@ export async function GET() {
     }
   } catch { /* migration 045 */ }
 
-  return NextResponse.json({ ok: true, sources, google, lastStudy: learn, lastReview: review, memory: { total: memTotal, bySource: memBySource, byWeight: memByWeight } })
+  // "Is she learning?" — the audit's latest run, the failed probes, the dead memories, the shapes
+  // she keeps proposing after Jon said no, and the probe list (lib/eve/learning-audit.ts).
+  const audit = await safe(() => learningSnapshot(), null as any)
+
+  return NextResponse.json({ ok: true, sources, google, lastStudy: learn, lastReview: review, memory: { total: memTotal, bySource: memBySource, byWeight: memByWeight }, audit })
 }
 
 export async function POST(req: NextRequest) {
@@ -140,7 +145,24 @@ export async function POST(req: NextRequest) {
     if (text.length < 8) return NextResponse.json({ error: 'Say a little more — a rule she can follow.' }, { status: 400 })
     const res = await saveMemory({ text: text.slice(0, 1000), kind: body?.kind || 'rule', why: `Taught by ${by} in Settings → Eve → Learning on ${new Date().toISOString().slice(0, 10)}`, scope: body?.scope || 'portfolio', weight: 8, source: 'jon', confidence: 1, created_by: by })
     if (!res.ok) return NextResponse.json({ error: res.error || 'could not save' }, { status: 500 })
-    return NextResponse.json({ ok: true, id: res.id, deduped: !!res.deduped })
+    // Taught → tested. A probe is written for it now (one Haiku call) and asked tomorrow, with no
+    // tools, so "she was told" becomes "she still knows". A reinforced duplicate re-arms its probe.
+    let probe: any = null
+    if (res.id) { try { probe = await probeForMemory(res.id, 'taught') } catch { probe = null } }
+    return NextResponse.json({ ok: true, id: res.id, deduped: !!res.deduped, probe: probe?.ok ? { id: probe.id, question: probe.question } : null })
+  }
+
+  if (body?.op === 'selftest') {
+    const run = await runLearningAudit({ kind: 'manual', limit: Math.min(15, Math.max(1, Number(body?.limit) || 15)), by })
+    return NextResponse.json(run.ok ? { ok: true, run: run.run } : { error: run.error || 'the self-test did not run' }, { status: run.ok ? 200 : 500 })
+  }
+  if (body?.op === 'probe_active') {
+    const r = await setProbeActive(String(body?.id || ''), body?.active !== false, by)
+    return NextResponse.json(r.ok ? { ok: true } : { error: r.error }, { status: r.ok ? 200 : 400 })
+  }
+  if (body?.op === 'prune') {
+    const r = await pruneMemory(String(body?.memoryId || ''), by)
+    return NextResponse.json(r.ok ? { ok: true } : { error: r.error }, { status: r.ok ? 200 : 400 })
   }
 
   // 'study' — the same pass /api/eve/learn runs nightly, minus the model-heavy FAQ and vision
