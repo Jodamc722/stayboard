@@ -272,7 +272,7 @@ export type LaborEcon = {
   /** The simple, reconcilable labor P&L: housekeeping and maintenance, by market and in total. */
   pnl?: any
   /** How the departure-clean denominator was built, as its parts. */
-  cleanAudit?: { scope: string; counted: number; countedThisMarket: number; closed: number; openCounted: number; movedExcluded: number; noAssignee: number; noCheckout: number; noCheckoutExamples: { unit: string; day: string; who: string; task: string }[]; rule: string }
+  cleanAudit?: { scope: string; counted: number; countedThisMarket: number; closed: number; openCounted: number; movedExcluded: number; noAssignee: number; noCheckout: number; noCheckoutExamples: { unit: string; day: string; who: string; task: string }[]; vendorCleanerCleans: number; rule: string }
   /** Per person, day by day — the color behind every aggregate. Wages carry the day's agency share. */
   personDays?: Record<string, { d: string; cleans: number; depCleans: number; fee: number; feeAll: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]>
   /** Daily housekeeping series (credited cleans, net fees, loaded HK wages) for trend charts. */
@@ -837,7 +837,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // no matched fee adds a clean and $0, which is exactly what happened in real life.
   const cleanLandedDay = (t: any): string =>
     isClosed(t) ? etDay(t.finished_at) : String(t.scheduled_date || '').slice(0, 10)
-  let clAudCounted = 0, clAudClosed = 0, clAudOpen = 0, clAudMoved = 0, clAudNoAssignee = 0, clAudNoCheckout = 0
+  let clAudCounted = 0, clAudClosed = 0, clAudOpen = 0, clAudMoved = 0, clAudNoAssignee = 0, clAudNoCheckout = 0, clAudVendorCleaner = 0
   const cleansDone: any[] = []
   // A TURN IS A CHECKOUT (Jon, 2026-09-21: "actual checkouts and departure cleans only" → chose
   // checkout-backed turns only). A finished departure clean that no live reservation checked out
@@ -851,9 +851,21 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     if (isMoved(t)) { clAudMoved++; continue }
     if (!doer(t)) { clAudNoAssignee++; continue }
     if (!usedTask[String(t.id)]) {
-      clAudNoCheckout++
-      if (cleansNoCheckout.length < 60) cleansNoCheckout.push({ unit: (lmap[String(t.reference_property_id)] || { name: String(t.reference_property_id) }).name, day, who: doer(t) || '', task: String(t.name || '').slice(0, 80) })
-      continue
+      // VENDOR-MANAGED BUILDINGS never enter checkout matching (their fee sits in the vendor
+      // bucket), so a clean there cannot be checkout-backed. Our OWN crew covering a turn there is
+      // still a turn (vendor-inhouse — Jon: "if HK gets rev for outside cleaning it should be
+      // added"); a vendor company's own cleaner (no Homebase punches) is not our turn and used to
+      // dilute cost per turn — Opal Works' 15 Capri cleans were in the denominator before today.
+      const liV = lmap[String(t.reference_property_id)]
+      const w = doer(t) || ''
+      const onPayroll = !!w && rosterNames.indexOf(w) >= 0
+      if (liV && liV.vendor && onPayroll) { /* our crew in a vendor building — counts */ }
+      else if (liV && liV.vendor) { clAudVendorCleaner++; continue }
+      else {
+        clAudNoCheckout++
+        if (cleansNoCheckout.length < 60) cleansNoCheckout.push({ unit: (liV || { name: String(t.reference_property_id) }).name, day, who: w, task: String(t.name || '').slice(0, 80) })
+        continue
+      }
     }
     clAudCounted++
     if (isClosed(t)) clAudClosed++; else clAudOpen++
@@ -2383,6 +2395,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // Finished departure cleans with no live checkout behind them — real work, not turns.
     noCheckout: clAudNoCheckout,
     noCheckoutExamples: cleansNoCheckout,
+    // Cleans in vendor-managed buildings by the vendor's own cleaners — theirs, not our turns.
+    vendorCleanerCleans: clAudVendorCleaner,
     rule: 'a turn is a finished, assigned, not-deleted departure clean that a confirmed checkout was matched to (checkout day or day+1 first, then nearest within −2..+9 days). Deleted/cancelled = moved. A departure clean no checkout claims is listed under noCheckout and never counted (Jon, 2026-09-21).',
   }
 
