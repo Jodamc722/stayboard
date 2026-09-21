@@ -997,6 +997,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
   // ---------- present mode (full-screen slideshow) ----------
   const [present, setPresent] = useState(false)
+  // PRESENTER NOTES (Jon, 2026-09-21): a drawer only the presenter sees, on every slide, where
+  // notes typed during the call land. They are stored on the deck (content.notes.recap) and
+  // shown on the last slide as the recap, so the owner leaves with the record.
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [tidyBusy, setTidyBusy] = useState(false)
+  const [tidyMsg, setTidyMsg] = useState('')
   const [showMonths, setShowMonths] = useState(false)
   const [snFrom, setSnFrom] = useState('')
   const [snTo, setSnTo] = useState('')
@@ -1299,6 +1306,58 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   function setAnswer(section: string, i: number, v: string) {
     patch(section + '.asks.' + i + '.a', v)
     answerChanged()
+  }
+  function addRecap(text: string, on: string) {
+    const tx = String(text || '').trim()
+    if (!tx) return
+    mutate(d => {
+      const n = d.notes || (d.notes = {})
+      n.recap = Array.isArray(n.recap) ? n.recap : []
+      n.recap.push({ t: tx, on, at: new Date().toISOString() })
+    })
+    answerChanged()
+  }
+  function editRecap(i: number, text: string) { patch('notes.recap.' + i + '.t', text); answerChanged() }
+  function removeRecap(i: number) {
+    mutate(d => { const n = d.notes || {}; if (Array.isArray(n.recap)) n.recap.splice(i, 1) })
+    answerChanged()
+  }
+  // TIDY WITH AI (Jon, 2026-09-21: "AI ability to rewrite the note to be better organized,
+  // keep the original draft in case it does not work"). The rewrite goes through the same
+  // section editor the slides use. The first time it runs, the raw notes are kept as
+  // notes.recapDraft so "Restore original" always has the presenter's own words to go back to.
+  async function tidyRecap() {
+    const recap: Any[] = Array.isArray((c.notes || {}).recap) ? (c.notes || {}).recap : []
+    if (!recap.length || tidyBusy) return
+    setTidyBusy(true); setTidyMsg('')
+    try {
+      const r = await fetch('/api/reports/ai-edit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reportId: initial.id, sectionKey: 'notes', section: { recap },
+          prompt: 'These are the presenter\u2019s notes typed during an owner onboarding call, in order. Rewrite them as a clean recap for the owner: group related points, one clear sentence per item, plain professional English, no fluff. Keep every fact, figure, name and date exactly; add nothing. Merge duplicates, split run-ons. Keep each item\u2019s "on" and "at" fields (use the source item\u2019s values; when merging, use the first). Return the same shape: { "recap": [ { "t", "on", "at" } ] }.',
+        }),
+      })
+      const d = await r.json().catch(() => ({}))
+      const rows: Any[] = d?.ok && d?.section && Array.isArray(d.section.recap) ? d.section.recap : []
+      const clean = rows.map((x: Any) => ({ t: String((x && x.t) || '').trim(), on: String((x && x.on) || ''), at: String((x && x.at) || '') })).filter(x => x.t)
+      if (!clean.length) { setTidyMsg((d && d.error) || 'Could not tidy \u2014 notes unchanged.'); setTidyBusy(false); return }
+      mutate(dd => {
+        const n = dd.notes || (dd.notes = {})
+        if (!Array.isArray(n.recapDraft) || !n.recapDraft.length) n.recapDraft = JSON.parse(JSON.stringify(recap))
+        n.recap = clean
+      })
+      answerChanged()
+      setTidyMsg('Tidied. Your original is kept \u2014 Restore original brings it back.')
+    } catch { setTidyMsg('Could not tidy \u2014 notes unchanged.') }
+    setTidyBusy(false)
+  }
+  function restoreRecap() {
+    mutate(d => {
+      const n = d.notes || (d.notes = {})
+      if (Array.isArray(n.recapDraft) && n.recapDraft.length) { n.recap = n.recapDraft; delete n.recapDraft }
+    })
+    answerChanged(); setTidyMsg('Original restored.')
   }
 
   function copyLink() {
@@ -2119,6 +2178,73 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           )}
         </div>
       )}
+
+      {/* PRESENTER NOTES: the button and drawer exist only for a signed-in presenter. An owner
+          on the share link never sees them; the recap they produce lands on the last slide. */}
+      {canEdit && isOnboarding && (() => { const recap: Any[] = Array.isArray((c.notes || {}).recap) ? (c.notes || {}).recap : []; return (
+        <div className="sb-noprint fixed z-[64]" style={{ left: 16, bottom: 72 }}>
+          {notesOpen ? (
+            <div className="rounded-2xl shadow-2xl" style={{ width: 340, maxHeight: '62vh', display: 'flex', flexDirection: 'column', background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              <div className="flex items-center justify-between" style={{ padding: '10px 14px', borderBottom: '1px solid ' + t.rule }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: t.ink }}>Presenter notes</span>
+                <button onClick={() => setNotesOpen(false)} style={{ color: t.muted }} aria-label="Close notes"><X size={14} /></button>
+              </div>
+              <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + t.rule }}>
+                <textarea
+                  value={noteDraft}
+                  onChange={e => setNoteDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addRecap(noteDraft, present ? (navNames[slide] || '') : ''); setNoteDraft('') } }}
+                  placeholder="Type a note, press Enter"
+                  rows={2}
+                  style={{ width: '100%', resize: 'none', fontSize: 13, lineHeight: 1.5, padding: '8px 10px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.bg, color: t.ink, fontFamily: 'inherit', outline: 'none' }}
+                />
+                <div className="flex items-center justify-between" style={{ marginTop: 6 }}>
+                  <span style={{ fontSize: 11, color: t.muted }}>{present && navNames[slide] ? 'On: ' + navNames[slide] : 'Lands on the last slide as the recap'}</span>
+                  <button onClick={() => { addRecap(noteDraft, present ? (navNames[slide] || '') : ''); setNoteDraft('') }}
+                    style={{ fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '5px 12px', background: t.ink, color: t.bg }}>Add</button>
+                </div>
+              </div>
+              {(recap.length > 0 || (Array.isArray((c.notes || {}).recapDraft) && (c.notes || {}).recapDraft.length > 0)) ? (
+                <div className="flex items-center" style={{ gap: 8, padding: '8px 14px', borderBottom: '1px solid ' + t.rule, flexWrap: 'wrap' }}>
+                  {recap.length > 0 ? (
+                    <button onClick={tidyRecap} disabled={tidyBusy}
+                      className="inline-flex items-center gap-1"
+                      style={{ fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: '5px 11px', background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink, opacity: tidyBusy ? 0.6 : 1 }}>
+                      {tidyBusy ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />} {tidyBusy ? 'Tidying\u2026' : 'Tidy with AI'}
+                    </button>
+                  ) : null}
+                  {Array.isArray((c.notes || {}).recapDraft) && (c.notes || {}).recapDraft.length > 0 ? (
+                    <button onClick={restoreRecap}
+                      style={{ fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: '5px 11px', background: 'transparent', border: '1px dashed ' + t.cardBorder, color: t.sub }}>
+                      Restore original
+                    </button>
+                  ) : null}
+                  {tidyMsg ? <span style={{ fontSize: 11, color: t.muted, width: '100%' }}>{tidyMsg}</span> : null}
+                </div>
+              ) : null}
+              <div style={{ overflowY: 'auto', padding: '6px 14px 10px' }}>
+                {recap.length === 0 ? (
+                  <p style={{ fontSize: 12, color: t.muted, padding: '8px 0' }}>No notes yet.</p>
+                ) : recap.map((r: Any, i: number) => (
+                  <div key={i} className="flex items-start" style={{ gap: 8, padding: '7px 0', borderTop: i ? '1px solid ' + t.rule : 'none' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {r.on ? <p style={{ fontSize: 10.5, color: t.muted }}>{r.on}</p> : null}
+                      <p style={{ fontSize: 13, lineHeight: 1.45, color: t.ink, whiteSpace: 'pre-line' }}>{r.t}</p>
+                    </div>
+                    <button onClick={() => removeRecap(i)} title="Remove" style={{ color: t.muted, flexShrink: 0 }}><X size={12} /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setNotesOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-semibold shadow-lg"
+              style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+              <Pencil size={12} /> Notes{recap.length ? ' \u00b7 ' + recap.length : ''}
+            </button>
+          )}
+        </div>
+      ) })()}
 
       {/* Answers save themselves; say so once, briefly, so a presenter can trust it. */}
       {askSaved && (
@@ -3932,12 +4058,24 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           }
 
           // ── the off-by-default sections, one slide each ────────────────────
-          const RowSlide = ({ k, label, rows, kw, tone }: { k: string; label: string; rows: Any[]; kw?: number; tone?: SlideTone }) => (
+          const RowSlide = ({ k, label, rows, kw, tone, field, asks }: { k: string; label: string; rows: Any[]; kw?: number; tone?: SlideTone; field?: string; asks?: boolean }) => (
             <Slide nav={label} warn={edit} ground={GROUND[tone || 'light']}>
               <div className="flex flex-col h-full">
                 <Title k={k} />
                 <div className="flex-1 min-h-0" style={{ marginTop: 22, overflowY: 'auto' }}>
-                  {(rows || []).map((r: Any, i: number) => (
+                  {(rows || []).map((r: Any, i: number) => edit && field ? (
+                    // EDITABLE ROWS (Jon, 2026-09-21: "make it editable, we should be able to add
+                    // questions"). Both columns type in place; a row can be removed; one can be added.
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: (kw || 180) + 'px 1fr 24px', columnGap: 16, padding: '12px 0', borderTop: '1px solid ' + t.rule }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: t.sub }}>
+                        <Ed v={r.k != null ? r.k : (r.who || '')} set={v => patch(k + '.' + field + '.' + i + '.' + (r.k != null || r.who == null ? 'k' : 'who'), v)} edit={edit} placeholder="Label" />
+                      </div>
+                      <div style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body }}>
+                        <Ed v={r.v != null ? r.v : (r.item || '')} set={v => patch(k + '.' + field + '.' + i + '.' + (r.v != null || r.item == null ? 'v' : 'item'), v)} edit={edit} multiline placeholder="Text" />
+                      </div>
+                      <button onClick={() => mutate(d => { const arr = (d[k] || {})[field]; if (Array.isArray(arr)) arr.splice(i, 1) })} title="Remove row" style={{ color: t.muted, alignSelf: 'start', marginTop: 2 }}><X size={13} /></button>
+                    </div>
+                  ) : (
                     // THE CHECKLIST IS SHAPED { item, who, by }, NOT { k, v }. It has always been,
                     // and this row only ever read k and v -- which did not matter while the
                     // section was hidden by default and would have rendered as a slide of empty
@@ -3951,7 +4089,19 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       </div>
                     </div>
                   ))}
-                  <Asks k={k} />
+                  {edit && field ? (
+                    <button
+                      onClick={() => mutate(d => {
+                        const S2 = d[k] || (d[k] = {})
+                        S2[field] = Array.isArray(S2[field]) ? S2[field] : []
+                        S2[field].push(k === 'checklist' ? { item: '', who: 'Owner', by: '' } : { k: '', v: '' })
+                      })}
+                      className="sb-noprint"
+                      style={{ marginTop: 12, fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '7px 15px', background: t.card, border: '1px dashed ' + t.cardBorder, color: t.ink }}>
+                      + Add a row
+                    </button>
+                  ) : null}
+                  {asks === false ? null : <Asks k={k} />}
                 </div>
                 <Foot label={label} />
               </div>
@@ -3964,11 +4114,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             // carve-out is repaired on the way to the slide rather than left promising that a
             // departure clean is never billed. Everything else passes through untouched.
             let rows: Any[] = S.rows || S.facts || S.bands || S.rules || (S.months ? [] : [])
+            const field = S.rows ? 'rows' : S.facts ? 'facts' : S.bands ? 'bands' : S.rules ? 'rules' : ''
             if (x.k === 'money') rows = houseRows<Any>(rows, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[])
             if (x.k === 'checklist') rows = houseRows<Any>(rows, CHECKLIST_RETIRED_MARK, CHECKLIST_ROWS as Any[])
             slides.push({ key: x.k, ai: true, node: (
               rows && rows.length
-                ? <RowSlide k={x.k} label={x.label} rows={rows} tone={EXTRA.indexOf(x) % 2 ? 'tint' : 'light'} />
+                // The communication slide keeps its four rows and drops the questions block
+                // (Jon, 2026-09-21: "remove the bottom section, I like the top part").
+                ? <RowSlide k={x.k} label={x.label} rows={rows} field={field} asks={x.k !== 'comms'} tone={EXTRA.indexOf(x) % 2 ? 'tint' : 'light'} />
                 : (
                   <Slide nav={x.label} warn={edit} ground={GROUND[EXTRA.indexOf(x) % 2 ? 'tint' : 'light']}>
                     <div className="flex flex-col h-full">
@@ -4000,8 +4153,52 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         set={v => { patch('notes.body', v); answerChanged() }}
                       />
                     ) : null}
+                    {/* THE RECAP: what the presenter noted during the call, in order. Editable in
+                        edit mode; read as the record by the owner. */}
+                    {(((sec('notes').recap || []) as Any[]).length > 0) && (
+                      <div style={{ marginTop: (canEdit || String(sec('notes').body || '').trim()) ? 22 : 0 }}>
+                        <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.accent, marginBottom: 6 }}>Recap</p>
+                        {((sec('notes').recap || []) as Any[]).map((r: Any, i: number) => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: edit ? '120px 1fr 24px' : '120px 1fr', columnGap: 18, padding: '8px 0', borderTop: '1px solid ' + t.rule }}>
+                            <span style={{ fontSize: 11.5, color: t.muted }}>{r.on || ''}</span>
+                            <span style={{ fontSize: 13.5, lineHeight: 1.5, color: t.ink, whiteSpace: 'pre-line' }}>
+                              {edit ? <Ed v={String(r.t || '')} set={v => editRecap(i, v)} edit={edit} multiline /> : String(r.t || '')}
+                            </span>
+                            {edit ? <button onClick={() => removeRecap(i)} title="Remove" style={{ color: t.muted, alignSelf: 'start' }}><X size={13} /></button> : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* Questions of the deck's own, added on this slide (Jon, 2026-09-21). */}
+                    {(edit || ((sec('notes').asks || []) as Any[]).length > 0) && (
+                      <div style={{ marginTop: 22 }}>
+                        {((sec('notes').asks || []) as Any[]).map((a: Any, i: number) => (
+                          <div key={a.id || i} style={{ display: 'grid', gridTemplateColumns: edit ? '1fr 24px' : '1fr', columnGap: 12, padding: '8px 0', borderTop: '1px solid ' + t.rule }}>
+                            <div>
+                              <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
+                                {edit ? <Ed v={String(a.q || '')} set={v => patch('notes.asks.' + i + '.q', v)} edit={edit} placeholder="Question" /> : houseAsk(a.q)}
+                              </p>
+                              {canEdit ? (
+                                <input value={String(a.a || '')} onChange={e => setAnswer('notes', i, e.target.value)} placeholder="answer&hellip;"
+                                  className="onb-ask mt-1.5 w-full text-[13.5px] pb-1"
+                                  style={{ background: 'transparent', border: 0, borderBottom: '1px ' + (String(a.a || '').trim() ? 'solid ' + t.accent : 'dashed ' + t.rule), color: t.ink, fontFamily: 'inherit' }} />
+                              ) : String(a.a || '').trim() ? <p style={{ fontSize: 13.5, color: t.body, marginTop: 4 }}>{String(a.a)}</p> : null}
+                            </div>
+                            {edit ? <button onClick={() => mutate(d => { const n = d.notes || {}; if (Array.isArray(n.asks)) n.asks.splice(i, 1) })} title="Remove" style={{ color: t.muted, alignSelf: 'start' }}><X size={13} /></button> : null}
+                          </div>
+                        ))}
+                        {edit ? (
+                          <button
+                            onClick={() => mutate(d => { const n = d.notes || (d.notes = {}); n.asks = Array.isArray(n.asks) ? n.asks : []; n.asks.push({ id: 'n' + Date.now(), q: '' }) })}
+                            className="sb-noprint"
+                            style={{ marginTop: 10, fontSize: 12.5, fontWeight: 600, borderRadius: 999, padding: '7px 15px', background: t.card, border: '1px dashed ' + t.cardBorder, color: t.ink }}>
+                            + Add a question
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
                     {totalAsks > 0 && (
-                      <div style={{ marginTop: (canEdit || String(sec('notes').body || '').trim()) ? 26 : 0, paddingTop: 18, borderTop: '1px solid ' + t.ink }}>
+                      <div style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid ' + t.ink }}>
                         <p style={{ fontSize: 12.5, color: open.length ? t.gold : t.good }}>{answered} of {totalAsks} answered</p>
                         {open.length === 0 ? (
                           <p style={{ fontSize: 14, marginTop: 10, color: t.good }}>Nothing open.</p>
