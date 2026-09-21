@@ -865,7 +865,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       // Open ones always (they roll forward until somebody walks the unit); finished ones for a
       // week, so the morning after a walk still shows it got done.
       .filter(i => !isDoneStatus(i.status) || i.check_in >= weekBack)
-      .slice(0, 12)
+      .slice(0, 8)
   } catch { /* the brief still sends */ }
   const reviewOpen = reviewInsp.filter(i => !isDoneStatus(i.status))
   const inspOpen = autoInsp.filter(i => !/complet|finish|close|approv/i.test(str(i.status)))
@@ -1171,7 +1171,8 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
           (maintUnassigned.length ? `
     <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${maintUnassigned.length} ${maintUnassigned.length === 1 ? t('job') : t('jobs')}</span></td></tr>` +
             maintUnassigned.map((o: any) => otherRow(o)).join('') : '') +
-          (techs.length ? crewBand('maintenance', techs) + techs.map(n => personBlock(n, { showShift: variant === 'full' })).join('') : '')
+          // Six lines a tech is a morning's worth; the rest is a board, not an email (2026-09-21).
+          (techs.length ? crewBand('maintenance', techs) + techs.map(n => personBlock(n, { showShift: variant === 'full', maxRows: 6 })).join('') : '')
         ) + `<p style="font-size:11px;color:#9ca3af;margin:8px 0 0">${t('A numbered row on a technician is a departure clean he is covering. Bulleted rows are the maintenance board.')}</p>`
       : emptyLine(t('Nothing on the maintenance board today.')),
     '#0891b2')
@@ -1320,7 +1321,9 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     v.daysUntilArrival == null ? 'no future booking'
       : v.daysUntilArrival === 0 ? 'guest arriving today'
         : `${v.daysUntilArrival} clear ${v.daysUntilArrival === 1 ? 'day' : 'days'}`
-  const workLimit = isField ? 6 : 12
+  // Six on every variant (2026-09-21). This is a "slot something in" list, not an inventory —
+  // twelve rows of it were 8 KB of an email that Gmail was already truncating.
+  const workLimit = 6
   const workRows = vacWork.filter(v => v.top).slice(0, workLimit).map(v => {
     const t = v.top!
     const extra = v.suggestions.length - 1
@@ -1690,7 +1693,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
 
   ${review && review.items.length ? (() => {
     const r = review!
-    const rows = r.items.slice(0, 14).map(i => {
+    const rows = r.items.slice(0, 10).map(i => {
       const late = i.waitingDays != null && i.waitingDays > 0
       const tag = i.target?.hasTrade ? pillGreen('FREE TRIP') : i.target ? pillBlue('UNIT EMPTY') : pillAmber('NO WINDOW')
       return `
