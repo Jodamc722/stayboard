@@ -155,8 +155,8 @@ export async function POST(req: NextRequest) {
       // What Talkroute actually puts on a call, by direction — so caller extraction is built on the
       // real shape rather than the spec's example values.
       const db = supabaseAdmin()
-      const { data } = await db.from('talkroute_calls').select('id,direction,result,events,caller_device')
-        .not('events', 'is', null).order('call_at', { ascending: false }).limit(220)
+      const { data } = await db.from('talkroute_calls').select('id,direction,result,duration,recorded,recording_url,reservation_id,match_kind,events,caller_device')
+        .order('call_at', { ascending: false }).limit(600)
       const byDir: Record<string, Record<string, number>> = {}
       const samples: any[] = []
       for (const r of ((data as any[]) || [])) {
@@ -166,11 +166,28 @@ export async function POST(req: NextRequest) {
           const t = String(e?.type || '?')
           byDir[dir][t] = (byDir[dir][t] || 0) + 1
         }
-        if (r.direction === 'outbound' && samples.length < 6) {
-          samples.push({ id: r.id, result: r.result, device: r.caller_device || null, events: (Array.isArray(r.events) ? r.events : []).map((e: any) => ({ type: e?.type, description: String(e?.description || '').slice(0, 90) })) })
+        if (r.direction === 'outbound' && samples.length < 5) {
+          samples.push({ id: r.id, result: r.result, dur: r.duration, rec: !!r.recorded, url: !!r.recording_url, matched: !!r.reservation_id, kind: r.match_kind, events: (Array.isArray(r.events) ? r.events : []).map((e: any) => ({ type: e?.type, description: String(e?.description || '').slice(0, 90) })) })
         }
       }
-      return NextResponse.json({ ok: true, byDir, samples })
+      // OUTBOUND HAS NO `result` ON THIS ACCOUNT. Whether a welcome call connected has to come from
+      // somewhere else, so this reports the duration distribution and whether a recording exists —
+      // the two things that could stand in for it.
+      const out2: any = { total: 0, buckets: { z: 0, s1_5: 0, s6_19: 0, s20_59: 0, m1plus: 0 }, recorded: 0, withUrl: 0, matched: 0 }
+      for (const r of ((data as any[]) || [])) {
+        if (r.direction !== 'outbound') continue
+        out2.total++
+        const d = Number(r.duration) || 0
+        if (d === 0) out2.buckets.z++
+        else if (d <= 5) out2.buckets.s1_5++
+        else if (d <= 19) out2.buckets.s6_19++
+        else if (d <= 59) out2.buckets.s20_59++
+        else out2.buckets.m1plus++
+        if (r.recorded) out2.recorded++
+        if (r.recording_url) out2.withUrl++
+        if (r.reservation_id) out2.matched++
+      }
+      return NextResponse.json({ ok: true, byDir, samples, outbound: out2 })
     }
     if (op === 'find_callers') {
       const back = await backfillCallers(supabaseAdmin(), { limit: 600, deadline: Date.now() + 40_000 })
