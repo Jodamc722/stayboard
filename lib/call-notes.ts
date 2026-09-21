@@ -23,6 +23,7 @@ import 'server-only'
 import { trAllCallsSince, phoneDigits } from './talkroute'
 import { transcribeUrl, transcriptScript, transcribeReady, getTranscribeSettings, transcribeFrom, TRANSCRIBE_DEFAULTS } from './transcribe'
 import { readCall, type CallIntel } from './call-intel'
+import { callConnected } from './talkroute-sync'
 import { getToken as guestyToken } from './guesty'
 import { appendReservationNote } from './guesty-res-notes'
 
@@ -108,7 +109,9 @@ export async function processCallIntel(sb: any, opts: { deadline?: number; limit
   const { data: rows } = await sb.from('talkroute_calls')
     .select('id,direction,call_at,duration,result,recorded,recording_url,transcript,transcript_status,transcript_tries,summary,intel,reservation_id,match_kind,note_pushed_at,external_name,caller_name')
     .not('reservation_id', 'is', null)
-    .eq('result', 'answered')
+    // Outbound calls carry no `result` at all (2026-09-21) — requiring 'answered' here excluded
+    // every welcome call from transcription. Connectedness is decided by callConnected below.
+    .or('result.eq.answered,result.is.null')
     .gte('call_at', fromIso)
     .or('transcript_status.is.null,transcript_status.eq.pending')
     .order('call_at', { ascending: false })
@@ -120,7 +123,8 @@ export async function processCallIntel(sb: any, opts: { deadline?: number; limit
     const seconds = Number(c.duration) || 0
     try {
       // ── 1. Should this call be transcribed at all? ──────────────────────────────────────────
-      if (!c.recorded) { await mark(sb, c.id, { transcript_status: 'none' }); rep.skipped++; }
+      if (callConnected(c) !== 'answered') { await mark(sb, c.id, { transcript_status: 'none' }); rep.skipped++ }
+      else if (!c.recorded) { await mark(sb, c.id, { transcript_status: 'none' }); rep.skipped++ }
       else if (seconds < minSeconds) { await mark(sb, c.id, { transcript_status: 'skipped', transcript_error: `Under ${minSeconds}s` }); rep.skipped++ }
       else if (!ready) { rep.skipped++; continue }          // no key: leave it pending for later
       else if (cap > 0 && spend >= cap) { rep.skipped++; rep.errors.push(`Daily transcription cap $${cap} reached`); break }

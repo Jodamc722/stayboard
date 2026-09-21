@@ -48,6 +48,30 @@ const WELCOME_FIELD_ID = '68d59ad7e34f25001311d85a'
 
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
+/**
+ * DID THIS CALL CONNECT? (2026-09-21, found by reading 194 live outbound records.)
+ *
+ * Talkroute fills `result` on INBOUND calls only — answered / missed / hangup. Every OUTBOUND call
+ * on this account comes back with result null and an empty event list. The matcher required
+ * result === 'answered', so no welcome call had ever completed itself: each one logged as a
+ * no-answer attempt however long the team had talked.
+ *
+ * Outbound therefore falls back to the one field Talkroute does fill: duration. A call with talk
+ * time connected to SOMETHING, and how long decides whether that something was the guest or their
+ * voicemail — the same `voicemailMaxSec` line the desk already uses for inbound. Zero seconds is
+ * the only outbound state we read as nobody answering.
+ *
+ * Returns 'answered' | 'missed' — 'missed' meaning "do not complete the card on this".
+ */
+export function callConnected(c: { direction?: string; result?: any; duration?: any }): 'answered' | 'missed' {
+  const r = String(c.result || '').toLowerCase()
+  if (r === 'answered') return 'answered'
+  if (r === 'missed' || r === 'hangup') return 'missed'
+  // No result at all. Outbound: trust duration. Inbound with no result is left alone.
+  if (String(c.direction) === 'outbound') return (Number(c.duration) || 0) > 0 ? 'answered' : 'missed'
+  return 'missed'
+}
+
 export type SyncReport = {
   calls: { fetched: number; upserted: number; matched: number; welcomeCompleted: number; welcomeAttempts: number; postAttempts: number; stay: number; partial?: boolean }
   texts: { conversations: number; messages: number; matched: number; partial?: boolean }
@@ -171,7 +195,7 @@ async function completeWelcome(sb: any, res: ResLite, call: TrCallRecord, outcom
     called_by: by, caller_email: null, called_at: at,
     listing_id: res.listing_id || null, guest_name: res.guest_name || null,
     ref_date: res.check_in || null, scheduled_for: res.check_in || null,
-    source: 'talkroute', talkroute_call_id: call.id, last_attempt_at: at, last_result: String(call.result || ''), talk_seconds: Number(call.duration) || 0,
+    source: 'talkroute', talkroute_call_id: call.id, last_attempt_at: at, last_result: String(call.result || '') || callConnected(call), talk_seconds: Number(call.duration) || 0,
   }, { onConflict: 'reservation_id,kind' })
   if (error) { errors.push(`guest_calls ${res.id}: ${error.message}`); return false }
   return true
@@ -189,7 +213,7 @@ async function recordAttempt(sb: any, res: ResLite, kind: 'welcome' | 'post_chec
     called_by: prev?.called_by || by, called_at: at,
     listing_id: res.listing_id || null, guest_name: res.guest_name || null,
     ref_date: kind === 'welcome' ? res.check_in : res.check_out, scheduled_for: kind === 'welcome' ? res.check_in : res.check_out,
-    source: 'talkroute', talkroute_call_id: call.id, last_attempt_at: at, last_result: String(call.result || ''), talk_seconds: Number(call.duration) || 0,
+    source: 'talkroute', talkroute_call_id: call.id, last_attempt_at: at, last_result: String(call.result || '') || callConnected(call), talk_seconds: Number(call.duration) || 0,
     outcome: completed ? prev.outcome : (kind === 'welcome' ? 'no_answer' : (prev?.outcome === 'in_progress' ? 'in_progress' : (String(call.result) === 'answered' ? 'in_progress' : 'no_answer'))),
   }
   if (completed) { delete row.called_at; delete row.called_by }
@@ -250,7 +274,7 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
       // every sync and the transcript — not the link — is what we keep. A call that connected and
       // was recorded joins the transcription queue; lib/call-notes walks it.
       ...(c.recording ? { recording_url: String(c.recording), recording_seen_at: new Date().toISOString() } : {}),
-      ...(known0?.transcript_status ? {} : { transcript_status: (c.recorded && String(c.result || '').toLowerCase() === 'answered') ? 'pending' : 'none' }),
+      ...(known0?.transcript_status ? {} : { transcript_status: (c.recorded && callConnected(c) === 'answered') ? 'pending' : 'none' }),
       // keep an existing match
       ...(known.get(String(c.id))?.reservation_id ? { reservation_id: known.get(String(c.id))!.reservation_id, match_kind: known.get(String(c.id))!.match_kind } : {}),
     })
@@ -277,7 +301,7 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
       if (!m) continue
       rep.matched++
       await sb.from('talkroute_calls').update({ reservation_id: m.res.id, match_kind: m.kind, matched_at: new Date().toISOString() }).eq('id', String(c.id))
-      const result = String(c.result || '').toLowerCase()
+      const result = callConnected(c)
       const device = callerDeviceOf(c.events)
       const by = callerLabel(c, peopleMap, people)
       if (device) { try { await sb.from('talkroute_calls').update({ caller_device: device, caller_name: by === 'Talkroute' ? null : by }).eq('id', String(c.id)) } catch { /* cosmetic */ } }
