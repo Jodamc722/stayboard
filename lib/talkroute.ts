@@ -138,9 +138,20 @@ export type TrVirtualNumber = { id: string; phoneNumber?: string; description?: 
 export type TrSubscription = { id: string; hookUrl: string; type: string }
 export const TR_WEBHOOK_TYPES = ['new_call_record', 'new_text_message', 'new_voicemail'] as const
 
+/**
+ * Talkroute's date filters want `Y-m-d\TH:i:sP` — "2026-09-14T14:26:00+00:00". JS's toISOString()
+ * gives "2026-09-14T14:26:00.123Z", which it rejects with a 422 (first live sync, 2026-09-21).
+ */
+export function trDate(v: string | Date | undefined): string | undefined {
+  if (!v) return undefined
+  const d = v instanceof Date ? v : new Date(v)
+  if (!Number.isFinite(d.getTime())) return undefined
+  return d.toISOString().replace(/\.\d{3}Z$/, '+00:00')
+}
+
 // ── ENDPOINTS ───────────────────────────────────────────────────────────────────────────────────
 export async function trCallHistory(q: { after?: string; before?: string; direction?: string; page?: number; pageSize?: number } = {}) {
-  return trFetch<TrPage<TrCallRecord>>('/call-history', { query: { pageSize: q.pageSize || 100, page: q.page || 1, after: q.after, before: q.before, direction: q.direction } })
+  return trFetch<TrPage<TrCallRecord>>('/call-history', { query: { pageSize: q.pageSize || 100, page: q.page || 1, after: trDate(q.after), before: trDate(q.before), direction: q.direction } })
 }
 /** Every call record since `after`, walking the pages (capped so a runaway account cannot hang a cron). */
 export async function trAllCallsSince(after: string, maxPages = 10): Promise<TrCallRecord[]> {
@@ -155,7 +166,7 @@ export async function trAllCallsSince(after: string, maxPages = 10): Promise<TrC
   return out
 }
 export async function trTextConversations(q: { since?: string; page?: number; pageSize?: number; unread?: boolean } = {}) {
-  return trFetch<TrPage<TrTextConversation>>('/text-conversations', { query: { pageSize: q.pageSize || 100, page: q.page || 1, since: q.since, unread: q.unread } })
+  return trFetch<TrPage<TrTextConversation>>('/text-conversations', { query: { pageSize: q.pageSize || 100, page: q.page || 1, since: trDate(q.since), unread: q.unread } })
 }
 export async function trTextMessages(conversationId: string, q: { page?: number; pageSize?: number } = {}) {
   return trFetch<TrPage<TrTextMessage>>(`/text-conversations/${encodeURIComponent(conversationId)}/messages`, { query: { pageSize: q.pageSize || 100, page: q.page || 1 } })
