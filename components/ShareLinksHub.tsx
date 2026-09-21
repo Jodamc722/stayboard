@@ -364,7 +364,7 @@ export function ShareLinksHub() {
                   </button>
                 ))}
               </div>
-              <p className="text-[11px] text-muted mt-1.5">The day sheet, delivery log, live orders, marketing, audit and Stay reports each have one fixed link already — edit those below.</p>
+              <p className="text-[11px] text-muted mt-1.5">The day sheet, delivery log, live orders, marketing, audit and Botanica reports each have one fixed link already — edit those below.</p>
             </div>
           ) : <p className="text-[12px] text-muted">{KIND_LABEL[form.kind as keyof typeof KIND_LABEL]} · <span className="font-mono">{editing.path}</span>{isFixed ? ' · fixed page' : ''}</p>}
 

@@ -25,7 +25,7 @@ export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-b
 export const KIND_LABEL: Record<LinkKind, string> = {
   'vendor-board': 'Vendor cleaning board', scheduler: 'Team scheduler', 'field-board': 'Live field board', parking: 'Parking board',
   'day-sheet': 'Day sheet', delivery: 'Delivery log', 'orders-live': 'Guest orders — live', 'salato-desk': 'Salato desk board',
-  marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Stay report',
+  marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Botanica report',
   'owner-report': 'Owner report', guidebook: 'Guidebook', guide: 'Guest guide page', 'order-form': 'Order form', count: 'Inventory count', 'custom-page': 'Custom report',
 }
 export const AUDIENCE_LABEL: Record<Audience, string> = {
@@ -72,7 +72,7 @@ export function pathFor(kind: string, code: string): string {
     case 'salato-desk': return '/salato/share'
     case 'marketing': return '/report/marketing'
     case 'owner-audit': return '/report/owner-audit'
-    case 'botanica': return '/report/stay'
+    case 'botanica': return '/report/botanica'
     case 'owner-report': return '/r/' + code
     case 'guidebook': return '/g/' + code
     case 'guide': return '/guide/' + code

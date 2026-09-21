@@ -51,7 +51,7 @@ const LEGACY_FAMILY: Record<string, { id: number; kind: string; audience: string
   'orders-live': { id: 1, kind: 'orders-live', audience: 'crew', title: 'Guest orders — live', scope: {} },
   marketing: { id: 3, kind: 'marketing', audience: 'partner', title: 'Direct bookings report — partners', scope: {} },
   'owner-audit': { id: 4, kind: 'owner-audit', audience: 'internal', title: 'Owner statement audit — reviewers', scope: {} },
-  'botanica-report': { id: 7, kind: 'botanica', audience: 'owner', title: 'Stay report — Margaux', scope: {} },
+  'botanica-report': { id: 7, kind: 'botanica', audience: 'owner', title: 'Botanica report — Margaux', scope: {} },
 }
 export const LEGACY_ID_PREFIX = 'legacy:'
 /** share_settings row id behind a synthesised legacy link id, or null for a real row. */

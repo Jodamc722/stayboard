@@ -187,7 +187,7 @@ export default function BotanicaReportPage() {
       <form onSubmit={submitPw} className="w-full max-w-sm bg-white border border-neutral-200 rounded-2xl shadow-lg overflow-hidden">
         <div className="bg-gradient-to-br from-neutral-900 to-neutral-800 px-6 pt-6 pb-7">
           <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300 font-semibold">Stay Hospitality</div>
-          <h1 className="text-2xl font-bold text-white mt-1">Stay report</h1>
+          <h1 className="text-2xl font-bold text-white mt-1">Botanica report</h1>
           <p className="text-xs text-neutral-400 mt-1">Performance report · passcode protected. Don’t have it? Ask Jon for this link’s passcode.</p>
         </div>
         <div className="p-6 space-y-3">
@@ -224,7 +224,7 @@ export default function BotanicaReportPage() {
                     LIVE
                   </span>
                 </div>
-                <h1 className="text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight">Stay report</h1>
+                <h1 className="text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight">Botanica report</h1>
                 <p className="text-xs text-neutral-400 mt-1.5 max-w-xl">
                   Nightly ADR (incl. cleaning), room nights sold, occupancy &amp; cleaning revenue · always live
                   {data.lastSync ? ' · synced ' + new Date(data.lastSync).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''}

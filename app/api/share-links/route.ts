@@ -215,7 +215,7 @@ export async function POST(req: NextRequest) {
     const row = (cur || [])[0] as any
     if (!row) return NextResponse.json({ ok: false, error: 'Unknown link.' }, { status: 404 })
     const given = str(body.passcode).trim()
-    if (given && given.length < 6) return NextResponse.json({ ok: false, error: 'A passcode needs at least 6 characters.' }, { status: 400 })
+    if (given && given.length < 5) return NextResponse.json({ ok: false, error: 'A passcode needs at least 5 characters.' }, { status: 400 })
     if (row.kind === 'parking' && given && given.length < 8) return NextResponse.json({ ok: false, error: 'A parking passcode needs at least 8 characters — the garage is outside the company.' }, { status: 400 })
     const pw = given || generatePasscode()
     const { data, error } = await db.from('share_links').update({ passcode_hash: storablePasscode(pw), passcode_hint: hintOf(pw), open: false, updated_at: now }).eq('id', id).select('*').limit(1)
@@ -271,7 +271,7 @@ export async function POST(req: NextRequest) {
   // Parking never opens without one, and neither does anything that used to sit on a family password.
   const given = str(body.passcode).trim()
   const wantsOpen = body.open === true && !given
-  if (given && given.length < 6) return NextResponse.json({ ok: false, error: 'A passcode needs at least 6 characters.' }, { status: 400 })
+  if (given && given.length < 5) return NextResponse.json({ ok: false, error: 'A passcode needs at least 5 characters.' }, { status: 400 })
   if (kind === 'parking' && (wantsOpen || (given && given.length < 8))) return NextResponse.json({ ok: false, error: 'A parking link needs its own passcode, at least 8 characters — the garage is outside the company.' }, { status: 400 })
   if (wantsOpen && ['vendor-board', 'day-sheet', 'delivery', 'orders-live', 'marketing', 'owner-audit', 'botanica'].indexOf(kind) >= 0) {
     return NextResponse.json({ ok: false, error: 'This kind of link always has a passcode.' }, { status: 400 })
