@@ -9,7 +9,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
-import { SAMPLE_STATEMENT, statementHasRows, STATEMENT_ALSO } from '@/lib/statement-sample'
+import { SAMPLE_STATEMENT, statementHasRows, statementIsHouseSample, STATEMENT_ALSO } from '@/lib/statement-sample'
 import {
   houseLine, houseRows, agendaStale, channelBodyStale, statementAlsoRowsStale, AGENDA_ROWS, HERO_HEADLINE,
   CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
@@ -3495,10 +3495,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                                 <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: 'rgba(255,255,255,0.22)', marginRight: 6 }} />Peak season
                               </span>
                               <span style={{ fontSize: 11.5, color: D.body }}>
-                                <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 999, background: '#fff', marginRight: 6 }} />March, the high
+                                <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 999, background: '#fff', marginRight: 6 }} />March peak
                               </span>
                               <span style={{ fontSize: 11.5, color: D.body }}>
-                                <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 999, background: t.accent, marginRight: 6 }} />September, the floor
+                                <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 999, background: t.accent, marginRight: 6 }} />September low
                               </span>
                             </div>
                             <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.muted, marginTop: 12 }}>
@@ -3638,9 +3638,6 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                       Owner portal: calendar, owner stays, analytics
                     </p>
                   </div>
-                  <p style={{ fontSize: 12.5, color: t.muted, whiteSpace: 'nowrap' }}>
-                    {housePortalUrl(sec('guesty').portalUrl).replace(/^https?:\/\//, '')}
-                  </p>
                 </div>
                 <div className="flex-1 min-h-0" style={{ marginTop: 20 }}>
                   <OwnerPortalDemo
@@ -3670,7 +3667,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             // Any deck whose stored statement has no rows — every one built before the remodel,
             // which rendered as a headline over an empty table — falls back to the shared one,
             // with no regeneration. A statement that HAS been edited keeps the edit.
-            const stFallback = !statementHasRows(sec('statement'))
+            const stFallback = !statementHasRows(sec('statement')) || statementIsHouseSample(sec('statement'))
             const st = stFallback ? { ...sec('statement'), ...SAMPLE_STATEMENT } : sec('statement')
             const stRes: Any[] = st.reservations || []
             const catLines = (cat: string | null) => {
@@ -3810,13 +3807,10 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                         })}
                         {stmtCat && catLines(stmtCat).length === 0 ? (
                           <p style={{ fontSize: 12, color: t.muted, paddingTop: 6 }}>
-                            Not tied to a booking. This is a monthly charge, billed once at its full amount \u2014 on your real statement it is itemised with the job and the date it came from.
+                            A monthly charge, not tied to a booking. Your real statement itemizes it by job and date.
                           </p>
                         ) : null}
                       </div>
-                      <p style={{ fontSize: 11, color: t.muted, paddingTop: 8, borderTop: '1px solid ' + t.rule }}>
-                        Sample figures. Your statement lists every booking and charge.
-                      </p>
                     </div>
                   </div>
                   <Foot label="Owner statements" />
@@ -3835,7 +3829,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                   <div className="flex-1 min-h-0 flex flex-col justify-center">
                     <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 20 }} />
                     <p className="onb-h" style={{ fontSize: 34, color: D.ink, maxWidth: '24ch', lineHeight: 1.2 }}>
-                      Three billing rules.
+                      Three billing rules
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 36, marginTop: 44 }}>
                       {hlRows.slice(0, 3).map((h: Any, i: number) => (
@@ -3879,7 +3873,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 <div className="flex flex-col h-full">
                   <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
                   <p className="onb-h" style={{ fontSize: 32, color: t.ink, maxWidth: '26ch', lineHeight: 1.2 }}>
-                    Common statement questions.
+                    Common statement questions
                   </p>
                   {/* Two columns, content-height rows, scrolled rather than squeezed. No
                       gridTemplateRows here on purpose: this grid WANTS two auto rows, and pinning
@@ -3999,13 +3993,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
                 <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', columnGap: 46 }} className="flex-1 min-h-0">
                   <div><Title k="notes" /></div>
                   <div className="min-h-0 onb-scroll">
-                    <LiveText
-                      v={String(sec('notes').body || '')}
-                      live={canEdit} t={t} ro="" cls="onb-copy"
-                      set={v => { patch('notes.body', v); answerChanged() }}
-                    />
+                    {(canEdit || String(sec('notes').body || '').trim()) ? (
+                      <LiveText
+                        v={String(sec('notes').body || '')}
+                        live={canEdit} t={t} ro="" cls="onb-copy"
+                        set={v => { patch('notes.body', v); answerChanged() }}
+                      />
+                    ) : null}
                     {totalAsks > 0 && (
-                      <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid ' + t.ink }}>
+                      <div style={{ marginTop: (canEdit || String(sec('notes').body || '').trim()) ? 26 : 0, paddingTop: 18, borderTop: '1px solid ' + t.ink }}>
                         <p style={{ fontSize: 12.5, color: open.length ? t.gold : t.good }}>{answered} of {totalAsks} answered</p>
                         {open.length === 0 ? (
                           <p style={{ fontSize: 14, marginTop: 10, color: t.good }}>Nothing open.</p>
