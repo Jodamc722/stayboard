@@ -92,9 +92,17 @@ export type SampleStatement = {
 const m = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const MINUS = '−'
 
+/** A stored statement that is one of our house samples (never an owner's numbers): rendered
+ *  from the current sample so wording fixes reach decks already generated. */
+export function statementIsHouseSample(stored: unknown): boolean {
+  const o = (stored || {}) as { unitLabel?: string; reservations?: { lines?: { desc?: string }[] }[] }
+  if (/^Sample statement/.test(String(o.unitLabel || ''))) return true
+  return (o.reservations || []).some(r => (r.lines || []).some(l => /returned to you|after the channel/.test(String(l.desc || ''))))
+}
+
 export const SAMPLE_STATEMENT: SampleStatement = {
-  unitLabel: 'Sample statement · 2 BR / 2 BA condo',
-  period: 'Example month · August',
+  unitLabel: '2 BR / 2 BA condo',
+  period: 'August',
   kpis: [
     { k: 'Occupancy', v: '68%' },
     { k: 'Proceeds', v: m(1747.5) },
@@ -115,18 +123,18 @@ export const SAMPLE_STATEMENT: SampleStatement = {
     {
       guest: 'M. Alvarez', stay: 'Aug 2 – Aug 8 · 6 nights',
       lines: [
-        { date: 'Aug 2', desc: 'Rental payment for HMABC12345 \u2014 after the channel\u2019s fee', cat: 'Rental income', amt: m(1024) },
-        { date: 'Aug 2', desc: 'PMC commission — 20% of rental', cat: 'Management fee', amt: MINUS + m(204.8), neg: true },
-        { date: 'Aug 2', desc: 'Airbnb RM channel fee reimbursement \u2014 15% of the cleaning fee, returned to you', cat: 'Airbnb RM channel fee reimbursement', amt: m(18.75) },
+        { date: 'Aug 2', desc: 'Rental payment \u2014 net of channel fee', cat: 'Rental income', amt: m(1024) },
+        { date: 'Aug 2', desc: 'Management fee \u2014 20% of rental', cat: 'Management fee', amt: MINUS + m(204.8), neg: true },
+        { date: 'Aug 2', desc: 'Channel fee refund \u2014 15% of the cleaning fee', cat: 'Airbnb RM channel fee reimbursement', amt: m(18.75) },
       ],
       total: m(837.95),
     },
     {
       guest: 'R. Whitfield', stay: 'Aug 14 – Aug 29 · 15 nights',
       lines: [
-        { date: 'Aug 14', desc: 'Rental payment for BC-9KD3LM \u2014 after the channel\u2019s fee', cat: 'Rental income', amt: m(1432) },
-        { date: 'Aug 14', desc: 'PMC commission — 20% of rental', cat: 'Management fee', amt: MINUS + m(286.4), neg: true },
-        { date: 'Aug 14', desc: 'Airbnb RM channel fee reimbursement \u2014 15% of the cleaning fee, returned to you', cat: 'Airbnb RM channel fee reimbursement', amt: m(18.75) },
+        { date: 'Aug 14', desc: 'Rental payment \u2014 net of channel fee', cat: 'Rental income', amt: m(1432) },
+        { date: 'Aug 14', desc: 'Management fee \u2014 20% of rental', cat: 'Management fee', amt: MINUS + m(286.4), neg: true },
+        { date: 'Aug 14', desc: 'Channel fee refund \u2014 15% of the cleaning fee', cat: 'Airbnb RM channel fee reimbursement', amt: m(18.75) },
       ],
       total: m(1164.35),
     },
