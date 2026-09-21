@@ -66,6 +66,11 @@ export type AskSettings = {
   includeQuestions: boolean
   /** Give up on an item after this many deliveries with no reply. */
   giveUpAfter: number
+  /**
+   * OFF by default (Jon, 2026-09-21: keep her observing; he reads in the app). On, the 09:00 ask
+   * carries "Yesterday I would have: …" — at most three lines from the Thinking feed.
+   */
+  thinkingDigest: boolean
 }
 
 const DEFAULTS: AskSettings = {
@@ -75,6 +80,7 @@ const DEFAULTS: AskSettings = {
   includeFindings: true,
   includeQuestions: false,
   giveUpAfter: 3,
+  thinkingDigest: false,
 }
 
 export async function askSettings(): Promise<AskSettings> {
@@ -85,6 +91,7 @@ export async function askSettings(): Promise<AskSettings> {
     maxPerDay: Math.min(Math.max(Number(s.maxPerDay) || 3, 1), 12),
     giveUpAfter: Math.min(Math.max(Number(s.giveUpAfter) || 3, 1), 10),
     recipients: Array.isArray(s.recipients) ? s.recipients.map(e => String(e).toLowerCase().trim()).filter(Boolean) : [],
+    thinkingDigest: s.thinkingDigest === true,
   }
 }
 
@@ -271,6 +278,11 @@ async function deliverOne(to: Recipient, item: AskItem): Promise<boolean> {
   if (gate.mode === 'observe' || gate.mode === 'draft') {
     if (gate.mode === 'draft') await saveDraft({ action: 'telegram_ask', summary: `${item.type}: ${item.title}`, exec: { chat_id: to.chatId, text }, why: gate.reason, by: 'cron:eve-ask', actor: to.email })
     else await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: false, mode: 'observe', reason: gate.reason, summary: item.title, by: 'cron:eve-ask', countAs: 'none' })
+    // Not sent — but it is what she wanted to raise this morning, so it goes on the Thinking feed.
+    try {
+      const { recordThought } = await import('./thoughts')
+      await recordThought({ action: 'telegram_ask', payload: { chat_id: to.chatId, text, type: item.type, ref: item.ref, title: item.title }, why: gate.reason, ask: item.title, source: 'ask', subject: `${item.type}:${item.ref}`, rungNow: gate.rung, wouldHaveBeen: 'propose', evidence: [item.body.split('\n')[0].replace(/\*\*/g, '').slice(0, 200)], by: 'cron:eve-ask', actor: to.email, cooldownHours: 24 })
+    } catch { /* the feed is a receipt */ }
     return false
   }
   // QUIET HOURS: held until morning and sent then, binding and all — never a proposal nobody sees.
@@ -314,8 +326,12 @@ export async function runMorningAsk(opts: { force?: boolean; max?: number } = {}
   const to = await recipients()
   if (!to.length) return { ok: true, sent: 0, skipped: 'no approved Telegram contact bound to a Lighthouse user', items: [] }
 
-  const batch = await buildBatch(ceiling)
-  if (!batch.length) return { ok: true, sent: 0, skipped: 'nothing worth asking', items: [] }
+  // Ask for more than the budget allows, so what the budget CUT is known: those candidates go on
+  // the Thinking feed (source 'ask') instead of vanishing until tomorrow.
+  const all = await buildBatch(ceiling + 10)
+  const batch = all.slice(0, ceiling)
+  await noteBudgetCut(all.slice(ceiling), s.maxPerDay)
+  if (!batch.length) { await thinkingDigest(to[0], s); return { ok: true, sent: 0, skipped: 'nothing worth asking', items: [] } }
 
   const sentTitles: string[] = []
   let sent = 0
@@ -324,7 +340,43 @@ export async function runMorningAsk(opts: { force?: boolean; max?: number } = {}
     // people gets it answered three different ways, and then she has a conflict instead of a rule.
     if (await deliverOne(to[0], item)) { sent++; sentTitles.push(`${item.type}: ${item.title}`) }
   }
+  await thinkingDigest(to[0], s)
   return { ok: true, sent, skipped: '', items: sentTitles }
+}
+
+/** The morning-ask candidates the budget left out — a thought each, so Jon sees what she wanted to raise. */
+async function noteBudgetCut(cut: AskItem[], maxPerDay: number): Promise<void> {
+  if (!cut.length) return
+  try {
+    const { recordThought } = await import('./thoughts')
+    const gate = await agentAllowed('telegram_ask', { ask: true })
+    for (const item of cut) {
+      await recordThought({
+        action: 'telegram_ask', payload: { type: item.type, ref: item.ref, title: item.title, text: item.body }, why: `Ranked ${item.rank}; today's ${maxPerDay} asks were taken by things ranked higher.`,
+        ask: item.title, source: 'ask', subject: `${item.type}:${item.ref}`, rungNow: gate.rung, wouldHaveBeen: 'propose', evidence: [item.body.split('\n')[0].replace(/\*\*/g, '').slice(0, 200)], by: 'cron:eve-ask', cooldownHours: 24,
+      })
+    }
+  } catch { /* the feed is a receipt */ }
+}
+
+/**
+ * "Yesterday I would have: …" — only when eve_ask.thinkingDigest is true (OFF by default). Goes
+ * through the same telegram_ask gate as any other message; observed or drafted, it is not sent.
+ */
+async function thinkingDigest(to: Recipient | undefined, s: AskSettings): Promise<boolean> {
+  if (!s.thinkingDigest || !to) return false
+  try {
+    const { thinkingDigestLines } = await import('./thoughts')
+    const lines = await thinkingDigestLines(3)
+    if (!lines.length) return false
+    const gate = await agentAllowed('telegram_ask', { ask: true })
+    if (gate.mode !== 'act' && gate.mode !== 'propose') return false
+    const text = `💭 **Yesterday I would have:**\n${lines.join('\n')}\n\n_Observing only — the full list, with Do it / Not this, is in Settings → Eve → Thinking._`
+    const res = await sendMessage(to.chatId, text)
+    if (!res.ok) return false
+    await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: true, mode: gate.mode, reason: 'thinking digest (eve_ask.thinkingDigest on)', summary: 'Yesterday I would have…', by: 'cron:eve-ask', actor: to.email, countAs: 'ask' })
+    return true
+  } catch { return false }
 }
 
 // ---- The reply -----------------------------------------------------------------------------------

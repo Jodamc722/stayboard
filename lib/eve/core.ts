@@ -273,13 +273,13 @@ export const CORE_TOOLS: EveTool[] = [
       const need = PAYLOAD_NEEDS[action as string]
       const missing = need ? need.filter(keys => !keys.some(k => String(payload[k] ?? '').trim())) : []
       if (missing.length) return { ok: false, error: `${action} needs ${missing.map(keys => keys.join(' or ')).join(', ')} in the payload — read the thread / task / unit first.` }
-      const r = await attemptAction({ action, summary, exec: payload, why: String(input?.why || '').slice(0, 300), by: 'chat', actor: ctx.email, usd: Number.isFinite(Number(input?.usd)) ? Number(input.usd) : null })
+      const r = await attemptAction({ action, summary, exec: payload, why: String(input?.why || '').slice(0, 300), by: 'chat', actor: ctx.email, usd: Number.isFinite(Number(input?.usd)) ? Number(input.usd) : null, snippet: ctx.question || null, subject: String(payload.unit || payload.conversationId || payload.conversation_id || payload.taskId || payload.task_id || payload.listingId || payload.listing_id || payload.reservationId || payload.reservation_id || '') || null, thoughtCooldownHours: 0 })
       const outcome =
         r.mode === 'act' ? (r.ok ? `DONE: ${r.done || summary}.${r.undo ? ' It can be undone for 24h (say "undo" or use the Agent panel).' : ''}` : `TRIED AND FAILED: ${r.error || 'unknown error'}. Say so plainly and suggest the person does it by hand.`)
         : r.mode === 'propose' ? (r.ok ? `PROPOSED, NOT DONE. It is waiting for a yes (Telegram / Settings → Eve → Agent mode). Say it is waiting on Jon.` : `Could not file the proposal: ${r.error}`)
         : r.mode === 'deferred' ? `HELD for quiet hours — it goes out on its own at ${r.verdict.settings.quietHours.end} ET. Say so.`
         : r.mode === 'draft' ? `DRAFTED ONLY (${r.verdict.reason}). A person picks it up in the Agent panel queue. Nothing happened in Breezeway, Guesty, Slack or a mailbox.`
-        : `OBSERVED ONLY (${r.verdict.reason}). Nothing happened. Say what you would have done and who should do it.`
+        : `OBSERVED ONLY (${r.verdict.reason}). Nothing happened. It is written up on Settings → Eve → Thinking with a "Do it" button. Say what you would have done and who should do it.`
       return { ok: r.ok, mode: r.mode, rung: r.verdict.rung, reason: r.verdict.reason, ref: r.ref || null, log_id: r.logId || null, outcome }
     },
   },

@@ -463,6 +463,14 @@ export type Proposal = {
   metric?: string | null
   /** When the action carries out a plan from the ledger: a yes accepts it, a no rejects it. */
   recommendationId?: string | null
+  /** Short evidence lines for the Thinking feed (lib/eve/thoughts.ts). */
+  evidence?: string[]
+  /** What Eve was asked, when this came out of chat — shown on the thought. */
+  snippet?: string | null
+  /** A note on the thought ('draft skipped — AI budget'). */
+  note?: string | null
+  /** Dedupe window for the thought; a watch passes its cooldown. */
+  thoughtCooldownHours?: number
 }
 
 /** The executor's answer (lib/eve/executors.ts ExecOut, minus the summary the caller already has). */
@@ -728,10 +736,32 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
   }
   if (verdict.mode === 'draft') {
     const r = await saveDraft(p)
+    await thinkAbout(verdict, p)
     return { mode: 'draft', ok: r.ok, ref: r.id || null }
   }
   await recordAgentAction(p.action, { rung: verdict.rung, allowed: false, mode: 'observe', reason: verdict.reason, summary: p.summary, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
-  return { mode: 'observe', ok: true }
+  const th = await thinkAbout(verdict, p)
+  return { mode: 'observe', ok: true, ref: th?.id || null }
+}
+
+/**
+ * WHAT SHE IS THINKING (2026-09-21). An observe or draft step-down used to leave one log line and
+ * throw the prepared action away. Now the whole thing — payload, draft, reason, the ask she would
+ * have sent — is written as a thought (lib/eve/thoughts.ts) for the Thinking tab and the Command
+ * Center line. Best-effort; never touches the step-down's own result.
+ */
+async function thinkAbout(verdict: AgentVerdict, p: Proposal): Promise<{ id?: string } | null> {
+  if (p.action === 'memory_rule' || p.action === 'recommendation') return null
+  try {
+    const { recordThought, wouldHaveBeenFor } = await import('./thoughts')
+    const source = p.by === 'chat' ? 'chat' : p.watchKey ? `watch:${p.watchKey}` : p.by.startsWith('watch:') ? p.by : p.by.startsWith('cron:eve-ask') ? 'ask' : p.by
+    const r = await recordThought({
+      action: p.action, payload: p.exec ?? null, why: p.why || verdict.reason, ask: p.summary, source, subject: p.subject || null,
+      rungNow: verdict.rung, wouldHaveBeen: wouldHaveBeenFor(p.action), evidence: p.evidence || [], snippet: p.snippet || null,
+      note: p.note || (p.exec ? null : 'no prepared payload'), by: p.by, actor: p.actor || null, cooldownHours: p.thoughtCooldownHours,
+    })
+    return r.ok ? { id: r.id } : null
+  } catch { return null }
 }
 
 /**

@@ -467,10 +467,11 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
   const env = makeEnv(settings)
   const out: WatchRun = { ok: true, ranAt, watches: [] }
   const db = supabaseAdmin()
-  // AI drafts cost money at every rung above observe, and agentAllowed only meters spend for an
-  // act. One read here: over today's AI budget, a watch that needs a model call is observed only.
+  // AI drafts cost money at every rung — including observe, now that the draft IS the thought
+  // (lib/eve/thoughts.ts) — and agentAllowed only meters spend for an act. One read here: over
+  // today's AI budget, a watch that needs a model call is recorded without its draft.
   let overAiBudget = false
-  if (settings.enabled && settings.budgets.aiUsdPerDay > 0) {
+  if (settings.budgets.aiUsdPerDay > 0) {
     try { const { aiSpendToday } = await import('./agent-mode'); overAiBudget = (await aiSpendToday()) >= settings.budgets.aiUsdPerDay } catch { overAiBudget = false }
   }
 
@@ -479,6 +480,12 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
     if (!row.enabled && !opts.only) continue
     const def = WATCH_BY_KEY[row.key]
     const t0 = Date.now()
+    // Would she do more than observe for this watch right now? (The switch, the action's rung and
+    // the watch's own override — the override can raise a watch to propose: "Ask me next time".)
+    const actionRung = Number(settings.rungs[def.action] || 0)
+    const ov = row.rungOverride
+    const effectiveRung = !settings.enabled ? 0 : ov == null ? actionRung : ov >= 2 ? Math.max(2, Math.min(ov, actionRung)) : Math.min(ov, actionRung)
+    const observesNow = effectiveRung <= 0
     const rec = { key: row.key, found: 0, fired: 0, cooled: 0, modes: {} as Record<string, number>, ms: 0, error: undefined as string | undefined }
     let found: Prepared[] = []
     try { found = await def.trigger(env) } catch (e: any) { rec.error = String(e?.message || e).slice(0, 200) }
@@ -491,16 +498,17 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
       try {
         const since = new Date(Date.now() - row.cooldownHours * 3600_000).toISOString()
         const { data } = await db.from('eve_watch_fires').select('subject,mode').eq('watch_key', row.key).in('subject', subjects.slice(0, 200)).gte('fired_at', since)
-        // A subject only OBSERVED (agent mode was OFF) is not in cooldown once the switch is ON:
-        // flipping the switch should let her raise what she saw, not wait a day.
-        for (const r of ((data as any[]) || [])) if (!(settings.enabled && r.mode === 'observe')) cooled.add(str(r.subject))
+        // A subject only OBSERVED (a thought on the Thinking tab) is not in cooldown once she would
+        // do more than observe: flipping the switch or raising a rung should let her raise what
+        // she saw, not wait a day. While she still observes, the thought stands and is not redone.
+        for (const r of ((data as any[]) || [])) if (!(r.mode === 'observe' && !observesNow)) cooled.add(str(r.subject))
       } catch { /* no table = no cooldown; the per-run cap still holds */ }
       // SECOND LOCK on repeats: the receipt the fire itself leaves. If the eve_watch_fires write
       // failed last time, the proposal / draft / guest draft it made still carries (watchKey,
       // subject) in its payload — anything raised inside the cooldown, or still open, is cooled.
       try {
         const since = new Date(Date.now() - row.cooldownHours * 3600_000).toISOString()
-        const { data } = await db.from('eve_actions').select('payload,status').filter('payload->>watchKey', 'eq', row.key).gte('created_at', since).order('created_at', { ascending: false }).limit(200)
+        const { data } = await db.from('eve_actions').select('payload,status').neq('kind', 'thought').filter('payload->>watchKey', 'eq', row.key).gte('created_at', since).order('created_at', { ascending: false }).limit(200)
         for (const r of ((data as any[]) || [])) { const sub = str(r.payload?.subject); if (sub && subjects.indexOf(sub) >= 0 && (!opts.force || r.status === 'proposed')) cooled.add(sub) }
       } catch { /* fine */ }
     }
@@ -521,16 +529,26 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
         const ceiling = row.rungOverride != null ? row.rungOverride : (def.maxMode === 'propose' ? 2 : null)
         if (ceiling != null && ceiling < 3 && (verdict.mode === 'act' || verdict.mode === 'deferred')) verdict = { ...verdict, mode: ceiling >= 2 ? 'propose' : ceiling === 1 ? 'draft' : 'observe', ok: false, needsApproval: ceiling >= 2, reason: `${verdict.reason}; watch capped at rung ${ceiling}` }
         if (ceiling != null && ceiling < 2 && verdict.mode === 'propose') verdict = { ...verdict, mode: ceiling === 1 ? 'draft' : 'observe', ok: false, needsApproval: false, reason: `${verdict.reason}; watch capped at rung ${ceiling}` }
+        // "ASK ME NEXT TIME" (Thinking tab): an override of 2 on a watch whose action still sits at
+        // observe or draft RAISES it to propose — while agent mode is on, so the ask can be delivered.
+        if (settings.enabled && row.rungOverride != null && row.rungOverride >= 2 && (verdict.mode === 'observe' || verdict.mode === 'draft')) verdict = { ...verdict, mode: 'propose', ok: false, needsApproval: true, reason: `${verdict.reason}; watch raised to propose (ask me next time)` }
         if (typeof f.exec === 'function' && overAiBudget && verdict.mode !== 'observe') verdict = { ...verdict, mode: 'observe', ok: false, needsApproval: false, reason: `${verdict.reason}; AI spend is over today's $${settings.budgets.aiUsdPerDay} — no draft` }
+        // THE DRAFT IS THE THOUGHT (2026-09-21). At observe she still prepares the whole action so
+        // the Thinking tab shows what she would have done — the one exception is a model draft
+        // when today's AI budget is spent, which is recorded as a thought without its draft.
         let exec: any = null
-        if (verdict.mode !== 'observe') {
+        let note: string | null = null
+        const skipModel = typeof f.exec === 'function' && overAiBudget
+        if (skipModel) note = 'draft skipped — AI budget'
+        else {
           exec = typeof f.exec === 'function' ? await f.exec() : f.exec
           // Nothing to draft (thread answered meanwhile, model returned nothing): it still counts
           // against this run's cap, so a run can never loop the model over thirty threads.
           if (!exec) { rec.modes.skipped = (rec.modes.skipped || 0) + 1; continue }
           exec = { ...exec, watchKey: row.key, subject: f.subject }
         }
-        const r = await stepDown(verdict, { action: f.action, summary: f.ask, exec, why: f.why, by: byLabel, watchKey: row.key, subject: f.subject, metric: f.metric || null, usd: f.usd ?? null })
+        const evidence = [f.why, ...(exec && typeof exec === 'object' && exec.why ? [String(exec.why)] : [])].filter(Boolean)
+        const r = await stepDown(verdict, { action: f.action, summary: f.ask, exec, why: f.why, by: byLabel, watchKey: row.key, subject: f.subject, metric: f.metric || null, usd: f.usd ?? null, evidence, note, thoughtCooldownHours: opts.force ? 0 : row.cooldownHours })
         mode = r.mode; ref = r.ref || null
         if (!r.ok && r.error) rec.error = (rec.error ? rec.error + '; ' : '') + `${f.subject}: ${r.error}`.slice(0, 200)
       } catch (e: any) {

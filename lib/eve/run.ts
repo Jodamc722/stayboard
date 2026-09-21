@@ -180,6 +180,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
 
   // --- Memory, scoped to what this question is actually about. ---
   const lastUser = String([...messages].reverse().find(m => m.role === 'user')?.content || '')
+  ctx.question = lastUser.slice(0, 400)
   const wholeThread = messages.map(m => String(m.content || '')).join(' \n ')
   const scopes = scopesForText(wholeThread, ctx.listingMeta)
   // The question rides along so retrieval can rank by RELEVANCE, not just weight — the memories

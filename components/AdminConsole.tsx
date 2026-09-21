@@ -205,7 +205,7 @@ const ENTRIES: Entry[] = [
   {
     key: 'eve', title: 'Eve — memory, voice & direction', group: 'AI', Icon: Sparkles, ownerOnly: true,
     blurb: 'What Eve knows, how she sounds, what she is told to push on, and where her approvals land.',
-    find: 'eve ai memory voice direction recommendation approvals channel audit questions learn',
+    find: 'eve ai memory voice direction recommendation approvals channel audit questions learn thinking thoughts observe what she would have done agent mode watches',
     render: p => <L.eve canEdit={p.isOwner} />,
   },
   {
@@ -248,6 +248,13 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
   const [tab, setTab] = useState<Tab>('people')
   const [panel, setPanel] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  // Unseen thoughts (what Eve would have done) — a badge on the Eve entry. Admins only; a 403 is a 0.
+  const [eveThoughts, setEveThoughts] = useState(0)
+  useEffect(() => {
+    let alive = true
+    fetch('/api/eve/thoughts?count=1').then(r => (r.ok ? r.json() : null)).then(j => { if (alive && j?.ok) setEveThoughts(Number(j.unseen) || 0) }).catch(() => {})
+    return () => { alive = false }
+  }, [panel])
 
   // Deep links: /users?tab=settings&panel=brief opens straight into the morning brief.
   useEffect(() => {
@@ -346,6 +353,9 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[13.5px] font-bold text-ink">{e.title}</span>
+                          {e.key === 'eve' && eveThoughts > 0 && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-brand-600 text-white" title="What she would have done, not yet seen">{eveThoughts} thought{eveThoughts === 1 ? '' : 's'}</span>
+                          )}
                           {e.ownerOnly && !isOwner && (
                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-app text-muted border border-line inline-flex items-center gap-1">
                               <Lock size={8} /> view only

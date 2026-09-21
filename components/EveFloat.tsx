@@ -53,6 +53,8 @@ export function EveFloat() {
   // Agent mode pill: null until known. Re-read each time the panel opens, so an OFF flipped in
   // Settings a moment ago shows here without a reload.
   const [agentOn, setAgentOn] = useState<boolean | null>(null)
+  // "3 thoughts": what she would have done, unseen by this person (admins; others get nothing back).
+  const [thoughts, setThoughts] = useState(0)
   const endRef = useRef<HTMLDivElement>(null)
   const boxRef = useRef<HTMLTextAreaElement>(null)
   const recRef = useRef<any>(null)
@@ -65,6 +67,7 @@ export function EveFloat() {
     if (!open) return
     let alive = true
     fetch('/api/eve/agent?pill=1').then(r => r.json()).then(d => { if (alive && d && typeof d.enabled === 'boolean') setAgentOn(d.enabled) }).catch(() => {})
+    fetch('/api/eve/thoughts?count=1').then(r => (r.ok ? r.json() : null)).then(d => { if (alive && d && d.ok) setThoughts(Number(d.unseen) || 0) }).catch(() => {})
     return () => { alive = false }
   }, [open])
 
@@ -187,6 +190,12 @@ export function EveFloat() {
                 className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border ${agentOn ? 'bg-[#E3F4EC] text-[#0F7B52] border-[#BFE5D2]' : 'bg-app text-muted border-line'}`}>
                 {agentOn ? 'agent ON' : 'agent OFF'}
               </span>
+            )}
+            {thoughts > 0 && (
+              <a href="/users?tab=settings&panel=eve" title="What she would have done — Settings → Eve → Thinking"
+                className="text-[10px] font-semibold rounded-full px-1.5 py-0.5 border bg-brand-50 text-brand-700 border-brand-200 hover:bg-brand-100">
+                {thoughts} thought{thoughts === 1 ? '' : 's'}
+              </a>
             )}
             <span className="text-[11px] text-muted hidden sm:inline">ops · money · quality · labor · guests</span>
             <div className="ml-auto flex items-center gap-0.5">

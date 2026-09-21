@@ -47,6 +47,7 @@ import {
 import { useSlackQueue, EVENT_LABEL, expiresIn, type Pending as SlackPending } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { Scoreboard } from '@/components/command/Scoreboard'
+import { EveThinkingLine } from '@/components/EveThoughts'
 
 type Sev = NextItem['severity']
 type Ranked = { key: string; sev: Sev; rank: number; node: ReactNode }
@@ -156,6 +157,8 @@ export function CommandDayList() {
       {/* THE WEEK — the KPI strip (Jon, 2026-09-18). The day's numbers stay behind "How's the day". */}
       <Scoreboard />
       <DecideBand d={data} claims={claims} approvals={approvals} onCleared={hide} onChanged={reload} />
+      {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
+      <EveThinkingLine />
       <FixBand rows={fixRows} roster={roster} onCleared={hide} onChanged={reload} />
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       <YoursBand />

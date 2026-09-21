@@ -510,6 +510,27 @@ export async function runReview(opts: { trigger: ReviewTrigger; focus?: string; 
   // Keep the persisted body in step with the ids we just minted.
   if (id) { try { await db.from('eve_reviews').update({ body }).eq('id', id) } catch { /* fine */ } }
 
+  // WHAT SHE IS THINKING (2026-09-21): every plan, critique and question also lands on the
+  // Thinking feed (source 'review'), whatever the recommendation rung — the review is her
+  // reasoning, and Jon asked to see it. Best-effort.
+  try {
+    const { recordThought } = await import('./thoughts')
+    const rung = recGate.rung
+    const src = 'review'
+    for (const p of body.plans) {
+      await recordThought({ action: 'plan', payload: { title: p.title, area: p.area, problem: p.problem, change: p.change, expected_effect: p.expected_effect, cost: p.cost, first_step: p.first_step, owner: p.owner_suggestion, metric: p.metric, scope: p.scope, recommendation_id: p.recommendation_id || null, review_id: id },
+        why: p.problem, ask: p.title, source: src, subject: `review:${id || pack.today}:plan:${clip(p.title, 60)}`, rungNow: rung, wouldHaveBeen: 'draft', evidence: p.evidence, by: opts.by || 'eve-review', cooldownHours: 24 * 7 })
+    }
+    for (const c of body.critiques) {
+      await recordThought({ action: 'critique', payload: { target: c.target, name: c.name, signal: c.signal, verdict: c.verdict, change: c.change, review_id: id },
+        why: c.verdict, ask: `${c.target} "${c.name}": ${c.change || c.verdict}`, source: src, subject: `review:${id || pack.today}:critique:${clip(c.name, 60)}`, rungNow: rung, wouldHaveBeen: 'draft', evidence: [c.signal], by: opts.by || 'eve-review', cooldownHours: 24 * 7 })
+    }
+    for (const q of body.questions) {
+      await recordThought({ action: 'question', payload: { question: q.question, why_it_matters: q.why_it_matters, what_i_will_assume: q.what_i_will_assume, question_id: q.question_id || null, review_id: id },
+        why: q.why_it_matters, ask: q.question, source: src, subject: `review:${id || pack.today}:question:${clip(q.question, 60)}`, rungNow: rung, wouldHaveBeen: 'propose', evidence: [...q.evidence, q.what_i_will_assume ? `If nobody answers I will assume: ${q.what_i_will_assume}` : ''].filter(Boolean), by: opts.by || 'eve-review', cooldownHours: 24 * 7 })
+    }
+  } catch { /* the feed is a receipt, never a gate */ }
+
   return { ok: true, id, review: body, model: answeredBy, pack: { tokens: pack.tokens, stats: pack.stats }, persisted: { plans, questions, retired } }
 }
 

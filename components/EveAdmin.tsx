@@ -5,12 +5,13 @@
 // head: everything she believes (editable, deletable, reweighable), how she sounds, what she has
 // recommended and how those calls actually graded, and a button to make her learn RIGHT NOW.
 import { useState, useEffect, useCallback } from 'react'
-import { Brain, Mic, Compass, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen, Sparkles, Power, GraduationCap } from 'lucide-react'
+import { Brain, Mic, Compass, Lightbulb, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen, Sparkles, Power, GraduationCap } from 'lucide-react'
 import { TelegramAdmin } from '@/components/TelegramAdmin'
 import { EveDocsAdmin } from '@/components/EveDocsAdmin'
 import { EveReviewAdmin } from '@/components/EveReviewAdmin'
 import { EveAgentAdmin } from '@/components/EveAgentAdmin'
 import { EveLearningAdmin } from '@/components/EveLearningAdmin'
+import { EveThinkingFeed, THOUGHTS_URL } from '@/components/EveThoughts'
 
 type Memory = {
   id: string; kind: string; text: string; why: string | null; scope: string; weight: number
@@ -31,28 +32,50 @@ const KIND_HELP: Record<string, string> = {
 const card = 'bg-white border border-line rounded-2xl shadow-soft'
 const input = 'w-full text-sm text-ink bg-app border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200'
 
+type EveTab = 'thinking' | 'agent' | 'learning' | 'review' | 'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'
+
 export function EveAdmin({ canEdit }: { canEdit: boolean }) {
-  const [tab, setTab] = useState<'agent' | 'learning' | 'review' | 'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'>('agent')
+  // THINKING FIRST while she only observes (Jon, 2026-09-21: "keep her observing but I want to see
+  // what she is thinking"); once any rung is above observe, Agent mode leads and Thinking is second.
+  const [tab, setTab] = useState<EveTab | null>(null)
+  const [thinking, setThinking] = useState<{ unseen: number; allObserving: boolean } | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetch(THOUGHTS_URL + '?count=1').then(r => r.json()).then(j => {
+      if (!alive) return
+      const st = { unseen: Number(j?.unseen) || 0, allObserving: j?.allObserving !== false }
+      setThinking(st)
+      setTab(t => t || (st.allObserving ? 'thinking' : 'agent'))
+    }).catch(() => { if (alive) { setThinking({ unseen: 0, allObserving: true }); setTab(t => t || 'thinking') } })
+    return () => { alive = false }
+  }, [])
+  const cur: EveTab = tab || (thinking ? (thinking.allObserving ? 'thinking' : 'agent') : 'thinking')
+  const first: [EveTab, string, any][] = thinking && !thinking.allObserving
+    ? [['agent', 'Agent mode', Power], ['thinking', 'Thinking', Lightbulb]]
+    : [['thinking', 'Thinking', Lightbulb], ['agent', 'Agent mode', Power]]
+  const tabs: [EveTab, string, any][] = [...first, ['learning', 'Learning', GraduationCap], ['review', 'Review', Sparkles], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send], ['docs', 'Library', BookOpen]]
   return (
     <div>
       <div className="flex items-center gap-1 mb-3 border-b border-line overflow-x-auto">
-        {([['agent', 'Agent mode', Power], ['learning', 'Learning', GraduationCap], ['review', 'Review', Sparkles], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send], ['docs', 'Library', BookOpen]] as const).map(([k, label, Icon]) => (
+        {tabs.map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors ${tab === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap ${cur === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
             <Icon size={13} /> {label}
+            {k === 'thinking' && thinking && thinking.unseen > 0 && <span className="text-[10px] font-bold text-white bg-brand-600 rounded-full px-1.5 py-0.5">{thinking.unseen}</span>}
           </button>
         ))}
       </div>
-      {tab === 'agent' && <EveAgentAdmin canEdit={canEdit} />}
-      {tab === 'learning' && <EveLearningAdmin canEdit={canEdit} />}
-      {tab === 'review' && <EveReviewAdmin canEdit={canEdit} />}
-      {tab === 'memory' && <EveMemoryAdmin canEdit={canEdit} />}
-      {tab === 'voice' && <EveVoiceAdmin canEdit={canEdit} />}
-      {tab === 'direction' && <EveDirectionAdmin canEdit={canEdit} />}
-      {tab === 'approvals' && <EveApprovalsAdmin canEdit={canEdit} />}
-      {tab === 'audits' && <EveAuditsAdmin canEdit={canEdit} />}
-      {tab === 'telegram' && <TelegramAdmin canEdit={canEdit} />}
-      {tab === 'docs' && <EveDocsAdmin canEdit={canEdit} />}
+      {cur === 'thinking' && <EveThinkingFeed />}
+      {cur === 'agent' && <EveAgentAdmin canEdit={canEdit} />}
+      {cur === 'learning' && <EveLearningAdmin canEdit={canEdit} />}
+      {cur === 'review' && <EveReviewAdmin canEdit={canEdit} />}
+      {cur === 'memory' && <EveMemoryAdmin canEdit={canEdit} />}
+      {cur === 'voice' && <EveVoiceAdmin canEdit={canEdit} />}
+      {cur === 'direction' && <EveDirectionAdmin canEdit={canEdit} />}
+      {cur === 'approvals' && <EveApprovalsAdmin canEdit={canEdit} />}
+      {cur === 'audits' && <EveAuditsAdmin canEdit={canEdit} />}
+      {cur === 'telegram' && <TelegramAdmin canEdit={canEdit} />}
+      {cur === 'docs' && <EveDocsAdmin canEdit={canEdit} />}
     </div>
   )
 }
