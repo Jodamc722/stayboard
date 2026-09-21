@@ -14,7 +14,7 @@ import {
 import { syncTalkrouteAll } from '@/lib/talkroute-sync'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 60
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
 function hookUrl(token: string, type: string) { return `${APP_URL}/api/talkroute/webhook?t=${token}&type=${type}` }
@@ -102,7 +102,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ...(await status()), removed: n })
     }
     if (op === 'sync') {
-      const r = await syncTalkrouteAll(supabaseAdmin(), { fullTexts: !!body?.full })
+      // 40s of a 60s function: the first backfill is several runs; each one resumes where the last stopped.
+      const r = await syncTalkrouteAll(supabaseAdmin(), { fullTexts: !!body?.full, budgetMs: 40_000 })
       return NextResponse.json({ ...(await status()), sync: r })
     }
     return NextResponse.json({ error: 'unknown op' }, { status: 400 })

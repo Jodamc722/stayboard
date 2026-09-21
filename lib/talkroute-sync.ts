@@ -48,12 +48,20 @@ const WELCOME_FIELD_ID = '68d59ad7e34f25001311d85a'
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
 export type SyncReport = {
-  calls: { fetched: number; upserted: number; matched: number; welcomeCompleted: number; welcomeAttempts: number; postAttempts: number; stay: number }
-  texts: { conversations: number; messages: number; matched: number }
+  calls: { fetched: number; upserted: number; matched: number; welcomeCompleted: number; welcomeAttempts: number; postAttempts: number; stay: number; partial?: boolean }
+  texts: { conversations: number; messages: number; matched: number; partial?: boolean }
   voicemails: { fetched: number; matched: number }
   errors: string[]
   ms: number
+  /** true when a feed ran out of time — the next run (cron or button) continues from where it stopped. */
+  partial: boolean
 }
+// TIME-BOXED (2026-09-21, first live sync). The first pull — 7 days of calls, 30 days of text
+// threads, each thread a message fetch — ran past Vercel's function limit and the panel got a
+// gateway page. Every feed now takes a deadline and stops cleanly when it is reached; because the
+// mirror is keyed by id and unchanged threads are skipped, the next run resumes where this one
+// stopped. `last*SyncAt` only advances when a feed finished, so nothing is ever skipped.
+const over = (deadline: number) => Date.now() > deadline
 
 // ── RESERVATION LOOKUP BY PHONE ─────────────────────────────────────────────────────────────────
 // Bookings whose guest phone ends in the same ten digits. Phones are stored as the guest typed them,
@@ -193,9 +201,10 @@ function callerLabel(c: TrCallRecord): string {
   return ev?.description ? `Talkroute · ${String(ev.description).slice(0, 60)}` : 'Talkroute'
 }
 
-export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?: string } = {}): Promise<SyncReport['calls'] & { errors: string[] }> {
+export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?: string; deadline?: number } = {}): Promise<SyncReport['calls'] & { errors: string[] }> {
+  const deadline = opts.deadline || (Date.now() + 40_000)
   const errors: string[] = []
-  const rep = { fetched: 0, upserted: 0, matched: 0, welcomeCompleted: 0, welcomeAttempts: 0, postAttempts: 0, stay: 0, errors }
+  const rep = { fetched: 0, upserted: 0, matched: 0, welcomeCompleted: 0, welcomeAttempts: 0, postAttempts: 0, stay: 0, partial: false, errors }
   const settings = await getTalkrouteSettings()
   const vmMax = Number(settings.voicemailMaxSec) || DEFAULT_VOICEMAIL_MAX_SEC
   const today = opts.today || ymdET(new Date())
@@ -242,6 +251,7 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
   const toMatch = records.filter(c => c.id && !known.get(String(c.id))?.reservation_id && phoneKey(c.externalNumber).length >= 7)
     .sort((a, b) => new Date(a.callDate).getTime() - new Date(b.callDate).getTime())
   for (const c of toMatch) {
+    if (over(deadline)) { rep.partial = true; break }
     try {
       const callYmd = ymdET(new Date(c.callDate))
       const cands = await reservationsByPhone(sb, String(c.externalNumber), callYmd)
@@ -263,7 +273,7 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
       } else rep.stay++
     } catch (e: any) { errors.push(`match ${c.id}: ${String(e?.message || e).slice(0, 120)}`) }
   }
-  await saveTalkrouteSettings({ lastCallSyncAt: new Date().toISOString(), lastError: errors.length ? errors[0] : null })
+  await saveTalkrouteSettings({ ...(rep.partial ? {} : { lastCallSyncAt: new Date().toISOString() }), lastError: errors.length ? errors[0] : null })
   return rep
 }
 
@@ -274,9 +284,10 @@ async function matchByPhone(sb: any, phone: string, around: string): Promise<Res
   return m ? m.res : null
 }
 
-export async function syncTalkrouteTexts(sb: any, opts: { since?: string; full?: boolean } = {}): Promise<SyncReport['texts'] & { errors: string[] }> {
+export async function syncTalkrouteTexts(sb: any, opts: { since?: string; full?: boolean; deadline?: number } = {}): Promise<SyncReport['texts'] & { errors: string[] }> {
+  const deadline = opts.deadline || (Date.now() + 40_000)
   const errors: string[] = []
-  const rep = { conversations: 0, messages: 0, matched: 0, errors }
+  const rep = { conversations: 0, messages: 0, matched: 0, partial: false, errors }
   const settings = await getTalkrouteSettings()
   const since = opts.full ? undefined : (opts.since || (settings.lastTextSyncAt ? new Date(new Date(settings.lastTextSyncAt).getTime() - 3600_000).toISOString() : new Date(Date.now() - 30 * 86400_000).toISOString()))
   let convos: TrTextConversation[] = []
@@ -290,6 +301,7 @@ export async function syncTalkrouteTexts(sb: any, opts: { since?: string; full?:
   } catch (e: any) { errors.push('text-conversations: ' + String(e?.message || e).slice(0, 200)); return rep }
   for (const c of convos) {
     if (!c.conversation_id) continue
+    if (over(deadline)) { rep.partial = true; break }
     try {
       const contact = phoneDigits(c.contact_number)
       const lastAt = c.last_message_at ? new Date(c.last_message_at).toISOString() : null
@@ -324,12 +336,13 @@ export async function syncTalkrouteTexts(sb: any, opts: { since?: string; full?:
       }
     } catch (e: any) { errors.push(`convo ${c.conversation_id}: ${String(e?.message || e).slice(0, 120)}`) }
   }
-  await saveTalkrouteSettings({ lastTextSyncAt: new Date().toISOString() })
+  if (!rep.partial) await saveTalkrouteSettings({ lastTextSyncAt: new Date().toISOString() })
   return rep
 }
 
 // ── VOICEMAILS ──────────────────────────────────────────────────────────────────────────────────
-export async function syncTalkrouteVoicemails(sb: any): Promise<SyncReport['voicemails'] & { errors: string[] }> {
+export async function syncTalkrouteVoicemails(sb: any, opts: { deadline?: number } = {}): Promise<SyncReport['voicemails'] & { errors: string[] }> {
+  const deadline = opts.deadline || (Date.now() + 20_000)
   const errors: string[] = []
   const rep = { fetched: 0, matched: 0, errors }
   let vms: TrVoiceMessage[] = []
@@ -350,6 +363,7 @@ export async function syncTalkrouteVoicemails(sb: any): Promise<SyncReport['voic
   }
   for (const v of vms) {
     if (!v.id) continue
+    if (over(deadline)) break
     try {
       const caller = phoneDigits(v.callerNumber)
       const at = v.createdAt ? new Date(v.createdAt).toISOString() : null
@@ -370,17 +384,22 @@ export async function syncTalkrouteVoicemails(sb: any): Promise<SyncReport['voic
 }
 
 /** Everything, in order. Safe to call from the cron, the webhook and the admin "Sync now". */
-export async function syncTalkrouteAll(sb: any, opts: { calls?: boolean; texts?: boolean; voicemails?: boolean; fullTexts?: boolean } = {}): Promise<SyncReport> {
+export async function syncTalkrouteAll(sb: any, opts: { calls?: boolean; texts?: boolean; voicemails?: boolean; fullTexts?: boolean; budgetMs?: number } = {}): Promise<SyncReport> {
   const t0 = Date.now()
+  const budget = opts.budgetMs || 45_000
+  const end = t0 + budget
   const rep: SyncReport = {
     calls: { fetched: 0, upserted: 0, matched: 0, welcomeCompleted: 0, welcomeAttempts: 0, postAttempts: 0, stay: 0 },
-    texts: { conversations: 0, messages: 0, matched: 0 }, voicemails: { fetched: 0, matched: 0 }, errors: [], ms: 0,
+    texts: { conversations: 0, messages: 0, matched: 0 }, voicemails: { fetched: 0, matched: 0 }, errors: [], ms: 0, partial: false,
   }
   if (!(await talkrouteConfigured())) { rep.errors.push('Talkroute is not connected.'); rep.ms = Date.now() - t0; return rep }
   const want = { calls: opts.calls !== false, texts: opts.texts !== false, voicemails: opts.voicemails !== false }
-  if (want.calls) { const r = await syncTalkrouteCalls(sb); rep.calls = r; rep.errors.push(...r.errors) }
-  if (want.texts) { const r = await syncTalkrouteTexts(sb, { full: !!opts.fullTexts }); rep.texts = r; rep.errors.push(...r.errors) }
-  if (want.voicemails) { const r = await syncTalkrouteVoicemails(sb); rep.voicemails = r; rep.errors.push(...r.errors) }
+  // Calls first (they drive the desk), voicemails second (small), texts get whatever is left.
+  if (want.calls) { const r = await syncTalkrouteCalls(sb, { deadline: t0 + Math.round(budget * 0.45) }); rep.calls = r; rep.errors.push(...r.errors) }
+  if (want.voicemails) { const r = await syncTalkrouteVoicemails(sb, { deadline: Math.min(end, Date.now() + 10_000) }); rep.voicemails = r; rep.errors.push(...r.errors) }
+  if (want.texts && !over(end - 3_000)) { const r = await syncTalkrouteTexts(sb, { full: !!opts.fullTexts, deadline: end }); rep.texts = r; rep.errors.push(...r.errors) }
+  else if (want.texts) rep.texts = { conversations: 0, messages: 0, matched: 0, partial: true }
+  rep.partial = !!(rep.calls.partial || rep.texts.partial)
   rep.ms = Date.now() - t0
   try { await sb.from('automation_runs').insert({ name: 'talkroute-sync', ok: rep.errors.length === 0, item_count: rep.calls.fetched + rep.texts.messages + rep.voicemails.fetched, detail: rep, ms: rep.ms }) } catch { /* ledger best-effort */ }
   return rep

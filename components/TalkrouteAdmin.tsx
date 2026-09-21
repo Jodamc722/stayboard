@@ -46,7 +46,7 @@ export function TalkrouteAdmin() {
     setBusy(op); setErr(null); setFlash(null)
     try {
       const r = await fetch('/api/talkroute/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, ...extra }) })
-      const j = await r.json()
+      const j = await r.json().catch(() => ({ error: r.status === 504 || r.status === 502 ? 'The server ran out of time. Press the button again — each run resumes where the last stopped.' : `Server error ${r.status}.` }))
       if (!r.ok) throw new Error(j?.error || 'That did not work.')
       setD(j); setVm(Number(j.voicemailMaxSec) || 20)
       if (op === 'save_key') { setKey(''); setFlash('Connected. Talkroute accepted the key.') }
@@ -54,7 +54,7 @@ export function TalkrouteAdmin() {
       if (op === 'unsubscribe') setFlash(`Removed ${j.removed || 0} webhook${j.removed === 1 ? '' : 's'}.`)
       if (op === 'sync') {
         const s = j.sync || {}
-        setFlash(`Synced — ${s.calls?.fetched ?? 0} calls (${s.calls?.matched ?? 0} matched to bookings, ${s.calls?.welcomeCompleted ?? 0} welcome calls completed), ${s.texts?.messages ?? 0} texts in ${s.texts?.conversations ?? 0} threads, ${s.voicemails?.fetched ?? 0} voicemails.${s.errors?.length ? ' First error: ' + s.errors[0] : ''}`)
+        setFlash(`${s.partial ? 'Partly synced (ran out of time — press Sync now again, or the 15-minute backfill finishes it)' : 'Synced'} — ${s.calls?.fetched ?? 0} calls (${s.calls?.matched ?? 0} matched to bookings, ${s.calls?.welcomeCompleted ?? 0} welcome calls completed), ${s.texts?.messages ?? 0} texts in ${s.texts?.conversations ?? 0} threads, ${s.voicemails?.fetched ?? 0} voicemails.${s.errors?.length ? ' First error: ' + s.errors[0] : ''}`)
       }
       if (op === 'settings') setFlash('Saved.')
     } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(null) }
