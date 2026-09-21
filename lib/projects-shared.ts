@@ -408,7 +408,7 @@ export type BoardSettings = {
   /** What that section is called. Ignored when the board already has one of DONE_NAMES. */
   doneSection: string
 }
-export const DEFAULT_SETTINGS: BoardSettings = { view: 'list', accent: 'indigo', icon: '📋', hideDone: false, sectionOrder: [], moveDone: true, doneSection: 'Completed' }
+export const DEFAULT_SETTINGS: BoardSettings = { view: 'board', accent: 'indigo', icon: '📋', hideDone: false, sectionOrder: [], moveDone: true, doneSection: 'Completed' }
 
 // ── MY VIEW OF THIS BOARD ───────────────────────────────────────────────────────────────────────
 //
@@ -472,10 +472,10 @@ export const DEFAULT_COLUMNS: ListColumn[] = ['assignee', 'due', 'priority']
 export const columnTemplate = (cols: ListColumn[]) =>
   ['minmax(0,1fr)', ...cols.map(c => COLUMN_WIDTH[c] + 'px')].join(' ')
 
-export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'list', hideDone: false, hidePanels: [], hideActivity: false, columns: DEFAULT_COLUMNS.slice(), railOpen: null }
+export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'board', hideDone: false, hidePanels: [], hideActivity: false, columns: DEFAULT_COLUMNS.slice(), railOpen: null }
 
 export const viewPrefsOf = (raw: any): ViewPrefs => ({
-  view: raw?.view === 'board' ? 'board' : raw?.view === 'calendar' ? 'calendar' : 'list',
+  view: raw?.view === 'list' ? 'list' : raw?.view === 'calendar' ? 'calendar' : 'board',
   hideDone: raw?.hideDone === true,
   hidePanels: Array.isArray(raw?.hidePanels)
     ? (raw.hidePanels as any[]).map(String).filter((k): k is RailPanel => (RAIL_PANELS as readonly string[]).includes(k))

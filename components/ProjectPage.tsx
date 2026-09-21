@@ -22,7 +22,7 @@ import {
   Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity, Repeat, SlidersHorizontal, LayoutTemplate, LayoutList, Columns3, ArrowUp, ArrowDown, MoreHorizontal, Save,
   CalendarRange, ChevronLeft, GripVertical, ShieldAlert, Bug, Wrench, ExternalLink, ArrowRightCircle,
-  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff, PanelRightClose, PanelRightOpen,
+  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff, PanelRightClose, PanelRightOpen, Flag, FolderInput,
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
@@ -58,6 +58,69 @@ const TONE_CLS: Record<string, string> = { open: 'bg-white border-line text-ink'
 // agree on what "violet" looks like. Shaped here for the two spots this page needs.
 const ACCENT = Object.fromEntries((Object.keys(ACCENT_CLS) as Accent[]).map(k => [k, { bar: ACCENT_CLS[k].soft, dot: ACCENT_CLS[k].solid, ring: ACCENT_CLS[k].ring }])) as Record<Accent, { bar: string; dot: string; ring: string }>
 
+// ── THE ROW LANGUAGE (Jon, 2026-09-21: "make it more visually easy to read and manage") ──────
+// Colour carries the state so the eye does not have to read: a priority EDGE on the left of the
+// row, a DUE CHIP that goes amber today and rose when late, avatars in stable per-person colours.
+// One of each, nothing decorative.
+const PRIORITY_EDGE: Record<string, string> = { urgent: 'border-l-rose-500', high: 'border-l-amber-400', normal: 'border-l-transparent', low: 'border-l-transparent' }
+const PRIORITY_LABEL: Record<string, string> = { urgent: 'Urgent', high: 'High', normal: 'Normal', low: 'Low' }
+const PRIORITY_DOT: Record<string, string> = { urgent: 'bg-rose-500', high: 'bg-amber-400', normal: 'bg-slate-300', low: 'bg-slate-200' }
+const AVATAR_PALETTE = ['bg-indigo-100 text-indigo-800', 'bg-emerald-100 text-emerald-800', 'bg-amber-100 text-amber-800', 'bg-sky-100 text-sky-800', 'bg-rose-100 text-rose-800', 'bg-violet-100 text-violet-800', 'bg-teal-100 text-teal-800', 'bg-orange-100 text-orange-800']
+const avatarCls = (name: string) => { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0; return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length] }
+const initials = (name: string) => { const parts = String(name || '').replace(/@.*$/, '').split(/[\s._-]+/).filter(Boolean); return ((parts[0] || '?')[0] + (parts[1] ? parts[1][0] : '')).toUpperCase() }
+
+function Avatars({ people, size = 20, max = 3 }: { people: Person[]; size?: number; max?: number }) {
+  if (!people.length) return null
+  const shown = people.slice(0, max)
+  return (
+    <span className="inline-flex items-center -space-x-1.5" title={people.map(x => x.display).join(', ')}>
+      {shown.map(a => (
+        <span key={a.person_key || a.display} style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}
+          className={'rounded-full ring-2 ring-white font-bold inline-flex items-center justify-center shrink-0 ' + avatarCls(a.display)}>{initials(a.display)}</span>
+      ))}
+      {people.length > max && <span style={{ width: size, height: size, fontSize: Math.round(size * 0.4) }} className="rounded-full ring-2 ring-white bg-app text-muted font-bold inline-flex items-center justify-center shrink-0">+{people.length - max}</span>}
+    </span>
+  )
+}
+
+/** Due date as a chip whose colour is the urgency. `soon` = within 2 days. */
+function dueTone(due: string | null, status: string): 'late' | 'today' | 'soon' | 'later' | 'none' {
+  if (!due) return 'none'
+  if (status === 'done') return 'later'
+  const t = today()
+  if (due < t) return 'late'
+  if (due === t) return 'today'
+  const soon = new Date(t + 'T12:00:00Z'); soon.setUTCDate(soon.getUTCDate() + 2)
+  return due <= soon.toISOString().slice(0, 10) ? 'soon' : 'later'
+}
+const DUE_CLS: Record<string, string> = {
+  late: 'bg-rose-100 text-rose-700 border-rose-200 font-bold',
+  today: 'bg-amber-100 text-amber-800 border-amber-200 font-bold',
+  soon: 'bg-white text-ink border-line font-semibold',
+  later: 'bg-white text-muted border-line',
+  none: 'bg-transparent text-muted/50 border-transparent hover:border-line',
+}
+const dueText = (due: string | null) => { const tone = dueTone(due, 'todo'); if (!due) return 'Date'; if (tone === 'today') return 'Today'; return nice(due) }
+
+/** A small anchored menu. Backdrop closes it; the panel stops propagation so a row click does not open the drawer. */
+function Menu({ open, onClose, children, align = 'right', className }: { open: boolean; onClose: () => void; children: any; align?: 'left' | 'right'; className?: string }) {
+  if (!open) return null
+  return (
+    <>
+      <div className="fixed inset-0 z-30" onClick={e => { e.stopPropagation(); onClose() }} />
+      <div onClick={e => e.stopPropagation()}
+        className={'absolute z-40 top-full mt-1 min-w-[160px] rounded-xl border border-line bg-white shadow-lifted py-1 ' + (align === 'right' ? 'right-0' : 'left-0') + ' ' + (className || '')}>
+        {children}
+      </div>
+    </>
+  )
+}
+const MenuItem = ({ onClick, children, active, tone }: { onClick: () => void; children: any; active?: boolean; tone?: 'danger' }) => (
+  <button type="button" onClick={onClick}
+    className={'w-full text-left px-2.5 py-1.5 text-[12.5px] flex items-center gap-2 hover:bg-app ' + (active ? 'font-bold text-ink' : tone === 'danger' ? 'text-rose-700' : 'text-ink')}>{children}</button>
+)
+const MenuHead = ({ children }: { children: any }) => <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">{children}</p>
+
 export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPrefs: initialPrefs }: {
   initial: ProjectFull; me: string; canEdit: boolean; canFull: boolean; superadmin: boolean; viewPrefs?: any
 }) {
@@ -73,6 +136,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
   })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [addMenu, setAddMenu] = useState(false)
 
   // Roster for the pickers — same endpoint the board uses, so both surfaces offer the same people.
   useEffect(() => {
@@ -205,7 +269,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
     if ('' in by && !order.includes('')) order.push('')
     const keep = (t: Task) => !prefs.hideDone || t.status !== 'done'
     return order.map(k => ({ name: k, tasks: by[k].filter(keep) })).filter(sec => sec.name !== '' || sec.tasks.length || !prefs.hideDone)
-  }, [p.tasks, settings])
+  }, [p.tasks, settings, prefs.hideDone])
   const accent = ACCENT[settings.accent]
   // A viewer-role member can switch views for themselves without being able to save it.
   const view = prefs.view
@@ -221,7 +285,9 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
    * back. List and calendar keep it open. The choice is remembered per person like every other
    * view preference.
    */
-  const railOpen = prefs.railOpen === null ? view !== 'board' : prefs.railOpen
+  // CLOSED UNTIL ASKED (Jon, 2026-09-21: "too much whitespace, too little on screen"). The rail
+  // used to open beside every list and take a third of the width; the tasks are the page.
+  const railOpen = prefs.railOpen === null ? false : prefs.railOpen
   // Drag state for tasks: what is being dragged, so drop targets can accept it.
   const [dragId, setDragId] = useState<string | null>(null)
   const moveTask = (taskId: string, section: string, beforeId: string | null) => act({ action: 'taskMove', taskId, section, beforeId })
@@ -276,10 +342,27 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
             </p>
           </div>
           <div className="flex items-center gap-1.5">
-            <button onClick={() => setPrefs({ railOpen: !railOpen })} title={railOpen ? 'Hide the side panel' : 'Show the side panel'}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1 text-[12px] font-bold text-muted hover:text-ink">
+            {/* WHAT ELSE IS ON THIS PROJECT — people, money, links, files — lives in the side panel,
+                which is closed until asked. One button opens it; one menu adds a panel that has
+                nothing in it yet. The dashed "Add to this project" card is gone. */}
+            <button onClick={() => setPrefs({ railOpen: !railOpen })} title={railOpen ? 'Hide the side panel' : 'Show people, money, links and files'}
+              className={'inline-flex items-center gap-1.5 rounded-xl border px-2 py-1 text-[12px] font-bold ' + (railOpen ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:text-ink')}>
               {railOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+              <span className="hidden sm:inline">{railOpen ? 'Panel' : 'Details'}</span>
+              {!railOpen && (p.members.length > 0 || p.invoices.length > 0 || p.links.length > 0 || p.photos.length > 0) && (
+                <span className="text-[10.5px] font-semibold text-muted">{[p.members.length ? p.members.length + ' people' : '', p.links.length ? p.links.length + ' links' : '', p.photos.length ? p.photos.length + ' files' : ''].filter(Boolean).join(' · ')}</span>
+              )}
             </button>
+            {canEdit && railRest.length > 0 && (
+              <span className="relative inline-flex">
+                <button onClick={() => setAddMenu(v => !v)} title="Add people, money, links or files to this project"
+                  className="inline-flex items-center gap-1 rounded-xl border border-line bg-white px-2 py-1 text-[12px] font-bold text-muted hover:text-ink"><Plus size={13} /><span className="hidden sm:inline">Add</span></button>
+                <Menu open={addMenu} onClose={() => setAddMenu(false)}>
+                  <MenuHead>Add to this project</MenuHead>
+                  {railRest.map(k => <MenuItem key={k} onClick={() => { setAddMenu(false); showPanel(k); if (!railOpen) setPrefs({ railOpen: true }) }}><Plus size={12} className="text-muted" />{RAIL_LABEL[k]}</MenuItem>)}
+                </Menu>
+              </span>
+            )}
             <RecurChip p={p} canEdit={canEdit} act={act} busy={busy} />
             <Customize settings={settings} prefs={prefs} sections={sections.map(x => x.name)} canEdit={canEdit} act={act} setPrefs={setPrefs} busy={busy} />
             <MoreMenu p={p} canEdit={canEdit} act={act} busy={busy} />
@@ -288,7 +371,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
         {p.summary && <p className="text-[13.5px] text-ink/85 mt-2 max-w-3xl">{p.summary}</p>}
         {/* VIEWS, like Asana's tabs under the title. The choice is saved on the project. */}
         <div className="mt-3 flex items-center gap-1 border-b border-line">
-          {([['list', 'List', LayoutList], ['board', 'Board', Columns3], ['calendar', 'Calendar', CalendarRange]] as const).map(([v, label, I]) => (
+          {([['board', 'Board', Columns3], ['list', 'List', LayoutList], ['calendar', 'Calendar', CalendarRange]] as const).map(([v, label, I]) => (
             <button key={v} onClick={() => setPrefs({ view: v })}
               className={'inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-semibold -mb-px border-b-2 ' + (view === v ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink')}>
               <I size={13} /> {label}
@@ -312,14 +395,14 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
           {view === 'calendar' ? (
             <CalendarView tasks={p.tasks} onOpen={setOpenTask} accent={accent} hideDone={prefs.hideDone} />
           ) : view === 'board' ? (
-            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+            <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
               {sections.map(sec => (
                 <SectionColumn key={sec.name || '__none'} name={sec.name} tasks={sec.tasks} canEdit={canEdit} busy={busy}
                   openId={openTask} onOpen={setOpenTask} act={act} counts={counts} accent={accent} add={add}
                   dragId={dragId} setDragId={setDragId} onMove={moveTask} onPush={pushTask} />
               ))}
               {canEdit && (
-                <div className="w-[300px] shrink-0 pt-1">
+                <div className="w-[240px] shrink-0 pt-1">
                   <NewSection onAdd={name => act({ action: 'setSettings', settings: { sectionOrder: [...sections.map(x => x.name).filter(x => x && x !== name), name] } })} busy={busy} />
                 </div>
               )}
@@ -363,19 +446,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
             : k === 'about' ? <LinksPanel key={k} p={p} canEdit={canEdit} act={act} busy={busy} onHide={() => hidePanel('about')} />
             : <FilesPanel key={k} p={p} canEdit={canEdit} act={act} busy={busy} upload={upload} onOpen={setOpenTask} onHide={() => hidePanel('files')} />
           ))}
-          {railRest.length > 0 && (
-            <div className="rounded-2xl border border-dashed border-line bg-white/60 px-3 py-2">
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-1.5">Add to this project</p>
-              <div className="flex flex-wrap gap-1.5">
-                {railRest.map(k => (
-                  <button key={k} onClick={() => showPanel(k)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[11.5px] font-semibold text-muted hover:text-ink hover:border-ink/40">
-                    <Plus size={11} /> {RAIL_LABEL[k]}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+
         </div>
         </>
         )}
@@ -451,7 +522,7 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
       onDragOver={e => { if (dragging) e.preventDefault() }}
       onDrop={e => { if (dragging && dragId) { e.preventDefault(); onMove(dragId, name, null); setDragId(null) } }}>
       <button onClick={() => setCollapsed(c => !c)}
-        className={'w-full flex items-center gap-2 px-3 py-2 border-b text-left ' + accent.bar}>
+        className={'w-full flex items-center gap-2 px-3 py-1.5 border-b text-left ' + accent.bar}>
         {collapsed ? <ChevronRight size={13} className="text-muted" /> : <ChevronDown size={13} className="text-muted" />}
         <SectionName name={name} canEdit={canEdit} act={act} busy={busy} className="text-[12.5px] font-bold text-ink" />
         <span className="text-[11px] text-muted tabular-nums">{done}/{tasks.length}</span>
@@ -462,7 +533,7 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
             <div key={t.id}>
               <DropSlot active={dragging && dragId !== t.id} onDrop={() => { if (dragId) { onMove(dragId, name, t.id); setDragId(null) } }} className="mx-3" />
               <TaskRow t={t} depth={0} canEdit={canEdit} busy={busy} open={openId === t.id} onOpen={onOpen} act={act} counts={counts}
-                cols={cols} tpl={tpl} dragId={dragId} setDragId={setDragId} onMove={onMove} onPush={onPush} />
+                cols={cols} dragId={dragId} setDragId={setDragId} onMove={onMove} onPush={onPush} sections={add.sections} roster={add.roster} />
             </div>
           ))}
           <DropSlot active={dragging} onDrop={() => { if (dragId) { onMove(dragId, name, null); setDragId(null) } }} className="mx-3" />
@@ -483,57 +554,70 @@ function SectionColumn({ name, tasks, canEdit, busy, openId, onOpen, act, counts
   const done = tasks.filter(t => t.status === 'done').length
   const dragging = !!dragId && canEdit
   return (
-    <div className={'w-[300px] shrink-0 rounded-2xl p-1.5 -m-1.5 ' + (dragging ? 'bg-brand-50/40' : '')}
+    <div className={'w-[268px] shrink-0 rounded-2xl p-1 ' + (dragging ? 'bg-brand-50/40' : '')}
       onDragOver={e => { if (dragging) e.preventDefault() }}
       onDrop={e => { if (dragging && dragId) { e.preventDefault(); onMove(dragId, name, null); setDragId(null) } }}>
-      <div className={'flex items-center gap-2 px-2.5 py-1.5 rounded-xl border mb-2 ' + accent.bar}>
+      <div className={'flex items-center gap-2 px-2.5 py-1.5 rounded-xl border mb-1.5 ' + accent.bar}>
         <span className={'w-1.5 h-1.5 rounded-full ' + accent.dot} />
         <SectionName name={name} canEdit={canEdit} act={act} busy={busy} className="text-[12.5px] font-bold text-ink flex-1 truncate" />
         <span className="text-[11px] text-muted tabular-nums">{done}/{tasks.length}</span>
       </div>
-      <div className="space-y-1.5 min-h-[40px]">
-        {tasks.map(t => {
-          const Icon = STATUS_ICON[t.status] || Circle
-          const late = t.status !== 'done' && !!t.due_on && t.due_on < today()
-          const c = counts[t.id]
-          return (
-            <div key={t.id}>
-              <DropSlot active={dragging && dragId !== t.id} onDrop={() => { if (dragId) { onMove(dragId, name, t.id); setDragId(null) } }} />
-              <div onClick={() => onOpen(t.id)} draggable={canEdit}
-                onDragStart={e => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDragId(null)}
-                className={'rounded-xl border bg-white px-2.5 py-2 cursor-pointer hover:shadow-sm ' + (openId === t.id ? 'border-ink' : 'border-line hover:border-ink/40') + (dragId === t.id ? ' opacity-40' : '')}>
-                <div className="flex items-start gap-2">
-                  <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); act({ action: 'taskSet', taskId: t.id, status: t.status === 'done' ? 'todo' : 'done' }) }}
-                    className={'w-4 h-4 mt-0.5 rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]} title={TASK_STATUS_LABEL[t.status]}>
-                    <Icon size={9} strokeWidth={3} />
-                  </button>
-                  <span className={'text-[12.5px] leading-snug flex-1 ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
-                </div>
-                {(t.vendor_name || t.visit_on) && <div className="mt-1 pl-6"><VisitLine t={t} compact /></div>}
-                {(t.assignees.length > 0 || t.due_on || t.subtasks.length > 0 || c) && (
-                  <div className="mt-1.5 pl-6 flex items-center gap-2 flex-wrap text-[10.5px] text-muted">
-                    {t.assignees.length > 0 && <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-brand-50 text-brand-700 text-[9px] font-bold inline-flex items-center justify-center">{t.assignees[0].display.slice(0, 1).toUpperCase()}</span><span className="truncate max-w-[110px]">{t.assignees.map(a => first(a.display)).join(', ')}</span></span>}
-                    {t.due_on && <span className={'tabular-nums ' + (late ? 'text-rose-600 font-bold' : '')}>{nice(t.due_on)}</span>}
-                    {t.subtasks.length > 0 && <span className="tabular-nums">{t.subtasks.filter(s => s.status === 'done').length}/{t.subtasks.length}</span>}
-                    {c && c.comments > 0 && <span className="inline-flex items-center gap-0.5"><MessageSquare size={10} />{c.comments}</span>}
-                    {c && c.files > 0 && <span className="inline-flex items-center gap-0.5"><Paperclip size={10} />{c.files}</span>}
-                    {t.priority === 'urgent' && <span className="font-bold uppercase text-rose-700">Urgent</span>}
-                    {t.priority === 'high' && <span className="font-bold uppercase text-amber-800">High</span>}
-                    {t.breezeway_task_id && <span className={'inline-flex items-center gap-0.5 font-bold uppercase px-1 rounded border ' + (TONE_CLS[t.breezeway?.tone || 'open'])}><Wrench size={9} />{t.breezeway?.status || 'BZ'}</span>}
-                    {!t.breezeway_task_id && canEdit && onPush && <button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="ml-auto text-muted hover:text-ink" title="Push to Breezeway"><Wrench size={11} /></button>}
-                  </div>
-                )}
-                {!(t.assignees.length > 0 || t.due_on || t.subtasks.length > 0 || c) && canEdit && onPush && !t.breezeway_task_id && (
-                  <div className="mt-1 pl-6"><button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="text-muted hover:text-ink" title="Push to Breezeway"><Wrench size={11} /></button></div>
-                )}
-              </div>
-            </div>
-          )
-        })}
+      <div className="space-y-1 min-h-[40px]">
+        {tasks.map(t => <BoardCard key={t.id} t={t} name={name} canEdit={canEdit} busy={busy} openId={openId} onOpen={onOpen} act={act} counts={counts} dragId={dragId} setDragId={setDragId} onMove={onMove} onPush={onPush} />)}
         <DropSlot active={dragging} onDrop={() => { if (dragId) { onMove(dragId, name, null); setDragId(null) } }} />
         {canEdit && (
           <div className="rounded-xl border border-dashed border-line bg-white/60">
             <QuickAdd section={name} act={act} busy={busy} {...add} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** A card is the row folded in two: title line, then the same chips. Same colours, same taps. */
+function BoardCard({ t, name, canEdit, busy, openId, onOpen, act, counts, dragId, setDragId, onMove, onPush }: {
+  t: Task; name: string; canEdit: boolean; busy: boolean; openId: string | null; onOpen: (id: string) => void
+  act: (b: any) => Promise<any>; counts: Counts
+} & DragProps) {
+  const Icon = STATUS_ICON[t.status] || Circle
+  const done = t.status === 'done'
+  const tone = dueTone(t.due_on, t.status)
+  const c = counts[t.id]
+  const dragging = !!dragId && canEdit
+  const set = (patch: any) => act({ action: 'taskSet', taskId: t.id, ...patch })
+  const subDone = t.subtasks.filter(s => s.status === 'done').length
+  const meta = t.assignees.length > 0 || t.due_on || t.subtasks.length > 0 || (c && (c.comments > 0 || c.files > 0)) || t.breezeway_task_id || t.priority === 'urgent' || t.priority === 'high'
+  return (
+    <div>
+      <DropSlot active={dragging && dragId !== t.id} onDrop={() => { if (dragId) { onMove(dragId, name, t.id); setDragId(null) } }} />
+      <div onClick={() => onOpen(t.id)} draggable={canEdit}
+        onDragStart={e => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDragId(null)}
+        className={'rounded-lg border border-l-[3px] bg-white px-2 py-1.5 cursor-pointer hover:shadow-sm ' + (PRIORITY_EDGE[done ? 'normal' : t.priority] || 'border-l-transparent') + ' '
+          + (openId === t.id ? 'border-ink' : 'border-line hover:border-ink/40') + (dragId === t.id ? ' opacity-40' : '') + (done ? ' opacity-70' : '')}>
+        <div className="flex items-start gap-1.5">
+          <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); set({ status: done ? 'todo' : 'done' }) }}
+            className={'w-4 h-4 mt-[1px] rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]} title={TASK_STATUS_LABEL[t.status]}>
+            <Icon size={9} strokeWidth={3} />
+          </button>
+          <span className={'text-[12.5px] leading-snug flex-1 min-w-0 ' + (done ? 'text-muted line-through' : 'text-ink')}>{t.title || <span className="text-muted/60 italic">Untitled</span>}</span>
+        </div>
+        {(t.vendor_name || t.visit_on) && <div className="mt-1 pl-5"><VisitLine t={t} compact /></div>}
+        {meta && (
+          <div className="mt-1.5 pl-5 flex items-center gap-1.5 flex-wrap" onClick={e => e.stopPropagation()}>
+            {t.due_on && (canEdit ? (
+              <label className={'relative inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] tabular-nums cursor-pointer ' + DUE_CLS[tone]}>
+                <CalendarDays size={9} /><span>{dueText(t.due_on)}</span>
+                <input type="date" value={t.due_on || ''} disabled={busy} onChange={e => set({ due_on: e.target.value || null })} className="absolute inset-0 opacity-0 cursor-pointer w-full" />
+              </label>
+            ) : <span className={'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] tabular-nums ' + DUE_CLS[tone]}><CalendarDays size={9} />{dueText(t.due_on)}</span>)}
+            {(t.priority === 'urgent' || t.priority === 'high') && !done && <span className={'text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded ' + (t.priority === 'urgent' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800')}>{PRIORITY_LABEL[t.priority]}</span>}
+            {t.subtasks.length > 0 && <span className="text-[10.5px] text-muted tabular-nums">{subDone}/{t.subtasks.length}</span>}
+            {c && c.comments > 0 && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted"><MessageSquare size={10} />{c.comments}</span>}
+            {c && c.files > 0 && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted"><Paperclip size={10} />{c.files}</span>}
+            {t.breezeway_task_id && <span className={'inline-flex items-center gap-0.5 text-[9px] font-bold uppercase px-1 rounded border ' + (TONE_CLS[t.breezeway?.tone || 'open'])}><Wrench size={9} />{t.breezeway?.status || 'BZ'}</span>}
+            {t.assignees.length > 0 && <span className="ml-auto"><Avatars people={t.assignees} size={18} /></span>}
+            {!t.breezeway_task_id && canEdit && onPush && !t.assignees.length && <button onClick={() => onPush(t.id)} className="ml-auto text-muted/60 hover:text-ink" title="Push to Breezeway"><Wrench size={11} /></button>}
           </div>
         )}
       </div>
@@ -812,142 +896,154 @@ function MoreMenu({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean;
   )
 }
 
-function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, tpl, dragId, setDragId, onMove, onPush }: {
+type RowCtx = { sections?: string[]; roster?: Roster }
+
+function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, dragId, setDragId, onMove, onPush, sections, roster }: {
   t: Task; depth: number; canEdit: boolean; busy: boolean; open: boolean
   onOpen: (id: string) => void; act: (b: any) => Promise<any>; counts: Counts
-  cols: ListColumn[]; tpl: string
-} & DragProps) {
+  cols: ListColumn[]; tpl?: string
+} & DragProps & RowCtx) {
   const Icon = STATUS_ICON[t.status] || Circle
-  const late = t.status !== 'done' && !!t.due_on && t.due_on < today()
-  const next = (s: string) => (s === 'done' ? 'todo' : 'done')   // one tap toggles done; the drawer has the four states
   const c = counts[t.id]
   const has = (k: ListColumn) => cols.indexOf(k) >= 0
+  const done = t.status === 'done'
+  const set = (patch: any) => act({ action: 'taskSet', taskId: t.id, ...patch })
 
-  /**
-   * SUBTASKS FOLD, THE WAY ASANA FOLDS THEM (Jon, 2026-09-16: "When I click into a task, even on
-   * the main header page, I should be able to open up all the subtasks").
-   *
-   * They used to render unconditionally, so a parent with six subtasks was seven rows whether or
-   * not you cared, and there was no way to say "not now". A chevron on the parent opens them in
-   * place; the Subtasks column already says how many there are, so closed is never hiding anything
-   * you did not know about. Local state on purpose — which rows I have open right now is not a
-   * preference worth persisting, and a page that remembers it forever gets in the way.
-   */
+  // Subtasks fold (Jon, 2026-09-16). Local state on purpose.
   const [openSubs, setOpenSubs] = useState(false)
-  const Cell = ({ children, className }: { children?: any; className?: string }) => (
-    <div className={'px-2 text-[11px] min-w-0 ' + (className || 'text-muted')} onClick={e => e.stopPropagation()}>{children}</div>
-  )
+  // Which inline editor is open on this row: the ⋯ menu, the owner picker, or a title rename.
+  const [menu, setMenu] = useState<null | 'more' | 'owner'>(null)
+  const [rename, setRename] = useState<string | null>(null)
+  const tone = dueTone(t.due_on, t.status)
+
+  const ownerNames = t.assignees.map(a => a.email || a.display)
   return (
     <>
-      {/* A GRID, NOT A FLEX ROW. Everything used to float right at its natural width, so the due
-          date on one row sat under the owner on the next and a column could not be read down the
-          page — which is the only reason to want columns at all. The template comes from the
-          board's chosen columns and is shared with the header, so they cannot drift. */}
-      <div className={'group/row grid items-center gap-0 py-2 cursor-pointer border-t border-line ' + (open ? 'bg-brand-50/60' : 'hover:bg-app/50') + (dragId === t.id ? ' opacity-40' : '')}
-        style={{ gridTemplateColumns: tpl }}
+      {/*
+        ONE ROW, ONE LINE, THE TITLE ALWAYS WINS (labor-board audit 2026-09-21). The old grid gave
+        every column a fixed pixel width and let only the title shrink, so with the side panel open
+        on a laptop the title shrank to nothing and "0/5 subtasks" was all that survived. Now the
+        title is a minmax(140px,1fr) track and the meta is an auto track that never wraps — so a
+        narrow screen scrolls the section sideways rather than eating the words.
+        Colour does the reading: priority is the left edge, urgency is the due chip, the owner is
+        an avatar in a stable colour. Everything on the row is editable in place.
+      */}
+      <div className={'group/row grid items-center gap-2 pr-2 cursor-pointer border-t border-line border-l-[3px] ' + (PRIORITY_EDGE[done ? 'normal' : t.priority] || 'border-l-transparent') + ' '
+          + (open ? 'bg-brand-50/60' : 'hover:bg-app/60') + (dragId === t.id ? ' opacity-40' : '') + (done ? ' opacity-70' : '')}
+        style={{ gridTemplateColumns: 'minmax(140px,1fr) auto', minHeight: 32 }}
         onClick={() => onOpen(t.id)}
-        draggable={canEdit && depth === 0} onDragStart={e => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDragId(null)}>
+        draggable={canEdit && depth === 0 && !rename} onDragStart={e => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => setDragId(null)}>
 
-        {/* TITLE — indentation for subtasks lives inside this cell, so nesting never shifts a column. */}
-        <div className="flex items-center gap-2.5 min-w-0 pr-2" style={{ paddingLeft: 12 + depth * 22 }}>
-          {depth === 0 && canEdit && <GripVertical size={12} className="text-muted/50 shrink-0 -ml-1 cursor-grab" />}
-          {depth > 0 && <CornerDownRight size={11} className="text-muted shrink-0 -ml-1" />}
-          {t.subtasks.length > 0 ? (
-            <button onClick={e => { e.stopPropagation(); setOpenSubs(o => !o) }}
-              className="shrink-0 -ml-1 text-muted hover:text-ink" title={openSubs ? 'Hide subtasks' : `Show ${t.subtasks.length} subtask${t.subtasks.length === 1 ? '' : 's'}`}>
-              {openSubs ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-            </button>
-          ) : <span className="w-[13px] shrink-0" aria-hidden />}
-          <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); act({ action: 'taskSet', taskId: t.id, status: next(t.status) }) }}
-            className={'w-5 h-5 rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]}
-            title={TASK_STATUS_LABEL[t.status]}>
-            <Icon size={11} strokeWidth={3} />
+        {/* ── title cell */}
+        <div className="flex items-center gap-2 min-w-0 py-1" style={{ paddingLeft: 6 + depth * 22 }}>
+          {depth === 0 && canEdit && <GripVertical size={12} className="text-muted/40 shrink-0 cursor-grab opacity-0 group-hover/row:opacity-100" />}
+          {depth > 0 && <CornerDownRight size={11} className="text-muted shrink-0" />}
+          {/* STATUS: one tap = done / not done. The ⋯ menu carries Doing and Blocked. */}
+          <button disabled={!canEdit || busy} onClick={e => { e.stopPropagation(); set({ status: done ? 'todo' : 'done' }) }}
+            className={'w-[18px] h-[18px] rounded-full border-2 inline-flex items-center justify-center shrink-0 disabled:opacity-60 ' + STATUS_CLS[t.status]}
+            title={TASK_STATUS_LABEL[t.status] + (canEdit ? ' — click to ' + (done ? 'reopen' : 'complete') : '')}>
+            <Icon size={10} strokeWidth={3} />
           </button>
-          <span className={'min-w-0 flex-1 text-[13px] truncate ' + (t.status === 'done' ? 'text-muted line-through' : 'text-ink')}>{t.title}</span>
-          {t.breezeway_task_id ? (
-            <button onClick={e => { e.stopPropagation(); onPush?.(t.id) }} className={'inline-flex items-center gap-0.5 text-[10px] font-bold uppercase px-1 py-0.5 rounded border shrink-0 ' + (TONE_CLS[t.breezeway?.tone || 'open'])} title="In Breezeway — click to reassign or move"><Wrench size={9} /> {t.breezeway?.status || 'BZ'}</button>
-          ) : (canEdit && depth === 0 && onPush && (
-            <button onClick={e => { e.stopPropagation(); onPush(t.id) }} className="opacity-0 group-hover/row:opacity-100 text-muted hover:text-ink shrink-0" title="Push to Breezeway"><Wrench size={12} /></button>
-          ))}
-          {t.subtasks.length > 0 && !openSubs && (
-            <button onClick={e => { e.stopPropagation(); setOpenSubs(true) }}
-              className="text-[10.5px] font-semibold text-muted hover:text-ink tabular-nums shrink-0 rounded px-1 py-0.5 hover:bg-app"
-              title="Show subtasks">
-              {t.subtasks.filter(x => x.status === 'done').length}/{t.subtasks.length} subtasks
+          {rename !== null ? (
+            <input autoFocus value={rename} onChange={e => setRename(e.target.value)} onClick={e => e.stopPropagation()}
+              onBlur={() => { const v = rename.trim(); setRename(null); if (v && v !== t.title) set({ title: v }) }}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRename(null) }}
+              className="min-w-0 flex-1 rounded-md border border-brand-300 bg-white px-1.5 py-0.5 text-[13px] text-ink focus:outline-none" />
+          ) : (
+            <span onDoubleClick={e => { if (canEdit) { e.stopPropagation(); setRename(t.title) } }}
+              className={'min-w-0 flex-1 text-[13px] truncate ' + (done ? 'text-muted line-through' : 'text-ink')} title={canEdit ? t.title + ' — double-click to rename' : t.title}>
+              {t.title || <span className="text-muted/60 italic">Untitled</span>}
+            </span>
+          )}
+          {t.subtasks.length > 0 && (
+            <button onClick={e => { e.stopPropagation(); setOpenSubs(o => !o) }}
+              className={'shrink-0 inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10.5px] font-semibold tabular-nums hover:bg-app ' + (openSubs ? 'text-ink' : 'text-muted')}
+              title={openSubs ? 'Hide subtasks' : 'Show subtasks'}>
+              {openSubs ? <ChevronDown size={11} /> : <ChevronRight size={11} />}{t.subtasks.filter(x => x.status === 'done').length}/{t.subtasks.length}
             </button>
           )}
           {t.homed && <span className="text-[9.5px] font-semibold text-muted truncate max-w-[110px] shrink-0" title={`Also in ${t.home_project_title}`}>↗ {t.home_project_title}</span>}
         </div>
 
-        {has('assignee') && (
-          <Cell>
-            {t.assignees.length > 0 ? (
-              <span className="flex items-center gap-1.5 min-w-0">
-                <span className="w-5 h-5 rounded-full bg-brand-50 text-brand-700 text-[9px] font-bold inline-flex items-center justify-center shrink-0">{t.assignees[0].display.slice(0, 1).toUpperCase()}</span>
-                <span className="truncate">{t.assignees.map(a => first(a.display)).join(', ')}</span>
-              </span>
-            ) : <span className="text-muted/40">—</span>}
-          </Cell>
-        )}
-
-        {has('due') && (
-          <Cell className={late ? 'text-rose-600 font-bold' : 'text-muted'}>
-            {canEdit ? (
-              <label className="relative inline-flex items-center gap-1 tabular-nums cursor-pointer w-full" title="Due date">
-                <CalendarDays size={11} className="shrink-0" />
-                <span className={t.due_on ? '' : 'text-muted/40'}>{t.due_on ? nice(t.due_on) : 'Set'}</span>
-                <input type="date" value={t.due_on || ''} disabled={busy} onChange={e => act({ action: 'taskSet', taskId: t.id, due_on: e.target.value || null })} className="absolute inset-0 opacity-0 cursor-pointer w-full" />
-              </label>
-            ) : (t.due_on ? <span className="tabular-nums">{nice(t.due_on)}</span> : <span className="text-muted/40">—</span>)}
-          </Cell>
-        )}
-
-        {has('priority') && (
-          <Cell>
-            {t.priority === 'urgent' ? <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-rose-100 text-rose-700">Urgent</span>
-              : t.priority === 'high' ? <span className="text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded bg-amber-100 text-amber-800">High</span>
-              : <span className="text-muted/40">—</span>}
-          </Cell>
-        )}
-
-        {has('status') && <Cell><span className="truncate">{TASK_STATUS_LABEL[t.status] || t.status}</span></Cell>}
-
-        {has('subtasks') && (
-          <Cell className="text-muted tabular-nums">
-            {t.subtasks.length > 0 ? `${t.subtasks.filter(x => x.status === 'done').length}/${t.subtasks.length}` : <span className="text-muted/40">—</span>}
-          </Cell>
-        )}
-
-        {has('activity') && (
-          <Cell>
-            <span className="flex items-center gap-2 tabular-nums">
-              {c && c.comments > 0 ? <span className="inline-flex items-center gap-0.5" title={`${c.comments} comment${c.comments === 1 ? '' : 's'}`}><MessageSquare size={11} />{c.comments}</span> : null}
-              {c && c.files > 0 ? <span className="inline-flex items-center gap-0.5" title={`${c.files} file${c.files === 1 ? '' : 's'}`}><Paperclip size={11} />{c.files}</span> : null}
-              {(!c || (!c.comments && !c.files)) && <span className="text-muted/40">—</span>}
+        {/* ── meta cell: never wraps, never squeezes the title */}
+        <div className="flex items-center gap-1.5 whitespace-nowrap py-1" onClick={e => e.stopPropagation()}>
+          {t.breezeway_task_id ? (
+            <button onClick={() => onPush?.(t.id)} className={'inline-flex items-center gap-0.5 text-[9.5px] font-bold uppercase px-1 py-0.5 rounded border ' + (TONE_CLS[t.breezeway?.tone || 'open'])} title="In Breezeway — click to reassign or move"><Wrench size={9} /> {t.breezeway?.status || 'BZ'}</button>
+          ) : null}
+          {has('activity') && c && (c.comments > 0 || c.files > 0) && (
+            <span className="inline-flex items-center gap-1.5 text-[10.5px] text-muted tabular-nums">
+              {c.comments > 0 && <span className="inline-flex items-center gap-0.5" title={`${c.comments} comments`}><MessageSquare size={11} />{c.comments}</span>}
+              {c.files > 0 && <span className="inline-flex items-center gap-0.5" title={`${c.files} files`}><Paperclip size={11} />{c.files}</span>}
             </span>
-          </Cell>
-        )}
+          )}
+          {has('priority') && (t.priority === 'urgent' || t.priority === 'high') && !done && (
+            <span className={'text-[9.5px] font-bold uppercase tracking-wide px-1 py-0.5 rounded ' + (t.priority === 'urgent' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800')}>{PRIORITY_LABEL[t.priority]}</span>
+          )}
+          {has('due') && (canEdit ? (
+            <label className={'relative inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] tabular-nums cursor-pointer ' + DUE_CLS[tone]} title="Due date — click to change">
+              <CalendarDays size={10} className="shrink-0" />
+              <span>{dueText(t.due_on)}</span>
+              <input type="date" value={t.due_on || ''} disabled={busy} onChange={e => set({ due_on: e.target.value || null })} className="absolute inset-0 opacity-0 cursor-pointer w-full" />
+            </label>
+          ) : (t.due_on ? <span className={'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] tabular-nums ' + DUE_CLS[tone]}><CalendarDays size={10} />{dueText(t.due_on)}</span> : null))}
+          {has('assignee') && (
+            <span className="relative inline-flex">
+              <button disabled={!canEdit} onClick={() => setMenu(menu === 'owner' ? null : 'owner')} title={t.assignees.length ? t.assignees.map(a => a.display).join(', ') : 'Assign'}
+                className={'inline-flex items-center rounded-full ' + (t.assignees.length ? '' : 'w-5 h-5 border border-dashed border-line text-muted/60 hover:text-ink hover:border-ink/40 justify-center')}>
+                {t.assignees.length ? <Avatars people={t.assignees} /> : <UserRound size={11} />}
+              </button>
+              <Menu open={menu === 'owner'} onClose={() => setMenu(null)} className="w-64 p-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-1">Owner</p>
+                <PeoplePicker value={ownerNames} roster={roster || []} disabled={busy} placeholder="Add a person…"
+                  onChange={next => set({ assignees: next })} />
+              </Menu>
+            </span>
+          )}
+          {canEdit && (
+            <span className="relative inline-flex">
+              <button onClick={() => setMenu(menu === 'more' ? null : 'more')} className={'rounded-md p-0.5 text-muted hover:text-ink hover:bg-app ' + (menu === 'more' ? 'text-ink bg-app' : 'opacity-40 group-hover/row:opacity-100')} title="Status · priority · move · rename · delete">
+                <MoreHorizontal size={14} />
+              </button>
+              <Menu open={menu === 'more'} onClose={() => setMenu(null)} className="w-52">
+                <MenuHead>Status</MenuHead>
+                {(['todo', 'doing', 'blocked', 'done'] as const).map(st => { const I = STATUS_ICON[st]; return (
+                  <MenuItem key={st} active={t.status === st} onClick={() => { setMenu(null); set({ status: st }) }}>
+                    <span className={'w-4 h-4 rounded-full border-2 inline-flex items-center justify-center ' + STATUS_CLS[st]}><I size={9} strokeWidth={3} /></span>{TASK_STATUS_LABEL[st]}
+                  </MenuItem>) })}
+                <MenuHead>Priority</MenuHead>
+                {(['urgent', 'high', 'normal', 'low'] as const).map(pr => (
+                  <MenuItem key={pr} active={t.priority === pr} onClick={() => { setMenu(null); set({ priority: pr }) }}>
+                    <span className={'w-2 h-2 rounded-full ' + PRIORITY_DOT[pr]} />{PRIORITY_LABEL[pr]}
+                  </MenuItem>
+                ))}
+                {sections && sections.length > 1 && depth === 0 && (<>
+                  <MenuHead>Move to</MenuHead>
+                  {sections.map(sname => (
+                    <MenuItem key={sname || '__none'} active={(t.section || '') === sname} onClick={() => { setMenu(null); onMove(t.id, sname, null) }}>
+                      <FolderInput size={12} className="text-muted" />{sname || 'Tasks'}
+                    </MenuItem>
+                  ))}
+                </>)}
+                <div className="my-1 border-t border-line" />
+                <MenuItem onClick={() => { setMenu(null); setRename(t.title) }}><Pencil size={12} className="text-muted" />Rename</MenuItem>
+                {!t.breezeway_task_id && onPush && depth === 0 && <MenuItem onClick={() => { setMenu(null); onPush(t.id) }}><Wrench size={12} className="text-muted" />Push to Breezeway</MenuItem>}
+                <MenuItem tone="danger" onClick={() => { setMenu(null); if (confirm(`Delete “${t.title}”?`)) act({ action: 'taskDelete', taskId: t.id }) }}><Trash2 size={12} />Delete</MenuItem>
+              </Menu>
+            </span>
+          )}
+        </div>
       </div>
       {(t.vendor_name || t.visit_on) && (
-        <div className="px-3 pb-1.5" style={{ paddingLeft: 12 + depth * 22 + 26 }}><VisitLine t={t} /></div>
+        <div className="px-3 pb-1" style={{ paddingLeft: 6 + depth * 22 + 30 }}><VisitLine t={t} /></div>
       )}
-      {openSubs && t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} cols={cols} tpl={tpl} dragId={dragId} setDragId={setDragId} onMove={onMove} />)}
+      {openSubs && t.subtasks.map(s => <TaskRow key={s.id} t={s} depth={depth + 1} canEdit={canEdit} busy={busy} open={false} onOpen={onOpen} act={act} counts={counts} cols={cols} dragId={dragId} setDragId={setDragId} onMove={onMove} sections={sections} roster={roster} />)}
     </>
   )
 }
 
-/** The header strip above the sections. Same template as every row, or it is decoration. */
-function ColumnHead({ cols, tpl }: { cols: ListColumn[]; tpl: string }) {
-  if (!cols.length) return null
-  return (
-    <div className="grid items-center gap-0 px-0 pb-1" style={{ gridTemplateColumns: tpl }}>
-      <div className="pl-3 text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Task</div>
-      {cols.map(c => (
-        <div key={c} className="px-2 text-[10px] font-bold uppercase tracking-[0.12em] text-muted truncate">{COLUMN_LABEL[c]}</div>
-      ))}
-    </div>
-  )
-}
+/** The header strip is gone: chips label themselves and the fixed-column grid was what made
+ *  titles vanish. Kept as a no-op so the call site stays; remove when convenient. */
+function ColumnHead(_: { cols: ListColumn[]; tpl: string }) { return null }
 
 // ── PEOPLE PICKER ─────────────────────────────────────────────────────────────────────────────
 // Chips plus a typeahead over the roster. One component for assignees, for collaborators and for
@@ -1393,9 +1489,10 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
             </select>
 
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Section</span>
-            <input value={task.section || ''} disabled={!canEdit} placeholder="None"
+            <input defaultValue={task.section || ''} key={task.id + ':' + (task.section || '')} disabled={!canEdit} placeholder="None"
               onBlur={e => { if ((e.target.value || null) !== (task.section || null)) set({ section: e.target.value }) }}
-              onChange={() => {}} className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
 
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Projects</span>
             <TaskProjects task={task} p={p} canEdit={canEdit} busy={busy} act={act} />
@@ -2017,7 +2114,7 @@ const VISIT_CLS: Record<string, string> = {
   soon:   'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
   later:  'bg-app text-muted ring-1 ring-line',
   missed: 'bg-rose-600 text-white',
-  done:   'bg-app text-faint ring-1 ring-line',
+  done:   'bg-app text-muted/60 ring-1 ring-line',
 }
 
 /** The one-line "who is coming and when", used on the card and at the top of the drawer. */
@@ -2253,7 +2350,7 @@ const INV_CLS: Record<string, string> = {
   received: 'bg-amber-50 text-amber-800 ring-amber-200',
   approved: 'bg-sky-50 text-sky-800 ring-sky-200',
   paid:     'bg-emerald-50 text-emerald-800 ring-emerald-200',
-  void:     'bg-app text-faint ring-line',
+  void:     'bg-app text-muted/60 ring-line',
 }
 
 type VendorHit = VendorRecord & { coi?: { tone: 'bad' | 'warn' | 'ok'; label: string } | null }

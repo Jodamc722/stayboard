@@ -7,7 +7,7 @@
 // groups them. A tile shows the one thing a card is for — how it is doing — and opens the page.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Lock, Repeat, Clock, AlertTriangle, ListChecks, KanbanSquare, Loader2, LayoutTemplate, Truck, ChevronRight, ChevronDown, MoreHorizontal, Archive, Trash2, RotateCcw, ShieldAlert } from 'lucide-react'
+import { Plus, Lock, Repeat, ListChecks, KanbanSquare, Loader2, Truck, ChevronRight, ChevronDown, MoreHorizontal, Archive, Trash2, RotateCcw, ShieldAlert, Check, Circle } from 'lucide-react'
 import { ACCENT_CLS, iconOf, accentOf } from '@/lib/projects-shared'
 
 type P = {
@@ -26,12 +26,29 @@ const daysLeft = (iso: string | null) => {
 }
 
 const first = (s: string) => String(s || '').split(/[\s@]/)[0]
-const hello = () => { const h = Number(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' })); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening' }
+const niceDay = (ymd: string) => { try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd } }
+const AVATAR_PALETTE = ['bg-indigo-100 text-indigo-800', 'bg-emerald-100 text-emerald-800', 'bg-amber-100 text-amber-800', 'bg-sky-100 text-sky-800', 'bg-rose-100 text-rose-800', 'bg-violet-100 text-violet-800', 'bg-teal-100 text-teal-800', 'bg-orange-100 text-orange-800']
+const avatarCls = (name: string) => { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0; return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length] }
+type MineItem = { id: string; projectId: string; title: string; status: string; due: string | null; priority?: string; project: string; oneOnOne?: boolean; mine?: boolean; where?: string | null }
+type MineGroups = { overdue: MineItem[]; today: MineItem[]; week: MineItem[]; later: MineItem[]; someday: MineItem[] }
 
 export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) {
   const [projects, setProjects] = useState<P[] | null>(null)
   const [templates, setTemplates] = useState<Tpl[]>([])
-  const [mine, setMine] = useState<{ overdue: number; today: number; week: number; total: number } | null>(null)
+  // MY TASKS, ON THE PAGE (Jon, 2026-09-21: "home page is noise"). The strip used to print four
+  // counts and a link; the overdue and due-today tasks themselves are what a person opens this
+  // page for, so they sit at the top, each one completable in place.
+  const [mine, setMine] = useState<{ groups: MineGroups; total: number } | null>(null)
+  const [showWeek, setShowWeek] = useState(false)
+  const [newMenu, setNewMenu] = useState(false)
+  const [doneIds, setDoneIds] = useState<Record<string, boolean>>({})
+  const completeMine = async (it: MineItem) => {
+    setDoneIds(d => ({ ...d, [it.id]: true }))
+    try {
+      const r = await fetch('/api/projects/' + it.projectId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'taskSet', taskId: it.id, status: 'done' }) })
+      if (!r.ok) throw new Error('save failed')
+    } catch { setDoneIds(d => ({ ...d, [it.id]: false })); setNote('That task did not save.') }
+  }
   const [err, setErr] = useState<string | null>(null)
   // Which of the foldable groups this person has opened. Vendor jobs start folded.
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
@@ -87,7 +104,7 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
       .then(j => { if (!j?.ok) throw new Error(j?.error || 'Could not load projects.'); setProjects(j.projects || []); setTemplates(j.templates || []) })
       .catch(e => { setErr(String(e?.message || e)); setProjects([]) })
     fetch('/api/projects/mine', { cache: 'no-store' }).then(r => r.json())
-      .then(j => { if (j?.ok !== false && j?.groups) setMine({ overdue: j.groups.overdue.length, today: j.groups.today.length, week: j.groups.week.length, total: j.total || 0 }) })
+      .then(j => { if (j?.ok !== false && j?.groups) setMine({ groups: j.groups, total: j.total || 0 }) })
       .catch(() => {})
   }, [])
 
@@ -121,27 +138,76 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
 
   return (
     <div className="pb-16">
-      <header className="mb-4 flex items-start gap-3">
+      <header className="mb-3 flex items-center gap-3">
         <div className="flex-1 min-w-0">
-          <p className="text-[11px] uppercase tracking-wider font-semibold text-muted inline-flex items-center gap-1.5"><KanbanSquare size={12} /> Projects</p>
-          <h1 className="text-2xl font-bold text-ink tracking-tight">{hello()}{me ? `, ${first(me)[0]?.toUpperCase()}${first(me).slice(1)}` : ''}.</h1>
+          <h1 className="text-[20px] font-bold text-ink tracking-tight inline-flex items-center gap-2"><KanbanSquare size={16} className="text-muted" /> Projects</h1>
         </div>
+        {canEdit && (
+          <span className="relative inline-flex">
+            <button onClick={() => setNewMenu(v => !v)} className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-bold hover:bg-brand-700"><Plus size={13} /> New <ChevronDown size={12} /></button>
+            {newMenu && (<>
+              <div className="fixed inset-0 z-30" onClick={() => setNewMenu(false)} />
+              <div className="absolute right-0 top-full mt-1 z-40 w-56 rounded-xl border border-line bg-white shadow-lifted py-1">
+                <Link href="/projects/board?new=1" className="block px-2.5 py-1.5 text-[12.5px] font-semibold text-ink hover:bg-app">Project</Link>
+                <Link href="/projects/board?new=personal" className="block px-2.5 py-1.5 text-[12.5px] text-ink hover:bg-app">Private board</Link>
+                {templates.filter(t => t.kind !== 'personal').length > 0 && <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">From a template</p>}
+                {templates.filter(t => t.kind !== 'personal').slice(0, 8).map(t => (
+                  <Link key={t.key} href={'/projects/board?new=' + encodeURIComponent(t.key)} title={t.blurb} className="flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-ink hover:bg-app"><span aria-hidden>{t.icon || '📋'}</span>{t.label}</Link>
+                ))}
+              </div>
+            </>)}
+          </span>
+        )}
       </header>
 
-      {/* what is on me */}
-      <Link href="/projects/mine" className="block rounded-2xl border border-line bg-white px-4 py-3 mb-4 hover:border-ink/40">
-        <div className="flex items-center gap-4 flex-wrap">
-          <span className="text-[12.5px] font-bold text-ink inline-flex items-center gap-1.5"><ListChecks size={13} /> My Tasks</span>
-          {mine ? (
-            <>
-              <span className={'text-[12.5px] inline-flex items-center gap-1 ' + (mine.overdue ? 'text-rose-700 font-bold' : 'text-muted')}><AlertTriangle size={12} /> {mine.overdue} overdue</span>
-              <span className={'text-[12.5px] inline-flex items-center gap-1 ' + (mine.today ? 'text-ink font-semibold' : 'text-muted')}><Clock size={12} /> {mine.today} due today</span>
-              <span className="text-[12.5px] text-muted">{mine.week} this week · {mine.total} open</span>
-            </>
-          ) : <span className="text-[12.5px] text-muted inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Loading…</span>}
-          <span className="ml-auto text-[12px] font-semibold text-muted">Open →</span>
+      {/* ── MY TASKS: overdue and due today, right here, completable in place ── */}
+      <section className="mb-4 rounded-2xl border border-line bg-white overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-app/60 border-b border-line">
+          <ListChecks size={13} className="text-muted" />
+          <span className="text-[12.5px] font-bold text-ink">My tasks</span>
+          {mine && (
+            <span className="text-[11.5px] text-muted flex items-center gap-2 flex-wrap">
+              {mine.groups.overdue.length > 0 && <span className="text-rose-700 font-bold">{mine.groups.overdue.length} overdue</span>}
+              {mine.groups.today.length > 0 && <span className="text-amber-800 font-semibold">{mine.groups.today.length} today</span>}
+              <span>{mine.groups.week.length} this week · {mine.total} open</span>
+            </span>
+          )}
+          <Link href="/projects/mine" className="ml-auto text-[12px] font-semibold text-muted hover:text-ink">All my tasks →</Link>
         </div>
-      </Link>
+        {!mine ? (
+          <p className="px-3 py-3 text-[12.5px] text-muted inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Loading…</p>
+        ) : (() => {
+          const rows: { it: MineItem; tone: 'late' | 'today' | 'week' }[] = [
+            ...mine.groups.overdue.map(it => ({ it, tone: 'late' as const })),
+            ...mine.groups.today.map(it => ({ it, tone: 'today' as const })),
+            ...(showWeek ? mine.groups.week.map(it => ({ it, tone: 'week' as const })) : []),
+          ]
+          if (!rows.length) return (
+            <p className="px-3 py-3 text-[12.5px] text-muted">Nothing overdue, nothing due today.{mine.groups.week.length ? <> <button onClick={() => setShowWeek(true)} className="underline hover:text-ink">{mine.groups.week.length} due this week</button>.</> : ''}</p>
+          )
+          return (
+            <div>
+              {rows.map(({ it, tone }) => {
+                const isDone = doneIds[it.id] || it.status === 'done'
+                return (
+                  <div key={it.id} className={'flex items-center gap-2 px-3 border-t border-line first:border-t-0 ' + (isDone ? 'opacity-50' : '')} style={{ minHeight: 32 }}>
+                    <button onClick={() => !isDone && completeMine(it)} disabled={isDone}
+                      className={'w-[18px] h-[18px] rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + (isDone ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-line text-muted hover:border-ink')} title="Mark done">
+                      {isDone ? <Check size={10} strokeWidth={3} /> : <Circle size={0} />}
+                    </button>
+                    <Link href={'/projects/' + it.projectId + '?task=' + it.id} className={'min-w-0 flex-1 text-[13px] truncate hover:underline ' + (isDone ? 'line-through text-muted' : 'text-ink')}>{it.title}</Link>
+                    <span className="text-[11px] text-muted truncate max-w-[160px] hidden sm:inline">{it.project}</span>
+                    {it.due && <span className={'shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] tabular-nums ' + (tone === 'late' ? 'bg-rose-100 text-rose-700 border-rose-200 font-bold' : tone === 'today' ? 'bg-amber-100 text-amber-800 border-amber-200 font-bold' : 'bg-white text-muted border-line')}>{tone === 'today' ? 'Today' : niceDay(it.due)}</span>}
+                  </div>
+                )
+              })}
+              {!showWeek && mine.groups.week.length > 0 && (
+                <button onClick={() => setShowWeek(true)} className="w-full text-left px-3 py-1.5 border-t border-line text-[11.5px] font-semibold text-muted hover:text-ink hover:bg-app/60">+ {mine.groups.week.length} due this week</button>
+              )}
+            </div>
+          )
+        })()}
+      </section>
 
       {err && <p className="mb-3 text-[12.5px] text-rose-700">{err}</p>}
       {projects === null && <p className="py-10 text-center text-[13px] text-muted inline-flex items-center gap-2 w-full justify-center"><Loader2 size={14} className="animate-spin" /> Loading projects…</p>}
@@ -166,38 +232,41 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
             <span className="text-[11px] text-muted tabular-nums">{g.items.length}</span>
             <span className="flex-1 h-px bg-line" />
           </button>
-          {!folded && <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          {/* ONE LINE PER BOARD. The tiles spent 120px on a summary nobody reads twice; a row
+              carries the same facts — icon, name, progress, what is late, who leads — and the
+              whole list fits on one screen. */}
+          {!folded && <div className="rounded-2xl border border-line bg-white overflow-hidden">
             {g.items.map(p => {
               const h = p.health
               const ac = ACCENT_CLS[accentOf(p)]
+              const openN = Math.max(0, (p.progress.total || 0) - (p.progress.done || 0))
               return (
-                <div key={p.id} className="relative group/card">
-                {canEdit && (
-                  <ProjectMenu p={p} busy={busyId === p.id}
-                    onArchive={() => removeProject(p, 'archive')} onDelete={() => removeProject(p, 'delete')} />
-                )}
-                <Link href={'/projects/' + p.id}
-                  className="block group rounded-2xl border border-line bg-white p-3 hover:border-ink/30 hover:shadow-md transition">
-                  <div className="flex items-start gap-2.5">
-                    <span className={'w-10 h-10 rounded-xl border grid place-items-center text-[20px] shrink-0 ' + ac.soft} aria-hidden>{iconOf(p)}</span>
+                <div key={p.id} className="relative group/card flex items-center gap-2.5 px-2.5 border-t border-line first:border-t-0 hover:bg-app/60" style={{ minHeight: 40 }}>
+                  <Link href={'/projects/' + p.id} className="flex items-center gap-2.5 min-w-0 flex-1 py-1.5">
+                    <span className={'w-7 h-7 rounded-lg border grid place-items-center text-[15px] shrink-0 ' + ac.soft} aria-hidden>{iconOf(p)}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13.5px] font-semibold text-ink leading-snug">{p.title}</span>
-                      {p.summary && <span className="block text-[11.5px] text-muted mt-0.5 line-clamp-2">{p.summary}</span>}
+                      <span className="block text-[13px] font-semibold text-ink truncate">{p.title}{p.recurs && <Repeat size={10} className="inline ml-1.5 text-muted" />}</span>
+                      {(h.reason || p.building || p.market) && (
+                        <span className="block text-[11px] text-muted truncate">
+                          {h.reason && <span className={'font-semibold ' + (h.state === 'late' ? 'text-rose-700' : h.state === 'due' ? 'text-amber-700' : '')}>{h.reason}</span>}
+                          {h.reason && (p.building || p.market) ? ' · ' : ''}{p.building || p.market || ''}
+                        </span>
+                      )}
                     </span>
-                    {p.recurs && <Repeat size={11} className="text-muted shrink-0 mt-1" />}
-                  </div>
-                  <div className="mt-2.5 flex items-center gap-2 flex-wrap text-[11px] text-muted">
                     {p.progress.total > 0 && (
-                      <span className="inline-flex items-center gap-1.5">
+                      <span className="hidden sm:inline-flex items-center gap-1.5 shrink-0 text-[11px] text-muted tabular-nums" title={`${p.progress.done} of ${p.progress.total} done`}>
                         <span className="w-16 h-1.5 rounded-full bg-app overflow-hidden inline-block"><span className={'block h-full ' + ac.solid} style={{ width: (p.progress.pct || 0) + '%' }} /></span>
-                        <span className="tabular-nums">{p.progress.done}/{p.progress.total}</span>
+                        <span className={openN ? 'text-ink font-semibold' : ''}>{openN} open</span>
                       </span>
                     )}
-                    {h.reason && <span className={'font-semibold ' + (h.state === 'late' ? 'text-rose-700' : h.state === 'due' ? 'text-amber-700' : '')}>{h.reason}</span>}
-                    {(p.building || p.market) && <span>· {p.building || p.market}</span>}
-                    {p.lead_email && p.kind !== 'personal' && <span>· {first(p.lead_email)}</span>}
-                  </div>
-                </Link>
+                    {p.lead_email && p.kind !== 'personal' && (
+                      <span className={'w-5 h-5 rounded-full text-[9px] font-bold inline-flex items-center justify-center shrink-0 ' + avatarCls(p.lead_email)} title={p.lead_email}>{first(p.lead_email).slice(0, 1).toUpperCase()}</span>
+                    )}
+                  </Link>
+                  {canEdit && (
+                    <ProjectMenu p={p} busy={busyId === p.id}
+                      onArchive={() => removeProject(p, 'archive')} onDelete={() => removeProject(p, 'delete')} />
+                  )}
                 </div>
               )
             })}
@@ -256,28 +325,6 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
           onDone={async (msg) => { setPurging(null); setNote(msg); await reload() }} />
       )}
 
-      {canEdit && (
-        <section>
-          <div className="flex items-center gap-2 px-1 mb-2">
-            <LayoutTemplate size={12} className="text-muted" />
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Start something</span>
-            <span className="flex-1 h-px bg-line" />
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <Link href="/projects/board?new=1" className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-bold hover:bg-brand-700"><Plus size={13} /> New project</Link>
-            <Link href="/projects/board?new=personal" className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-muted hover:text-ink"><Lock size={12} /> Private board</Link>
-            {templates.filter(t => t.kind !== 'personal').slice(0, 8).map(t => {
-              const ac = ACCENT_CLS[((t.accent && t.accent in ACCENT_CLS) ? t.accent : 'indigo') as keyof typeof ACCENT_CLS]
-              return (
-                <Link key={t.key} href={'/projects/board?new=' + encodeURIComponent(t.key)} title={t.blurb}
-                  className={'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[12.5px] font-semibold hover:shadow-sm ' + ac.soft + ' ' + ac.text}>
-                  <span className="text-[14px]" aria-hidden>{t.icon || '📋'}</span> {t.label}
-                </Link>
-              )
-            })}
-          </div>
-        </section>
-      )}
     </div>
   )
 }
