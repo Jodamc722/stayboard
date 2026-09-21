@@ -315,9 +315,9 @@ export function statementAlsoRowsStale(rows: unknown): boolean {
 // Matched on a phrase rather than the whole paragraph: the stored text is the evaluated string,
 // newlines and all, and pinning a repair to 300 characters of prose means it stops working the
 // first time someone fixes a comma.
-export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'not a marketplace of contractors we hope shows up', 'our own people, on our own payroll']
+export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'not a marketplace of contractors we hope shows up', 'our own people, on our own payroll', 'guest care are in-house']
 export const OVERVIEW_BODY =
-  'Stay Hospitality manages short-term rentals in Miami, Broward and West Palm Beach: listing, pricing, guest communication, turnovers and maintenance. Housekeeping, maintenance and guest care are in-house.\n\n' +
+  'Stay Hospitality manages short-term rentals in Miami, Broward and West Palm Beach: listing, pricing, guest communication, turnovers and maintenance.\n\n' +
   'One team, one system, one monthly statement.'
 
 export const COMPANY_STATS_RETIRED_MARK = 'Miami & Broward'
