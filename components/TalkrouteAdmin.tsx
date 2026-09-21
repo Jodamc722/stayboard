@@ -15,6 +15,7 @@ type Status = {
   people: People | null
   sync?: any; made?: string[]; removed?: number; notes?: any
   callers?: { scanned: number; named: number; devices: string[]; error?: string }
+  reconciled?: { looked: number; completed: number; errors: string[] }
 }
 type People = {
   directory: { id: string; label: string; detail: string; kind: string }[]
@@ -77,6 +78,10 @@ export function TalkrouteAdmin() {
         setFlash(`${s.partial ? 'Partly synced (ran out of time — press Sync now again, or the 15-minute backfill finishes it)' : 'Synced'} — ${s.calls?.fetched ?? 0} calls (${s.calls?.matched ?? 0} matched to bookings, ${s.calls?.welcomeCompleted ?? 0} welcome calls completed), ${s.texts?.messages ?? 0} texts in ${s.texts?.conversations ?? 0} threads, ${s.voicemails?.fetched ?? 0} voicemails.${s.errors?.length ? ' First error: ' + s.errors[0] : ''}`)
       }
       if (op === 'settings' || op === 'transcribe_settings') setFlash('Saved.')
+      if (op === 'recheck_calls') {
+        const c = j.reconciled || {}
+        setFlash(`Re-read ${c.looked || 0} welcome calls, completed ${c.completed || 0}.${(c.completed || 0) >= 25 ? ' More to go — press again.' : ''}${c.errors?.length ? ' First error: ' + c.errors[0] : ''}`)
+      }
       if (op === 'find_callers' || op === 'people_map') {
         const c = j.callers || {}
         if (c.error) setErr(`${op === 'people_map' ? 'Names saved, but ' : ''}${c.error}`)
@@ -166,6 +171,7 @@ export function TalkrouteAdmin() {
               <div className="flex gap-2 flex-wrap">
                 <button onClick={() => post('subscribe')} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3.5 py-2 font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'subscribe' ? <Loader2 size={13} className="animate-spin" /> : <Webhook size={13} />} {d.webhookRegistered ? 'Re-register webhooks' : 'Register webhooks'}</button>
                 <button onClick={() => post('sync')} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3.5 py-2 font-semibold text-ink hover:bg-app disabled:opacity-50">{busy === 'sync' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Sync now</button>
+                <button onClick={() => post('recheck_calls')} disabled={!!busy} title="Re-read recent welcome calls and complete the ones that actually connected" className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3.5 py-2 font-semibold text-ink hover:bg-app disabled:opacity-50">{busy === 'recheck_calls' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Re-check welcome calls</button>
                 <button onClick={() => { if (confirm('Pull every text thread again (not just the changed ones)? Fine to do; it just takes longer.')) post('sync', { full: true }) }} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-2 text-[12px] font-semibold text-muted hover:text-ink disabled:opacity-50">Full text re-sync</button>
                 {d.webhookRegistered && <button onClick={() => post('unsubscribe')} disabled={!!busy} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-rose-600 ml-auto">Remove webhooks</button>}
               </div>

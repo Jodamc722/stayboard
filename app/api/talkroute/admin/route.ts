@@ -11,7 +11,7 @@ import {
   trVirtualNumbers, trSubscriptions, trSubscribe, trUnsubscribe, trAccount, formatPhone, phoneDigits,
   TR_WEBHOOK_TYPES, DEFAULT_VOICEMAIL_MAX_SEC,
 } from '@/lib/talkroute'
-import { syncTalkrouteAll } from '@/lib/talkroute-sync'
+import { syncTalkrouteAll, reconcileWelcomeCalls } from '@/lib/talkroute-sync'
 import { processCallIntel } from '@/lib/call-notes'
 import { talkroutePeople, getPeopleMap, setPeopleMap, backfillCallers } from '@/lib/talkroute-people'
 import {
@@ -188,6 +188,10 @@ export async function POST(req: NextRequest) {
         if (r.reservation_id) out2.matched++
       }
       return NextResponse.json({ ok: true, byDir, samples, outbound: out2 })
+    }
+    if (op === 'recheck_calls') {
+      const r = await reconcileWelcomeCalls(supabaseAdmin(), { days: Number(body?.days) || 7, limit: 200, deadline: Date.now() + 40_000 })
+      return NextResponse.json({ ...(await status()), reconciled: r })
     }
     if (op === 'find_callers') {
       const back = await backfillCallers(supabaseAdmin(), { limit: 600, deadline: Date.now() + 40_000 })

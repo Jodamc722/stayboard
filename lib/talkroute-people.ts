@@ -44,12 +44,17 @@ export function callerDeviceOf(events: TrCallEvent[] | null | undefined): string
     const ev = list.find(e => String(e?.type) === type && String(e?.description || '').trim())
     if (ev) return cleanDevice(String(ev.description))
   }
-  // Nothing from the usual suspects. An OUTBOUND call does not get a "forwarding device" event at
-  // all, so fall back to any event whose description names something in underscores — that is the
-  // shape Talkroute uses for a person or device wherever it mentions one.
+  // Nothing from the usual suspects. Fall back to any event that names something in underscores —
+  // EXCEPT `talkroute_number`, which names OUR line, not the person who handled the call. Without
+  // that exclusion the first live run labelled eleven calls "1 (954) 526-8998".
   for (const e of list) {
+    if (String(e?.type) === 'talkroute_number') continue
     const d = String(e?.description || '')
-    if (/_[^_]{2,60}_/.test(d)) return cleanDevice(d)
+    if (!/_[^_]{2,60}_/.test(d)) continue
+    const name = cleanDevice(d)
+    // A bare phone number is a line, not a colleague.
+    if (/^[+\d()\-.\s]{9,}$/.test(name)) continue
+    return name
   }
   return ''
 }

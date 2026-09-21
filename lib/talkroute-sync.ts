@@ -82,6 +82,8 @@ export type SyncReport = {
   partial: boolean
   /** who-called backfill: how many rows were re-read and named this pass */
   callers?: { scanned: number; named: number; devices: string[] }
+  /** welcome calls completed on a re-read of calls judged by the old result-only rule */
+  reconciled?: { looked: number; completed: number; errors: string[] }
 }
 // TIME-BOXED (2026-09-21, first live sync). The first pull — 7 days of calls, 30 days of text
 // threads, each thread a message fetch — ran past Vercel's function limit and the panel got a
@@ -321,6 +323,48 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
   return rep
 }
 
+/**
+ * RE-READ WELCOME CALLS THAT WERE JUDGED BY THE OLD RULE (2026-09-21).
+ *
+ * Until callConnected existed, an outbound call — which carries no `result` — was logged as a
+ * no-answer attempt no matter how long the team talked. Those rows are already MATCHED, so the
+ * matcher never looks at them again. This walks recent welcome calls that actually connected and
+ * completes the ones still sitting open.
+ *
+ * Deliberately bounded: recent calls only, and a cap per run. Completing a call writes to Guesty,
+ * so this converges over a few passes instead of firing hundreds of writes at once, and it never
+ * touches a card a person already completed.
+ */
+export async function reconcileWelcomeCalls(sb: any, opts: { days?: number; limit?: number; deadline?: number } = {}): Promise<{ looked: number; completed: number; errors: string[] }> {
+  const out = { looked: 0, completed: 0, errors: [] as string[] }
+  const deadline = opts.deadline || (Date.now() + 25_000)
+  const since = new Date(Date.now() - (opts.days || 7) * 86400_000).toISOString()
+  const { data, error } = await sb.from('talkroute_calls')
+    .select('id,direction,call_at,duration,result,recorded,events,reservation_id,match_kind,caller_name')
+    .eq('match_kind', 'welcome').gte('call_at', since)
+    .order('call_at', { ascending: false }).limit(opts.limit || 120)
+  if (error) { out.errors.push(error.message); return out }
+  const rows = ((data as any[]) || []).filter(r => callConnected(r) === 'answered' && r.reservation_id)
+  // Newest call per booking wins — one completion per reservation, not one per attempt.
+  const best = new Map<string, any>()
+  for (const r of rows) if (!best.has(String(r.reservation_id))) best.set(String(r.reservation_id), r)
+  let done = 0
+  const vmMax = Number((await getTalkrouteSettings()).voicemailMaxSec) || DEFAULT_VOICEMAIL_MAX_SEC
+  for (const [resId, c] of Array.from(best.entries())) {
+    if (Date.now() > deadline || done >= 25) break
+    out.looked++
+    try {
+      const { data: lg } = await sb.from('guest_calls').select('outcome').eq('reservation_id', resId).eq('kind', 'welcome').maybeSingle()
+      if (lg && isCompleted(lg.outcome)) continue
+      const { data: res } = await sb.from('guesty_reservations').select(RES_COLS).eq('id', resId).maybeSingle()
+      if (!res) continue
+      const outcome: 'reached' | 'voicemail' = (Number(c.duration) || 0) >= vmMax ? 'reached' : 'voicemail'
+      if (await completeWelcome(sb, res as any, c, outcome, c.caller_name || 'Talkroute', out.errors)) { out.completed++; done++ }
+    } catch (e: any) { out.errors.push(`reconcile ${resId}: ${String(e?.message || e).slice(0, 120)}`) }
+  }
+  return out
+}
+
 // ── TEXTS ───────────────────────────────────────────────────────────────────────────────────────
 async function matchByPhone(sb: any, phone: string, around: string): Promise<ResLite | null> {
   const cands = await reservationsByPhone(sb, phone, around)
@@ -454,6 +498,8 @@ export async function syncTalkrouteAll(sb: any, opts: { calls?: boolean; texts?:
   // Fill in the caller on calls matched before there was a caller to fill in, and re-resolve any
   // device that has since been given a name on the panel. Reads stored events; costs nothing.
   if (!over(end - 2_000)) { try { rep.callers = await backfillCallers(sb, { deadline: Math.min(end, Date.now() + 12_000) }) } catch { /* cosmetic */ } }
+  // Complete welcome calls that connected but were judged by the old result-only rule.
+  if (!over(end - 5_000)) { try { rep.reconciled = await reconcileWelcomeCalls(sb, { deadline: Math.min(end, Date.now() + 20_000) }) } catch { /* next run */ } }
   rep.partial = !!(rep.calls.partial || rep.texts.partial)
   rep.ms = Date.now() - t0
   try { await sb.from('automation_runs').insert({ name: 'talkroute-sync', ok: rep.errors.length === 0, item_count: rep.calls.fetched + rep.texts.messages + rep.voicemails.fetched, detail: rep, ms: rep.ms }) } catch { /* ledger best-effort */ }
