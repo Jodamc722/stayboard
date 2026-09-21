@@ -16,6 +16,22 @@ import { trFetch, getTalkrouteSettings, saveTalkrouteSettings, formatPhone, phon
 /** Event types that name our end of the call, in the order they identify the caller best. */
 const CALLER_EVENTS = ['forwarding_device', 'user_extension', 'call_forward', 'call_transfer']
 
+/**
+ * Talkroute writes the device as a SENTENCE with the name in underscores — live on this account:
+ * "Call answered by _Support Team_". Taking the raw description would have made every card read
+ * "Call answered by _Support Team_" instead of "Support Team", so the wrapper is peeled here.
+ * Anything that does not match the pattern is returned as-is rather than mangled.
+ */
+export function cleanDevice(raw: string): string {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  const under = s.match(/_([^_]{2,60})_/)
+  if (under) return under[1].trim()
+  const lead = s.match(/^(?:call\s+)?(?:answered|forwarded|transferred|routed|sent|rang)\s+(?:by|to)\s+(.{2,60})$/i)
+  if (lead) return lead[1].trim().replace(/[.\s]+$/, '')
+  return s.slice(0, 60)
+}
+
 export type TrPerson = { id: string; label: string; detail: string; kind: 'forwarding' | 'extension' | 'user' }
 export type PeopleMap = Record<string, string>   // normalised device text → teammate name
 
@@ -26,7 +42,14 @@ export function callerDeviceOf(events: TrCallEvent[] | null | undefined): string
   const list = Array.isArray(events) ? events : []
   for (const type of CALLER_EVENTS) {
     const ev = list.find(e => String(e?.type) === type && String(e?.description || '').trim())
-    if (ev) return String(ev.description).trim().slice(0, 120)
+    if (ev) return cleanDevice(String(ev.description))
+  }
+  // Nothing from the usual suspects. An OUTBOUND call does not get a "forwarding device" event at
+  // all, so fall back to any event whose description names something in underscores — that is the
+  // shape Talkroute uses for a person or device wherever it mentions one.
+  for (const e of list) {
+    const d = String(e?.description || '')
+    if (/_[^_]{2,60}_/.test(d)) return cleanDevice(d)
   }
   return ''
 }

@@ -151,6 +151,27 @@ export async function POST(req: NextRequest) {
       const back = await backfillCallers(supabaseAdmin(), { limit: 500, deadline: Date.now() + 25_000 })
       return NextResponse.json({ ...(await status()), callers: back })
     }
+    if (op === 'peek_events') {
+      // What Talkroute actually puts on a call, by direction — so caller extraction is built on the
+      // real shape rather than the spec's example values.
+      const db = supabaseAdmin()
+      const { data } = await db.from('talkroute_calls').select('id,direction,result,events,caller_device')
+        .not('events', 'is', null).order('call_at', { ascending: false }).limit(220)
+      const byDir: Record<string, Record<string, number>> = {}
+      const samples: any[] = []
+      for (const r of ((data as any[]) || [])) {
+        const dir = `${r.direction}/${r.result}`
+        byDir[dir] = byDir[dir] || {}
+        for (const e of (Array.isArray(r.events) ? r.events : [])) {
+          const t = String(e?.type || '?')
+          byDir[dir][t] = (byDir[dir][t] || 0) + 1
+        }
+        if (r.direction === 'outbound' && samples.length < 6) {
+          samples.push({ id: r.id, result: r.result, device: r.caller_device || null, events: (Array.isArray(r.events) ? r.events : []).map((e: any) => ({ type: e?.type, description: String(e?.description || '').slice(0, 90) })) })
+        }
+      }
+      return NextResponse.json({ ok: true, byDir, samples })
+    }
     if (op === 'find_callers') {
       const back = await backfillCallers(supabaseAdmin(), { limit: 600, deadline: Date.now() + 40_000 })
       return NextResponse.json({ ...(await status()), callers: back })
