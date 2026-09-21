@@ -45,7 +45,7 @@ import { listQuestions, answerQuestion } from './questions'
 import { listAudits, decideAudit } from './audit'
 import { saveMemory } from './memory'
 import { pendingDrafts, sendApproved, declineDraft } from './ralph'
-import { agentAllowed, recordAgentAction, saveDraft, deferAction, executeProposal, rejectProposal } from './agent-mode'
+import { agentAllowed, recordAgentAction, saveDraft, deferAction, executeProposal, rejectProposal, getAgentSettings } from './agent-mode'
 
 export const ASK_SETTINGS_KEY = 'eve_ask'
 
@@ -376,9 +376,16 @@ export async function findAsk(chatId: string | number, replyToMessageId?: number
 
 const NOT_NOW = /^(skip|not now|later|dunno|don'?t know|no idea|pass)\b/i
 export const UNDO = /^\s*(undo|revert|put it back|take it back)\b/i
+const OWNER_LABEL = 'Jon'
+
+/** Only an approver (Settings → Eve → Agent mode) may say yes to an action or undo one from Telegram. */
+async function isApprover(by: string): Promise<boolean> {
+  try { const s = await getAgentSettings(); return s.approvers.indexOf(String(by || '').toLowerCase().trim()) >= 0 } catch { return false }
+}
 
 /** "undo" with no question attached: reverse the most recent action that still can be. */
 export async function undoLast(by: string): Promise<string> {
+  if (!(await isApprover(by))) return `Only an approver can undo what I did — ask ${OWNER_LABEL}.`
   const { lastUndoable, undoAction } = await import('./executors')
   const last = await lastUndoable(24)
   if (!last) return `Nothing to undo — I haven't done anything reversible in the last 24 hours.`
@@ -439,6 +446,9 @@ export async function resolveAsk(binding: AskBinding, reply: string, by: string)
   // and rejects the plan behind it when there is one.
   if (binding.type === 'action') {
     if (UNDO.test(text)) return undoLast(by)
+    // The ask only ever goes to an approver's chat (notifyProposal), but a yes is the one word that
+    // moves a welded action, so the person is checked again here rather than trusted by chat id.
+    if (!(await isApprover(by))) return `Only an approver can say yes to that — it stays in Settings → Eve → Agent mode.`
     if (!AFFIRMATIVE.test(text)) {
       await rejectProposal(binding.id, by, text)
       return `Dropped — I won't do that.`

@@ -73,7 +73,12 @@ async function resolveHome(input: { listingId?: string; unit?: string; name?: st
   if (!row && name) {
     const { data } = await db.from('guesty_listings').select('id,nickname,title,building,address_city,status').or(`nickname.ilike.%${name.replace(/[%,]/g, '')}%,title.ilike.%${name.replace(/[%,]/g, '')}%`).order('id').limit(5)
     const rows = ((data as any[]) || [])
-    row = rows.find(r => !/inactive|disabled|archived|deleted|pending/i.test(str(r.status))) || rows[0] || null
+    // An exact nickname/title wins; a partial match ("Pelican" → Pelican 9 / Pelican 12) only when
+    // it is the ONLY live one, so a task never lands on a neighbour's unit by prefix.
+    const live = rows.filter(r => !/inactive|disabled|archived|deleted|pending/i.test(str(r.status)))
+    const exact = (live.length ? live : rows).find(r => [r.nickname, r.title].some(v => str(v).trim().toLowerCase() === name.toLowerCase()))
+    row = exact || (live.length === 1 ? live[0] : (!live.length && rows.length === 1 ? rows[0] : null))
+    if (!row && rows.length > 1) return null
   }
   if (!row) return null
   let homeId: number | null = null
@@ -145,6 +150,17 @@ const task_create: Executor = async (p) => {
   } catch { /* the sync catches up */ }
   // A task made for a glitch closes the loop on the glitch board too.
   if (p?.glitchId) { try { await supabaseAdmin().from('glitches').update({ breezeway_task_id: taskId }).eq('id', str(p.glitchId)) } catch { /* the board shows it next sync */ } }
+  // An inspection the automation would otherwise file too (big arrival: the reservation id; low
+  // review: 'rev:<id>') is written to its exactly-once table, so the cron sees it as done. This is
+  // what stops the Pelican 9 double.
+  if (p?.autoInspectionKey) {
+    try {
+      await supabaseAdmin().from('auto_inspections').upsert({
+        reservation_id: str(p.autoInspectionKey), listing_id: home.listingId, unit_name: home.unit, guest_name: str(p?.guest) || null,
+        check_in: date, reason: str(p?.autoInspectionReason) || 'Eve', market: home.market, task_id: taskId, assignees: assignedNames,
+      }, { onConflict: 'reservation_id' })
+    } catch { /* the watch's own cooldown still holds */ }
+  }
   try { const { bustOpsDay } = await import('@/lib/ops-day'); bustOpsDay() } catch { /* fine */ }
   return {
     ok: true, ref: taskId,
@@ -238,7 +254,7 @@ const guest_reply_draft: Executor = async (p, ctx) => {
   } catch { /* fine */ }
   const { data, error } = await db.from('eve_actions').insert({
     created_by: ctx.actor || ctx.by, kind: 'guest_draft',
-    payload: { conversationId: conversationId || null, reviewId: reviewId || null, draft, guest: str(p?.guest) || null, unit: str(p?.unit) || null, channel: str(p?.channel) || null, by: ctx.by },
+    payload: { conversationId: conversationId || null, reviewId: reviewId || null, draft, guest: str(p?.guest) || null, unit: str(p?.unit) || null, channel: str(p?.channel) || null, by: ctx.by, watchKey: str(p?.watchKey) || null, subject: str(p?.subject) || null },
     why: str(p?.why).slice(0, 400) || 'Eve drafted a reply', status: 'proposed',
     expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
   }).select('id').maybeSingle()
@@ -398,12 +414,21 @@ export async function undoAction(logId: string | number, by: string): Promise<{ 
   if (row.undone_at) return { ok: false, summary: 'already undone', error: `undone at ${row.undone_at}` }
   if (!row.undo) return { ok: false, summary: `"${str(row.summary).slice(0, 80)}" cannot be undone`, error: 'no undo recorded for that action' }
   if (Date.now() - Date.parse(row.at) > 24 * 3600_000) return { ok: false, summary: 'too late — undo works for 24 hours', error: 'older than 24h' }
+  // CLAIM FIRST. Two "undo"s a second apart (Telegram and the panel) must not both cancel, reassign
+  // or strip: the row is stamped with a conditional update and only the caller whose stamp lands
+  // goes on. A failed undo clears the stamp so it can be tried again.
+  let claimed = false
+  try {
+    const { data: c } = await db.from('eve_agent_log').update({ undone_at: new Date().toISOString(), undone_by: by }).eq('id', row.id).is('undone_at', null).select('id')
+    claimed = !!((c as any[]) || []).length
+  } catch { claimed = false }
+  if (!claimed) return { ok: false, summary: 'already undone', error: 'another undo got there first' }
   const u: Undo = row.undo
   let r: { ok: boolean; summary: string; error?: string }
   try { r = await applyUndo(u, by) } catch (e: any) { r = { ok: false, summary: 'undo failed', error: str(e?.message || e).slice(0, 200) } }
   const { logAgent } = await import('./agent-mode')
   await logAgent({ action: row.action, rung: 0, allowed: r.ok, mode: 'act', reason: r.ok ? `undone by ${by}` : `undo failed: ${r.error}`, summary: `UNDO: ${r.summary}`, ref: str(row.id), by: 'chat', actor: by })
-  if (r.ok) { try { await db.from('eve_agent_log').update({ undone_at: new Date().toISOString(), undone_by: by }).eq('id', row.id) } catch { /* fine */ } }
+  if (!r.ok) { try { await db.from('eve_agent_log').update({ undone_at: null, undone_by: null }).eq('id', row.id) } catch { /* fine */ } }
   return r
 }
 

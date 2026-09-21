@@ -131,11 +131,16 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
     const unit = str(res?.listing_name) || ''
     out.push({
       subject: `thread:${convId}`, action: 'guest_reply_draft', metric: 'sentiment_negative',
-      ask: `send this reply to ${guest}${unit ? ` (${unit})` : ''} — waiting ${waitedH}h on ${str(r.channel) || 'their thread'}${arrivesToday ? ', arriving TODAY' : ''}?`,
+      ask: `draft a reply to ${guest}${unit ? ` (${unit})` : ''} — waiting ${waitedH}h on ${str(r.channel) || 'their thread'}${arrivesToday ? ', arriving TODAY' : ''}? (it waits on the thread for Send; nothing reaches the guest yet)`,
       why: `The guest spoke last ${waitedH}h ago and nobody has answered.`,
       exec: async () => {
-        const { data: msgs } = await db.from('guesty_messages').select('sender,sender_name,body,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(12)
-        const thread = ((msgs as any[]) || []).slice().reverse().map(m => `${/guest/i.test(str(m.sender)) ? 'GUEST' : 'US'}: ${str(m.body).replace(/\s+/g, ' ').slice(0, 500)}`).join('\n')
+        const { data: msgs } = await db.from('guesty_messages').select('sender,sender_name,body,sent_at,module').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(12)
+        const all = ((msgs as any[]) || [])
+        // conversation_response is refreshed by the guest-comms cron; the mirror is fresher. If we
+        // (or Eve, via Send) have answered since, there is nothing to draft.
+        const lastReal = all.find(m => m.sender === 'guest' || m.sender === 'host')
+        if (!lastReal || lastReal.sender !== 'guest') return null
+        const thread = all.filter(m => m.sender === 'guest' || m.sender === 'host').slice().reverse().map(m => `${m.sender === 'guest' ? 'GUEST' : 'US'}: ${str(m.body).replace(/\s+/g, ' ').slice(0, 500)}`).join('\n')
         if (!thread) return null
         const facts = res ? `Guest: ${guest}. Unit: ${unit}. Stay: ${str(res.check_in).slice(0, 10)} to ${str(res.check_out).slice(0, 10)} (${res.nights || '?'} nights). Channel: ${str(r.channel)}.` : `Channel: ${str(r.channel)}.`
         const draft = await askModel('guest-reply', GUEST_REPLY_SYSTEM, `${facts}\n\nTHREAD (oldest first):\n${thread}\n\nWrite our reply to the guest's last message.`)
@@ -198,6 +203,7 @@ async function bigArrivalUninspected(env: WatchEnv): Promise<Prepared[]> {
       why: `A $${Math.round(a.value).toLocaleString('en-US')} arrival ${a.checkIn === env.today ? 'today' : 'on ' + a.checkIn} with no inspection on the books.`,
       exec: {
         listingId: a.listingId, title: `Pre-arrival inspection — ${a.unit} (big arrival)`, department: 'inspection', priority: 'high', date: a.checkIn, assignees,
+        autoInspectionKey: a.reservationId, autoInspectionReason: 'big arrival', guest: a.guest,
         description: `BIG ARRIVAL ${a.checkIn}.\nGuest: ${a.guest} · ${a.nights} night${a.nights === 1 ? '' : 's'} · $${Math.round(a.value).toLocaleString('en-US')}\nWalk the unit AFTER the turn and BEFORE the guest lands: cleanliness to standard, AC cooling, hot water, wifi, door code working, no maintenance flags. Photograph anything off and file it before check-in.`,
       },
     })
@@ -220,6 +226,13 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
     low = low.map(r => ({ ...r, _inspected: has.has('rev:' + str(r.id)) }))
   } catch { /* no table: nothing filed */ }
   const lids = Array.from(new Set(low.map(r => str(r.listing_id)).filter(Boolean)))
+  // Belt and braces: an open "Quality inspection" task already on the unit (from the automation, a
+  // person, or a previous run of this watch before its receipt landed) means no second task.
+  try {
+    const { data: open } = await db.from('breezeway_tasks_sync').select('reference_property_id,name').in('reference_property_id', lids).is('finished_at', null).ilike('name', '%quality inspection%').limit(200)
+    const has = new Set(((open as any[]) || []).map(t => str(t.reference_property_id)))
+    low = low.map(r => (has.has(str(r.listing_id)) ? { ...r, _inspected: true } : r))
+  } catch { /* fine */ }
   const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').in('id', lids)
   const nameOf: Record<string, string> = {}
   for (const l of ((ls as any[]) || [])) nameOf[str(l.id)] = str(l.nickname || l.title)
@@ -239,13 +252,14 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
       why: quote ? `"${quote.slice(0, 160)}"` : `A ${rating}★ review with no written comment.`,
       exec: {
         listingId: lid, title: `Quality inspection — ${unit} (${rating}★ review)`, department: 'inspection', priority: 'high', date, assignees,
+        autoInspectionKey: 'rev:' + str(r.id), autoInspectionReason: 'low review ' + rating + '★', guest: str(r.guest_name) || null,
         description: `From a ${rating}/5 review on ${str(r.channel)} (${str(r.created_at).slice(0, 10)}).\n\nWHAT THE GUEST SAID\n${quote ? `"${quote}"\n— ${str(r.guest_name) || 'Guest'}` : 'No written comment — the score is the signal.'}\n\nWalk the unit as a first-time guest and find what earned ${rating}/5. Photograph everything, good and bad. Anything that needs a trade becomes a work order today.`,
       },
     })
     if (!r.has_reply && quote) {
       out.push({
         subject: `rev:${r.id}:reply`, action: 'guest_reply_draft', metric: 'unanswered_reviews',
-        ask: `use this public reply to ${str(r.guest_name) || 'the guest'}'s ${rating}★ review on ${unit}?`,
+        ask: `draft a public reply to ${str(r.guest_name) || 'the guest'}'s ${rating}★ review on ${unit}? (it waits on /reviews; nothing is published yet)`,
         why: `A low review with no reply yet — a prospect reads the reply before booking.`,
         exec: async () => {
           const draft = await askModel('review-reply', REVIEW_REPLY_SYSTEM, `Channel: ${str(r.channel)}\nGuest: ${str(r.guest_name) || 'the guest'}\nRating: ${rating} out of 5\nGuest review:\n"""${quote}"""\n\nWrite the single best reply.`, 300)
@@ -453,6 +467,12 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
   const env = makeEnv(settings)
   const out: WatchRun = { ok: true, ranAt, watches: [] }
   const db = supabaseAdmin()
+  // AI drafts cost money at every rung above observe, and agentAllowed only meters spend for an
+  // act. One read here: over today's AI budget, a watch that needs a model call is observed only.
+  let overAiBudget = false
+  if (settings.enabled && settings.budgets.aiUsdPerDay > 0) {
+    try { const { aiSpendToday } = await import('./agent-mode'); overAiBudget = (await aiSpendToday()) >= settings.budgets.aiUsdPerDay } catch { overAiBudget = false }
+  }
 
   for (const row of rows) {
     if (opts.only && row.key !== opts.only) continue
@@ -475,12 +495,21 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
         // flipping the switch should let her raise what she saw, not wait a day.
         for (const r of ((data as any[]) || [])) if (!(settings.enabled && r.mode === 'observe')) cooled.add(str(r.subject))
       } catch { /* no table = no cooldown; the per-run cap still holds */ }
+      // SECOND LOCK on repeats: the receipt the fire itself leaves. If the eve_watch_fires write
+      // failed last time, the proposal / draft / guest draft it made still carries (watchKey,
+      // subject) in its payload — anything raised inside the cooldown, or still open, is cooled.
+      try {
+        const since = new Date(Date.now() - row.cooldownHours * 3600_000).toISOString()
+        const { data } = await db.from('eve_actions').select('payload,status').filter('payload->>watchKey', 'eq', row.key).gte('created_at', since).order('created_at', { ascending: false }).limit(200)
+        for (const r of ((data as any[]) || [])) { const sub = str(r.payload?.subject); if (sub && subjects.indexOf(sub) >= 0 && (!opts.force || r.status === 'proposed')) cooled.add(sub) }
+      } catch { /* fine */ }
     }
 
-    let fired = 0
+    let fired = 0, tries = 0
     for (const f of found) {
       if (cooled.has(f.subject)) { rec.cooled++; continue }
-      if (fired >= MAX_PER_WATCH) break
+      if (tries >= MAX_PER_WATCH) break
+      tries++
       const byLabel = `watch:${row.key}`
       let mode: Mode = 'observe'
       let ref: string | null = null
@@ -492,10 +521,14 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
         const ceiling = row.rungOverride != null ? row.rungOverride : (def.maxMode === 'propose' ? 2 : null)
         if (ceiling != null && ceiling < 3 && (verdict.mode === 'act' || verdict.mode === 'deferred')) verdict = { ...verdict, mode: ceiling >= 2 ? 'propose' : ceiling === 1 ? 'draft' : 'observe', ok: false, needsApproval: ceiling >= 2, reason: `${verdict.reason}; watch capped at rung ${ceiling}` }
         if (ceiling != null && ceiling < 2 && verdict.mode === 'propose') verdict = { ...verdict, mode: ceiling === 1 ? 'draft' : 'observe', ok: false, needsApproval: false, reason: `${verdict.reason}; watch capped at rung ${ceiling}` }
+        if (typeof f.exec === 'function' && overAiBudget && verdict.mode !== 'observe') verdict = { ...verdict, mode: 'observe', ok: false, needsApproval: false, reason: `${verdict.reason}; AI spend is over today's $${settings.budgets.aiUsdPerDay} — no draft` }
         let exec: any = null
         if (verdict.mode !== 'observe') {
           exec = typeof f.exec === 'function' ? await f.exec() : f.exec
+          // Nothing to draft (thread answered meanwhile, model returned nothing): it still counts
+          // against this run's cap, so a run can never loop the model over thirty threads.
           if (!exec) { rec.modes.skipped = (rec.modes.skipped || 0) + 1; continue }
+          exec = { ...exec, watchKey: row.key, subject: f.subject }
         }
         const r = await stepDown(verdict, { action: f.action, summary: f.ask, exec, why: f.why, by: byLabel, watchKey: row.key, subject: f.subject, metric: f.metric || null, usd: f.usd ?? null })
         mode = r.mode; ref = r.ref || null

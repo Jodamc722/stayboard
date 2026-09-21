@@ -41,7 +41,7 @@ create index if not exists eve_watch_fires_at_idx on eve_watch_fires (fired_at d
 alter table eve_watch_fires enable row level security;
 
 -- 4. The eight watches. Enabled by default: agent mode and the rungs still decide whether a
---    fired watch acts, proposes or only drafts — a watch with agent mode OFF writes a draft, nothing more.
+--    fired watch acts, proposes or only drafts — with agent mode OFF a watch only logs what it saw.
 insert into eve_watches (key, title, enabled, cooldown_hours, label, metric)
 values
   ('guest_unanswered_1h',    'Guest waiting over an hour',            true, 24, 'Guest waiting over an hour',            null),

@@ -30,6 +30,22 @@ const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 // What guesty_live may read with a raw path (first segment). Objects Eve already reasons about.
 const GUESTY_LIVE_PREFIXES = ['reservations', 'listings', 'calendar', 'availability-pricing', 'reviews', 'guests-crud', 'guests', 'custom-fields', 'tasks-open-api', 'owners']
 
+// What each action's payload must carry before it goes anywhere (each entry: one of these keys).
+// A task_create with no unit would otherwise reach the executor and fail late; a guest reply with
+// no conversation would have nowhere to go. lib/eve/executors.ts validates again, per action.
+const PAYLOAD_NEEDS: Record<string, string[][]> = {
+  task_create: [['listingId', 'listing_id', 'unit'], ['title', 'name']],
+  task_assign: [['taskId', 'task_id'], ['person', 'assignee', 'people', 'personIds']],
+  task_note: [['taskId', 'task_id'], ['text', 'note']],
+  task_cancel: [['taskId', 'task_id']],
+  guest_reply_draft: [['conversationId', 'conversation_id', 'reviewId', 'review_id'], ['draft', 'body', 'text']],
+  guest_reply_send: [['conversationId', 'conversation_id'], ['body', 'draft', 'text']],
+  email_draft: [['to'], ['subject']],
+  guesty_write: [['reservationId', 'reservation_id'], ['note', 'fieldId']],
+  calendar_block: [['listingId', 'listing_id'], ['date']],
+  slack_post: [['channel'], ['text']],
+}
+
 export const CORE_TOOLS: EveTool[] = [
   {
     name: 'portfolio',
@@ -241,16 +257,22 @@ export const CORE_TOOLS: EveTool[] = [
   {
     name: 'propose_action',
     description: 'DO SOMETHING IN THE BUSINESS — this is your hands, and the ONLY way you act. Pass the action, its full payload, a one-line summary in plain words (this is what Jon reads on Telegram after "Eve wants to:") and why. Agent mode then decides, per the rungs Jon set: it ACTS now (and you say what you did and that it can be undone), PROPOSES and waits for a yes (you say it is waiting on Jon), DRAFTS for a person to pick up, or only OBSERVES (you say you noted it). Read `outcome` and report exactly that — never say you did a thing that was only proposed. Actions and payloads: task_create {listingId or unit, title, department (housekeeping|inspection|maintenance|safety), priority (urgent|high|normal|low), date YYYY-MM-DD, description, assignees:[names]} · task_assign {taskId, person} · task_note {taskId, text} · task_cancel {taskId, reason} (never a departure clean) · guest_reply_draft {conversationId, draft, guest, unit} (saved on the thread with a Send button; nothing reaches the guest) · guest_reply_send {conversationId, body} (ALWAYS needs a yes) · email_draft {to:[emails], subject, text} (a Gmail draft, nobody receives it) · guesty_write {reservationId, note} (ALWAYS needs a yes) · calendar_block {listingId, date, action:block|unblock} (ALWAYS needs a yes) · slack_post {channel, text}. Read the thread / task / unit FIRST with the other tools so the payload is right; one call per action.',
-    input_schema: obj({ action: S.str, payload: { type: 'object' }, summary: S.str, why: S.str, usd: S.num }, ['action', 'payload', 'summary']),
+    input_schema: obj({ action: { type: 'string', enum: ['task_create', 'task_assign', 'task_note', 'task_cancel', 'guest_reply_draft', 'guest_reply_send', 'email_draft', 'guesty_write', 'calendar_block', 'slack_post'] }, payload: { type: 'object' }, summary: S.str, why: S.str, usd: S.num }, ['action', 'payload', 'summary']),
     run: async (input, ctx) => {
       const { attemptAction, ACTION_KEYS } = await import('./agent-mode')
       const action = String(input?.action || '').trim() as any
       if (ACTION_KEYS.indexOf(action) < 0) return { ok: false, error: `Unknown action "${action}". One of: ${ACTION_KEYS.join(', ')}.` }
       if (action === 'door_code_release') return { ok: false, error: 'Door codes go through door_code_check, never through propose_action.' }
       if (action === 'memory_rule' || action === 'recommendation') return { ok: false, error: `Use the "${action === 'memory_rule' ? 'remember' : 'recommend'}" tool for that.` }
-      const payload = input?.payload && typeof input.payload === 'object' ? input.payload : {}
+      const payload: any = input?.payload && typeof input.payload === 'object' ? { ...input.payload } : {}
+      // The human yes is a property of the CALLER (executeProposal, the Send button), never of the
+      // payload — the executor reads ctx.human, not this, but nothing she writes should even look like one.
+      delete payload.human
       const summary = String(input?.summary || '').trim().slice(0, 300)
       if (!summary) return { ok: false, error: 'summary is required — one line, plain words, what you want to do.' }
+      const need = PAYLOAD_NEEDS[action as string]
+      const missing = need ? need.filter(keys => !keys.some(k => String(payload[k] ?? '').trim())) : []
+      if (missing.length) return { ok: false, error: `${action} needs ${missing.map(keys => keys.join(' or ')).join(', ')} in the payload — read the thread / task / unit first.` }
       const r = await attemptAction({ action, summary, exec: payload, why: String(input?.why || '').slice(0, 300), by: 'chat', actor: ctx.email, usd: Number.isFinite(Number(input?.usd)) ? Number(input.usd) : null })
       const outcome =
         r.mode === 'act' ? (r.ok ? `DONE: ${r.done || summary}.${r.undo ? ' It can be undone for 24h (say "undo" or use the Agent panel).' : ''}` : `TRIED AND FAILED: ${r.error || 'unknown error'}. Say so plainly and suggest the person does it by hand.`)
