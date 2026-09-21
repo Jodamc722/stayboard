@@ -26,7 +26,7 @@ type Data = {
   health: {
     payrollComplete: boolean; failedWeeks: string[]; timecardsOutsideWindow: number
     feesNoCleanFound: number | null; excludedNonLive: { reservations: number; grossFees: number }
-    excludedOwnerFF: { reservations: number; grossFees: number }; movedCleans: number
+    ownerBilled: { reservations: number; fees: number | null; pendingInGuesty: number | null }; movedCleans: number
     unrostered: { people: number; payroll: number | null; names: string[] }
     unassignedMarket: { people: number; payroll: number | null; names: string[] }
     tasksNoCharge: number; salaried: string[]
@@ -111,7 +111,7 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
             if (h.unassignedMarket.people > 0 && market !== 'all') notes.push({ t: `${h.unassignedMarket.people} with no Staffing area are off every market tab: ${h.unassignedMarket.names.slice(0, 4).join(', ')}`, bad: true })
             if (h.timecardsOutsideWindow > 0) notes.push({ t: `${h.timecardsOutsideWindow} Homebase cards dated outside the window were left out`, bad: false })
             if (h.excludedNonLive.reservations > 0) notes.push({ t: `${h.excludedNonLive.reservations} reservation rows that never became stays (inquiries, expired, pending) kept out of revenue${h.excludedNonLive.grossFees ? ` — ${money(h.excludedNonLive.grossFees)} of fees that were being counted before` : ''}`, bad: false })
-            if (h.excludedOwnerFF.reservations > 0) notes.push({ t: `${h.excludedOwnerFF.reservations} owner / friends-&-family checkouts carry $0`, bad: false })
+            if (h.ownerBilled && h.ownerBilled.reservations > 0) notes.push({ t: `${h.ownerBilled.reservations} owner / friends-&-family checkouts billed to the owner${h.ownerBilled.fees ? ` (${money(h.ownerBilled.fees)}` + (h.ownerBilled.pendingInGuesty ? `, ${money(h.ownerBilled.pendingInGuesty)} not in Guesty yet` : '') + ')' : ''}`, bad: false })
             if (h.feesNoCleanFound != null && h.feesNoCleanFound > 0) notes.push({ t: `${money(h.feesNoCleanFound)} of fees on confirmed checkouts with no departure clean found within 9 days`, bad: h.feesNoCleanFound > 1000 })
             if (h.movedCleans > 0) notes.push({ t: `${h.movedCleans} departure tasks deleted or cancelled in Breezeway (moved — not counted)`, bad: false })
             if (h.tasksNoCharge > 0) notes.push({ t: `${h.tasksNoCharge} maintenance tasks closed with no charge entered`, bad: h.tasksNoCharge > 50 })

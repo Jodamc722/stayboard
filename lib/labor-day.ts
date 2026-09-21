@@ -14,7 +14,8 @@
 //   • Volume: departure cleans, on the ET day they landed. Cost and hours per turn come TWO ways:
 //     HK wages ÷ every turn (a supervisor covering one is a saving — the number that matters) and
 //     HK wages ÷ housekeepers' own turns (the scheduling check). Both always shown.
-//   • Revenue: net cleaning fees on confirmed checkouts only. Owner / F&F stays earn $0.
+//   • Revenue: net cleaning fees on confirmed checkouts only. Owner / F&F stays carry the fee the
+//     owner is billed (the listing's fee when Guesty does not carry one yet).
 //   • Billable: what the team ENTERED on Breezeway tasks (a manual process, never task clock
 //     time), on the ET day the task was finished, credited by the same person→crew rule as wages.
 //     Billed hours = billed $ ÷ the charge rate (app_settings billing_default_rate, $40).
@@ -102,7 +103,8 @@ export type LaborDays = {
     feesNoCleanFound: number
     /** Fees on inquiries / expired / pending rows the engine now refuses to count. */
     excludedNonLive: { reservations: number; grossFees: number }
-    excludedOwnerFF: { reservations: number; grossFees: number }
+    /** Owner / friends-&-family checkouts: billed the cleaning fee to the owner; `pendingInGuesty` is the part Guesty does not carry yet. */
+    ownerBilled: { reservations: number; fees: number; pendingInGuesty: number }
     /** Departure cleans in the window that were deleted / cancelled in Breezeway (moved, not done). */
     movedCleans: number
     unrostered: { people: number; payroll: number; names: string[] }
@@ -239,7 +241,7 @@ export async function laborDays(opts: { from: string; to: string; market?: strin
       timecardsOutsideWindow: Number((econ.payrollAudit as any).outsideWindowCards || 0),
       feesNoCleanFound: round2(Number(fa.noCleanFound || 0)),
       excludedNonLive: fa.excludedNonLive || { reservations: 0, grossFees: 0 },
-      excludedOwnerFF: fa.excludedOwnerFF || { reservations: 0, grossFees: 0 },
+      ownerBilled: fa.ownerBilled || { reservations: 0, fees: 0, pendingInGuesty: 0 },
       movedCleans: Number(ca.movedExcluded || 0),
       unrostered: { people: econ.unrostered.people, payroll: econ.unrostered.payroll, names: econ.unrostered.names },
       unassignedMarket: { people: econ.unassignedMarket.people, payroll: econ.unassignedMarket.payroll, names: econ.unassignedMarket.names },

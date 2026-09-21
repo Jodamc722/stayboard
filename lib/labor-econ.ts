@@ -356,14 +356,14 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const [presets, crew, listingRows, tcAudit] = await Promise.all([
     getOpsPresets(),
     getCrew(),
-    pageAll((a, b) => sb.from('guesty_listings').select('id,nickname,title,building,address_city,bedrooms').order('id', { ascending: true }).range(a, b)),
+    pageAll((a, b) => sb.from('guesty_listings').select('id,nickname,title,building,address_city,bedrooms,listingFee:raw->prices->>cleaningFee').order('id', { ascending: true }).range(a, b)),
     // Audited: a week Homebase failed to return is RECORDED, never silently empty. If any week is
     // missing, every payroll-derived number below is suspect and payrollAudit.complete says so.
     getTimecardsAudited(from, to).catch((): TimecardAudit => ({ cards: [] as Timecard[], weeks: 0, failedWeeks: ['all'], complete: false })),
   ])
   const timecards = tcAudit.cards
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
-  const lmap: Record<string, { market: string; name: string; vendor: boolean; is17: boolean; bot: boolean; bedrooms: number | null; travelKey: string }> = {}
+  const lmap: Record<string, { market: string; name: string; vendor: boolean; is17: boolean; bot: boolean; bedrooms: number | null; travelKey: string; listingFee: number }> = {}
   for (const l of listingRows) {
     const name = l.nickname || l.title || 'Unit'
     const vendor = VENDOR_RE.test(String(l.building || '')) || VENDOR_RE.test(String(name))
@@ -386,6 +386,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       name, vendor, is17, bot,
       bedrooms: Number.isFinite(beds) ? beds : null,
       travelKey,
+      listingFee: Math.max(0, num(l.listingFee) ?? 0),
     }
   }
   const inMarketListing = (id: any) => market === 'all' || lmap[String(id)]?.market === market
@@ -573,13 +574,29 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       resNonLiveByStatus[st || 'blank'] = (resNonLiveByStatus[st || 'blank'] || 0) + 1
       return false
     }
-    const tagBlob = Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : ''
-    if (isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))) {
-      resOwnerFF++; resOwnerFFFees = round2(resOwnerFFFees + feeG)
-      return false
-    }
     return true
   })
+  // OWNER / FRIENDS-&-FAMILY STAYS ARE BILLED A CLEANING FEE (Jon, 2026-09-21: "we charge owners a
+  // cleaning fee btw, this gets updated later if fee not there"). So the clean is revenue — the
+  // guest fee when Guesty already carries it, else the listing's cleaning fee, which is what the
+  // owner statement will charge once the reservation is updated. Tagged so the audit can say how
+  // much of the window's revenue is owner-billed and still pending in Guesty.
+  const ownerBilledIds: Record<string, boolean> = {}
+  let ownerBilledPending = 0
+  for (const r of resRowsAll) {
+    const tagBlob = Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : ''
+    if (!isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))) continue
+    resOwnerFF++
+    const feeG = num(r.cleaning) ?? 0
+    const li = lmap[String(r.listing_id)]
+    if (feeG <= 0 && li && li.listingFee > 0) {
+      ;(r as any).cleaning = li.listingFee
+      ;(r as any).channelFee = 0          // billed to the owner — no OTA cut
+      ownerBilledPending = round2(ownerBilledPending + li.listingFee)
+    }
+    resOwnerFFFees = round2(resOwnerFFFees + (num((r as any).cleaning) ?? 0))
+    ownerBilledIds[String(r.confirmation_code || r.listing_id + '|' + r.check_out)] = true
+  }
 
   // ── EXPEDIA CLEANING BACK-FILL ───────────────────────────────────────────
   // Expedia-family channels bundle the cleaning fee INTO the accommodation fare, so the reservation
@@ -2416,7 +2433,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       // large, the reservations table is carrying inquiries as bookings — a sync question, not a
       // cleaning one.
       excludedNonLive: { reservations: resNonLive, grossFees: resNonLiveFees, byStatus: resNonLiveByStatus },
-      excludedOwnerFF: { reservations: resOwnerFF, grossFees: resOwnerFFFees },
+      ownerBilled: { reservations: resOwnerFF, fees: resOwnerFFFees, pendingInGuesty: ownerBilledPending },
+      // kept for callers that read the old key
+      excludedOwnerFF: { reservations: 0, grossFees: 0 },
       window: 'checkout day or day+1 first (real cleans only — ghosts can never claim a fee), then nearest clean from 2 days early to 9 days late',
     },
     coverage: {

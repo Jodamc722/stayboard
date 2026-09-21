@@ -340,7 +340,7 @@ async function send(req: NextRequest) {
       '</table>' + dayStrip +
       '<p style="margin:10px 0 0;font-size:11px;color:#9ca3af;line-height:1.7">' +
       '<b>Cost per turn</b> is housekeeper wages only, divided by every departure turn &mdash; a turn a supervisor or technician covered is a saving on housekeeping labor, so it counts (Jon, 2026-09-21). The line under it divides the same wages by the turns housekeepers themselves did, which is the scheduling check. ' +
-      'Cleaning revenue counts confirmed checkouts only; inquiries, expired requests and owner / friends-&amp;-family stays earn $0. ' +
+      'Cleaning revenue counts confirmed checkouts only; inquiries and expired requests earn $0; an owner / friends-&amp;-family stay carries the fee billed to the owner. ' +
       'A shared Breezeway task is credited to the first field person on it; office staff are never credited. ' +
       'Every dollar of payroll is a Homebase punch, or the stated salary for salaried people, pro-rated to the window.</p>' +
       '</div>'
