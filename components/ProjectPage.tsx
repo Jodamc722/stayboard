@@ -117,9 +117,9 @@ function Menu({ open, onClose, children, align = 'right', className }: { open: b
 }
 const MenuItem = ({ onClick, children, active, tone }: { onClick: () => void; children: any; active?: boolean; tone?: 'danger' }) => (
   <button type="button" onClick={onClick}
-    className={'w-full text-left px-2.5 py-1.5 text-[12.5px] flex items-center gap-2 hover:bg-app ' + (active ? 'font-bold text-ink' : tone === 'danger' ? 'text-rose-700' : 'text-ink')}>{children}</button>
+    className={'w-full text-left px-2.5 py-1 text-[12px] flex items-center gap-2 hover:bg-app ' + (active ? 'font-bold text-ink' : tone === 'danger' ? 'text-rose-700' : 'text-ink')}>{children}</button>
 )
-const MenuHead = ({ children }: { children: any }) => <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">{children}</p>
+const MenuHead = ({ children }: { children: any }) => <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">{children}</p>
 
 export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPrefs: initialPrefs }: {
   initial: ProjectFull; me: string; canEdit: boolean; canFull: boolean; superadmin: boolean; viewPrefs?: any
@@ -518,11 +518,13 @@ function Section({ name, tasks, canEdit, busy, openId, onOpen, act, counts, acce
   const done = tasks.filter(t => t.status === 'done').length
   const dragging = !!dragId && canEdit
   return (
-    <div className={'rounded-2xl border bg-white overflow-hidden ' + (dragging ? 'border-brand-200' : 'border-line')}
+    <div className={'rounded-2xl border bg-white ' + (dragging ? 'border-brand-200' : 'border-line')}
       onDragOver={e => { if (dragging) e.preventDefault() }}
       onDrop={e => { if (dragging && dragId) { e.preventDefault(); onMove(dragId, name, null); setDragId(null) } }}>
+      {/* No overflow-hidden on the card: the row's ⋯ menu is absolutely positioned and was being
+          clipped to the section. The header rounds its own top corners instead. */}
       <button onClick={() => setCollapsed(c => !c)}
-        className={'w-full flex items-center gap-2 px-3 py-1.5 border-b text-left ' + accent.bar}>
+        className={'w-full flex items-center gap-2 px-3 py-1.5 border-b text-left rounded-t-2xl ' + (collapsed ? 'rounded-b-2xl border-b-0 ' : '') + accent.bar}>
         {collapsed ? <ChevronRight size={13} className="text-muted" /> : <ChevronDown size={13} className="text-muted" />}
         <SectionName name={name} canEdit={canEdit} act={act} busy={busy} className="text-[12.5px] font-bold text-ink" />
         <span className="text-[11px] text-muted tabular-nums">{done}/{tasks.length}</span>
@@ -1004,18 +1006,24 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, dra
               <button onClick={() => setMenu(menu === 'more' ? null : 'more')} className={'rounded-md p-0.5 text-muted hover:text-ink hover:bg-app ' + (menu === 'more' ? 'text-ink bg-app' : 'opacity-40 group-hover/row:opacity-100')} title="Status · priority · move · rename · delete">
                 <MoreHorizontal size={14} />
               </button>
-              <Menu open={menu === 'more'} onClose={() => setMenu(null)} className="w-52">
-                <MenuHead>Status</MenuHead>
-                {(['todo', 'doing', 'blocked', 'done'] as const).map(st => { const I = STATUS_ICON[st]; return (
-                  <MenuItem key={st} active={t.status === st} onClick={() => { setMenu(null); set({ status: st }) }}>
-                    <span className={'w-4 h-4 rounded-full border-2 inline-flex items-center justify-center ' + STATUS_CLS[st]}><I size={9} strokeWidth={3} /></span>{TASK_STATUS_LABEL[st]}
-                  </MenuItem>) })}
-                <MenuHead>Priority</MenuHead>
-                {(['urgent', 'high', 'normal', 'low'] as const).map(pr => (
-                  <MenuItem key={pr} active={t.priority === pr} onClick={() => { setMenu(null); set({ priority: pr }) }}>
-                    <span className={'w-2 h-2 rounded-full ' + PRIORITY_DOT[pr]} />{PRIORITY_LABEL[pr]}
-                  </MenuItem>
-                ))}
+              <Menu open={menu === 'more'} onClose={() => setMenu(null)} className="w-64">
+                <div className="grid grid-cols-2 divide-x divide-line">
+                  <div>
+                    <MenuHead>Status</MenuHead>
+                    {(['todo', 'doing', 'blocked', 'done'] as const).map(st => { const I = STATUS_ICON[st]; return (
+                      <MenuItem key={st} active={t.status === st} onClick={() => { setMenu(null); set({ status: st }) }}>
+                        <span className={'w-4 h-4 rounded-full border-2 inline-flex items-center justify-center ' + STATUS_CLS[st]}><I size={9} strokeWidth={3} /></span>{TASK_STATUS_LABEL[st]}
+                      </MenuItem>) })}
+                  </div>
+                  <div>
+                    <MenuHead>Priority</MenuHead>
+                    {(['urgent', 'high', 'normal', 'low'] as const).map(pr => (
+                      <MenuItem key={pr} active={t.priority === pr} onClick={() => { setMenu(null); set({ priority: pr }) }}>
+                        <span className={'w-2 h-2 rounded-full ' + PRIORITY_DOT[pr]} />{PRIORITY_LABEL[pr]}
+                      </MenuItem>
+                    ))}
+                  </div>
+                </div>
                 {sections && sections.length > 1 && depth === 0 && (<>
                   <MenuHead>Move to</MenuHead>
                   {sections.map(sname => (
