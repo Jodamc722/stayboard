@@ -2,7 +2,7 @@
 // TALKROUTE — Users & admin panel. Connect the phone system (one key), register the webhooks, set
 // the voicemail rule, watch the feeds. The key is pasted once and never shown again.
 import { useCallback, useEffect, useState } from 'react'
-import { PhoneCall, Check, AlertTriangle, Loader2, RefreshCw, Webhook, KeyRound, Trash2, MessageSquare, Voicemail, Radio } from 'lucide-react'
+import { PhoneCall, Check, AlertTriangle, Loader2, RefreshCw, Webhook, KeyRound, Trash2, MessageSquare, Voicemail, Radio, FileText, Sparkles } from 'lucide-react'
 
 type Sub = { id: string; type: string; ours: boolean }
 type Num = { id: string; number: string; label: string; messaging: boolean }
@@ -11,7 +11,14 @@ type Status = {
   voicemailMaxSec: number; lastCallSyncAt: string | null; lastTextSyncAt: string | null; lastVoicemailSyncAt: string | null
   lastError: string | null; webhookRegistered: boolean; numbers: Num[]; subscriptions: Sub[]; account: { name: string | null } | null; apiError: string | null
   counts: { calls7d: number; texts7d: number; voicemails7d: number; autoLogged7d: number } | null
-  sync?: any; made?: string[]; removed?: number
+  transcribe: Transcribe | null
+  sync?: any; made?: string[]; removed?: number; notes?: any
+}
+type Transcribe = {
+  ready: boolean; keyHint: string | null; viaEnv: boolean; enabled: boolean
+  connectedBy: string | null; connectedAt: string | null
+  minSeconds: number; usdPerDay: number; usdPerMinute: number; lastError: string | null
+  queue: { pending: number; transcribed: number; failed: number; notesPushed: number; usdToday: number } | null
 }
 
 function ago(iso: string | null): string {
@@ -30,6 +37,9 @@ export function TalkrouteAdmin() {
   const [key, setKey] = useState('')
   const [vm, setVm] = useState<number>(20)
   const [flash, setFlash] = useState<string | null>(null)
+  const [dgKey, setDgKey] = useState('')
+  const [minSec, setMinSec] = useState(25)
+  const [cap, setCap] = useState(3)
 
   const load = useCallback(async () => {
     setBusy('load'); setErr(null)
@@ -38,6 +48,7 @@ export function TalkrouteAdmin() {
       const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Could not load Talkroute status.')
       setD(j); setVm(Number(j.voicemailMaxSec) || 20)
+      if (j.transcribe) { setMinSec(Number(j.transcribe.minSeconds) || 25); setCap(Number(j.transcribe.usdPerDay) || 0) }
     } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(null) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -56,7 +67,12 @@ export function TalkrouteAdmin() {
         const s = j.sync || {}
         setFlash(`${s.partial ? 'Partly synced (ran out of time — press Sync now again, or the 15-minute backfill finishes it)' : 'Synced'} — ${s.calls?.fetched ?? 0} calls (${s.calls?.matched ?? 0} matched to bookings, ${s.calls?.welcomeCompleted ?? 0} welcome calls completed), ${s.texts?.messages ?? 0} texts in ${s.texts?.conversations ?? 0} threads, ${s.voicemails?.fetched ?? 0} voicemails.${s.errors?.length ? ' First error: ' + s.errors[0] : ''}`)
       }
-      if (op === 'settings') setFlash('Saved.')
+      if (op === 'settings' || op === 'transcribe_settings') setFlash('Saved.')
+      if (op === 'save_transcribe_key') { setDgKey(''); setFlash('Transcription is on. Recorded calls will start turning into notes within a few minutes.') }
+      if (op === 'run_notes') {
+        const n = j.notes || {}
+        setFlash(`${n.transcribed || 0} calls transcribed, ${n.summarised || 0} notes written, ${n.notesPushed || 0} pushed to Guesty${n.usd ? ` · $${n.usd.toFixed(3)}` : ''}${n.partial ? ' — more to go, press again or let the 15-minute job finish it' : ''}.${n.errors?.length ? ' First error: ' + n.errors[0] : ''}`)
+      }
     } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(null) }
   }
 
@@ -152,6 +168,9 @@ export function TalkrouteAdmin() {
             </div>
           </div>
 
+          {/* ── Call notes from recordings ── */}
+          <TranscribeCard d={d} busy={busy} post={post} dgKey={dgKey} setDgKey={setDgKey} minSec={minSec} setMinSec={setMinSec} cap={cap} setCap={setCap} />
+
           {/* ── The rule ── */}
           <div className="rounded-2xl border border-line bg-white overflow-hidden">
             <div className="px-4 py-3 border-b border-line flex items-center gap-2">
@@ -175,6 +194,84 @@ export function TalkrouteAdmin() {
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+/**
+ * CALL NOTES FROM RECORDINGS. Stay records every call and plays the notice, so the recording is
+ * readable: it is transcribed, Claude writes the two-line note, and that note lands on the booking
+ * and in Guesty's reservation notes. Off until a Deepgram key is pasted — everything else on this
+ * page works without it.
+ */
+function TranscribeCard({ d, busy, post, dgKey, setDgKey, minSec, setMinSec, cap, setCap }: {
+  d: Status; busy: string | null; post: (op: string, extra?: any) => void
+  dgKey: string; setDgKey: (v: string) => void; minSec: number; setMinSec: (v: number) => void; cap: number; setCap: (v: number) => void
+}) {
+  const t = d.transcribe
+  if (!t) return null
+  const q = t.queue
+  return (
+    <div className="rounded-2xl border border-line bg-white overflow-hidden">
+      <div className="px-4 py-3 border-b border-line flex items-center gap-2">
+        <FileText size={15} className="text-brand-600" />
+        <span className="text-sm font-bold text-ink">Call notes from recordings</span>
+        {t.ready
+          ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full"><Sparkles size={11} /> On</span>
+          : <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted bg-app border border-line px-2 py-0.5 rounded-full">Off</span>}
+      </div>
+      <div className="p-4 space-y-3 text-[13px]">
+        <p className="text-muted">
+          Every recorded call is transcribed and read into a two-line note — what the guest asked, what we promised, anything wrong —
+          which lands on the booking under <b className="text-ink">Calls &amp; texts</b> and as one dated line in the reservation&apos;s notes in Guesty.
+          The transcript is kept in Lighthouse behind the note. Only calls that connected, are matched to a booking and ran longer than the
+          minimum below are transcribed.
+        </p>
+        <p className="text-[12px] text-muted">
+          This reads recordings of real guest calls, so it assumes what is already true here: calls are recorded and the recorded-call notice plays.
+          If that ever changes, turn this off — Florida requires everyone on the call to be told.
+        </p>
+
+        {t.ready ? (
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 text-ink font-semibold"><KeyRound size={13} className="text-muted" /> Deepgram key {t.viaEnv ? 'from Vercel' : `…${t.keyHint || '????'}`}</span>
+            {t.connectedBy && <span className="text-muted">added by {t.connectedBy}</span>}
+            {!t.viaEnv && <button onClick={() => { if (confirm('Turn off call transcription? Calls are still logged; they just stop getting notes.')) post('clear_transcribe_key') }} disabled={!!busy} className="inline-flex items-center gap-1 text-[12px] text-rose-600 hover:underline"><Trash2 size={12} /> Turn off</button>}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-line bg-app/40 p-3 space-y-2">
+            <div className="font-semibold text-ink">Paste a Deepgram API key to switch this on</div>
+            <p className="text-muted">deepgram.com → sign up → API Keys. It reads the recording straight from Talkroute&apos;s link, so nothing large is ever downloaded. About ${t.usdPerMinute.toFixed(4)} per minute of audio.</p>
+            <div className="flex gap-2 flex-wrap">
+              <input value={dgKey} onChange={e => setDgKey(e.target.value)} placeholder="Deepgram API key" autoComplete="off" spellCheck={false}
+                className="flex-1 min-w-[240px] rounded-lg border border-line px-3 py-2 font-mono text-[12px]" />
+              <button onClick={() => post('save_transcribe_key', { key: dgKey })} disabled={!!busy || !dgKey.trim()} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3.5 py-2 font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'save_transcribe_key' ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />} Turn on</button>
+            </div>
+          </div>
+        )}
+
+        {t.ready && q && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <Tile Icon={Loader2} label="Waiting" value={q.pending} sub="to transcribe" />
+            <Tile Icon={FileText} label="Transcribed" value={q.transcribed} />
+            <Tile Icon={Check} label="Notes in Guesty" value={q.notesPushed} />
+            <Tile Icon={AlertTriangle} label="Could not read" value={q.failed} />
+            <Tile Icon={Sparkles} label="Spent today" value={`$${(q.usdToday || 0).toFixed(2)}`} sub={`cap $${t.usdPerDay}`} />
+          </div>
+        )}
+
+        {t.ready && (
+          <div className="flex items-end gap-3 flex-wrap pt-1">
+            <label className="text-[12px] text-muted">Skip calls under
+              <input type="number" min={5} max={300} value={minSec} onChange={e => setMinSec(Number(e.target.value))} className="w-16 mx-1.5 rounded-lg border border-line px-2 py-1 text-center text-ink" />seconds</label>
+            <label className="text-[12px] text-muted">Stop after
+              <input type="number" min={0} max={500} value={cap} onChange={e => setCap(Number(e.target.value))} className="w-16 mx-1.5 rounded-lg border border-line px-2 py-1 text-center text-ink" />$ a day</label>
+            <button onClick={() => post('transcribe_settings', { minSeconds: minSec, usdPerDay: cap, enabled: true })} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-1.5 font-semibold text-ink hover:bg-app disabled:opacity-50">{busy === 'transcribe_settings' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save</button>
+            <button onClick={() => post('run_notes')} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 font-semibold hover:bg-brand-700 disabled:opacity-50 ml-auto">{busy === 'run_notes' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Write notes now</button>
+          </div>
+        )}
+        {t.lastError && <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-amber-800 text-[12px]"><AlertTriangle size={12} className="inline mr-1" /> {t.lastError}</div>}
+      </div>
     </div>
   )
 }

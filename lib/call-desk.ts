@@ -729,6 +729,14 @@ export async function closeOutCalls(sb: any, today: string): Promise<{ welcome: 
     if (error) { skipped++; return false }
     return true
   }
+  // THE ATTEMPT-RUN LINE (Jon, 2026-09-21). A call that closes without ever connecting leaves ONE
+  // line on the booking in Guesty — "Tried 3× before arrival, never reached" — written here, at the
+  // close, rather than one line per attempt as the calls happened. Best-effort: a Guesty hiccup
+  // must never stop the close-out, which is the thing that makes the miss exist as data.
+  const runNote = async (id: string, kind: 'welcome' | 'post_checkout', attempts: number) => {
+    if (attempts < 1) return
+    try { const { pushAttemptRunNote } = await import('./call-notes'); await pushAttemptRunNote(sb, id, kind, attempts) } catch { /* noted below, not here */ }
+  }
   for (const r of d.rows) {
     if (r.done) {
       // Guesty says called; local row (if any) does not. Upgrade it — or create it, so a call
@@ -748,7 +756,7 @@ export async function closeOutCalls(sb: any, today: string): Promise<{ welcome: 
       attempts: r.attempts || 0, guest_name: r.guest, ref_date: r.check_in,
       scheduled_for: r.check_in, closed_at: at, called_at: at,
       ...(r.listingId ? { listing_id: r.listingId } : {}),
-    })) welcome++
+    })) { welcome++; await runNote(r.id, 'welcome', r.attempts || 0) }
   }
   for (const r of d.outRows) {
     if (!r.closed || r.done || r.incomplete) continue
@@ -757,7 +765,7 @@ export async function closeOutCalls(sb: any, today: string): Promise<{ welcome: 
       attempts: r.attempts || 0, guest_name: r.guest, ref_date: r.check_out,
       scheduled_for: r.check_out, closed_at: at, called_at: at,
       ...(r.listingId ? { listing_id: r.listingId } : {}),
-    })) post++
+    })) { post++; await runNote(r.id, 'post_checkout', r.attempts || 0) }
   }
   return { welcome, post, reconciled, skipped }
 }

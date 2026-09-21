@@ -167,6 +167,10 @@
     {
       "path": "/api/cron/talkroute",
       "schedule": "11,26,41,56 * * * *"
+    },
+    {
+      "path": "/api/cron/call-notes",
+      "schedule": "6,21,36,51 * * * *"
     }
   ]
 }

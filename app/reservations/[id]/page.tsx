@@ -6,6 +6,8 @@ import { Shell } from '@/components/Shell'
 import { customFieldNameMap } from '@/lib/custom-fields'
 import { STAGE_LABEL, money, daysUntil, clockRunning } from '@/lib/claims'
 import { ReservationOrders } from '@/components/ReservationOrders'
+import { ContactHistory } from '@/components/ContactHistory'
+import { loadContactHistory } from '@/lib/reservation-contact'
 
 export const dynamic = 'force-dynamic'
 
@@ -72,6 +74,10 @@ export default async function ReservationDetail({ params }: { params: { id: stri
     orderLink = Array.isArray(l) && l.length ? l[0] : null
     guestOrders = Array.isArray(o) ? o : []
   } catch { orderLink = null; guestOrders = [] }
+
+  // EVERY TIME WE WERE IN TOUCH BY PHONE (2026-09-21). Calls with what was said, texts and
+  // voicemails, matched to this booking by the Talkroute matcher. Fails soft to an empty history.
+  const contact = await loadContactHistory(supabaseAdmin(), params.id, r.guest_phone)
 
   const cfMap = await customFieldNameMap()
   const idOf = (cf: any) => String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
@@ -198,6 +204,14 @@ export default async function ReservationDetail({ params }: { params: { id: stri
             <Row label="Phone" value={r.guest_phone} />
             <Row label="Status" value={(r.status || '').replace('_', ' ')} />
           </dl>
+        </section>
+
+        <section className="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h2 className="text-sm font-semibold text-slate-900">Calls &amp; texts</h2>
+            {contact.phone && <Link href={`/messages/phone/${contact.phone.length === 10 ? '1' + contact.phone : contact.phone}`} className="text-xs text-brand-600 hover:underline">Open the phone thread →</Link>}
+          </div>
+          <ContactHistory h={contact} />
         </section>
 
         <section className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">

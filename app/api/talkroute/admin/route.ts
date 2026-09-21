@@ -12,6 +12,11 @@ import {
   TR_WEBHOOK_TYPES, DEFAULT_VOICEMAIL_MAX_SEC,
 } from '@/lib/talkroute'
 import { syncTalkrouteAll } from '@/lib/talkroute-sync'
+import { processCallIntel } from '@/lib/call-notes'
+import {
+  getTranscribeSettings, saveTranscribeSettings, storeTranscribeKey, clearTranscribeKey,
+  transcribeReady, TRANSCRIBE_DEFAULTS, USD_PER_MINUTE,
+} from '@/lib/transcribe'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -28,7 +33,37 @@ async function status() {
     voicemailMaxSec: Number(s.voicemailMaxSec) || DEFAULT_VOICEMAIL_MAX_SEC,
     lastCallSyncAt: s.lastCallSyncAt || null, lastTextSyncAt: s.lastTextSyncAt || null, lastVoicemailSyncAt: s.lastVoicemailSyncAt || null,
     lastError: s.lastError || null, webhookRegistered: false, numbers: [], subscriptions: [], account: null, apiError: null, counts: null,
+    transcribe: null as any,
   }
+  // ── TRANSCRIPTION (2026-09-21) ──────────────────────────────────────────────────────────────
+  // Stay records every call and plays the notice, so recordings are readable. This reports whether
+  // a key exists, what the rules are, and how the queue is doing — never the key itself.
+  try {
+    const t = await getTranscribeSettings()
+    const ready = await transcribeReady()
+    let queue: any = null
+    try {
+      const db = supabaseAdmin()
+      const dayAgo = new Date(Date.now() - 24 * 3600_000).toISOString()
+      const [pend, done, failed, notes, spendRows] = await Promise.all([
+        db.from('talkroute_calls').select('id', { count: 'exact', head: true }).eq('transcript_status', 'pending').not('reservation_id', 'is', null).eq('result', 'answered'),
+        db.from('talkroute_calls').select('id', { count: 'exact', head: true }).eq('transcript_status', 'done'),
+        db.from('talkroute_calls').select('id', { count: 'exact', head: true }).in('transcript_status', ['failed', 'expired']),
+        db.from('talkroute_calls').select('id', { count: 'exact', head: true }).not('note_pushed_at', 'is', null),
+        db.from('talkroute_calls').select('cost_usd').gte('transcript_at', dayAgo).limit(2000),
+      ])
+      let usd = 0
+      for (const r of ((spendRows.data as any[]) || [])) usd += Number(r.cost_usd) || 0
+      queue = { pending: pend.count || 0, transcribed: done.count || 0, failed: failed.count || 0, notesPushed: notes.count || 0, usdToday: Math.round(usd * 100) / 100 }
+    } catch { queue = null }
+    out.transcribe = {
+      ready, keyHint: t.keyHint || null, viaEnv: !!String(process.env.DEEPGRAM_API_KEY || '').trim(),
+      enabled: t.enabled !== false, connectedBy: t.connectedBy || null, connectedAt: t.connectedAt || null,
+      minSeconds: Number(t.minSeconds) || TRANSCRIBE_DEFAULTS.minSeconds,
+      usdPerDay: Number(t.usdPerDay ?? TRANSCRIBE_DEFAULTS.usdPerDay),
+      usdPerMinute: USD_PER_MINUTE, lastError: t.lastError || null, queue,
+    }
+  } catch { out.transcribe = null }
   if (connected) {
     try {
       const [nums, subs, acct] = await Promise.all([trVirtualNumbers(), trSubscriptions(), trAccount().catch(() => null)])
@@ -74,6 +109,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(await status())
     }
     if (op === 'clear_key') { await clearTalkrouteKey(actor); return NextResponse.json(await status()) }
+    // ── Transcription controls ──
+    if (op === 'save_transcribe_key') {
+      const r = await storeTranscribeKey(String(body?.key || ''), actor)
+      if (!r.ok) return NextResponse.json({ error: r.error || 'Could not save the key.' }, { status: 400 })
+      return NextResponse.json(await status())
+    }
+    if (op === 'clear_transcribe_key') { await clearTranscribeKey(actor); return NextResponse.json(await status()) }
+    if (op === 'transcribe_settings') {
+      await saveTranscribeSettings({
+        enabled: body?.enabled !== false,
+        minSeconds: Math.max(5, Math.min(300, Number(body?.minSeconds) || TRANSCRIBE_DEFAULTS.minSeconds)),
+        usdPerDay: Math.max(0, Math.min(500, Number(body?.usdPerDay ?? TRANSCRIBE_DEFAULTS.usdPerDay))),
+      }, actor)
+      return NextResponse.json(await status())
+    }
+    if (op === 'run_notes') {
+      const r = await processCallIntel(supabaseAdmin(), { deadline: Date.now() + 40_000, limit: 25 })
+      return NextResponse.json({ ...(await status()), notes: r })
+    }
     if (op === 'settings') {
       const v = Math.max(5, Math.min(120, Number(body?.voicemailMaxSec) || DEFAULT_VOICEMAIL_MAX_SEC))
       await saveTalkrouteSettings({ voicemailMaxSec: v }, actor)

@@ -221,16 +221,17 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
 
   // Which records are new or still unmatched.
   const ids = records.map(r => String(r.id)).filter(Boolean)
-  const known = new Map<string, { reservation_id: string | null; match_kind: string | null }>()
+  const known = new Map<string, { reservation_id: string | null; match_kind: string | null; transcript_status: string | null }>()
   for (let i = 0; i < ids.length; i += 200) {
-    const { data } = await sb.from('talkroute_calls').select('id,reservation_id,match_kind').in('id', ids.slice(i, i + 200))
-    for (const k of (data || [])) known.set(String(k.id), { reservation_id: k.reservation_id, match_kind: k.match_kind })
+    const { data } = await sb.from('talkroute_calls').select('id,reservation_id,match_kind,transcript_status').in('id', ids.slice(i, i + 200))
+    for (const k of (data || [])) known.set(String(k.id), { reservation_id: k.reservation_id, match_kind: k.match_kind, transcript_status: k.transcript_status })
   }
 
   const upserts: any[] = []
   for (const c of records) {
     if (!c.id) continue
     const voicemail = (c.events || []).some(e => e.type === 'voicemail')
+    const known0 = known.get(String(c.id))
     upserts.push({
       id: String(c.id), direction: c.direction === 'outbound' ? 'outbound' : 'inbound',
       call_at: new Date(c.callDate || Date.now()).toISOString(),
@@ -238,6 +239,11 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
       talkroute_number: phoneDigits(c.phoneNumber) || null,
       duration: Number(c.duration) || 0, result: String(c.result || '').toLowerCase() || null,
       recorded: !!c.recorded, voicemail, events: c.events || null, raw: c, synced_at: new Date().toISOString(),
+      // THE RECORDING (2026-09-21). `recording` is a temporary signed URL, so it is refreshed on
+      // every sync and the transcript — not the link — is what we keep. A call that connected and
+      // was recorded joins the transcription queue; lib/call-notes walks it.
+      ...(c.recording ? { recording_url: String(c.recording), recording_seen_at: new Date().toISOString() } : {}),
+      ...(known0?.transcript_status ? {} : { transcript_status: (c.recorded && String(c.result || '').toLowerCase() === 'answered') ? 'pending' : 'none' }),
       // keep an existing match
       ...(known.get(String(c.id))?.reservation_id ? { reservation_id: known.get(String(c.id))!.reservation_id, match_kind: known.get(String(c.id))!.match_kind } : {}),
     })
@@ -377,6 +383,14 @@ export async function syncTalkrouteVoicemails(sb: any, opts: { deadline?: number
         ...(resId ? { reservation_id: resId } : {}), raw: v, synced_at: new Date().toISOString(),
       }, { onConflict: 'id' })
       if (error) errors.push('voicemail: ' + error.message)
+      // A voicemail the guest left, matched to a booking, gets its one line on the reservation —
+      // their own words are the most useful thing the phone produces (lib/call-notes).
+      if (resId && !known.has(String(v.id))) {
+        try {
+          const { pushVoicemailNote } = await import('./call-notes')
+          await pushVoicemailNote(sb, { id: String(v.id), reservation_id: resId, transcript: v.transcript, duration: v.duration, note_pushed_at: null })
+        } catch { /* the note is best-effort; the voicemail itself is saved */ }
+      }
     } catch (e: any) { errors.push(`vm ${v.id}: ${String(e?.message || e).slice(0, 120)}`) }
   }
   await saveTalkrouteSettings({ lastVoicemailSyncAt: new Date().toISOString() })
