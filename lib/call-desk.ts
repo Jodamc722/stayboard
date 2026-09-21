@@ -400,7 +400,17 @@ const cachedRecovery = unstable_cache(async () => {
 
 export const RES_SELECT = 'id,listing_id,guest_name,guest_phone,listing_name,check_in,check_out,nights,status,money_total,money_paid,money_balance,money_currency,custom_fields,source,money:raw->money,guestId:raw->guest->>_id,nightsCount:raw->>nightsCount'
 
-export type CallLog = { reservation_id: string; kind: string; outcome: string; note: string; called_by: string; caller_email: string; called_at: string; attempts: number; tier: string }
+export type CallLog = {
+  reservation_id: string; kind: string; outcome: string; note: string; called_by: string; caller_email: string; called_at: string; attempts: number; tier: string
+  // TALKROUTE (migration 104): where the outcome came from and what the phone system last saw.
+  source?: string | null; last_attempt_at?: string | null; last_result?: string | null; talk_seconds?: number | null
+}
+/** The phone system's word on a call, carried onto the desk rows. */
+export type PhoneProof = { source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number }
+const proofOf = (lg: CallLog | null): PhoneProof => ({
+  source: lg ? String(lg.source || '') : '', lastAttemptAt: lg ? String(lg.last_attempt_at || '') : '',
+  lastResult: lg ? String(lg.last_result || '') : '', talkSeconds: lg ? (Number(lg.talk_seconds) || 0) : 0,
+})
 
 export type WelcomeRow = {
   id: string; guest: string; guestId: string; listing: string; listingId: string; building: string; check_in: string
@@ -410,6 +420,7 @@ export type WelcomeRow = {
   done: boolean; outcome: string; attempts: number
   callValue: string; calledBy: string; calledAt: string
   claimedBy: string; claimedAt: string
+  proof: PhoneProof
   sensitive: boolean
   due: boolean; dueToday: boolean; lastChance: boolean; closed: boolean; incomplete: boolean
   prio: number
@@ -421,10 +432,13 @@ export type PostRow = {
   glitches: StayGlitch[]; recovery: RecoveryUnit | null; reasons: CallReason[]
   done: boolean; outcome: string; attempts: number; calledBy: string; calledAt: string; callNote: string
   claimedBy: string; claimedAt: string
+  proof: PhoneProof
   closed: boolean; incomplete: boolean
 }
 export type DeskData = {
   today: string
+  /** Talkroute is connected: the desk shows phone-proven outcomes and folds the manual buttons away. */
+  talkroute: boolean
   rows: WelcomeRow[]
   outRows: PostRow[]
   recoveryFailed: boolean
@@ -463,7 +477,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
   const idChunks: string[][] = []
   for (let i = 0; i < callIds.length; i += 200) idChunks.push(callIds.slice(i, i + 200))
   const logs: CallLog[] = (await Promise.all(idChunks.map(chunk => sb.from('guest_calls')
-    .select('reservation_id,kind,outcome,note,called_by,caller_email,called_at,attempts,tier')
+    .select('reservation_id,kind,outcome,note,called_by,caller_email,called_at,attempts,tier,source,last_attempt_at,last_result,talk_seconds')
     .in('reservation_id', chunk).then((r: any) => r.data || [])))).flat()
   const callLog = new Map<string, CallLog>()
   for (const c of logs) callLog.set(String(c.reservation_id) + '|' + String(c.kind), c)
@@ -516,6 +530,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
       calledAt: (lg && isCompleted(lg.outcome) && lg.called_at) ? String(lg.called_at) : (w._at || ''),
       claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
       claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
+      proof: proofOf(lg),
       sensitive: truthy(fieldVal(r.custom_fields, 'sensitive')),
       // Due = inside the 72-hour window, every tier alike (Jon, 2026-09-09: "complete by the day of
       // or 72 hours in advance"). Beyond the window a mandatory call is still on the 14-day list
@@ -556,6 +571,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
         calledBy: lg ? String(lg.called_by || '') : '', calledAt: lg ? String(lg.called_at || '') : '', callNote: lg ? String(lg.note || '') : '',
         claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
         claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
+        proof: proofOf(lg),
         closed: checkOut < backDate,
         incomplete: !!lg && lg.outcome === 'incomplete',
       }
@@ -597,7 +613,11 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
     recoveryFailed: rec.failed,
   }
 
-  return { today, rows, outRows, recoveryFailed: rec.failed, kpis }
+  // Is the phone system connected? One settings read (cached 60s in lib/app-settings); the env var
+  // short-circuits it. Read here, not in the component, so the close-out and the page agree.
+  let talkroute = !!String(process.env.TALKROUTE_API_KEY || '').trim()
+  if (!talkroute) { try { const { talkrouteConfigured } = await import('./talkroute'); talkroute = await talkrouteConfigured() } catch { talkroute = false } }
+  return { today, talkroute, rows, outRows, recoveryFailed: rec.failed, kpis }
 }
 
 // ── THE RECOVERY BOARD (Reviews page) ───────────────────────────────────────────────────────────

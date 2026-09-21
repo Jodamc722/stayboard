@@ -17,7 +17,7 @@
 //
 // The script panel is the one built earlier today: facts as chips, the must-dos in the only box,
 // six steps, the building guide behind a toggle, notes last.
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
 
@@ -33,6 +33,7 @@ type Row = {
   done: boolean; outcome: string; attempts: number
   callValue: string; calledBy: string; calledAt: string
   claimedBy: string; claimedAt: string
+  proof: Proof
   sensitive: boolean
   due: boolean; dueToday: boolean; lastChance: boolean; closed: boolean; incomplete: boolean
   prio: number
@@ -44,7 +45,27 @@ type OutRow = {
   glitches: Glitch[]; recovery: Recovery | null; reasons: string[]
   done: boolean; outcome: string; attempts: number; calledBy: string; calledAt: string; callNote: string
   claimedBy: string; claimedAt: string
+  proof: Proof
   closed: boolean; incomplete: boolean
+}
+// TALKROUTE (2026-09-21). What the phone system last saw for this call: the source of the outcome
+// ('talkroute' when the call record proved it, 'manual' / '' when a person pressed a button), the
+// last attempt and its result, and how long the guest actually talked.
+type Proof = { source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number }
+function talkMins(sec: number) { return sec >= 60 ? `${Math.round(sec / 60)} min` : `${sec}s` }
+function ProofLine({ p, done, kind }: { p: Proof; done: boolean; kind: 'welcome' | 'post' }) {
+  if (!p.lastAttemptAt) return null
+  const res = p.lastResult
+  const when = day(p.lastAttemptAt)
+  if (res === 'answered') {
+    return (
+      <div className={`text-[11px] mt-0.5 inline-flex items-center gap-1 ${done ? 'text-emerald-700' : 'text-brand-700'}`}>
+        <PhoneCall size={11} /> Talkroute: answered · {talkMins(p.talkSeconds)} · {when}
+        {!done && kind === 'post' && <span className="text-ink font-semibold"> — what did they say? Pick an outcome below.</span>}
+      </div>
+    )
+  }
+  return <div className="text-[11px] text-muted mt-0.5 inline-flex items-center gap-1"><PhoneOff size={11} /> Talkroute: {res === 'missed' ? 'no answer' : res || 'no answer'} · {when}</div>
 }
 type Kpis = {
   dueNow: number; dueToday: number; lastChance: number; mandatoryOpen: number; mandatoryDoneToday: number
@@ -330,7 +351,7 @@ function OutcomeRow({ busy, onReached, onVoicemail, onNoAnswer, attempts, compac
   )
 }
 
-export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, me }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; me: string }) {
+export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, me, talkroute = false }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; me: string; talkroute?: boolean }) {
   const [rows, setRows] = useState<Row[]>(initial)
   const [outRows, setOutRows] = useState<OutRow[]>(initialOut)
   const [tab, setTab] = useState<'welcome' | 'post' | 'board' | 'all'>('welcome')
@@ -557,7 +578,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
                     {Array.from(byDay.entries()).map(([d, xs]) => (
                       <div key={d}>
                         <h3 className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${d === today ? 'text-rose-700' : 'text-muted'}`}>{dayLabel(d)} — {xs.length}</h3>
-                        <WelcomeList rows={xs} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }} />
+                        <WelcomeList rows={xs} talkroute={talkroute} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }} />
                       </div>
                     ))}
                   </div>
@@ -571,10 +592,23 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       {tab === 'all' && (
         allSorted.length === 0
           ? <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No upcoming reservations.</div>
-          : <WelcomeList rows={allSorted} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }} />
+          : <WelcomeList rows={allSorted} talkroute={talkroute} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }} />
       )}
 
-      <p className="text-[11px] text-muted"><StickyNote size={11} className="inline" /> Reached and Voicemail write the <b>Welcome Call</b> field on the reservation in Guesty and append your note to the reservation notes. No answer, Take it and post-checkout outcomes are logged in Lighthouse (the post-checkout note goes to Guesty too). After midnight, any welcome call whose guest arrived today and any post-checkout call past its 48 hours closes as incomplete.</p>
+      {talkroute
+        ? <p className="text-[11px] text-muted"><PhoneCall size={11} className="inline" /> <b>Calls are tracked from Talkroute.</b> Dial the guest from the Talkroute app; when the call ends, Lighthouse matches it to the booking by phone number and marks it — answered is Reached, a short answered call is Voicemail (both count), missed or hung up adds an attempt and keeps the card. Every match writes the <b>Welcome Call</b> field and a dated note in Guesty. Use <i>Log by hand</i> only for a call made from a personal phone.</p>
+        : <p className="text-[11px] text-muted"><StickyNote size={11} className="inline" /> Reached and Voicemail write the <b>Welcome Call</b> field on the reservation in Guesty and append your note to the reservation notes. No answer, Take it and post-checkout outcomes are logged in Lighthouse (the post-checkout note goes to Guesty too). After midnight, any welcome call whose guest arrived today and any post-checkout call past its 48 hours closes as incomplete.</p>}
+    </div>
+  )
+}
+
+/** The manual outcome buttons, folded away when Talkroute is doing the marking. */
+function ManualFold({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-2">
+      <button onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} /> Log by hand (call made from a personal phone)</button>
+      {open && children}
     </div>
   )
 }
@@ -582,8 +616,8 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 function nextDay(ymd: string) { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10) }
 
 // ── ONE WELCOME-CALL CARD LIST ─────────────────────────────────────────────────────────────────
-function WelcomeList({ rows, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }: {
-  rows: Row[]; openId: string | null; setOpenId: (v: string | null) => void
+function WelcomeList({ rows, talkroute, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }: {
+  rows: Row[]; talkroute: boolean; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; copied: string | null; copyPhone: (id: string, p: string) => void
   welcome: (id: string, o: 'reached' | 'voicemail' | 'no_answer' | 'claim' | 'undo') => void
@@ -620,7 +654,8 @@ function WelcomeList({ rows, openId, setOpenId, draft, setDraft, busy, copied, c
                 </div>
                 <div className="text-[12px] text-muted mt-0.5">{r.listing} · checks in {shortDay(r.check_in)}{r.status.nights ? ` · ${r.status.nights} night${r.status.nights === 1 ? '' : 's'}` : ''}</div>
                 {r.done && (r.calledBy || r.callValue) && <div className="text-[11px] text-emerald-700 mt-0.5">{r.calledBy ? `${r.outcome === 'voicemail' ? 'Voicemail by' : 'Called by'} ${who(r.calledBy)}` : 'Called'}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}</div>}
-                {!r.done && r.outcome === 'no_answer' && r.calledBy && <div className="text-[11px] text-muted mt-0.5">Last tried by {who(r.calledBy)}</div>}
+                {!r.done && r.outcome === 'no_answer' && r.calledBy && !r.proof.lastAttemptAt && <div className="text-[11px] text-muted mt-0.5">Last tried by {who(r.calledBy)}</div>}
+                <ProofLine p={r.proof} done={r.done} kind="welcome" />
                 {r.phone ? (
                   <div className="text-[12px] mt-1 inline-flex items-center gap-2 flex-wrap">
                     <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} title="Calls through the Talkroute desktop app" className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</a>
@@ -638,7 +673,9 @@ function WelcomeList({ rows, openId, setOpenId, draft, setDraft, busy, copied, c
                 ) : (
                   <>
                     {!r.claimedBy && <button onClick={() => welcome(r.id, 'claim')} disabled={busy === r.id} title="Lock this call to you so nobody else dials the same guest" className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"><Hand size={13} /> Take it</button>}
-                    <button onClick={() => welcome(r.id, 'reached')} disabled={busy === r.id} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === r.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Reached</button>
+                    {talkroute
+                      ? <span title="Dial from the Talkroute app — the call record marks this card by itself" className="inline-flex items-center gap-1.5 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-[12px] font-semibold text-brand-700"><PhoneCall size={13} /> Tracked by Talkroute</span>
+                      : <button onClick={() => welcome(r.id, 'reached')} disabled={busy === r.id} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === r.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Reached</button>}
                   </>
                 )}
               </div>
@@ -650,9 +687,13 @@ function WelcomeList({ rows, openId, setOpenId, draft, setDraft, busy, copied, c
               <>
                 {r.recovery && <RecoveryNote rec={r.recovery} unit={r.listing} />}
                 <WelcomeScript r={r} draft={draft} setDraft={setDraft} onSaveNote={() => saveNote(r.id)} saving={saving === r.id} saved={saved === r.id} />
-                {!r.done && !r.closed && (
-                  <OutcomeRow busy={busy === r.id} attempts={r.attempts}
-                    onReached={() => welcome(r.id, 'reached')} onVoicemail={() => welcome(r.id, 'voicemail')} onNoAnswer={() => welcome(r.id, 'no_answer')} />
+                {!r.done && !r.closed && (talkroute
+                  ? <ManualFold>
+                      <OutcomeRow busy={busy === r.id} attempts={r.attempts} compact
+                        onReached={() => welcome(r.id, 'reached')} onVoicemail={() => welcome(r.id, 'voicemail')} onNoAnswer={() => welcome(r.id, 'no_answer')} />
+                    </ManualFold>
+                  : <OutcomeRow busy={busy === r.id} attempts={r.attempts}
+                      onReached={() => welcome(r.id, 'reached')} onVoicemail={() => welcome(r.id, 'voicemail')} onNoAnswer={() => welcome(r.id, 'no_answer')} />
                 )}
                 {failedId === r.id && error && (
                   <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-start gap-1.5">
@@ -702,7 +743,8 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                     {(r.closed || r.incomplete) && !r.done && <Badge cls="bg-slate-200 text-slate-600" Icon={PhoneOff}>Incomplete · closed</Badge>}
                   </div>
                   <div className="text-[12px] text-muted mt-0.5">{r.listing} · {r.nights} {r.nights === 1 ? 'night' : 'nights'} · checked out {shortDay(r.check_out)}</div>
-                  {(r.calledBy || r.callNote) && <div className="text-[11px] text-emerald-700 mt-0.5">{r.calledBy ? `${r.outcome === 'no_answer' ? 'Tried by' : 'Called by'} ${who(r.calledBy)}` : ''}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}{r.callNote ? ` · ${r.callNote.slice(0, 60)}` : ''}</div>}
+                  {(r.calledBy || r.callNote) && !(r.proof.lastAttemptAt && !r.done) && <div className="text-[11px] text-emerald-700 mt-0.5">{r.calledBy ? `${r.outcome === 'no_answer' ? 'Tried by' : 'Called by'} ${who(r.calledBy)}` : ''}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}{r.callNote ? ` · ${r.callNote.slice(0, 60)}` : ''}</div>}
+                  <ProofLine p={r.proof} done={r.done} kind="post" />
                   {r.phone ? (
                     <div className="text-[12px] mt-1 inline-flex items-center gap-2 flex-wrap">
                       <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</a>

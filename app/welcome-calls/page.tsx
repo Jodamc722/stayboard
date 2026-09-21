@@ -70,7 +70,7 @@ export default async function CallsPage() {
 
   return (
     <Shell>
-      <CallsDesk rows={d.rows} outRows={d.outRows} kpis={d.kpis as any} today={d.today} me={String(user.email || '')} />
+      <CallsDesk rows={d.rows} outRows={d.outRows} kpis={d.kpis as any} today={d.today} me={String(user.email || '')} talkroute={d.talkroute} />
     </Shell>
   )
 }

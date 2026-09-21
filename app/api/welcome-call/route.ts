@@ -302,7 +302,7 @@ export async function POST(req: NextRequest) {
       await sb.from('guest_calls').upsert({
         reservation_id: reservationId, kind: 'welcome', outcome, tier, ...(note ? { note } : {}),
         attempts: loggedAttempts,
-        called_by: by, caller_email: callerEmail, called_at: at,
+        called_by: by, caller_email: callerEmail, called_at: at, source: 'manual',
         listing_id: (meta as any)?.listing_id || null,
         guest_name: (meta as any)?.guest_name || null,
         ref_date: (meta as any)?.check_in || null,

@@ -31,7 +31,7 @@ import dynamic from 'next/dynamic'
 import {
   Users, ShieldCheck, Sliders, ChevronRight, Search, X, ArrowLeft, Loader2, Lock,
   Activity, ListChecks, Mail, Bot, ShoppingBag, HardHat, Package, MessageSquare,
-  DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2, CalendarClock, Plug, Timer, Tags, Cpu,
+  DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2, CalendarClock, Plug, Timer, Tags, Cpu, PhoneCall,
 } from 'lucide-react'
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { RolesAdmin } from '@/components/RolesAdmin'
@@ -69,6 +69,7 @@ const L = {
   integrations: dynamic(() => import('@/components/IntegrationsAdmin').then(m => m.IntegrationsAdmin), { loading: spin, ssr: false }),
   laborSettings: dynamic(() => import('@/components/LaborSettings').then(m => m.LaborSettings), { loading: spin, ssr: false }),
   customFields: dynamic(() => import('@/components/CustomFieldsAdmin').then(m => m.CustomFieldsAdmin), { loading: spin, ssr: false }),
+  talkroute: dynamic(() => import('@/components/TalkrouteAdmin').then(m => m.TalkrouteAdmin), { loading: spin, ssr: false }),
   aiModels: dynamic(() => import('@/components/AiModelsAdmin').then(m => m.AiModelsAdmin), { loading: spin, ssr: false }),
 }
 
@@ -107,6 +108,12 @@ const ENTRIES: Entry[] = [
     blurb: 'The outside apps Lighthouse talks to — Slack, outbound email, Guesty, Breezeway, Homebase — and whether each background feed is actually listening.',
     find: 'integrations connected apps slack email guesty breezeway homebase feed sync status listening webhook connect',
     render: () => <L.integrations />,
+  },
+  {
+    key: 'talkroute', title: 'Talkroute (phone)', group: 'Communications', Icon: PhoneCall,
+    blurb: 'Connect the phone system. Welcome calls get marked by the call record itself (answered / voicemail / no answer), and texts and voicemails show in Messages.',
+    find: 'talkroute phone calls call log welcome call answered picked up voicemail sms text texting inbox webhook api key dial',
+    render: () => <L.talkroute />,
   },
   {
     key: 'review-audit', title: 'Review audit', group: 'Start here', Icon: Star,

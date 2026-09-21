@@ -59,9 +59,14 @@ export async function POST(req: NextRequest) {
 
   const [{ data: res }, { data: prev }] = await Promise.all([
     sb.from('guesty_reservations').select('listing_id, guest_name, check_out, custom_fields, raw').eq('id', reservationId).maybeSingle(),
-    sb.from('guest_calls').select('outcome,attempts').eq('reservation_id', reservationId).eq('kind', 'post_checkout').maybeSingle(),
+    sb.from('guest_calls').select('outcome,attempts,source,last_attempt_at').eq('reservation_id', reservationId).eq('kind', 'post_checkout').maybeSingle(),
   ])
   const prevAttempts = Number((prev as any)?.attempts) || 0
+  // TALKROUTE (2026-09-21): when the phone system already counted this call (an attempt it logged
+  // in the last 24h), the person picking "All good" / "issue" is describing THAT call, not making
+  // another one — so the counter holds.
+  const phoneCounted = (prev as any)?.source === 'talkroute' && (prev as any)?.last_attempt_at && (Date.now() - new Date(String((prev as any).last_attempt_at)).getTime()) < 24 * 3600_000
+  const nextAttempts = outcome === 'claim' ? prevAttempts : (phoneCounted ? Math.max(1, prevAttempts) : prevAttempts + 1)
   // A completed call is never downgraded by a late claim.
   if (outcome === 'claim' && prev && ['happy', 'issue'].indexOf(String((prev as any).outcome)) >= 0) {
     return NextResponse.json({ ok: true, outcome: (prev as any).outcome, unchanged: true })
@@ -77,7 +82,7 @@ export async function POST(req: NextRequest) {
     ref_date: (res as any)?.check_out || null,
     scheduled_for: (res as any)?.check_out || null,
     outcome: outcome === 'claim' ? 'in_progress' : outcome,
-    attempts: outcome === 'claim' ? prevAttempts : prevAttempts + 1,
+    attempts: nextAttempts, ...(outcome !== 'claim' && !phoneCounted ? { source: 'manual' } : {}),
     ...(note || outcome !== 'claim' ? { note } : {}),   // a bare claim never blanks an earlier note
     called_by: by, caller_email: callerEmail, called_at: at,
   }, { onConflict: 'reservation_id,kind' })
@@ -101,5 +106,5 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* the local row is the record that matters */ }
 
-  return NextResponse.json({ ok: true, outcome, attempts: prevAttempts + 1, by, at, noteSynced })
+  return NextResponse.json({ ok: true, outcome, attempts: nextAttempts, by, at, noteSynced })
 }

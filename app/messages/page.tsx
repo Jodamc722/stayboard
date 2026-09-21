@@ -5,7 +5,10 @@ import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { SyncNowButton } from '@/components/SyncNowButton'
 import { SentimentBoard } from '@/components/SentimentBoard'
-import { MessageSquare, Gauge, Timer, Zap, Reply, Inbox, Mail } from 'lucide-react'
+import { MessageSquare, Gauge, Timer, Zap, Reply, Inbox, Mail, PhoneCall, Voicemail, PhoneMissed } from 'lucide-react'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { listPhoneThreads, type PhoneThreadSummary } from '@/lib/phone-threads'
+import { talkrouteConfigured } from '@/lib/talkroute'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,14 +60,26 @@ export default async function MessagesPage() {
   ])
   const msgs = msgsPage.rows
 
+  // THE PHONE SIDE (Talkroute, 2026-09-21). Texts, voicemails and calls keyed by guest number,
+  // merged into the same list by last activity. Empty until Talkroute is connected.
+  const phoneOn = await talkrouteConfigured()
+  const phone: PhoneThreadSummary[] = phoneOn ? await listPhoneThreads(supabaseAdmin(), 100).catch(() => []) : []
+
   const list = convos ?? []
-  const lids = Array.from(new Set(list.map((c: any) => c.listing_id).filter(Boolean)))
+  const lids = Array.from(new Set(list.map((c: any) => c.listing_id).concat(phone.map(t => t.listingId)).filter(Boolean)))
   const unitById: Record<string, string> = {}
   if (lids.length) {
     const { data: ls } = await supabase.from('guesty_listings').select('id, nickname, title').in('id', lids as string[])
     ;(ls ?? []).forEach((l: any) => { const n = String(l.nickname || l.title || ''); const m = n.match(/#?\s*([0-9]{2,5}[A-Za-z]?)\s*$/); unitById[l.id] = m ? m[1] : '' })
   }
   const kpis = computeKpis((msgs as Msg[] | null) ?? [], list)
+
+  // One list, two sources, newest first.
+  type Item = { kind: 'guesty'; at: string; c: any } | { kind: 'phone'; at: string; t: PhoneThreadSummary }
+  const items: Item[] = (list.map((c: any) => ({ kind: 'guesty' as const, at: String(c.last_message_at || ''), c })) as Item[])
+    .concat(phone.map(t => ({ kind: 'phone' as const, at: t.lastAt, t })))
+    .sort((a, b) => b.at.localeCompare(a.at))
+  const phoneAwaiting = phone.filter(t => t.awaiting).length
 
   return (
     <Shell>
@@ -74,7 +89,7 @@ export default async function MessagesPage() {
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Messages</h1>
           <p className="text-sm text-muted mt-1">
             {sync?.last_sync_at ? `Last synced ${timeAgo(new Date(sync.last_sync_at))} · ` : ''}
-            <strong className="text-ink/80">{list.length}</strong> threads · response stats over last <strong className="text-ink/80">{kpis.sampleConvos}</strong> conversations
+            <strong className="text-ink/80">{list.length}</strong> Guesty threads{phoneOn ? <> · <strong className="text-ink/80">{phone.length}</strong> phone threads{phoneAwaiting ? <> (<span className="text-rose-600 font-semibold">{phoneAwaiting} need a reply</span>)</> : null}</> : null} · response stats over last <strong className="text-ink/80">{kpis.sampleConvos}</strong> conversations
           </p>
         </div>
         <SyncNowButton />
@@ -117,13 +132,15 @@ export default async function MessagesPage() {
 
       <SentimentBoard />
 
-      {list.length === 0 ? (
+      {items.length === 0 ? (
         <div className="bg-white rounded-2xl border border-line p-16 text-center text-muted shadow-soft">
           No conversations cached yet. Click <strong>Sync now</strong> above.
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-line shadow-soft divide-y divide-line/60 overflow-hidden">
-          {list.map((c: any) => {
+          {items.map(it => {
+            if (it.kind === 'phone') return <PhoneRow key={'p' + it.t.number} t={it.t} unit={unitById[it.t.listingId] || ''} />
+            const c = it.c
             const awaiting = kpis.awaitingIds.has(c.id)
             return (
               <Link key={c.id} href={`/messages/${c.id}`} className="flex items-start gap-3 px-3 sm:px-5 py-3 hover:bg-app/40 transition-colors">
@@ -168,6 +185,36 @@ export default async function MessagesPage() {
         Median first-reply gap: <b className="text-ink">{fmtDur(kpis.medianFirstMs)}</b>{kpis.sampleReplies ? ` across ${kpis.sampleReplies} guest→host replies` : ''}. Replying under an hour boosts OTA ranking; threads whose latest message is a guest are flagged <span className="text-rose-600 font-medium">Awaiting reply</span>.
       </div>
     </Shell>
+  )
+}
+
+/* ---------- A phone thread in the list (Talkroute) ---------- */
+
+function PhoneRow({ t, unit }: { t: PhoneThreadSummary; unit: string }) {
+  const Icon = t.lastKind === 'voicemail' ? Voicemail : t.lastKind === 'call' ? (t.awaiting ? PhoneMissed : PhoneCall) : MessageSquare
+  const label = t.lastKind === 'voicemail' ? 'Voicemail' : t.lastKind === 'call' ? 'Call' : 'SMS'
+  return (
+    <Link href={`/messages/phone/${t.number}`} className="flex items-start gap-3 px-3 sm:px-5 py-3 hover:bg-app/40 transition-colors">
+      <Avatar name={t.guestName || t.display} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0 flex-wrap gap-y-1">
+            <span className="font-medium text-ink truncate">{t.guestName || t.display}</span>
+            <span className="text-[10px] text-muted uppercase tracking-[0.08em] font-semibold flex-shrink-0 inline-flex items-center gap-1"><Icon size={11} /> {label} · Talkroute</span>
+            {unit && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded flex-shrink-0">Unit {unit}</span>}
+            {!t.reservationId && <span className="text-[10px] text-muted bg-app px-1.5 py-0.5 rounded flex-shrink-0" title="No booking has this phone number">Unmatched</span>}
+            {t.awaiting && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-full flex-shrink-0" title="Latest is from the guest — a text, a voicemail or a missed call">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" /> Needs a reply
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-muted flex-shrink-0">{t.lastAt ? rel(t.lastAt) : ''}</span>
+        </div>
+        <p className={`text-sm truncate mt-0.5 ${t.unread ? 'text-ink font-medium' : 'text-muted'}`}>{t.preview || <span className="italic text-line">(no preview)</span>}</p>
+        <p className="text-[10px] text-muted mt-0.5">{t.display}{t.counts.texts ? ` · ${t.counts.texts} texts` : ''}{t.counts.voicemails ? ` · ${t.counts.voicemails} voicemail${t.counts.voicemails === 1 ? '' : 's'}` : ''}{t.counts.calls ? ` · ${t.counts.calls} call${t.counts.calls === 1 ? '' : 's'}` : ''}</p>
+      </div>
+    </Link>
   )
 }
 
