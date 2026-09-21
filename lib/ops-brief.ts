@@ -397,7 +397,9 @@ async function gather(variant: BriefVariant) {
     .filter(r => { const st = ratingToStars(Number(r.rating)); return st != null && st <= 3 })
     .slice()
     .sort((a, b) => str(b.created_at).localeCompare(str(a.created_at)))
-  const low30 = lowRevs.slice(0, 8).map(r => ({
+  // Five is a scoreboard, eight is a spreadsheet — and this card is the last thing in the email,
+  // so its rows were the ones Gmail was cutting off (2026-09-21). The count above it stays honest.
+  const low30 = lowRevs.slice(0, 5).map(r => ({
     unit: meta[String(r.listing_id)]?.name ?? 'Unit',
     stars: ratingToStars(Number(r.rating)) as number,
     channel: str(r.channel),
