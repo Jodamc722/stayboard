@@ -18,7 +18,7 @@
 // The script panel is the one built earlier today: facts as chips, the must-dos in the only box,
 // six steps, the building guide behind a toggle, notes last.
 import { useEffect, useState, type ReactNode } from 'react'
-import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck } from 'lucide-react'
+import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck, FileText } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
 
 type Recovery = { listingId: string; rating: number; channel: string; guest: string; content: string; at: string; openDays: number; reviewsSince: number }
@@ -51,8 +51,29 @@ type OutRow = {
 // TALKROUTE (2026-09-21). What the phone system last saw for this call: the source of the outcome
 // ('talkroute' when the call record proved it, 'manual' / '' when a person pressed a button), the
 // last attempt and its result, and how long the guest actually talked.
-type Proof = { source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number }
+type Proof = {
+  source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number
+  note: string; promised: string[]; issues: string[]; sentiment: string; callId: string
+}
 function talkMins(sec: number) { return sec >= 60 ? `${Math.round(sec / 60)} min` : `${sec}s` }
+/**
+ * WHAT WAS SAID (2026-09-21, Jon: "in the call on call desk i should be able to see record notes").
+ * The note written from the recording, on the card. Promises first when there are any — the caller
+ * needs to know what we already owe this guest before dialling them again.
+ */
+function CallNote({ p }: { p: Proof }) {
+  if (!p.note) return null
+  const tone = p.sentiment === 'unhappy' ? 'border-rose-200 bg-rose-50/60' : p.sentiment === 'happy' ? 'border-emerald-200 bg-emerald-50/50' : 'border-line bg-app/50'
+  return (
+    <div className={`mt-1.5 rounded-xl border px-2.5 py-2 ${tone}`}>
+      <div className="text-[10px] uppercase tracking-[0.12em] font-semibold text-muted flex items-center gap-1 mb-0.5"><FileText size={10} /> From the call</div>
+      <div className="text-[12.5px] text-ink">{p.note}</div>
+      {p.promised.length > 0 && <div className="text-[11.5px] text-brand-700 mt-1"><b>We promised:</b> {p.promised.join(' · ')}</div>}
+      {p.issues.length > 0 && <div className="text-[11.5px] text-rose-700 mt-0.5"><b>Flagged:</b> {p.issues.join(' · ')}</div>}
+    </div>
+  )
+}
+
 function ProofLine({ p, done, kind }: { p: Proof; done: boolean; kind: 'welcome' | 'post' }) {
   if (!p.lastAttemptAt) return null
   const res = p.lastResult
@@ -656,6 +677,7 @@ function WelcomeList({ rows, talkroute, openId, setOpenId, draft, setDraft, busy
                 {r.done && (r.calledBy || r.callValue) && <div className="text-[11px] text-emerald-700 mt-0.5">{r.calledBy ? `${r.outcome === 'voicemail' ? 'Voicemail by' : 'Called by'} ${who(r.calledBy)}` : 'Called'}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}</div>}
                 {!r.done && r.outcome === 'no_answer' && r.calledBy && !r.proof.lastAttemptAt && <div className="text-[11px] text-muted mt-0.5">Last tried by {who(r.calledBy)}</div>}
                 <ProofLine p={r.proof} done={r.done} kind="welcome" />
+                <CallNote p={r.proof} />
                 {r.phone ? (
                   <div className="text-[12px] mt-1 inline-flex items-center gap-2 flex-wrap">
                     <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} title="Calls through the Talkroute desktop app" className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</a>
@@ -745,6 +767,7 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                   <div className="text-[12px] text-muted mt-0.5">{r.listing} · {r.nights} {r.nights === 1 ? 'night' : 'nights'} · checked out {shortDay(r.check_out)}</div>
                   {(r.calledBy || r.callNote) && !(r.proof.lastAttemptAt && !r.done) && <div className="text-[11px] text-emerald-700 mt-0.5">{r.calledBy ? `${r.outcome === 'no_answer' ? 'Tried by' : 'Called by'} ${who(r.calledBy)}` : ''}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}{r.callNote ? ` · ${r.callNote.slice(0, 60)}` : ''}</div>}
                   <ProofLine p={r.proof} done={r.done} kind="post" />
+                  <CallNote p={r.proof} />
                   {r.phone ? (
                     <div className="text-[12px] mt-1 inline-flex items-center gap-2 flex-wrap">
                       <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</a>

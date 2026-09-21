@@ -405,12 +405,57 @@ export type CallLog = {
   // TALKROUTE (migration 104): where the outcome came from and what the phone system last saw.
   source?: string | null; last_attempt_at?: string | null; last_result?: string | null; talk_seconds?: number | null
 }
-/** The phone system's word on a call, carried onto the desk rows. */
-export type PhoneProof = { source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number }
-const proofOf = (lg: CallLog | null): PhoneProof => ({
+/**
+ * The phone system's word on a call, carried onto the desk rows — and, since 2026-09-21, WHAT WAS
+ * SAID on it. Jon: "in the call on call desk i should be able to see record notes." The note is
+ * written from the recording (lib/call-notes); the desk shows it inline so a caller picking up the
+ * next card can see what the last conversation with this guest actually covered, without opening
+ * the booking.
+ */
+export type PhoneProof = {
+  source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number
+  note: string; promised: string[]; issues: string[]; sentiment: string; callId: string
+}
+const proofOf = (lg: CallLog | null, note?: CallNote | null): PhoneProof => ({
   source: lg ? String(lg.source || '') : '', lastAttemptAt: lg ? String(lg.last_attempt_at || '') : '',
   lastResult: lg ? String(lg.last_result || '') : '', talkSeconds: lg ? (Number(lg.talk_seconds) || 0) : 0,
+  note: note?.summary || '', promised: note?.promised || [], issues: note?.issues || [],
+  sentiment: note?.sentiment || '', callId: note?.id || '',
 })
+
+/** The written-up call on a booking: the newest transcribed call we have for it. */
+export type CallNote = { id: string; summary: string; promised: string[]; issues: string[]; sentiment: string; at: string }
+
+/**
+ * The newest call note per reservation, for the desk. One query for the whole board rather than one
+ * per card; missing table or RLS hiccup reads as "no notes", never as a broken desk.
+ */
+async function callNotes(sb: any, ids: string[]): Promise<Map<string, CallNote>> {
+  const out = new Map<string, CallNote>()
+  if (!ids.length) return out
+  try {
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await sb.from('talkroute_calls')
+        .select('id,reservation_id,summary,intel,call_at')
+        .in('reservation_id', ids.slice(i, i + 200))
+        .not('summary', 'is', null)
+        .order('call_at', { ascending: true })
+      for (const r of ((data as any[]) || [])) {
+        const rid = String(r.reservation_id || '')
+        if (!rid || !String(r.summary || '').trim()) continue
+        const intel: any = (r.intel && typeof r.intel === 'object') ? r.intel : {}
+        // ascending, so the last write per reservation is the newest call.
+        out.set(rid, {
+          id: String(r.id), summary: String(r.summary), at: String(r.call_at || ''),
+          promised: Array.isArray(intel.promised) ? intel.promised.slice(0, 4) : [],
+          issues: Array.isArray(intel.issues) ? intel.issues.slice(0, 4) : [],
+          sentiment: String(intel.sentiment || ''),
+        })
+      }
+    }
+  } catch { /* the desk works without notes */ }
+  return out
+}
 
 export type WelcomeRow = {
   id: string; guest: string; guestId: string; listing: string; listingId: string; building: string; check_in: string
@@ -479,6 +524,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
   const logs: CallLog[] = (await Promise.all(idChunks.map(chunk => sb.from('guest_calls')
     .select('reservation_id,kind,outcome,note,called_by,caller_email,called_at,attempts,tier,source,last_attempt_at,last_result,talk_seconds')
     .in('reservation_id', chunk).then((r: any) => r.data || [])))).flat()
+  const notes = await callNotes(sb, callIds)
   const callLog = new Map<string, CallLog>()
   for (const c of logs) callLog.set(String(c.reservation_id) + '|' + String(c.kind), c)
   const logOf = (id: any, kind: 'welcome' | 'post_checkout') => callLog.get(String(id) + '|' + kind) || null
@@ -530,7 +576,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
       calledAt: (lg && isCompleted(lg.outcome) && lg.called_at) ? String(lg.called_at) : (w._at || ''),
       claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
       claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
-      proof: proofOf(lg),
+      proof: proofOf(lg, notes.get(String(r.id))),
       sensitive: truthy(fieldVal(r.custom_fields, 'sensitive')),
       // Due = inside the 72-hour window, every tier alike (Jon, 2026-09-09: "complete by the day of
       // or 72 hours in advance"). Beyond the window a mandatory call is still on the 14-day list
@@ -571,7 +617,7 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
         calledBy: lg ? String(lg.called_by || '') : '', calledAt: lg ? String(lg.called_at || '') : '', callNote: lg ? String(lg.note || '') : '',
         claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
         claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
-        proof: proofOf(lg),
+        proof: proofOf(lg, notes.get(String(r.id))),
         closed: checkOut < backDate,
         incomplete: !!lg && lg.outcome === 'incomplete',
       }
