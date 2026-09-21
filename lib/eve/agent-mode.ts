@@ -84,18 +84,18 @@ export const ACTIONS: ActionDef[] = [
     wiredAt: ['lib/eve/slack-watch.ts (nudge, urgent, digest)', 'lib/eve/approvals.ts postDoorCodeApproval'] },
   { key: 'telegram_ask', label: 'Ask on Telegram', what: 'The morning ask (findings, questions), proposals waiting on a yes, approved questions to Ralphbot.', def: 2, cap: 4,
     wiredAt: ['lib/eve/ask.ts deliverOne', 'lib/eve/ralph.ts sendApproved', 'lib/eve/agent-mode.ts proposeAction'] },
-  { key: 'email_draft', label: 'Draft an email', what: 'A Gmail draft in a connected mailbox. Nobody receives it until a person sends it.', def: 2, cap: 4, wiredAt: [] },
-  { key: 'email_send', label: 'Send an email', what: 'An email leaving the company. Permanently propose-only.', def: 2, cap: 2, wiredAt: [] },
-  { key: 'guest_reply_draft', label: 'Draft a guest reply', what: 'A reply written into the guest thread as a draft, not sent.', def: 2, cap: 4, wiredAt: [] },
-  { key: 'guest_reply_send', label: 'Message a guest', what: 'A message the guest actually receives. Permanently propose-only.', def: 2, cap: 2, wiredAt: [] },
-  { key: 'task_create', label: 'Create a task', what: 'A new Breezeway task.', def: 2, cap: 4, wiredAt: [] },
-  { key: 'task_assign', label: 'Assign a task', what: 'Put a task on somebody\'s board.', def: 2, cap: 4, wiredAt: [] },
-  { key: 'task_note', label: 'Note on a task', what: 'A comment on an existing Breezeway task.', def: 2, cap: 4, wiredAt: [] },
-  { key: 'task_cancel', label: 'Cancel a task', what: 'Cancel a Breezeway task.', def: 2, cap: 3, wiredAt: [] },
+  { key: 'email_draft', label: 'Draft an email', what: 'A Gmail draft in a connected mailbox. Nobody receives it until a person sends it.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts email_draft', 'lib/eve/watches.ts channel_broken, stock_low'] },
+  { key: 'email_send', label: 'Send an email', what: 'An email leaving the company. Permanently propose-only, and the executor is not enabled.', def: 2, cap: 2, wiredAt: [] },
+  { key: 'guest_reply_draft', label: 'Draft a guest reply', what: 'A reply saved on the thread (/messages) and in Command Center → Decide with Send / Discard. Not sent.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts guest_reply_draft', 'lib/eve/watches.ts guest_unanswered_1h, bad_review_in'] },
+  { key: 'guest_reply_send', label: 'Message a guest', what: 'A message the guest actually receives (Guesty send-message). Permanently propose-only: only a Send button or a Telegram yes runs it.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts guest_reply_send', 'app/api/eve/guest-drafts send'] },
+  { key: 'task_create', label: 'Create a task', what: 'A new Breezeway task.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_create', 'lib/eve/core.ts propose_action', 'lib/eve/watches.ts big_arrival_uninspected, bad_review_in, glitch_overdue'] },
+  { key: 'task_assign', label: 'Assign a task', what: 'Put a task on somebody\'s board.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_assign', 'lib/eve/watches.ts clean_late'] },
+  { key: 'task_note', label: 'Note on a task', what: 'A comment on an existing Breezeway task.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_note', 'lib/eve/watches.ts no_show_risk'] },
+  { key: 'task_cancel', label: 'Cancel a task', what: 'Cancel a Breezeway task (never a departure clean — those belong to the scheduler).', def: 2, cap: 3, wiredAt: ['lib/eve/executors.ts task_cancel'] },
   { key: 'door_code_release', label: 'Release a door code', what: 'Hand a code to a person. Permanently propose-only; a person set to Direct is their own approver.', def: 2, cap: 2,
     wiredAt: ['lib/eve/core.ts door_code_check'] },
-  { key: 'guesty_write', label: 'Write to Guesty', what: 'Reservation notes, custom fields. Permanently propose-only.', def: 2, cap: 2, wiredAt: [] },
-  { key: 'calendar_block', label: 'Block a calendar', what: 'Block or unblock nights in Guesty. Permanently propose-only.', def: 2, cap: 2, wiredAt: [] },
+  { key: 'guesty_write', label: 'Write to Guesty', what: 'Reservation notes, custom fields. Permanently propose-only.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts guesty_write'] },
+  { key: 'calendar_block', label: 'Block a calendar', what: 'Soft-block a turnover day (the schedule board + the Breezeway clean move). Permanently propose-only.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts calendar_block'] },
   { key: 'recommendation', label: 'Log a recommendation', what: 'Her ledger — graded later, changes nothing until accepted.', def: 1, cap: 1,
     wiredAt: ['lib/eve/core.ts recommend', 'lib/eve/review.ts plans'] },
   { key: 'memory_rule', label: 'Write a memory', what: 'Her own notebook. At 0 she stops learning on her own; Jon can still teach her.', def: 1, cap: 1,
@@ -373,28 +373,43 @@ export type AgentLogEntry = {
   summary?: string
   /** eve_actions id, task id, Slack ts — whatever lets a person find the thing. */
   ref?: string | null
-  by: string   // 'eve' | 'cron:<name>' | 'chat'
+  by: string   // 'eve' | 'cron:<name>' | 'chat' | 'watch:<key>'
   actor?: string | null
+  /** What would reverse it (lib/eve/executors.ts Undo) — stored so "undo" can put it back within 24h. */
+  undo?: any
 }
 
-/** One row per decision. Best-effort: never throws, never blocks the caller for long. */
-export async function logAgent(e: AgentLogEntry): Promise<void> {
+/**
+ * One row per decision. Best-effort: never throws, never blocks the caller for long. Returns the
+ * row id when the insert landed in time (the undo handle), else null.
+ */
+export async function logAgent(e: AgentLogEntry): Promise<string | null> {
+  const base: any = {
+    action: e.action, rung: e.rung, allowed: !!e.allowed, mode: e.mode || null,
+    reason: (e.reason || '').slice(0, 300), usd: e.usd ?? null,
+    summary: (e.summary || '').slice(0, 500), ref: e.ref ? String(e.ref).slice(0, 120) : null,
+    by: String(e.by || 'eve').slice(0, 60), actor: e.actor ? String(e.actor).slice(0, 120) : null,
+  }
+  const attempt = async (row: any) => {
+    const ins = supabaseAdmin().from('eve_agent_log').insert(row).select('id').maybeSingle()
+    const r: any = await Promise.race([ins, new Promise(res => setTimeout(() => res({ timeout: true }), 2500))])
+    return r
+  }
   try {
-    const ins = supabaseAdmin().from('eve_agent_log').insert({
-      action: e.action, rung: e.rung, allowed: !!e.allowed, mode: e.mode || null,
-      reason: (e.reason || '').slice(0, 300), usd: e.usd ?? null,
-      summary: (e.summary || '').slice(0, 500), ref: e.ref ? String(e.ref).slice(0, 120) : null,
-      by: String(e.by || 'eve').slice(0, 60), actor: e.actor ? String(e.actor).slice(0, 120) : null,
-    })
-    await Promise.race([ins, new Promise(res => setTimeout(res, 2000))])
-  } catch { /* migration 100 not run, or a blip — the action still happens */ }
+    let r = await attempt(e.undo ? { ...base, undo: e.undo } : base)
+    // Migration 102 not run yet: the undo column is missing. Log the action anyway, without it.
+    if (r?.error && e.undo && /column|schema cache/i.test(String(r.error.message || ''))) r = await attempt(base)
+    const id = r?.data?.id
+    return id != null ? String(id) : null
+  } catch { return null }   /* migration 100 not run, or a blip — the action still happens */
 }
 
 /**
  * Count it AND log it. Call after the thing actually happened (or was proposed / drafted).
  * `mode` decides which counter moves: an act counts against actions, an ask against asks.
+ * Returns the log row id (the undo handle) when there is one.
  */
-export async function recordAgentAction(action: ActionType, meta: Omit<AgentLogEntry, 'action'> & { countAs?: 'action' | 'ask' | 'none' }): Promise<void> {
+export async function recordAgentAction(action: ActionType, meta: Omit<AgentLogEntry, 'action'> & { countAs?: 'action' | 'ask' | 'none' }): Promise<string | null> {
   const countAs = meta.countAs || (meta.mode === 'act' ? 'action' : (action === 'telegram_ask' || meta.mode === 'propose') ? 'ask' : 'none')
   if (countAs !== 'none') {
     try {
@@ -405,13 +420,29 @@ export async function recordAgentAction(action: ActionType, meta: Omit<AgentLogE
       await setSetting(AGENT_COUNTERS_KEY, c, meta.by)
     } catch { /* counters are advisory */ }
   }
-  await logAgent({ action, ...meta })
+  return logAgent({ action, ...meta })
 }
 
-/** The "Today" strip. */
-export async function agentToday(): Promise<{ date: string; actions: number; asks: number; aiUsd: number; byAction: Record<string, number> }> {
+/** The "Today" strip: acted / proposed / graded good / graded bad (the loop, in four numbers). */
+export async function agentToday(): Promise<{ date: string; actions: number; asks: number; aiUsd: number; byAction: Record<string, number>; proposed: number; gradedGood: number; gradedBad: number; gradedPending: number }> {
   const [c, usd] = await Promise.all([readCounters(), aiSpendToday()])
-  return { date: c.date, actions: c.actions, asks: c.asks, aiUsd: usd, byAction: c.byAction }
+  let proposed = 0, gradedGood = 0, gradedBad = 0, gradedPending = 0
+  try {
+    const sinceLocal = new Date(c.date + 'T00:00:00')
+    const since = new Date(sinceLocal.getTime() - etOffsetMinutes(sinceLocal) * 60_000).toISOString()
+    const { data } = await supabaseAdmin().from('eve_actions').select('id,payload').eq('kind', 'ask').gte('created_at', since).limit(500)
+    for (const r of ((data as any[]) || [])) if (r.payload?.type === 'action') proposed++
+  } catch { /* zero */ }
+  try {
+    const since30 = new Date(Date.now() - 30 * 86400_000).toISOString()
+    const { data } = await supabaseAdmin().from('eve_recommendations').select('outcome,status').eq('kind', 'action').gte('created_at', since30).limit(1000)
+    for (const r of ((data as any[]) || [])) {
+      if (r.outcome === 'worked') gradedGood++
+      else if (r.outcome === 'didnt') gradedBad++
+      else if (!r.outcome && r.status === 'accepted') gradedPending++
+    }
+  } catch { /* migration 099/102 not run: zeros */ }
+  return { date: c.date, actions: c.actions, asks: c.asks, aiUsd: usd, byAction: c.byAction, proposed, gradedGood, gradedBad, gradedPending }
 }
 
 // ---- Stepping down: drafts and proposals ---------------------------------------------------------
@@ -425,6 +456,53 @@ export type Proposal = {
   usd?: number | null
   by: string
   actor?: string | null
+  /** Set by lib/eve/watches.ts: which watch fired and on what (a unit, a thread, a task). */
+  watchKey?: string | null
+  subject?: string | null
+  /** The metric the action is expected to move — the recommendation row it creates is graded on it. */
+  metric?: string | null
+  /** When the action carries out a plan from the ledger: a yes accepts it, a no rejects it. */
+  recommendationId?: string | null
+}
+
+/** The executor's answer (lib/eve/executors.ts ExecOut, minus the summary the caller already has). */
+export type ExecResult = { ok: boolean; done?: string; error?: string; ref?: string | null; undo?: any }
+
+/** What the proposal carries into the eve_actions payload so the receipts survive the round trip. */
+function proposalMeta(p: Proposal) {
+  return { actor: p.actor || null, watchKey: p.watchKey || null, subject: p.subject || null, metric: p.metric || null, recommendation_id: p.recommendationId || null }
+}
+
+// The metric an action most plausibly moves, when the caller did not say. Only ever a guess — the
+// grader decides — but a guess that is measurable beats no row at all.
+const ACTION_METRIC: Partial<Record<ActionType, string>> = {
+  task_create: 'tasks_completed', task_assign: 'cleans_unassigned', task_note: 'tasks_completed', task_cancel: 'tasks_completed',
+  guest_reply_draft: 'sentiment_negative', guest_reply_send: 'sentiment_negative',
+  email_draft: 'open_field_work', guesty_write: 'glitches_open', calendar_block: 'cleans_done',
+  slack_post: 'tasks_completed',
+}
+
+/**
+ * THE LOOP CLOSES (Build 3, 2026-09-21). Every action she carries out becomes a recommendation row
+ * (kind 'action', measured in 7 days, accepted on the spot because the thing was actually done) so
+ * gradeDue measures whether it helped and the Today strip can say "graded good / graded bad".
+ * Best-effort: a missing metric or a failed insert never touches the action that already happened.
+ */
+export async function afterAct(action: ActionType, res: ExecResult, meta: { by: string; actor?: string | null; watchKey?: string | null; subject?: string | null; summary: string; metric?: string | null }): Promise<void> {
+  const internal = action === 'memory_rule' || action === 'recommendation' || action === 'telegram_ask'
+  if (!res.ok || internal) return
+  const metric = meta.metric || ACTION_METRIC[action]
+  if (!metric) return
+  try {
+    const { createRecommendation, decideRecommendation } = await import('./recommendations')
+    const title = `Action: ${(res.done || meta.summary || action).slice(0, 240)}`
+    const detail = [`Eve carried this out (${action}) via ${meta.by}${meta.actor ? `, approved by ${meta.actor}` : ''}.`, meta.watchKey ? `Fired by watch ${meta.watchKey}${meta.subject ? ` on ${meta.subject}` : ''}.` : '', res.ref ? `Ref ${res.ref}.` : ''].filter(Boolean).join(' ')
+    const r = await createRecommendation({ title, detail, metric, scope: 'portfolio', expect_direction: metricDirection(metric), measure_in_days: 7, measure_window: 7, created_by: meta.actor || 'eve', source: meta.watchKey ? 'watch' : 'chat', kind: 'action', area: 'operations' })
+    if (r.ok && r.id) await decideRecommendation(r.id, 'accepted', 'eve', 'accepted automatically: the action was carried out')
+  } catch { /* the ledger is a receipt, never a gate */ }
+}
+function metricDirection(metric: string): 'up' | 'down' {
+  return /unassigned|negative|open|low_|glitches|cancel|minutes|unanswered/.test(metric) ? 'down' : 'up'
 }
 
 /** Rung 1: write it down and stop. Lands in eve_actions kind 'draft' so it shows in the queue. */
@@ -458,7 +536,7 @@ export async function proposeAction(p: Proposal): Promise<{ ok: boolean; id?: st
   try {
     const { data, error } = await supabaseAdmin().from('eve_actions').insert({
       created_by: p.actor || p.by, kind: 'ask',
-      payload: { type: 'action', ref: '', action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, why: (p.why || '').slice(0, 300), delivery_count: 0 },
+      payload: { type: 'action', ref: '', action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, why: (p.why || '').slice(0, 300), delivery_count: 0, by: p.by, ...proposalMeta(p) },
       why: (p.why || p.summary).slice(0, 400), status: 'proposed',
       expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
     }).select('id').maybeSingle()
@@ -556,7 +634,7 @@ export async function deferAction(p: Proposal, kind: DeferKind = 'action', setti
   try {
     const { data, error } = await supabaseAdmin().from('eve_actions').insert({
       created_by: p.actor || p.by, kind: 'ask',
-      payload: { type: 'deferred', ref: '', deferKind: kind, action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, deferUntil: until, by: p.by, delivery_count: 0 },
+      payload: { type: 'deferred', ref: '', deferKind: kind, action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, deferUntil: until, by: p.by, delivery_count: 0, ...proposalMeta(p) },
       why: (p.why || `held for quiet hours until ${s.quietHours.end} ${s.quietHours.tz}`).slice(0, 400), status: 'proposed',
       expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
     }).select('id').maybeSingle()
@@ -600,17 +678,18 @@ export async function flushDeferred(by = 'cron:flush'): Promise<{ ran: number; f
     } catch { claimed = false }
     if (!claimed) { out.skipped++; continue }
     const action = String(pl.action || 'slack_post') as ActionType
-    let res: { ok: boolean; done?: string; error?: string }
+    let res: ExecResult
     if (pl.deferKind === 'proposal_notify') {
       const n = await notifyProposal(String(pl.exec?.proposal_id || ''), s)
       res = n.notified.length ? { ok: true, done: `approver told via ${n.notified.join('+')}` } : { ok: false, error: n.error || 'undeliverable' }
     } else {
-      res = await runExec(action, pl.exec || {}, by)
+      res = await runExec(action, pl.exec || {}, by, { actor: String(pl.actor || '') || null })
     }
     const nowISO = new Date().toISOString()
-    try { await supabaseAdmin().from('eve_actions').update({ status: res.ok ? 'executed' : 'failed', executed_at: res.ok ? nowISO : null, result: { by, ...res } }).eq('id', String(r.id)) } catch { /* fine */ }
+    try { await supabaseAdmin().from('eve_actions').update({ status: res.ok ? 'executed' : 'failed', executed_at: res.ok ? nowISO : null, result: { by, ok: res.ok, done: res.done, error: res.error, ref: res.ref } }).eq('id', String(r.id)) } catch { /* fine */ }
     if (pl.deferKind !== 'proposal_notify') {
-      await recordAgentAction(action, { rung: 3, allowed: res.ok, mode: 'act', reason: res.ok ? `deferred from quiet hours; ran at ${nowISO}` : `deferred from quiet hours; failed: ${res.error}`, summary: String(pl.summary || ''), ref: String(r.id), by: String(pl.by || by), countAs: res.ok ? 'action' : 'none' })
+      await recordAgentAction(action, { rung: 3, allowed: res.ok, mode: 'act', reason: res.ok ? `deferred from quiet hours; ran at ${nowISO}` : `deferred from quiet hours; failed: ${res.error}`, summary: res.ok && res.done ? res.done : String(pl.summary || ''), ref: res.ref || String(r.id), by: String(pl.by || by), countAs: res.ok ? 'action' : 'none', undo: res.undo || undefined })
+      if (res.ok) await afterAct(action, res, { by: String(pl.by || by), watchKey: String(pl.watchKey || '') || null, subject: String(pl.subject || '') || null, summary: String(pl.summary || '') })
     }
     if (res.ok) out.ran++; else { out.failed++; out.notes.push(`${action}: ${res.error}`) }
   }
@@ -619,16 +698,25 @@ export async function flushDeferred(by = 'cron:flush'): Promise<{ ran: number; f
 
 /**
  * Step down from whatever the verdict allows. The caller passes what it WANTED to do; this files
- * the right smaller thing and returns which one. `act` is the caller's own function, run only when
- * the verdict says act — and counted when it succeeds. `deferred` stores the exec to run later, so
- * `p.exec` must be complete enough for runExec.
+ * the right smaller thing and returns which one. When the verdict says act, the action runs through
+ * the executor registry (lib/eve/executors.ts) from `p.exec` — or through `act`, the caller's own
+ * function, for the few paths that still carry their own (Slack watch). Either way it is counted
+ * when it succeeds, logged with its undo, and turned into a graded recommendation row.
+ * `deferred` stores the exec to run later, so `p.exec` must be complete enough for runExec.
  */
-export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => Promise<{ ok: boolean; ref?: string | null; error?: string }>): Promise<{ mode: Mode; ok: boolean; ref?: string | null; error?: string }> {
-  if (verdict.mode === 'act' && act) {
-    let r: { ok: boolean; ref?: string | null; error?: string }
-    try { r = await act() } catch (e: any) { r = { ok: false, error: String(e?.message || e).slice(0, 200) } }
-    await recordAgentAction(p.action, { rung: verdict.rung, allowed: true, mode: 'act', reason: r.ok ? verdict.reason : `act failed: ${r.error || 'unknown'}`, summary: p.summary, ref: r.ref || null, by: p.by, actor: p.actor, usd: p.usd, countAs: r.ok ? 'action' : 'none' })
-    return { mode: 'act', ok: r.ok, ref: r.ref, error: r.error }
+export type StepResult = { mode: Mode; ok: boolean; ref?: string | null; error?: string; done?: string; logId?: string | null; undo?: any }
+
+export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => Promise<{ ok: boolean; ref?: string | null; error?: string }>): Promise<StepResult> {
+  if (verdict.mode === 'act') {
+    let r: ExecResult
+    if (act) {
+      try { r = await act() } catch (e: any) { r = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+    } else {
+      r = await runExec(p.action, p.exec || {}, p.by, { actor: p.actor })
+    }
+    const logId = await recordAgentAction(p.action, { rung: verdict.rung, allowed: r.ok, mode: 'act', reason: r.ok ? verdict.reason : `act failed: ${r.error || 'unknown'}`, summary: r.ok && r.done ? r.done : p.summary, ref: r.ref || null, by: p.by, actor: p.actor, usd: p.usd, countAs: r.ok ? 'action' : 'none', undo: r.undo || undefined })
+    if (r.ok) await afterAct(p.action, r, { by: p.by, actor: p.actor, watchKey: p.watchKey, subject: p.subject, summary: p.summary, metric: p.metric })
+    return { mode: 'act', ok: r.ok, ref: r.ref, error: r.error, done: r.done, logId, undo: r.undo || null }
   }
   if (verdict.mode === 'deferred') {
     const r = await deferAction(p, 'action', verdict.settings)
@@ -646,47 +734,38 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
   return { mode: 'observe', ok: true }
 }
 
+/**
+ * ONE CALL FOR "EVE WANTS TO DO X" (the chat tool and the watches). Decides with agentAllowed, then
+ * steps down. `p.exec` is the full payload the executor needs.
+ */
+export async function attemptAction(p: Proposal, opts: { ask?: boolean; urgent?: boolean; usd?: number } = {}): Promise<StepResult & { verdict: AgentVerdict }> {
+  const verdict = await agentAllowed(p.action, { ask: opts.ask, urgent: opts.urgent, usd: opts.usd ?? (p.usd || undefined) })
+  const r = await stepDown(verdict, p)
+  return { ...r, verdict }
+}
+
 // ---- Executing an approved proposal --------------------------------------------------------------
 
-/** The executors: one per action Eve can currently carry out herself from a stored `exec`. */
-async function runExec(action: ActionType, exec: any, by: string): Promise<{ ok: boolean; done?: string; error?: string }> {
+/**
+ * The executors live in lib/eve/executors.ts (one per ActionType). This is the thin adapter every
+ * path in this file uses: a stored `exec` payload in, the executor's receipt out. `human` marks a
+ * person's yes — the welded actions (guest_reply_send, guesty_write, calendar_block) refuse to run
+ * without it, whatever the caller thinks the rung is.
+ */
+async function runExec(action: ActionType, exec: any, by: string, opts: { actor?: string | null; human?: boolean } = {}): Promise<ExecResult> {
   try {
-    if (action === 'slack_post' && exec?.channel && exec?.text) {
-      const { postToChannel, postThreadReply } = await import('@/lib/slack')
-      const r = exec.thread_ts ? await postThreadReply(String(exec.channel), String(exec.thread_ts), String(exec.text)) : await postToChannel(String(exec.channel), String(exec.text))
-      return r.ok ? { ok: true, done: `posted in ${exec.channel_name || exec.channel}` } : { ok: false, error: String(r.error || 'Slack refused it') }
-    }
-    if (action === 'telegram_ask' && exec?.chat_id && exec?.text) {
-      const { sendMessage } = await import('@/lib/telegram')
-      const r = await sendMessage(String(exec.chat_id), String(exec.text))
-      if (!r.ok) return { ok: false, error: String((r as any).error || 'Telegram refused it') }
-      // A deferred morning ask carries its binding so the reply still lands on the right question.
-      if (exec.bind && typeof exec.bind === 'object') {
-        try {
-          await supabaseAdmin().from('eve_actions').insert({
-            created_by: exec.bind.created_by || by, kind: 'ask',
-            payload: { type: exec.bind.type, ref: exec.bind.ref, chat_id: String(exec.chat_id), message_id: Number((r as any)?.result?.message_id) || null, delivery_count: 1, sent_at: new Date().toISOString() },
-            why: String(exec.bind.title || '').slice(0, 400), status: 'proposed',
-          })
-        } catch { /* sent; only the reply binding is lost */ }
-      }
-      return { ok: true, done: 'sent on Telegram' }
-    }
-    if (action === 'memory_rule' && exec?.text) {
-      const { saveMemory } = await import('./memory')
-      const r = await saveMemory({ text: String(exec.text), kind: exec.kind, why: exec.why, scope: exec.scope, weight: exec.weight, source: 'eve', created_by: by })
-      return r.ok ? { ok: true, done: 'remembered' } : { ok: false, error: r.error || 'could not save' }
-    }
-    return { ok: true, done: `approved — no executor for ${action} yet, so a person does this one by hand` }
+    const { runExecutor } = await import('./executors')
+    const r = await runExecutor(action, exec || {}, { by, actor: opts.actor || null, human: !!opts.human })
+    return { ok: r.ok, done: r.ok ? (r.done || r.summary) : undefined, error: r.ok ? undefined : (r.error || r.summary), ref: r.ref || null, undo: r.undo || null }
   } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 200) } }
 }
 
 /**
- * A person said yes. Executors exist for the actions Eve can currently take herself; anything else
- * is marked approved with a note that a person has to do it — an approval is never silently lost.
- * A deferred row may be approved too: "post it now" instead of waiting for the morning.
+ * A person said yes. The executor for the action runs with `human: true`, the row is closed with
+ * the receipt, and — because the thing actually happened — it is logged with its undo and becomes
+ * a graded recommendation. A deferred row may be approved too: "post it now" instead of waiting.
  */
-export async function executeProposal(id: string, by: string): Promise<{ ok: boolean; done?: string; error?: string }> {
+export async function executeProposal(id: string, by: string): Promise<{ ok: boolean; done?: string; error?: string; logId?: string | null; undo?: any }> {
   let row: any = null
   try {
     const { data } = await supabaseAdmin().from('eve_actions').select('*').eq('id', id).maybeSingle()
@@ -705,18 +784,23 @@ export async function executeProposal(id: string, by: string): Promise<{ ok: boo
     try { await supabaseAdmin().from('eve_actions').update({ status, decided_by: by, decided_at: nowISO, executed_at: status === 'executed' ? nowISO : null, result }).eq('id', id) } catch { /* fine */ }
   }
 
-  const out = row.payload?.deferKind === 'proposal_notify'
+  const out: ExecResult = row.payload?.deferKind === 'proposal_notify'
     ? await (async () => { const n = await notifyProposal(String(exec?.proposal_id || ''), s); return n.notified.length ? { ok: true, done: `approver told via ${n.notified.join('+')}` } : { ok: false, error: n.error || 'undeliverable' } })()
-    : await runExec(action, exec, by)
+    : await runExec(action, exec, 'chat', { actor: by, human: true })
 
-  await close(out.ok ? 'executed' : 'failed', { by, ...out })
-  await recordAgentAction(action, { rung: 2, allowed: out.ok, mode: 'act', reason: out.ok ? `approved by ${by}` : `approved by ${by} but failed: ${out.error}`, summary: String(row.payload?.summary || ''), ref: id, by: 'chat', actor: by, countAs: out.ok ? 'action' : 'none' })
-  return out
+  await close(out.ok ? 'executed' : 'failed', { by, ok: out.ok, done: out.done, error: out.error, ref: out.ref })
+  if (out.ok && row.payload?.recommendation_id) { try { const { decideRecommendation } = await import('./recommendations'); await decideRecommendation(String(row.payload.recommendation_id), 'accepted', by, 'accepted: the action was carried out') } catch { /* fine */ } }
+  const logId = await recordAgentAction(action, { rung: 2, allowed: out.ok, mode: 'act', reason: out.ok ? `approved by ${by}` : `approved by ${by} but failed: ${out.error}`, summary: out.ok && out.done ? out.done : String(row.payload?.summary || ''), ref: out.ref || id, by: 'chat', actor: by, countAs: out.ok ? 'action' : 'none', undo: out.undo || undefined })
+  if (out.ok && row.payload?.deferKind !== 'proposal_notify') await afterAct(action, out, { by: String(row.payload?.by || 'chat'), actor: by, watchKey: row.payload?.watchKey || null, subject: row.payload?.subject || null, summary: String(row.payload?.summary || ''), metric: row.payload?.metric || null })
+  return { ok: out.ok, done: out.done, error: out.error, logId, undo: out.undo || null }
 }
 
 export async function rejectProposal(id: string, by: string, note?: string): Promise<{ ok: boolean }> {
   try {
-    await supabaseAdmin().from('eve_actions').update({ status: 'rejected', decided_by: by, decided_at: new Date().toISOString(), result: note ? { note: note.slice(0, 300) } : null }).eq('id', id).eq('status', 'proposed')
+    const { data } = await supabaseAdmin().from('eve_actions').update({ status: 'rejected', decided_by: by, decided_at: new Date().toISOString(), result: note ? { note: note.slice(0, 300) } : null }).eq('id', id).eq('status', 'proposed').select('payload')
+    // A "no" to an action that carried out a plan is a "no" to the plan: the ledger says rejected.
+    const recId = ((data as any[]) || [])[0]?.payload?.recommendation_id
+    if (recId) { try { const { decideRecommendation } = await import('./recommendations'); await decideRecommendation(String(recId), 'rejected', by, note ? `rejected on Telegram: ${note.slice(0, 200)}` : 'rejected with the proposal') } catch { /* ledger is best-effort */ } }
     await logAgent({ action: 'memory_rule', rung: 0, allowed: false, mode: 'observe', reason: `proposal rejected by ${by}`, ref: id, by: 'chat', actor: by })
     return { ok: true }
   } catch { return { ok: false } }
@@ -783,7 +867,7 @@ export async function agentLog(limit = 100): Promise<any[]> {
 /** One paragraph, so she never claims she can or cannot act wrongly. */
 export function renderAgentModeForPrompt(s: AgentSettings): string {
   if (!s.enabled) {
-    return `AGENT MODE IS OFF. You observe, answer and draft. Nothing you do leaves this app: no Slack post, no Telegram message, no task, no door code, no message to a guest. If something needs doing, say precisely what and who should do it, and offer to draft it. Your own notebook ("remember") and the recommendation ledger ("recommend") still work.`
+    return `AGENT MODE IS OFF. You observe, answer and draft. Nothing you do leaves this app: no Slack post, no Telegram message, no task, no door code, no message to a guest. propose_action still files a DRAFT in the Agent panel queue so the work is not lost — say it is drafted, not done. If something needs doing, say precisely what and who should do it. Your own notebook ("remember") and the recommendation ledger ("recommend") still work.`
   }
   const acts: string[] = [], proposes: string[] = [], drafts: string[] = [], off: string[] = []
   for (const a of ACTIONS) {
@@ -796,5 +880,5 @@ export function renderAgentModeForPrompt(s: AgentSettings): string {
     else off.push(a.label.toLowerCase())
   }
   const quiet = `Quiet hours ${s.quietHours.start}–${s.quietHours.end} ET: anything you would act on is held and goes out on its own at ${s.quietHours.end}; nobody is woken for it.`
-  return `AGENT MODE IS ON, inside a fence. You may ACT on your own for: ${acts.length ? acts.join(', ') : 'nothing yet'}. You must PROPOSE and wait for a yes for: ${proposes.length ? proposes.join(', ') : 'nothing'}. You only DRAFT (a person picks it up) for: ${drafts.length ? drafts.join(', ') : 'nothing'}.${off.length ? ` You do not do: ${off.join(', ')}.` : ''} Budgets today: ${s.budgets.actionsPerDay} actions, ${s.budgets.asksPerDay} asks, $${s.budgets.aiUsdPerDay} of AI; money over $${s.budgets.moneyCeilingUsd} always needs a yes. ${quiet} Say which of these applies when someone asks you to do something — never claim you already did a thing that was only proposed, and never say you cannot do something you may act on.`
+  return `AGENT MODE IS ON, inside a fence. propose_action is how you do things; it applies these rungs for you. You may ACT on your own for: ${acts.length ? acts.join(', ') : 'nothing yet'}. You must PROPOSE and wait for a yes for: ${proposes.length ? proposes.join(', ') : 'nothing'}. You only DRAFT (a person picks it up) for: ${drafts.length ? drafts.join(', ') : 'nothing'}.${off.length ? ` You do not do: ${off.join(', ')}.` : ''} Budgets today: ${s.budgets.actionsPerDay} actions, ${s.budgets.asksPerDay} asks, $${s.budgets.aiUsdPerDay} of AI; money over $${s.budgets.moneyCeilingUsd} always needs a yes. ${quiet} Say which of these applied after you call propose_action — never claim you already did a thing that was only proposed, and never say you cannot do something you may act on. Anything you did can be undone for 24 hours ("undo").`
 }

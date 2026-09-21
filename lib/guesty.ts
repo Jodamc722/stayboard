@@ -659,6 +659,94 @@ export async function syncMessages(conversationId: string): Promise<number> {
   return rows.length
 }
 
+// ------------------------------------------------------------
+// SEND A MESSAGE TO A GUEST (2026-09-21, Eve's hands). The one write this file makes into a guest's
+// inbox. Guesty Open API: POST /communication/conversations/{conversationId}/send-message with
+// { module: { type }, body }. The module type is the channel the thread lives on — Guesty's docs list
+// 'email', 'sms', 'whatsapp' and the OTA modules (airbnb2, bookingCom, homeaway2…); the exact
+// enum for OTA threads is NOT verified against a live call, so this is defensive on purpose:
+//   • the caller may pass a module; otherwise it is derived from the conversation's channel;
+//   • a 4xx that mentions the module is retried once with the thread's last inbound module, then
+//     with 'email' — never a third time;
+//   • the FULL error text is logged and returned; nothing here ever throws past the caller.
+// This is welded to rung 2 in agent mode: it only ever runs after a person said yes.
+// ------------------------------------------------------------
+export type SendGuestResult = { ok: boolean; id?: string | null; module?: string; error?: string; status?: number; attempts?: string[] }
+
+function moduleForChannel(channel: string): string {
+  const c = String(channel || '').toLowerCase()
+  if (/airbnb/.test(c)) return 'airbnb2'
+  if (/booking/.test(c)) return 'bookingCom'
+  if (/vrbo|homeaway/.test(c)) return 'homeaway2'
+  if (/expedia/.test(c)) return 'expedia'
+  if (/sms/.test(c)) return 'sms'
+  if (/whatsapp/.test(c)) return 'whatsapp'
+  return 'email'
+}
+
+export async function sendGuestMessage(conversationId: string, body: string, opts: { module?: string } = {}): Promise<SendGuestResult> {
+  const id = String(conversationId || '').trim()
+  const text = String(body || '').trim()
+  if (!id) return { ok: false, error: 'no conversation id' }
+  if (!text) return { ok: false, error: 'empty message' }
+  if (!CID || !CSEC) return { ok: false, error: 'Guesty is not configured' }
+
+  // Which module? Caller's choice first; else the thread's channel from the mirror; else the
+  // module of the guest's own last message (the surest sign of where they are reading).
+  const candidates: string[] = []
+  if (opts.module) candidates.push(String(opts.module))
+  try {
+    const sb = supabaseAdmin()
+    const { data: conv } = await sb.from('guesty_conversations').select('channel,raw').eq('id', id).maybeSingle()
+    const rawMod = String((conv as any)?.raw?.lastMessage?.module || '')
+    const chan = String((conv as any)?.channel || '')
+    if (chan) candidates.push(moduleForChannel(chan))
+    if (rawMod) candidates.push(rawMod)
+    const { data: last } = await sb.from('guesty_messages').select('raw').eq('conversation_id', id).eq('sender', 'guest').order('sent_at', { ascending: false }).limit(1)
+    const lm = String(((last as any[]) || [])[0]?.raw?.module || '')
+    if (lm) candidates.push(lm)
+  } catch { /* the mirror is a hint, not a requirement */ }
+  candidates.push('email')
+  const tried: string[] = []
+  const order: string[] = []
+  for (const c of candidates) if (c && order.indexOf(c) < 0) order.push(c)
+
+  let lastErr = ''
+  let lastStatus = 0
+  for (const mod of order.slice(0, 3)) {
+    tried.push(mod)
+    try {
+      const token = await getToken()
+      const r = await fetch(`${BASE}/communication/conversations/${encodeURIComponent(id)}/send-message`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ module: { type: mod }, body: text }),
+        cache: 'no-store',
+      })
+      const txt = await r.text().catch(() => '')
+      if (r.ok) {
+        let j: any = null
+        try { j = JSON.parse(txt) } catch { j = null }
+        const mid = j?._id || j?.id || j?.data?._id || null
+        try { await recordSync('guest_message_sent', 1) } catch { /* cosmetic */ }
+        return { ok: true, id: mid ? String(mid) : null, module: mod, attempts: tried }
+      }
+      lastStatus = r.status
+      lastErr = `Guesty send-message ${r.status} (module ${mod}): ${txt.slice(0, 400)}`
+      console.error('[guesty] sendGuestMessage failed', { conversationId: id, module: mod, status: r.status, body: txt.slice(0, 1000) })
+      // Only a complaint about the module is worth another module. Auth, rate limit and a
+      // missing conversation are not.
+      const moduleProblem = (r.status === 400 || r.status === 422) && /module/i.test(txt)
+      if (!moduleProblem) break
+    } catch (e: any) {
+      lastErr = `Guesty send-message threw (module ${mod}): ${String(e?.message || e).slice(0, 300)}`
+      console.error('[guesty] sendGuestMessage threw', { conversationId: id, module: mod, error: String(e?.message || e) })
+      break
+    }
+  }
+  return { ok: false, error: lastErr || 'Guesty refused the message', status: lastStatus || undefined, attempts: tried }
+}
+
 // Clean a raw Guesty channel id/name into a human-friendly label.
 function cleanChannel(rawChannel: string): string {
   const c = String(rawChannel || '').toLowerCase()

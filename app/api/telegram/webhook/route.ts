@@ -31,7 +31,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getMe, sendMessage, sendTyping, displayName, type TgUpdate, type TgMessage } from '@/lib/telegram'
 import { webhookSecret, botConfigured } from '@/lib/telegram'
 import { claimUpdate, pruneUpdates, decide, seeRoom, recordMessage, threadFor, resetThread, overRate } from '@/lib/eve/telegram'
-import { findAsk, resolveAsk, runMorningAsk } from '@/lib/eve/ask'
+import { findAsk, resolveAsk, runMorningAsk, UNDO, undoLast } from '@/lib/eve/ask'
 import { acceptsFrom, recordReply } from '@/lib/eve/ralph'
 import { canSeeMoney, doorCodePolicy } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
@@ -187,6 +187,14 @@ export async function POST(req: NextRequest) {
   // is the reply half of a conversation she started, and it belongs to the question it answers.
   // Only for a real person's plain text: a slash command is always a command.
   if (!command && !isGroup) {
+    // "undo" on its own reverses the last thing she did, whether or not it answers an ask.
+    if (UNDO.test(question)) {
+      await recordMessage(chat.id, String(from.id), 'user', question)
+      const said = await undoLast(contact.email || String(from.id))
+      await recordMessage(chat.id, null, 'assistant', said)
+      await sendMessage(chat.id, said, { replyTo: msg.message_id })
+      return ok()
+    }
     const binding = await findAsk(chat.id, msg.reply_to_message?.message_id || null, question)
     if (binding) {
       await recordMessage(chat.id, String(from.id), 'user', question)

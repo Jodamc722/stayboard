@@ -65,6 +65,9 @@ export async function GET(req: NextRequest) {
 
   // Anything held for quiet hours goes out first — the morning ask runs at 09:00, well after 07:00.
   const flushed = await flushDeferred('cron:eve-ask').catch(() => ({ ran: 0, failed: 0, skipped: 0, notes: ['flush failed'] }))
+  // The watches run here too (lib/eve/watches.ts): the 09:00 pass is the one a person is awake for,
+  // so what the night found is on the morning's ask. Cooldowns keep it from repeating the 30-minute run.
+  const watched = await import('@/lib/eve/watches').then(m => m.runWatches('cron:eve-ask')).catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))
   const expired = await expireStaleAsks()
   // A question Ralphbot never answered stops being one after two days, so the reply-matching window
   // cannot drift onto a question from last week.
@@ -75,8 +78,8 @@ export async function GET(req: NextRequest) {
     name: 'eve-ask',
     ok: run.ok,
     itemCount: run.sent,
-    detail: run.skipped ? { skipped: run.skipped, expired, ralphExpired, flushed } : { items: run.items, expired, ralphExpired, flushed },
+    detail: run.skipped ? { skipped: run.skipped, expired, ralphExpired, flushed, watched } : { items: run.items, expired, ralphExpired, flushed, watched },
   })
 
-  return NextResponse.json({ ...run, expired, ralphExpired, flushed })
+  return NextResponse.json({ ...run, expired, ralphExpired, flushed, watched })
 }

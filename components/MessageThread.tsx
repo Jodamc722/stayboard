@@ -2,9 +2,9 @@
 // Read-only AUDIT view of a guest conversation: full transcript (who sent each message),
 // a reservation-details pop-up, and a button to open + reply in Guesty's inbox.
 // (In-app replying is intentionally off for now — this is a quality/audit surface.)
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, MessageSquare } from 'lucide-react'
+import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, MessageSquare, Sparkles, Send, Loader2 } from 'lucide-react'
 
 type Msg = { id: string; sender: string; sender_name?: string | null; body: string | null; sent_at: string | null }
 type Reservation = {
@@ -20,7 +20,8 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
   conversationId: string; channel: string; guest: string; unit: string; initialMessages: Msg[]; reservation: Reservation; guestyUrl: string
 }) {
   const [showRes, setShowRes] = useState(false)
-  const messages = initialMessages
+  const [sent, setSent] = useState<Msg[]>([])
+  const messages = initialMessages.concat(sent)
 
   return (
     /* The transcript only scrolls INSIDE its own box if the box has a height. A min-height alone
@@ -72,6 +73,11 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
         })}
       </div>
 
+      {/* EVE'S DRAFT (2026-09-21). When the guest_unanswered_1h watch (or Eve in chat) drafted a
+          reply for this thread, it sits here with Send / Discard. Send is the only way it reaches
+          the guest, and the person who presses it is on the receipt. */}
+      <EveDraftCard conversationId={conversationId} guest={guest} onSent={(body) => setSent(prev => prev.concat([{ id: 'eve-' + Date.now(), sender: 'host', sender_name: 'Eve (sent by you)', body, sent_at: new Date().toISOString() }]))} />
+
       {/* Audit footer — reply happens in Guesty */}
       <div className="border-t border-line px-3 sm:px-5 py-3 flex items-center justify-between gap-3 flex-wrap bg-app/30">
         <span className="text-[12px] text-muted inline-flex items-center gap-1.5"><MessageSquare size={13} /> Audit view — reply to the guest in Guesty.</span>
@@ -121,6 +127,51 @@ function Row({ Icon, label, value, link }: { Icon: any; label: string; value: st
     <div className="flex items-center justify-between gap-3">
       <span className="text-muted inline-flex items-center gap-1.5"><Icon size={13} /> {label}</span>
       {link ? <a href={link} className="font-medium text-brand-700 hover:underline text-right">{value}</a> : <span className="font-medium text-ink text-right">{value}</span>}
+    </div>
+  )
+}
+
+type EveDraft = { id: string; draft: string; why: string; by: string; createdAt: string }
+
+function EveDraftCard({ conversationId, guest, onSent }: { conversationId: string; guest: string; onSent: (body: string) => void }) {
+  const [draft, setDraft] = useState<EveDraft | null>(null)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState<'' | 'send' | 'discard'>('')
+  const [err, setErr] = useState('')
+  const [done, setDone] = useState('')
+  useEffect(() => {
+    let alive = true
+    fetch('/api/eve/guest-drafts?conversation=' + encodeURIComponent(conversationId)).then(r => r.json()).then(r => {
+      if (!alive) return
+      const d = Array.isArray(r?.drafts) && r.drafts[0] ? r.drafts[0] as EveDraft : null
+      setDraft(d); setText(d ? d.draft : '')
+    }).catch(() => { /* no card */ })
+    return () => { alive = false }
+  }, [conversationId])
+  if (!draft) return null
+  const act = async (op: 'send' | 'discard') => {
+    if (busy) return
+    if (op === 'send' && !confirm('Send this to ' + (guest || 'the guest') + ' now?')) return
+    setBusy(op); setErr('')
+    try {
+      const r = await fetch('/api/eve/guest-drafts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id: draft.id, body: text }) }).then(x => x.json())
+      if (!r?.ok) { setErr(r?.error || 'That did not work.'); return }
+      if (op === 'send') { onSent(text); setDone('Sent to ' + (guest || 'the guest') + '.') } else setDone('Discarded.')
+      setDraft(null)
+    } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy('') }
+  }
+  return (
+    <div className="border-t border-line px-3 sm:px-5 py-3 bg-brand-50/40">
+      <div className="flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 mb-1.5"><Sparkles size={13} /> Eve's draft <span className="text-muted font-normal">· {draft.why}</span></div>
+      <textarea value={text} onChange={e => setText(e.target.value)} rows={4} aria-label="Eve's draft reply"
+        className="w-full text-sm text-ink bg-white border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
+        <button onClick={() => act('send')} disabled={!!busy || !text.trim()} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white bg-brand-600 hover:bg-brand-700 px-2.5 py-1.5 rounded-lg disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send to guest</button>
+        <button onClick={() => act('discard')} disabled={!!busy} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-muted bg-white border border-line hover:text-ink px-2.5 py-1.5 rounded-lg disabled:opacity-50"><X size={13} /> Discard</button>
+        <span className="text-[11px] text-muted">Nothing reaches the guest until you press Send. You can edit it first.</span>
+      </div>
+      {err && <div className="mt-1.5 text-[12px] text-rose-700">{err}</div>}
+      {done && <div className="mt-1.5 text-[12px] text-emerald-700">{done}</div>}
     </div>
   )
 }

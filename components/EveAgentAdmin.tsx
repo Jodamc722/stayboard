@@ -7,7 +7,7 @@
 // hours; approvers; channels. A "today" strip from the counters and the AI ledger, the proposals
 // waiting on a yes, and the last 100 lines of her log. Owner edits; admins see everything.
 import { useCallback, useEffect, useState } from 'react'
-import { Power, Lock, Loader2, Check, X, RefreshCw, ScrollText, Inbox, Save, Sparkles, AlertTriangle, Clock } from 'lucide-react'
+import { Power, Lock, Loader2, Check, X, RefreshCw, ScrollText, Inbox, Save, Sparkles, AlertTriangle, Clock, Eye, Undo2, Play } from 'lucide-react'
 
 type Rung = 0 | 1 | 2 | 3 | 4
 type ActionDef = { key: string; label: string; what: string; def: Rung; cap: Rung; wiredAt: string[] }
@@ -20,7 +20,9 @@ type Settings = {
   channels: { telegram: boolean; slack: boolean; email: boolean }
   updatedBy?: string | null; updatedAt?: string | null
 }
-type Today = { date: string; actions: number; asks: number; aiUsd: number; byAction: Record<string, number> }
+type Today = { date: string; actions: number; asks: number; aiUsd: number; byAction: Record<string, number>; proposed?: number; gradedGood?: number; gradedBad?: number; gradedPending?: number }
+type WatchRow = { key: string; title: string; what: string; action: string; enabled: boolean; cooldownHours: number; rungOverride: number | null; lastFiredAt: string | null; lastRunAt: string | null; firedCount: number; lastResult: any; migrated: boolean }
+type Undoable = { id: number; at: string; action: string; summary: string | null; by: string; actor: string | null; ref: string | null; undone_at: string | null }
 type LogRow = { id: number; at: string; action: string; rung: number; allowed: boolean; mode: string | null; reason: string | null; usd: number | null; summary: string | null; ref: string | null; by: string; actor: string | null }
 type QueueStatus = { waiting: number; deferred: number; undeliverable: number; undeliverableWhy: string[] }
 type QueueRow = { id: string; kind: string; payload: any; why: string | null; status: string; created_by: string | null; created_at: string; decided_by: string | null; result: any }
@@ -63,7 +65,10 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
   const [err, setErr] = useState('')
   const [note, setNote] = useState('')
   const [dirty, setDirty] = useState(false)
-  const [view, setView] = useState<'fence' | 'queue' | 'log'>('fence')
+  const [view, setView] = useState<'fence' | 'queue' | 'watches' | 'log'>('fence')
+  const [watches, setWatches] = useState<WatchRow[]>([])
+  const [undoable, setUndoable] = useState<Undoable[]>([])
+  const [running, setRunning] = useState('')
   const [log, setLog] = useState<LogRow[]>([])
   const [queue, setQueue] = useState<QueueRow[]>([])
   const [approversText, setApproversText] = useState('')
@@ -90,7 +95,43 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
   const loadQueue = useCallback(async () => {
     try { const r = await fetch('/api/eve/agent?queue=1').then(x => x.json()); setQueue(r?.queue || []); if (r?.status) setStatus(r.status) } catch { /* shown empty */ }
   }, [])
-  useEffect(() => { if (view === 'log') loadLog(); if (view === 'queue') loadQueue() }, [view, loadLog, loadQueue])
+  const loadWatches = useCallback(async () => {
+    try { const r = await fetch('/api/eve/agent?watches=1').then(x => x.json()); setWatches(r?.watches || []) } catch { /* shown empty */ }
+  }, [])
+  const loadUndoable = useCallback(async () => {
+    try { const r = await fetch('/api/eve/agent?undoable=1').then(x => x.json()); setUndoable(r?.undoable || []) } catch { /* shown empty */ }
+  }, [])
+  useEffect(() => { if (view === 'log') { loadLog(); loadUndoable() } if (view === 'queue') { loadQueue(); loadUndoable() } if (view === 'watches') loadWatches() }, [view, loadLog, loadQueue, loadWatches, loadUndoable])
+
+  async function undo(logId: number | null) {
+    if (!confirm(logId ? 'Undo this action?' : 'Undo the last thing she did?')) return
+    try {
+      const r = await fetch('/api/eve/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(logId ? { op: 'undo', logId } : { op: 'undo_last' }) }).then(x => x.json())
+      setNote(r?.ok ? `Undone — ${r.summary}.` : (r?.error || r?.summary || 'Could not undo that.'))
+    } catch (e: any) { setNote(e?.message || String(e)) }
+    await loadUndoable(); await loadLog(); await load()
+  }
+  async function patchWatch(key: string, patch: any) {
+    if (!canEdit) return
+    try {
+      const r = await fetch('/api/eve/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'watch', key, ...patch }) }).then(x => x.json())
+      if (!r?.ok) setNote(r?.error || 'Could not save that watch.')
+    } catch (e: any) { setNote(e?.message || String(e)) }
+    await loadWatches()
+  }
+  async function runWatch(key?: string) {
+    setRunning(key || 'all')
+    try {
+      const r = await fetch('/api/eve/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'run_watches', key, force: !!key }) }).then(x => x.json())
+      if (!r?.ok) setNote(r?.skipped || r?.error || 'The run did not complete.')
+      else {
+        const ws = (r.watches || []) as any[]
+        const fired = ws.reduce((n, w) => n + (w.fired || 0), 0), found = ws.reduce((n, w) => n + (w.found || 0), 0)
+        setNote(`Ran ${ws.length} watch${ws.length === 1 ? '' : 'es'}: found ${found}, raised ${fired}${ws.some(w => w.error) ? ' — ' + ws.filter(w => w.error).map(w => `${w.key}: ${w.error}`).join('; ').slice(0, 300) : ''}.`)
+      }
+    } catch (e: any) { setNote(e?.message || String(e)) } finally { setRunning('') }
+    await loadWatches(); await load()
+  }
 
   async function put(patch: any, msg: string) {
     if (!canEdit) return
@@ -163,11 +204,12 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
 
       {/* TODAY */}
       {today && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {[
-            ['Actions taken', `${today.actions} / ${s.budgets.actionsPerDay}`],
-            ['Asks sent', `${today.asks} / ${s.budgets.asksPerDay}`],
+            ['Acted', `${today.actions} / ${s.budgets.actionsPerDay}`],
+            ['Proposed', `${today.proposed ?? 0} · asks ${today.asks} / ${s.budgets.asksPerDay}`],
             ['AI spend', `$${today.aiUsd.toFixed(2)} / $${s.budgets.aiUsdPerDay}`],
+            ['Graded good · bad', `${today.gradedGood ?? 0} · ${today.gradedBad ?? 0}${today.gradedPending ? ` (${today.gradedPending} measuring)` : ''}`],
           ].map(([k, v]) => (
             <div key={k} className={`${card} px-3 py-2.5`}>
               <div className="text-[11px] text-muted">{k} · {today.date}</div>
@@ -193,7 +235,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
       {note && <div className="text-[13px] text-ink bg-app border border-line rounded-xl px-3.5 py-2.5">{note}</div>}
 
       <div className="flex items-center gap-1 border-b border-line">
-        {([['fence', 'Parameters', Lock], ['queue', 'Waiting on a yes', Inbox], ['log', 'Log', ScrollText]] as const).map(([k, label, Icon]) => (
+        {([['fence', 'Parameters', Lock], ['queue', 'Waiting on a yes', Inbox], ['watches', 'Watches', Eye], ['log', 'Log', ScrollText]] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setView(k)}
             className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px ${view === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
             <Icon size={13} /> {label}
@@ -309,6 +351,13 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
 
       {view === 'queue' && (
         <div className={`${card} p-4`}>
+          {undoable.length > 0 && (
+            <div className="mb-3 rounded-xl border border-line bg-app/40 px-3 py-2 text-[12px] flex flex-wrap items-center gap-2">
+              <Undo2 size={13} className="text-muted" />
+              <span className="text-ink">{undoable.filter(u => !u.undone_at).length} thing{undoable.filter(u => !u.undone_at).length === 1 ? '' : 's'} she did in the last 24h can still be undone.</span>
+              <button onClick={() => undo(null)} className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1 hover:bg-app"><Undo2 size={11} /> Undo the last one</button>
+            </div>
+          )}
           <div className="flex items-center justify-between mb-2">
             <div className="text-[13px] font-bold text-ink">Proposals, drafts and work held for the morning</div>
             <button onClick={loadQueue} className="text-xs text-muted hover:text-ink inline-flex items-center gap-1"><RefreshCw size={12} /> Refresh</button>
@@ -343,6 +392,54 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
         </div>
       )}
 
+      {view === 'watches' && (
+        <div className={`${card} p-4`}>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <div className="text-[13px] font-bold text-ink">What she watches on her own</div>
+            <div className="flex items-center gap-2">
+              <button onClick={loadWatches} className="text-xs text-muted hover:text-ink inline-flex items-center gap-1"><RefreshCw size={12} /> Refresh</button>
+              <button onClick={() => runWatch()} disabled={!!running} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-brand-600 rounded-lg px-2.5 py-1.5 hover:bg-brand-700 disabled:opacity-50">{running === 'all' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run all now</button>
+            </div>
+          </div>
+          <div className="text-[12px] text-muted mb-3">Each watch is a deterministic check over the same day picture the boards read. When one trips, she prepares the whole action and puts it through the fence above: at Act she does it (and it can be undone), at Propose she asks on Telegram, at Draft it waits here, and with agent mode OFF she only logs what she saw. A subject (a unit, a thread, a task) is never raised twice inside the cooldown. They run every 30 minutes with the sentiment scan and at the 09:00 ask.</div>
+          {watches.length > 0 && !watches[0].migrated && <div className="mb-3 text-[12px] text-[#B42318] bg-[#FDECEC] border border-[#F5C2C0] rounded-xl px-3 py-2 inline-flex items-center gap-1.5"><AlertTriangle size={12} /> Migration 102 has not run — the watches cannot store their state or fire yet.</div>}
+          {!watches.length && <div className="text-[13px] text-muted">Loading…</div>}
+          <div className="divide-y divide-line">
+            {watches.map(w => {
+              const res = w.lastResult || {}
+              return (
+                <div key={w.key} className="py-2.5 flex flex-col sm:flex-row sm:items-start gap-2">
+                  <button onClick={() => patchWatch(w.key, { enabled: !w.enabled })} disabled={!canEdit || !w.migrated} role="switch" aria-checked={w.enabled} title={w.enabled ? 'On — click to switch off' : 'Off — click to switch on'}
+                    className={`shrink-0 mt-0.5 inline-flex items-center rounded-full px-0.5 py-0.5 transition-colors ${w.enabled ? 'bg-[#0F7B52]' : 'bg-line'} ${canEdit && w.migrated ? '' : 'opacity-60 cursor-not-allowed'}`} style={{ width: 40 }}>
+                    <span className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${w.enabled ? 'translate-x-[18px]' : 'translate-x-0'}`} />
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-semibold text-ink flex items-center gap-1.5 flex-wrap">
+                      {w.title}
+                      <span className="text-[10px] font-semibold text-muted bg-app border border-line rounded-full px-1.5 py-0.5">{w.action}</span>
+                      {w.rungOverride != null && <span className="text-[10px] font-semibold text-[#9A6200] bg-[#FDF3E0] border border-[#F0DAA8] rounded-full px-1.5 py-0.5">capped at rung {w.rungOverride}</span>}
+                    </div>
+                    <div className="text-[11px] text-muted">{w.what}</div>
+                    <div className="text-[11px] text-muted mt-0.5">
+                      {w.lastFiredAt ? `last raised ${when(w.lastFiredAt)} · ` : 'never raised · '}{w.firedCount} raised in total{w.lastRunAt ? ` · last ran ${when(w.lastRunAt)}` : ''}
+                      {res && typeof res.found === 'number' ? ` · last run found ${res.found}, raised ${res.fired}${res.cooled ? `, ${res.cooled} in cooldown` : ''}` : ''}
+                      {res?.error ? <span className="text-[#B42318]"> · {String(res.error).slice(0, 140)}</span> : null}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <label className="text-[11px] text-muted inline-flex items-center gap-1">cooldown
+                      <input type="number" min={1} max={720} defaultValue={w.cooldownHours} disabled={!canEdit || !w.migrated} onBlur={e => { const n = Number(e.target.value); if (n && n !== w.cooldownHours) patchWatch(w.key, { cooldownHours: n }) }}
+                        className="w-[64px] text-[12px] text-ink bg-app border border-line rounded-lg px-2 py-1" /> h
+                    </label>
+                    <button onClick={() => runWatch(w.key)} disabled={!!running || !w.migrated} title="Run this watch now (ignores the cooldown)" className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1.5 hover:bg-app disabled:opacity-50">{running === w.key ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run now</button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {view === 'log' && (
         <div className={`${card} p-4`}>
           <div className="flex items-center justify-between mb-2">
@@ -361,6 +458,9 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                 </div>
                 <div className="text-ink">{r.summary}</div>
                 {r.reason && <div className="text-muted">{r.reason}{r.ref ? ` · ref ${r.ref}` : ''}</div>}
+                {(() => { const u = undoable.find(x => Number(x.id) === Number(r.id)); if (!u) return null; return u.undone_at
+                  ? <div className="text-[11px] text-muted inline-flex items-center gap-1"><Undo2 size={10} /> undone {when(u.undone_at)}</div>
+                  : <button onClick={() => undo(Number(r.id))} className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1 hover:bg-app"><Undo2 size={11} /> Undo</button> })()}
               </div>
             ))}
           </div>

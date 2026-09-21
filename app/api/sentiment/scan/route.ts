@@ -61,6 +61,18 @@ export async function POST(req: NextRequest) {
   // once quiet hours end. Best effort; a flush failure never stops the scan.
   let flushed: any = null
   try { flushed = await flushDeferred('cron:sentiment-scan'); if (flushed.ran || flushed.failed) await recordRun({ name: 'eve-deferred', ok: !flushed.failed, itemCount: flushed.ran, detail: flushed }) } catch { flushed = null }
+  // EVE'S EYES (2026-09-21). The eight watches (lib/eve/watches.ts) ride the same 30-minute beat,
+  // for the cron only — an interactive scan should not wait on the day picture. vercel.json is at
+  // its 40-entry cap, so this is a chain, not a cron. Best effort; a watch failure never stops the scan.
+  let watched: any = null
+  if (viaCron || allowed.viaSecret) {
+    try {
+      const { runWatches } = await import('@/lib/eve/watches')
+      watched = await runWatches('cron:sentiment-scan')
+      const fired = (watched.watches || []).reduce((n: number, w: any) => n + (w.fired || 0), 0)
+      if (fired || watched.skipped) await recordRun({ name: 'eve-watches', ok: !!watched.ok, itemCount: fired, detail: watched })
+    } catch (e: any) { watched = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+  }
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured - add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })
@@ -270,7 +282,7 @@ Return STRICT minified JSON only, no markdown:
 
   recordRun({ name: 'sentiment', ok: true, itemCount: scanned, detail: { scanned, flagged, remaining: Math.max(0, todo.length - scanned), windowDays: days } })
 
-  return NextResponse.json({ ok: true, scanned, flagged, remaining: Math.max(0, todo.length - scanned), windowDays: days })
+  return NextResponse.json({ ok: true, scanned, flagged, remaining: Math.max(0, todo.length - scanned), windowDays: days, flushed, watched })
 }
 
 export const GET = POST

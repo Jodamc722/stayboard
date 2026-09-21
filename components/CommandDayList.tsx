@@ -280,6 +280,7 @@ function Row({ sev, title, meta, primary, secondary, onTap, expanded, children, 
 function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: CommandDay; claims: NextItem[]; approvals: GuestDeskRow[]; onCleared: (key: string) => void; onChanged: () => void }) {
   const eve = useEveQuestions()
   const plans = useEvePlans()
+  const drafts = useEveDrafts()
   const slack = useSlackQueue()
   const [allEve, setAllEve] = useState(false)
   const slackLive = slack.live || []
@@ -290,13 +291,14 @@ function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: Command
   const eveMore = eveGroups.slice(eveShown.length).reduce((a, g) => a + g.qs.length, 0)
   const eveCount = eve.rows.length || (eve.loaded ? 0 : eve.count)
   const approvalsHidden = Math.max(0, d.tiles.guestDesk.approvals - d.tiles.guestDesk.rows.filter(r => r.kind === 'approval').length)
-  const count = slackLive.length + approvals.length + claims.length + eveCount + plans.rows.length
+  const count = slackLive.length + approvals.length + claims.length + eveCount + plans.rows.length + drafts.rows.length
 
   const rows: Ranked[] = []
   for (const it of slackLive) rows.push({ key: 'slack:' + it.id, sev: 'now', rank: 0, node: <SlackRow item={it} q={slack} /> })
   for (const c of claims) rows.push({ key: c.key, sev: c.severity, rank: c.rank, node: <ClaimRow item={c} onCleared={onCleared} /> })
   for (const a of approvals) rows.push({ key: a.key, sev: 'today', rank: 3, node: <ApprovalRow row={a} onCleared={onCleared} onChanged={onChanged} /> })
   if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} meta="Only the first few are listed here" primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
+  for (const dr of drafts.rows) rows.push({ key: 'draft:' + dr.id, sev: 'today', rank: 2.5, node: <EveDraftRow d={dr} act={drafts.act} busy={drafts.busy === dr.id} /> })
   for (const p of plans.rows) rows.push({ key: 'plan:' + p.id, sev: 'today', rank: 8, node: <EvePlanRow p={p} act={plans.decide} busy={plans.busy === p.id} /> })
   for (const g of eveShown) rows.push({ key: 'eve:' + g.key, sev: 'today', rank: 9, node: g.qs.length > 1 ? <EveGroupRow g={g} act={eve.act} busy={eve.busy} /> : <EveRow q={g.qs[0]} act={eve.act} busy={eve.busy === g.qs[0].id} /> })
   if (!eve.loaded && eve.count > 0) rows.push({ key: 'eve:loading', sev: 'today', rank: 9, node: <Row sev={null} title={'Eve is asking you ' + eve.count} meta={<span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> getting them</span>} /> })
@@ -348,6 +350,59 @@ function EvePlanRow({ p, act, busy }: { p: EvePlan; act: (id: string, s: 'accept
       primary={<button onClick={() => go('accepted')} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Accept</button>}
       secondary={<button onClick={() => go('rejected')} disabled={busy} className={SECONDARY} aria-label="Reject" title="Reject — not this one"><X size={14} /></button>}>
       {open && p.detail && <pre className="mt-2 ml-3.5 rounded-xl border border-line bg-app/40 p-3 text-[12px] text-ink whitespace-pre-wrap font-sans leading-relaxed">{p.detail}</pre>}
+    </Row>
+  )
+}
+
+// ── EVE'S GUEST REPLY DRAFTS (2026-09-21) ──────────────────────────────────────────────────────
+// A guest_reply_draft (from the guest_unanswered_1h watch, the bad-review watch or Eve in chat)
+// waits here with Send / Discard. Send runs guest_reply_send as a human yes — the guest hears
+// nothing until a person presses it. A review draft has no Send: it is copied into /reviews.
+type EveDraft = { id: string; conversationId: string | null; reviewId: string | null; draft: string; guest: string | null; unit: string | null; channel: string | null; why: string; by: string; createdAt: string }
+const EVE_DRAFTS_URL = '/api/eve/guest-drafts'
+
+function useEveDrafts() {
+  const { data, error } = useCachedFetch<{ drafts?: EveDraft[] }>(EVE_DRAFTS_URL, { ttl: 120_000 })
+  const [gone, setGone] = useState<Record<string, true>>({})
+  const [busy, setBusy] = useState('')
+  const rows = error ? [] : ((data?.drafts || []) as EveDraft[]).filter(d => !gone[d.id])
+  const act = async (id: string, op: 'send' | 'discard', body?: string): Promise<string> => {
+    setBusy(id)
+    try {
+      const r = await fetch(EVE_DRAFTS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id, body }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j?.ok) return j?.error || 'That did not work.'
+      setGone(g => ({ ...g, [id]: true }))
+      invalidateCache(EVE_DRAFTS_URL)
+      return ''
+    } finally { setBusy('') }
+  }
+  return { rows, busy, act }
+}
+
+function EveDraftRow({ d, act, busy }: { d: EveDraft; act: (id: string, op: 'send' | 'discard', body?: string) => Promise<string>; busy: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState(d.draft)
+  const [err, setErr] = useState('')
+  const isReview = !d.conversationId && !!d.reviewId
+  const go = async (op: 'send' | 'discard') => {
+    if (op === 'send' && !confirm('Send this to ' + (d.guest || 'the guest') + ' now?')) return
+    setErr(''); const e = await act(d.id, op, text); if (e) setErr(e)
+  }
+  const who = (d.guest || 'Guest') + (d.unit ? ' · ' + d.unit : '')
+  const meta = [isReview ? 'Eve drafted a public review reply' : 'Eve drafted a reply', d.channel || '', d.why].filter(Boolean).join(' · ')
+  return (
+    <Row sev="today" title={(isReview ? 'Reply to review from ' : 'Reply to ') + who} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
+      primary={isReview
+        ? <Link href="/reviews" className={PRIMARY}>Open reviews</Link>
+        : <button onClick={() => go('send')} disabled={busy || !text.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>}
+      secondary={<button onClick={() => go('discard')} disabled={busy} className={SECONDARY} aria-label="Discard" title="Discard — do not send"><X size={14} /></button>}>
+      {open && (
+        <div className="mt-2 ml-3.5">
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={4} aria-label="Eve's draft" className="w-full rounded-xl border border-line bg-white px-3 py-2 text-[13px] text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          <div className="mt-1 text-[11px] text-muted">{isReview ? 'Copy this into the reply box on the Reviews page.' : d.conversationId ? <>Edit it here, then Send. <Link href={'/messages/' + d.conversationId} className="text-brand-700 hover:underline">Open the thread</Link>.</> : null}</div>
+        </div>
+      )}
     </Row>
   )
 }

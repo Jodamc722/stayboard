@@ -239,6 +239,30 @@ export const CORE_TOOLS: EveTool[] = [
   },
 
   {
+    name: 'propose_action',
+    description: 'DO SOMETHING IN THE BUSINESS — this is your hands, and the ONLY way you act. Pass the action, its full payload, a one-line summary in plain words (this is what Jon reads on Telegram after "Eve wants to:") and why. Agent mode then decides, per the rungs Jon set: it ACTS now (and you say what you did and that it can be undone), PROPOSES and waits for a yes (you say it is waiting on Jon), DRAFTS for a person to pick up, or only OBSERVES (you say you noted it). Read `outcome` and report exactly that — never say you did a thing that was only proposed. Actions and payloads: task_create {listingId or unit, title, department (housekeeping|inspection|maintenance|safety), priority (urgent|high|normal|low), date YYYY-MM-DD, description, assignees:[names]} · task_assign {taskId, person} · task_note {taskId, text} · task_cancel {taskId, reason} (never a departure clean) · guest_reply_draft {conversationId, draft, guest, unit} (saved on the thread with a Send button; nothing reaches the guest) · guest_reply_send {conversationId, body} (ALWAYS needs a yes) · email_draft {to:[emails], subject, text} (a Gmail draft, nobody receives it) · guesty_write {reservationId, note} (ALWAYS needs a yes) · calendar_block {listingId, date, action:block|unblock} (ALWAYS needs a yes) · slack_post {channel, text}. Read the thread / task / unit FIRST with the other tools so the payload is right; one call per action.',
+    input_schema: obj({ action: S.str, payload: { type: 'object' }, summary: S.str, why: S.str, usd: S.num }, ['action', 'payload', 'summary']),
+    run: async (input, ctx) => {
+      const { attemptAction, ACTION_KEYS } = await import('./agent-mode')
+      const action = String(input?.action || '').trim() as any
+      if (ACTION_KEYS.indexOf(action) < 0) return { ok: false, error: `Unknown action "${action}". One of: ${ACTION_KEYS.join(', ')}.` }
+      if (action === 'door_code_release') return { ok: false, error: 'Door codes go through door_code_check, never through propose_action.' }
+      if (action === 'memory_rule' || action === 'recommendation') return { ok: false, error: `Use the "${action === 'memory_rule' ? 'remember' : 'recommend'}" tool for that.` }
+      const payload = input?.payload && typeof input.payload === 'object' ? input.payload : {}
+      const summary = String(input?.summary || '').trim().slice(0, 300)
+      if (!summary) return { ok: false, error: 'summary is required — one line, plain words, what you want to do.' }
+      const r = await attemptAction({ action, summary, exec: payload, why: String(input?.why || '').slice(0, 300), by: 'chat', actor: ctx.email, usd: Number.isFinite(Number(input?.usd)) ? Number(input.usd) : null })
+      const outcome =
+        r.mode === 'act' ? (r.ok ? `DONE: ${r.done || summary}.${r.undo ? ' It can be undone for 24h (say "undo" or use the Agent panel).' : ''}` : `TRIED AND FAILED: ${r.error || 'unknown error'}. Say so plainly and suggest the person does it by hand.`)
+        : r.mode === 'propose' ? (r.ok ? `PROPOSED, NOT DONE. It is waiting for a yes (Telegram / Settings → Eve → Agent mode). Say it is waiting on Jon.` : `Could not file the proposal: ${r.error}`)
+        : r.mode === 'deferred' ? `HELD for quiet hours — it goes out on its own at ${r.verdict.settings.quietHours.end} ET. Say so.`
+        : r.mode === 'draft' ? `DRAFTED ONLY (${r.verdict.reason}). A person picks it up in the Agent panel queue. Nothing happened in Breezeway, Guesty, Slack or a mailbox.`
+        : `OBSERVED ONLY (${r.verdict.reason}). Nothing happened. Say what you would have done and who should do it.`
+      return { ok: r.ok, mode: r.mode, rung: r.verdict.rung, reason: r.verdict.reason, ref: r.ref || null, log_id: r.logId || null, outcome }
+    },
+  },
+
+  {
     name: 'trend',
     description: 'IS THIS NUMBER ACTUALLY UNUSUAL? Compares a metric over a recent window against the SAME scope\'s own history and returns a z-score, so you can say "2.1 sigma below its own 90-day norm" instead of "looks lower". Params: metric (required), scope ("portfolio" or "building:<Name>"), days (window, default 7), baselineDays (default 90). ALWAYS use this before calling something a problem or a win — a number without a baseline is not evidence. If it reports a caveat about thin history, SAY SO rather than quoting the z-score as fact.',
     input_schema: obj({ metric: S.str, scope: S.str, days: S.num, baselineDays: S.num }, ['metric']),

@@ -375,6 +375,16 @@ export async function findAsk(chatId: string | number, replyToMessageId?: number
 }
 
 const NOT_NOW = /^(skip|not now|later|dunno|don'?t know|no idea|pass)\b/i
+export const UNDO = /^\s*(undo|revert|put it back|take it back)\b/i
+
+/** "undo" with no question attached: reverse the most recent action that still can be. */
+export async function undoLast(by: string): Promise<string> {
+  const { lastUndoable, undoAction } = await import('./executors')
+  const last = await lastUndoable(24)
+  if (!last) return `Nothing to undo — I haven't done anything reversible in the last 24 hours.`
+  const r = await undoAction(last.id, by)
+  return r.ok ? `Undone — ${r.summary}. (That was: ${last.summary.slice(0, 120)})` : `I couldn't undo "${last.summary.slice(0, 100)}": ${r.error || r.summary}`
+}
 /** Deliberately narrow. Silence, a shrug, or "maybe" all mean don't send it. */
 const AFFIRMATIVE = /^\s*(y|ya|yes|yep|yeah|yup|ok|okay|sure|go|go ahead|send|send it|do it|please do|approved?)\b/i
 const ITS_FINE = /\b(that'?s|it'?s)\s+(fine|expected|normal|on purpose|intentional|by design)\b|\bknown\b|\bignore\b|\bleave it\b/i
@@ -424,14 +434,19 @@ export async function resolveAsk(binding: AskBinding, reply: string, by: string)
       : `I couldn't send it: ${res.error}`
   }
 
-  // An agent-mode proposal. Same rule as Ralphbot: only a clear yes does anything.
+  // An agent-mode proposal. Same rule as Ralphbot: only a clear yes does anything. "undo" reverses
+  // the last thing she actually did (lib/eve/executors.ts undoAction), "no" drops the proposal —
+  // and rejects the plan behind it when there is one.
   if (binding.type === 'action') {
+    if (UNDO.test(text)) return undoLast(by)
     if (!AFFIRMATIVE.test(text)) {
       await rejectProposal(binding.id, by, text)
       return `Dropped — I won't do that.`
     }
     const res = await executeProposal(binding.id, by)
-    return res.ok ? `Done — ${res.done}. It's on my log.` : `I couldn't: ${res.error}`
+    return res.ok
+      ? `Done — ${res.done}. It's on my log.${res.undo ? ' Reply **undo** within 24h and I\'ll put it back.' : ''}`
+      : `I couldn't: ${res.error}`
   }
 
   if (binding.type === 'question') {

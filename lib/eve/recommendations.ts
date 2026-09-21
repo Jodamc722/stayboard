@@ -37,8 +37,9 @@ export type NewRecommendation = {
   title: string; detail?: string; scope?: string; metric: string
   expect_direction?: string; expect_pct?: number; measure_in_days?: number; measure_window?: number
   created_by?: string; source?: string; chat_id?: string | null
-  /** 'plan' = a ranked plan from the operator's review (migration 099); default 'rec'. */
-  kind?: 'rec' | 'plan'; review_id?: string | null; area?: string | null
+  /** 'plan' = a ranked plan from the operator's review (migration 099); 'action' = something Eve
+   *  actually did in agent mode (lib/eve/agent-mode.ts afterAct), graded like any other; default 'rec'. */
+  kind?: 'rec' | 'plan' | 'action'; review_id?: string | null; area?: string | null
 }
 
 /**
@@ -82,7 +83,7 @@ export async function createRecommendation(input: NewRecommendation): Promise<{ 
   // when asked for, and a failed insert retries without them, so a review on a Lighthouse that has
   // not run 099 still logs its plans as ordinary recommendations rather than logging nothing.
   const extra: any = {}
-  if (input.kind === 'plan') extra.kind = 'plan'
+  if (input.kind && input.kind !== 'rec') extra.kind = input.kind
   if (input.review_id) extra.review_id = input.review_id
   if (input.area) extra.area = String(input.area).slice(0, 40)
   try {
