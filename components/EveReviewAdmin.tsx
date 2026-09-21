@@ -134,6 +134,12 @@ function ReviewView({ rv, canEdit, openPlans, onChanged }: { rv: Review; canEdit
         <p className="text-[11px] uppercase tracking-[0.08em] text-muted font-bold">{when(rv.at)} · {rv.trigger}{rv.focus ? ' · focus: ' + rv.focus : ''}{rv.model ? ' · ' + rv.model : ''}</p>
         <p className="text-[15px] font-semibold text-ink mt-1.5 leading-snug">{b.headline || rv.headline}</p>
         {rv.pack_stats?.tokens ? <p className="text-[11px] text-muted mt-2">Evidence pack ≈ {Number(rv.pack_stats.tokens).toLocaleString()} tokens{rv.pack_stats?.retired ? ` · retired ${rv.pack_stats.retired} template questions` : ''}</p> : null}
+        {rv.pack_stats?.modelAsked && rv.pack_stats?.modelAnswered && rv.pack_stats.modelAsked !== rv.pack_stats.modelAnswered ? (
+          <p className="text-[11px] text-amber-700 mt-1">{String(rv.pack_stats.modelAsked)} was unavailable, {String(rv.pack_stats.modelAnswered)} answered.</p>
+        ) : null}
+        {rv.pack_stats?.truncated ? (
+          <p className="text-[11px] text-red-600 font-semibold mt-1">Output was cut off at the token limit — the last plan or question may be incomplete. Run it again.</p>
+        ) : null}
       </div>
 
       {!!(b.movements || []).length && (

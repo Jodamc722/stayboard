@@ -183,7 +183,7 @@ export async function postDoorCodeApproval(p: DoorApprovalPost): Promise<{ ok: b
   // AGENT MODE GATE (slack_post, as an ask). This post IS the approval request, so "propose" is
   // enough to send it; OFF or a spent ask budget keeps it inside the app — the request is still
   // parked and an admin can release it from Settings → Eve → Approvals.
-  const gate = await agentAllowed('slack_post', { ask: true })
+  const gate = await agentAllowed('slack_post', { ask: true, urgent: true })
   if (gate.mode === 'observe' || gate.mode === 'draft') {
     await recordAgentAction('slack_post', { rung: gate.rung, allowed: false, mode: gate.mode, reason: gate.reason, summary: `door-code approval post for ${p.unit}`, by: 'eve', actor: p.requestedBy, countAs: 'none' })
     return { ok: false, error: `not posted — ${gate.reason}. The request is parked; release it from Settings → Eve → Approvals.`, channel: '#' + ch.name }

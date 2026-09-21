@@ -452,6 +452,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
         async () => { const p = await postThreadReply(it.channel, it.thread_ts || it.msg_ts, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
       // A proposed or drafted nudge still claims the slot: the proposal carries the text, and a
       // yes posts it. Re-proposing the same nudge every twenty minutes is the flood this prevents.
+      // A deferred nudge (quiet hours) posts on its own at the end of quiet hours; it claims the slot too.
       if (r.ok && r.mode !== 'observe') { await db.from('eve_slack_items').update({ nudged_at: new Date().toISOString(), nudge_count: it.nudge_count + 1 }).eq('id', it.id); if (r.mode === 'act') out.nudged++ }
       if (r.mode !== 'act') out.notes.push(`nudge ${r.mode}: ${gate.reason}`)
     }
@@ -492,11 +493,13 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     const text = parts.join('\n\n')
     const stepped = await stepDown(gate, { action: 'slack_post', summary: `morning roll-up in #vr-eve (${openNow.length} open)`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },
       async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
-    const r = stepped.mode === 'act' ? { ok: stepped.ok, error: stepped.error } : { ok: false, error: `${stepped.mode}: ${gate.reason}` }
+    // DEFERRED COUNTS AS SENT (2026-09-21). The 5:22am run is inside quiet hours; the roll-up is
+    // held and posted at 07:00 on its own. It claims the day, or the next run builds a second one.
+    const r = (stepped.mode === 'act' || stepped.mode === 'deferred') ? { ok: stepped.ok, error: stepped.error } : { ok: false, error: `${stepped.mode}: ${gate.reason}` }
     // A roll-up with nothing in it does not claim the day. The first live run was preceded by two
     // empty ones (the reads were failing) and each said "quiet day" and took today's slot — so the
     // real roll-up, with 30 open items, never went out. Only a digest with content counts.
-    if (r.ok) { out.digest = true; if (openNow.length || closed.length) st.lastDigest = today }
+    if (r.ok) { out.digest = true; if (openNow.length || closed.length) st.lastDigest = today; if (stepped.mode === 'deferred') out.notes.push(`digest held for quiet hours: ${gate.reason}`) }
     else out.notes.push(`digest: ${r.error}`)
   }
 

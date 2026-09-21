@@ -45,7 +45,7 @@ import { listQuestions, answerQuestion } from './questions'
 import { listAudits, decideAudit } from './audit'
 import { saveMemory } from './memory'
 import { pendingDrafts, sendApproved, declineDraft } from './ralph'
-import { agentAllowed, recordAgentAction, saveDraft, executeProposal, rejectProposal } from './agent-mode'
+import { agentAllowed, recordAgentAction, saveDraft, deferAction, executeProposal, rejectProposal } from './agent-mode'
 
 export const ASK_SETTINGS_KEY = 'eve_ask'
 
@@ -131,10 +131,14 @@ async function alreadyAsked(): Promise<Map<string, { id: string; count: number; 
 async function sentToday(): Promise<number> {
   const since = new Date(); since.setHours(0, 0, 0, 0)
   try {
-    const { count } = await db().from('eve_actions')
-      .select('id', { count: 'exact', head: true })
-      .eq('kind', 'ask').gte('created_at', since.toISOString())
-    return count || 0
+    // Proposals and quiet-hours holds share the envelope (kind 'ask') but are not morning asks;
+    // a 5am digest held for 07:00 must not eat one of the day's three question slots.
+    const { data } = await db().from('eve_actions')
+      .select('id,payload')
+      .eq('kind', 'ask').gte('created_at', since.toISOString()).limit(500)
+    let n = 0
+    for (const r of ((data as any[]) || [])) { const t = r.payload?.type; if (t !== 'action' && t !== 'deferred') n++ }
+    return n
   } catch { return 0 }
 }
 
@@ -267,6 +271,11 @@ async function deliverOne(to: Recipient, item: AskItem): Promise<boolean> {
   if (gate.mode === 'observe' || gate.mode === 'draft') {
     if (gate.mode === 'draft') await saveDraft({ action: 'telegram_ask', summary: `${item.type}: ${item.title}`, exec: { chat_id: to.chatId, text }, why: gate.reason, by: 'cron:eve-ask', actor: to.email })
     else await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: false, mode: 'observe', reason: gate.reason, summary: item.title, by: 'cron:eve-ask', countAs: 'none' })
+    return false
+  }
+  // QUIET HOURS: held until morning and sent then, binding and all — never a proposal nobody sees.
+  if (gate.mode === 'deferred') {
+    await deferAction({ action: 'telegram_ask', summary: `${item.type}: ${item.title}`, exec: { chat_id: to.chatId, text, bind: { type: item.type, ref: item.ref, created_by: to.email, title: item.title } }, why: gate.reason, by: 'cron:eve-ask', actor: to.email }, 'action', gate.settings)
     return false
   }
   const res = await sendMessage(to.chatId, text)

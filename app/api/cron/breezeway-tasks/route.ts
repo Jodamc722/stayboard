@@ -4,6 +4,7 @@ import { syncBreezewayComments } from '@/lib/breezeway-comment-sync'
 import { runBehindAlert } from '@/lib/ops-behind'
 import { revalidateTag } from 'next/cache'
 import { bustOpsDay } from '@/lib/ops-day'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -36,10 +37,11 @@ async function run(req: NextRequest) {
   return NextResponse.json({ ranAt: new Date().toISOString(), ...result, comments, alert })
 }
 
+const withReceipt = withRouteReceipt<NextRequest>('breezeway-tasks', run)
 export async function GET(req: NextRequest) {
-  return run(req)
+  return withReceipt(req)
 }
 
 export async function POST(req: NextRequest) {
-  return run(req)
+  return withReceipt(req)
 }

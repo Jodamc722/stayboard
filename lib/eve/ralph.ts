@@ -261,7 +261,7 @@ export async function sendApproved(id: string, by: string): Promise<{ ok: boolea
 
   // AGENT MODE GATE. Jon's yes is the approval; the master switch still decides whether anything
   // leaves the app at all. OFF → the draft stays proposed and he is told why.
-  const gate = await agentAllowed('telegram_ask', { ask: true })
+  const gate = await agentAllowed('telegram_ask', { ask: true, urgent: true })
   if (gate.mode === 'observe' || gate.mode === 'draft') {
     await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: false, mode: gate.mode, reason: gate.reason, summary: `ask Ralphbot: ${question.slice(0, 120)}`, ref: id, by: 'chat', actor: by, countAs: 'none' })
     return { ok: false, error: `not sent — ${gate.reason}. It stays on file; switch agent mode on and say yes again.` }

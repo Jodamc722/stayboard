@@ -35,6 +35,7 @@ import { buildDaySheet } from '@/lib/daysheet'
 import { getShifts } from '@/lib/homebase'
 import { etDay } from '@/lib/clean-day'
 import { sendGmail } from '@/lib/gmail-send'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -66,7 +67,9 @@ async function signedIn(): Promise<string | null> {
   try { const sb = createClient(); const { data: { user } } = await sb.auth.getUser(); return user?.email ? String(user.email).toLowerCase() : null } catch { return null }
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withRouteReceipt<NextRequest>('eod-recap', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return !!sp.get('preview') || !!sp.get('test') } })
+
+async function send(req: NextRequest) {
   const sp = new URL(req.url).searchParams
   const secret = process.env.CRON_SECRET
   const auth = req.headers.get('authorization') || ''

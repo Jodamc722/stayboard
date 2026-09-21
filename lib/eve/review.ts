@@ -428,19 +428,27 @@ export async function runReview(opts: { trigger: ReviewTrigger; focus?: string; 
   let body: ReviewBody
   let answeredBy = model
   let usage: any = null
+  // 2026-09-21: the live run stopped at exactly 6000 output tokens and the tool input was cut mid-plan.
+  // 8000 now, and the truncation is recorded (pack_stats.truncated) so the Review tab can say so
+  // instead of showing a review that quietly lost its last plan. modelAsked/modelAnswered record
+  // the fallback (Fable asked, Opus answered) for the same reason.
+  let truncated = false
+  let stopReason: string | null = null
   try {
-    // No temperature: the Fable tier rejects it. max_tokens 6000 leaves room for six full plans.
+    // No temperature: the Fable tier rejects it. max_tokens 8000 leaves room for six full plans.
     // STRUCTURED OUTPUT VIA A FORCED TOOL CALL (2026-09-18). The first live run came back as prose
     // around the JSON and failed to parse. A tool_choice-forced call returns the object as
     // tool input, validated against the schema, with no fences and no preamble to strip.
     const r = await anthropicMessages(key, {
-      model, max_tokens: 6000, system: SYSTEM,
+      model, max_tokens: 8000, system: SYSTEM,
       tools: [{ name: 'operator_review', description: 'Deliver the operator review as structured data.', input_schema: REVIEW_SCHEMA }],
       tool_choice: { type: 'tool', name: 'operator_review' },
       messages: [{ role: 'user', content: user }],
     }, fallback, 'eve-review')
     answeredBy = r.model
     usage = usageOf(r.data)
+    stopReason = r.data?.stop_reason ? String(r.data.stop_reason) : null
+    truncated = stopReason === 'max_tokens'
     if (!r.ok) return { ok: false, error: clip(r.data?.error?.message, 200) || `model call failed (${r.status})`, pack: { tokens: pack.tokens, stats: pack.stats } }
     const toolUse = (r.data?.content || []).find((c: any) => c.type === 'tool_use' && c.input && typeof c.input === 'object')
     const text = (r.data?.content || []).filter((c: any) => c.type === 'text').map((c: any) => String(c.text || '')).join('\n')
@@ -463,7 +471,7 @@ export async function runReview(opts: { trigger: ReviewTrigger; focus?: string; 
   try {
     const { data, error } = await db.from('eve_reviews').insert({
       trigger: opts.trigger, focus: focus || null, model: answeredBy, headline: body.headline,
-      body, pack_stats: { tokens: pack.tokens, blocks: pack.stats, retired }, usage, created_by: opts.by || null,
+      body, pack_stats: { tokens: pack.tokens, blocks: pack.stats, retired, truncated, stop_reason: stopReason, modelAsked: model, modelAnswered: answeredBy }, usage, created_by: opts.by || null,
     }).select('id').maybeSingle()
     if (!error) id = (data as any)?.id || null
   } catch { /* the review still returns; only the history is lost */ }

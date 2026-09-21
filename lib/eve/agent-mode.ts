@@ -23,6 +23,16 @@
 // smaller thing. Every decision — allowed or not — is one row in eve_agent_log, so "why didn't she
 // post that" is a query, not a debate.
 //
+// QUIET HOURS DEFER, THEY DO NOT PROPOSE (2026-09-21). For three mornings the Slack watch ran at
+// 5:22am ET, inside quiet hours, and each digest and "affects a guest today" post was turned into a
+// PROPOSAL — and the proposal's own notification was gated by the telegram_ask rung, which was 0.
+// Five posts sat in "waiting on a yes" that nobody was ever told about. Nothing reached Slack for
+// three days. So now: an act inside quiet hours is DEFERRED — stored with `deferUntil` = the end of
+// quiet hours and carried out then, no yes required, by flushDeferred() (called every 30 minutes
+// from /api/sentiment/scan and from the eve-ask cron). And the notification for a proposal is the
+// approval channel itself: it goes to the approvers whenever agent mode is on, whatever the
+// telegram_ask rung says; in quiet hours it is deferred to the morning, never dropped.
+//
 // THE KILL PATH. `enabled:false` must stop everything within one request, so the setting is read
 // FRESH here (app_settings has a 60s cache; this bypasses it on purpose). A stale "on" for a minute
 // after Jon hits OFF is the one latency this design refuses to have.
@@ -45,7 +55,17 @@ export type ActionType =
   | 'recommendation' | 'memory_rule'
 
 export type Rung = 0 | 1 | 2 | 3 | 4
-export type Mode = 'observe' | 'draft' | 'propose' | 'act'
+export type Mode = 'observe' | 'draft' | 'propose' | 'act' | 'deferred'
+
+/** The wiring for a recommended, safe day-one setup — the "Recommended setup" button. */
+export const RECOMMENDED_RUNGS: Partial<Record<ActionType, Rung>> = {
+  slack_post: 3, telegram_ask: 2, email_draft: 2, recommendation: 1, memory_rule: 1, task_note: 2, task_create: 2,
+}
+export function recommendedRungs(): Record<ActionType, Rung> {
+  const out: any = {}
+  for (const a of ACTIONS) out[a.key] = RECOMMENDED_RUNGS[a.key] ?? Math.min(2, a.cap)
+  return out
+}
 
 export type ActionDef = {
   key: ActionType
@@ -89,6 +109,19 @@ export const RUNG_MEANING: Record<Rung, string> = {
   2: 'Propose — she files it and asks; a person taps yes.',
   3: 'Act — she does it inside the fence; it can be undone.',
   4: 'Act and report — she does it and only tells you about exceptions.',
+}
+
+/** What the effective rung means for a person: the column next to each action in the panel. */
+export type Stance = 'Observes' | 'Drafts only' | 'Needs your approval' | 'Acts on her own'
+export function stanceOf(action: ActionType, rung: Rung, enabled: boolean): Stance {
+  const def = ACTIONS.find(a => a.key === action)
+  const r = clampRung(rung, def ? def.cap : 2)
+  const internal = !!def && def.cap <= 1
+  if (!enabled && !internal) return r >= 1 ? 'Drafts only' : 'Observes'
+  if (r >= 3) return 'Acts on her own'
+  if (r === 2) return 'Needs your approval'
+  if (r === 1) return 'Drafts only'
+  return 'Observes'
 }
 
 // ---- Settings ------------------------------------------------------------------------------------
@@ -217,10 +250,10 @@ export async function aiSpendToday(): Promise<number> {
   } catch { return 0 }
 }
 
-/** Minutes east of UTC for America/New_York at a given instant (negative = west). */
-function etOffsetMinutes(d: Date): number {
+/** Minutes east of UTC for a zone (default America/New_York) at a given instant (negative = west). */
+function etOffsetMinutes(d: Date, zone = 'America/New_York'): number {
   try {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'shortOffset' }).formatToParts(d)
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(d)
     const tz = parts.find(p => p.type === 'timeZoneName')?.value || 'GMT-5'
     const m = tz.match(/GMT([+-]\d{1,2})(?::(\d{2}))?/)
     if (!m) return -300
@@ -241,12 +274,33 @@ export function inQuietHours(s: AgentSettings, now = new Date()): boolean {
 }
 function toMin(hhmm: string): number { const [h, m] = String(hhmm).split(':').map(Number); return ((h || 0) % 24) * 60 + (m || 0) }
 
+/**
+ * The next instant quiet hours end, as an ISO string. Inside quiet hours this is the coming `end`
+ * (today or tomorrow in the zone, whichever is next); outside them it is `now`, so a deferral made
+ * by mistake flushes on the next pass rather than waiting a day.
+ */
+export function quietHoursEnd(s: AgentSettings, now = new Date()): string {
+  try {
+    if (!inQuietHours(s, now)) return now.toISOString()
+    const tz = s.quietHours.tz || 'America/New_York'
+    const f = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+    const parts: Record<string, string> = {}
+    for (const p of f.formatToParts(now)) parts[p.type] = p.value
+    const cur = toMin(`${parts.hour}:${parts.minute}`), end = toMin(s.quietHours.end)
+    // Local wall-clock of the end, today; if that has already passed today, tomorrow.
+    let local = new Date(`${parts.year}-${parts.month}-${parts.day}T${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}:00`)
+    if (cur >= end) local = new Date(local.getTime() + 86400_000)
+    const instant = new Date(local.getTime() - etOffsetMinutes(local, tz) * 60_000)
+    return instant.toISOString()
+  } catch { return new Date(now.getTime() + 60 * 60_000).toISOString() }
+}
+
 // ---- The decision --------------------------------------------------------------------------------
 
 export function modeOf(rung: Rung): Mode {
   return rung >= 3 ? 'act' : rung === 2 ? 'propose' : rung === 1 ? 'draft' : 'observe'
 }
-const RANK: Record<Mode, number> = { observe: 0, draft: 1, propose: 2, act: 3 }
+const RANK: Record<Mode, number> = { observe: 0, draft: 1, propose: 2, deferred: 3, act: 3 }
 function lower(a: Mode, b: Mode): Mode { return RANK[a] <= RANK[b] ? a : b }
 
 export type AgentVerdict = {
@@ -265,8 +319,10 @@ export type AgentVerdict = {
  * May Eve take this action right now? Never throws. Reads the switch fresh.
  *
  * `usd` is the money at stake, when there is any; `now` is for tests.
+ * `urgent` means a person asked for this right now (a door code at 2am, Jon's own yes) — quiet
+ * hours hold Eve's own initiative, not a human's request.
  */
-export async function agentAllowed(action: ActionType, opts: { usd?: number; now?: Date; ask?: boolean } = {}): Promise<AgentVerdict> {
+export async function agentAllowed(action: ActionType, opts: { usd?: number; now?: Date; ask?: boolean; urgent?: boolean } = {}): Promise<AgentVerdict> {
   const s = await getAgentSettings()
   const def = ACTIONS.find(a => a.key === action)
   const rung = clampRung(s.rungs[action] ?? (def ? def.def : 0), def ? def.cap : 2)
@@ -278,8 +334,6 @@ export async function agentAllowed(action: ActionType, opts: { usd?: number; now
     // OFF: nothing leaves the app. Drafts still get written, so the work is not lost — just parked.
     mode = lower(mode, 'draft'); why.push('agent mode is OFF')
   }
-  if (mode === 'act' && inQuietHours(s, opts.now)) { mode = 'propose'; why.push(`quiet hours ${s.quietHours.start}–${s.quietHours.end} ${s.quietHours.tz}`) }
-
   const usd = Number(opts.usd)
   if (Number.isFinite(usd) && usd > 0 && mode === 'act' && usd > s.budgets.moneyCeilingUsd) {
     mode = 'propose'; why.push(`$${usd.toFixed(2)} is over the $${s.budgets.moneyCeilingUsd} ceiling`)
@@ -294,6 +348,13 @@ export async function agentAllowed(action: ActionType, opts: { usd?: number; now
       const spend = await aiSpendToday()
       if (spend >= s.budgets.aiUsdPerDay) { mode = 'propose'; why.push(`AI spend $${spend} is over today's $${s.budgets.aiUsdPerDay}`) }
     }
+  }
+
+  // QUIET HOURS: an act is held, not turned into a proposal nobody is told about. A Telegram ask
+  // is a message to a person, so at rung 2 (where it sends) it is held as well — hold until
+  // morning, never propose-to-nobody at 3am. Decided last so the budgets above still apply.
+  if (!opts.urgent && inQuietHours(s, opts.now) && (mode === 'act' || (action === 'telegram_ask' && mode === 'propose'))) {
+    mode = 'deferred'; why.push(`quiet hours ${s.quietHours.start}–${s.quietHours.end} ${s.quietHours.tz}: held until ${s.quietHours.end}`)
   }
 
   const reason = why.length ? why.join('; ') : (mode === 'act' ? `rung ${rung}: act` : `rung ${rung}: ${mode}`)
@@ -385,65 +446,182 @@ export async function saveDraft(p: Proposal): Promise<{ ok: boolean; id?: string
  * payload.type 'action') so a Telegram reply of "yes" lands on it exactly like a reply to a
  * question does — lib/eve/ask.ts resolveAsk handles the 'action' type. Slack gets a plain line in
  * the approvals room pointing at Settings → Eve → Agent mode, where Approve / Reject live.
+ *
+ * THE NOTIFICATION IS THE APPROVAL CHANNEL (2026-09-21). It is not itself a `telegram_ask` that the
+ * telegram_ask rung may switch off — that is how five proposals sat unseen for three days. When
+ * agent mode is on it always goes to an approver: Telegram if one is bound, else the Slack
+ * approvals room, else it is logged 'undeliverable' and the panel shows it in red. In quiet hours
+ * the notification is deferred to the morning, never dropped.
  */
 export async function proposeAction(p: Proposal): Promise<{ ok: boolean; id?: string; notified: string[]; error?: string }> {
-  const notified: string[] = []
   let id: string | undefined
   try {
     const { data, error } = await supabaseAdmin().from('eve_actions').insert({
       created_by: p.actor || p.by, kind: 'ask',
-      payload: { type: 'action', ref: '', action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, delivery_count: 0 },
+      payload: { type: 'action', ref: '', action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, why: (p.why || '').slice(0, 300), delivery_count: 0 },
       why: (p.why || p.summary).slice(0, 400), status: 'proposed',
       expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
     }).select('id').maybeSingle()
     if (error) throw error
     id = (data as any)?.id ? String((data as any).id) : undefined
   } catch (e: any) {
-    return { ok: false, notified, error: String(e?.message || e).slice(0, 200) }
+    return { ok: false, notified: [], error: String(e?.message || e).slice(0, 200) }
   }
+  if (!id) return { ok: false, notified: [], error: 'proposal was not filed' }
 
   const s = await getAgentSettings()
-  const text = `🤖 **Eve wants to: ${p.summary.slice(0, 300)}**${p.why ? `\n\n_Why:_ ${p.why.slice(0, 300)}` : ''}${p.usd ? `\n_Money:_ $${Number(p.usd).toFixed(2)}` : ''}\n\nReply **yes** and I'll do it. Reply **no** and I'll drop it. It also sits in Settings → Eve → Agent mode.`
-
-  // The ask itself is budgeted: past today's asks it is filed silently and shows in the panel.
-  const askOk = await agentAllowed('telegram_ask', { ask: true })
-  if (askOk.mode !== 'observe' && askOk.mode !== 'draft' && s.enabled) {
-    if (s.channels.telegram) {
-      try {
-        const { sendMessage } = await import('@/lib/telegram')
-        const { data } = await supabaseAdmin().from('telegram_contacts').select('email,dm_chat_id,status').eq('status', 'approved').limit(100)
-        const rows = ((data as any[]) || []).filter(r => r.email && r.dm_chat_id && s.approvers.indexOf(String(r.email).toLowerCase()) >= 0)
-        const to = rows[0]
-        if (to && id) {
-          const res = await sendMessage(String(to.dm_chat_id), text)
-          if (res.ok) {
-            notified.push('telegram')
-            const messageId = Number((res as any)?.result?.message_id) || null
-            await supabaseAdmin().from('eve_actions').update({ payload: { type: 'action', ref: '', action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, chat_id: String(to.dm_chat_id), message_id: messageId, delivery_count: 1, sent_at: new Date().toISOString() } }).eq('id', id)
-          }
-        }
-      } catch { /* Slack may still carry it */ }
-    }
-    if (s.channels.slack) {
-      try {
-        const { getApprovalsChannel } = await import('./approvals')
-        const { postToChannel } = await import('@/lib/slack')
-        const ch = await getApprovalsChannel()
-        if (ch) {
-          const r = await postToChannel(ch.id, `🤖 *Eve wants to:* ${p.summary.slice(0, 300)}${p.why ? `\n_Why:_ ${p.why.slice(0, 200)}` : ''}\nApprove or reject in Lighthouse → Users & admin → Eve → Agent mode.`)
-          if (r.ok) notified.push('slack')
-        }
-      } catch { /* the proposal is filed regardless */ }
-    }
+  let notified: string[] = []
+  let reason = 'proposed; waiting in the panel'
+  if (s.enabled && inQuietHours(s)) {
+    const d = await deferAction({ action: p.action, summary: `tell an approver: ${p.summary.slice(0, 200)}`, exec: { proposal_id: id }, why: 'proposal made in quiet hours', by: p.by, actor: p.actor }, 'proposal_notify', s)
+    reason = d.ok ? `proposed; approver will be told at ${s.quietHours.end} (quiet hours)` : 'proposed; could not schedule the morning notification'
+    try { await supabaseAdmin().from('eve_actions').update({ result: { delivery: 'deferred', until: d.until } }).eq('id', id) } catch { /* fine */ }
+  } else if (s.enabled) {
+    const n = await notifyProposal(id, s)
+    notified = n.notified
+    reason = notified.length ? `proposed; asked via ${notified.join('+')}` : `proposed; UNDELIVERABLE — ${n.error || 'no approver reachable'}`
   }
-  await recordAgentAction(p.action, { rung: 2, allowed: false, mode: 'propose', reason: notified.length ? `proposed; asked via ${notified.join('+')}` : 'proposed; waiting in the panel', summary: p.summary, ref: id || null, by: p.by, actor: p.actor, usd: p.usd, countAs: notified.length ? 'ask' : 'none' })
+  await recordAgentAction(p.action, { rung: 2, allowed: false, mode: 'propose', reason, summary: p.summary, ref: id, by: p.by, actor: p.actor, usd: p.usd, countAs: notified.length ? 'ask' : 'none' })
   return { ok: true, id, notified }
+}
+
+/**
+ * Tell an approver about a filed proposal. Telegram first (the first approver bound to a chat),
+ * then the Slack approvals room; if neither can carry it, the row is marked undeliverable so the
+ * panel can shout. Returns which channels took it.
+ */
+export async function notifyProposal(id: string, settings?: AgentSettings): Promise<{ notified: string[]; error?: string }> {
+  const s = settings || await getAgentSettings()
+  const notified: string[] = []
+  let row: any = null
+  try { const { data } = await supabaseAdmin().from('eve_actions').select('id,payload,status').eq('id', id).maybeSingle(); row = data } catch { /* below */ }
+  if (!row || row.status !== 'proposed') return { notified, error: row ? `already ${row.status}` : 'proposal not on file' }
+  const pl = row.payload || {}
+  const summary = String(pl.summary || '').slice(0, 300), why = String(pl.why || '').slice(0, 300), usd = Number(pl.usd) || 0
+  const errors: string[] = []
+
+  if (s.channels.telegram) {
+    try {
+      const { sendMessage } = await import('@/lib/telegram')
+      const { data } = await supabaseAdmin().from('telegram_contacts').select('email,dm_chat_id,status').eq('status', 'approved').limit(100)
+      const rows = ((data as any[]) || []).filter(r => r.email && r.dm_chat_id && s.approvers.indexOf(String(r.email).toLowerCase()) >= 0)
+      const to = rows[0]
+      if (!to) errors.push('no approver is bound on Telegram')
+      else {
+        const text = `🤖 **Eve wants to: ${summary}**${why ? `\n\n_Why:_ ${why}` : ''}${usd ? `\n_Money:_ $${usd.toFixed(2)}` : ''}\n\nReply **yes** and I'll do it. Reply **no** and I'll drop it. It also sits in Settings → Eve → Agent mode.`
+        const res = await sendMessage(String(to.dm_chat_id), text)
+        if (res.ok) {
+          notified.push('telegram')
+          const messageId = Number((res as any)?.result?.message_id) || null
+          await supabaseAdmin().from('eve_actions').update({ payload: { ...pl, chat_id: String(to.dm_chat_id), message_id: messageId, delivery_count: Number(pl.delivery_count || 0) + 1, sent_at: new Date().toISOString() }, result: { delivery: 'telegram' } }).eq('id', id)
+        } else errors.push(`Telegram: ${String((res as any)?.error || 'refused').slice(0, 80)}`)
+      }
+    } catch (e: any) { errors.push(`Telegram: ${String(e?.message || e).slice(0, 80)}`) }
+  } else errors.push('Telegram is switched off')
+
+  if (!notified.length && s.channels.slack) {
+    try {
+      const { getApprovalsChannel } = await import('./approvals')
+      const { postToChannel } = await import('@/lib/slack')
+      const ch = await getApprovalsChannel()
+      if (!ch) errors.push('no Slack approvals channel')
+      else {
+        const r = await postToChannel(ch.id, `🤖 *Eve wants to:* ${summary}${why ? `\n_Why:_ ${why.slice(0, 200)}` : ''}\nApprove or reject in Lighthouse → Users & admin → Eve → Agent mode.`)
+        if (r.ok) { notified.push('slack'); await supabaseAdmin().from('eve_actions').update({ result: { delivery: 'slack' } }).eq('id', id) }
+        else errors.push(`Slack: ${String(r.error || 'refused').slice(0, 80)}`)
+      }
+    } catch (e: any) { errors.push(`Slack: ${String(e?.message || e).slice(0, 80)}`) }
+  } else if (!notified.length) errors.push('Slack is switched off')
+
+  if (!notified.length) {
+    const error = errors.join('; ').slice(0, 300)
+    try { await supabaseAdmin().from('eve_actions').update({ result: { delivery: 'undeliverable', error } }).eq('id', id) } catch { /* fine */ }
+    await logAgent({ action: String(pl.action || 'telegram_ask') as ActionType, rung: 2, allowed: false, mode: 'propose', reason: `UNDELIVERABLE: ${error}`, summary: summary, ref: id, by: 'eve' })
+    return { notified, error }
+  }
+  return { notified }
+}
+
+// ---- Deferred: quiet hours hold the action, the morning carries it out --------------------------
+
+export type DeferKind = 'action' | 'proposal_notify'
+
+/**
+ * Store an action to be carried out at the end of quiet hours — no yes required. Lands in
+ * eve_actions kind 'ask', payload.type 'deferred' (no migration; same queue), with `deferUntil`.
+ */
+export async function deferAction(p: Proposal, kind: DeferKind = 'action', settings?: AgentSettings): Promise<{ ok: boolean; id?: string; until: string }> {
+  const s = settings || await getAgentSettings()
+  const until = quietHoursEnd(s)
+  try {
+    const { data, error } = await supabaseAdmin().from('eve_actions').insert({
+      created_by: p.actor || p.by, kind: 'ask',
+      payload: { type: 'deferred', ref: '', deferKind: kind, action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, deferUntil: until, by: p.by, delivery_count: 0 },
+      why: (p.why || `held for quiet hours until ${s.quietHours.end} ${s.quietHours.tz}`).slice(0, 400), status: 'proposed',
+      expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
+    }).select('id').maybeSingle()
+    if (error) throw error
+    const id = (data as any)?.id ? String((data as any).id) : undefined
+    if (kind === 'action') await recordAgentAction(p.action, { rung: 3, allowed: false, mode: 'deferred', reason: `quiet hours; will run at ${until}`, summary: p.summary, ref: id || null, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
+    return { ok: true, id, until }
+  } catch (e: any) {
+    await logAgent({ action: p.action, rung: 3, allowed: false, mode: 'deferred', reason: `could not defer: ${String(e?.message || e).slice(0, 120)}`, summary: p.summary, by: p.by, actor: p.actor })
+    return { ok: false, until }
+  }
+}
+
+/**
+ * Carry out everything whose hold has expired. Called from the two jobs that run through the
+ * morning: /api/sentiment/scan (every 30 minutes) and the eve-ask cron. Each row is CLAIMED with a
+ * conditional update first, so two overlapping callers cannot both post the same digest.
+ */
+export async function flushDeferred(by = 'cron:flush'): Promise<{ ran: number; failed: number; skipped: number; notes: string[] }> {
+  const out = { ran: 0, failed: 0, skipped: 0, notes: [] as string[] }
+  let rows: any[] = []
+  try {
+    const { data } = await supabaseAdmin().from('eve_actions').select('id,payload,status,created_by,created_at')
+      .eq('kind', 'ask').eq('status', 'proposed').order('created_at', { ascending: true }).limit(200)
+    rows = ((data as any[]) || []).filter(r => r.payload?.type === 'deferred')
+  } catch { return out }
+  if (!rows.length) return out
+  const s = await getAgentSettings()
+  if (!s.enabled) { out.skipped = rows.length; out.notes.push('agent mode is OFF; deferred work stays held'); return out }
+  if (inQuietHours(s)) { out.skipped = rows.length; out.notes.push('still quiet hours'); return out }
+  const now = Date.now()
+  for (const r of rows) {
+    const pl = r.payload || {}
+    const due = Date.parse(String(pl.deferUntil || ''))
+    if (Number.isFinite(due) && due > now) { out.skipped++; continue }
+    // Claim it. Only the caller whose update lands moves on.
+    let claimed = false
+    try {
+      const { data } = await supabaseAdmin().from('eve_actions').update({ status: 'approved', decided_by: by, decided_at: new Date().toISOString() }).eq('id', r.id).eq('status', 'proposed').select('id')
+      claimed = !!((data as any[]) || []).length
+    } catch { claimed = false }
+    if (!claimed) { out.skipped++; continue }
+    const action = String(pl.action || 'slack_post') as ActionType
+    let res: { ok: boolean; done?: string; error?: string }
+    if (pl.deferKind === 'proposal_notify') {
+      const n = await notifyProposal(String(pl.exec?.proposal_id || ''), s)
+      res = n.notified.length ? { ok: true, done: `approver told via ${n.notified.join('+')}` } : { ok: false, error: n.error || 'undeliverable' }
+    } else {
+      res = await runExec(action, pl.exec || {}, by)
+    }
+    const nowISO = new Date().toISOString()
+    try { await supabaseAdmin().from('eve_actions').update({ status: res.ok ? 'executed' : 'failed', executed_at: res.ok ? nowISO : null, result: { by, ...res } }).eq('id', String(r.id)) } catch { /* fine */ }
+    if (pl.deferKind !== 'proposal_notify') {
+      await recordAgentAction(action, { rung: 3, allowed: res.ok, mode: 'act', reason: res.ok ? `deferred from quiet hours; ran at ${nowISO}` : `deferred from quiet hours; failed: ${res.error}`, summary: String(pl.summary || ''), ref: String(r.id), by: String(pl.by || by), countAs: res.ok ? 'action' : 'none' })
+    }
+    if (res.ok) out.ran++; else { out.failed++; out.notes.push(`${action}: ${res.error}`) }
+  }
+  return out
 }
 
 /**
  * Step down from whatever the verdict allows. The caller passes what it WANTED to do; this files
  * the right smaller thing and returns which one. `act` is the caller's own function, run only when
- * the verdict says act — and counted when it succeeds.
+ * the verdict says act — and counted when it succeeds. `deferred` stores the exec to run later, so
+ * `p.exec` must be complete enough for runExec.
  */
 export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => Promise<{ ok: boolean; ref?: string | null; error?: string }>): Promise<{ mode: Mode; ok: boolean; ref?: string | null; error?: string }> {
   if (verdict.mode === 'act' && act) {
@@ -451,6 +629,10 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
     try { r = await act() } catch (e: any) { r = { ok: false, error: String(e?.message || e).slice(0, 200) } }
     await recordAgentAction(p.action, { rung: verdict.rung, allowed: true, mode: 'act', reason: r.ok ? verdict.reason : `act failed: ${r.error || 'unknown'}`, summary: p.summary, ref: r.ref || null, by: p.by, actor: p.actor, usd: p.usd, countAs: r.ok ? 'action' : 'none' })
     return { mode: 'act', ok: r.ok, ref: r.ref, error: r.error }
+  }
+  if (verdict.mode === 'deferred') {
+    const r = await deferAction(p, 'action', verdict.settings)
+    return { mode: 'deferred', ok: r.ok, ref: r.id || null, error: r.ok ? undefined : 'could not defer' }
   }
   if (verdict.mode === 'propose') {
     const r = await proposeAction(p)
@@ -466,9 +648,43 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
 
 // ---- Executing an approved proposal --------------------------------------------------------------
 
+/** The executors: one per action Eve can currently carry out herself from a stored `exec`. */
+async function runExec(action: ActionType, exec: any, by: string): Promise<{ ok: boolean; done?: string; error?: string }> {
+  try {
+    if (action === 'slack_post' && exec?.channel && exec?.text) {
+      const { postToChannel, postThreadReply } = await import('@/lib/slack')
+      const r = exec.thread_ts ? await postThreadReply(String(exec.channel), String(exec.thread_ts), String(exec.text)) : await postToChannel(String(exec.channel), String(exec.text))
+      return r.ok ? { ok: true, done: `posted in ${exec.channel_name || exec.channel}` } : { ok: false, error: String(r.error || 'Slack refused it') }
+    }
+    if (action === 'telegram_ask' && exec?.chat_id && exec?.text) {
+      const { sendMessage } = await import('@/lib/telegram')
+      const r = await sendMessage(String(exec.chat_id), String(exec.text))
+      if (!r.ok) return { ok: false, error: String((r as any).error || 'Telegram refused it') }
+      // A deferred morning ask carries its binding so the reply still lands on the right question.
+      if (exec.bind && typeof exec.bind === 'object') {
+        try {
+          await supabaseAdmin().from('eve_actions').insert({
+            created_by: exec.bind.created_by || by, kind: 'ask',
+            payload: { type: exec.bind.type, ref: exec.bind.ref, chat_id: String(exec.chat_id), message_id: Number((r as any)?.result?.message_id) || null, delivery_count: 1, sent_at: new Date().toISOString() },
+            why: String(exec.bind.title || '').slice(0, 400), status: 'proposed',
+          })
+        } catch { /* sent; only the reply binding is lost */ }
+      }
+      return { ok: true, done: 'sent on Telegram' }
+    }
+    if (action === 'memory_rule' && exec?.text) {
+      const { saveMemory } = await import('./memory')
+      const r = await saveMemory({ text: String(exec.text), kind: exec.kind, why: exec.why, scope: exec.scope, weight: exec.weight, source: 'eve', created_by: by })
+      return r.ok ? { ok: true, done: 'remembered' } : { ok: false, error: r.error || 'could not save' }
+    }
+    return { ok: true, done: `approved — no executor for ${action} yet, so a person does this one by hand` }
+  } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 200) } }
+}
+
 /**
  * A person said yes. Executors exist for the actions Eve can currently take herself; anything else
  * is marked approved with a note that a person has to do it — an approval is never silently lost.
+ * A deferred row may be approved too: "post it now" instead of waiting for the morning.
  */
 export async function executeProposal(id: string, by: string): Promise<{ ok: boolean; done?: string; error?: string }> {
   let row: any = null
@@ -476,7 +692,8 @@ export async function executeProposal(id: string, by: string): Promise<{ ok: boo
     const { data } = await supabaseAdmin().from('eve_actions').select('*').eq('id', id).maybeSingle()
     row = data
   } catch { /* below */ }
-  if (!row || !(row.kind === 'ask' && row.payload?.type === 'action') && row.kind !== 'draft') return { ok: false, error: 'that proposal is no longer on file' }
+  const isAsk = row && row.kind === 'ask' && (row.payload?.type === 'action' || row.payload?.type === 'deferred')
+  if (!row || (!isAsk && row.kind !== 'draft')) return { ok: false, error: 'that proposal is no longer on file' }
   if (row.status !== 'proposed') return { ok: false, error: `already ${row.status}` }
   const action = String(row.payload?.action || '') as ActionType
   const exec = row.payload?.exec || {}
@@ -488,24 +705,9 @@ export async function executeProposal(id: string, by: string): Promise<{ ok: boo
     try { await supabaseAdmin().from('eve_actions').update({ status, decided_by: by, decided_at: nowISO, executed_at: status === 'executed' ? nowISO : null, result }).eq('id', id) } catch { /* fine */ }
   }
 
-  let out: { ok: boolean; done?: string; error?: string }
-  try {
-    if (action === 'slack_post' && exec?.channel && exec?.text) {
-      const { postToChannel, postThreadReply } = await import('@/lib/slack')
-      const r = exec.thread_ts ? await postThreadReply(String(exec.channel), String(exec.thread_ts), String(exec.text)) : await postToChannel(String(exec.channel), String(exec.text))
-      out = r.ok ? { ok: true, done: `posted in ${exec.channel_name || exec.channel}` } : { ok: false, error: String(r.error || 'Slack refused it') }
-    } else if (action === 'telegram_ask' && exec?.chat_id && exec?.text) {
-      const { sendMessage } = await import('@/lib/telegram')
-      const r = await sendMessage(String(exec.chat_id), String(exec.text))
-      out = r.ok ? { ok: true, done: 'sent on Telegram' } : { ok: false, error: String((r as any).error || 'Telegram refused it') }
-    } else if (action === 'memory_rule' && exec?.text) {
-      const { saveMemory } = await import('./memory')
-      const r = await saveMemory({ text: String(exec.text), kind: exec.kind, why: exec.why, scope: exec.scope, weight: exec.weight, source: 'eve', created_by: by })
-      out = r.ok ? { ok: true, done: 'remembered' } : { ok: false, error: r.error || 'could not save' }
-    } else {
-      out = { ok: true, done: `approved — no executor for ${action} yet, so a person does this one by hand` }
-    }
-  } catch (e: any) { out = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+  const out = row.payload?.deferKind === 'proposal_notify'
+    ? await (async () => { const n = await notifyProposal(String(exec?.proposal_id || ''), s); return n.notified.length ? { ok: true, done: `approver told via ${n.notified.join('+')}` } : { ok: false, error: n.error || 'undeliverable' } })()
+    : await runExec(action, exec, by)
 
   await close(out.ok ? 'executed' : 'failed', { by, ...out })
   await recordAgentAction(action, { rung: 2, allowed: out.ok, mode: 'act', reason: out.ok ? `approved by ${by}` : `approved by ${by} but failed: ${out.error}`, summary: String(row.payload?.summary || ''), ref: id, by: 'chat', actor: by, countAs: out.ok ? 'action' : 'none' })
@@ -520,13 +722,53 @@ export async function rejectProposal(id: string, by: string, note?: string): Pro
   } catch { return { ok: false } }
 }
 
-/** Open proposals and drafts, for the panel. */
+/** Open proposals, drafts and deferred work, for the panel. */
 export async function listProposals(limit = 40): Promise<any[]> {
   try {
     const { data } = await supabaseAdmin().from('eve_actions').select('id,kind,payload,why,status,created_by,created_at,decided_by,decided_at,result')
       .in('kind', ['ask', 'draft']).order('created_at', { ascending: false }).limit(200)
-    return ((data as any[]) || []).filter(r => r.kind === 'draft' || r.payload?.type === 'action').slice(0, limit)
+    return ((data as any[]) || []).filter(r => r.kind === 'draft' || r.payload?.type === 'action' || r.payload?.type === 'deferred').slice(0, limit)
   } catch { return [] }
+}
+
+/**
+ * The graveyard sweep (2026-09-21). A morning roll-up or an "affects a guest today" post that has
+ * waited more than a day for a yes is about a day that is over: posting it now would be noise.
+ * Expire them, log it, and let the queue hold only things still worth a decision. Run when the
+ * panel loads.
+ */
+export async function expireStaleDigests(): Promise<number> {
+  try {
+    const cutoff = new Date(Date.now() - 24 * 3600_000).toISOString()
+    const { data } = await supabaseAdmin().from('eve_actions').select('id,payload,created_at')
+      .eq('kind', 'ask').eq('status', 'proposed').lt('created_at', cutoff).limit(200)
+    const stale = ((data as any[]) || []).filter(r => (r.payload?.type === 'action' || r.payload?.type === 'deferred') && r.payload?.action === 'slack_post' && /roll-up|digest|urgent-today|affects a guest/i.test(String(r.payload?.summary || '')))
+    let n = 0
+    for (const r of stale) {
+      try {
+        const { data: upd } = await supabaseAdmin().from('eve_actions').update({ status: 'expired', decided_by: 'eve', decided_at: new Date().toISOString(), result: { note: 'expired: a day-of post older than 24h' } }).eq('id', r.id).eq('status', 'proposed').select('id')
+        if (((upd as any[]) || []).length) { n++; await logAgent({ action: 'slack_post', rung: 2, allowed: false, mode: 'observe', reason: 'expired: a digest older than 24h is about a day that is over', summary: String(r.payload?.summary || ''), ref: String(r.id), by: 'eve' }) }
+      } catch { /* next */ }
+    }
+    return n
+  } catch { return 0 }
+}
+
+/** The strip at the top of the panel: how many wait, how many the approver was never told about. */
+export async function queueStatus(): Promise<{ waiting: number; deferred: number; undeliverable: number; undeliverableWhy: string[] }> {
+  const out = { waiting: 0, deferred: 0, undeliverable: 0, undeliverableWhy: [] as string[] }
+  try {
+    const { data } = await supabaseAdmin().from('eve_actions').select('id,payload,result').eq('kind', 'ask').eq('status', 'proposed').limit(300)
+    for (const r of ((data as any[]) || [])) {
+      const t = r.payload?.type
+      if (t === 'deferred') out.deferred++
+      else if (t === 'action') {
+        out.waiting++
+        if (r.result?.delivery === 'undeliverable') { out.undeliverable++; if (r.result?.error && out.undeliverableWhy.length < 3) out.undeliverableWhy.push(String(r.result.error).slice(0, 160)) }
+      }
+    }
+  } catch { /* zeros */ }
+  return out
 }
 
 export async function agentLog(limit = 100): Promise<any[]> {
@@ -553,6 +795,6 @@ export function renderAgentModeForPrompt(s: AgentSettings): string {
     else if (m === 'draft') drafts.push(a.label.toLowerCase())
     else off.push(a.label.toLowerCase())
   }
-  const quiet = `Quiet hours ${s.quietHours.start}–${s.quietHours.end} ET: anything you would act on waits for a person until morning.`
+  const quiet = `Quiet hours ${s.quietHours.start}–${s.quietHours.end} ET: anything you would act on is held and goes out on its own at ${s.quietHours.end}; nobody is woken for it.`
   return `AGENT MODE IS ON, inside a fence. You may ACT on your own for: ${acts.length ? acts.join(', ') : 'nothing yet'}. You must PROPOSE and wait for a yes for: ${proposes.length ? proposes.join(', ') : 'nothing'}. You only DRAFT (a person picks it up) for: ${drafts.length ? drafts.join(', ') : 'nothing'}.${off.length ? ` You do not do: ${off.join(', ')}.` : ''} Budgets today: ${s.budgets.actionsPerDay} actions, ${s.budgets.asksPerDay} asks, $${s.budgets.aiUsdPerDay} of AI; money over $${s.budgets.moneyCeilingUsd} always needs a yes. ${quiet} Say which of these applies when someone asks you to do something — never claim you already did a thing that was only proposed, and never say you cannot do something you may act on.`
 }

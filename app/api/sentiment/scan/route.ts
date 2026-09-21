@@ -11,6 +11,7 @@ import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
+import { flushDeferred } from '@/lib/eve/agent-mode'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -54,6 +55,12 @@ export async function POST(req: NextRequest) {
       if (skip) return NextResponse.json({ ok: true, ...skip })
     }
   }
+
+  // EVE'S HELD WORK (2026-09-21). This is the one job that runs every 30 minutes around the clock,
+  // so it is where anything Eve held for quiet hours (a 5:22am roll-up, a nudge) gets carried out
+  // once quiet hours end. Best effort; a flush failure never stops the scan.
+  let flushed: any = null
+  try { flushed = await flushDeferred('cron:sentiment-scan'); if (flushed.ran || flushed.failed) await recordRun({ name: 'eve-deferred', ok: !flushed.failed, itemCount: flushed.ran, detail: flushed }) } catch { flushed = null }
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured - add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })

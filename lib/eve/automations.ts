@@ -65,7 +65,7 @@ export const AUTOMATIONS: AutomationDef[] = [
   { key: 'guest-comms', label: 'Conversations & messages sync', area: 'guests', path: '/api/cron/guest-comms',
     what: 'Pulls guest conversations and their recent messages, then recomputes response times for anything that moved.', receipt: 'none' },
   { key: 'breezeway-tasks', label: 'Breezeway task mirror', area: 'ops', path: '/api/cron/breezeway-tasks',
-    what: 'Mirrors Breezeway tasks and their comments, and raises the behind-schedule signal the ops board reads.', receipt: 'none' },
+    what: 'Mirrors Breezeway tasks and their comments, and raises the behind-schedule signal the ops board reads.', receipt: 'automation_runs' },
   { key: 'owner-statements', label: 'Owner statements sync', area: 'money', path: '/api/sync/owner-statements',
     what: 'Mirrors Guesty owner statements and their line items — the source of truth for anything owner-facing.', receipt: 'none' },
   { key: 'revenue-sync', label: 'Revenue app mirror', area: 'money', path: '/api/cron/revenue-sync',
@@ -150,7 +150,7 @@ export const AUTOMATIONS: AutomationDef[] = [
   // ---- Slack ----------------------------------------------------------------------------------
   { key: 'slack-alerts', label: 'Slack alert engines', area: 'slack', path: '/api/cron/slack',
     what: 'Every half hour, runs fourteen alert engines (late cleans, glitches, overtime, readiness, walk-in risk, door codes, handover and the rest) and dispatches whatever has been approved.',
-    configKey: 'slack_rules', settingsPath: '/users → Settings → Slack alerts & rules', receipt: 'slack_outbox' },
+    configKey: 'slack_rules', settingsPath: '/users → Settings → Slack alerts & rules', receipt: 'automation_runs' },
   { key: 'slack-digest', label: 'Morning Slack digest', area: 'slack', path: '/api/cron/slack-digest',
     what: 'Posts the day-ahead summary into the ops channel.', configKey: 'slack_rules', receipt: 'slack_outbox' },
   { key: 'weekly-planner', label: 'Weekly plan', area: 'slack', path: '/api/cron/weekly-planner',

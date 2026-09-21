@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { buildPlannerPosts } from '@/lib/slack-planner'
 import { getSlackRules } from '@/lib/slack-rules'
 import { draft } from '@/lib/slack-queue'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -48,5 +49,6 @@ async function run(req: NextRequest) {
   }
 }
 
-export async function GET(req: NextRequest) { return run(req) }
-export async function POST(req: NextRequest) { return run(req) }
+const withReceipt = withRouteReceipt<NextRequest>('weekly-planner', run)
+export async function GET(req: NextRequest) { return withReceipt(req) }
+export async function POST(req: NextRequest) { return withReceipt(req) }

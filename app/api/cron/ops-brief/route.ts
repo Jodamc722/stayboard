@@ -15,6 +15,7 @@ import { getSetting } from '@/lib/app-settings'
 import { buildOpsBrief, buildGmBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
 import { asLang, type BriefLang } from '@/lib/brief-lang'
 import { sendGmail } from '@/lib/gmail-send'
+import { withRouteReceipt } from '@/lib/automation-runs'
 import { hashLegacyPasscodes } from '@/lib/share-links-server'
 
 export const dynamic = 'force-dynamic'
@@ -54,7 +55,12 @@ async function currentUser(): Promise<string | null> {
   } catch { return null }
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withRouteReceipt<NextRequest>('ops-brief', send, {
+  skipWhen: (req) => { const sp = new URL(req.url).searchParams; return !!sp.get('preview') || !!sp.get('test') },
+  count: (b) => Array.isArray(b?.results) ? b.results.filter((o: any) => o && o.sent).length : undefined,
+})
+
+async function send(req: NextRequest) {
   const secret = process.env.CRON_SECRET
   const auth = req.headers.get('authorization') || ''
   // ANONYMOUS CALLERS ARE NOT CRON (2026-09-02). This read `|| auth === ''`, and an anonymous

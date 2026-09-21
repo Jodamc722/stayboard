@@ -35,6 +35,7 @@ import { getTimecards } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { computeYesterdayLabor } from '@/lib/labor-daily'
 import { cronAllowed } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -80,7 +81,11 @@ const secTitle = (t: string, sub: string) =>
   '<p style="margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;font-weight:700">' + t +
   (sub ? ' <span style="color:#c4c9d0;font-weight:400;text-transform:none;letter-spacing:0">&middot; ' + sub + '</span>' : '') + '</p>'
 
-export async function GET(req: NextRequest) {
+// RECEIPT (2026-09-21): the Learning tab's Homebase row read "missing" because this job never
+// wrote one. The wrapper reads ok/sent/to off the response; preview and test write nothing.
+export const GET = withRouteReceipt<NextRequest>('labor-trueup', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return sp.get('preview') === '1' || sp.get('test') === '1' } })
+
+async function send(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const preview = sp.get('preview') === '1'
   const test = sp.get('test') === '1'

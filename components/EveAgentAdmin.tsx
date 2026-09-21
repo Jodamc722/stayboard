@@ -7,7 +7,7 @@
 // hours; approvers; channels. A "today" strip from the counters and the AI ledger, the proposals
 // waiting on a yes, and the last 100 lines of her log. Owner edits; admins see everything.
 import { useCallback, useEffect, useState } from 'react'
-import { Power, Lock, Loader2, Check, X, RefreshCw, ScrollText, Inbox, Save } from 'lucide-react'
+import { Power, Lock, Loader2, Check, X, RefreshCw, ScrollText, Inbox, Save, Sparkles, AlertTriangle, Clock } from 'lucide-react'
 
 type Rung = 0 | 1 | 2 | 3 | 4
 type ActionDef = { key: string; label: string; what: string; def: Rung; cap: Rung; wiredAt: string[] }
@@ -22,11 +22,31 @@ type Settings = {
 }
 type Today = { date: string; actions: number; asks: number; aiUsd: number; byAction: Record<string, number> }
 type LogRow = { id: number; at: string; action: string; rung: number; allowed: boolean; mode: string | null; reason: string | null; usd: number | null; summary: string | null; ref: string | null; by: string; actor: string | null }
+type QueueStatus = { waiting: number; deferred: number; undeliverable: number; undeliverableWhy: string[] }
 type QueueRow = { id: string; kind: string; payload: any; why: string | null; status: string; created_by: string | null; created_at: string; decided_by: string | null; result: any }
 
 const card = 'bg-white border border-line rounded-2xl shadow-soft'
 const input = 'w-full text-sm text-ink bg-app border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200'
 const RUNG_SHORT = ['Observe', 'Draft', 'Propose', 'Act', 'Act + report']
+
+// The plain-words column next to each action — the same rule as stanceOf in lib/eve/agent-mode.ts,
+// computed here so it follows the rung buttons live, before Save.
+type Stance = 'Observes' | 'Drafts only' | 'Needs your approval' | 'Acts on her own'
+function stanceOf(a: ActionDef, rung: number, enabled: boolean): Stance {
+  const r = Math.max(0, Math.min(a.cap, rung))
+  const internal = a.cap <= 1
+  if (!enabled && !internal) return r >= 1 ? 'Drafts only' : 'Observes'
+  if (r >= 3) return 'Acts on her own'
+  if (r === 2) return 'Needs your approval'
+  if (r === 1) return 'Drafts only'
+  return 'Observes'
+}
+const STANCE_STYLE: Record<Stance, string> = {
+  'Acts on her own': 'bg-[#E3F4EC] text-[#0F7B52] border-[#BFE5D2]',
+  'Needs your approval': 'bg-[#FDF3E0] text-[#9A6200] border-[#F0DAA8]',
+  'Drafts only': 'bg-app text-ink border-line',
+  'Observes': 'bg-app text-muted border-line',
+}
 
 function when(iso: string): string {
   const d = new Date(iso)
@@ -47,6 +67,8 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
   const [log, setLog] = useState<LogRow[]>([])
   const [queue, setQueue] = useState<QueueRow[]>([])
   const [approversText, setApproversText] = useState('')
+  const [status, setStatus] = useState<QueueStatus | null>(null)
+  const [recommended, setRecommended] = useState<Record<string, Rung>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -54,6 +76,8 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
       const r = await fetch('/api/eve/agent').then(x => x.json())
       if (!r?.ok) { setErr(r?.message || r?.error || 'Could not load agent mode.'); return }
       setS(r.settings); setActions(r.actions || []); setMeanings(r.rungs || {}); setToday(r.today || null)
+      setStatus(r.status || null); setRecommended(r.recommended || {})
+      if (r.expiredDigests) setNote(`Cleared ${r.expiredDigests} stale digest proposal${r.expiredDigests === 1 ? '' : 's'} older than a day.`)
       setApproversText((r.settings?.approvers || []).join(', '))
       setDirty(false); setErr('')
     } catch (e: any) { setErr(e?.message || String(e)) } finally { setLoading(false) }
@@ -64,7 +88,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
     try { const r = await fetch('/api/eve/agent?log=1').then(x => x.json()); setLog(r?.log || []) } catch { /* shown empty */ }
   }, [])
   const loadQueue = useCallback(async () => {
-    try { const r = await fetch('/api/eve/agent?queue=1').then(x => x.json()); setQueue(r?.queue || []) } catch { /* shown empty */ }
+    try { const r = await fetch('/api/eve/agent?queue=1').then(x => x.json()); setQueue(r?.queue || []); if (r?.status) setStatus(r.status) } catch { /* shown empty */ }
   }, [])
   useEffect(() => { if (view === 'log') loadLog(); if (view === 'queue') loadQueue() }, [view, loadLog, loadQueue])
 
@@ -86,6 +110,12 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
   }
 
   function edit(fn: (d: Settings) => Settings) { if (!s || !canEdit) return; setS(fn(s)); setDirty(true) }
+
+  function applyRecommended() {
+    if (!s || !canEdit || !Object.keys(recommended).length) return
+    edit(d => ({ ...d, rungs: { ...d.rungs, ...recommended } }))
+    setNote('Recommended setup applied — Save parameters to keep it.')
+  }
 
   async function saveParams() {
     if (!s) return
@@ -147,6 +177,18 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
         </div>
       )}
 
+      {/* THE QUEUE, AT THE TOP. Waiting on a yes, held for the morning, and — in red — proposals
+          nobody was told about. Three days of silent digests is what this line is for. */}
+      {status && (
+        <div className={`${card} px-3.5 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]`}>
+          <button onClick={() => setView('queue')} className="inline-flex items-center gap-1.5 text-ink hover:underline"><Inbox size={13} /> <b>{status.waiting}</b> waiting on a yes</button>
+          <span className="inline-flex items-center gap-1.5 text-muted"><Clock size={13} /> <b className="text-ink">{status.deferred}</b> held for the morning</span>
+          {status.undeliverable > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-[#B42318] font-semibold"><AlertTriangle size={13} /> {status.undeliverable} proposal{status.undeliverable === 1 ? '' : 's'} could not reach an approver{status.undeliverableWhy[0] ? ` — ${status.undeliverableWhy[0]}` : ''}</span>
+          )}
+        </div>
+      )}
+
       {err && <div className="text-[13px] text-[#B42318] bg-[#FDECEC] border border-[#F5C2C0] rounded-xl px-3.5 py-2.5">{err}</div>}
       {note && <div className="text-[13px] text-ink bg-app border border-line rounded-xl px-3.5 py-2.5">{note}</div>}
 
@@ -163,7 +205,16 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
         <div className="space-y-4">
           {/* RUNGS */}
           <div className={`${card} p-4`}>
-            <div className="text-[13px] font-bold text-ink mb-1">What she may do, per kind of action</div>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <div className="text-[13px] font-bold text-ink">What she may do, per kind of action</div>
+              {canEdit && (
+                <button onClick={applyRecommended} disabled={saving || !Object.keys(recommended).length}
+                  title="Slack posts on her own; Telegram asks, email drafts and task notes and tasks with your yes; recommendations and memory as drafts; everything welded stays at propose."
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-brand-700 bg-white border border-line rounded-lg px-2.5 py-1.5 hover:bg-app disabled:opacity-50">
+                  <Sparkles size={12} /> Recommended setup
+                </button>
+              )}
+            </div>
             <div className="text-[12px] text-muted mb-3">
               {[0, 1, 2, 3, 4].map(r => <span key={r} className="mr-3"><b>{r}</b> {meanings[String(r)] || RUNG_SHORT[r]}</span>)}
             </div>
@@ -171,6 +222,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
               {actions.map(a => {
                 const v = s.rungs[a.key] ?? a.def
                 const locked = a.cap < 4
+                const stance = stanceOf(a, v, s.enabled)
                 return (
                   <div key={a.key} className="py-2.5 flex flex-col sm:flex-row sm:items-center gap-2">
                     <div className="flex-1 min-w-0">
@@ -180,6 +232,9 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                         {a.wiredAt.length === 0 && <span className="text-[10px] text-muted bg-app border border-line rounded-full px-1.5 py-0.5" title="No code path takes this action yet — the setting is ready for when one does.">not wired yet</span>}
                       </div>
                       <div className="text-[11px] text-muted">{a.what}</div>
+                    </div>
+                    <div className="sm:w-[150px] shrink-0">
+                      <span className={`inline-block text-[11px] font-semibold rounded-full px-2 py-0.5 border ${STANCE_STYLE[stance]}`} title={!s.enabled && a.cap > 1 ? 'Agent mode is OFF, so nothing leaves the app whatever the rung says.' : `Rung ${v}`}>{stance}</span>
                     </div>
                     <div className="flex items-center gap-1">
                       {[0, 1, 2, 3, 4].map(r => {
@@ -215,7 +270,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
             <div className="space-y-4">
               <div className={`${card} p-4`}>
                 <div className="text-[13px] font-bold text-ink mb-2">Quiet hours</div>
-                <div className="text-[11px] text-muted mb-2">Acts wait until morning; asks and drafts still queue.</div>
+                <div className="text-[11px] text-muted mb-2">Anything she would act on is held and goes out on its own when quiet hours end — no yes needed. A proposal made at night reaches you in the morning.</div>
                 <div className="flex items-center gap-2">
                   <input type="time" value={s.quietHours.start} disabled={!canEdit} className={input} onChange={e => edit(d => ({ ...d, quietHours: { ...d.quietHours, start: e.target.value } }))} />
                   <span className="text-muted text-xs">to</span>
@@ -255,26 +310,30 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
       {view === 'queue' && (
         <div className={`${card} p-4`}>
           <div className="flex items-center justify-between mb-2">
-            <div className="text-[13px] font-bold text-ink">Proposals and drafts</div>
+            <div className="text-[13px] font-bold text-ink">Proposals, drafts and work held for the morning</div>
             <button onClick={loadQueue} className="text-xs text-muted hover:text-ink inline-flex items-center gap-1"><RefreshCw size={12} /> Refresh</button>
           </div>
           {!queue.length && <div className="text-[13px] text-muted">Nothing waiting.</div>}
           <div className="divide-y divide-line">
             {queue.map(q => {
               const open = q.status === 'proposed'
+              const deferred = q.payload?.type === 'deferred'
+              const delivery = q.result?.delivery as string | undefined
               return (
                 <div key={q.id} className="py-2.5 flex flex-col sm:flex-row sm:items-start gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] text-ink">
-                      <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border mr-1.5 ${q.kind === 'draft' ? 'bg-app text-muted border-line' : 'bg-[#FDF3E0] text-[#9A6200] border-[#F0DAA8]'}`}>{q.kind === 'draft' ? 'draft' : 'proposal'}</span>
+                      <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border mr-1.5 ${q.kind === 'draft' ? 'bg-app text-muted border-line' : deferred ? 'bg-[#E8F0FE] text-[#1D4ED8] border-[#C7D7FB]' : 'bg-[#FDF3E0] text-[#9A6200] border-[#F0DAA8]'}`}>{q.kind === 'draft' ? 'draft' : deferred ? 'held' : 'proposal'}</span>
                       <b>{q.payload?.action}</b> — {q.payload?.summary || q.why}
                     </div>
-                    <div className="text-[11px] text-muted">{when(q.created_at)} · {q.created_by || 'eve'} · {q.status}{q.decided_by ? ` by ${q.decided_by}` : ''}{q.result?.done ? ` · ${q.result.done}` : ''}{q.result?.error ? ` · ${q.result.error}` : ''}</div>
+                    <div className="text-[11px] text-muted">{when(q.created_at)} · {q.created_by || 'eve'} · {q.status}{q.decided_by ? ` by ${q.decided_by}` : ''}{deferred && open && q.payload?.deferUntil ? ` · goes out ${when(q.payload.deferUntil)}` : ''}{q.result?.done ? ` · ${q.result.done}` : ''}{q.result?.error && delivery !== 'undeliverable' ? ` · ${q.result.error}` : ''}</div>
+                    {open && !deferred && delivery === 'undeliverable' && <div className="text-[11px] text-[#B42318] font-semibold inline-flex items-center gap-1"><AlertTriangle size={11} /> Nobody was told about this one: {q.result?.error || 'no approver reachable'}</div>}
+                    {open && !deferred && delivery === 'deferred' && <div className="text-[11px] text-muted">You will be told in the morning{q.result?.until ? ` (${when(q.result.until)})` : ''}.</div>}
                   </div>
                   {open && (
                     <div className="flex items-center gap-1.5">
-                      <button onClick={() => decide(q.id, 'approve')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-[#0F7B52] rounded-lg px-2.5 py-1.5"><Check size={12} /> Yes, do it</button>
-                      <button onClick={() => decide(q.id, 'reject')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted bg-white border border-line rounded-lg px-2.5 py-1.5 hover:text-ink"><X size={12} /> No</button>
+                      <button onClick={() => decide(q.id, 'approve')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-[#0F7B52] rounded-lg px-2.5 py-1.5"><Check size={12} /> {deferred ? 'Do it now' : 'Yes, do it'}</button>
+                      <button onClick={() => decide(q.id, 'reject')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted bg-white border border-line rounded-lg px-2.5 py-1.5 hover:text-ink"><X size={12} /> {deferred ? 'Drop it' : 'No'}</button>
                     </div>
                   )}
                 </div>

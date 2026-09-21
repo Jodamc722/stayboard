@@ -17,6 +17,7 @@ import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { runMorningAsk, buildBatch, expireStaleAsks, askSettings, recipients } from '@/lib/eve/ask'
 import { expireUnanswered } from '@/lib/eve/ralph'
+import { flushDeferred } from '@/lib/eve/agent-mode'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -62,6 +63,8 @@ export async function GET(req: NextRequest) {
     if (skip) return NextResponse.json({ ok: true, ...skip })
   }
 
+  // Anything held for quiet hours goes out first — the morning ask runs at 09:00, well after 07:00.
+  const flushed = await flushDeferred('cron:eve-ask').catch(() => ({ ran: 0, failed: 0, skipped: 0, notes: ['flush failed'] }))
   const expired = await expireStaleAsks()
   // A question Ralphbot never answered stops being one after two days, so the reply-matching window
   // cannot drift onto a question from last week.
@@ -72,8 +75,8 @@ export async function GET(req: NextRequest) {
     name: 'eve-ask',
     ok: run.ok,
     itemCount: run.sent,
-    detail: run.skipped ? { skipped: run.skipped, expired, ralphExpired } : { items: run.items, expired, ralphExpired },
+    detail: run.skipped ? { skipped: run.skipped, expired, ralphExpired, flushed } : { items: run.items, expired, ralphExpired, flushed },
   })
 
-  return NextResponse.json({ ...run, expired, ralphExpired })
+  return NextResponse.json({ ...run, expired, ralphExpired, flushed })
 }

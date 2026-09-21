@@ -50,6 +50,46 @@ export async function withReceipt<T>(name: string, fn: () => Promise<T>, summari
   }
 }
 
+/**
+ * Wrap a cron ROUTE HANDLER so the receipt is read off its own JSON response. For the jobs that
+ * return `NextResponse.json({ ok, sent, to, ... })` from a dozen places (labor-trueup, eod-recap,
+ * ops-brief…), threading recordRun through every return is exactly the wiring that gets missed —
+ * which is why the Learning tab said "missing" for them. `skipWhen` keeps a signed-in preview or
+ * test from writing a receipt as if the real send had happened.
+ */
+export function withRouteReceipt<R extends Request>(
+  name: string,
+  handler: (req: R) => Promise<Response>,
+  opts: { skipWhen?: (req: R) => boolean; count?: (body: any) => number | undefined } = {},
+): (req: R) => Promise<Response> {
+  return async (req: R) => {
+    if (opts.skipWhen && opts.skipWhen(req)) return handler(req)
+    const t0 = Date.now()
+    let res: Response
+    try { res = await handler(req) } catch (e: any) {
+      await recordRun({ name, ok: false, ms: Date.now() - t0, error: String(e?.message || e) })
+      throw e
+    }
+    let body: any = null
+    try { body = await res.clone().json() } catch { body = null }
+    if (res.status === 401) return res   // an unauthorized poke is not a run
+    const b = body && typeof body === 'object' ? body : {}
+    const ok = res.status < 400 && b.ok !== false && !b.error
+    let itemCount = opts.count ? opts.count(b) : undefined
+    if (itemCount == null) {
+      for (const k of ['to', 'posts', 'count', 'sent', 'upserted', 'tasks']) {
+        const v = b[k]
+        if (typeof v === 'number') { itemCount = v; break }
+        if (typeof v === 'boolean') { itemCount = v ? 1 : 0; break }
+      }
+    }
+    const detail: Record<string, any> = {}
+    for (const k of ['reason', 'skipped', 'subject', 'sent', 'to', 'alert', 'comments']) if (b[k] != null && typeof b[k] !== 'object') detail[k] = b[k]
+    await recordRun({ name, ok, ms: Date.now() - t0, itemCount, detail: Object.keys(detail).length ? detail : null, error: b.error ? String(b.error) : (res.status >= 400 ? `HTTP ${res.status}` : null) })
+    return res
+  }
+}
+
 export type LastRun = { name: string; ok: boolean; at: string; itemCount: number | null; error: string | null; ms: number | null }
 
 /** The most recent run of each named automation, in one query. */
