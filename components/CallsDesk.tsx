@@ -750,7 +750,9 @@ function WelcomeList({ rows, talkroute, openId, setOpenId, draft, setDraft, busy
                   <>
                     {!r.claimedBy && <button onClick={() => welcome(r.id, 'claim')} disabled={busy === r.id} title="Lock this call to you so nobody else dials the same guest" className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"><Hand size={13} /> Take it</button>}
                     {talkroute
-                      ? <span title="Dial from the Talkroute app — the call record marks this card by itself" className="inline-flex items-center gap-1.5 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-[12px] font-semibold text-brand-700"><PhoneCall size={13} /> Tracked by Talkroute</span>
+                      ? (r.proof.lastAttemptAt
+                          ? <span title="Talkroute has seen a call to this guest" className="inline-flex items-center gap-1.5 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-[12px] font-semibold text-brand-700"><PhoneCall size={13} /> Call logged</span>
+                          : <span title="No call to this guest has reached Talkroute yet. Dial from the Talkroute app and the card marks itself." className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-app px-3 py-2 text-[12px] font-semibold text-muted"><PhoneOff size={13} /> No call yet</span>)
                       : <button onClick={() => welcome(r.id, 'reached')} disabled={busy === r.id} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === r.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Reached</button>}
                   </>
                 )}

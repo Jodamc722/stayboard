@@ -75,6 +75,12 @@ export async function backfillCallers(sb: any, opts: { limit?: number; deadline?
   let map: PeopleMap = {}
   try { [people, map] = await Promise.all([talkroutePeople(), getPeopleMap()]) } catch { /* map alone still works */ }
   try {
+    // FIRST, UNDO THE BAD LABELS (2026-09-21). Before `talkroute_number` was excluded, 139 calls
+    // were labelled with OUR OWN line — "(954) 526-8998" — as though the office phone had made the
+    // call. Those rows have both columns set, so the backfill below would never revisit them.
+    // Clearing anything whose name is just a phone number puts them back in the queue.
+    try { await sb.from('talkroute_calls').update({ caller_device: null, caller_name: null }).like('caller_name', '(%) %-%') } catch { /* best effort */ }
+
     // supabase-js RETURNS an error, it does not throw — a missing column would otherwise read as
     // "nothing to do" forever, which is exactly how this looked before the message was surfaced.
     const { data, error } = await sb.from('talkroute_calls')
