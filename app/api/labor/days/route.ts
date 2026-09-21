@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
       // Same money gate as the board: hours, turns and counts stay; every dollar is hidden.
       const strip = (r: any) => {
         for (const k of CREW_KEYS) { r.crews[k].payroll = null; r.crews[k].punchPayroll = null; r.crews[k].billable = null }
-        r.hk.fees = null; r.hk.costPerClean = null; r.hk.margin = null; r.hk.marginPct = null
+        r.hk.fees = null; r.hk.chargedRevenue = null; r.hk.costPerClean = null; r.hk.margin = null; r.hk.marginPct = null
         r.total.payroll = null; r.total.fees = null; r.total.billable = null; r.total.margin = null
       }
       out.rows.forEach(strip); strip(out.sum)

@@ -272,7 +272,7 @@ export type LaborEcon = {
   /** The simple, reconcilable labor P&L: housekeeping and maintenance, by market and in total. */
   pnl?: any
   /** How the departure-clean denominator was built, as its parts. */
-  cleanAudit?: { scope: string; counted: number; countedThisMarket: number; closed: number; openCounted: number; movedExcluded: number; noAssignee: number; noCheckout: number; noCheckoutExamples: { unit: string; day: string; who: string; task: string }[]; vendorCleanerCleans: number; rule: string }
+  cleanAudit?: { scope: string; counted: number; countedThisMarket: number; closed: number; openCounted: number; movedExcluded: number; noAssignee: number; noCheckout: number; noCheckoutExamples: { unit: string; day: string; who: string; task: string }[]; vendorCleanerCleans: number; midStay: number; midStayNoCharge: number; midStayExamples: { unit: string; day: string; who: string; task: string; charge: number }[]; rule: string }
   /** Per person, day by day — the color behind every aggregate. Wages carry the day's agency share. */
   personDays?: Record<string, { d: string; cleans: number; depCleans: number; fee: number; feeAll: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]>
   /** Daily housekeeping series (credited cleans, net fees, loaded HK wages) for trend charts. */
@@ -576,6 +576,21 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     }
     return true
   })
+  // WHO WAS IN THE UNIT ON A GIVEN DAY. A departure clean finished while a live guest is still in
+  // house is a MID-STAY clean (Jon, 2026-09-21: "mid stay cleans are revenue generated"), not a
+  // turn and not a refresh. Live stays overlapping the window, by listing.
+  const staysRaw = await pageAll((a, b) => sb.from('guesty_reservations')
+    .select('id,listing_id,check_in,check_out,status')
+    .lte('check_in', to).gte('check_out', from)
+    .in('status', LIVE_RES_STATUS).order('id', { ascending: true }).range(a, b))
+  const staysByListing: Record<string, { ci: string; co: string }[]> = {}
+  for (const r of staysRaw) {
+    const ci = String(r.check_in || '').slice(0, 10), co = String(r.check_out || '').slice(0, 10)
+    if (!ci || !co) continue
+    ;(staysByListing[String(r.listing_id)] = staysByListing[String(r.listing_id)] || []).push({ ci, co })
+  }
+  const occupiedOn = (listingId: string, day: string) => (staysByListing[listingId] || []).some(x => x.ci <= day && day < x.co)
+
   // OWNER / FRIENDS-&-FAMILY STAYS ARE BILLED A CLEANING FEE (Jon, 2026-09-21: "we charge owners a
   // cleaning fee btw, this gets updated later if fee not there"). So the clean is revenue — the
   // guest fee when Guesty already carries it, else the listing's cleaning fee, which is what the
@@ -837,7 +852,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // no matched fee adds a clean and $0, which is exactly what happened in real life.
   const cleanLandedDay = (t: any): string =>
     isClosed(t) ? etDay(t.finished_at) : String(t.scheduled_date || '').slice(0, 10)
-  let clAudCounted = 0, clAudClosed = 0, clAudOpen = 0, clAudMoved = 0, clAudNoAssignee = 0, clAudNoCheckout = 0, clAudVendorCleaner = 0
+  let clAudCounted = 0, clAudClosed = 0, clAudOpen = 0, clAudMoved = 0, clAudNoAssignee = 0, clAudNoCheckout = 0, clAudVendorCleaner = 0, clAudMidStay = 0, clAudMidStayNoCharge = 0
+  const cleansMidStay: { unit: string; day: string; who: string; task: string; charge: number }[] = []
   const cleansDone: any[] = []
   // A TURN IS A CHECKOUT (Jon, 2026-09-21: "actual checkouts and departure cleans only" → chose
   // checkout-backed turns only). A finished departure clean that no live reservation checked out
@@ -861,7 +877,17 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       const onPayroll = !!w && rosterNames.indexOf(w) >= 0
       if (liV && liV.vendor && onPayroll) { /* our crew in a vendor building — counts */ }
       else if (liV && liV.vendor) { clAudVendorCleaner++; continue }
-      else {
+      else if (occupiedOn(String(t.reference_property_id), day)) {
+        // MID-STAY: a guest was in house. Revenue-generating cleaning work — it joins the charged
+        // cleans (its entered charge is the revenue; $0 means nobody priced it, which is flagged
+        // by the charged-clean filter below), never the turn count.
+        clAudMidStay++
+        if (!chargedCleanIds[String(t.id)]) { chargedCleanIds[String(t.id)] = true; chargedCleanTasks.push(t) }
+        if (chargeOfRaw(t) <= 0) clAudMidStayNoCharge++
+        if (cleansMidStay.length < 60) cleansMidStay.push({ unit: (liV || { name: String(t.reference_property_id) }).name, day, who: w, task: String(t.name || '').slice(0, 80), charge: chargeOfRaw(t) })
+        continue
+      } else {
+        // REFRESH / RE-CLEAN: unit vacant, the turn already happened. Labor with no revenue.
         clAudNoCheckout++
         if (cleansNoCheckout.length < 60) cleansNoCheckout.push({ unit: (liV || { name: String(t.reference_property_id) }).name, day, who: w, task: String(t.name || '').slice(0, 80) })
         continue
@@ -2397,7 +2423,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     noCheckoutExamples: cleansNoCheckout,
     // Cleans in vendor-managed buildings by the vendor's own cleaners — theirs, not our turns.
     vendorCleanerCleans: clAudVendorCleaner,
-    rule: 'a turn is a finished, assigned, not-deleted departure clean that a confirmed checkout was matched to (checkout day or day+1 first, then nearest within −2..+9 days). Deleted/cancelled = moved. A departure clean no checkout claims is listed under noCheckout and never counted (Jon, 2026-09-21).',
+    // Departure-named cleans done while a guest was in house — mid-stays: revenue work, not turns.
+    midStay: clAudMidStay,
+    midStayNoCharge: clAudMidStayNoCharge,
+    midStayExamples: cleansMidStay,
+    rule: 'a turn is a finished, assigned, not-deleted departure clean that a confirmed checkout was matched to (checkout day or day+1 first, then nearest within −2..+9 days). Deleted/cancelled = moved. A departure-named clean no checkout claims is a MID-STAY when a guest was in house (revenue work, joins charged cleans) and a REFRESH / RE-CLEAN when the unit was vacant (labor, no revenue, listed under noCheckout). Neither is a turn (Jon, 2026-09-21).',
   }
 
   return {

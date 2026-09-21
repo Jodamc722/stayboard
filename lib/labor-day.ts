@@ -74,6 +74,10 @@ export type LaborDayRow = {
     cleansTotal: number
     /** Net cleaning fees on every in-house departure turn that landed today (any crew). */
     fees: number
+    /** CHARGED CLEANING WORK — its own section (Jon 2026-09-21): mid-stays, linen refreshes,
+     *  re-cleans that carry a charge. Revenue cleans, never turns. */
+    chargedCleans: number
+    chargedRevenue: number
     /** HK wages ÷ every turn — THE number. */
     hoursPerClean: number | null
     costPerClean: number | null
@@ -110,6 +114,8 @@ export type LaborDays = {
     movedCleans: number
     /** Finished departure cleans with no live checkout behind them — real work, not turns (Jon 2026-09-21). */
     cleansNoCheckout: { count: number; examples: { unit: string; day: string; who: string; task: string }[] }
+    /** Departure-named cleans done with a guest in house: revenue cleans when charged, flagged when not. */
+    midStay: { count: number; noCharge: number; examples: { unit: string; day: string; who: string; task: string; charge: number }[] }
     unrostered: { people: number; payroll: number; names: string[] }
     unassignedMarket: { people: number; payroll: number; names: string[] }
     /** Maintenance tasks closed with no charge entered (17WEST excluded by design). */
@@ -126,7 +132,7 @@ const blankCrew = (): CrewDay => ({ people: 0, hours: 0, payroll: 0, punchPayrol
 const blankRow = (d: string): LaborDayRow => ({
   d, dow: d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }) : '',
   crews: { housekeeping: blankCrew(), supervision: blankCrew(), maintenance: blankCrew(), other: blankCrew() },
-  hk: { cleans: 0, coveredByOthers: 0, cleansTotal: 0, fees: 0, hoursPerClean: null, costPerClean: null, hoursPerCleanHkOnly: null, costPerCleanHkOnly: null, margin: 0, marginPct: null },
+  hk: { cleans: 0, coveredByOthers: 0, cleansTotal: 0, fees: 0, chargedCleans: 0, chargedRevenue: 0, hoursPerClean: null, costPerClean: null, hoursPerCleanHkOnly: null, costPerCleanHkOnly: null, margin: 0, marginPct: null },
   total: { hours: 0, payroll: 0, cleans: 0, fees: 0, billable: 0, billedHours: null, margin: 0 },
 })
 
@@ -140,6 +146,7 @@ function finish(row: LaborDayRow, rate: number) {
   }
   const hk = row.crews.housekeeping
   row.hk.fees = round2(row.hk.fees)
+  row.hk.chargedRevenue = round2(row.hk.chargedRevenue)
   row.hk.cleansTotal = row.hk.cleans + row.hk.coveredByOthers
   row.hk.hoursPerClean = row.hk.cleansTotal > 0 && hk.hours > 0 ? round2(hk.hours / row.hk.cleansTotal) : null
   row.hk.costPerClean = row.hk.cleansTotal > 0 && hk.payroll > 0 ? round2(hk.payroll / row.hk.cleansTotal) : null
@@ -210,6 +217,8 @@ export async function laborDays(opts: { from: string; to: string; market?: strin
         c.billable += r.billable
         // Cleaning fees follow the TURN, not the person: a supervisor's covered turn is HK revenue.
         rows[d].hk.fees += r.feeAll
+        // Charged cleaning work (r.cleans counts turns + charged cleans; depCleans is turns only).
+        if (crew === 'housekeeping') { rows[d].hk.chargedCleans += Math.max(0, r.cleans - r.depCleans); rows[d].hk.chargedRevenue += r.billable }
         if (crew === 'housekeeping') rows[d].hk.cleans += r.depCleans
         else rows[d].hk.coveredByOthers += r.depCleans
       }
@@ -228,6 +237,7 @@ export async function laborDays(opts: { from: string; to: string; market?: strin
       for (const n of b.names) if (a.names.indexOf(n) < 0) a.names.push(n)
     }
     sum.hk.cleans += r.hk.cleans; sum.hk.coveredByOthers += r.hk.coveredByOthers; sum.hk.fees += r.hk.fees
+    sum.hk.chargedCleans += r.hk.chargedCleans; sum.hk.chargedRevenue += r.hk.chargedRevenue
   }
   finish(sum, rate)
 
@@ -247,6 +257,7 @@ export async function laborDays(opts: { from: string; to: string; market?: strin
       ownerBilled: fa.ownerBilled || { reservations: 0, fees: 0, pendingInGuesty: 0 },
       movedCleans: Number(ca.movedExcluded || 0),
       cleansNoCheckout: { count: Number(ca.noCheckout || 0), examples: Array.isArray(ca.noCheckoutExamples) ? ca.noCheckoutExamples : [] },
+      midStay: { count: Number(ca.midStay || 0), noCharge: Number(ca.midStayNoCharge || 0), examples: Array.isArray(ca.midStayExamples) ? ca.midStayExamples : [] },
       unrostered: { people: econ.unrostered.people, payroll: econ.unrostered.payroll, names: econ.unrostered.names },
       unassignedMarket: { people: econ.unassignedMarket.people, payroll: econ.unassignedMarket.payroll, names: econ.unassignedMarket.names },
       tasksNoCharge: mt ? Number((mt as any).tasksNoCharge || 0) : 0,

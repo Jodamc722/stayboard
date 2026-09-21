@@ -18,7 +18,7 @@ type Crew = { people: number; hours: number; payroll: number | null; punchPayrol
 type Row = {
   d: string; dow: string
   crews: { housekeeping: Crew; supervision: Crew; maintenance: Crew; other: Crew }
-  hk: { cleans: number; coveredByOthers: number; cleansTotal: number; fees: number | null; hoursPerClean: number | null; costPerClean: number | null; hoursPerCleanHkOnly: number | null; costPerCleanHkOnly: number | null; margin: number | null; marginPct: number | null }
+  hk: { cleans: number; coveredByOthers: number; cleansTotal: number; fees: number | null; chargedCleans: number; chargedRevenue: number | null; hoursPerClean: number | null; costPerClean: number | null; hoursPerCleanHkOnly: number | null; costPerCleanHkOnly: number | null; margin: number | null; marginPct: number | null }
   total: { hours: number; payroll: number | null; cleans: number; fees: number | null; billable: number | null; billedHours: number | null; margin: number | null }
 }
 type Data = {
@@ -28,6 +28,7 @@ type Data = {
     feesNoCleanFound: number | null; excludedNonLive: { reservations: number; grossFees: number }
     ownerBilled: { reservations: number; fees: number | null; pendingInGuesty: number | null }; movedCleans: number
     cleansNoCheckout?: { count: number; examples: { unit: string; day: string; who: string; task: string }[] }
+    midStay?: { count: number; noCharge: number; examples: { unit: string; day: string; who: string; task: string; charge: number }[] }
     unrostered: { people: number; payroll: number | null; names: string[] }
     unassignedMarket: { people: number; payroll: number | null; names: string[] }
     tasksNoCharge: number; salaried: string[]
@@ -115,7 +116,8 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
             if (h.ownerBilled && h.ownerBilled.reservations > 0) notes.push({ t: `${h.ownerBilled.reservations} owner / friends-&-family checkouts billed to the owner${h.ownerBilled.fees ? ` (${money(h.ownerBilled.fees)}` + (h.ownerBilled.pendingInGuesty ? `, ${money(h.ownerBilled.pendingInGuesty)} not in Guesty yet` : '') + ')' : ''}`, bad: false })
             if (h.feesNoCleanFound != null && h.feesNoCleanFound > 0) notes.push({ t: `${money(h.feesNoCleanFound)} of fees on confirmed checkouts with no departure clean found within 9 days`, bad: h.feesNoCleanFound > 1000 })
             if (h.movedCleans > 0) notes.push({ t: `${h.movedCleans} departure tasks deleted or cancelled in Breezeway (moved — not counted)`, bad: false })
-            if (h.cleansNoCheckout && h.cleansNoCheckout.count > 0) notes.push({ t: `${h.cleansNoCheckout.count} finished departure cleans with no checkout behind them — not counted as turns: ${h.cleansNoCheckout.examples.slice(0, 6).map(x => `${x.unit.split(' ').slice(0, 2).join(' ')} ${x.day.slice(5)} (${x.who.split(' ')[0]})`).join(', ')}${h.cleansNoCheckout.count > 6 ? '…' : ''}`, bad: h.cleansNoCheckout.count >= 5 })
+            if (h.midStay && h.midStay.noCharge > 0) notes.push({ t: `${h.midStay.noCharge} mid-stay clean${h.midStay.noCharge === 1 ? '' : 's'} (guest in house) closed with no charge entered — not revenue until priced: ${h.midStay.examples.filter(x => !(x.charge > 0)).slice(0, 5).map(x => `${x.unit.split(' ').slice(0, 2).join(' ')} ${x.day.slice(5)} (${x.who.split(' ')[0]})`).join(', ')}`, bad: true })
+            if (h.cleansNoCheckout && h.cleansNoCheckout.count > 0) notes.push({ t: `${h.cleansNoCheckout.count} refresh / re-cleans on a vacant unit (departure checklist, no checkout) — labor, no revenue, not turns: ${h.cleansNoCheckout.examples.slice(0, 6).map(x => `${x.unit.split(' ').slice(0, 2).join(' ')} ${x.day.slice(5)} (${x.who.split(' ')[0]})`).join(', ')}${h.cleansNoCheckout.count > 6 ? '…' : ''}`, bad: h.cleansNoCheckout.count >= 5 })
             if (h.tasksNoCharge > 0) notes.push({ t: `${h.tasksNoCharge} maintenance tasks closed with no charge entered`, bad: h.tasksNoCharge > 50 })
             if (h.salaried.length) notes.push({ t: `salaries by the day: ${h.salaried.join(', ')} (punches shown beside)`, bad: false })
             if (!notes.length) return null
@@ -135,7 +137,8 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
               <thead>
                 <tr className="text-[10px] uppercase tracking-[0.09em] text-muted border-b border-line">
                   <th className="py-1 pr-3 text-left" rowSpan={2}>Day</th>
-                  <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70 bg-emerald-50/40" colSpan={8}>Housekeeping · alone</th>
+                  <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70 bg-emerald-50/40" colSpan={8}>Housekeeping · turns</th>
+                  <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70 bg-violet-50/40" colSpan={1}>Cleaning rev · charged work</th>
                   <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70 bg-sky-50/40" colSpan={4}>Supervisors · alone</th>
                   <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70 bg-amber-50/40" colSpan={4}>Maintenance · alone</th>
                   <th className="py-1 pr-3 text-center whitespace-nowrap border-l border-line/70" colSpan={3}>All crews</th>
@@ -149,6 +152,7 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
                   <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">$ / own</th>
                   <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">h / turn · own</th>
                   <th className="py-1 pr-3 text-right whitespace-nowrap bg-emerald-50/40">Fees · margin</th>
+                  <th className="py-1 pr-3 text-right whitespace-nowrap border-l border-line/70 bg-violet-50/40">Mid-stay / refresh $</th>
                   <th className="py-1 pr-3 text-right whitespace-nowrap border-l border-line/70 bg-sky-50/40">Paid h</th>
                   <th className="py-1 pr-3 text-right whitespace-nowrap bg-sky-50/40">Payroll</th>
                   <th className="py-1 pr-3 text-right whitespace-nowrap bg-sky-50/40">Billed</th>
@@ -196,6 +200,9 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
                         <span className="text-muted">{money(r.hk.fees)}</span>
                         {r.hk.margin != null && <span className={'ml-1 ' + (r.hk.margin >= 0 ? 'text-emerald-700' : 'text-rose-700')}>{money(r.hk.margin)}{r.hk.marginPct != null && <span className="text-[10.5px] font-normal"> · {r.hk.marginPct}%</span>}</span>}
                       </td>
+                      <td className="py-1.5 pr-3 text-right tabular-nums border-l border-line/70 whitespace-nowrap">
+                        {r.hk.chargedCleans > 0 ? <><span className="text-ink font-semibold">{money(r.hk.chargedRevenue)}</span><span className="text-[10.5px] text-muted"> · {r.hk.chargedCleans}</span></> : <span className="text-muted">—</span>}
+                      </td>
                       <td className="py-1.5 pr-3 text-right tabular-nums border-l border-line/70 text-ink" title={sp.names.join(', ')}>{hrs(sp.hours)}{sp.people > 0 && <span className="text-[10.5px] text-muted font-normal"> · {sp.people}</span>}</td>
                       {cell(money(sp.payroll), 'text-muted')}
                       {cell(sp.billable == null ? '—' : (sp.billable > 0 ? money(sp.billable) + ' · ' + hrs(sp.billedHours) : '—'), billedCls(sp))}
@@ -214,7 +221,7 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
             </table>
           </div>
           <p className="text-[10.5px] text-muted px-2 mt-2">
-            A turn is a finished departure clean tied to a confirmed checkout — nothing else. Housekeeping, two ways: <b>$ / turn · total</b> is housekeeper wages over every turn in the market — a turn Yoslenis or a tech covered is a saving, so this is the number. <b>$ / own</b> and <b>h / turn · own</b> divide the same wages by the turns housekeepers themselves did — whether the controllable team is scheduled well. Supervisors and maintenance are judged on paid hours vs the charges the team entered on their tasks (÷ ${d.chargeRate}/h) — a low billed-to-paid % is either work that was never priced or hours that produced nothing billable. Bold red/green = more than 15% off the {d.rows.length}-day average. Salaries are spread by the day; agency markups ride on the wages they were computed on.
+            A turn is a finished departure clean tied to a confirmed checkout — nothing else. <b>Cleaning rev · charged work</b> is the separate section: mid-stays, linen refreshes and re-cleans that carry a charge (a mid-stay with nothing entered is flagged, not counted). Housekeeping, two ways: <b>$ / turn · total</b> is housekeeper wages over every turn in the market — a turn Yoslenis or a tech covered is a saving, so this is the number. <b>$ / own</b> and <b>h / turn · own</b> divide the same wages by the turns housekeepers themselves did — whether the controllable team is scheduled well. Supervisors and maintenance are judged on paid hours vs the charges the team entered on their tasks (÷ ${d.chargeRate}/h) — a low billed-to-paid % is either work that was never priced or hours that produced nothing billable. Bold red/green = more than 15% off the {d.rows.length}-day average. Salaries are spread by the day; agency markups ride on the wages they were computed on.
           </p>
           {showNames && (() => {
             const r = d.rows.find(x => x.d + 'hk' === showNames)
