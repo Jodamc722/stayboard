@@ -18,6 +18,7 @@ type Transcribe = {
   ready: boolean; keyHint: string | null; viaEnv: boolean; enabled: boolean
   connectedBy: string | null; connectedAt: string | null
   minSeconds: number; usdPerDay: number; usdPerMinute: number; lastError: string | null
+  fromDate: string; today: string
   queue: { pending: number; transcribed: number; failed: number; notesPushed: number; usdToday: number } | null
 }
 
@@ -40,6 +41,7 @@ export function TalkrouteAdmin() {
   const [dgKey, setDgKey] = useState('')
   const [minSec, setMinSec] = useState(25)
   const [cap, setCap] = useState(3)
+  const [from, setFrom] = useState('')
 
   const load = useCallback(async () => {
     setBusy('load'); setErr(null)
@@ -48,7 +50,7 @@ export function TalkrouteAdmin() {
       const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Could not load Talkroute status.')
       setD(j); setVm(Number(j.voicemailMaxSec) || 20)
-      if (j.transcribe) { setMinSec(Number(j.transcribe.minSeconds) || 25); setCap(Number(j.transcribe.usdPerDay) || 0) }
+      if (j.transcribe) { setMinSec(Number(j.transcribe.minSeconds) || 25); setCap(Number(j.transcribe.usdPerDay) || 0); setFrom(String(j.transcribe.fromDate || '')) }
     } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(null) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -169,7 +171,7 @@ export function TalkrouteAdmin() {
           </div>
 
           {/* ── Call notes from recordings ── */}
-          <TranscribeCard d={d} busy={busy} post={post} dgKey={dgKey} setDgKey={setDgKey} minSec={minSec} setMinSec={setMinSec} cap={cap} setCap={setCap} />
+          <TranscribeCard d={d} busy={busy} post={post} dgKey={dgKey} setDgKey={setDgKey} minSec={minSec} setMinSec={setMinSec} cap={cap} setCap={setCap} from={from} setFrom={setFrom} />
 
           {/* ── The rule ── */}
           <div className="rounded-2xl border border-line bg-white overflow-hidden">
@@ -204,9 +206,10 @@ export function TalkrouteAdmin() {
  * and in Guesty's reservation notes. Off until a Deepgram key is pasted — everything else on this
  * page works without it.
  */
-function TranscribeCard({ d, busy, post, dgKey, setDgKey, minSec, setMinSec, cap, setCap }: {
+function TranscribeCard({ d, busy, post, dgKey, setDgKey, minSec, setMinSec, cap, setCap, from, setFrom }: {
   d: Status; busy: string | null; post: (op: string, extra?: any) => void
   dgKey: string; setDgKey: (v: string) => void; minSec: number; setMinSec: (v: number) => void; cap: number; setCap: (v: number) => void
+  from: string; setFrom: (v: string) => void
 }) {
   const t = d.transcribe
   if (!t) return null
@@ -224,8 +227,9 @@ function TranscribeCard({ d, busy, post, dgKey, setDgKey, minSec, setMinSec, cap
         <p className="text-muted">
           Every recorded call is transcribed and read into a two-line note — what the guest asked, what we promised, anything wrong —
           which lands on the booking under <b className="text-ink">Calls &amp; texts</b> and as one dated line in the reservation&apos;s notes in Guesty.
-          The transcript is kept in Lighthouse behind the note. Only calls that connected, are matched to a booking and ran longer than the
-          minimum below are transcribed.
+          The transcript is kept in Lighthouse behind the note. Only calls that connected, are matched to a booking, ran longer than the
+          minimum below, and happened <b className="text-ink">on or after {t.fromDate === t.today ? 'today' : t.fromDate}</b> are transcribed —
+          older recordings are left alone.
         </p>
         <p className="text-[12px] text-muted">
           This reads recordings of real guest calls, so it assumes what is already true here: calls are recorded and the recorded-call notice plays.
@@ -266,7 +270,9 @@ function TranscribeCard({ d, busy, post, dgKey, setDgKey, minSec, setMinSec, cap
               <input type="number" min={5} max={300} value={minSec} onChange={e => setMinSec(Number(e.target.value))} className="w-16 mx-1.5 rounded-lg border border-line px-2 py-1 text-center text-ink" />seconds</label>
             <label className="text-[12px] text-muted">Stop after
               <input type="number" min={0} max={500} value={cap} onChange={e => setCap(Number(e.target.value))} className="w-16 mx-1.5 rounded-lg border border-line px-2 py-1 text-center text-ink" />$ a day</label>
-            <button onClick={() => post('transcribe_settings', { minSeconds: minSec, usdPerDay: cap, enabled: true })} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-1.5 font-semibold text-ink hover:bg-app disabled:opacity-50">{busy === 'transcribe_settings' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save</button>
+            <label className="text-[12px] text-muted">Only calls from
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="mx-1.5 rounded-lg border border-line px-2 py-1 text-ink" />onward</label>
+            <button onClick={() => post('transcribe_settings', { minSeconds: minSec, usdPerDay: cap, fromDate: from, enabled: true })} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-1.5 font-semibold text-ink hover:bg-app disabled:opacity-50">{busy === 'transcribe_settings' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save</button>
             <button onClick={() => post('run_notes')} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 font-semibold hover:bg-brand-700 disabled:opacity-50 ml-auto">{busy === 'run_notes' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Write notes now</button>
           </div>
         )}

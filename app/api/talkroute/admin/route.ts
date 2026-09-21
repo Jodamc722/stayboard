@@ -15,7 +15,7 @@ import { syncTalkrouteAll } from '@/lib/talkroute-sync'
 import { processCallIntel } from '@/lib/call-notes'
 import {
   getTranscribeSettings, saveTranscribeSettings, storeTranscribeKey, clearTranscribeKey,
-  transcribeReady, TRANSCRIBE_DEFAULTS, USD_PER_MINUTE,
+  transcribeReady, transcribeFrom, todayET, TRANSCRIBE_DEFAULTS, USD_PER_MINUTE,
 } from '@/lib/transcribe'
 
 export const dynamic = 'force-dynamic'
@@ -46,7 +46,9 @@ async function status() {
       const db = supabaseAdmin()
       const dayAgo = new Date(Date.now() - 24 * 3600_000).toISOString()
       const [pend, done, failed, notes, spendRows] = await Promise.all([
-        db.from('talkroute_calls').select('id', { count: 'exact', head: true }).eq('transcript_status', 'pending').not('reservation_id', 'is', null).eq('result', 'answered'),
+        db.from('talkroute_calls').select('id', { count: 'exact', head: true }).not('reservation_id', 'is', null).eq('result', 'answered')
+          .gte('call_at', new Date((await transcribeFrom()) + 'T00:00:00-05:00').toISOString())
+          .or('transcript_status.is.null,transcript_status.eq.pending'),
         db.from('talkroute_calls').select('id', { count: 'exact', head: true }).eq('transcript_status', 'done'),
         db.from('talkroute_calls').select('id', { count: 'exact', head: true }).in('transcript_status', ['failed', 'expired']),
         db.from('talkroute_calls').select('id', { count: 'exact', head: true }).not('note_pushed_at', 'is', null),
@@ -61,6 +63,7 @@ async function status() {
       enabled: t.enabled !== false, connectedBy: t.connectedBy || null, connectedAt: t.connectedAt || null,
       minSeconds: Number(t.minSeconds) || TRANSCRIBE_DEFAULTS.minSeconds,
       usdPerDay: Number(t.usdPerDay ?? TRANSCRIBE_DEFAULTS.usdPerDay),
+      fromDate: await transcribeFrom(), today: todayET(),
       usdPerMinute: USD_PER_MINUTE, lastError: t.lastError || null, queue,
     }
   } catch { out.transcribe = null }
@@ -117,10 +120,12 @@ export async function POST(req: NextRequest) {
     }
     if (op === 'clear_transcribe_key') { await clearTranscribeKey(actor); return NextResponse.json(await status()) }
     if (op === 'transcribe_settings') {
+      const from = String(body?.fromDate || '')
       await saveTranscribeSettings({
         enabled: body?.enabled !== false,
         minSeconds: Math.max(5, Math.min(300, Number(body?.minSeconds) || TRANSCRIBE_DEFAULTS.minSeconds)),
         usdPerDay: Math.max(0, Math.min(500, Number(body?.usdPerDay ?? TRANSCRIBE_DEFAULTS.usdPerDay))),
+        ...(/^\d{4}-\d{2}-\d{2}$/.test(from) ? { fromDate: from } : {}),
       }, actor)
       return NextResponse.json(await status())
     }

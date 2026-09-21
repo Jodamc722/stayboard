@@ -21,7 +21,7 @@
 // gates the Guesty write, and both are set before the next stage runs.
 import 'server-only'
 import { trAllCallsSince, phoneDigits } from './talkroute'
-import { transcribeUrl, transcriptScript, transcribeReady, getTranscribeSettings, TRANSCRIBE_DEFAULTS } from './transcribe'
+import { transcribeUrl, transcriptScript, transcribeReady, getTranscribeSettings, transcribeFrom, TRANSCRIBE_DEFAULTS } from './transcribe'
 import { readCall, type CallIntel } from './call-intel'
 import { getToken as guestyToken } from './guesty'
 import { appendReservationNote } from './guesty-res-notes'
@@ -88,12 +88,18 @@ export async function processCallIntel(sb: any, opts: { deadline?: number; limit
   const cap = Number(s.usdPerDay ?? TRANSCRIBE_DEFAULTS.usdPerDay)
   let spend = await spentToday(sb)
 
-  // The queue: matched calls that connected, newest first — today's calls matter more than a
-  // backlog from last week, and the backlog drains on later passes.
+  // ONLY FROM THE BOUNDARY DAY ONWARD (Jon, 2026-09-21: "only record call moving forward or from
+  // today"). Calls older than this are never transcribed — not skipped-and-retried, simply out of
+  // scope — so switching transcription on never pays to read a back catalogue.
+  const from = await transcribeFrom()
+  const fromIso = new Date(from + 'T00:00:00-05:00').toISOString()
+
+  // The queue: matched calls that connected, newest first.
   const { data: rows } = await sb.from('talkroute_calls')
     .select('id,direction,call_at,duration,result,recorded,recording_url,transcript,transcript_status,transcript_tries,summary,intel,reservation_id,match_kind,note_pushed_at,external_name')
     .not('reservation_id', 'is', null)
     .eq('result', 'answered')
+    .gte('call_at', fromIso)
     .or('transcript_status.is.null,transcript_status.eq.pending')
     .order('call_at', { ascending: false })
     .limit(opts.limit || 40)

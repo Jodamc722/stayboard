@@ -27,10 +27,23 @@ export type TranscribeSettings = {
   minSeconds?: number
   /** stop transcribing for the day once the ledger passes this */
   usdPerDay?: number
+  /**
+   * ONLY CALLS FROM THIS DAY ONWARD (Jon, 2026-09-21: "only record call moving forward or from
+   * today"). An Eastern calendar date. Older recordings are left alone — they are not worth paying
+   * to read, and a note written months after a stay helps nobody. Set to the day the key was pasted
+   * unless someone changes it, so switching this on never quietly bills for a back catalogue.
+   */
+  fromDate?: string
   lastError?: string | null
 }
 
 export const TRANSCRIBE_DEFAULTS = { minSeconds: 25, usdPerDay: 3, enabled: true }
+export const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+/** The calendar day transcription starts from — set when the key is saved, editable on the panel. */
+export async function transcribeFrom(): Promise<string> {
+  const s = await getTranscribeSettings()
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s.fromDate || '')) ? String(s.fromDate) : todayET()
+}
 /** Deepgram nova-3 list price, per minute of audio. Used for the ledger and the daily cap. */
 export const USD_PER_MINUTE = 0.0043
 
@@ -56,9 +69,12 @@ export async function transcribeReady(): Promise<boolean> {
 export async function storeTranscribeKey(key: string, actor: string) {
   const k = String(key || '').trim()
   if (k.length < 20 || /\s/.test(k)) return { ok: false, error: 'That does not look like a Deepgram API key.' }
+  const cur = await getTranscribeSettings()
   const patch: Partial<TranscribeSettings> = {
     provider: 'deepgram', keyHint: k.slice(-4), connectedBy: actor, connectedAt: new Date().toISOString(),
     enabled: true, lastError: null,
+    // Today, unless a boundary was already chosen — pasting a replacement key must not re-open the back catalogue.
+    fromDate: cur.fromDate || todayET(),
   }
   if (vaultKeyReady()) { patch.apiKeyCipher = encryptSecret(k); patch.apiKeyPlain = null }
   else { patch.apiKeyPlain = k; patch.apiKeyCipher = null }
