@@ -82,6 +82,14 @@ export async function POST(req: NextRequest) {
   // expensive burst. It runs BEFORE the questions pass so anything a new document raised — a
   // conflict with a standing rule, a term it never defines — is already in the pile when she works
   // out what to ask.
+  // THE OTA PLAYBOOK (Jon, 2026-09-21: "have her learn everything about our OTA"). Idempotent: an
+  // unchanged cell costs nothing; an edited one supersedes its memory; an empty Stay half re-raises
+  // its question (deduped). Runs before the documents so a playbook rule is already a belief when a
+  // new SOP is compared against what she holds.
+  let ota: any = null
+  try { const { syncOtaPlaybook } = await import('@/lib/ota-playbook-server'); ota = await syncOtaPlaybook({ by: 'system', askGaps: true }) }
+  catch (e: any) { ota = { ok: false, error: String(e?.message || e).slice(0, 160) } }
+
   let studied: any = null
   try { studied = await studyPending(3) }
   catch (e: any) { studied = { studied: 0, error: String(e?.message || e).slice(0, 160) } }
@@ -125,7 +133,7 @@ export async function POST(req: NextRequest) {
   catch (e: any) { audit = { ok: false, error: String(e?.message || e).slice(0, 200) } }
 
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, audit, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
+  if (!key) return NextResponse.json({ ok: true, sweep, ota, studied, vision, questions, lingo, audit, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
 
   const cutoff = new Date(Date.now() - days * 86400000).toISOString()
   const sb = supabaseAdmin()
@@ -155,7 +163,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (guestMsgs.length === 0 && reviewText.length === 0) {
-    return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, audit, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
+    return NextResponse.json({ ok: true, sweep, ota, studied, vision, questions, lingo, audit, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
   }
 
   const SYSTEM = `You analyze a short-term-rental manager's recent GUEST MESSAGES and REVIEWS to extract reusable operational knowledge. Return STRICT minified JSON only:
@@ -198,6 +206,6 @@ Generalize (don't repeat one guest's wording). Max 12 faqs, max 10 complaints. B
     learned = rows.length
   }
   recordRun({ name: 'eve-learn', ok: true, itemCount: learned, detail: { sweep, studied, vision, questions, learned, audit } })
-  return NextResponse.json({ ok: true, sweep, studied, vision, questions, lingo, audit, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
+  return NextResponse.json({ ok: true, sweep, ota, studied, vision, questions, lingo, audit, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
 }
 export const GET = POST

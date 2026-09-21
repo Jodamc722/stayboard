@@ -20,10 +20,33 @@ import { obj, S } from './types'
 import { clampLimit, clampDays, lc, has, safe, cap, num, round2, pageRows } from './ctx'
 import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
 import { fmtDuration, median } from '@/lib/response-times'
+import { otaPlaybookView } from '@/lib/ota-playbook-server'
+import { otaChannelOf, otaTopicOf } from '@/lib/ota-playbook'
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : 0)
 
 export const CS_TOOLS: EveTool[] = [
+  {
+    // THE OTA PLAYBOOK (Jon, 2026-09-21: "have her learn everything about our OTA ... refund process,
+    // claims process, our process for OTA collecting deposits, charging"). Deterministic: no search,
+    // no model — the cell is returned as written, with OUR process and the PLATFORM'S rule kept
+    // apart and a flag saying whether Jon confirmed ours. An empty "our process" is returned as a
+    // gap, not filled from the platform default, so she asks instead of promising.
+    name: 'ota_playbook',
+    description: 'How each booking channel (Airbnb, Vrbo, Booking.com, Expedia, Direct) handles money and how WE handle it: who collects payment and when we are paid, our security-deposit process, how we charge extras (orders, parking, pets, late checkout), how a refund is actually issued, cancellation terms, the damage-claim window and route, disputes and chargebacks, and how to reach the channel. ALWAYS read this before answering a guest or the team about a refund, deposit, claim, extra charge or cancellation on a specific channel. Each cell has our_process (what Stay does — trust it when confirmed_by_jon) and platform_rule (the channel\u2019s published rule, dated). A missing our_process is a real gap: say so and ask Jon rather than assuming the platform default. Edited at Settings → Eve → OTA playbook.',
+    input_schema: obj({ channel: S.str, topic: S.str }),
+    run: async (input) => {
+      const ch = otaChannelOf(input?.channel)
+      const topic = otaTopicOf(input?.topic)
+      if (input?.channel && !ch) return { error: `Unknown channel "${String(input.channel)}". Use Airbnb, Vrbo, Booking.com, Expedia or Direct.` }
+      if (input?.topic && !topic) return { error: `Unknown topic "${String(input.topic)}". Use payment, deposit, charging, refunds, cancellations, claims, disputes or contact.` }
+      const view = await otaPlaybookView(ch, topic)
+      return {
+        ...view,
+        how_to_read: 'our_process is Stay Hospitality\u2019s own rule (confirmed_by_jon = Jon signed it off). platform_rule is what the channel itself does, as of platform_rule_checked. For a refund AMOUNT use the refund framework via the glitch desk; this tool is about mechanics — who, where, when.',
+      }
+    },
+  },
   {
     name: 'response_times',
     description: 'How fast we actually answer guests — median and average first response, how many within an hour, how many threads are waiting right now, sliced by building, channel or day. Also reports how much of our "response" was an automated Guesty message rather than a person. Use this for any question about responsiveness, speed of reply, or unanswered guests.',

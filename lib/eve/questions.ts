@@ -156,6 +156,14 @@ export async function answerQuestion(id: string, answer: string, by: string): Pr
         await applyCalibrationAnswer(String(q.evidence.building), text, by, q.evidence.assumed)
       } catch { /* the memory is saved either way; the model catches up on the next answer */ }
     }
+    // An OTA playbook gap ("what is our deposit process on Vrbo?") writes the answer into the
+    // playbook cell itself, verified, so the page and the memory say the same thing.
+    if (q.evidence && typeof q.evidence === 'object' && q.evidence.ota) {
+      try {
+        const { applyOtaAnswer } = await import('@/lib/ota-playbook-server')
+        await applyOtaAnswer(q.evidence, text, by)
+      } catch { /* the memory is saved either way */ }
+    }
     // Every answer a person gives becomes a probe: tomorrow, then in a week, then in a month, the
     // audit asks her the same thing with no tools and checks she still knows (learning-audit.ts).
     if (saved.id && !saved.deduped) {

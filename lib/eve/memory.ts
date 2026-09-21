@@ -14,6 +14,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { lc } from './ctx'
+import { otaChannelOf, channelsInText } from '@/lib/ota-playbook'
 
 export const MEMORY_KINDS = ['rule', 'preference', 'insight', 'decision', 'person', 'issue', 'correction'] as const
 export type MemoryKind = typeof MEMORY_KINDS[number]
@@ -46,13 +47,18 @@ export function normWeight(v: any): number {
   if (!Number.isFinite(n)) return 5
   return Math.min(10, Math.max(1, Math.round(n)))
 }
-/** Scope strings are `portfolio`, `building:<Rollup>`, `unit:<listingId>`, `person:<email>`. */
+/**
+ * Scope strings are `portfolio`, `building:<Rollup>`, `unit:<listingId>`, `person:<email>` and,
+ * since the OTA playbook (2026-09-21), `channel:<Airbnb|Vrbo|Booking.com|Expedia|Direct|Other>` —
+ * a channel rule loads only when that channel is in the conversation, the way a building rule does.
+ */
 export function normScope(v: any): string {
   const s = String(v || '').trim()
   if (!s) return 'portfolio'
   if (s === 'portfolio') return 'portfolio'
-  const m = s.match(/^(building|unit|person)\s*:\s*(.+)$/i)
+  const m = s.match(/^(building|unit|person|channel)\s*:\s*(.+)$/i)
   if (!m) return 'portfolio'
+  if (lc(m[1]) === 'channel') { const ch = otaChannelOf(m[2]); return ch ? 'channel:' + ch : 'portfolio' }
   return lc(m[1]) + ':' + m[2].trim()
 }
 
@@ -77,6 +83,9 @@ export function scopesForText(text: string, listingMeta: Record<string, { name: 
   const bKeys = Object.keys(buildings)
   for (const b of bKeys) scopes.push('building:' + b)
   for (const id of ids.slice(0, 6)) scopes.push('unit:' + id)
+  // A channel named in the thread brings its playbook rules in (deposit, refunds, claims, charging).
+  const chans = channelsInText(text)
+  for (let i = 0; i < chans.length; i++) scopes.push('channel:' + chans[i])
   return scopes
 }
 

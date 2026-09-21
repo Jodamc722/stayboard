@@ -5,12 +5,13 @@
 // head: everything she believes (editable, deletable, reweighable), how she sounds, what she has
 // recommended and how those calls actually graded, and a button to make her learn RIGHT NOW.
 import { useState, useEffect, useCallback } from 'react'
-import { Brain, Mic, Compass, Lightbulb, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen, Sparkles, Power, GraduationCap } from 'lucide-react'
+import { Brain, Mic, Compass, Lightbulb, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen, Sparkles, Power, GraduationCap, Globe } from 'lucide-react'
 import { TelegramAdmin } from '@/components/TelegramAdmin'
 import { EveDocsAdmin } from '@/components/EveDocsAdmin'
 import { EveReviewAdmin } from '@/components/EveReviewAdmin'
 import { EveAgentAdmin } from '@/components/EveAgentAdmin'
 import { EveLearningAdmin } from '@/components/EveLearningAdmin'
+import { OtaPlaybookAdmin } from '@/components/OtaPlaybookAdmin'
 import { EveThinkingFeed, THOUGHTS_URL } from '@/components/EveThoughts'
 
 type Memory = {
@@ -32,7 +33,7 @@ const KIND_HELP: Record<string, string> = {
 const card = 'bg-white border border-line rounded-2xl shadow-soft'
 const input = 'w-full text-sm text-ink bg-app border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200'
 
-type EveTab = 'thinking' | 'agent' | 'learning' | 'review' | 'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'
+type EveTab = 'thinking' | 'agent' | 'learning' | 'ota' | 'review' | 'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'
 
 export function EveAdmin({ canEdit }: { canEdit: boolean }) {
   // THINKING FIRST while she only observes (Jon, 2026-09-21: "keep her observing but I want to see
@@ -53,7 +54,7 @@ export function EveAdmin({ canEdit }: { canEdit: boolean }) {
   const first: [EveTab, string, any][] = thinking && !thinking.allObserving
     ? [['agent', 'Agent mode', Power], ['thinking', 'Thinking', Lightbulb]]
     : [['thinking', 'Thinking', Lightbulb], ['agent', 'Agent mode', Power]]
-  const tabs: [EveTab, string, any][] = [...first, ['learning', 'Learning', GraduationCap], ['review', 'Review', Sparkles], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send], ['docs', 'Library', BookOpen]]
+  const tabs: [EveTab, string, any][] = [...first, ['learning', 'Learning', GraduationCap], ['ota', 'OTA playbook', Globe], ['review', 'Review', Sparkles], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send], ['docs', 'Library', BookOpen]]
   return (
     <div>
       <div className="flex items-center gap-1 mb-3 border-b border-line overflow-x-auto">
@@ -68,6 +69,7 @@ export function EveAdmin({ canEdit }: { canEdit: boolean }) {
       {cur === 'thinking' && <EveThinkingFeed />}
       {cur === 'agent' && <EveAgentAdmin canEdit={canEdit} />}
       {cur === 'learning' && <EveLearningAdmin canEdit={canEdit} />}
+      {cur === 'ota' && <OtaPlaybookAdmin canEdit={canEdit} />}
       {cur === 'review' && <EveReviewAdmin canEdit={canEdit} />}
       {cur === 'memory' && <EveMemoryAdmin canEdit={canEdit} />}
       {cur === 'voice' && <EveVoiceAdmin canEdit={canEdit} />}

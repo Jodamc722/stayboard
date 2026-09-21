@@ -97,6 +97,12 @@ export async function GET() {
   const studiedAt = await latest('eve_knowledge', 'updated_at', q => q.like('id', 'doc_study_%'))
   sources.push({ key: 'docs', label: 'Documents (Library)', status: !docs ? 'missing' : fresh(studiedAt, 24 * 14), lastLearned: studiedAt, count: docs, note: docs ? `${docs} active document${docs === 1 ? '' : 's'}; study receipts in eve_knowledge` : 'nothing uploaded yet — Settings → Eve → Library' })
 
+  // The OTA playbook — channel money rules, taught cell by cell (lib/ota-playbook-server.ts).
+  const otaSync = await getSetting<any>('ota_playbook_sync', null)
+  const otaMap = await getSetting<Record<string, any>>('ota_playbook_memory', {})
+  const otaCells = Object.keys(otaMap || {}).length
+  sources.push({ key: 'ota', label: 'OTA playbook', status: !otaCells ? 'missing' : fresh(otaSync?.at, 24 * 3), lastLearned: otaSync?.at || null, count: otaCells, note: otaCells ? `${otaCells} channel rules as memories${otaSync?.gaps ? `; ${otaSync.gaps} gaps she has asked you about` : ''} — Settings → Eve → OTA playbook` : 'not taught yet — open Settings → Eve → OTA playbook and press Teach her now' })
+
   // Owner statements.
   const osAt = await latest('guesty_owner_statements', 'synced_at')
   sources.push({ key: 'owner-statements', label: 'Owner statements', status: fresh(osAt, 24 * 45), lastLearned: osAt, count: await count('guesty_owner_statements'), note: runs['owner-statements']?.error ? String(runs['owner-statements'].error).slice(0, 120) : 'monthly' })
