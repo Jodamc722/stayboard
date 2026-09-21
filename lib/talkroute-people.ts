@@ -31,6 +31,44 @@ export function callerDeviceOf(events: TrCallEvent[] | null | undefined): string
   return ''
 }
 
+/**
+ * BACKFILL WHO CALLED (2026-09-21). The caller is written when a call is first MATCHED to a
+ * booking, so every call matched before that code existed has a blank caller — which was all of
+ * them. The events are already stored on the row, so this re-reads them in place: no Talkroute
+ * call, no cost, and it converges after a few passes.
+ *
+ * It also re-resolves rows that have a device but no name, which is what makes naming a device on
+ * the panel apply to the calls already on file rather than only to the next ones.
+ */
+export async function backfillCallers(sb: any, opts: { limit?: number; deadline?: number } = {}): Promise<{ scanned: number; named: number; devices: string[] }> {
+  const out = { scanned: 0, named: 0, devices: [] as string[] }
+  const deadline = opts.deadline || (Date.now() + 15_000)
+  let people: TrPerson[] = []
+  let map: PeopleMap = {}
+  try { [people, map] = await Promise.all([talkroutePeople(), getPeopleMap()]) } catch { /* map alone still works */ }
+  try {
+    const { data } = await sb.from('talkroute_calls')
+      .select('id,events,caller_device,caller_name')
+      .not('events', 'is', null)
+      .or('caller_device.is.null,caller_name.is.null')
+      .order('call_at', { ascending: false })
+      .limit(opts.limit || 300)
+    for (const r of ((data as any[]) || [])) {
+      if (Date.now() > deadline) break
+      out.scanned++
+      const device = String(r.caller_device || '') || callerDeviceOf(r.events)
+      if (!device) { continue }
+      const name = callerNameOf(device, map, people)
+      if (out.devices.indexOf(device) < 0 && out.devices.length < 12) out.devices.push(device)
+      const patch: Record<string, any> = { caller_device: device }
+      if (name && name !== device) patch.caller_name = name
+      else if (name) patch.caller_name = name
+      try { await sb.from('talkroute_calls').update(patch).eq('id', r.id); if (patch.caller_name) out.named++ } catch { /* next pass */ }
+    }
+  } catch { /* the column may not exist yet — the migration note says so on the panel */ }
+  return out
+}
+
 /** Everyone Talkroute knows about, for the mapping UI. Fails soft to an empty list. */
 export async function talkroutePeople(): Promise<TrPerson[]> {
   const out: TrPerson[] = []

@@ -13,7 +13,7 @@ import {
 } from '@/lib/talkroute'
 import { syncTalkrouteAll } from '@/lib/talkroute-sync'
 import { processCallIntel } from '@/lib/call-notes'
-import { talkroutePeople, getPeopleMap, setPeopleMap } from '@/lib/talkroute-people'
+import { talkroutePeople, getPeopleMap, setPeopleMap, backfillCallers } from '@/lib/talkroute-people'
 import {
   getTranscribeSettings, saveTranscribeSettings, storeTranscribeKey, clearTranscribeKey,
   transcribeReady, transcribeFrom, todayET, TRANSCRIBE_DEFAULTS, USD_PER_MINUTE,
@@ -147,7 +147,13 @@ export async function POST(req: NextRequest) {
       const m = (body?.map && typeof body.map === 'object') ? body.map : {}
       const r = await setPeopleMap(m, actor)
       if (!r.ok) return NextResponse.json({ error: r.error || 'Could not save.' }, { status: 400 })
-      return NextResponse.json(await status())
+      // Apply the new names to the calls already on file, not just the next ones.
+      const back = await backfillCallers(supabaseAdmin(), { limit: 500, deadline: Date.now() + 25_000 })
+      return NextResponse.json({ ...(await status()), callers: back })
+    }
+    if (op === 'find_callers') {
+      const back = await backfillCallers(supabaseAdmin(), { limit: 600, deadline: Date.now() + 40_000 })
+      return NextResponse.json({ ...(await status()), callers: back })
     }
     if (op === 'clear_transcribe_key') { await clearTranscribeKey(actor); return NextResponse.json(await status()) }
     if (op === 'transcribe_settings') {

@@ -233,7 +233,15 @@ function PeopleCard({ d, busy, post }: { d: Status; busy: string | null; post: (
           caller shows on the Calls desk, on the booking and in the Guesty note. Devices are listed by how many calls they have taken in the last 30 days.
         </p>
         {p.devices.length === 0
-          ? <p className="text-muted">No caller devices seen yet — they appear after the next sync of a call that involved one of your people.</p>
+          ? (
+            <div className="space-y-2">
+              <p className="text-muted">No caller devices read yet. Calls matched before this shipped never had one recorded — press below to read it from the call records already on file.</p>
+              <button onClick={() => post('find_callers')} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'find_callers' ? <Loader2 size={13} className="animate-spin" /> : <UserCheck size={13} />} Find who called</button>
+              {p.directory.length > 0 && (
+                <p className="text-[12px] text-muted">Talkroute knows {p.directory.length} devices and people on this account, including {p.directory.slice(0, 4).map(x => x.label).join(', ')}.</p>
+              )}
+            </div>
+          )
           : (
             <div className="space-y-1.5">
               {p.devices.map(x => (

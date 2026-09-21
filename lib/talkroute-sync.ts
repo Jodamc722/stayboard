@@ -40,7 +40,7 @@ import { writeCustomFields } from './guesty-custom-fields'
 import { appendReservationNote } from './guesty-res-notes'
 import { WELCOME_AHEAD_DAYS, WELCOME_GRACE_DAYS, POST_GRACE_DAYS, addDays, isCompleted } from './call-desk'
 import { isLiveStay } from './stay-status'
-import { callerDeviceOf, callerNameOf, talkroutePeople, getPeopleMap, type TrPerson, type PeopleMap } from './talkroute-people'
+import { callerDeviceOf, callerNameOf, talkroutePeople, getPeopleMap, backfillCallers, type TrPerson, type PeopleMap } from './talkroute-people'
 
 // Guesty's reservation customFields carry no field name in the mirror; the Welcome Call definition
 // id is known from live data (app/api/welcome-call/route.ts uses the same constant).
@@ -56,6 +56,8 @@ export type SyncReport = {
   ms: number
   /** true when a feed ran out of time — the next run (cron or button) continues from where it stopped. */
   partial: boolean
+  /** who-called backfill: how many rows were re-read and named this pass */
+  callers?: { scanned: number; named: number; devices: string[] }
 }
 // TIME-BOXED (2026-09-21, first live sync). The first pull — 7 days of calls, 30 days of text
 // threads, each thread a message fetch — ran past Vercel's function limit and the panel got a
@@ -425,6 +427,9 @@ export async function syncTalkrouteAll(sb: any, opts: { calls?: boolean; texts?:
   if (want.voicemails) { const r = await syncTalkrouteVoicemails(sb, { deadline: Math.min(end, Date.now() + 10_000) }); rep.voicemails = r; rep.errors.push(...r.errors) }
   if (want.texts && !over(end - 3_000)) { const r = await syncTalkrouteTexts(sb, { full: !!opts.fullTexts, deadline: end }); rep.texts = r; rep.errors.push(...r.errors) }
   else if (want.texts) rep.texts = { conversations: 0, messages: 0, matched: 0, partial: true }
+  // Fill in the caller on calls matched before there was a caller to fill in, and re-resolve any
+  // device that has since been given a name on the panel. Reads stored events; costs nothing.
+  if (!over(end - 2_000)) { try { rep.callers = await backfillCallers(sb, { deadline: Math.min(end, Date.now() + 12_000) }) } catch { /* cosmetic */ } }
   rep.partial = !!(rep.calls.partial || rep.texts.partial)
   rep.ms = Date.now() - t0
   try { await sb.from('automation_runs').insert({ name: 'talkroute-sync', ok: rep.errors.length === 0, item_count: rep.calls.fetched + rep.texts.messages + rep.voicemails.fetched, detail: rep, ms: rep.ms }) } catch { /* ledger best-effort */ }
