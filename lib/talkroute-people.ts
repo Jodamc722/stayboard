@@ -40,19 +40,28 @@ export function callerDeviceOf(events: TrCallEvent[] | null | undefined): string
  * It also re-resolves rows that have a device but no name, which is what makes naming a device on
  * the panel apply to the calls already on file rather than only to the next ones.
  */
-export async function backfillCallers(sb: any, opts: { limit?: number; deadline?: number } = {}): Promise<{ scanned: number; named: number; devices: string[] }> {
-  const out = { scanned: 0, named: 0, devices: [] as string[] }
+export async function backfillCallers(sb: any, opts: { limit?: number; deadline?: number } = {}): Promise<{ scanned: number; named: number; devices: string[]; error?: string }> {
+  const out = { scanned: 0, named: 0, devices: [] as string[], error: undefined as string | undefined }
   const deadline = opts.deadline || (Date.now() + 15_000)
   let people: TrPerson[] = []
   let map: PeopleMap = {}
   try { [people, map] = await Promise.all([talkroutePeople(), getPeopleMap()]) } catch { /* map alone still works */ }
   try {
-    const { data } = await sb.from('talkroute_calls')
+    // supabase-js RETURNS an error, it does not throw — a missing column would otherwise read as
+    // "nothing to do" forever, which is exactly how this looked before the message was surfaced.
+    const { data, error } = await sb.from('talkroute_calls')
       .select('id,events,caller_device,caller_name')
       .not('events', 'is', null)
       .or('caller_device.is.null,caller_name.is.null')
       .order('call_at', { ascending: false })
       .limit(opts.limit || 300)
+    if (error) {
+      out.error = /caller_device|caller_name|column/i.test(String(error.message || ''))
+        ? 'Migration 106 has not been run yet — the caller columns do not exist.'
+        : String(error.message || 'could not read calls').slice(0, 200)
+      return out
+    }
+    if (!data || data.length === 0) { out.error = 'No calls with event data to read.'; return out }
     for (const r of ((data as any[]) || [])) {
       if (Date.now() > deadline) break
       out.scanned++
@@ -65,7 +74,7 @@ export async function backfillCallers(sb: any, opts: { limit?: number; deadline?
       else if (name) patch.caller_name = name
       try { await sb.from('talkroute_calls').update(patch).eq('id', r.id); if (patch.caller_name) out.named++ } catch { /* next pass */ }
     }
-  } catch { /* the column may not exist yet — the migration note says so on the panel */ }
+  } catch (e: any) { out.error = String(e?.message || e).slice(0, 200) }
   return out
 }
 
