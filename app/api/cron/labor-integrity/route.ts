@@ -93,9 +93,21 @@ export async function GET(req: NextRequest) {
     const q = ec.pnl?.quality || {}
     const outliers = Array.isArray(q.rateOutliers) ? q.rateOutliers.length : 0
     const noPay = Array.isArray(q.workedNoPay) ? q.workedNoPay.length : 0
-    push('wages', outliers + noPay === 0, 'amber',
-      outliers + noPay ? `${outliers} people with an implied rate far under the median, ${noPay} with cleans but $0 payroll` : 'wage data sane',
-      'Homebase wage missing on their profile — the engine can only price what Homebase knows.')
+    // NAME THEM. A count cannot be fixed by anybody (house rule: an alert that names nothing is
+    // worse than silence). The same people are now flagged in the daily labor email, which is the
+    // one Roberto reads and the only place the Homebase profile actually gets corrected.
+    const nm = (xs: any[]) => xs.slice(0, 5).map((x: any) => String(x?.name || '?')).join(', ') + (xs.length > 5 ? ` +${xs.length - 5} more` : '')
+    const oList = Array.isArray(q.rateOutliers) ? q.rateOutliers : []
+    const nList = Array.isArray(q.workedNoPay) ? q.workedNoPay : []
+    const noPayCleans = nList.reduce((a: number, x: any) => a + (Number(x.cleans) || 0), 0)
+    push('wages', outliers + noPay === 0, noPay ? 'red' : 'amber',
+      outliers + noPay
+        ? [
+            noPay ? `${nm(nList)} — ${noPayCleans} clean${noPayCleans === 1 ? '' : 's'} with $0 payroll, so those turns cost nothing and every cost per clean reads low` : '',
+            outliers ? `${nm(oList)} — implied rate far under the median` : '',
+          ].filter(Boolean).join('; ')
+        : 'wage data sane',
+      'Homebase → the person → wage. The engine can only price what Homebase knows.')
   } catch (e: any) {
     push('engine', false, 'red', 'the labor engine itself failed to run: ' + String(e?.message || e).slice(0, 160),
       'Nothing downstream can be trusted until this runs — check Vercel logs for /api/cron/labor-integrity.')

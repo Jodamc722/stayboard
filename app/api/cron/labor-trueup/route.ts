@@ -495,7 +495,27 @@ async function send(req: NextRequest) {
         ? '<span style="' + GREEN + '">✓</span> '
         : '<span style="' + AMBER + '">!</span> ')
         + lostPct + '% of cleaning fees without a matched clean' + (lostPct > 15 ? ' — check Data health on the Labor board' : ''))
-      if (Number(unro.people) > 0) items.push('<span style="' + AMBER + '">!</span> ' + unro.people + ' on payroll with no crew set — their wages count in no department')
+      const nameList = (xs: any[], max = 4) =>
+        xs.slice(0, max).map((x: any) => esc(x.name)).join(', ') + (xs.length > max ? ' +' + (xs.length - max) + ' more' : '')
+      if (Number(unro.people) > 0) items.push('<span style="' + AMBER + '">!</span> ' + unro.people + ' on payroll with no crew set' +
+        ((unro.names || []).length ? ' (' + nameList((unro.names || []).map((n: any) => ({ name: n }))) + ')' : '') +
+        ' — their wages count in no department. /users → People.')
+      // A CLEAN WITH NO WAGE BEHIND IT FLATTERS EVERY NUMBER ABOVE (Jon, 2026-09-21). The nightly
+      // integrity cron already caught this, but it emails the owner alone and only on failure —
+      // the person who can actually fix a Homebase profile reads THIS email. Named, or it is noise.
+      const q30: any = (ec30 as any).pnl?.quality || {}
+      const noPay: any[] = Array.isArray(q30.workedNoPay) ? q30.workedNoPay : []
+      const outliers: any[] = Array.isArray(q30.rateOutliers) ? q30.rateOutliers : []
+      if (noPay.length) {
+        const cl = noPay.reduce((a: number, x: any) => a + (Number(x.cleans) || 0), 0)
+        items.push('<span style="' + RED + '">✗</span> <b>' + nameList(noPay) + '</b> — ' + cl + ' clean' + (cl === 1 ? '' : 's') +
+          ' with <b>$0 of payroll</b>. No wage on the Homebase profile, so those turns cost nothing here and every cost-per-clean above reads low. Fix in Homebase → the person → wage.')
+      }
+      if (outliers.length) {
+        items.push('<span style="' + AMBER + '">!</span> ' + nameList(outliers) + ' paid far under the median rate (' +
+          outliers.slice(0, 4).map((x: any) => rate(x.impliedRate)).join(', ') + ') — check the Homebase wage before trusting their cost per clean.')
+      }
+      if (!noPay.length && !outliers.length) items.push('<span style="' + GREEN + '">✓</span> every person with cleans has a wage in Homebase')
       healthCard = '<div style="' + cardStyle + '">' +
         secTitle('Is this accurate?', '30-day basis &middot; audited nightly') +
         '<p style="margin:0;font-size:12.5px;line-height:2;color:#374151">' + items.join('<br>') + '</p>' +
