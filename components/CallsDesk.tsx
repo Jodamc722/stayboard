@@ -627,12 +627,63 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 }
 
 /** The manual outcome buttons, folded away when Talkroute is doing the marking. */
-function ManualFold({ children }: { children: ReactNode }) {
+function ManualFold({ children, label }: { children: ReactNode; label?: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-2">
-      <button onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} /> Log by hand (call made from a personal phone)</button>
+      <button onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} /> {label || 'Log by hand (call made from a personal phone)'}</button>
       {open && children}
+    </div>
+  )
+}
+
+/**
+ * CLOSE IT OUT (2026-09-21, Jon: "We need it to close that call in the call desk as completed, or
+ * give you the option to complete it, saying that it's been done, but you can also add a note").
+ *
+ * Talkroute closes a call by itself the moment the guest picks up. What it cannot judge is a call
+ * that rang out, a guest reached on a personal phone, or a conversation that happened but needs a
+ * line of context. So the card carries the human close-out in the open — not behind a fold — with
+ * a note box beside it, because the note is the part that has to be typed while it is fresh.
+ *
+ * The note rides along with the outcome: /api/welcome-call appends it to the reservation notes in
+ * Guesty on the same write that marks the call done.
+ */
+function CompleteStrip({ r, busy, draft, setDraft, onComplete, talkroute }: {
+  r: Row; busy: boolean
+  draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
+  onComplete: (o: 'reached' | 'voicemail' | 'no_answer') => void
+  talkroute: boolean
+}) {
+  const seen = !!r.proof.lastAttemptAt
+  const answered = r.proof.lastResult === 'answered'
+  const talked = r.proof.talkSeconds >= 60 ? `${Math.round(r.proof.talkSeconds / 60)} min` : `${r.proof.talkSeconds}s`
+  return (
+    <div className={`mt-2 rounded-xl border px-3 py-2.5 ${seen ? 'border-brand-200 bg-brand-50/50' : 'border-line bg-app/40'}`}>
+      <div className="text-[12px] text-ink font-semibold mb-1.5">
+        {seen
+          ? (answered
+              ? <>Talkroute logged an answered call {day(r.proof.lastAttemptAt)}{r.proof.talkSeconds ? ` · ${talked}` : ''} — mark it complete?</>
+              : <>Talkroute logged {r.attempts || 1} attempt{(r.attempts || 1) === 1 ? '' : 's'}, never answered. Did you reach them another way?</>)
+          : (talkroute ? <>No call on this guest yet. If you reached them from a personal phone, close it out here.</> : <>How did the call go?</>)}
+      </div>
+      <input
+        value={draft[r.id] || ''} onChange={e => setDraft(d => ({ ...d, [r.id]: e.target.value }))}
+        placeholder="Add a note — goes on the reservation in Guesty (optional)"
+        className="w-full rounded-lg border border-line bg-white px-2.5 py-2 text-[12px] text-ink focus:outline-none focus:border-brand-600" />
+      <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+        <button onClick={() => onComplete('reached')} disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Mark complete
+        </button>
+        <button onClick={() => onComplete('voicemail')} disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-ink hover:bg-app disabled:opacity-50"><Voicemail size={13} /> Left voicemail</button>
+        {!seen && (
+          <button onClick={() => onComplete('no_answer')} disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-muted hover:text-ink disabled:opacity-50"><PhoneOff size={13} /> No answer{r.attempts > 0 ? ` (${r.attempts} so far)` : ''}</button>
+        )}
+        <span className="text-[11px] text-muted/80">Marks the Welcome Call field in Guesty and closes the card.</span>
+      </div>
     </div>
   )
 }
@@ -708,17 +759,22 @@ function WelcomeList({ rows, talkroute, openId, setOpenId, draft, setDraft, busy
 
             {r.recovery && !r.done && <RecoveryFlag rec={r.recovery} />}
 
+            {/* The human close-out, in the open. Talkroute completes an answered call by itself;
+                this is for everything it cannot judge — and for the note. */}
+            {!r.done && !r.closed && (
+              <CompleteStrip r={r} busy={busy === r.id} draft={draft} setDraft={setDraft} talkroute={talkroute}
+                onComplete={o => welcome(r.id, o)} />
+            )}
+
             {open && (
               <>
                 {r.recovery && <RecoveryNote rec={r.recovery} unit={r.listing} />}
                 <WelcomeScript r={r} draft={draft} setDraft={setDraft} onSaveNote={() => saveNote(r.id)} saving={saving === r.id} saved={saved === r.id} />
-                {!r.done && !r.closed && (talkroute
-                  ? <ManualFold>
-                      <OutcomeRow busy={busy === r.id} attempts={r.attempts} compact
-                        onReached={() => welcome(r.id, 'reached')} onVoicemail={() => welcome(r.id, 'voicemail')} onNoAnswer={() => welcome(r.id, 'no_answer')} />
-                    </ManualFold>
-                  : <OutcomeRow busy={busy === r.id} attempts={r.attempts}
+                {!r.done && !r.closed && (
+                  <ManualFold label="More outcomes">
+                    <OutcomeRow busy={busy === r.id} attempts={r.attempts} compact
                       onReached={() => welcome(r.id, 'reached')} onVoicemail={() => welcome(r.id, 'voicemail')} onNoAnswer={() => welcome(r.id, 'no_answer')} />
+                  </ManualFold>
                 )}
                 {failedId === r.id && error && (
                   <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-start gap-1.5">
