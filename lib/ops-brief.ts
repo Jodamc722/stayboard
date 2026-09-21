@@ -1846,6 +1846,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   try { ec7 = await laborEconomics({ from: winFrom, to: winTo, market: 'all' }) } catch { ec7 = null }
   const E7: any = (ec7 && !(ec7.payrollAudit && !ec7.payrollAudit.complete)) ? ec7.kpi : null
   const H7t: any = E7 ? E7.housekeeping : null
+  // Bands come from Labor settings (labor audit 2026-09-21) — they were hard-coded 70/90 here
+  // while the board and the Daily Labor email read pct_good / pct_bad.
+  const laborBands = await getLaborSettings('default').catch(() => ({ pct_good: 30, pct_bad: 40 } as any))
+  const pctGood = Number(laborBands.pct_good) || 30, pctBad = Number(laborBands.pct_bad) || 40
   const winNice = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(winFrom + 'T12:00:00'))
     + ' – ' + new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(winTo + 'T12:00:00'))
 
@@ -1924,18 +1928,20 @@ export async function buildGmBrief(): Promise<OpsBrief> {
         : H7t.revPerClean != null ? 'we charge ' + money0(H7t.revPerClean) : undefined },
     { label: 'HK margin · 7d', value: H7t && H7t.marginPct != null ? pct1(H7t.marginPct) : '—',
       tone: !H7t || H7t.marginPct == null ? undefined : H7t.marginPct >= 30 ? 'green' : H7t.marginPct >= 10 ? 'amber' : 'red',
-      note: H7t ? money0(H7t.margin) + ' on ' + H7t.cleans + ' cleans' : 'cost not available' },
+      note: H7t ? money0(H7t.margin) + ' on ' + H7t.cleans + ' turns' + (H7t.cleansByOtherCrews ? ' (' + H7t.cleansByOtherCrews + ' covered by others)' : '') : 'cost not available' },
     { label: 'Occupancy · 30d', value: rev.occupancy != null ? pct1(rev.occupancy) : '—',
       tone: rev.occupancy == null ? undefined : rev.occupancy >= 75 ? 'green' : rev.occupancy >= 60 ? 'amber' : 'red',
       note: rev.occupancyChange != null ? (rev.occupancyChange > 0 ? '+' : '') + rev.occupancyChange + ' pts vs prev' : undefined },
     { label: 'Reviews · 30d', value: d.rep.avg != null ? d.rep.avg.toFixed(2) : '—',
       tone: d.rep.avg == null ? undefined : d.rep.avg >= 4.6 ? 'green' : d.rep.avg >= 4.3 ? 'amber' : 'red',
       note: d.rep.n ? d.rep.n + ' reviews' : 'no reviews' },
-    { label: 'Billable · 7d', value: comp && comp.billableKnown ? money0(comp.totalBillable) : '—',
-      note: comp && comp.billableKnown ? 'owner-billable work' : 'no billing detail' },
+    // The engine's own billable (charges on non-clean tasks, by ET finished day, crew-credited) —
+    // the compliance sum counted every task incl. departure cleans and vendor units.
+    { label: 'Billable · 7d', value: ec7 ? money0(Number(ec7.billableRevenue) || 0) : (comp && comp.billableKnown ? money0(comp.totalBillable) : '—'),
+      note: ec7 ? 'charges entered on tasks' : (comp && comp.billableKnown ? 'owner-billable work' : 'no billing detail') },
     { label: 'Labor % of fee', value: H7t && H7t.laborPct != null ? pct1(H7t.laborPct) : '—',
-      tone: !H7t || H7t.laborPct == null ? undefined : H7t.laborPct <= 70 ? 'green' : H7t.laborPct <= 90 ? 'amber' : 'red',
-      note: H7t && H7t.hours ? Math.round(H7t.hours) + ' hrs clocked' : undefined },
+      tone: !H7t || H7t.laborPct == null ? undefined : H7t.laborPct <= pctGood ? 'green' : H7t.laborPct <= pctBad ? 'amber' : 'red',
+      note: H7t && H7t.hours ? Math.round(H7t.hours) + ' hrs clocked · goal ≤ ' + pctGood + '%' : undefined },
   ]
 
   // ── 3. TREND — the week against the settled month ───────────────────────────────────────────

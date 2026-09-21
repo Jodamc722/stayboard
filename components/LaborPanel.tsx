@@ -1,5 +1,6 @@
 'use client'
 import { LaborWeekly } from '@/components/LaborWeekly'
+import { LaborDays } from '@/components/LaborDays'
 // components/LaborPanel.tsx (v4) — live labor dashboard for /labor.
 // v4: custom day/range picker, payroll vs revenue with banding, today strip
 // for in-day decisions, click-a-person task drill-down (Breezeway).
@@ -211,7 +212,7 @@ export function LaborPanel() {
       <div className="rounded-xl border border-line bg-white px-4 py-3 relative">
         <p className="text-[10px] uppercase tracking-wide text-muted font-bold mb-2">Trend <span className="normal-case font-normal">· {weekly ? 'by week (Sun–Sat)' : 'by day'} · housekeepers only, engine numbers — hover any bar</span></p>
         <div className="flex flex-wrap gap-6">
-          <Panel title="Cost per clean" sub="housekeeper wages ÷ every departure clean, any crew — lower is better" val={r => r.cpc} fmtV={n => '$' + n.toFixed(0)} color={() => '#6366f1'} />
+          <Panel title="Cost per turn" sub="housekeeper wages ÷ the turns housekeepers did — lower is better" val={r => r.cpc} fmtV={n => '$' + n.toFixed(0)} color={() => '#6366f1'} />
           <Panel title="HK margin %" sub="net fees kept after loaded wages" val={r => r.marginPct} fmtV={n => n.toFixed(0) + '%'} color={v => (v >= 0 ? '#059669' : '#e11d48')} />
         </div>
         {tip && (
@@ -306,7 +307,7 @@ export function LaborPanel() {
               tone={pay.scheduledVsActualPct != null && pay.scheduledVsActualPct > 105 ? 'warn' : undefined} />
             <Stat label="Vendor mix" value={loading ? '…' : pct(pay.vendorMixPct)} sub="of cleaning revenue" />
           </> : <>
-            <Stat label="Payroll (actual)" value={loading ? '…' : fmt$(pay.actual)} sub="Homebase timecards" />
+            <Stat label="Punches (Homebase)" value={loading ? '…' : fmt$(pay.actual)} sub="clock only — salaries and the 17WEST credit are in the crew cards below" />
             <Stat label="Payroll (sched)" value={loading ? '…' : fmt$(pay.scheduled)} sub="Homebase shifts" />
             <Stat label="In-house revenue" value={loading ? '…' : fmt$(pay.revenueInhouse ?? pay.revenue)} sub="net of channel cut" />
             <Stat label="Vendor revenue" value={loading ? '…' : fmt$(pay.revenueVendor ?? 0)} sub="vendor-cleaned units" />
@@ -427,6 +428,10 @@ export function LaborPanel() {
       )}
       {/* WEEK BY WEEK — the trend Jon asked for: cleans against the hours and payroll that turned
           them, revenue and HK payroll leading. Its own endpoint so the board is not held up by it. */}
+      {/* LABOR BY DAY, BY CREW (Jon, 2026-09-21: "HK alone, Supervisor alone, Maintenance alone vs
+          billable labor recorded for the day"). Hours per turn is HK-only; supervisors and
+          maintenance are paid hours against the charges the team entered. One engine run. */}
+      <LaborDays market={market} />
       <LaborWeekly market={market} />
       {/* PER PERSON, BY CREW (Jon, 2026-09-09: "rev per team member vs payroll broken by
           departments"). The honest part is the blank column: a supervisor and a coordinator earn

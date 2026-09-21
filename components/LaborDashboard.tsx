@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Timer, RefreshCw, AlertTriangle, AlertOctagon, ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react'
 
-type Dept = 'housekeeping' | 'maintenance' | 'inspection' | 'other'
+type Dept = 'housekeeping' | 'supervision' | 'maintenance' | 'inspection' | 'other'
 type Flag = { level: 'red' | 'amber'; kind: string; title: string; detail: string; people?: string[] }
 type PersonRow = {
   name: string; role: string | null; dept: Dept
@@ -26,6 +26,8 @@ type Report = {
   checkouts: number; vendorCheckouts: number; departureClosed: number
   /** True when the headline economics came from the labor engine rather than the checkout fallback. */
   engineBasis?: boolean
+  hkPayroll?: number
+  hkHours?: number
   engineCleans?: number | null
   coveredByOtherCrews?: { cleans: number; fees: number } | null
   mix: Record<string, { tasks: number; hours: number; materials: number }>
@@ -49,7 +51,7 @@ const MIX_LABEL: Record<string, string> = {
   inspection: 'Inspections', maintenance: 'Maintenance', other: 'Everything else',
 }
 const DEPT_LABEL: Record<Dept, string> = {
-  housekeeping: 'Housekeeping', maintenance: 'Maintenance', inspection: 'Inspections', other: 'Other roles',
+  housekeeping: 'Housekeeping', supervision: 'Supervisors', maintenance: 'Maintenance', inspection: 'Inspections', other: 'Other roles',
 }
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'bad' | 'warn' | 'good' }) {
@@ -297,7 +299,7 @@ export function LaborDashboard() {
             <div className="px-4 py-3 border-b border-line text-sm font-bold text-ink">Cleaning money</div>
             <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-line">
               <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Guest fees</div><div className="text-lg font-bold tabular-nums">{money(data.cleaningRevenue)}</div><div className="text-[11px] text-muted">{data.feePerClean != null ? money(data.feePerClean) + ' per turn' : ''}</div></div>
-              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">HK payroll</div><div className="text-lg font-bold tabular-nums">{money(data.byDept.housekeeping.payroll)}</div><div className="text-[11px] text-muted">{data.byDept.housekeeping.hours}h clocked</div></div>
+              <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">HK payroll</div><div className="text-lg font-bold tabular-nums">{money(data.hkPayroll ?? data.byDept.housekeeping.payroll)}</div><div className="text-[11px] text-muted">{data.hkHours ?? data.byDept.housekeeping.hours}h clocked</div></div>
               <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Margin</div><div className={'text-lg font-bold tabular-nums ' + ((data.cleaningMargin ?? 0) < 0 ? 'text-rose-600' : 'text-emerald-700')}>{money(data.cleaningMargin)}</div><div className="text-[11px] text-muted">{data.cleaningMarginPct != null ? data.cleaningMarginPct + '%' : ''}</div></div>
               <div className="px-4 py-3"><div className="text-[10.5px] uppercase tracking-wider text-muted font-bold">Cost / clean</div><div className="text-lg font-bold tabular-nums">{money(data.costPerClean)}</div><div className="text-[11px] text-muted">departure cleans only</div></div>
             </div>

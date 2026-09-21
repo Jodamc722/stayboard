@@ -65,20 +65,29 @@ export async function GET(req: NextRequest) {
       // HOUSEKEEPER WAGES OVER HOUSEKEEPER CLEANS. `e.cleans` is every person's clean count —
       // techs, supervisors, outside cleaners — so dividing HK-only payroll by it made this trend
       // read materially cheaper than the board's own tile, directly above it on the same screen.
-      const cleans = Number(hk?.cleans) || 0
+      // ONE ANSWER (labor audit 2026-09-21): this route used to divide HK payroll by every in-house
+      // clean and pair it with ALL checkout fees, so the trend disagreed with the board's HK card
+      // above it. It now reads the engine's own HK-only KPI — wages over the turns housekeepers
+      // did, against the fees on the turns that actually landed — and never re-derives.
+      const k = e.kpi.housekeeping
+      const cleans = Number(k.cleans) || 0                       // every in-house turn, any crew
+      const cleansByHk = Number(k.cleansByHousekeepers) || 0
       const hkHours = Number(hk?.hours) || 0
       const hkPayroll = Number(hk?.payroll) || 0
-      const revenue = Number(e.cleaningRevenue) || 0
+      const revenue = Number(k.revenue) || 0                     // fees on those turns, net
       rows.push({
         ...w,
         // -- the rule --------------------------------------------------
         cleans,
+        cleansByHk,
+        coveredByOthers: Number(k.cleansByOtherCrews) || 0,
         cleaningRevenue: money ? round2(revenue) : null,
+        allCheckoutFees: money ? round2(Number(e.cleaningRevenue) || 0) : null,
         hkPayroll: money ? round2(hkPayroll) : null,
         hkHours: round1(hkHours),
         housekeepers: Number(hk?.people) || 0,
-        hoursPerClean: cleans > 0 && hkHours > 0 ? round2(hkHours / cleans) : null,
-        costPerClean: money && cleans > 0 && hkPayroll > 0 ? round2(hkPayroll / cleans) : null,
+        hoursPerClean: k.hoursPerClean,
+        costPerClean: money ? k.costPerClean : null,
         revPerClean: money && cleans > 0 && revenue > 0 ? round2(revenue / cleans) : null,
         hkMargin: money ? round2(revenue - hkPayroll) : null,
         hkMarginPct: revenue > 0 ? round1(((revenue - hkPayroll) / revenue) * 100) : null,
@@ -115,7 +124,7 @@ export async function GET(req: NextRequest) {
       costPerClean: avg(r => r.costPerClean),
       revPerClean: avg(r => r.revPerClean),
     },
-    basis: 'Homebase timecards for hours and payroll · matched departure cleans for volume · cleaning fees net of the channel cut for revenue. Breezeway task counts are context, never the calculation.',
+    basis: 'Homebase timecards for hours and payroll · departure turns housekeepers did for cost and hours per turn (turns covered by other crews shown apart) · net cleaning fees on confirmed checkouts for revenue. Breezeway task counts are context, never the calculation.',
     failedWeeks: rows.filter(r => r.error).map(r => r.label),
   })
 }

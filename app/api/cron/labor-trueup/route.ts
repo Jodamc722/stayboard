@@ -268,6 +268,15 @@ async function send(req: NextRequest) {
       }
     }
     const TY = tier(ecY), T7 = tier(ec7), T30 = tier(ec30)
+    // The charge rate the team bills at ($40/h) — what a maintenance dollar is worth in hours, so
+    // paid hours and billed hours sit on one line (Jon, 2026-09-21).
+    const chargeRate = Number((await getSetting<{ rate?: number }>('billing_default_rate', { rate: 40 }).catch(() => ({ rate: 40 }))).rate) || 40
+    const billedVsPaid = (bill: number, hours: number) => {
+      if (!(bill > 0) || !(chargeRate > 0)) return ''
+      const bh = Math.round((bill / chargeRate) * 10) / 10
+      const pct = hours > 0 ? Math.round((bh / hours) * 100) : null
+      return '<br><span style="' + (pct != null && pct < 30 ? AMBER : MUTED) + ';font-size:11px">= ' + bh + 'h billed' + (pct != null ? ' of ' + r1(hours) + 'h paid (' + pct + '%)' : '') + '</span>'
+    }
     const WIN = [TY, T7, T30]
     const tRow = (label: string, sub: string, f: (x: ReturnType<typeof tier>) => string, opts: { strong?: boolean; top?: boolean } = {}) =>
       '<tr><td style="' + td + (opts.top ? ';border-top:2px solid #e5e7eb' : '') + '">' + (opts.strong ? '<b>' + label + '</b>' : label) +
@@ -281,10 +290,12 @@ async function send(req: NextRequest) {
       const bits = ['miami', 'broward'].filter(k => x.byMk[k] != null).map(k => (k === 'miami' ? 'Miami' : 'Broward') + ' <b>' + rate(x.byMk[k]) + '</b>')
       return bits.length ? '<span style="font-size:11.5px;color:#374151">' + bits.join(' &middot; ') + '</span>' : '<span style="' + MUTED + '">&mdash;</span>'
     }
-    const cleansByDay7 = ((ec7 as any).daily || []) as { d: string; cleans: number }[]
+    // Same series the 7-day row is summed from (HK turns + turns others covered), so the strip
+    // adds up to the row above it — the audit caught 116 vs 133.
+    const cleansByDay7 = ((ec7 as any).daily || []) as { d: string; cleans: number; cleansByOthers: number }[]
     const dayStrip = cleansByDay7.length
-      ? '<p style="margin:10px 0 0;font-size:12px;color:#374151"><b>Departure cleans by day</b> <span style="' + MUTED + '">&middot; last 7</span> &nbsp; ' +
-        cleansByDay7.map(r => '<span style="white-space:nowrap"><span style="' + MUTED + '">' + new Date(r.d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ }) + '</span> <b>' + (r.cleans || 0) + '</b></span>').join(' &nbsp;&middot;&nbsp; ') + '</p>'
+      ? '<p style="margin:10px 0 0;font-size:12px;color:#374151"><b>Departure turns by day</b> <span style="' + MUTED + '">&middot; last 7 &middot; housekeepers + covered by others</span> &nbsp; ' +
+        cleansByDay7.map(r => '<span style="white-space:nowrap"><span style="' + MUTED + '">' + new Date(r.d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ }) + '</span> <b>' + (r.cleans || 0) + '</b>' + (r.cleansByOthers ? '<span style="' + MUTED + '">+' + r.cleansByOthers + '</span>' : '') + '</span>').join(' &nbsp;&middot;&nbsp; ') + '</p>'
       : ''
     const tiersCard = '<div style="' + cardStyle + '">' +
       secTitle('Labor, in three tiers', 'yesterday &middot; last 7 &middot; last 30 &mdash; punches, never the schedule') +
@@ -293,11 +304,11 @@ async function send(req: NextRequest) {
       '<th style="' + th + ';text-align:right">Last 7 days</th><th style="' + th + ';text-align:right">Last 30 days</th></tr>' +
       // ── tier 1
       band('1 &middot; Housekeeping', 'cost per clean &mdash; housekeeper wages only') +
-      tRow('Cost per clean', 'housekeeper payroll &divide; every departure clean', x => x.cpc != null ? '<b style="font-size:17px">' + rate(x.cpc) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>', { strong: true }) +
+      tRow('Cost per turn', 'housekeeper payroll &divide; the turns housekeepers did', x => x.cpc != null ? '<b style="font-size:17px">' + rate(x.cpc) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>', { strong: true }) +
       tRow('By market', '', mkLine) +
-      tRow('Departure cleans', 'the denominator &mdash; whoever turned the unit', x => '<b>' + x.cleans + '</b>' +
-        (x.cleansOthers ? '<br><span style="' + GREEN + ';font-size:11px;font-weight:400">' + x.cleansOthers + ' covered by other crews</span>' : '')) +
-      tRow('Housekeeper hours &middot; payroll', 'Homebase punches', x => r1(x.hkHours) + 'h &middot; ' + money(x.hkPay) + (x.hpc != null ? '<br><span style="' + MUTED + ';font-size:11px">' + x.hpc + 'h per clean</span>' : '')) +
+      tRow('Turns by housekeepers', 'the denominator', x => '<b>' + x.cleansHk + '</b>' +
+        (x.cleansOthers ? '<br><span style="' + GREEN + ';font-size:11px;font-weight:400">+ ' + x.cleansOthers + ' covered by other crews (' + x.cleans + ' in all)</span>' : '')) +
+      tRow('Housekeeper hours &middot; payroll', 'Homebase punches', x => r1(x.hkHours) + 'h &middot; ' + money(x.hkPay) + (x.hpc != null ? '<br><span style="' + MUTED + ';font-size:11px">' + x.hpc + 'h per turn</span>' : '')) +
       tRow('Cleaning fees earned', 'net of the channel cut' , x => money(x.hkFees) + (x.hkCharged ? '<br><span style="' + MUTED + ';font-size:11px">+ ' + money(x.hkCharged) + ' charged cleaning work</span>' : '')) +
       tRow('Housekeeping net', 'fees minus housekeeper payroll', x => net(x.hkFees + x.hkCharged - x.hkPay)) +
       // ── tier 2
@@ -309,12 +320,12 @@ async function send(req: NextRequest) {
             + [x.sup.bill ? money(x.sup.bill) + ' billed' : '',
                x.sup.cleans ? x.sup.cleans + ' turn' + (x.sup.cleans === 1 ? '' : 's') + ' covered, ' + money(x.sup.fees) + ' to housekeeping' : '']
               .filter(Boolean).join(' &middot; ') + '</span>'
-          : '<span style="' + MUTED + '">none</span>')) +
+          : '<span style="' + MUTED + '">none</span>') + billedVsPaid(x.sup.bill, x.sup.hours)) +
       tRow('Supervision net cost', 'what the cleans carry', x => net(x.sup.rev - x.sup.pay)) +
       // ── tier 3
       band('3 &middot; Maintenance', 'Breezeway charges + any turn they covered, against their wages') +
       tRow('Payroll', T30.mt.names.slice(0, 4).map((n: string) => esc(n)).join(', ') + (T30.mt.names.length > 4 ? '…' : ''), x => money(x.mt.pay) + (x.mt.hours ? '<br><span style="' + MUTED + ';font-size:11px">' + r1(x.mt.hours) + 'h punched</span>' : '')) +
-      tRow('Revenue', 'charges entered on their tasks', x => money(x.mt.rev) +
+      tRow('Revenue', 'charges entered on their tasks &mdash; a manual entry, never the task clock', x => money(x.mt.rev) + billedVsPaid(x.mt.bill, x.mt.hours) +
         '<br><span style="' + MUTED + ';font-size:11px">' + [x.mt.billed ? x.mt.billed + ' billed ' + money(x.mt.bill) : '', x.mt.fees ? 'turns covered, ' + money(x.mt.fees) + ' to housekeeping' : ''].filter(Boolean).join(' &middot; ') + '</span>' +
         (x.mt.noCharge ? '<br><span style="' + AMBER + ';font-size:11px;font-weight:400">' + x.mt.noCharge + ' closed with no charge entered</span>' : '')) +
       tRow('Maintenance net', 'revenue minus maintenance payroll', x => net(x.mt.rev - x.mt.pay)) +
@@ -323,10 +334,11 @@ async function send(req: NextRequest) {
       tRow('Revenue', 'cleaning fees + charged work + maintenance', x => money(x.allRev)) +
       tRow('Payroll', 'housekeeping + supervisors + maintenance' + (WIN.some(w => w.ccsPay > 0) ? ' + CCS' : ''), x => money(x.allPay)) +
       tRow('Profit', 'revenue minus payroll', x => net(x.profit) + (x.marginPct != null ? ' <span style="' + MUTED + '">(' + pctTxt(x.marginPct) + ')</span>' : ''), { strong: true }) +
-      tRow('Loaded cost per clean', 'all payroll &divide; departure cleans', x => x.cleans > 0 && x.allPay > 0 ? '<b>' + rate(x.allPay / x.cleans) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>') +
+      tRow('Loaded cost per turn', 'all payroll &divide; every departure turn, any crew', x => x.cleans > 0 && x.allPay > 0 ? '<b>' + rate(x.allPay / x.cleans) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>') +
       '</table>' + dayStrip +
       '<p style="margin:10px 0 0;font-size:11px;color:#9ca3af;line-height:1.7">' +
-      '<b>Cost per clean</b> is housekeeper wages only, divided by every departure clean done in the market &mdash; a turn a technician or supervisor covered counts as a clean (it lowers the rate) while its fee and their wages stay on their own tier. ' +
+      '<b>Cost per turn</b> is housekeeper wages only, divided by the turns housekeepers did (HK-only, Jon 2026-09-21) &mdash; a turn a technician or supervisor covered is counted beside it and its fee is cleaning revenue, but it never lowers the rate. ' +
+      'Cleaning revenue counts confirmed checkouts only; inquiries, expired requests and owner / friends-&amp;-family stays earn $0. ' +
       'A shared Breezeway task is credited to the first field person on it; office staff are never credited. ' +
       'Every dollar of payroll is a Homebase punch, or the stated salary for salaried people, pro-rated to the window.</p>' +
       '</div>'
@@ -446,8 +458,8 @@ async function send(req: NextRequest) {
 
     // ── header + verdict ──────────────────────────────────────────────────────────────────────
     const verdict =
-      'Yesterday: <b>' + TY.cleans + ' cleans</b>' + (TY.cpc != null ? ' at <b>' + rate(TY.cpc) + '</b> of housekeeper pay each' : '') +
-      ' &middot; ' + money(TY.allRev) + ' earned against ' + money(TY.allPay) + ' payroll &rarr; <b style="' + (TY.profit < 0 ? RED : GREEN) + '">' + money(TY.profit) + (TY.profit < 0 ? ' loss' : ' profit') + '</b>' +
+      'Yesterday: <b>' + TY.cleansHk + ' turns</b> by housekeepers' + (TY.cleansOthers ? ' (+' + TY.cleansOthers + ' covered by others)' : '') + (TY.cpc != null ? ' at <b>' + rate(TY.cpc) + '</b> of housekeeper pay each' : '') +
+      ' &middot; all crews: ' + money(TY.allRev) + ' earned against ' + money(TY.allPay) + ' payroll &rarr; <b style="' + (TY.profit < 0 ? RED : GREEN) + '">' + money(TY.profit) + (TY.profit < 0 ? ' loss' : ' profit') + '</b>' +
       (TY.marginPct != null ? ' (' + pctTxt(TY.marginPct) + ')' : '') + '.' +
       (T30.cpc != null ? ' 30-day cost per clean <b>' + rate(T30.cpc) + '</b>.' : '') +
       (onShift ? ' Today: <b>' + onShift + '</b> on shift' + (cleansDueToday != null ? ', <b>' + cleansDueToday + '</b> cleans due' : '') + '.' : '')

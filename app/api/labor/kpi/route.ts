@@ -26,6 +26,7 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { staffByName, resolveStaff } from '@/lib/staffing'
 import { laborEconomics, kindOfTask } from '@/lib/labor-econ'
+import { etDay } from '@/lib/clean-day'
 import { unstable_cache } from 'next/cache'
 
 const cachedStripReadsRaw = unstable_cache(
@@ -188,22 +189,24 @@ export async function GET(req: Request) {
       marketParam === 'all' || (lmap[String(listingId)]?.market === marketParam)
 
     // ---- Tasks in window ---------------------------------------------------
+    // Widened a day each side then filtered by ET day (labor audit 2026-09-21): finished_at is a
+    // timestamptz and the raw bounds are UTC, so anything closed after 8pm on `end` was dropped
+    // and the previous evening's work rode in. Same fix the engine had since 2026-09-01.
+    const qStart = dISO(new Date(new Date(start + 'T12:00:00Z').getTime() - 864e5))
+    const qEnd = dISO(new Date(new Date(end + 'T12:00:00Z').getTime() + 864e5))
     const taskRowsAll = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
       .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,rate_paid,total_minutes')
-      .gte('finished_at', start).lte('finished_at', end + 'T23:59:59')
+      .gte('finished_at', qStart).lte('finished_at', qEnd + 'T23:59:59')
       .range(a, b)))
+      .filter(t => { const d = etDay(t.finished_at); return !!d && d >= start && d <= end })
     const taskRows = taskRowsAll.filter(t => marketFilter(t.reference_property_id))
 
+    // ONE CLASSIFIER (labor audit 2026-09-21): this route had its own regex, so its task counts
+    // disagreed with the engine's on strips, hyphenated names and "limpieza de salida". `kindOfTask`
+    // is the engine's rule; 'clean' here means a departure clean and nothing else.
     const classify = (t: any): 'clean' | 'inspection' | 'maintenance' | 'other' => {
-      const s = `${t.type_department || ''} ${t.name || ''}`.toLowerCase()
-      // Strips/walkthroughs and delivery errands are NOT departure cleans - they must
-      // never collect a cleaning fee (a strip on a checkout day was stealing the
-      // fee from the real cleaner).
-      if (/strip|walkthrough|walk-through|deliver|mattress/.test(s)) return 'other'
-      if (/clean|housekeep|turn/.test(s)) return 'clean'
-      if (/inspect|walk/.test(s)) return 'inspection'
-      if (/maint|repair|fix|hvac|plumb|electric|pest/.test(s)) return 'maintenance'
-      return 'other'
+      const k = kindOfTask(t)
+      return k === 'clean' || k === 'inspection' || k === 'maintenance' ? k : 'other'
     }
     // Canonicalize Breezeway doer names to the Homebase roster. Fuzzy full-name
     // match first; then the unique-first-name fallback (last-name drift between
@@ -238,18 +241,16 @@ export async function GET(req: Request) {
     // fallback for people nobody has classified yet. Without this the settings page would look
     // authoritative while the board quietly ignored it.
     const staffIdx = await staffByName().catch(() => ({} as Record<string, any>))
+    // BREEZEWAY NEVER DECIDES A PERSON'S MARKET (feedback-labor-truth-source; labor audit
+    // 2026-09-21). The majority-of-tasks fallback below was the last place it still did, so a
+    // person with no Staffing area moved between tabs with their week's assignments. Now: the
+    // Staffing area or nothing — the engine names the unplaced in `unassignedMarket`.
     const marketOfPerson = (name: string): string | null => {
       const rec = resolveStaff(name, staffIdx)
       if (rec?.area) return String(rec.area).toLowerCase()
-      const agg0: Record<string, number> = {}
-      for (const rawName of Object.keys(personMarketCount)) {
-        if (!nameMatches(rawName, name)) continue
-        for (const mk1 of Object.keys(personMarketCount[rawName])) agg0[mk1] = (agg0[mk1] || 0) + personMarketCount[rawName][mk1]
-      }
-      let best: string | null = null, bestN = 0
-      for (const mk1 of Object.keys(agg0)) if (agg0[mk1] > bestN) { best = mk1; bestN = agg0[mk1] }
-      return best
+      return null
     }
+    void personMarketCount
     const roleOfPerson = (name: string): string | null => resolveStaff(name, staffIdx)?.role || null
     const inMarket = (name: string) => marketParam === 'all' || marketOfPerson(name) === marketParam
     const timecards = marketParam === 'all' ? timecardsAll : timecardsAll.filter(t => inMarket(t.name))
@@ -264,7 +265,7 @@ export async function GET(req: Request) {
     // look cheaper than it is. A departure clean is the turnover the guest fee pays for, and it is
     // named for itself in Breezeway ("Departure Clean Checklist", incl. same-day-turn and long-stay
     // variants), so it is matched by name rather than by department.
-    const isDepartureClean = (t: any) => /departure clean|turnover clean|check-?out clean/i.test(String(t.name || ''))
+    const isDepartureClean = (t: any) => kindOfTask(t) === 'clean'
     const tasks = { clean: 0, inspection: 0, maintenance: 0, other: 0, total: 0 }
     const cleanTasks: any[] = []
     let hkNonDeparture = 0
@@ -528,6 +529,11 @@ export async function GET(req: Request) {
       payrollComplete: tcAudit.complete && (econ as any)?.payrollAudit?.complete !== false,
       payrollFailedWeeks: Array.from(new Set([...(tcAudit.failedWeeks || []), ...(((econ as any)?.payrollAudit?.failedWeeks) || [])])),
       ...kpis, tasks, payroll, today: todayBlock,
+      // ONE hours-per-turn (labor audit 2026-09-21): computeLaborKpis divides EVERY crew's hours by
+      // the clean count (3.05h) while the HK card says 2.4h. The engine's HK-only figure is the KPI.
+      hoursPerClean: econ.hoursPerClean,
+      hoursPerCleanAllCrews: kpis.hoursPerClean,
+      cleansCompleted: econ.kpi?.housekeeping?.cleans ?? kpis.cleansCompleted,
       // The three housekeeping categories and the layer stack, straight off the shared engine.
       buckets: econ.buckets,
       // Our crew's work inside vendor-managed buildings + the per-building invoice check.

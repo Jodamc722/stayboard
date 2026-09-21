@@ -100,6 +100,11 @@ export async function GET(req: NextRequest) {
   const rows: any[] = []
   for (const t of tasks) {
     if (!isDepartureCleanName(t.name)) continue
+    // DELETED IS MOVED (lib/clean-day.ts): Breezeway deletes and recreates a clean it moves, so
+    // the deleted row is a ghost of a turn that lives on another day — it used to print here as
+    // "not finished" (64 of them in one fortnight, labor audit 2026-09-21) and read as work
+    // nobody closed. Cancelled is the same thing.
+    if (/^(deleted|cancel)/.test(str(t.status).toLowerCase())) continue
     const li = lmap[String(t.reference_property_id)]
     if (market !== 'all' && (li?.market || 'unassigned') !== market) continue
     if (unitFilter && String(t.reference_property_id) !== unitFilter) continue

@@ -38,6 +38,7 @@ import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { laborEconomics } from './labor-econ'
+import { getCrew } from './crew'
 
 export const BILLABLE_LOOKBACK_DAYS = 45
 
@@ -49,16 +50,31 @@ export const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: T
 export const shiftDay = (s: string, n: number) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymdET(d) }
 const daysBetween = (a: string, b: string) => Math.round((new Date(b + 'T12:00:00').getTime() - new Date(a + 'T12:00:00').getTime()) / 86400000)
 
-export type Dept = 'housekeeping' | 'maintenance' | 'inspection' | 'other'
-const DEPTS: Dept[] = ['housekeeping', 'maintenance', 'inspection', 'other']
+export type Dept = 'housekeeping' | 'supervision' | 'maintenance' | 'inspection' | 'other'
+const DEPTS: Dept[] = ['housekeeping', 'supervision', 'maintenance', 'inspection', 'other']
 
-/** Department from the Homebase role. The role is what payroll is actually charged against. */
+/** Department from the Homebase role text alone — the LAST resort. The roster decides first (see
+ *  deptOfPerson below). Kept exported because older callers still import it. */
 export function deptOfRole(role: any): Dept {
   const s = String(role || '').toLowerCase()
+  if (/maint|tech|repair|handy/.test(s)) return 'maintenance'
+  if (/supervis|lead|manager/.test(s)) return 'supervision'
   if (/inspect|audit|quality/.test(s)) return 'inspection'
   if (/clean|housekeep|turn/.test(s)) return 'housekeeping'
-  if (/maint|tech|repair|handy/.test(s)) return 'maintenance'
   return 'other'
+}
+/** THE ROSTER DECIDES (labor audit 2026-09-21): this report classified payroll by Homebase role
+ *  text and had no supervisor bucket, so "Housekeeping Supervisor" landed in housekeeping and the
+ *  HK payroll tile disagreed with the margin printed beside it. Same lib/crew chain as the engine:
+ *  staff record → Crew & roles override → declared → role text. */
+function deptOfPerson(crew: Awaited<ReturnType<typeof getCrew>> | null, name: string, role: any): Dept {
+  if (crew) {
+    const d = crew.deptOf(name, role == null ? null : String(role))
+    if (d === 'housekeeping' || d === 'supervision' || d === 'maintenance' || d === 'inspection') return d
+    if (d === 'ccs') return 'other'
+    return 'other'
+  }
+  return deptOfRole(role)
 }
 /** Task kind, used for the work mix and for pricing billable labor. */
 export function kindOfTask(t: any): 'departure' | 'otherClean' | 'inspection' | 'maintenance' | 'other' {
@@ -138,6 +154,10 @@ export type LaborReport = {
   // True when the headline economics above came from lib/labor-econ (net fees, credited
   // departure cleans). False = the engine call failed and the old checkout arithmetic filled in.
   engineBasis?: boolean
+  /** The HK payroll the margin and cost per clean above were computed from (engine when
+   *  engineBasis, salary-aware) — the tile must print THIS, not the role-text bucket. */
+  hkPayroll: number
+  hkHours: number
   /** Departure cleans the engine counted — the real denominator when engineBasis is true. */
   engineCleans: number | null
   /** Turns a supervisor or technician covered, and what those turns billed. */
@@ -230,10 +250,11 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   const byDept = {} as LaborReport['byDept']
   for (const d of DEPTS) byDept[d] = { hours: 0, payroll: 0, people: 0 }
   const seenByDept: Record<Dept, Set<string>> = {
-    housekeeping: new Set(), maintenance: new Set(), inspection: new Set(), other: new Set(),
+    housekeeping: new Set(), supervision: new Set(), maintenance: new Set(), inspection: new Set(), other: new Set(),
   }
+  const crewMap = await getCrew().catch(() => null)
   for (const t of timecards) {
-    const d = deptOfRole(t.role)
+    const d = deptOfPerson(crewMap, t.name, t.role)
     byDept[d].hours += t.hours ?? 0
     byDept[d].payroll += t.laborCost ?? 0
     if (t.name) seenByDept[d].add(t.name)
@@ -324,7 +345,7 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
   // per-person day detail below stays local because it is punches and tasks, not economics.
   // If the engine call fails the old arithmetic fills in, flagged by engineBasis=false.
   let hkPayroll = byDept.housekeeping.payroll
-  const hkHours = byDept.housekeeping.hours
+  let hkHours = byDept.housekeeping.hours
   let costPerClean = checkouts > 0 && hkPayroll > 0 ? r2(hkPayroll / checkouts) : null
   let hoursPerClean = checkouts > 0 && hkHours > 0 ? r1(hkHours / checkouts) : null
   let feePerClean = checkouts > 0 && cleaningRevenue > 0 ? r2(cleaningRevenue / checkouts) : null
@@ -339,6 +360,7 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     const H = eco.kpi.housekeeping
     cleaningRevenue = r2(H.revenue)
     hkPayroll = r2(H.payroll)
+    hkHours = r1(Number(H.hours) || hkHours)
     costPerClean = H.costPerClean
     hoursPerClean = H.hoursPerClean
     feePerClean = H.revPerClean
@@ -375,15 +397,18 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
       const k = kindOfTask(t); return k === 'maintenance' || k === 'inspection'
     })
     const bCards = await timecardsRange(bFrom, to)
-    const billed = billableTasks.reduce((a: number, t: any) => a + ownerItems(t), 0)
+    // billedAmount is what the owner is actually invoiced (rate + owner line items, overrides and
+    // exclusions applied — lib/billing.ts). Summing line items alone missed every rate-priced job.
+    const billedOf = (t: any) => (Number(t.billedAmount) || 0)
+    const billed = billableTasks.reduce((a: number, t: any) => a + billedOf(t), 0)
     billable = {
       from: bFrom, to, days: BILLABLE_LOOKBACK_DAYS,
       billed: r2(billed),
       tasks: billableTasks.length,
-      tasksWithBilling: billableTasks.filter((t: any) => ownerItems(t) > 0).length,
+      tasksWithBilling: billableTasks.filter((t: any) => billedOf(t) > 0).length,
       tasksMissingDetail: lookTasks.filter((t: any) => !t.hasDetail).length,
       hours: r1(billableTasks.reduce((a: number, t: any) => a + (Number(t.actualMinutes) || 0), 0) / 60),
-      maintenancePayroll: r2(bCards.filter(t => deptOfRole(t.role) === 'maintenance').reduce((a, t) => a + (t.laborCost ?? 0), 0)),
+      maintenancePayroll: r2(bCards.filter(t => deptOfPerson(crewMap, t.name, t.role) === 'maintenance').reduce((a, t) => a + (t.laborCost ?? 0), 0)),
       margin: 0,
     }
     billable.margin = r2(billable.billed - billable.maintenancePayroll)
@@ -503,7 +528,7 @@ export async function buildLaborReport(from: string, to: string): Promise<LaborR
     totals, byDept,
     checkouts, vendorCheckouts, departureClosed, mix, engineCleans, coveredByOtherCrews,
     cleaningRevenue: r2(cleaningRevenue),
-    engineBasis,
+    engineBasis, hkPayroll: r2(hkPayroll), hkHours: r1(hkHours),
     costPerClean, hoursPerClean, feePerClean, cleaningMargin, cleaningMarginPct,
     laborPctOfRevenue, band,
     billable, people, yesterday, flags, settings,

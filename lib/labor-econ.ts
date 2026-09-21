@@ -45,6 +45,11 @@ import { getCrew, type Dept, type DeptSource, DEPTS, DEPT_LABEL } from './crew'
 import { isDepartureCleanName } from './breezeway'
 import { resolveStaff, getAgencies } from './staffing'
 import { laborAmount, isTaskDone } from './billing'
+import { isOwnerOrFriendsFamily } from './owner-audit'
+
+// A booking that actually happened. Same list as lib/kpi.ts — inquiries, expired requests and
+// pending bookings are NOT checkouts and never earned a cleaning fee.
+const LIVE_RES_STATUS = ['confirmed', 'checked_in', 'checked_out', 'closed']
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 const num = (v: any): number | null => { const n = Number(v); return Number.isFinite(n) ? n : null }
@@ -259,15 +264,15 @@ export type LaborEcon = {
   /** Expedia-bundled cleaning fees rebuilt from the unit's own modal fee. An estimate — shown. */
   bundledFeeBackfill: { checkouts: number; amount: number; basis: string }
   /** Timecard completeness. complete=false → payroll-derived numbers are understated; warn, don't print. */
-  payrollAudit: { weeks: number; failedWeeks: string[]; complete: boolean }
+  payrollAudit: { weeks: number; failedWeeks: string[]; complete: boolean; outsideWindowCards: number; outsideWindowHours: number; undatedCards: number }
   /** The simple, reconcilable labor P&L: housekeeping and maintenance, by market and in total. */
   pnl?: any
   /** How the departure-clean denominator was built, as its parts. */
   cleanAudit?: { scope: string; counted: number; countedThisMarket: number; closed: number; openCounted: number; movedExcluded: number; noAssignee: number; rule: string }
   /** Per person, day by day — the color behind every aggregate. Wages carry the day's agency share. */
-  personDays?: Record<string, { d: string; cleans: number; fee: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]>
+  personDays?: Record<string, { d: string; cleans: number; depCleans: number; fee: number; feeAll: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]>
   /** Daily housekeeping series (credited cleans, net fees, loaded HK wages) for trend charts. */
-  daily?: { d: string; cleans: number; fee: number; hkWages: number }[]
+  daily?: { d: string; cleans: number; cleansByOthers: number; fee: number; hkWages: number }[]
   /** Of that, the part tied to a named person via their departure clean. */
   cleaningRevenueAttributed: number
   /** The rest: a checkout whose clean we could not match to anybody. Shown, never hidden —
@@ -287,8 +292,9 @@ export type LaborEcon = {
   /** Miami / Broward / Vendor-cleaned, the three housekeeping categories. */
   buckets: Array<{
     key: string; label: string; inHouse: boolean; people: number
-    cleans: number; cleaningRevenue: number; payroll: number; hours: number
+    cleans: number; cleansByHk: number; cleansByOthers: number; cleaningRevenue: number; payroll: number; hours: number
     laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
+    laborCostPerCleanAllCrews: number | null; hoursPerCleanAllCrews: number | null
     margin: number; marginPct: number | null
   }>
   /** The stack: housekeeping labor, maintenance billables, maintenance cleans, supervisor overhead. */
@@ -427,11 +433,13 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // or the denominator and the numerator quietly disagree every evening. lib/clean-day.ts is the
   // one shared rule; this file now actually uses it.
   const cleanDay = (t: any): string => etDay(t.finished_at) || String(t.scheduled_date || '').slice(0, 10)
-  const isClosed = (t: any) => !!t.finished_at && String(t.status || '').toLowerCase() !== 'deleted'
+  const isClosed = (t: any) => !!t.finished_at && !/^(deleted|cancel)/.test(String(t.status || '').toLowerCase())
   // DELETED MEANS MOVED (Jon, 2026-08-25: "if moved it means extended or we moved for a
   // schedule"). Breezeway does not edit a clean onto a new day; it deletes the row and creates a
   // new task, so a deleted row is the ghost of a clean that now lives somewhere else.
-  const isMoved = (t: any) => String(t.status || '').toLowerCase() === 'deleted'
+  // CANCELLED IS MOVED TOO (labor audit, 2026-09-21): cancelBreezewayTask writes 'cancelled', and
+  // a cancelled clean with an assignee and a scheduled day used to count as a turn that happened.
+  const isMoved = (t: any) => /^(deleted|cancel)/.test(String(t.status || '').toLowerCase())
 
   const ids = taskRows.map(t => String(t.id))
   const details: Record<string, any> = {}
@@ -538,10 +546,36 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // the MATCHING only: their fees ride on the clean they claim, and every window-scoped total and
   // audit bucket still counts checkouts strictly inside [from, to].
   const resFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -9))
-  const resRowsAll = await pageAll((a, b) => sb.from('guesty_reservations')
-    .select('listing_id,check_out,status,source,confirmation_code,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
+  // ONLY A BOOKING THAT ACTUALLY HAPPENED PAYS A CLEANING FEE (labor audit, 2026-09-21). This
+  // query used to exclude canceled/declined and keep everything else — so VRBO inquiries, expired
+  // requests and pending bookings all counted as cleaning revenue. The audit found "Rustic 16 ·
+  // vrbo · $121.43" FIVE times on one checkout day and "Elser 4418 · $225" twice: one real stay
+  // plus its inquiries, each counted as a checkout that earned a fee and owed a clean. That was
+  // most of the "$8.9k of fees with no clean found" and it inflated margin. Same positive list
+  // lib/kpi.ts uses (LIVE_RES); owner + friends-&-family stays are inventory decisions, not
+  // guests (lib/owner-audit.ts isOwnerOrFriendsFamily), so they earn no cleaning revenue here
+  // either — their clean still counts as a clean, it just carries $0.
+  const resRowsRaw = await pageAll((a, b) => sb.from('guesty_reservations')
+    .select('listing_id,check_out,status,source,confirmation_code,guest_name,tags,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
     .gte('check_out', resFrom).lte('check_out', to)
     .not('status', 'in', '("canceled","cancelled","declined")').order('id', { ascending: true }).range(a, b))
+  let resNonLive = 0, resNonLiveFees = 0, resOwnerFF = 0, resOwnerFFFees = 0
+  const resNonLiveByStatus: Record<string, number> = {}
+  const resRowsAll = resRowsRaw.filter(r => {
+    const st = String(r.status || '').toLowerCase()
+    const feeG = num(r.cleaning) ?? 0
+    if (LIVE_RES_STATUS.indexOf(st) < 0) {
+      resNonLive++; resNonLiveFees = round2(resNonLiveFees + feeG)
+      resNonLiveByStatus[st || 'blank'] = (resNonLiveByStatus[st || 'blank'] || 0) + 1
+      return false
+    }
+    const tagBlob = Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : ''
+    if (isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))) {
+      resOwnerFF++; resOwnerFFFees = round2(resOwnerFFFees + feeG)
+      return false
+    }
+    return true
+  })
 
   // ── EXPEDIA CLEANING BACK-FILL ───────────────────────────────────────────
   // Expedia-family channels bundle the cleaning fee INTO the accommodation fare, so the reservation
@@ -814,7 +848,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // PER-DAY LEDGER accumulators (Jon, 2026-08-23: "the labor KPI dashboard needs to show all
   // the color") — work by day per person, wages by day per person; assembled after the agency
   // loading so every day carries its share of the markup.
-  const ledgerT: Record<string, Record<string, { cleans: number; fee: number; billable: number }>> = {}
+  const ledgerT: Record<string, Record<string, { cleans: number; depCleans: number; fee: number; billable: number }>> = {}
   const ledgerW: Record<string, Record<string, { hours: number; wages: number }>> = {}
   for (const t of taskRows) {
     const w = doer(t)
@@ -839,7 +873,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       const day = etDay(t.finished_at)
       if (day) {
         const L = (ledgerT[k] = ledgerT[k] || {})
-        const e = (L[day] = L[day] || { cleans: 0, fee: 0, billable: 0 })
+        const e = (L[day] = L[day] || { cleans: 0, depCleans: 0, fee: 0, billable: 0 })
         if (chargedCleanIds[String(t.id)]) { e.cleans++; e.billable = round2(e.billable + chargeOfRaw(t)) }
         else if (kind === 'clean') { /* counted on its landed day in the cleansDone pass below */ }
         else e.billable = round2(e.billable + ch.billable)
@@ -881,14 +915,24 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     const day = cleanLandedDay(t)
     if (day) {
       const L = (ledgerT[k] = ledgerT[k] || {})
-      const e = (L[day] = L[day] || { cleans: 0, fee: 0, billable: 0 })
+      const e = (L[day] = L[day] || { cleans: 0, depCleans: 0, fee: 0, billable: 0 })
       e.cleans++
+      e.depCleans++
       e.fee = round2(e.fee + (feeByTask[String(t.id)] || 0))
     }
     if (li) { const mk = li.vendor ? 'vendor' : li.market; p._mk[mk] = (p._mk[mk] || 0) + 1 }
   }
 
+  // A TIMECARD OUTSIDE THE WINDOW IS NOT THIS WINDOW'S PAYROLL (labor audit, 2026-09-21). The
+  // Homebase pull is week-chunked and whatever it returned was summed as-is, so the boundary
+  // was whatever Homebase decided about start_date/end_date. Hours per turn cannot be trusted
+  // if a card from the day after `to` can ride in. Cards with no date at all are kept (never
+  // lose money silently) and counted in payrollAudit.undatedCards.
+  let tcOutsideWindow = 0, tcOutsideHours = 0, tcUndated = 0
   for (const t of timecards) {
+    const tday = String((t as any).date || '').slice(0, 10)
+    if (!tday) tcUndated++
+    else if (tday < from || tday > to) { tcOutsideWindow++; tcOutsideHours = round2(tcOutsideHours + (t.hours ?? 0)); continue }
     const k = keyFor(t.name)
     const p = acc[k] = acc[k] || blank(t.name)
     p.hours = round2(p.hours + (t.hours ?? 0))
@@ -1105,7 +1149,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // Every aggregate above decomposes into days a reader can audit: that day's cleans and the
   // net fees they earned, the charges typed on other work, the hours punched, the wages those
   // hours cost WITH the day's share of the agency markup, the building hops, and the margin.
-  const personDays: Record<string, { d: string; cleans: number; fee: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]> = {}
+  const personDays: Record<string, { d: string; cleans: number; depCleans: number; fee: number; feeAll: number; billable: number; hours: number; wages: number; hops: number; margin: number }[]> = {}
   for (const p of peopleAll) {
     const tl = ledgerT[p.name] || {}
     const wl = ledgerW[p.name] || {}
@@ -1115,7 +1159,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // housekeeping's now, and printing it here put the same dollars on two screens.
     const keepsFees = p.dept === 'housekeeping'
     personDays[p.name] = daySet.map(d => {
-      const a0 = tl[d] || { cleans: 0, fee: 0, billable: 0 }
+      const a0 = tl[d] || { cleans: 0, depCleans: 0, fee: 0, billable: 0 }
       const a = keepsFees ? a0 : { ...a0, fee: 0 }
       const w = wl[d] || { hours: 0, wages: 0 }
       let hops = 0
@@ -1124,17 +1168,23 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       // The agency markup follows the wages it was computed on, day by day.
       const load = (p.agencyLoad || 0) > 0 && (p.wagesHomebase || 0) > 0 ? round2((p.agencyLoad || 0) * (w.wages / (p.wagesHomebase || 1))) : 0
       const wages = round2(w.wages + load)
-      return { d, cleans: a.cleans, fee: round2(a.fee), billable: round2(a.billable), hours: round2(w.hours), wages, hops, margin: round2(a.fee + a.billable - wages) }
+      // depCleans / feeAll: departure turns only and the fee they carried BEFORE the hand-over to
+      // housekeeping — lib/labor-day.ts builds the per-day department view from these.
+      return { d, cleans: a.cleans, depCleans: a0.depCleans, fee: round2(a.fee), feeAll: round2(a0.fee), billable: round2(a.billable), hours: round2(w.hours), wages, hops, margin: round2(a.fee + a.billable - wages) }
     })
   }
   // Daily housekeeping series for the trend chart: housekeepers only, credited cleans, net
   // fees, loaded wages. A single day is noisy (paperwork lag) — the chart groups by week.
-  const dailyAcc: Record<string, { cleans: number; fee: number; hkWages: number }> = {}
+  // HK-ONLY, DEPARTURE TURNS ONLY (labor audit 2026-09-21): `cleans` used to include charged
+  // cleaning tasks, so the trend's cost per clean never matched the headline. Now it is the same
+  // arithmetic — housekeeper wages over the turns housekeepers did — and turns other crews covered
+  // ride along as `cleansByOthers` so the chart can say so.
+  const dailyAcc: Record<string, { cleans: number; cleansByOthers: number; fee: number; hkWages: number }> = {}
   for (const p of peopleAll) {
-    if (p.dept !== 'housekeeping') continue
     for (const r of (personDays[p.name] || [])) {
-      const e = (dailyAcc[r.d] = dailyAcc[r.d] || { cleans: 0, fee: 0, hkWages: 0 })
-      e.cleans += r.cleans; e.fee = round2(e.fee + r.fee); e.hkWages = round2(e.hkWages + r.wages)
+      const e = (dailyAcc[r.d] = dailyAcc[r.d] || { cleans: 0, cleansByOthers: 0, fee: 0, hkWages: 0 })
+      if (p.dept === 'housekeeping') { e.cleans += r.depCleans; e.fee = round2(e.fee + r.feeAll); e.hkWages = round2(e.hkWages + r.wages) }
+      else { e.cleansByOthers += r.depCleans; e.fee = round2(e.fee + r.feeAll) }
     }
   }
   const daily = Object.keys(dailyAcc).sort().map(d => ({ d, ...dailyAcc[d] }))
@@ -1267,8 +1317,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
 
   type Bucket = {
     key: string; label: string; inHouse: boolean
-    cleans: number; cleaningRevenue: number; payroll: number; hours: number
+    cleans: number; cleansByHk: number; cleansByOthers: number; cleaningRevenue: number; payroll: number; hours: number
     laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
+    laborCostPerCleanAllCrews: number | null; hoursPerCleanAllCrews: number | null
     margin: number; marginPct: number | null; people: number
   }
   // 'vendor-inhouse' is OUR crew cleaning inside a vendor-managed building — our hours, our cost,
@@ -1282,8 +1333,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   }
   const mkBucket = (key: string, inHouse: boolean): Bucket => ({
     key, label: BUCKET_LABEL[key] || (key.charAt(0).toUpperCase() + key.slice(1)), inHouse,
-    cleans: 0, cleaningRevenue: 0, payroll: 0, hours: 0,
+    cleans: 0, cleansByHk: 0, cleansByOthers: 0, cleaningRevenue: 0, payroll: 0, hours: 0,
     laborCostPerClean: null, hoursPerClean: null, feePerClean: null,
+    laborCostPerCleanAllCrews: null, hoursPerCleanAllCrews: null,
     margin: 0, marginPct: null, people: 0,
   })
   const buckets: Record<string, Bucket> = {}
@@ -1404,11 +1456,20 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     v.cleans = vendorCleans
     v.cleaningRevenue = round2(cleaningVendor)
   }
+  // HK-ONLY IS THE RULE (Jon, 2026-09-21 labor audit, chose "HK-only"): housekeeper wages over the
+  // turns HOUSEKEEPERS did. A turn a supervisor, a tech or a vendor cleaner covered is still a clean
+  // and its fee is still cleaning revenue — but it goes in `cleansByOthers`, never under HK wages.
+  // The audit measured the old way flattering cost per turn by ~12% (255 of 282 turns were
+  // housekeepers'; $43.96 shown vs $48.60 real) and hours per turn by the same (2.42 vs 2.67).
   for (const k of Object.keys(buckets)) {
     const b = buckets[k]
     b.people = Object.keys(bucketNames[k] || {}).length
-    b.laborCostPerClean = b.inHouse && b.cleans > 0 && b.payroll > 0 ? round2(b.payroll / b.cleans) : null
-    b.hoursPerClean = b.inHouse && b.cleans > 0 && b.hours > 0 ? round2(b.hours / b.cleans) : null
+    b.cleansByOthers = depCleansByOthersMk[k] || 0
+    b.cleansByHk = Math.max(0, b.cleans - b.cleansByOthers)
+    b.laborCostPerClean = b.inHouse && b.cleansByHk > 0 && b.payroll > 0 ? round2(b.payroll / b.cleansByHk) : null
+    b.hoursPerClean = b.inHouse && b.cleansByHk > 0 && b.hours > 0 ? round2(b.hours / b.cleansByHk) : null
+    b.laborCostPerCleanAllCrews = b.inHouse && b.cleans > 0 && b.payroll > 0 ? round2(b.payroll / b.cleans) : null
+    b.hoursPerCleanAllCrews = b.inHouse && b.cleans > 0 && b.hours > 0 ? round2(b.hours / b.cleans) : null
     b.feePerClean = b.cleans > 0 && b.cleaningRevenue > 0 ? round2(b.cleaningRevenue / b.cleans) : null
     b.margin = round2(b.cleaningRevenue - b.payroll)
     b.marginPct = b.cleaningRevenue > 0 ? round2((b.margin / b.cleaningRevenue) * 100) : null
@@ -1441,8 +1502,13 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const hkPayrollInHouse = round2(inHouseB.reduce((a, b) => a + b.payroll, 0))
   const hkHoursInHouse = round2(inHouseB.reduce((a, b) => a + b.hours, 0))
   const hkCleansInHouse = inHouseB.reduce((a, b) => a + b.cleans, 0)
-  const costPerClean = hkCleansInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansInHouse) : null
-  const hoursPerClean = hkCleansInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansInHouse) : null
+  const hkCleansByOthersInHouse = inHouseB.reduce((a, b) => a + (b.cleansByOthers || 0), 0)
+  const hkCleansByHkInHouse = Math.max(0, hkCleansInHouse - hkCleansByOthersInHouse)
+  // HK-ONLY (see the bucket loop above): wages ÷ turns housekeepers did.
+  const costPerClean = hkCleansByHkInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansByHkInHouse) : null
+  const hoursPerClean = hkCleansByHkInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansByHkInHouse) : null
+  const costPerCleanAllCrews = hkCleansInHouse > 0 && hkPayrollInHouse > 0 ? round2(hkPayrollInHouse / hkCleansInHouse) : null
+  const hoursPerCleanAllCrews = hkCleansInHouse > 0 && hkHoursInHouse > 0 ? round2(hkHoursInHouse / hkCleansInHouse) : null
   // ONE ANSWER PER QUESTION. The housekeeping department row used to divide a person's FULL
   // window payroll by their MARKET-filtered cleans, so on a market tab the row disagreed with the
   // tile printed directly above it. The bucket figures already allocate a housekeeper's wages
@@ -1565,7 +1631,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
         cleans: inHouseB.reduce((a, b) => a + (depCleansByOthersMk[b.key] || 0), 0),
         fees: round2(inHouseB.reduce((a, b) => a + (feesByOthersMk[b.key] || 0), 0)),
       },
-      basisNote: 'housekeeper wages over every departure clean done in the market, against the fees on those same cleans — a turn covered by a tech or a supervisor counts as a clean and its fee counts as housekeeping revenue; only their wages stay on their own crew',
+      basisNote: 'housekeeper wages over the turns housekeepers did (HK-only, Jon 2026-09-21). A turn covered by a supervisor, a tech or a vendor cleaner is counted and its fee is cleaning revenue, but it never dilutes cost or hours per turn — see cleansByOtherCrews and costPerCleanAllCrews',
+      costPerCleanAllCrews, hoursPerCleanAllCrews,
       // Gross guest cleaning fees before the OTA cut, so the difference is visible.
       revenueGross: cleaningGrossAll,
       channelCut: round2(Math.max(0, cleaningGrossAll - cleaningInhouse)),
@@ -2312,7 +2379,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // Which timecard weeks Homebase actually returned. When complete=false, payroll and every
     // number derived from it (cost per clean, margins, labor %) are UNDERSTATED — display layers
     // must show the warning instead of the numbers.
-    payrollAudit: { weeks: tcAudit.weeks, failedWeeks: tcAudit.failedWeeks, complete: tcAudit.complete },
+    payrollAudit: { weeks: tcAudit.weeks, failedWeeks: tcAudit.failedWeeks, complete: tcAudit.complete, outsideWindowCards: tcOutsideWindow, outsideWindowHours: tcOutsideHours, undatedCards: tcUndated },
     costPerClean,
     hoursPerClean,
     costPerCleanByMarket,
@@ -2337,6 +2404,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       noCleanBySource,
       notClosedBySource,
       noCleanExamples,
+      // What the positive status filter and the owner/F&F rule kept OUT of revenue. If these are
+      // large, the reservations table is carrying inquiries as bookings — a sync question, not a
+      // cleaning one.
+      excludedNonLive: { reservations: resNonLive, grossFees: resNonLiveFees, byStatus: resNonLiveByStatus },
+      excludedOwnerFF: { reservations: resOwnerFF, grossFees: resOwnerFFFees },
       window: 'checkout day or day+1 first (real cleans only — ghosts can never claim a fee), then nearest clean from 2 days early to 9 days late',
     },
     coverage: {
