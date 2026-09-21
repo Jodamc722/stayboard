@@ -11,7 +11,8 @@
 //
 // THE RULES (feedback-labor-truth-source + the audit decisions):
 //   • Hours and wages: Homebase punches. Salaried people carry salary ÷ days, punches shown beside.
-//   • Volume: departure cleans, on the ET day they landed. Cost and hours per turn come TWO ways:
+//   • Volume: departure cleans tied to a confirmed checkout, on the ET day they landed. A finished
+//     departure clean no checkout claims is listed as unexplained, never counted as a turn. Cost and hours per turn come TWO ways:
 //     HK wages ÷ every turn (a supervisor covering one is a saving — the number that matters) and
 //     HK wages ÷ housekeepers' own turns (the scheduling check). Both always shown.
 //   • Revenue: net cleaning fees on confirmed checkouts only. Owner / F&F stays carry the fee the
@@ -107,6 +108,8 @@ export type LaborDays = {
     ownerBilled: { reservations: number; fees: number; pendingInGuesty: number }
     /** Departure cleans in the window that were deleted / cancelled in Breezeway (moved, not done). */
     movedCleans: number
+    /** Finished departure cleans with no live checkout behind them — real work, not turns (Jon 2026-09-21). */
+    cleansNoCheckout: { count: number; examples: { unit: string; day: string; who: string; task: string }[] }
     unrostered: { people: number; payroll: number; names: string[] }
     unassignedMarket: { people: number; payroll: number; names: string[] }
     /** Maintenance tasks closed with no charge entered (17WEST excluded by design). */
@@ -243,6 +246,7 @@ export async function laborDays(opts: { from: string; to: string; market?: strin
       excludedNonLive: fa.excludedNonLive || { reservations: 0, grossFees: 0 },
       ownerBilled: fa.ownerBilled || { reservations: 0, fees: 0, pendingInGuesty: 0 },
       movedCleans: Number(ca.movedExcluded || 0),
+      cleansNoCheckout: { count: Number(ca.noCheckout || 0), examples: Array.isArray(ca.noCheckoutExamples) ? ca.noCheckoutExamples : [] },
       unrostered: { people: econ.unrostered.people, payroll: econ.unrostered.payroll, names: econ.unrostered.names },
       unassignedMarket: { people: econ.unassignedMarket.people, payroll: econ.unassignedMarket.payroll, names: econ.unassignedMarket.names },
       tasksNoCharge: mt ? Number((mt as any).tasksNoCharge || 0) : 0,

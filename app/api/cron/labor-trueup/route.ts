@@ -251,6 +251,7 @@ async function send(req: NextRequest) {
       const supRev = Number(sup.billableRevenue || 0)
       return {
         cleans: Number(hk.cleans) || 0,
+        noCheckout: Number((ec.cleanAudit || {}).noCheckout) || 0,
         cleansHk: Number(hk.cleansByHousekeepers ?? hk.cleans) || 0,
         cleansOthers: Number(hk.cleansByOtherCrews) || 0,
         hkHours: Number(hk.hours) || 0, hkPay: Number(hk.payroll) || 0,
@@ -308,8 +309,9 @@ async function send(req: NextRequest) {
       tRow('Cost per turn', 'housekeeper payroll &divide; every turn &mdash; a turn a supervisor covered is a saving', x => x.cpc != null ? '<b style="font-size:17px">' + rate(x.cpc) + '</b>' : '<span style="' + MUTED + '">&mdash;</span>', { strong: true }) +
       tRow('&nbsp;&nbsp;on housekeepers&rsquo; own turns', 'the same wages &divide; only the turns they did &mdash; are they scheduled well', x => x.cpcOwn != null ? rate(x.cpcOwn) + (x.hpcOwn != null ? ' <span style="' + MUTED + ';font-size:11px">' + x.hpcOwn + 'h</span>' : '') : '<span style="' + MUTED + '">&mdash;</span>') +
       tRow('By market', '', mkLine) +
-      tRow('Departure turns', 'every turn &mdash; the denominator', x => '<b>' + x.cleans + '</b>' +
-        '<br><span style="' + MUTED + ';font-size:11px">' + x.cleansHk + ' by housekeepers' + (x.cleansOthers ? '</span> <span style="' + GREEN + ';font-size:11px;font-weight:400">+ ' + x.cleansOthers + ' covered by supervisors / techs</span>' : '</span>')) +
+      tRow('Departure turns', 'finished departure cleans tied to a real checkout &mdash; the denominator', x => '<b>' + x.cleans + '</b>' +
+        '<br><span style="' + MUTED + ';font-size:11px">' + x.cleansHk + ' by housekeepers' + (x.cleansOthers ? '</span> <span style="' + GREEN + ';font-size:11px;font-weight:400">+ ' + x.cleansOthers + ' covered by supervisors / techs</span>' : '</span>') +
+        (x.noCheckout ? '<br><span style="' + AMBER + ';font-size:11px;font-weight:400">' + x.noCheckout + ' departure clean' + (x.noCheckout === 1 ? '' : 's') + ' with no checkout behind ' + (x.noCheckout === 1 ? 'it' : 'them') + ' &mdash; not counted</span>' : '')) +
       tRow('Housekeeper hours &middot; payroll', 'Homebase punches', x => r1(x.hkHours) + 'h &middot; ' + money(x.hkPay) + (x.hpc != null ? '<br><span style="' + MUTED + ';font-size:11px">' + x.hpc + 'h per turn</span>' : '')) +
       tRow('Cleaning fees earned', 'net of the channel cut' , x => money(x.hkFees) + (x.hkCharged ? '<br><span style="' + MUTED + ';font-size:11px">+ ' + money(x.hkCharged) + ' charged cleaning work</span>' : '')) +
       tRow('Housekeeping net', 'fees minus housekeeper payroll', x => net(x.hkFees + x.hkCharged - x.hkPay)) +

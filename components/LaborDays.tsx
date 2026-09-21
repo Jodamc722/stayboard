@@ -27,6 +27,7 @@ type Data = {
     payrollComplete: boolean; failedWeeks: string[]; timecardsOutsideWindow: number
     feesNoCleanFound: number | null; excludedNonLive: { reservations: number; grossFees: number }
     ownerBilled: { reservations: number; fees: number | null; pendingInGuesty: number | null }; movedCleans: number
+    cleansNoCheckout?: { count: number; examples: { unit: string; day: string; who: string; task: string }[] }
     unrostered: { people: number; payroll: number | null; names: string[] }
     unassignedMarket: { people: number; payroll: number | null; names: string[] }
     tasksNoCharge: number; salaried: string[]
@@ -114,6 +115,7 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
             if (h.ownerBilled && h.ownerBilled.reservations > 0) notes.push({ t: `${h.ownerBilled.reservations} owner / friends-&-family checkouts billed to the owner${h.ownerBilled.fees ? ` (${money(h.ownerBilled.fees)}` + (h.ownerBilled.pendingInGuesty ? `, ${money(h.ownerBilled.pendingInGuesty)} not in Guesty yet` : '') + ')' : ''}`, bad: false })
             if (h.feesNoCleanFound != null && h.feesNoCleanFound > 0) notes.push({ t: `${money(h.feesNoCleanFound)} of fees on confirmed checkouts with no departure clean found within 9 days`, bad: h.feesNoCleanFound > 1000 })
             if (h.movedCleans > 0) notes.push({ t: `${h.movedCleans} departure tasks deleted or cancelled in Breezeway (moved — not counted)`, bad: false })
+            if (h.cleansNoCheckout && h.cleansNoCheckout.count > 0) notes.push({ t: `${h.cleansNoCheckout.count} finished departure cleans with no checkout behind them — not counted as turns: ${h.cleansNoCheckout.examples.slice(0, 6).map(x => `${x.unit.split(' ').slice(0, 2).join(' ')} ${x.day.slice(5)} (${x.who.split(' ')[0]})`).join(', ')}${h.cleansNoCheckout.count > 6 ? '…' : ''}`, bad: h.cleansNoCheckout.count >= 5 })
             if (h.tasksNoCharge > 0) notes.push({ t: `${h.tasksNoCharge} maintenance tasks closed with no charge entered`, bad: h.tasksNoCharge > 50 })
             if (h.salaried.length) notes.push({ t: `salaries by the day: ${h.salaried.join(', ')} (punches shown beside)`, bad: false })
             if (!notes.length) return null
@@ -212,7 +214,7 @@ export function LaborDays({ market = 'all' }: { market?: string }) {
             </table>
           </div>
           <p className="text-[10.5px] text-muted px-2 mt-2">
-            Housekeeping, two ways: <b>$ / turn · total</b> is housekeeper wages over every turn in the market — a turn Yoslenis or a tech covered is a saving, so this is the number. <b>$ / own</b> and <b>h / turn · own</b> divide the same wages by the turns housekeepers themselves did — whether the controllable team is scheduled well. Supervisors and maintenance are judged on paid hours vs the charges the team entered on their tasks (÷ ${d.chargeRate}/h) — a low billed-to-paid % is either work that was never priced or hours that produced nothing billable. Bold red/green = more than 15% off the {d.rows.length}-day average. Salaries are spread by the day; agency markups ride on the wages they were computed on.
+            A turn is a finished departure clean tied to a confirmed checkout — nothing else. Housekeeping, two ways: <b>$ / turn · total</b> is housekeeper wages over every turn in the market — a turn Yoslenis or a tech covered is a saving, so this is the number. <b>$ / own</b> and <b>h / turn · own</b> divide the same wages by the turns housekeepers themselves did — whether the controllable team is scheduled well. Supervisors and maintenance are judged on paid hours vs the charges the team entered on their tasks (÷ ${d.chargeRate}/h) — a low billed-to-paid % is either work that was never priced or hours that produced nothing billable. Bold red/green = more than 15% off the {d.rows.length}-day average. Salaries are spread by the day; agency markups ride on the wages they were computed on.
           </p>
           {showNames && (() => {
             const r = d.rows.find(x => x.d + 'hk' === showNames)

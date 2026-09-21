@@ -18,7 +18,7 @@ type Row = {
   cleaningRevenue: number | null; hkPayroll: number | null; hkHours: number
   housekeepers: number
   hoursPerClean: number | null; costPerClean: number | null; revPerClean: number | null
-  hoursPerCleanHkOnly?: number | null; costPerCleanHkOnly?: number | null; coveredByOthers?: number
+  hoursPerCleanHkOnly?: number | null; costPerCleanHkOnly?: number | null; coveredByOthers?: number; cleansNoCheckout?: number
   hkMargin: number | null; hkMarginPct: number | null
   vendorRevenue: number | null
   cleansUnassigned: number; unrosteredPeople: number; unrosteredPayroll: number | null
@@ -121,6 +121,7 @@ export function LaborWeekly({ market = 'all' }: { market?: string }) {
                 if (r.unrosteredPeople > 0) notes.push(`${r.unrosteredPeople} on payroll with no crew${r.unrosteredPayroll ? ` (${money(r.unrosteredPayroll)})` : ''}`)
                 if (r.cleansUnassigned > 0) notes.push(`${r.cleansUnassigned} cleans with nobody named`)
                 if (r.coveredByOthers) notes.push(`${r.coveredByOthers} turns covered by supervisors / techs`)
+                if (r.cleansNoCheckout) notes.push(`${r.cleansNoCheckout} departure cleans with no checkout — not counted`)
                 if (r.vendorRevenue) notes.push(`${money(r.vendorRevenue)} vendor-cleaned, kept out of the above`)
                 return (
                   <tr key={r.start} className={`border-b border-line/60 last:border-b-0 ${r.partial ? 'opacity-70' : ''}`}>

@@ -81,6 +81,7 @@ export async function GET(req: NextRequest) {
         cleans,
         cleansByHk,
         coveredByOthers: Number(k.cleansByOtherCrews) || 0,
+        cleansNoCheckout: Number((e.cleanAudit || {}).noCheckout) || 0,
         cleaningRevenue: money ? round2(revenue) : null,
         allCheckoutFees: money ? round2(Number(e.cleaningRevenue) || 0) : null,
         hkPayroll: money ? round2(hkPayroll) : null,
