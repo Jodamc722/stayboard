@@ -13,6 +13,7 @@ import {
 } from '@/lib/talkroute'
 import { syncTalkrouteAll } from '@/lib/talkroute-sync'
 import { processCallIntel } from '@/lib/call-notes'
+import { talkroutePeople, getPeopleMap, setPeopleMap } from '@/lib/talkroute-people'
 import {
   getTranscribeSettings, saveTranscribeSettings, storeTranscribeKey, clearTranscribeKey,
   transcribeReady, transcribeFrom, todayET, TRANSCRIBE_DEFAULTS, USD_PER_MINUTE,
@@ -34,7 +35,31 @@ async function status() {
     lastCallSyncAt: s.lastCallSyncAt || null, lastTextSyncAt: s.lastTextSyncAt || null, lastVoicemailSyncAt: s.lastVoicemailSyncAt || null,
     lastError: s.lastError || null, webhookRegistered: false, numbers: [], subscriptions: [], account: null, apiError: null, counts: null,
     transcribe: null as any,
+    people: null as any,
   }
+  // WHO MADE THE CALL. The Talkroute directory, the device strings actually seen on recent calls,
+  // and the map between them — so a device that resolves to nobody can be named once and stay named.
+  try {
+    const db = supabaseAdmin()
+    const [dir, map, seen] = await Promise.all([
+      talkroutePeople().catch(() => []),
+      getPeopleMap(),
+      db.from('talkroute_calls').select('caller_device,caller_name').not('caller_device', 'is', null)
+        .gte('call_at', new Date(Date.now() - 30 * 86400_000).toISOString()).limit(1000),
+    ])
+    const counts = new Map<string, { device: string; name: string; calls: number }>()
+    for (const r of ((seen.data as any[]) || [])) {
+      const d = String(r.caller_device || '').trim(); if (!d) continue
+      const k = d.toLowerCase()
+      const cur = counts.get(k) || { device: d, name: String(r.caller_name || ''), calls: 0 }
+      cur.calls++; if (!cur.name && r.caller_name) cur.name = String(r.caller_name)
+      counts.set(k, cur)
+    }
+    out.people = {
+      directory: dir, map,
+      devices: Array.from(counts.values()).sort((a, b) => b.calls - a.calls).slice(0, 30),
+    }
+  } catch { out.people = null }
   // ── TRANSCRIPTION (2026-09-21) ──────────────────────────────────────────────────────────────
   // Stay records every call and plays the notice, so recordings are readable. This reports whether
   // a key exists, what the rules are, and how the queue is doing — never the key itself.
@@ -116,6 +141,12 @@ export async function POST(req: NextRequest) {
     if (op === 'save_transcribe_key') {
       const r = await storeTranscribeKey(String(body?.key || ''), actor)
       if (!r.ok) return NextResponse.json({ error: r.error || 'Could not save the key.' }, { status: 400 })
+      return NextResponse.json(await status())
+    }
+    if (op === 'people_map') {
+      const m = (body?.map && typeof body.map === 'object') ? body.map : {}
+      const r = await setPeopleMap(m, actor)
+      if (!r.ok) return NextResponse.json({ error: r.error || 'Could not save.' }, { status: 400 })
       return NextResponse.json(await status())
     }
     if (op === 'clear_transcribe_key') { await clearTranscribeKey(actor); return NextResponse.json(await status()) }

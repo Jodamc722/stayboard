@@ -7,11 +7,12 @@
 // A call opens to its note; the full transcript is one more click, because the note is the point
 // and the transcript is the evidence behind it.
 import { useState } from 'react'
-import { PhoneCall, PhoneIncoming, PhoneMissed, PhoneOutgoing, Voicemail, MessageSquare, ChevronDown, Check, AlertTriangle, Play, FileText, Clock, HandHeart } from 'lucide-react'
+import Link from 'next/link'
+import { PhoneCall, PhoneIncoming, PhoneMissed, PhoneOutgoing, Voicemail, MessageSquare, ChevronDown, Check, AlertTriangle, Play, FileText, Clock, HandHeart, ExternalLink } from 'lucide-react'
 
 type Intel = { summary: string; asked: string[]; promised: string[]; issues: string[]; sentiment: string; followUp: boolean; whoAnswered: string } | null
 type Ev =
-  | { kind: 'call'; id: string; at: string; direction: 'inbound' | 'outbound'; result: string; seconds: number; matchKind: string; recorded: boolean; transcriptStatus: string; transcript: string; summary: string; intel: Intel; notePushed: boolean }
+  | { kind: 'call'; id: string; at: string; direction: 'inbound' | 'outbound'; result: string; seconds: number; matchKind: string; recorded: boolean; transcriptStatus: string; transcript: string; summary: string; intel: Intel; notePushed: boolean; callerName: string }
   | { kind: 'text'; id: string; at: string; direction: 'incoming' | 'outgoing'; body: string; by: string }
   | { kind: 'voicemail'; id: string; at: string; seconds: number; transcript: string; audio: string }
 type Log = { kind: string; outcome: string; attempts: number; calledBy: string; calledAt: string; note: string; source: string }
@@ -113,6 +114,7 @@ export function ContactHistory({ h }: { h: History }) {
                     <span className="font-semibold text-slate-700">{e.direction === 'outbound' ? 'We called' : 'Guest called'}</span>
                     <span>{answered ? `answered · ${dur(e.seconds)}` : e.result === 'missed' ? 'no answer' : e.result || 'no answer'}</span>
                     <span>· {when(e.at)}</span>
+                    {e.callerName && <span>· by <b className="text-slate-700">{e.callerName}</b></span>}
                     {e.matchKind && KIND[e.matchKind] && <span className="rounded bg-slate-100 px-1.5 text-[10px] font-semibold text-slate-600">{KIND[e.matchKind]}</span>}
                     {tone && <span className={`rounded px-1.5 text-[10px] font-semibold ${tone.cls}`}>{tone.label}</span>}
                     {e.intel?.followUp && <span className="rounded bg-brand-100 px-1.5 text-[10px] font-semibold text-brand-700">Follow-up</span>}
@@ -134,10 +136,11 @@ export function ContactHistory({ h }: { h: History }) {
                       <Bit label="Problems raised" items={e.intel.issues} tone="rose" />
                     </div>
                   )}
-                  <div className="flex items-center gap-3 text-[11px]">
+                  <div className="flex items-center gap-3 text-[11px] flex-wrap">
                     {e.transcript
                       ? <button onClick={() => setScript(script === e.id ? null : e.id)} className="inline-flex items-center gap-1 text-brand-600 hover:underline font-semibold"><FileText size={11} /> {script === e.id ? 'Hide' : 'Read'} the transcript</button>
                       : <span className="text-slate-400 inline-flex items-center gap-1"><Clock size={11} /> {statusWord(e)}</span>}
+                    <Link href={`/welcome-calls/call/${e.id}`} className="inline-flex items-center gap-1 text-brand-600 hover:underline font-semibold"><ExternalLink size={11} /> Open the call page</Link>
                     {e.notePushed && <span className="text-slate-400">Note pushed to Guesty</span>}
                   </div>
                   {script === e.id && e.transcript && (

@@ -2,7 +2,7 @@
 // TALKROUTE — Users & admin panel. Connect the phone system (one key), register the webhooks, set
 // the voicemail rule, watch the feeds. The key is pasted once and never shown again.
 import { useCallback, useEffect, useState } from 'react'
-import { PhoneCall, Check, AlertTriangle, Loader2, RefreshCw, Webhook, KeyRound, Trash2, MessageSquare, Voicemail, Radio, FileText, Sparkles } from 'lucide-react'
+import { PhoneCall, Check, AlertTriangle, Loader2, RefreshCw, Webhook, KeyRound, Trash2, MessageSquare, Voicemail, Radio, FileText, Sparkles, UserCheck } from 'lucide-react'
 
 type Sub = { id: string; type: string; ours: boolean }
 type Num = { id: string; number: string; label: string; messaging: boolean }
@@ -12,7 +12,13 @@ type Status = {
   lastError: string | null; webhookRegistered: boolean; numbers: Num[]; subscriptions: Sub[]; account: { name: string | null } | null; apiError: string | null
   counts: { calls7d: number; texts7d: number; voicemails7d: number; autoLogged7d: number } | null
   transcribe: Transcribe | null
+  people: People | null
   sync?: any; made?: string[]; removed?: number; notes?: any
+}
+type People = {
+  directory: { id: string; label: string; detail: string; kind: string }[]
+  map: Record<string, string>
+  devices: { device: string; name: string; calls: number }[]
 }
 type Transcribe = {
   ready: boolean; keyHint: string | null; viaEnv: boolean; enabled: boolean
@@ -170,6 +176,9 @@ export function TalkrouteAdmin() {
             </div>
           </div>
 
+          {/* ── Who made the call ── */}
+          <PeopleCard d={d} busy={busy} post={post} />
+
           {/* ── Call notes from recordings ── */}
           <TranscribeCard d={d} busy={busy} post={post} dgKey={dgKey} setDgKey={setDgKey} minSec={minSec} setMinSec={setMinSec} cap={cap} setCap={setCap} from={from} setFrom={setFrom} />
 
@@ -196,6 +205,58 @@ export function TalkrouteAdmin() {
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+/**
+ * WHO MADE THE CALL (2026-09-21, Jon: "put who called too in lighthouse"). Talkroute names the
+ * DEVICE that took a call, not a person, so this maps each device string it has actually seen to a
+ * teammate. Names set here appear on the Calls desk, on the booking and in the Guesty note.
+ */
+function PeopleCard({ d, busy, post }: { d: Status; busy: string | null; post: (op: string, extra?: any) => void }) {
+  const p = d.people
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  if (!p) return null
+  const unnamed = p.devices.filter(x => !x.name).length
+  const value = (dev: string) => draft[dev] !== undefined ? draft[dev] : (p.devices.find(x => x.device === dev)?.name || '')
+  return (
+    <div className="rounded-2xl border border-line bg-white overflow-hidden">
+      <div className="px-4 py-3 border-b border-line flex items-center gap-2">
+        <UserCheck size={15} className="text-brand-600" />
+        <span className="text-sm font-bold text-ink">Who made the call</span>
+        {unnamed > 0 && <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">{unnamed} unnamed</span>}
+      </div>
+      <div className="p-4 space-y-3 text-[13px]">
+        <p className="text-muted">
+          Talkroute tells us which <b className="text-ink">device or extension</b> handled a call, not which person. Name each one here once and the
+          caller shows on the Calls desk, on the booking and in the Guesty note. Devices are listed by how many calls they have taken in the last 30 days.
+        </p>
+        {p.devices.length === 0
+          ? <p className="text-muted">No caller devices seen yet — they appear after the next sync of a call that involved one of your people.</p>
+          : (
+            <div className="space-y-1.5">
+              {p.devices.map(x => (
+                <div key={x.device} className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-[12px] text-ink min-w-[180px] truncate" title={x.device}>{x.device}</span>
+                  <span className="text-[11px] text-muted w-16">{x.calls} call{x.calls === 1 ? '' : 's'}</span>
+                  <input value={value(x.device)} onChange={e => setDraft(dd => ({ ...dd, [x.device]: e.target.value }))}
+                    placeholder="Who is this?" list="tr-people"
+                    className="flex-1 min-w-[160px] rounded-lg border border-line px-2.5 py-1.5 text-[12px]" />
+                </div>
+              ))}
+              <datalist id="tr-people">{p.directory.map(dd => <option key={dd.id + dd.label} value={dd.label} />)}</datalist>
+              <div className="flex items-center gap-2 pt-1">
+                <button onClick={() => {
+                  const map: Record<string, string> = { ...p.map }
+                  for (const x of p.devices) { const v = value(x.device).trim(); if (v) map[x.device] = v }
+                  post('people_map', { map })
+                }} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'people_map' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save names</button>
+                <span className="text-[11px] text-muted">Applies to calls from the next sync on; earlier calls keep the name they were given.</span>
+              </div>
+            </div>
+          )}
+      </div>
     </div>
   )
 }

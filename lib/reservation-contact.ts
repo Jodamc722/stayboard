@@ -25,6 +25,7 @@ export type ContactCall = {
   summary: string
   intel: CallIntel | null
   notePushed: boolean
+  callerName: string
 }
 export type ContactText = { kind: 'text'; id: string; at: string; direction: 'incoming' | 'outgoing'; body: string; by: string }
 export type ContactVoicemail = { kind: 'voicemail'; id: string; at: string; seconds: number; transcript: string; audio: string }
@@ -58,7 +59,7 @@ export async function loadContactHistory(sb: any, reservationId: string, guestPh
     // also why a booking with no phone on file shows calls but no texts.
     const [{ data: calls }, { data: vms }, { data: log }, convos] = await Promise.all([
       sb.from('talkroute_calls')
-        .select('id,direction,call_at,duration,result,recorded,match_kind,transcript,transcript_status,summary,intel,note_pushed_at')
+        .select('id,direction,call_at,duration,result,recorded,match_kind,transcript,transcript_status,summary,intel,note_pushed_at,caller_name')
         .eq('reservation_id', reservationId).order('call_at', { ascending: true }).limit(200),
       sb.from('talkroute_voicemails')
         .select('id,created_at,duration,transcript,audio_link')
@@ -94,6 +95,7 @@ export async function loadContactHistory(sb: any, reservationId: string, guestPh
         matchKind: String(c.match_kind || ''), recorded: !!c.recorded,
         transcriptStatus: String(c.transcript_status || ''), transcript: String(c.transcript || ''),
         summary: String(c.summary || ''), intel, notePushed: !!c.note_pushed_at,
+        callerName: String(c.caller_name || ''),
       })
     }
     for (const v of (vms || [])) {

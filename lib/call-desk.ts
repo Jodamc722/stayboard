@@ -414,17 +414,17 @@ export type CallLog = {
  */
 export type PhoneProof = {
   source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number
-  note: string; promised: string[]; issues: string[]; sentiment: string; callId: string
+  note: string; promised: string[]; issues: string[]; sentiment: string; callId: string; noteBy: string
 }
 const proofOf = (lg: CallLog | null, note?: CallNote | null): PhoneProof => ({
   source: lg ? String(lg.source || '') : '', lastAttemptAt: lg ? String(lg.last_attempt_at || '') : '',
   lastResult: lg ? String(lg.last_result || '') : '', talkSeconds: lg ? (Number(lg.talk_seconds) || 0) : 0,
   note: note?.summary || '', promised: note?.promised || [], issues: note?.issues || [],
-  sentiment: note?.sentiment || '', callId: note?.id || '',
+  sentiment: note?.sentiment || '', callId: note?.id || '', noteBy: note?.caller || '',
 })
 
 /** The written-up call on a booking: the newest transcribed call we have for it. */
-export type CallNote = { id: string; summary: string; promised: string[]; issues: string[]; sentiment: string; at: string }
+export type CallNote = { id: string; summary: string; promised: string[]; issues: string[]; sentiment: string; at: string; caller: string }
 
 /**
  * The newest call note per reservation, for the desk. One query for the whole board rather than one
@@ -436,7 +436,7 @@ async function callNotes(sb: any, ids: string[]): Promise<Map<string, CallNote>>
   try {
     for (let i = 0; i < ids.length; i += 200) {
       const { data } = await sb.from('talkroute_calls')
-        .select('id,reservation_id,summary,intel,call_at')
+        .select('id,reservation_id,summary,intel,call_at,caller_name')
         .in('reservation_id', ids.slice(i, i + 200))
         .not('summary', 'is', null)
         .order('call_at', { ascending: true })
@@ -446,7 +446,7 @@ async function callNotes(sb: any, ids: string[]): Promise<Map<string, CallNote>>
         const intel: any = (r.intel && typeof r.intel === 'object') ? r.intel : {}
         // ascending, so the last write per reservation is the newest call.
         out.set(rid, {
-          id: String(r.id), summary: String(r.summary), at: String(r.call_at || ''),
+          id: String(r.id), summary: String(r.summary), at: String(r.call_at || ''), caller: String(r.caller_name || ''),
           promised: Array.isArray(intel.promised) ? intel.promised.slice(0, 4) : [],
           issues: Array.isArray(intel.issues) ? intel.issues.slice(0, 4) : [],
           sentiment: String(intel.sentiment || ''),

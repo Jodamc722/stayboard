@@ -53,7 +53,7 @@ type OutRow = {
 // last attempt and its result, and how long the guest actually talked.
 type Proof = {
   source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number
-  note: string; promised: string[]; issues: string[]; sentiment: string; callId: string
+  note: string; promised: string[]; issues: string[]; sentiment: string; callId: string; noteBy: string
 }
 function talkMins(sec: number) { return sec >= 60 ? `${Math.round(sec / 60)} min` : `${sec}s` }
 /**
@@ -66,7 +66,10 @@ function CallNote({ p }: { p: Proof }) {
   const tone = p.sentiment === 'unhappy' ? 'border-rose-200 bg-rose-50/60' : p.sentiment === 'happy' ? 'border-emerald-200 bg-emerald-50/50' : 'border-line bg-app/50'
   return (
     <div className={`mt-1.5 rounded-xl border px-2.5 py-2 ${tone}`}>
-      <div className="text-[10px] uppercase tracking-[0.12em] font-semibold text-muted flex items-center gap-1 mb-0.5"><FileText size={10} /> From the call</div>
+      <div className="text-[10px] uppercase tracking-[0.12em] font-semibold text-muted flex items-center justify-between gap-2 mb-0.5">
+        <span className="inline-flex items-center gap-1"><FileText size={10} /> From the call{p.noteBy ? ` · ${p.noteBy}` : ''}</span>
+        {p.callId && <a href={`/welcome-calls/call/${p.callId}`} className="normal-case tracking-normal text-brand-600 hover:underline font-semibold">Full transcript →</a>}
+      </div>
       <div className="text-[12.5px] text-ink">{p.note}</div>
       {p.promised.length > 0 && <div className="text-[11.5px] text-brand-700 mt-1"><b>We promised:</b> {p.promised.join(' · ')}</div>}
       {p.issues.length > 0 && <div className="text-[11.5px] text-rose-700 mt-0.5"><b>Flagged:</b> {p.issues.join(' · ')}</div>}

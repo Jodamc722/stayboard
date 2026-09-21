@@ -28,6 +28,9 @@ import { appendReservationNote } from './guesty-res-notes'
 
 const MATCH_LABEL: Record<string, string> = { welcome: 'Welcome call', post_checkout: 'Post-checkout call', stay: 'Guest call' }
 const mins = (sec: number) => sec >= 60 ? `${Math.round(sec / 60)}m` : `${sec}s`
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+/** The permanent Lighthouse page for one call — note, who called, and the full transcript. */
+export const callUrl = (id: string) => `${APP_URL}/welcome-calls/call/${id}`
 
 export type IntelReport = {
   considered: number; transcribed: number; summarised: number; notesPushed: number
@@ -70,11 +73,14 @@ async function freshRecordingUrl(callId: string, callAt: string): Promise<string
  */
 export function noteLineFor(call: any, intel: CallIntel | null): string {
   const dir = call.direction === 'inbound' ? 'guest called in' : 'we called'
-  const head = `${dir} · ${mins(Number(call.duration) || 0)}`
+  const by = call.caller_name ? ` · ${call.caller_name}` : ''
+  const head = `${dir} · ${mins(Number(call.duration) || 0)}${by}`
   const body = intel?.summary ? intel.summary : 'Connected; no note recorded.'
   const promised = intel?.promised?.length ? ` · We promised: ${intel.promised.join('; ')}.` : ''
   const issues = intel?.issues?.length ? ` · Flagged: ${intel.issues.join('; ')}.` : ''
-  return `${head} — ${body}${promised}${issues}`.slice(0, 900)
+  // The transcript link rides along, so anyone reading the note in Guesty can hear the whole call.
+  const link = call.transcript ? ` · Full transcript: ${callUrl(String(call.id))}` : ''
+  return `${head} — ${body}${promised}${issues}${link}`.slice(0, 900)
 }
 
 /**
@@ -100,7 +106,7 @@ export async function processCallIntel(sb: any, opts: { deadline?: number; limit
 
   // The queue: matched calls that connected, newest first.
   const { data: rows } = await sb.from('talkroute_calls')
-    .select('id,direction,call_at,duration,result,recorded,recording_url,transcript,transcript_status,transcript_tries,summary,intel,reservation_id,match_kind,note_pushed_at,external_name')
+    .select('id,direction,call_at,duration,result,recorded,recording_url,transcript,transcript_status,transcript_tries,summary,intel,reservation_id,match_kind,note_pushed_at,external_name,caller_name')
     .not('reservation_id', 'is', null)
     .eq('result', 'answered')
     .gte('call_at', fromIso)

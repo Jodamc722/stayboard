@@ -40,6 +40,7 @@ import { writeCustomFields } from './guesty-custom-fields'
 import { appendReservationNote } from './guesty-res-notes'
 import { WELCOME_AHEAD_DAYS, WELCOME_GRACE_DAYS, POST_GRACE_DAYS, addDays, isCompleted } from './call-desk'
 import { isLiveStay } from './stay-status'
+import { callerDeviceOf, callerNameOf, talkroutePeople, getPeopleMap, type TrPerson, type PeopleMap } from './talkroute-people'
 
 // Guesty's reservation customFields carry no field name in the mirror; the Welcome Call definition
 // id is known from live data (app/api/welcome-call/route.ts uses the same constant).
@@ -195,10 +196,14 @@ async function recordAttempt(sb: any, res: ResLite, kind: 'welcome' | 'post_chec
 }
 
 // ── CALLS ───────────────────────────────────────────────────────────────────────────────────────
-function callerLabel(c: TrCallRecord): string {
-  // The extension / forwarding-device event names who was on our end, when Talkroute includes it.
-  const ev = (c.events || []).find(e => e.type === 'user_extension' || e.type === 'forwarding_device')
-  return ev?.description ? `Talkroute · ${String(ev.description).slice(0, 60)}` : 'Talkroute'
+/**
+ * WHO TO CREDIT for a call (2026-09-21). The call's events name the device or extension on our end;
+ * lib/talkroute-people turns that into a teammate's name via the panel's map or the Talkroute
+ * directory. With nobody identifiable it stays "Talkroute" — the desk should never invent a caller.
+ */
+function callerLabel(c: TrCallRecord, map: PeopleMap, people: TrPerson[]): string {
+  const name = callerNameOf(callerDeviceOf(c.events), map, people)
+  return name || 'Talkroute'
 }
 
 export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?: string; deadline?: number } = {}): Promise<SyncReport['calls'] & { errors: string[] }> {
@@ -254,6 +259,11 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
   }
 
   // Match, oldest first so attempts count up in the order they happened.
+  // The Talkroute directory and the name map, once for the whole run rather than per call.
+  let people: TrPerson[] = []
+  let peopleMap: PeopleMap = {}
+  try { [people, peopleMap] = await Promise.all([talkroutePeople(), getPeopleMap()]) } catch { /* names are a nicety */ }
+
   const toMatch = records.filter(c => c.id && !known.get(String(c.id))?.reservation_id && phoneKey(c.externalNumber).length >= 7)
     .sort((a, b) => new Date(a.callDate).getTime() - new Date(b.callDate).getTime())
   for (const c of toMatch) {
@@ -266,7 +276,9 @@ export async function syncTalkrouteCalls(sb: any, opts: { since?: string; today?
       rep.matched++
       await sb.from('talkroute_calls').update({ reservation_id: m.res.id, match_kind: m.kind, matched_at: new Date().toISOString() }).eq('id', String(c.id))
       const result = String(c.result || '').toLowerCase()
-      const by = callerLabel(c)
+      const device = callerDeviceOf(c.events)
+      const by = callerLabel(c, peopleMap, people)
+      if (device) { try { await sb.from('talkroute_calls').update({ caller_device: device, caller_name: by === 'Talkroute' ? null : by }).eq('id', String(c.id)) } catch { /* cosmetic */ } }
       if (m.kind === 'welcome') {
         const { data: prev } = await sb.from('guest_calls').select('outcome').eq('reservation_id', m.res.id).eq('kind', 'welcome').maybeSingle()
         if (prev && isCompleted(prev.outcome)) { await recordAttempt(sb, m.res, 'welcome', c, by, errors); continue }
