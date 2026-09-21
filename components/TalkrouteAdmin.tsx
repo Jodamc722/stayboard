@@ -14,6 +14,7 @@ type Status = {
   transcribe: Transcribe | null
   people: People | null
   sync?: any; made?: string[]; removed?: number; notes?: any
+  callers?: { scanned: number; named: number; devices: string[]; error?: string }
 }
 type People = {
   directory: { id: string; label: string; detail: string; kind: string }[]
@@ -76,6 +77,11 @@ export function TalkrouteAdmin() {
         setFlash(`${s.partial ? 'Partly synced (ran out of time — press Sync now again, or the 15-minute backfill finishes it)' : 'Synced'} — ${s.calls?.fetched ?? 0} calls (${s.calls?.matched ?? 0} matched to bookings, ${s.calls?.welcomeCompleted ?? 0} welcome calls completed), ${s.texts?.messages ?? 0} texts in ${s.texts?.conversations ?? 0} threads, ${s.voicemails?.fetched ?? 0} voicemails.${s.errors?.length ? ' First error: ' + s.errors[0] : ''}`)
       }
       if (op === 'settings' || op === 'transcribe_settings') setFlash('Saved.')
+      if (op === 'find_callers' || op === 'people_map') {
+        const c = j.callers || {}
+        if (c.error) setErr(`${op === 'people_map' ? 'Names saved, but ' : ''}${c.error}`)
+        else setFlash(`${op === 'people_map' ? 'Names saved. ' : ''}Read ${c.scanned || 0} calls, named ${c.named || 0}.${c.devices?.length ? ' Devices seen: ' + c.devices.slice(0, 6).join(', ') + '.' : ' Talkroute named no device on any of them.'}`)
+      }
       if (op === 'save_transcribe_key') { setDgKey(''); setFlash('Transcription is on. Recorded calls will start turning into notes within a few minutes.') }
       if (op === 'run_notes') {
         const n = j.notes || {}
