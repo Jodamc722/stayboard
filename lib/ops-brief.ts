@@ -95,12 +95,21 @@ async function gather(variant: BriefVariant) {
     db.from('guesty_reservations')
       .select('listing_id,check_in,check_out,nights,status,guest_name,money_total,custom_fields,source')
       .gte('check_in', today).lte('check_in', inN).limit(1500),
-    db.from('review_actions')
-      .select('listing_id,unit,building,title,action,kind,severity,mentions,status')
-      .in('status', ['open', 'doing']).limit(300),
-    db.from('guesty_reviews')
-      .select('listing_id,rating,content,guest_name,channel,has_reply,dismissed,created_at')
-      .gte('created_at', monthAgo).limit(3000),
+    // REPUTATION IS NOT A FIELD SUBJECT (audit 2026-09-21). These two reads — a 300-row feedback
+    // queue and a 3,000-row month of reviews — feed the New reviews, Reputation and Units-to-inspect
+    // cards, none of which a day sheet renders. They ran on all four sends every morning and their
+    // output was discarded on two of them. The day sheet's own bad-review walks come from
+    // `auto_inspections`, not from here, so nothing the field reads is lost.
+    variant === 'Miami' || variant === 'Broward'
+      ? Promise.resolve({ data: [] as any[] })
+      : db.from('review_actions')
+          .select('listing_id,unit,building,title,action,kind,severity,mentions,status')
+          .in('status', ['open', 'doing']).limit(300),
+    variant === 'Miami' || variant === 'Broward'
+      ? Promise.resolve({ data: [] as any[] })
+      : db.from('guesty_reviews')
+          .select('listing_id,rating,content,guest_name,channel,has_reply,dismissed,created_at')
+          .gte('created_at', monthAgo).limit(3000),
   ])
 
   type Meta = { name: string; market: Market; building: string; active: boolean }
@@ -231,7 +240,13 @@ async function gather(variant: BriefVariant) {
   // to the most recent old review when nothing is new — so the subject line could cry "1 low
   // review" about last week's, every morning (super audit, 2026-08-22).
   const freshLow = fresh.filter(r => { const st = ratingToStars(Number(r.rating)); return st != null && st <= 3 }).length
-  const newReviews = (fresh.length ? fresh : allRevs.slice(0, 1))
+  // A MONTH-OLD REVIEW IS NOT CONTEXT, IT IS FILLER (audit 2026-09-21). When nothing new had
+  // landed this fell back to the most recent review whenever it was — today's preview offered one
+  // from 29 days ago "for context". The fallback now only reaches back ten days; past that the
+  // card says nothing new and stops, which is the honest answer.
+  const fallbackFloor = ymdET(new Date(Date.now() - 10 * 86400000))
+  const recentEnough = allRevs.filter(r => str(r.created_at).slice(0, 10) >= fallbackFloor).slice(0, 1)
+  const newReviews = (fresh.length ? fresh : recentEnough)
     .slice()
     .sort((a, b) => str(b.created_at).localeCompare(str(a.created_at)))
     .slice(0, 10)
@@ -461,6 +476,15 @@ const stars = (n: number) => n >= 4.75 ? '★★★★★' : n >= 4 ? '★★★
 
 // Stat-tile row, table-based for email clients. tone colors the VALUE only when it needs attention.
 type Tile = { label: string; value: string; note?: string; tone?: 'red' | 'amber' | 'green' }
+// Section eyebrows carry a rule line so an email reads as CHAPTERS, not one long scroll — the eye
+// can jump Act now → Ops today → Looking ahead → Good to know without reading a word. Module-level
+// because the GM brief needs the same chapter headings (2026-09-21).
+export const eyebrow = (label: string): string =>
+  `<table width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 10px"><tr>
+    <td style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#6b7280;text-transform:uppercase;white-space:nowrap;padding:0 10px 0 4px">${label}</td>
+    <td width="100%" style="border-top:2px solid #e5e7eb;line-height:1px;font-size:1px">&nbsp;</td>
+  </tr></table>`
+
 function tileRow(tiles: Tile[]): string {
   const toneCss = (t?: string) => t === 'red' ? ';color:#b91c1c' : t === 'amber' ? ';color:#b45309' : t === 'green' ? ';color:#047857' : ''
   return `<table width="100%" cellspacing="0" cellpadding="0"><tr>` +
@@ -560,7 +584,15 @@ export const accessNotice = (lang: BriefLang = 'en'): string => {
 // that, since the oldest block is the one nobody remembers creating.
 //
 // `markets` scopes the card to a supervisor's own patch; pass null for the whole portfolio.
-function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: boolean; linked?: number }): string {
+function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: boolean; linked?: number; failed?: boolean }): string {
+  // A FALSE ALL-CLEAR IS THE WORST BUG THIS CARD CAN HAVE (audit 2026-09-21). The runs come from a
+  // live Guesty calendar call; when it failed the caller handed over an empty array and this card
+  // printed "Nothing out of service. Every unit is sellable." — good news, invented. An outage now
+  // says so in red and asks for the board, which is what every other card here already does.
+  if (opts?.failed) {
+    return card('Blocked units — off the calendar', null,
+      `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.red}">Guesty did not answer this morning.</span> <span style="${S.muted}">This is not an all-clear — check the board before assuming every unit is sellable.</span></p>`, '#dc2626')
+  }
   // LINKED UNITS ARE NOT ON THIS LIST (Jon, 2026-08-10: "some are parent listing, meaning if one
   // is booked can take some offline"). A unit sold whole and in parts drops off the calendar the
   // moment a sibling sells — that is the system working. Those are counted in a footnote instead
@@ -684,6 +716,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // COUNT (tile, verdict, subject) so the morning picture stays honest, but the unit-by-unit
   // table is the owner's: releasing a block is a revenue call. Market crews never see blocks.
   let fullBlocked: BlockedRun[] = []
+  let fullBlockedFailed = false
   let maintMi: Awaited<ReturnType<typeof maintData>> | null = null
   let maintBr: Awaited<ReturnType<typeof maintData>> | null = null
   let comp: Awaited<ReturnType<typeof weekCompliance>> | null = null
@@ -728,7 +761,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
         else if (et === 'contractor') offSchedule.push({ name: r.name, why: 'contractor' })
       }
     } catch { /* tags degrade to the amber default */ }
-    try { const rep = await blockedUnits(30); fullBlocked = rep.runs } catch { /* brief still sends */ }
+    try { const rep = await blockedUnits(30); fullBlocked = rep.runs } catch { fullBlockedFailed = true }
     try { comp = await weekCompliance() } catch { comp = null }
   }
   // MAINTENANCE FOR WHOEVER NEEDS IT. Ops Command needs both markets side by side; a field day
@@ -951,14 +984,34 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   // get done unless somebody notices).
   const shiftOf = (name: string): any | null =>
     todayShifts.find((s: any) => nameMatches(str(s.name), name)) || null
-  const personBlock = (name: string, opts: { showShift?: boolean } = {}) => {
-    const mine = (byPerson[name] || []).slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || a.unit.localeCompare(b.unit))
-    const others = otherByPerson[name] || []
-    const hotN = mine.filter(c => c.sameDayArrival).length
-    const doneN = mine.filter(c => c.state === 'done').length + others.filter(t => t.state === 'done').length
+  /**
+   * WHAT IS LEFT IS THE PAGE (feedback-field-board-design, applied to the brief 2026-09-21).
+   *
+   * Every person's block used to print every row they hold, finished ones included, at full
+   * weight. On Ops Command that made this one card 60 KB of a 170 KB email — and Gmail clips at
+   * 102 KB, so the maintenance card, the week ahead, paperwork and labor were below the fold
+   * every single morning and nobody had seen them since the card was built.
+   *
+   * So: finished work collapses to a count on the person's header line, and `maxRows` caps how
+   * much of a person's remaining run is spelled out — full for the housekeepers whose run this
+   * email IS, three lines for a supervisor whose detail lives on the board. The count is always
+   * honest; only the spelling-out is capped.
+   */
+  const personBlock = (name: string, opts: { showShift?: boolean; maxRows?: number } = {}) => {
+    const maxRows = opts.maxRows == null ? 99 : opts.maxRows
+    const allMine = (byPerson[name] || []).slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || a.unit.localeCompare(b.unit))
+    const allOthers = otherByPerson[name] || []
+    const doneN = allMine.filter(c => c.state === 'done').length + allOthers.filter(t => t.state === 'done').length
+    const openMine = allMine.filter(c => c.state !== 'done')
+    const openOthers = allOthers.filter((t: any) => t.state !== 'done')
+    // The cap spends its rows on cleans first — a door with a guest behind it beats a restock.
+    const mine = openMine.slice(0, maxRows)
+    const others = openOthers.slice(0, Math.max(0, maxRows - mine.length))
+    const hidden = (openMine.length - mine.length) + (openOthers.length - others.length)
+    const hotN = openMine.filter(c => c.sameDayArrival).length
     const bits = [
-      mine.length ? `${mine.length} ${mine.length === 1 ? t('clean') : t('cleans')}` : '',
-      others.length ? `${others.length} ${others.length === 1 ? t('other job') : t('other jobs')}` : '',
+      allMine.length ? `${allMine.length} ${allMine.length === 1 ? t('clean') : t('cleans')}` : '',
+      allOthers.length ? `${allOthers.length} ${allOthers.length === 1 ? t('other job') : t('other jobs')}` : '',
     ].filter(Boolean).join(' · ')
     // The person's own crew, so a supervisor knows whose day this is — and sees at a glance
     // when a tech's day has turned into cleans.
@@ -974,14 +1027,21 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
           ? ` <span style="${S.muted};font-size:11.5px">· ${esc(off.why)} — no Homebase shift expected</span>`
           : ` <span style="${S.amber};font-size:11.5px">· not on the Homebase schedule</span>`
     }
-    const nothing = !mine.length && !others.length
+    // Three states, three sentences: nothing on them at all, everything already closed, or a run.
+    const nothing = !allMine.length && !allOthers.length
       ? `<tr><td colspan="3" style="${S.td};padding-left:40px"><span style="${S.amber}">${t('nothing assigned yet')}</span> <span style="${S.muted}">— ${t('on the clock with no work on the board')}</span></td></tr>`
+      : (!openMine.length && !openOthers.length)
+        ? `<tr><td colspan="3" style="${S.td};padding-left:40px"><span style="${S.green}">${t('all done')}</span></td></tr>`
+        : ''
+    const moreRow = hidden > 0
+      ? `<tr><td colspan="3" style="${S.td};padding-left:40px"><span style="${S.muted};font-size:11.5px">+${hidden} ${t('more on the board')}</span></td></tr>`
       : ''
     return `
     <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(disp(name))}</b>${depTag}${shiftTag} <span style="${S.muted}">${bits ? '· ' + bits : ''}${hotN ? ` · <span style="${S.red}">${hotN} ${t('same-day')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
       nothing +
       mine.map((c, i) => cleanRow(c, i + 1, c.sameDayArrival, name)).join('') +
-      others.map((o: any) => otherRow(o, name)).join('')
+      others.map((o: any) => otherRow(o, name)).join('') +
+      moreRow
   }
   // Somebody whose whole day is strips and linen has a run too — include them in the order.
   const everyone = Array.from(new Set([...personOrder, ...Object.keys(otherByPerson)]))
@@ -1042,21 +1102,36 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   }
   // Maintenance has its own card (Jon, 2026-09-07: cleans and who's cleaning first, then
   // maintenance tasks) — the techs are not repeated here.
+  // HOUSEKEEPING IS THE RUN; EVERY OTHER CREW IS CONTEXT. The housekeepers' doors are what this
+  // email exists to schedule, so they print in full. A supervisor's or coordinator's day gets its
+  // header line, its counts and its first three open jobs — enough to see it is covered, not
+  // enough to push the maintenance card past Gmail's 102 KB clip (it did, every morning).
+  const CREW_ROWS: Record<string, number> = { housekeeping: 99, supervision: 3, inspection: 3, ccs: 2, other: 2 }
   const rosterRows = CREW_ORDER.filter(k => k !== 'maintenance' && (byCrew[k] || []).length)
-    .map(k => crewBand(k, byCrew[k]) + byCrew[k].slice().sort(orderPeople).map(n => personBlock(n, { showShift: true })).join(''))
+    .map(k => crewBand(k, byCrew[k]) + byCrew[k].slice().sort(orderPeople).map(n => personBlock(n, { showShift: true, maxRows: CREW_ROWS[k] ?? 3 })).join(''))
     .join('')
   const isTech = (n: string) => crewOfAnyone(n) === 'maintenance'
 
   // ── OFFICE / COORDINATION STRIP. Roberto's and Karla's tasks still print — they are just not a
   // field run, so they sit under their own heading and never enter the field counts.
+  const OFFICE_MAX = 2
   const officeRowsFor = (n: string) => {
-    const mine = d.cleans.filter(c => namesOf(c.assignee).some(x => nameMatches(x, n)))
-    const others = hkAll.filter(x => namesOf(x.assignee).some(y => nameMatches(y, n)))
-    if (!mine.length && !others.length) return ''
+    const allMine = d.cleans.filter(c => namesOf(c.assignee).some(x => nameMatches(x, n)))
+    const allOthers = hkAll.filter(x => namesOf(x.assignee).some(y => nameMatches(y, n)))
+    if (!allMine.length && !allOthers.length) return ''
+    const doneN = allMine.filter((c: any) => c.state === 'done').length + allOthers.filter((x: any) => x.state === 'done').length
+    const openMine = allMine.filter((c: any) => c.state !== 'done')
+    const openOthers = allOthers.filter((x: any) => x.state !== 'done')
+    // Coordination work is not a field run — the count is the point, two lines are the sample.
+    const mine = openMine.slice(0, OFFICE_MAX)
+    const others = openOthers.slice(0, Math.max(0, OFFICE_MAX - mine.length))
+    const hidden = (openMine.length - mine.length) + (openOthers.length - others.length)
+    const total = allMine.length + allOthers.length
     return `
-    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(n)}</b> <span style="${S.muted};font-size:11px">· ${t('office')}</span> <span style="${S.muted}">· ${mine.length + others.length} ${mine.length + others.length === 1 ? t('task') : t('tasks')}</span></td></tr>` +
+    <tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;border-top:1px solid #e5e7eb;font-size:12.5px"><b>${esc(n)}</b> <span style="${S.muted};font-size:11px">· ${t('office')}</span> <span style="${S.muted}">· ${total} ${total === 1 ? t('task') : t('tasks')}${doneN ? ` · ${doneN} ${t('done')}` : ''}</span></td></tr>` +
       mine.map(c => cleanRow(c, null, c.sameDayArrival, n)).join('') +
-      others.map((o: any) => otherRow(o, n)).join('')
+      others.map((o: any) => otherRow(o, n)).join('') +
+      (hidden > 0 ? `<tr><td colspan="3" style="${S.td};padding-left:40px"><span style="${S.muted};font-size:11.5px">+${hidden} ${t('more on the board')}</span></td></tr>` : '')
   }
   const officeRows = officeList.map(officeRowsFor).filter(Boolean).join('')
   const officeStrip = officeRows
@@ -1108,7 +1183,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     (hkUnassigned.length ? `
     <tr><td colspan="3" style="padding:8px 10px;background:#fef2f2;font-size:12.5px;color:#b91c1c"><b>${t('NO ONE ASSIGNED')}</b> <span style="color:#b91c1c;opacity:.75">· ${hkUnassigned.length} ${hkUnassigned.length === 1 ? t('other job') : t('other jobs')} ${t('with nobody on them')}</span></td></tr>` +
       hkUnassigned.map((o: any) => otherRow(o)).join('') : '') +
-    everyone.filter(n => !isTech(n)).map(n => personBlock(n)).join('') + officeStrip
+    everyone.filter(n => !isTech(n)).map(n => personBlock(n, { maxRows: crewOfAnyone(n) === 'housekeeping' ? 99 : 4 })).join('') + officeStrip
 
   // ── ON THE SCHEDULE TODAY (Ops Command). Each shift is cross-checked against the clean board:
   // a housekeeper on the clock with zero doors is the day's quietest problem, so it prints amber
@@ -1430,13 +1505,6 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       '#6366f1')
   }
 
-  // Section eyebrows carry a rule line so the email reads as CHAPTERS, not one long scroll —
-  // the eye can jump Act now → Today → Looking ahead → The shop without reading a word.
-  const eyebrow = (t: string) =>
-    `<table width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 10px"><tr>
-      <td style="font-size:10px;font-weight:700;letter-spacing:.16em;color:#6b7280;text-transform:uppercase;white-space:nowrap;padding:0 10px 0 4px">${t}</td>
-      <td width="100%" style="border-top:2px solid #e5e7eb;line-height:1px;font-size:1px">&nbsp;</td>
-    </tr></table>`
   const bare = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
   // The tile row is gone from this brief — every number on it was in the verdict one line above
   // (Jon, 2026-09-09: "duplicate info"). The GM and vendor briefs still build their own.
@@ -1543,8 +1611,14 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       `${todayShifts.length ? `${todayShifts.length} on shift · ` : ''}${d.cleans.length} cleans (${unassigned.length} unassigned) · ${arrivals.length} in / ${departures.length} out.` +
       // A BLOCKED COUNT WITH NO DOOR ON IT IS NOT A FACT ANYONE CAN USE. It was printed three
       // times — tile, verdict, subject — and never once said which units. Named here, once.
-      (fullBlocked.length
-        ? `<br><span style="${S.red}">${fullBlocked.length} blocked:</span> <span style="color:#374151">${fullBlocked.slice(0, 8).map((b: any) => esc(str(b.unit))).join(', ')}${fullBlocked.length > 8 ? ` +${fullBlocked.length - 8}` : ''}</span>`
+      // A VERDICT IS A SENTENCE, NOT A LIST. This line named up to eight blocked units and then
+      // "+39" — a paragraph of unit names in the place where the day's shape belongs, and the
+      // names were unactionable anyway because the list with reasons and dates is GM-only. The
+      // count stays; the names went back to where they can be acted on.
+      (fullBlockedFailed
+        ? `<br><span style="${S.red}">Blocked units unknown</span> <span style="color:#374151">— Guesty did not answer this morning. Not an all-clear.</span>`
+        : fullBlocked.length
+        ? `<br><span style="${S.red}">${fullBlocked.length} blocked</span> <span style="color:#374151">— ${fullBlocked.filter((b: any) => b.live).length} down now. Full list with reasons in the GM brief.</span>`
         : '')
 
   const title = isField ? `${variant} — ${t('Day Sheet')}` : 'Ops Command'
@@ -1555,6 +1629,29 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     ? `${variant} Day Sheet ${dateNice}: ${d.cleans.length} cleans${sameDay.length ? ` · ${sameDay.length} same-day` : ''}${unassigned.length ? ` · ${unassigned.length} UNASSIGNED` : ''} · ${arrivals.length} in / ${departures.length} out`
     : `Ops Command ${dateNice}: ${priorities.length} exceptions · ${carryTot2} carryover · ${fullBlocked.length} blocked${bzPct2 != null ? ` · BZ ${bzPct2}%` : ''}`
 
+  /**
+   * THE FIRST UNIT ON THE FIRST SCREEN (Jon, 2026-09-21: the briefs must be "directional and
+   * useful, not just noise").
+   *
+   * The day sheet used to open with two full-width buttons and a sixty-word access disclaimer —
+   * on a phone that is the entire first screen, and a housekeeper had scrolled past all of it
+   * before a single unit was named. Both still matter, so neither is deleted: the two links become
+   * one line of link text and the access rule becomes one amber sentence beside them. Four lines
+   * where there were about twenty, and "Top priorities" now starts above the fold.
+   */
+  const fieldTopStrip = (() => {
+    if (!isField) return ''
+    const boardUrl = `${APP_URL}/day?market=${encodeURIComponent(variant)}`
+    const links = [
+      `<a href="${boardUrl}" style="color:#4338ca;font-weight:700;text-decoration:none">${pick('Live board →', 'Tablero en vivo →')}</a>`,
+      schedLink ? `<a href="${esc(schedLink.url)}" style="color:#4338ca;font-weight:700;text-decoration:none">${pick('Team schedule →', 'Horario del equipo →')}</a>${schedLink.passcode ? ` <span style="${S.muted};font-size:11.5px">(${pick('passcode ends', 'la clave termina en')} ${esc(schedLink.passcode)})</span>` : ''}` : '',
+    ].filter(Boolean).join(' &nbsp;·&nbsp; ')
+    return `<div style="border:1px solid #fcd34d;background:#fffbeb;border-radius:12px;padding:10px 16px;margin-bottom:10px">
+      <p style="margin:0;font-size:12.5px;line-height:1.6">${links}</p>
+      <p style="margin:4px 0 0;font-size:12px;line-height:1.55;color:#92400e"><b>${t('Confirm access before entering any unit.')}</b> ${pick('This is the 7am snapshot — plans change after it is sent.', 'Esta es la foto de las 7am — los planes cambian después de enviarla.')}</p>
+    </div>`
+  })()
+
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
     <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
@@ -1564,16 +1661,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #4338ca;border-radius:12px;padding:12px 18px;margin-bottom:10px">
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
-  ${isField ? btn(`${APP_URL}/day?market=${encodeURIComponent(variant)}`,
-      pick('Open the live board →', 'Abrir el tablero en vivo →'),
-      pick(
-        'This email is the 7am snapshot. That board is live all day.',
-        'Este correo es la foto de las 7am. Ese tablero está en vivo todo el día.')) : ''}
-  ${isField && schedLink ? btn(schedLink.url,
-      pick('Team schedule →', 'Horario del equipo →'),
-      (schedLink.passcode ? `${pick('Passcode ends', 'La clave termina en')}: <b style="color:#111827">${esc(schedLink.passcode)}</b> · ` : '') +
-      pick('Pick your cleans for the week and press Submit — Jon reviews it and sends notes back.', 'Elija sus limpiezas de la semana y presione Enviar — Jon lo revisa y devuelve notas.')) : ''}
-  ${isField ? accessNotice(lang) : ''}
+  ${isField ? fieldTopStrip : ''}
 
   ${eyebrow(t('Act now'))}
   ${priorities.length
@@ -1830,7 +1918,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   // releasing a block is the owner's call; Ops Command keeps just the count).
   let blocked: BlockedRun[] = []
   let blockedLinked = 0
-  try { const rep = await blockedUnits(30); blocked = rep.runs; blockedLinked = rep.linkedCount } catch { /* brief still sends */ }
+  let blockedFailed = false
+  try { const rep = await blockedUnits(30); blocked = rep.runs; blockedLinked = rep.linkedCount } catch { blockedFailed = true }
 
   // 30-day KPI window: occupancy, welcome calls, sentiment, glitches, today numbers.
   let k: any = {}
@@ -1999,17 +2088,20 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-left:4px solid #4338ca;border-radius:12px;padding:12px 18px;margin-bottom:12px">
     <p style="margin:0;font-size:14px;line-height:1.65">${verdict}</p>
   </div>
-  <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
 
+  ${eyebrow('Decide today')}
   ${decideCard}
-  ${blockedCard(blocked, { showMarket: true, limit: 12, linked: blockedLinked })}
+  ${blockedCard(blocked, { showMarket: true, limit: 12, linked: blockedLinked, failed: blockedFailed })}
+
+  ${eyebrow('Where the business stands')}
+  <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
   ${trendCard}
   ${guestsCard}
 
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:11px 18px;margin-bottom:12px">
     <p style="margin:0;font-size:12px;color:#6b7280;line-height:1.7">
       <b>Labor deep-dive</b> → the Daily Labor email (7:58am) ·
-      <b>Ops detail</b> → Ops Command (blocked list, maintenance, paperwork) ·
+      <b>Ops detail</b> → Ops Command (maintenance, paperwork, the day's runs) ·
       <b>Everything live</b> → <a href="${APP_URL}/command" style="color:#4338ca">Command Center</a>
     </p>
   </div>

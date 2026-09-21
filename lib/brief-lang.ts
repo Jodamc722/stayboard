@@ -70,6 +70,10 @@ const ES: Record<string, string> = {
   'other jobs': 'otros trabajos',
   'same-day': 'salida y llegada hoy',
   'done': 'listo',
+  'all done': 'todo listo',
+  'more on the board': 'más en el tablero',
+  'nothing assigned yet': 'nada asignado todavía',
+  'on the clock with no work on the board': 'en el reloj sin trabajo en el tablero',
   'in progress': 'en proceso',
   'scheduled': 'programado',
   'to do': 'por hacer',
@@ -200,7 +204,6 @@ const ES: Record<string, string> = {
   'With': 'Con',
   'Not assigned — pick it up.': 'Sin asignar — tómela.',
   'more on the boards': 'más en el tablero',
-  'more on the board': 'más en el tablero',
   // ── closings
   'Thank you for everything you do.': 'Gracias por todo lo que hacen.',
   'Sent automatically every morning · your supervisor has the live board.':
