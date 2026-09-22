@@ -27,7 +27,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyConfigured, listRecentReviews } from '@/lib/guesty'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
@@ -55,6 +55,9 @@ export async function GET(req: NextRequest) {
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
 
   const days = Math.max(30, Math.min(180, parseInt(str(req.nextUrl.searchParams.get('days')) || '120', 10) || 120))
+  // ?deep=1 pulls Guesty's WHOLE review feed for the removed-review comparison below. Slow and
+  // read-only, so it is opt-in rather than something the health screen does on every load.
+  const deep = str(req.nextUrl.searchParams.get('deep')) === '1'
   const since = ymd(new Date(Date.now() - days * 86400000))
   const today = ymd(new Date())
   const db = supabaseAdmin()
@@ -71,6 +74,13 @@ export async function GET(req: NextRequest) {
   for (const l of ((lstRes.data || []) as any[])) unitOf[str(l.id)] = l.nickname || l.title || str(l.id)
 
   const reviews = ((revRes.data || []) as any[]).filter(r => r.created_at)
+  // Our whole-table count, not just the window: the deep comparison below needs it to judge
+  // whether Guesty's pull came back complete enough to trust.
+  let ourTotal = 0
+  try {
+    const { count } = await db.from('guesty_reviews').select('*', { count: 'exact', head: true })
+    ourTotal = Number(count) || 0
+  } catch { ourTotal = 0 }
   const stays = ((resRes.data || []) as any[])
     .filter(r => !/cancel|denied|declined|expired|inquir/i.test(str(r.status)))
 
@@ -158,6 +168,40 @@ export async function GET(req: NextRequest) {
         // is ours and these ids are the proof.
         inGuestyNotInOurs: recent.filter(r => r.id && !ours.has(r.id)).slice(0, 20)
           .map(r => ({ id: r.id, channel: r.channel, createdAt: r.createdAt, rating: r.rating })),
+      }
+
+      // ---- THE REVERSE, WHICH IS THE ONLY WAY TO SEE A REMOVED REVIEW -------------------------
+      // Jon, 2026-09-22: "does guesty remove reviews that were removed". Our own table cannot
+      // answer it: syncReviewsDetailed upserts by id and never deletes, so "the channel pulled it
+      // and Guesty stopped serving it" and "nothing was ever pulled" leave IDENTICAL data behind.
+      // The one question that separates them is the opposite comparison to the block above --
+      // which reviews do WE hold that Guesty is no longer serving.
+      //
+      // ?deep=1 pays for the full feed to ask it. READ-ONLY, and it flags rather than deletes: a
+      // page of the Guesty feed that fails or comes back short would otherwise look exactly like
+      // a pile of removed reviews, which is why nothing here is ever allowed to act on its own.
+      if (deep) {
+        const all = await listRecentReviews(8000)
+        const guesty = new Set(all.map(r => str(r.id)).filter(Boolean))
+        // Only trust the comparison if the pull actually looks complete. A short pull means a
+        // paging failure, and every id we hold would read as "removed".
+        const plausible = guesty.size >= Math.floor(ourTotal * 0.9)
+        const gone = plausible
+          ? reviews.filter(r => str(r.id) && !guesty.has(str(r.id)))
+          : []
+        ;(live as any).deep = {
+          guestyTotal: guesty.size,
+          oursInWindow: reviews.length,
+          oursTotal: ourTotal,
+          trustworthy: plausible,
+          note: plausible
+            ? 'Guesty served at least 90% of what we hold, so a gap is a real gap.'
+            : 'The pull came back short — treat this as a failed read, not as removed reviews.',
+          inOursNotInGuesty: gone.slice(0, 50).map(r => ({
+            id: str(r.id), channel: str(r.channel), createdAt: r.created_at, rating: r.rating,
+          })),
+          inOursNotInGuestyCount: gone.length,
+        }
       }
     }
   } catch (e: any) { live = { configured: true, error: String(e?.message || e).slice(0, 200) } }
