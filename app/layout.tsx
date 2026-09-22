@@ -1,11 +1,22 @@
 import './globals.css'
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, Fraunces } from 'next/font/google'
 
 const inter = Inter({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700', '800'],
   variable: '--font-inter',
+  display: 'swap'
+})
+
+// THE DECK SERIF (2026-09-22). Owner-facing documents set their titles and their figures in a
+// display serif — it is the single cheapest thing that separates a report an owner keeps from a
+// dashboard screenshot. Loaded as a variable so only the deck reaches for it; the app itself
+// stays on Inter.
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  weight: ['300', '400', '500'],
+  variable: '--font-serif',
   display: 'swap'
 })
 
@@ -34,7 +45,7 @@ export const viewport: Viewport = {
 // squarely on top of the mobile bottom nav bar. Deleted; Shell renders the real one.
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={inter.variable + ' ' + fraunces.variable}>
       <body className="bg-app text-ink antialiased font-sans">
         {children}
       </body>

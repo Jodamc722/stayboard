@@ -104,3 +104,17 @@ export function blend(a: string, b: string, amt: number): string {
   const m = (p: number, q: number) => Math.round(p + (q - p) * Math.max(0, Math.min(1, amt)))
   return '#' + [m(r1, r2), m(g1, g2), m(b1, b2)].map(v => v.toString(16).padStart(2, '0')).join('')
 }
+
+// ── THE DECK SERIF ───────────────────────────────────────────────────────────
+// Jon, 2026-09-22: "like a high-level marketing company… think through visuals, congruency,
+// colour palette, text size". Titles and FIGURES on an owner document are set in a display
+// serif; the supporting copy, labels and tables stay on Inter. Setting a revenue number in a
+// serif is the oldest move in premium reporting and it costs nothing.
+export const SERIF = 'var(--font-serif), "Iowan Old Style", Georgia, serif'
+
+/** Ink at an opacity, for the tint ladder a one-accent palette runs on. */
+export function inkA(hex: string, a: number): string {
+  const x = hex.replace('#', '')
+  const n = parseInt(x.length === 3 ? x.split('').map(c => c + c).join('') : x.slice(0, 6), 16)
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'
+}

@@ -244,7 +244,17 @@ export function buildVerdict(content: Any): Verdict | null {
   const numbers = numbersFrom(c)
   const market = marketLine(c)
   const budget = budgetLine(c)
-  const lines = [market, budget, aheadLine(c), actionLine(c)].filter(Boolean) as VerdictLine[]
+  const raw = [market, budget, aheadLine(c), actionLine(c)].filter(Boolean) as VerdictLine[]
+  // LEAD WITH WHAT WE BEAT, AND STILL SAY THE REST. Jon, 2026-09-22: "we need to make us look good
+  // where we can but still paint a picture". Nothing is dropped and nothing is softened — the
+  // shortfall keeps its own line, in its own words. What changes is the ORDER: when the period
+  // holds both a win and a miss, the win is read first, because it is equally true and it is the
+  // part we earned. A month with only bad news still opens with the bad news; there is nothing to
+  // lead with, and pretending otherwise is how an owner stops trusting the document.
+  const wins = raw.filter(l => l.tone === 'good')
+  const lines = wins.length && wins.length < raw.length
+    ? wins.concat(raw.filter(l => l.tone !== 'good'))
+    : raw
   if (!numbers.length && !lines.length) return null
   return { numbers, lines, headline: headlineFrom(market, budget) }
 }
