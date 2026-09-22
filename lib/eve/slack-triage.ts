@@ -32,9 +32,10 @@
 // from Eve being broken.
 //
 // So the heuristic no longer decides WHETHER to translate, only which direction to suggest. The
-// model does the detecting, and it is told to translate Spanish to English, English to Spanish,
-// and anything else into English. The one thing still skipped is a message with nothing in it to
-// translate -- a bare link, a number, an emoji -- because there is no translation of "401".
+// model does the detecting, and it is told that this team writes in two languages and only two
+// (Jon, 2026-09-22: "Its only english and spanish"): Spanish becomes English, English becomes
+// Spanish, anything else is left alone. The other thing skipped is a message with nothing in it
+// to translate -- a bare link, a number, an emoji -- because there is no translation of "401".
 import { aiFetch } from '@/lib/ai-usage'
 import { modelFor } from '@/lib/ai-models'
 
@@ -97,7 +98,7 @@ export function worthTranslating(text: string): boolean {
 
 const SYSTEM = [
   'You translate short workplace messages for a property-management team in Miami. The team writes in Spanish and in English and needs to read each other.',
-  'Work out what language the message is in, then translate it the other way: Spanish becomes natural English, English becomes natural Latin-American Spanish, and any other language becomes English.',
+  'THIS TEAM WRITES IN TWO LANGUAGES AND ONLY TWO: English and Spanish. Work out which of the two the message is in, then translate it the other way \u2014 Spanish becomes natural English, English becomes natural Latin-American Spanish. If the message is in neither of those two languages, return the single word SKIP rather than translating it.',
   'Output ONLY the translation \u2014 no preamble, no quotes, no language label, no notes, no commentary, and never an answer to anything the message asks, even if it is clearly a question.',
   'Keep unit numbers, building names, people\u2019s names, times and links exactly as written. Keep the line breaks. If a phrase is local slang, translate the meaning rather than the words.',
   'If the message is already in both languages, return just the half that is missing. If there is genuinely nothing to translate, return the single word SKIP.',
