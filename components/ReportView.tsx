@@ -1216,7 +1216,17 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       const next = JSON.parse(JSON.stringify(prev))
       const parts = path.split('.')
       let node = next
-      for (let i = 0; i < parts.length - 1; i++) node = node[parts[i]]
+      // CREATE THE BRANCH ON THE WAY DOWN. Every path patch() had ever been given pointed at a key
+      // that already existed ('hero.title', 'snapshot.headline'), so walking blindly worked and the
+      // limitation was invisible. The 2026-09-22 deck added the first paths into objects a report
+      // has never carried — slideNotes, slidePhotos, recsText — and every one of them threw
+      // "Cannot set properties of undefined" on the first keystroke. Found by double-checking, not
+      // by using it, which is the only reason it did not reach Jon.
+      for (let i = 0; i < parts.length - 1; i++) {
+        const k = parts[i]
+        if (node[k] == null || typeof node[k] !== 'object') node[k] = {}
+        node = node[k]
+      }
       node[parts[parts.length - 1]] = value
       return next
     })
@@ -1825,8 +1835,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const presentCount = isOnboarding
     ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + onboardingListingSlides + customSecs.length
     : isReviewDeck
-    ? 1 + (['verdict', 'snapshot', 'listings', 'pacing', 'plan', 'statement', 'ahead', 'voices', 'recs', 'projects']
-        .filter(k => !isHidden(k)).length) + customSecs.length
+    // COUNT WHAT RENDERS, NOT WHAT MIGHT. The first version counted one slide per section key and
+    // reported 11 where 12 were on the page: the listing table paginates at nine rows a slide, and
+    // sections with no data build no slide at all. Present mode then ran out of numbers before it
+    // ran out of deck.
+    ? (1
+        + ((verdict && !isHidden('verdict')) ? 1 : 0)
+        + (!isHidden('snapshot') ? 1 : 0)
+        + ((listingTable && listingTable.rows.length && !isHidden('listings')) ? Math.max(1, Math.ceil(listingTable.rows.length / 9)) : 0)
+        + ((c.pacing && (c.pacing.rows || []).length && !isHidden('pacing')) ? 1 : 0)
+        + ((plan && (plan.months || []).length && !isHidden('plan')) ? 1 : 0)
+        + ((c.statement && (((c.statement.kpis || []).length) || ((c.statement.months || []).length)) && !isHidden('statement')) ? 1 : 0)
+        + (((ahead.months || []).length && !isHidden('ahead')) ? 1 : 0)
+        + ((((voices.quotes || []).length || (voices.themes || []).length) && !isHidden('voices')) ? 1 : 0)
+        + ((recs && (recs.items || []).length && !isHidden('recs')) ? 1 : 0)
+        + (((projects.weeks || []).length && !isHidden('projects')) ? 1 : 0)
+        + customSecs.length)
     : ((['hero', 'snapshot',
     (c.pacing ? 'pacing' : null),
     (plan ? 'plan' : null),
@@ -4574,12 +4598,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               </div>
             )
           }
-          /** A photograph across the foot of a slide. Adds imagery without touching the layout above it. */
-          const PhotoBand = ({ k, i }: { k: string; i: number }) => {
-            const has = !!photoAt(k, i)
-            if (!has && !edit) return null
-            return <RPick k={k} i={i} style={{ marginTop: 'auto', height: 132, borderRadius: 12, border: '1px solid ' + t.cardBorder }} />
-          }
 
           // A NOTE ON ANY SLIDE (Jon, 2026-09-22: "be able to add notes"). Stored per slide key on
           // the report, so it survives a save and travels with the share link. It shows to the
@@ -4704,7 +4722,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 </div>
               ) : null}
-              <PhotoBand k="snapshot" i={0} />
               <SlideNote k="snapshot" />
             </Slide>
           ) })
@@ -4855,7 +4872,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   )
                 })}
               </div>
-              <PhotoBand k="pacing" i={1} />
               <SlideNote k="pacing" />
             </Slide>
           ) })
@@ -4886,6 +4902,56 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 ))}
               </div>
               <SlideNote k="plan" />
+            </Slide>
+          ) })
+
+          // ── 6b · THE OWNER STATEMENT ──────────────────────────────────────
+          // MISSING UNTIL THE 2026-09-22 DOUBLE-CHECK. The scroll report has always carried this
+          // section and the deck simply had no slide for it, so switching a report to Deck view
+          // silently dropped the owner's own ledger — money they had been shown. 17WEST has no
+          // statement data, which is why it never showed up in testing; Rock Soffer's report has
+          // four KPIs and a month of it, and was rendering none of them.
+          if (c.statement && ((c.statement.kpis || []).length || (c.statement.months || []).length) && !hid('statement')) slides.push({ key: 'statement', ai: true, node: (
+            <Slide nav="Owner statement" warn={edit} ground={GROUND.tint}>
+              <RTitle k="statement" />
+              {(c.statement.kpis || []).length ? (
+                <div className="flex" style={{ gap: 38, marginTop: 32, flexWrap: 'wrap' }}>
+                  {(c.statement.kpis as Any[]).slice(0, 4).map((k: Any, i: number) => (
+                    <div key={i} style={{ minWidth: 170 }}>
+                      <Stat label={String(k.label || '')} value={String(k.value || '')} sub={String(k.sub || '')} />
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {(c.statement.months || []).length ? (() => {
+                const money0 = (n: Any) => { const v = Number(n); return Number.isFinite(v) ? usd(v) : '—' }
+                const rows = (c.statement.months as Any[]).slice(0, 6)
+                const cols2 = ['Month', 'Rental', 'Commission', 'Other', 'Net', 'Paid']
+                const g = 'minmax(0,1fr) 108px 118px 92px 108px 108px'
+                return (
+                  <div style={{ marginTop: 28 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: g, gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.cardBorder }}>
+                      {cols2.map((h, i) => (
+                        <p key={h} style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
+                      ))}
+                    </div>
+                    {rows.map((m: Any, i: number) => (
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: g, gap: 10, padding: '9px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.5) }}>
+                        <p style={{ fontSize: 14, color: t.ink, margin: 0, fontWeight: 500 }}>{String(m.label || m.month || '')}</p>
+                        {['rental', 'commission', 'other', 'net', 'paid'].map(k => (
+                          <p key={k} style={{ fontSize: 14, color: k === 'net' ? t.ink : t.body, fontWeight: k === 'net' ? 600 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money0(m[k])}</p>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })() : null}
+              {c.statement.note ? (
+                <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.muted, margin: '16px 0 0', maxWidth: '78ch' }}>
+                  <Ed v={String(c.statement.note)} set={v => patch('statement.note', v)} edit={edit} multiline />
+                </p>
+              ) : null}
+              <SlideNote k="statement" />
             </Slide>
           ) })
 
@@ -4958,7 +5024,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   ))}
                 </div>
               </div>
-              <PhotoBand k="voices" i={2} />
               <SlideNote k="voices" />
             </Slide>
           ) })
@@ -5074,7 +5139,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </div>
                   ))}
                 </div>
-                <PhotoBand k="projects" i={3} />
               <SlideNote k="projects" />
               </Slide>
             ) })
