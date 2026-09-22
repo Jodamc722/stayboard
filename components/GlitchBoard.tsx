@@ -371,6 +371,9 @@ function fmtPhone(v: string | null | undefined): string {
 function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; name: string; departments?: string[]; role?: string | null }[]; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // App users only (Jon, 2026-09-22: "assignee should just be users in the app").
+  const [users, setUsers] = useState<{ email: string; name: string }[]>([])
+  useEffect(() => { fetch('/api/users/directory', { cache: 'no-store' }).then(r => r.json()).then(j => setUsers(Array.isArray(j.users) ? j.users : [])).catch(() => {}) }, [])
   const save = async (body: Record<string, any>) => {
     setBusy(true); setErr('')
     try {
@@ -380,39 +383,26 @@ function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; n
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }
-  const known = people.some(p => p.name === g.assignee)
-  // 120+ names is a wall. Maintenance first — they fix most glitches — then the office, then
-  // housekeeping; one entry per name (Breezeway lists some people twice).
-  const groups = (() => {
-    const seen = new Set<string>()
-    const maint: typeof people = [], office: typeof people = [], hk: typeof people = []
-    for (const p of people.slice().sort((a, b) => a.name.localeCompare(b.name))) {
-      const k = p.name.trim().toLowerCase()
-      if (!k || seen.has(k)) continue
-      seen.add(k)
-      const d = (p.departments || []).map(x => String(x).toLowerCase())
-      if (d.includes('maintenance')) maint.push(p)
-      else if (!d.length || String(p.role || '') === 'office') office.push(p)
-      else hk.push(p)
-    }
-    return [['Maintenance', maint], ['Office', office], ['Housekeeping', hk]] as [string, typeof people][]
-  })()
+  // SUPPORT IS THE DEFAULT OWNER (Jon, 2026-09-22). It is always first in the list; when there
+  // is an app user for the support inbox, assigning to Support notifies that login.
+  const supportUser = users.find(u => /^support@/.test(u.email)) || null
+  const others = users.filter(u => u !== supportUser && u.name.toLowerCase() !== 'support')
+  const current = g.assignee || 'Support'
+  const known = current === 'Support' || others.some(u => u.name === current)
   return (
     <span className="inline-flex items-center gap-2 flex-wrap">
-      <select value={g.assignee || ''} disabled={busy}
+      <select value={current} disabled={busy}
         onChange={e => {
           const name = e.target.value
-          const person = people.find(p => p.name === name)
-          save({ assignee: name, assigneePersonId: person ? person.id : null })
+          const u = name === 'Support' ? supportUser : users.find(x => x.name === name)
+          // If the same person is also in Breezeway, the crew task follows the assignment.
+          const person = people.find(p => p.name.trim().toLowerCase() === name.trim().toLowerCase())
+          save({ assignee: name, assigneeEmail: u ? u.email : '', assigneePersonId: person ? person.id : null })
         }}
-        className={'text-[13px] border border-line rounded-lg px-2 h-8 bg-white max-w-[240px] ' + (g.assignee ? 'font-semibold text-ink' : 'text-muted')}>
-        <option value="">No assignee</option>
-        {g.assignee && !known ? <option value={g.assignee}>{g.assignee}</option> : null}
-        {groups.map(([label, list]) => list.length ? (
-          <optgroup key={label} label={label}>
-            {list.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-          </optgroup>
-        ) : null)}
+        className="text-[13px] font-semibold text-ink border border-line rounded-lg px-2 h-8 bg-white max-w-[240px]">
+        <option value="Support">Support</option>
+        {!known ? <option value={current}>{current}</option> : null}
+        {others.map(u => <option key={u.email} value={u.name}>{u.name}</option>)}
       </select>
       {busy ? <Loader2 size={13} className="animate-spin text-muted" /> : null}
       {err ? <span className="text-[12px] text-rose-700">{err}</span> : null}
