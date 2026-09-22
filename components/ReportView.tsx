@@ -4530,6 +4530,25 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </div>
           )
 
+          // A NOTE ON ANY SLIDE (Jon, 2026-09-22: "be able to add notes"). Stored per slide key on
+          // the report, so it survives a save and travels with the share link. It shows to the
+          // owner when it has words in it and offers itself as an empty line only while editing —
+          // a deck full of "Add a note" placeholders is not a deck anybody would send.
+          const SlideNote = ({ k }: { k: string }) => {
+            const notes = (c.slideNotes || {}) as Any
+            const v = String(notes[k] || '')
+            if (!v && !edit) return null
+            return (
+              <div style={{ marginTop: 'auto', paddingTop: 22 }}>
+                <div style={{ borderLeft: '2px solid ' + t.accent, paddingLeft: 13 }}>
+                  <p style={{ fontSize: 13.5, lineHeight: 1.5, color: t.body, margin: 0 }}>
+                    <Ed v={v} set={x => patch('slideNotes.' + k, x)} edit={edit} multiline placeholder="A note for the owner on this slide…" />
+                  </p>
+                </div>
+              </div>
+            )
+          }
+
           const slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
 
           // ── 1 · COVER — text left, the property bleeding off the right edge ──
@@ -4592,6 +4611,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 ))}
               </div>
+              <SlideNote k="verdict" />
             </Slide>
           ) })
 
@@ -4621,6 +4641,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 </div>
               ) : null}
+              <SlideNote k="snapshot" />
             </Slide>
           ) })
 
@@ -4629,39 +4650,45 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // Ten rows a slide: eleven starts clipping the footer at this type size, and a table that
           // runs off the bottom of a slide is the failure mode the canvas exists to prevent.
           if (listingTable && listingTable.rows.length && !hid('listings')) {
-            const PER = 10
+            const PER = 9
             const pages = Math.max(1, Math.ceil(listingTable.rows.length / PER))
-            // WHICH "NET". The report has three bases (lib/basis) and the snapshot's headline
-            // REVENUE card is drawn in whichever one the report is set to — netota by default,
-            // accommodation before channel fees. The Net column here uses that SAME basis, through
-            // the same basisTriple, so the total row lands on the card above rather than on a
-            // second, equally-correct number that quietly contradicts it.
+            // THE BASIS IS THE REPORT'S, NOT THIS SLIDE'S (Jon, 2026-09-22: "the gross or net
+            // option are just from edit mode only... and it should apply where data is being
+            // pulled like it did previously"). The first cut invented a local three-way toggle,
+            // which meant the choice did not persist, did not travel to the PPTX, and disagreed
+            // with every other section's basis picker. It now drives content.basis.byListing
+            // through the same setBasis the snaps and month sections use, so choosing here is the
+            // same act as choosing anywhere else and it is saved with the report.
             const netBasis: Basis = (isBasis(bSection('byListing')) ? bSection('byListing') : 'netota') as Basis
             const tri = (r: Any, b: Basis) => basisTriple(r as Any, b)
-            const showGross = listingCols !== 'net'
-            const showNet = listingCols !== 'gross'
-            // ADR and RevPAR follow whichever money is on the slide: showing a gross-only table
-            // with a net ADR beside it is how a reader ends up comparing two different things.
-            const ratioBasis: Basis = listingCols === 'gross' ? 'gross' : netBasis
+            // Gross rides alongside whenever the chosen basis is not gross, so the owner sees both
+            // the top line and the number the statement is built on without switching anything.
+            const withGross = netBasis !== 'gross'
             const cols: { key: string; label: string; w: number }[] = [
               { key: 'unit', label: 'Unit', w: 0 },
-              ...(showGross ? [{ key: 'gross', label: 'Gross', w: 104 }] : []),
-              ...(showNet ? [{ key: 'net', label: netBasis === 'net' ? 'Net' : netBasis === 'gross' ? 'Gross' : 'Net', w: 104 }] : []),
-              { key: 'occ', label: 'Occ', w: 78 },
-              { key: 'adr', label: 'ADR', w: 92 },
-              { key: 'revpar', label: 'RevPAR', w: 92 },
-              { key: 'nights', label: 'Nights', w: 78 },
+              ...(withGross ? [{ key: 'gross', label: 'Gross', w: 96 }] : []),
+              { key: 'rev', label: BASIS_SHORT[netBasis] === 'Net + fees' ? 'Net' : BASIS_SHORT[netBasis], w: 96 },
+              { key: 'occ', label: 'Occ', w: 70 },
+              { key: 'adr', label: 'ADR', w: 84 },
+              { key: 'revpar', label: 'RevPAR', w: 84 },
+              { key: 'nights', label: 'Nights', w: 68 },
             ]
             const grid = cols.map(x => (x.w ? x.w + 'px' : 'minmax(0,1fr)')).join(' ')
             const cell = (r: Any, key: string): string => {
-              if (key === 'unit') return String(r.unit || r.name || '')
               if (key === 'gross') return usd(tri(r, 'gross').revenue)
-              if (key === 'net') return usd(tri(r, netBasis).revenue)
+              if (key === 'rev') return usd(tri(r, netBasis).revenue)
               if (key === 'occ') return Math.round(Number(r.occPct) || 0) + '%'
-              if (key === 'adr') return usd(tri(r, ratioBasis).adr)
-              if (key === 'revpar') return usd(tri(r, ratioBasis).revpar)
+              if (key === 'adr') return usd(tri(r, netBasis).adr)
+              if (key === 'revpar') return usd(tri(r, netBasis).revpar)
               if (key === 'nights') return String(r.occNights ?? '')
               return ''
+            }
+            // Size beside the unit, and the internal Guesty name under it (Jon, 2026-09-22) — the
+            // name the team searches by, which is not what the owner calls the apartment.
+            const size = (r: Any) => (r.bedrooms == null ? '' : Number(r.bedrooms) === 0 ? 'Studio' : Number(r.bedrooms) + 'BR')
+            const pretty = (iso: string) => {
+              const d = new Date(String(iso) + 'T12:00:00')
+              return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
             }
             for (let p = 0; p < pages; p++) {
               const rows = listingTable.rows.slice(p * PER, p * PER + PER)
@@ -4669,49 +4696,56 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               slides.push({ key: 'listings', node: (
                 <Slide nav={'By listing' + (pages > 1 ? ' ' + (p + 1) : '')} warn={edit} ground={GROUND.tint}>
                   <div className="flex items-start justify-between" style={{ gap: 24 }}>
-                    <div>
+                    <div style={{ minWidth: 0 }}>
                       <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
                       <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: 0, maxWidth: '19ch' }}>
-                        Performance by listing{pages > 1 ? ' · ' + (p + 1) + ' of ' + pages : ''}
+                        <Ed v={String(c.listingsTitle || 'Performance by listing')} set={v => patch('listingsTitle', v)} edit={edit} />
+                        {pages > 1 ? <span style={{ color: t.muted }}>{' \u00b7 ' + (p + 1) + ' of ' + pages}</span> : null}
                       </h2>
-                      <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: t.muted, margin: '14px 0 0', maxWidth: '54ch' }}>
-                        {listingTable.totals.units} unit{listingTable.totals.units === 1 ? '' : 's'}, {listingTable.from} to {listingTable.to}. Gross is accommodation plus cleaning; net is {BASIS_NOTE[netBasis].toLowerCase()}. Same basis and window as the snapshot, counted live.
+                      <p style={{ fontSize: 15.5, lineHeight: 1.5, color: t.muted, margin: '13px 0 0', maxWidth: '60ch' }}>
+                        <Ed v={String(c.listingsNote || (listingTable.totals.units + ' units, ' + pretty(listingTable.from) + ' to ' + pretty(listingTable.to) + '. Gross is accommodation plus cleaning; ' + (BASIS_SHORT[netBasis] === 'Net + fees' ? 'net' : BASIS_SHORT[netBasis].toLowerCase()) + ' is ' + BASIS_NOTE[netBasis].toLowerCase() + '.'))}
+                          set={v => patch('listingsNote', v)} edit={edit} multiline />
                       </p>
                     </div>
-                    {canEdit && (
-                      <span className="sb-noprint inline-flex items-center rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.cardBorder, flexShrink: 0 }}>
-                        {([['both', 'Both'], ['gross', 'Gross'], ['net', 'Net']] as [string, string][]).map(([k, lab]) => (
-                          <button key={k} onClick={() => setListingCols(k as Any)} className="rounded-full px-3 py-1" style={{ fontSize: 12, fontWeight: 600, ...(listingCols === k ? { background: t.ink, color: t.bg } : { color: t.sub }) }}>{lab}</button>
-                        ))}
+                    {edit && (
+                      <span className="sb-noprint" style={{ flexShrink: 0 }}>
+                        <BasisPicker label="Basis" value={bSection('byListing')} onPick={(v: string) => setBasis('byListing', v)} t={t} />
                       </span>
                     )}
                   </div>
 
-                  <div style={{ marginTop: 28 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 12, paddingBottom: 9, borderBottom: '1px solid ' + t.cardBorder }}>
+                  <div style={{ marginTop: 24 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.cardBorder }}>
                       {cols.map(x => (
-                        <p key={x.key} style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right' }}>{x.label}</p>
+                        <p key={x.key} style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right' }}>{x.label}</p>
                       ))}
                     </div>
                     {rows.map((r: Any) => (
-                      <div key={r.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 12, padding: '9px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.5) }}>
-                        {cols.map(x => (
-                          <p key={x.key} style={{ fontSize: x.key === 'unit' ? 14 : 14.5, color: x.key === 'unit' ? t.ink : t.body, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right', fontWeight: x.key === 'unit' ? 500 : 400, fontVariantNumeric: 'tabular-nums', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {cell(r, x.key)}
+                      <div key={r.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '8px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.5), alignItems: 'baseline' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <p style={{ fontSize: 14, color: t.ink, margin: 0, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {String(r.unit || r.name || '')}
+                            {size(r) ? <span style={{ color: t.muted, fontWeight: 400 }}>{'  ' + size(r)}</span> : null}
                           </p>
+                          {r.name && r.name !== r.unit ? (
+                            <p style={{ fontSize: 10.5, color: t.muted, margin: '1px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(r.name)}</p>
+                          ) : null}
+                        </div>
+                        {cols.slice(1).map(x => (
+                          <p key={x.key} style={{ fontSize: 14, color: t.body, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cell(r, x.key)}</p>
                         ))}
                       </div>
                     ))}
                     {last ? (
-                      <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 12, padding: '12px 0 0', borderTop: '2px solid ' + t.ink, marginTop: 4 }}>
-                        {cols.map(x => (
-                          <p key={x.key} style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {x.key === 'unit' ? 'All ' + listingTable.totals.units + ' units' : cell(listingTable.totals, x.key)}
-                          </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '11px 0 0', borderTop: '2px solid ' + t.ink, marginTop: 4 }}>
+                        <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, margin: 0 }}>{'All ' + listingTable.totals.units + ' units'}</p>
+                        {cols.slice(1).map(x => (
+                          <p key={x.key} style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cell(listingTable.totals, x.key)}</p>
                         ))}
                       </div>
                     ) : null}
                   </div>
+                  <SlideNote k={'listings' + p} />
                 </Slide>
               ) })
             }
@@ -4739,6 +4773,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   )
                 })}
               </div>
+              <SlideNote k="pacing" />
             </Slide>
           ) })
 
@@ -4767,6 +4802,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 ))}
               </div>
+              <SlideNote k="plan" />
             </Slide>
           ) })
 
@@ -4787,6 +4823,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 ))}
               </div>
+              <SlideNote k="ahead" />
             </Slide>
           ) })
 
@@ -4812,46 +4849,96 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   ))}
                 </div>
               </div>
+              <SlideNote k="voices" />
             </Slide>
           ) })
 
           // ── 8b · WHAT WE ARE DOING ABOUT IT (Jon, 2026-09-22) ─────────────
-          // Built from the review text itself through the same taxonomy the cleaner's task uses
-          // (lib/review-themes), so a theme is on this slide because guests wrote it down — with a
-          // count, a quote and the units behind it — and not because a model thought it sounded
-          // plausible. Top four: a page of twelve recommendations is a page nobody acts on.
-          if (recs && (recs.items || []).length && !hid('recs')) slides.push({ key: 'recs', node: (
-            <Slide nav="What we are improving" warn={edit} ground={GROUND.light}>
-              <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
-              <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: 0, maxWidth: '19ch' }}>
-                What guests raised, and what we are doing
-              </h2>
-              <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: t.muted, margin: '14px 0 0', maxWidth: '58ch' }}>
-                From {recs.reviews} review{recs.reviews === 1 ? '' : 's'} since {recs.from}
-                {recs.avgRating != null ? ', averaging ' + recs.avgRating.toFixed(2) : ''}
-                {recs.clean > 0 ? ' \u00b7 ' + recs.clean + ' raised nothing to fix' : ''}.
-              </p>
-              <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 20 }}>
-                {(recs.items as Any[]).slice(0, 4).map((r: Any) => (
-                  <div key={r.key} style={{ borderRadius: 14, background: t.chip, border: '1px solid ' + t.cardBorder, padding: '18px 20px' }}>
-                    <div className="flex items-baseline" style={{ gap: 8 }}>
-                      <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, margin: 0, textTransform: 'capitalize' }}>{String(r.label || '')}</p>
-                      <span style={{ fontSize: 11, color: t.muted }}>
-                        {r.mentions} guest{r.mentions === 1 ? '' : 's'}{r.units > 1 ? ' \u00b7 ' + r.units + ' units' : ''}
-                        {r.avgRating != null ? ' \u00b7 avg ' + r.avgRating.toFixed(1) : ''}
-                      </span>
-                    </div>
-                    {r.quote ? (
-                      <p style={{ fontSize: 12.5, lineHeight: 1.45, color: t.muted, margin: '9px 0 0', fontStyle: 'italic', borderLeft: '2px solid ' + t.cardBorder, paddingLeft: 10 }}>
-                        &ldquo;{String(r.quote)}&rdquo;
-                      </p>
-                    ) : null}
-                    <p style={{ fontSize: 13.5, lineHeight: 1.5, color: t.body, margin: '11px 0 0' }}>{String(r.action || '')}</p>
+          // Built from the review text through the taxonomy the cleaner's task already uses
+          // (lib/review-themes), so a theme is here because guests wrote it down — with a count, a
+          // quote and the units behind it.
+          //
+          // WHAT PRINTS WITHOUT ASKING. Jon, 2026-09-22: "you can mention real issue related to
+          // building, pests are building issues, thats fine, lets not highlight any issue casued
+          // by us, without my approval." Building problems and the owner's own worn furniture
+          // print. Anything we caused is withheld: Jon sees it here with an Include switch, the
+          // owner does not see it at all until he flips one. That is a decision he makes per
+          // report, in the room, not one this code makes on his behalf while he is elsewhere.
+          if (recs && (recs.items || []).length && !hid('recs')) {
+            const approved: string[] = Array.isArray(c.recsApproved) ? c.recsApproved : []
+            const shows = (r: Any) => r.cause !== 'ours' || approved.indexOf(r.key) >= 0
+            const shown = (recs.items as Any[]).filter(shows).slice(0, 4)
+            const held = (recs.items as Any[]).filter((r: Any) => !shows(r))
+            const toggle = (k: string) => mutate((d: Any) => {
+              const list: string[] = Array.isArray(d.recsApproved) ? d.recsApproved.slice() : []
+              const at = list.indexOf(k)
+              if (at >= 0) list.splice(at, 1); else list.push(k)
+              d.recsApproved = list
+            })
+            if (shown.length || edit) slides.push({ key: 'recs', node: (
+              <Slide nav="What we are improving" warn={edit} ground={GROUND.light}>
+                <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
+                <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: 0, maxWidth: '20ch' }}>
+                  <Ed v={String(c.recsTitle || 'What guests raised, and what we are doing')} set={v => patch('recsTitle', v)} edit={edit} multiline />
+                </h2>
+                <p style={{ fontSize: 15.5, lineHeight: 1.5, color: t.muted, margin: '13px 0 0', maxWidth: '60ch' }}>
+                  <Ed v={String(c.recsNote || ('From ' + recs.reviews + ' review' + (recs.reviews === 1 ? '' : 's') + ' in the last 90 days' + (recs.avgRating != null ? ', averaging ' + recs.avgRating.toFixed(2) : '') + (recs.clean > 0 ? ' \u00b7 ' + recs.clean + ' raised nothing to fix' : '') + '.'))}
+                    set={v => patch('recsNote', v)} edit={edit} multiline />
+                </p>
+
+                {shown.length ? (
+                  <div style={{ marginTop: 24, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 18 }}>
+                    {shown.map((r: Any) => (
+                      <div key={r.key} style={{ borderRadius: 14, background: t.chip, border: '1px solid ' + t.cardBorder, padding: '16px 18px' }}>
+                        <div className="flex items-baseline" style={{ gap: 8 }}>
+                          <p style={{ fontSize: 14, fontWeight: 600, color: t.ink, margin: 0, textTransform: 'capitalize' }}>{String(r.label || '')}</p>
+                          <span style={{ fontSize: 10.5, color: t.muted }}>
+                            {r.mentions} guest{r.mentions === 1 ? '' : 's'}{r.units > 1 ? ' \u00b7 ' + r.units + ' units' : ''}
+                          </span>
+                          {edit && r.cause === 'ours' ? (
+                            <button onClick={() => toggle(r.key)} className="sb-noprint" style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: t.accent, color: '#fff' }}>Included</button>
+                          ) : null}
+                        </div>
+                        {r.quote ? (
+                          <p style={{ fontSize: 12, lineHeight: 1.45, color: t.muted, margin: '8px 0 0', fontStyle: 'italic', borderLeft: '2px solid ' + t.cardBorder, paddingLeft: 9 }}>
+                            &ldquo;{String(r.quote)}&rdquo;
+                          </p>
+                        ) : null}
+                        <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, margin: '10px 0 0' }}>
+                          <Ed v={String((c.recsText || {})[r.key] || r.action || '')} set={v => patch('recsText.' + r.key, v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </Slide>
-          ) })
+                ) : (
+                  <p style={{ fontSize: 15, color: t.muted, margin: '26px 0 0' }}>
+                    Nothing on this report that is not ours to own. Anything guests raised about our own service is held below for you.
+                  </p>
+                )}
+
+                {/* WITHHELD — team only. Never rendered for an owner, at any width. */}
+                {edit && held.length ? (
+                  <div style={{ marginTop: 22, borderTop: '1px dashed ' + t.cardBorder, paddingTop: 14 }} className="sb-noprint">
+                    <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>
+                      Held back — ours to own ({held.length})
+                    </p>
+                    <p style={{ fontSize: 12, color: t.muted, margin: '4px 0 10px', maxWidth: '70ch' }}>
+                      Guests raised these about our own service. They stay off the owner&rsquo;s copy until you include them.
+                    </p>
+                    <div className="flex flex-wrap" style={{ gap: 8 }}>
+                      {held.map((r: Any) => (
+                        <button key={r.key} onClick={() => toggle(r.key)} title={String(r.quote || '')}
+                          style={{ fontSize: 12, fontWeight: 500, padding: '6px 12px', borderRadius: 999, background: t.card, border: '1px solid ' + t.cardBorder, color: t.sub, textTransform: 'capitalize' }}>
+                          + {String(r.label)} <span style={{ color: t.muted }}>{r.mentions}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <SlideNote k="recs" />
+              </Slide>
+            ) })
+          }
 
           // ── 9 · THE WORK ──────────────────────────────────────────────────
           if ((projects.weeks || []).length && !hid('projects')) {
@@ -4877,6 +4964,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </div>
                   ))}
                 </div>
+                <SlideNote k="projects" />
               </Slide>
             ) })
           }

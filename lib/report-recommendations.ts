@@ -43,7 +43,39 @@ import { THEMES, looksNegative, sentenceAbout } from '@/lib/review-themes'
 //   the 'clean bed'." That is the single most useful sentence in the whole dataset and it is not
 //   something a tool should place in a client document unattended. The theme, the count and the
 //   recommendation all survive; the sentence falls back to another guest's, or to none.
-const OFF_LIMITS = new Set(['pests', 'safety', 'security'])
+// WHO CAUSED IT DECIDES WHETHER IT PRINTS (Jon, 2026-09-22: "you can mention real issue related
+// to building, pests are building issues, thats fine, lets not highlight any issue casued by us,
+// without my approval").
+//
+// My first pass had this exactly backwards: it hid pests, which are a BUILDING problem an owner is
+// entitled to know about, and printed cleanliness, which is OURS. Those are opposite kinds of fact.
+// A building issue is information the owner needs and nobody at Stay has to answer for. A failure
+// of our own is a conversation Jon has with the owner in his own words, on his own timing — not
+// something a report volunteers on his behalf while he is not in the room.
+//
+//   building — the building, the street, the neighbours, pests. Prints.
+//   asset    — the owner's own furniture and beds wearing out. Prints; it is a spend recommendation.
+//   ours     — our cleaning, our stocking, our maintenance, our tech. WITHHELD until Jon says so,
+//              per report, from edit mode. He sees them; the owner does not until he includes them.
+export type Cause = 'building' | 'asset' | 'ours'
+const CAUSE: Record<string, Cause> = {
+  pests: 'building',
+  noise: 'building',
+  bed: 'asset',
+  furniture: 'asset',
+  cleanliness: 'ours',
+  smell: 'ours',
+  bathroom: 'ours',
+  kitchen: 'ours',
+  supplies: 'ours',
+  ac: 'ours',
+  wifi: 'ours',
+  // Door codes are ours, the garage and the lobby are the building's. Mixed goes to 'ours',
+  // because the cost of withholding something is a conversation and the cost of publishing
+  // something we caused is Jon finding out from the owner.
+  access: 'ours',
+}
+const causeOf = (key: string): Cause => CAUSE[key] || 'ours'
 const GRAPHIC = /\b(piss|pissed|shit|fuck\w*|cunt|bastard|urine|feces|faeces|poop|vomit|puke|blood|bloody|semen|needle|cockroach|roaches?|bed ?bugs?)\b/i
 
 /** What we tell an OWNER we are doing, per theme. The crew-facing version stays in review-themes. */
@@ -57,9 +89,9 @@ const OWNER_ACTION: Record<string, string> = {
   ac: 'Servicing the unit and confirming it holds temperature, with filters on a standing schedule.',
   wifi: 'Testing the Wi-Fi and the TV sign-in on every inspection, and upgrading the router where it keeps recurring.',
   access: 'Testing the door code, building entry and garage access ourselves before each arrival.',
-  noise: 'Identifying the source, and where it is the building or the street, setting expectations in the listing before guests book.',
+  noise: 'Identifying the source. Where it is the building or the street, we set the expectation in the listing before guests book rather than let them find it on arrival.',
   furniture: 'Photographing the worn pieces and bringing you a costed replacement list.',
-  pests: 'Treating the unit and putting it on a preventative pest schedule.',
+  pests: 'Treating the unit and putting it on a preventative schedule, and raising it with building management where it is coming from common areas.',
 }
 
 export type Recommendation = {
@@ -75,6 +107,8 @@ export type Recommendation = {
   quote: string
   /** What we are doing about it, in the report's voice. */
   action: string
+  /** Who this is on. Decides whether it prints without Jon saying so. */
+  cause: Cause
 }
 
 export type Recommendations = {
@@ -118,7 +152,6 @@ export async function reportRecommendations(report: any): Promise<Recommendation
   const items: Recommendation[] = []
 
   for (const theme of THEMES) {
-    if (OFF_LIMITS.has(theme.key)) continue
     let mentions = 0
     const units = new Set<string>()
     const ratings: number[] = []
@@ -149,6 +182,7 @@ export async function reportRecommendations(report: any): Promise<Recommendation
       avgRating: ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 100) / 100 : null,
       quote,
       action: OWNER_ACTION[theme.key] || theme.action,
+      cause: causeOf(theme.key),
     })
   }
 
