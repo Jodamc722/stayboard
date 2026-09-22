@@ -19,9 +19,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
-  ClipboardCheck, Loader2, Check, Clock, AlertTriangle, Plus, X, Pencil, Trash2,
-  CheckCircle2, Sunrise, Sun, Sunset, Moon, ArrowUpRight,
+  Loader2, Check, Clock, Plus, X, Pencil, Trash2, Sunrise, Sun, Sunset, Moon, ArrowUpRight,
 } from 'lucide-react'
+import { LeanHead, Pill, Tag, Tip, IconBtn, LeanList, LeanRow, LeanSection, LeanEmpty } from '@/components/lean'
 
 import { clockLabel, signalLabel, SIGNAL_META, type Band } from '@/lib/checklist-shared'
 type Row = {
@@ -52,10 +52,8 @@ const shortTime = (iso: string | null) => {
 }
 const firstName = (s: string | null) => String(s || '').split(/[\s@]/)[0]
 
-// THE CHIP. The server sends the NUMBER and lib/checklist-shared owns what it reads like, so the
-// page and the API can never disagree about the wording. Zero is good news on every signal here,
-// so the chip goes quiet rather than loud.
-const chipTone = (n: number) => (n > 0 ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-app text-muted ring-line')
+// THE CHIP. The server sends the NUMBER and lib/checklist-shared owns the wording. Zero is good
+// news on every signal here, so the tag goes quiet rather than loud.
 
 export function DailyChecklist() {
   const [data, setData] = useState<Data | null>(null)
@@ -111,96 +109,48 @@ export function DailyChecklist() {
 
   return (
     <div className="pb-16">
-      <header className="mb-4">
-        <p className="text-[11px] uppercase tracking-wider font-semibold text-muted inline-flex items-center gap-1.5">
-          <ClipboardCheck size={12} /> Operations
-        </p>
-        <div className="flex items-start gap-3 flex-wrap mt-1">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-bold text-ink tracking-tight">Daily Checklist</h1>
-            <p className="text-[13px] text-muted mt-0.5">{dayLabel}{data.clock ? ` · it is ${clockLabel(data.clock)}` : ''}</p>
-          </div>
-          {data.canManage && (
-            <button onClick={() => setManage(m => !m)}
-              className={'rounded-xl border px-2.5 py-1.5 text-[12px] font-bold ' + (manage ? 'bg-ink text-white border-ink' : 'border-line bg-white text-muted hover:text-ink')}>
-              <Pencil size={12} className="inline mr-1" />{manage ? 'Done editing' : 'Edit the list'}
-            </button>
-          )}
-        </div>
+      <LeanHead title="Daily Checklist">
+        <Pill title={dayLabel + (data.clock ? ' · it is ' + clockLabel(data.clock) : '')}>{data.clock ? clockLabel(data.clock) : dayLabel}</Pill>
+        <Pill tone={p.total > 0 && p.done === p.total ? 'emerald' : 'slate'} title={p.pct + '% of today done'}>{p.done}/{p.total} done</Pill>
+        {/* Late is its own number and colour — the only one that asks somebody to move. */}
+        {p.late > 0 && <Pill tone="roseSolid" title="Items whose time has passed without a tick">{p.late} late</Pill>}
+        {p.next && <Pill tone="brand" title={'Next due: ' + p.next.title + ' by ' + clockLabel(p.next.by_time)}>Next {clockLabel(p.next.by_time)}</Pill>}
+        {data.canManage && (
+          <button onClick={() => setManage(m => !m)}
+            className={'rounded-lg border px-2 py-1 text-[12px] font-semibold inline-flex items-center gap-1 ' + (manage ? 'bg-ink text-white border-ink' : 'border-line bg-white text-muted hover:text-ink')}>
+            <Pencil size={11} />{manage ? 'Done' : 'Edit list'}
+          </button>
+        )}
+      </LeanHead>
+      {err && <p className="mb-2 text-[12.5px] text-rose-700">{err}</p>}
 
-        {/* HOW THE DAY IS GOING. Late is its own number and its own colour, because it is the only
-            one that asks somebody to move. */}
-        <div className="mt-3 rounded-2xl border border-line bg-white px-4 py-3">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[19px] font-bold text-ink tabular-nums">{p.done}<span className="text-muted font-semibold text-[15px]">/{p.total}</span></span>
-            <span className="text-[12.5px] text-muted">done</span>
-            {p.late > 0 && (
-              <span className="inline-flex items-center gap-1 text-[12.5px] font-bold text-rose-700">
-                <AlertTriangle size={13} /> {p.late} past due
-              </span>
-            )}
-            {p.late === 0 && p.done === p.total && p.total > 0 && (
-              <span className="inline-flex items-center gap-1 text-[12.5px] font-bold text-emerald-700">
-                <CheckCircle2 size={13} /> Everything done
-              </span>
-            )}
-            {p.next && (
-              <span className="ml-auto text-[12.5px] text-muted">
-                Next: <span className="font-semibold text-ink">{p.next.title}</span> by {clockLabel(p.next.by_time)}
-              </span>
-            )}
-          </div>
-          <div className="mt-2 h-1.5 rounded-full bg-app overflow-hidden">
-            <div className={'h-full ' + (p.late ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: p.pct + '%' }} />
-          </div>
-        </div>
-        {err && <p className="mt-2 text-[12.5px] text-rose-700">{err}</p>}
-      </header>
-
-      {p.total === 0 && (
-        <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center">
-          <p className="text-[14px] font-semibold text-ink">Nothing on the list yet.</p>
-          <p className="text-[12.5px] text-muted mt-1 max-w-md mx-auto">
-            {data.canManage
-              ? 'Add the things that have to happen every single day — the ones you would notice if nobody did them.'
-              : 'A manager sets the daily list. It will appear here.'}
-          </p>
-        </div>
+      {p.total === 0 && !manage && (
+        <LeanEmpty>{data.canManage ? 'Nothing on the list yet — Edit list to add the things that must happen every day.' : 'Nothing on the list yet. A manager sets it.'}</LeanEmpty>
       )}
 
-      <div className="space-y-4">
-        {BANDS.map(band => {
-          const rows = byBand[band.key]
-          if (!rows.length && !manage) return null
-          const bandDone = rows.filter(r => r.done).length
-          const bandLate = rows.filter(r => r.late).length
-          const I = band.Icon
-          return (
-            <section key={band.key} className="rounded-2xl border border-line bg-white overflow-hidden">
-              <div className="px-3 py-2 bg-app/60 border-b border-line flex items-center gap-2">
-                <I size={14} className="text-muted" />
-                <span className="text-[12.5px] font-bold text-ink">{band.label}</span>
-                <span className="text-[11.5px] text-muted hidden sm:inline">{band.hint}</span>
-                {bandLate > 0 && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white">{bandLate} late</span>}
-                <span className="ml-auto text-[11.5px] text-muted tabular-nums">{bandDone}/{rows.length}</span>
-              </div>
-
-              <div className="divide-y divide-line">
-                {rows.map(r => (
-                  <ItemRow key={r.id} r={r} busy={busy} act={act} canTick={canTick} manage={manage}
-                    count={r.signal ? (data.signals?.[r.signal] ?? null) : null} />
-                ))}
-                {rows.length === 0 && <p className="px-3 py-3 text-[12px] text-muted">Nothing in this part of the day.</p>}
-                {manage && <AddItem band={band.key} act={act} busy={busy} nextSort={(rows[rows.length - 1]?.sort || 0) + 10} />}
-              </div>
-            </section>
-          )
-        })}
-      </div>
-
-      <p className="text-[11.5px] text-muted mt-4 px-1">
-        The list starts clean every morning — nothing carries over. Whoever does a thing ticks it, and their name goes next to it.
-      </p>
+      {/* Fresh every morning, nothing carried; whoever ticks is recorded. */}
+      {BANDS.map(band => {
+        const rows = byBand[band.key]
+        if (!rows.length && !manage) return null
+        const bandDone = rows.filter(r => r.done).length
+        const bandLate = rows.filter(r => r.late).length
+        const I = band.Icon
+        return (
+          <LeanSection key={band.key}
+            title={<span className="inline-flex items-center gap-1.5" title={band.hint}><I size={12} />{band.label}</span>}
+            tone={bandLate > 0 ? 'rose' : undefined}
+            right={<span className="tabular-nums text-muted">{bandLate > 0 ? <span className="text-rose-700 font-semibold">{bandLate} late · </span> : null}{bandDone}/{rows.length}</span>}>
+            <LeanList>
+              {rows.map(r => (
+                <ItemRow key={r.id} r={r} busy={busy} act={act} canTick={canTick} manage={manage}
+                  count={r.signal ? (data.signals?.[r.signal] ?? null) : null} />
+              ))}
+              {rows.length === 0 && <li className="px-4 py-2 text-[12px] text-muted">Nothing in this part of the day.</li>}
+              {manage && <AddItem band={band.key} act={act} busy={busy} nextSort={(rows[rows.length - 1]?.sort || 0) + 10} />}
+            </LeanList>
+          </LeanSection>
+        )
+      })}
     </div>
   )
 }
@@ -213,67 +163,52 @@ function ItemRow({ r, busy, act, canTick, manage, count }: {
   const due = clockLabel(r.by_time)
   const soon = !r.done && r.in_minutes != null && r.in_minutes >= 0 && r.in_minutes <= 30
   const chip = signalLabel(r.signal, count)
+  const hasDetail = !!r.detail || manage
+  const tick = (
+    <Tip label={canTick ? (r.done ? 'Mark not done' : 'Mark done') : 'You can see the list but not tick it'}>
+      <button
+        onClick={() => canTick && act({ action: 'tick', itemId: r.id, done: !r.done }, r.id)}
+        disabled={!canTick || busy === r.id}
+        aria-label={r.done ? 'Mark not done' : 'Mark done'}
+        className={'w-5 h-5 rounded-md border-2 grid place-items-center shrink-0 disabled:opacity-50 ' +
+          (r.done ? 'bg-emerald-600 border-emerald-600 text-white'
+            : r.late ? 'border-rose-400 text-rose-500 hover:bg-rose-100'
+            : 'border-line text-transparent hover:border-ink/40')}>
+        {busy === r.id ? <Loader2 size={11} className="animate-spin text-muted" /> : <Check size={12} strokeWidth={3} />}
+      </button>
+    </Tip>
+  )
   return (
-    <div className={'px-3 py-2.5 ' + (r.late ? 'bg-rose-50/60' : '')}>
-      <div className="flex items-start gap-2.5">
-        <button
-          onClick={() => canTick && act({ action: 'tick', itemId: r.id, done: !r.done }, r.id)}
-          disabled={!canTick || busy === r.id}
-          title={canTick ? (r.done ? 'Mark not done' : 'Mark done') : 'You can see the list but not tick it'}
-          className={'mt-0.5 w-5 h-5 rounded-md border-2 grid place-items-center shrink-0 disabled:opacity-50 ' +
-            (r.done ? 'bg-emerald-600 border-emerald-600 text-white'
-              : r.late ? 'border-rose-400 text-rose-500 hover:bg-rose-100'
-              : 'border-line text-transparent hover:border-ink/40')}>
-          {busy === r.id ? <Loader2 size={11} className="animate-spin text-muted" /> : <Check size={12} strokeWidth={3} />}
-        </button>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            {r.link
-              ? (
-                // The row is an instruction; the link is where the instruction is carried out. It
-                // does NOT tick the item — going to look at something is not having done it.
-                <Link href={r.link}
-                  className={'text-[13.5px] leading-snug inline-flex items-center gap-1 hover:underline ' +
-                    (r.done ? 'text-muted line-through' : 'text-ink font-medium')}>
-                  {r.title}<ArrowUpRight size={12} className="text-muted shrink-0" />
-                </Link>
-              )
-              : <span className={'text-[13.5px] leading-snug ' + (r.done ? 'text-muted line-through' : 'text-ink font-medium')}>{r.title}</span>}
-            {chip && !r.done && (
-              <span className={'text-[10.5px] font-bold px-1.5 py-0.5 rounded ring-1 tabular-nums ' + chipTone(count || 0)}>{chip}</span>
-            )}
-            {due && (
-              <span className={'text-[11px] font-bold tabular-nums inline-flex items-center gap-0.5 ' +
-                (r.done ? 'text-muted' : r.late ? 'text-rose-700' : soon ? 'text-amber-700' : 'text-muted')}>
-                <Clock size={10} />{r.late ? 'was due ' : 'by '}{due}
-              </span>
-            )}
-            {r.owner_role && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">{r.owner_role}</span>}
-          </div>
-
-          {r.detail && !r.done && <p className="text-[12px] text-muted mt-0.5 leading-snug">{r.detail}</p>}
-
-          {r.done && (
-            <p className="text-[11.5px] text-emerald-700 font-semibold mt-0.5">
-              {firstName(r.done_by) || 'Someone'} · {shortTime(r.done_at)}
-            </p>
-          )}
-        </div>
-
-        {manage && (
-          <div className="flex items-center gap-1 shrink-0">
-            <button onClick={() => setOpen(o => !o)} className="text-muted hover:text-ink" title="Edit"><Pencil size={12} /></button>
-            <button
-              onClick={() => act({ action: 'itemRetire', itemId: r.id }, 'retire' + r.id)}
-              disabled={busy === 'retire' + r.id}
-              className="text-muted hover:text-rose-600" title="Take this off the daily list"><Trash2 size={12} /></button>
-          </div>
+    <LeanRow
+      lead={tick}
+      tint={r.late ? 'rose' : undefined}
+      open={open} onToggle={() => setOpen(o => !o)}
+      name={<span className={r.done ? 'text-muted line-through font-medium' : ''}>{r.title}</span>}
+      tags={<>
+        {due && (
+          <Tag tone={r.done ? 'slate' : r.late ? 'rose' : soon ? 'amber' : 'slate'} title={r.late ? 'Was due by ' + due : 'Due by ' + due}>
+            <span className="inline-flex items-center gap-0.5"><Clock size={9} />{due}</span>
+          </Tag>
         )}
-      </div>
-
-      {manage && open && <EditItem r={r} act={act} busy={busy} onClose={() => setOpen(false)} />}
-    </div>
+        {chip && !r.done && <Tag tone={(count || 0) > 0 ? 'amber' : 'slate'} title="Live count">{chip}</Tag>}
+        {r.owner_role && <Tag title="Who does it">{r.owner_role}</Tag>}
+        {r.done && <Tag tone="emerald" title={'Ticked by ' + (r.done_by || 'someone') + ' at ' + shortTime(r.done_at)}>{firstName(r.done_by) || 'Someone'} · {shortTime(r.done_at)}</Tag>}
+      </>}
+      actions={<>
+        {/* The link is where the instruction is carried out. It does NOT tick the item — going to
+            look at something is not having done it. */}
+        {r.link && <Link href={r.link} aria-label="Open where this gets done"><Tip label="Open where this gets done"><span className="shrink-0 inline-flex items-center justify-center rounded-lg border border-line bg-white w-8 h-8 text-muted hover:text-ink hover:bg-app"><ArrowUpRight size={14} /></span></Tip></Link>}
+        {manage && <IconBtn title="Edit this item" onClick={() => setOpen(o => !o)}><Pencil size={13} /></IconBtn>}
+        {manage && (
+          <IconBtn title="Take this off the daily list" tone="bad" disabled={busy === 'retire' + r.id}
+            onClick={() => act({ action: 'itemRetire', itemId: r.id }, 'retire' + r.id)}><Trash2 size={13} /></IconBtn>
+        )}
+      </>}>
+      {hasDetail ? <>
+        {r.detail && <p className="text-[12.5px] text-muted">{r.detail}</p>}
+        {manage && <EditItem r={r} act={act} busy={busy} onClose={() => setOpen(false)} />}
+      </> : null}
+    </LeanRow>
   )
 }
 
@@ -286,7 +221,7 @@ function EditItem({ r, act, busy, onClose }: { r: Row; act: (b: any, k: string) 
   const [link, setLink] = useState(r.link || '')
   const [signal, setSignal] = useState(r.signal || '')
   return (
-    <div className="mt-2 ml-7 rounded-lg border border-line bg-app/40 p-2.5 space-y-2">
+    <div className="rounded-lg border border-line bg-app/40 p-2.5 space-y-2">
       <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What has to happen"
         className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] font-semibold" />
       <input value={detail} onChange={e => setDetail(e.target.value)} placeholder="What done looks like"
@@ -342,24 +277,24 @@ function AddItem({ band, act, busy, nextSort }: { band: Band; act: (b: any, k: s
 
   if (!on) {
     return (
-      <button onClick={() => setOn(true)} className="w-full px-3 py-2 text-left text-[12.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1.5">
+      <li><button onClick={() => setOn(true)} className="w-full px-4 py-2 text-left text-[12.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1.5">
         <Plus size={12} /> Add to {BANDS.find(b => b.key === band)?.label.toLowerCase()}
-      </button>
+      </button></li>
     )
   }
   return (
-    <div className="px-3 py-2.5 bg-app/40 space-y-2">
+    <li className="px-4 py-2.5 bg-app/40 space-y-2">
       <input autoFocus value={title} onChange={e => setTitle(e.target.value)} placeholder="What has to happen every day?"
         className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px]" />
       <div className="flex items-center gap-2 flex-wrap">
         <input type="time" value={byTime} onChange={e => setByTime(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
         <input value={role} onChange={e => setRole(e.target.value)} placeholder="Who (optional)" className="flex-1 min-w-[120px] rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
-        <button onClick={() => { setOn(false); setTitle('') }} className="text-muted hover:text-ink"><X size={14} /></button>
+        <IconBtn title="Cancel" onClick={() => { setOn(false); setTitle('') }}><X size={14} /></IconBtn>
         <button
           onClick={async () => { if (await act({ action: 'itemAdd', title, band, by_time: byTime, owner_role: role, sort: nextSort }, key)) { setTitle(''); setByTime(''); setRole(''); setOn(false) } }}
           disabled={busy === key || !title.trim()}
           className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-bold disabled:opacity-40">Add</button>
       </div>
-    </div>
+    </li>
   )
 }

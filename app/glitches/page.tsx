@@ -6,7 +6,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Shell } from '@/components/Shell'
 import { GlitchBoard } from '@/components/GlitchBoard'
 import { BuildingPatterns } from '@/components/BuildingPatterns'
-import { AlertTriangle, RefreshCw, Search } from 'lucide-react'
+import { RefreshCw, Search, ExternalLink, FileText, X } from 'lucide-react'
+import { LeanHead, LeanTabs, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty } from '@/components/lean'
 
 type Person = { id: number; name: string; departments: string[] }
 type Glitch = { id: string; unit: string; market: string; building?: string | null; issue: string; rawName: string; status: string; done: boolean; resolvedDate: string | null; scheduledDate: string | null; reportedDate: string | null; ageDays: number | null; running: boolean; unassigned: boolean; assignees: string[]; reportUrl: string | null }
@@ -16,7 +17,7 @@ function adminUrl(id: string) { return 'https://app.breezeway.io/task/' + id }
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
 
 export default function GlitchesPage() {
-  const [tab, setTab] = useState<'board' | 'history' | 'patterns'>('board')
+  const [tab, setTab] = useState<'board' | 'history' | 'patterns' | 'trends'>('board')
   const [data, setData] = useState<Data | null>(null)
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -68,109 +69,99 @@ export default function GlitchesPage() {
 
   const markets = ['all', 'Miami', 'Broward', 'North', 'Vendor']
   const openCount = all.filter(g => !g.done).length
+  const bg: any[] = board && Array.isArray(board.glitches) ? board.glitches : []
+  const inPlay = bg.filter(g => g.status !== 'closed').length
+  const boardRefunds = bg.reduce((s, g) => s + (Number(g.refund_approved) || 0), 0)
+  const topCats = (() => {
+    const byCat: Record<string, number> = {}
+    for (const g of bg) if (g.category) byCat[g.category] = (byCat[g.category] || 0) + 1
+    return Object.keys(byCat).map(k => ({ k, n: byCat[k] })).sort((a, b) => b.n - a.n).slice(0, 3)
+  })()
 
   return (
     <Shell>
-      <header className="mb-5">
-        <div className="text-[11px] font-semibold uppercase tracking-widest text-muted flex items-center gap-1.5"><AlertTriangle size={12} /> Operations</div>
-        <h1 className="text-3xl font-bold text-ink mt-1">Guest Issues</h1>
-        <p className="text-sm text-muted mt-1">Every guest-reported problem — what&rsquo;s open, what got resolved, and which units keep having issues. Current ones also show on Today in Ops.</p>
-      </header>
+      {/* The Today-in-Ops tab shows what needs eyes now; this page manages the pattern. */}
+      <LeanHead title="Guest Issues">
+        {bg.length > 0 && <Pill tone={inPlay ? 'rose' : 'emerald'} title="Cards on the escalation board that are not closed">{inPlay} in play</Pill>}
+        {data && <Pill title={all.length + ' Breezeway guest-reported tasks on record'}>{openCount} open in Breezeway</Pill>}
+        {boardRefunds > 0 && <Pill tone="emerald" title="Refunds approved across board cards">${Math.round(boardRefunds).toLocaleString()} refunded</Pill>}
+      </LeanHead>
 
-      {/* Board + History + Patterns, and on History five market chips, a search box and Refresh.
-          Wrapped, that is four rows of chrome between the title and the first glitch — one
-          swipeable strip below sm instead (`lh-actions`), untouched from sm up. */}
-      <div className="lh-actions flex items-center gap-2 flex-wrap mb-4">
-        <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
-          <button onClick={() => setTab('board')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'board' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Board</button>
-          <button onClick={() => setTab('history')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'history' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>History</button>
-          <button onClick={() => setTab('patterns')} className={'text-sm font-medium px-3 py-1.5 ' + (tab === 'patterns' ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}>Patterns</button>
-        </span>
-        {tab === 'board' && <span className="text-xs text-muted">Escalation board &mdash; every Breezeway guest-reported task ever is under History; recurring issues live in Patterns.</span>}
-        {tab === 'history' && (<>
-        {markets.map(m => (
-          <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
-        ))}
-        <span className="relative">
-          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit or issue…" className="text-sm border border-line rounded-lg pl-7 pr-2 py-1.5 bg-white w-56 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-        </span>
-        <button onClick={() => { setLoading(true); load() }} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
-        </>)}
-      </div>
+      <LeanTabs value={tab} onChange={setTab}
+        tabs={[
+          { key: 'board', label: 'Board', n: inPlay || null },
+          { key: 'history', label: 'History', n: data ? all.length : null },
+          { key: 'patterns', label: 'Patterns' },
+          { key: 'trends', label: 'Trends' },
+        ]}
+        right={tab === 'history' ? (<>
+          <select value={market} onChange={e => setMarket(e.target.value)} title="Market" className="text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white">
+            {markets.map(m => <option key={m} value={m}>{m === 'all' ? 'All markets' : m}</option>)}
+          </select>
+          <span className="relative">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Unit or issue…" className="text-[12px] border border-line rounded-lg pl-6 pr-2 py-1 bg-white w-40 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          </span>
+          <IconBtn title="Reload the history from Breezeway" onClick={() => { setLoading(true); load() }}><RefreshCw size={13} /></IconBtn>
+        </>) : null} />
 
       {tab === 'board' && <GlitchBoard />}
-      {tab !== 'board' && loading && !data && <div className="text-sm text-muted py-10 text-center">Loading glitches…</div>}
-      {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
+      {tab !== 'board' && tab !== 'patterns' && loading && !data && <LeanEmpty>Loading glitches…</LeanEmpty>}
+      {err && <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
 
-      {/* Nav diet 2026-08-11 (Jon): Building Patterns folded in from /patterns — the theme-level
-          prevention view (reviews + issues per building) leads, the repeat-offender drill follows. */}
-      {tab === 'patterns' && (
-        <>
-          <BuildingPatterns />
-          {data && (
-            <div className="mt-6">
-              <div className="text-[11px] font-semibold uppercase tracking-widest text-muted mb-2">Repeat offenders — glitch history</div>
-              <PatternsView all={all} board={board} onDrill={(u: string) => { setTab('history'); setQ(u) }} />
-            </div>
-          )}
-        </>
+      {/* Nav diet 2026-08-11 (Jon): Building Patterns folded in from /patterns. Lean pass: the
+          repeat-offender drill it used to stack underneath is now its own Trends tab. */}
+      {tab === 'patterns' && <BuildingPatterns />}
+      {tab === 'trends' && data && (
+        <PatternsView all={all} board={board} onDrill={(u: string) => { setTab('history'); setQ(u) }} />
       )}
 
       {tab === 'history' && data && (
         <>
-          <div className={'rounded-2xl border p-4 mb-4 flex items-center gap-2 flex-wrap ' + (openCount > 0 ? 'border-rose-300 bg-rose-50' : 'border-line bg-white')}>
-            <AlertTriangle size={16} className={openCount > 0 ? 'text-rose-700' : 'text-muted'} />
-            <span className="font-semibold text-ink">{all.length + ' glitches on record · ' + openCount + ' still open'}</span>
-            {(() => {
-              const bg: any[] = board && Array.isArray(board.glitches) ? board.glitches : []
-              if (!bg.length) return null
-              const ref = bg.reduce((s, g) => s + (Number(g.refund_approved) || 0), 0)
-              const byCat: Record<string, number> = {}
-              for (const g of bg) if (g.category) byCat[g.category] = (byCat[g.category] || 0) + 1
-              const top = Object.keys(byCat).map(k => ({ k, n: byCat[k] })).sort((a, b) => b.n - a.n).slice(0, 3)
-              return (
-                <span className="text-sm text-muted w-full mt-1 flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-ink">Board:</span>
-                  <span>{bg.filter(g => g.status !== 'closed').length} in play</span>
-                  {ref > 0 && <span>· ${Math.round(ref).toLocaleString()} refunds approved</span>}
-                  {top.length > 0 && <span>· top: {top.map(t => t.k.replace('Maintenance - ', '') + ' ×' + t.n).join(', ')}</span>}
-                </span>
-              )
-            })()}
-            {repeats.length > 0 && (
-              <span className="text-sm text-muted w-full mt-1">
-                Repeat units: {repeats.map((r, i) => <button key={r.unit} onClick={() => setQ(r.unit)} className="underline decoration-dotted hover:text-ink">{r.unit} ×{r.n}{i < repeats.length - 1 ? '' : ''}</button>).reduce((acc: any[], el, i) => acc.concat(i ? [<span key={'s' + i}> · </span>, el] : [el]), [])}
-              </span>
-            )}
-          </div>
+          {(topCats.length > 0 || repeats.length > 0) && (
+            <div className="flex items-center gap-1.5 flex-wrap mb-3 px-1 text-[12px] text-muted">
+              {topCats.length > 0 && <span className="font-semibold">Top</span>}
+              {topCats.map(t => <Tag key={t.k} title={t.k}>{t.k.replace('Maintenance - ', '')} ×{t.n}</Tag>)}
+              {repeats.length > 0 && <span className="font-semibold ml-2">Repeat units</span>}
+              {repeats.map(r => (
+                <button key={r.unit} onClick={() => setQ(r.unit)} title={'Show only ' + r.unit}><Tag tone="rose">{r.unit} ×{r.n}</Tag></button>
+              ))}
+            </div>
+          )}
 
-          {rows.length === 0 && <div className="text-sm text-muted py-10 text-center">Nothing matches.</div>}
-          <div className="space-y-2">
-            {rows.map(g => (
-              /* The assign box (150px) plus the two links left ~35px for the issue itself on a
-                 phone. Wrap: the issue takes its own line, then assign + links sit under it. */
-              <div key={g.id} className={'rounded-2xl border bg-white px-4 py-3 flex items-center gap-3 flex-wrap gap-y-2 ' + (g.done ? 'border-line opacity-80' : g.unassigned ? 'border-rose-200' : 'border-line')}>
-                <div className="basis-full min-w-0 sm:basis-auto sm:flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-ink">{g.issue}</span>
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 border-line text-muted">{g.unit}</span>
-                    <span className="text-[11px] text-muted">{g.market}</span>
-                    {g.reportedDate && <span className="text-[11px] text-muted">reported {fmtShort(g.reportedDate)}</span>}
+          {rows.length === 0 ? <LeanEmpty>Nothing matches.</LeanEmpty> : (
+            <LeanList>
+              {rows.map(g => (
+                <LeanRow key={g.id}
+                  tint={!g.done && g.unassigned ? 'rose' : undefined}
+                  name={g.issue}
+                  meta={g.unit + (g.market ? ' · ' + g.market : '')}
+                  tags={<>
                     {g.done
-                      ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-200">Resolved{g.resolvedDate ? ' ' + fmtShort(g.resolvedDate) : ''}</span>
+                      ? <Tag tone="emerald">Resolved{g.resolvedDate ? ' ' + fmtShort(g.resolvedDate) : ''}</Tag>
                       : g.running
-                        ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-sky-50 text-sky-700 border-sky-200">In progress</span>
-                        : <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + ((g.ageDays || 0) >= 2 ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-amber-50 text-amber-800 border-amber-200')}>Open{g.ageDays != null && g.ageDays > 0 ? ' · ' + g.ageDays + 'd' : ''}</span>}
-                  </div>
-                </div>
-                {!g.done && <input list="glitch-page-ppl" defaultValue="" placeholder={g.assignees.length ? g.assignees.join(', ') : 'assign…'} onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(g.id, p.id) } }} className={'text-xs rounded border px-2 py-1.5 bg-white w-[150px] shrink-0 ' + (g.assignees.length ? 'border-line text-ink placeholder:text-ink' : 'border-rose-300 text-rose-800 placeholder:text-rose-800 font-medium')} />}
-                {g.done && g.assignees.length > 0 && <span className="text-xs text-muted shrink-0">{g.assignees.join(', ')}</span>}
-                <a href={adminUrl(g.id)} target="_blank" rel="noreferrer" className="text-xs font-medium text-brand-600 hover:underline shrink-0" title="Open the admin task in Breezeway — edit, assign, check">admin</a>
-                {g.reportUrl && <a href={g.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-muted hover:underline shrink-0" title="View the field report">report</a>}
-              </div>
-            ))}
-          </div>
+                        ? <Tag tone="sky">In progress</Tag>
+                        : <Tag tone={(g.ageDays || 0) >= 2 ? 'rose' : 'amber'} title={g.ageDays != null ? g.ageDays + ' days open' : undefined}>Open{g.ageDays != null && g.ageDays > 0 ? ' · ' + g.ageDays + 'd' : ''}</Tag>}
+                    {g.reportedDate && <Tag title="Reported">{fmtShort(g.reportedDate)}</Tag>}
+                    {!g.done && g.unassigned && <Tag tone="rose" title="Open the row to assign">Unassigned</Tag>}
+                    {g.assignees.length > 0 && <Tag title={'Assigned: ' + g.assignees.join(', ')}>{g.assignees[0].split(' ')[0]}{g.assignees.length > 1 ? ' +' + (g.assignees.length - 1) : ''}</Tag>}
+                  </>}
+                  actions={<>
+                    <IconBtn title="Open the task in Breezeway (edit, assign, check)" href={adminUrl(g.id)}><ExternalLink size={13} /></IconBtn>
+                    {g.reportUrl && <IconBtn title="View the field report" href={g.reportUrl}><FileText size={13} /></IconBtn>}
+                  </>}>
+                  {!g.done ? (
+                    <div className="flex items-center gap-2 flex-wrap text-[12px]">
+                      <span className="text-muted">Assign</span>
+                      <input list="glitch-page-ppl" defaultValue="" placeholder={g.assignees.length ? g.assignees.join(', ') : 'pick a person…'} onChange={e => { const inp = e.target as HTMLInputElement; const nm = inp.value.trim().replace(/\s*\([^)]*\)\s*$/, ''); const p = people.find(x => x.name === nm); if (p) { inp.value = ''; assign(g.id, p.id) } }} className={'text-[12px] rounded-lg border px-2 py-1 bg-white w-56 max-w-full ' + (g.assignees.length ? 'border-line text-ink placeholder:text-ink' : 'border-rose-300 text-rose-800 placeholder:text-rose-800 font-medium')} />
+                    </div>
+                  ) : (
+                    <p className="text-[12px] text-muted">{g.assignees.length ? 'Handled by ' + g.assignees.join(', ') : 'No assignee recorded'}</p>
+                  )}
+                </LeanRow>
+              ))}
+            </LeanList>
+          )}
           <datalist id="glitch-page-ppl">
             {people.map(p => <option key={p.id} value={p.name + (p.departments && p.departments.length ? ' (' + p.departments.join('/') + ')' : '')} />)}
           </datalist>
@@ -260,29 +251,22 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
 
   return (
     <div className="space-y-4">
-      {/* FOCUS BAR — building and/or unit */}
-      <div className="rounded-2xl border border-line bg-white p-3 flex items-center gap-2 flex-wrap">
-        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold">Focus</span>
-        <select value={bFilter} onChange={e => { setBFilter(e.target.value); setUFilter('') }} className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white max-w-[240px]">
+      {/* FOCUS BAR — building and/or unit, with the headline numbers as pills on the same line. */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <select value={bFilter} onChange={e => { setBFilter(e.target.value); setUFilter('') }} title="Focus on one building" className="text-[12px] py-1 pl-2 pr-6 border border-line rounded-lg bg-white max-w-[14rem]">
           <option value="">All buildings</option>
           {buildingOpts.map(x => <option key={x.b} value={x.b}>{x.b} ({x.n})</option>)}
         </select>
-        <input list="patterns-units" value={uFilter} onChange={e => setUFilter(e.target.value)} placeholder={'Unit\u2026 (' + unitOpts.length + ')'} className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white w-56" />
+        <input list="patterns-units" value={uFilter} onChange={e => setUFilter(e.target.value)} title="Focus on one unit" placeholder={'Unit\u2026 (' + unitOpts.length + ')'} className="text-[12px] py-1 px-2 border border-line rounded-lg bg-white w-44" />
         <datalist id="patterns-units">{unitOpts.map(x => <option key={x.u} value={x.u}>{'\u00d7' + x.n}</option>)}</datalist>
-        {focused && <button onClick={() => { setBFilter(''); setUFilter('') }} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-app">Clear</button>}
-        {focused && (
-          <span className="text-sm text-ink font-medium">
-            {uFilter || bFilter}: <span className="font-bold">{filtered.length}</span> glitches \u00b7 <span className={stats.open > 0 ? 'text-rose-700 font-bold' : 'font-bold'}>{stats.open} open</span> \u00b7 {stats.last90} in last 90d
-          </span>
-        )}
-        {uFilter && <button onClick={() => onDrill(uFilter)} className="text-[12px] font-semibold text-brand-700 hover:underline">Full history \u2192</button>}
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">{focused ? 'Glitches (focused)' : 'On record'}</div><div className="text-2xl font-bold text-ink">{filtered.length}</div></div>
-        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Still open</div><div className="text-2xl font-bold text-rose-700">{stats.open}</div></div>
-        
-        <div className="rounded-2xl border border-line bg-white p-3"><div className="text-[11px] uppercase tracking-wide text-muted">Refunds approved (board)</div><div className="text-2xl font-bold text-ink">${Math.round(ref).toLocaleString()}</div></div>
+        {focused && <IconBtn title="Clear the focus" onClick={() => { setBFilter(''); setUFilter('') }}><X size={13} /></IconBtn>}
+        {uFilter && <button onClick={() => onDrill(uFilter)} className="text-[12px] font-semibold text-brand-700 hover:underline">Full history</button>}
+        <span className="ml-auto flex items-center gap-1.5 flex-wrap">
+          <Pill title={focused ? 'Glitches for ' + (uFilter || bFilter) : 'Glitches on record'}>{filtered.length} on record</Pill>
+          <Pill tone={stats.open > 0 ? 'rose' : 'slate'} title="Still open">{stats.open} open</Pill>
+          <Pill title="Reported in the last 90 days">{stats.last90} in 90d</Pill>
+          <Pill tone={ref > 0 ? 'emerald' : 'slate'} title="Refunds approved on board cards">${Math.round(ref).toLocaleString()} refunds</Pill>
+        </span>
       </div>
 
       <div className="rounded-2xl border border-line bg-white p-4">
@@ -304,7 +288,7 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
 
       <div className="grid md:grid-cols-2 gap-4">
         <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="text-sm font-semibold text-ink mb-2">Recurring issue themes{focused ? ' \u2014 ' + (uFilter || bFilter) : ''}</div>
+          <div className="text-sm font-semibold text-ink mb-2" title="Keyword match on the task issue text; one glitch can hit multiple themes">Recurring issue themes{focused ? ' \u2014 ' + (uFilter || bFilter) : ''}</div>
           <div className="space-y-1.5">
             {stats.themes.map(t => (
               <div key={t.label} className="flex items-center gap-2 text-[12px]">
@@ -315,19 +299,17 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
             ))}
             {stats.themes.length === 0 && <div className="text-[12px] text-muted">No glitches in this selection.</div>}
           </div>
-          <div className="text-[10px] text-muted mt-2">Keyword match on the task issue text; one glitch can hit multiple themes.</div>
         </div>
         <div className="rounded-2xl border border-line bg-white p-4">
           <div className="text-sm font-semibold text-ink mb-2">{uFilter ? 'Unit in focus' : 'Repeat-offender units' + (bFilter ? ' \u2014 ' + bFilter : '')}</div>
           <div className="divide-y divide-line">
             {stats.units.map(x => (
-              <button key={x.u} onClick={() => setUFilter(uFilter === x.u ? '' : x.u)} className={'w-full flex items-center gap-2 py-1.5 text-left text-[12px] rounded px-1 ' + (uFilter === x.u ? 'bg-ink text-white' : 'hover:bg-app/50')}>
+              <button key={x.u} onClick={() => setUFilter(uFilter === x.u ? '' : x.u)} title={uFilter === x.u ? 'Clear the focus' : 'Focus every stat on this unit'} className={'w-full flex items-center gap-2 py-1.5 text-left text-[12px] rounded px-1 ' + (uFilter === x.u ? 'bg-ink text-white' : 'hover:bg-app/50')}>
                 <span className={'flex-1 ' + (uFilter === x.u ? 'text-white' : 'text-ink')}>{x.u}</span>
                 <span className={'tabular-nums font-semibold ' + (uFilter === x.u ? 'text-white' : 'text-rose-700')}>{'\u00d7'}{x.n}</span>
               </button>
             ))}
           </div>
-          <div className="text-[10px] text-muted mt-2">Click a unit to focus every stat on it; click again to clear.</div>
         </div>
       </div>
 
@@ -342,7 +324,6 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
             <FragmentRow key={b.b} b={b} onPick={() => { if (bFilter || uFilter) setUFilter(uFilter === b.b ? '' : b.b); else { setBFilter(b.b); setUFilter('') } }} />
           ))}
         </div>
-        <div className="text-[10px] text-muted mt-2">{bFilter || uFilter ? 'Click a unit to focus on it.' : 'Click a building to focus every stat on it.'}</div>
       </div>
 
       {bg.length > 0 && (
@@ -350,7 +331,7 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
           <div className="text-sm font-semibold text-ink mb-2">Board categories{focused ? ' \u2014 ' + (uFilter || bFilter) : ''}</div>
           <div className="flex flex-wrap gap-1.5 text-[11px]">
             {Object.entries(bg.reduce((m: Record<string, number>, g: any) => { if (g.category) m[g.category] = (m[g.category] || 0) + 1; return m }, {})).sort((a: any, b: any) => b[1] - a[1]).map(([k, n]: any) => (
-              <span key={k} className="px-2 py-1 rounded-full border border-line bg-app text-muted">{k.replace('Maintenance - ', '')} <span className="font-semibold text-ink">{n}</span></span>
+              <Tag key={k} title={k}>{k.replace('Maintenance - ', '')} {n}</Tag>
             ))}
           </div>
         </div>
@@ -361,7 +342,7 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
 function FragmentRow({ b, onPick }: { b: { b: string; total: number; open: number; recent: number }; onPick?: () => void }) {
   return (
     <>
-      <button onClick={onPick} className="text-left text-ink hover:underline decoration-dotted">{b.b}</button>
+      <button onClick={onPick} title="Focus every stat on this" className="text-left text-ink hover:underline decoration-dotted">{b.b}</button>
       <div className="text-right tabular-nums font-semibold text-ink">{b.total}</div>
       <div className={'text-right tabular-nums font-semibold ' + (b.open > 0 ? 'text-rose-700' : 'text-muted')}>{b.open}</div>
       <div className="text-right tabular-nums text-muted">{b.recent}</div>

@@ -6,6 +6,7 @@ import PolishButton from './PolishButton'
 // Breezeway task for the field, and move the card along the escalation path.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil, GraduationCap } from 'lucide-react'
+import { Pill, Tag, IconBtn } from './lean'
 import CommentThread from './CommentThread'
 import UnitCalendar from './UnitCalendar'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
@@ -228,16 +229,18 @@ export function GlitchBoard() {
 
   return (
     <div>
-      <div className="lh-actions flex items-center gap-2 flex-wrap mb-4">
-        <button onClick={() => setShowNew(true)} className="text-sm font-medium px-3 py-1.5 rounded-lg bg-ink text-white inline-flex items-center gap-1.5"><Plus size={14} /> New glitch</button>
-        {markets.map(m => (
-          <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
-        ))}
-        {canTrain ? (
-          <button onClick={() => setShowTrain(true)} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100 inline-flex items-center gap-1.5"><GraduationCap size={14} /> Train refund advisor</button>
-        ) : null}
-        <button onClick={() => setShowTrash(!showTrash)} className={(canTrain ? '' : 'ml-auto ') + 'text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5'}><Trash2 size={13} /> Recently deleted</button>
-        <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
+      {/* ONE LINE: the verb, the market filter, the board's numbers, then the quiet tools. */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-3">
+        <button onClick={() => setShowNew(true)} className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white inline-flex items-center gap-1"><Plus size={13} /> New glitch</button>
+        <select value={market} onChange={e => setMarket(e.target.value)} title="Market" className="text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white">
+          {markets.map(m => <option key={m} value={m}>{m === 'all' ? 'All markets' : m}</option>)}
+        </select>
+        <GlitchKpis rows={rows} />
+        <span className="ml-auto flex items-center gap-1">
+          {canTrain ? <IconBtn title="Train the refund advisor" tone="brand" onClick={() => setShowTrain(true)}><GraduationCap size={14} /></IconBtn> : null}
+          <IconBtn title="Recently deleted glitches (restore)" onClick={() => setShowTrash(!showTrash)}><Trash2 size={13} /></IconBtn>
+          <IconBtn title="Reload the board" onClick={() => { setLoading(true); load() }}><RefreshCw size={13} /></IconBtn>
+        </span>
       </div>
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
       {showTrash && <TrashDrawer kind="glitch" onRestored={load} onClose={() => setShowTrash(false)} />}
@@ -245,8 +248,6 @@ export function GlitchBoard() {
         {showTrain ? <RefundTraining compact /> : null}
       </Sheet>
       {showNew && <NewGlitch onDone={() => { setShowNew(false); load() }} onCancel={() => setShowNew(false)} />}
-
-      <GlitchKpis rows={rows} />
 
       {/* FOUR LANES FIT. The old seven scrolled sideways on every screen, so the board could never
           be read in one look — which is most of what "confusing" meant. On a phone the lanes still
@@ -256,14 +257,11 @@ export function GlitchBoard() {
           const cards = rows.filter(g => laneOf(g.status).key === lane.key)
           return (
             <div key={lane.key} className="rounded-2xl bg-app/70 border border-line min-w-0">
-              <div className="px-3 py-2.5 border-b border-line">
-                <div className="flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-ink">{lane.label}</span>
-                  <span className={'text-[11px] font-bold tabular-nums px-1.5 rounded ' + (cards.length ? 'bg-ink text-white' : 'text-faint')}>{cards.length}</span>
-                </div>
-                <p className="text-[10.5px] text-muted mt-0.5">{lane.hint}</p>
+              <div className="px-3 py-2 border-b border-line flex items-center gap-2" title={lane.label + ' — ' + lane.hint}>
+                <span className="text-[12px] font-bold text-ink">{lane.label}</span>
+                <span className={'text-[11px] font-bold tabular-nums px-1.5 rounded ' + (cards.length ? 'bg-ink text-white' : 'text-faint')}>{cards.length}</span>
               </div>
-              <div className="p-2 space-y-2 min-h-[64px]"
+              <div className="p-1.5 space-y-1.5 min-h-[56px]"
                 onDragOver={e => e.preventDefault()}
                 onDrop={e => {
                   e.preventDefault()
@@ -273,7 +271,7 @@ export function GlitchBoard() {
                 {cards.map(g => (
                   <GlitchCard key={g.id} g={g} onOpen={() => setOpen(g.id)} />
                 ))}
-                {cards.length === 0 && <p className="text-[11px] text-faint text-center py-5">Nothing here</p>}
+                {cards.length === 0 && <p className="text-[11px] text-faint text-center py-4">Nothing here</p>}
               </div>
             </div>
           )
@@ -537,31 +535,23 @@ function GlitchKpis({ rows }: { rows: Glitch[] }) {
 
   const dur = (h: number) => h < 48 ? Math.round(h) + 'h' : Math.round(h / 24) + 'd'
 
-  const Tile = ({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) => (
-    <div className="min-w-0 rounded-2xl bg-white ring-1 ring-line px-4 py-3">
-      <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted">{label}</p>
-      <p className={'text-[20px] font-bold tabular-nums leading-tight mt-0.5 ' + (tone || 'text-ink')}>{value}</p>
-      {sub ? <p className="text-[11px] text-muted mt-0.5 break-words">{sub}</p> : null}
-    </div>
-  )
-
+  // Pills, not tiles (lean pass). What each number means lives in its hover.
   return (
-    <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4 mb-4">
-      <Tile label="Open now" value={String(stat.open)}
-        tone={stat.open ? 'text-ink' : 'text-emerald-700'}
-        sub={stat.open && stat.oldest > 0 ? 'oldest is ' + stat.oldest + ' day' + (stat.oldest === 1 ? '' : 's') + ' old' : 'nothing outstanding'} />
-      <Tile label="Typical time to close"
-        value={stat.median != null ? dur(stat.median) : '—'}
-        sub={stat.median != null
-          ? 'median of ' + stat.measured + ' closed' + (stat.estimated ? ' · ' + stat.estimated + ' older ones estimated' : '')
-          : (stat.estimated ? stat.estimated + ' closed before we timed them' : 'nothing closed yet')} />
-      <Tile label="Refunds given" value={stat.refundTotal ? money(stat.refundTotal) || '—' : '$0'}
-        tone={stat.refundTotal ? 'text-emerald-700' : 'text-ink'}
-        sub={stat.refundCount ? 'across ' + stat.refundCount + ' issue' + (stat.refundCount === 1 ? '' : 's') : 'none logged'} />
-      <Tile label="Waiting on approval" value={String(stat.awaitingApproval)}
-        tone={stat.awaitingApproval ? 'text-violet-700' : 'text-ink'}
-        sub={stat.awaitingApproval ? 'over the cap, unsigned' : 'nothing pending'} />
-    </div>
+    <>
+      <Pill tone={stat.open ? 'slate' : 'emerald'}
+        title={stat.open && stat.oldest > 0 ? 'Open now — oldest is ' + stat.oldest + ' day' + (stat.oldest === 1 ? '' : 's') + ' old' : 'Nothing outstanding'}>
+        {stat.open} open{stat.open && stat.oldest > 0 ? ' · ' + stat.oldest + 'd oldest' : ''}
+      </Pill>
+      <Pill title={stat.median != null
+        ? 'Typical time to close: median of ' + stat.measured + ' closed' + (stat.estimated ? ' · ' + stat.estimated + ' older ones estimated, not counted' : '')
+        : (stat.estimated ? stat.estimated + ' closed before we timed them' : 'Nothing closed yet')}>
+        {stat.median != null ? dur(stat.median) : '—'} to close
+      </Pill>
+      <Pill tone={stat.refundTotal ? 'emerald' : 'slate'} title={stat.refundCount ? 'Refunds given across ' + stat.refundCount + ' issue' + (stat.refundCount === 1 ? '' : 's') : 'No refunds logged'}>
+        {stat.refundTotal ? money(stat.refundTotal) || '$0' : '$0'} refunded
+      </Pill>
+      {stat.awaitingApproval > 0 && <Pill tone="violet" title="Refunds over the cap, not yet signed off">{stat.awaitingApproval} need approval</Pill>}
+    </>
   )
 }
 
@@ -907,63 +897,41 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
   const trade = tradeOf(g.category)
   const stay = stayState(g.check_in, g.check_out)
 
+  const taskTag = g.breezeway_task_id
+    ? (g.task_status === 'completed' ? <Tag tone="emerald" title="Breezeway task completed">Task done</Tag>
+      : g.task_status === 'in_progress' ? <Tag tone="sky" title="Breezeway task in progress">Task running</Tag>
+      : <Tag title="Breezeway task not started">Task not started</Tag>)
+    : <Tag tone="amber" title="No Breezeway task filed for the crew yet">No task</Tag>
+  // TWO LINES (lean pass, 2026-09-22): the unit, then the tags. What the guest said, the guest,
+  // market and dates are one click away in the sheet — and in the hover here.
+  const hover = [g.overview ? String(g.overview).slice(0, 200) : '', g.guest_name || '', g.market || '',
+    g.check_in ? stay.label + ' ' + fmtShort(g.check_in) + ' → ' + fmtShort(g.check_out) : ''].filter(Boolean).join('\n')
+
   return (
     <div draggable onDragStart={e => e.dataTransfer.setData('text/plain', g.id)}
-      className={'rounded-xl border bg-white shadow-soft cursor-grab active:cursor-grabbing ' +
+      className={'rounded-xl border bg-white cursor-grab active:cursor-grabbing ' +
         (urgent ? 'border-rose-300' : 'border-line')}>
-      <button onClick={onOpen} className="w-full text-left px-3 py-2.5 min-w-0">
-        {/* WHERE. Unit is what ops navigates by; market is how they filter. */}
-        <div className="flex items-baseline gap-2 min-w-0">
-          <p className="text-[13.5px] font-bold text-ink leading-snug truncate flex-1 min-w-0">{g.unit || 'No unit'}</p>
-          {g.market ? (
-            <span className="shrink-0 text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">{g.market}</span>
+      <button onClick={onOpen} title={hover} className="w-full text-left px-2.5 py-2 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="text-[13px] font-semibold text-ink truncate flex-1 min-w-0">{g.unit || 'No unit'}</p>
+          {g.assignee ? (
+            <span className="shrink-0 text-[10.5px] font-semibold text-muted inline-flex items-center gap-0.5" title={'Assigned to ' + g.assignee}>
+              <User2 size={10} />{g.assignee.split(' ')[0]}
+            </span>
           ) : null}
         </div>
-        <p className="text-[11.5px] text-muted truncate">{g.guest_name || 'Guest'}</p>
-
-        {/* CAN I ACT ON THIS TODAY? (Jon, 2026-09-15: "should show check in and checkout date".)
-            A guest in the unit tonight is a different job from a unit that emptied last week, and
-            that was only discoverable by opening the card. "In house" is the answer; the dates are
-            the evidence behind it. */}
-        {g.check_in ? (
-          <p className="text-[11.5px] mt-1 flex items-center gap-1.5 min-w-0">
-            <CalendarDays size={11} className={stay.now ? 'text-emerald-600 shrink-0' : 'text-muted shrink-0'} />
-            <span className={stay.now ? 'font-semibold text-emerald-700 shrink-0' : 'text-muted shrink-0'}>{stay.label}</span>
-            <span className="text-faint truncate">{fmtShort(g.check_in)} → {fmtShort(g.check_out)}</span>
-          </p>
-        ) : null}
-
-        <p className="text-[12px] text-ink/70 mt-1 line-clamp-2 leading-snug">{g.overview}</p>
-
-        {/* WHO DO I SEND, AND HOW LOUD IS IT. Urgent is red and first because it is the only thing
-            here that changes the ORDER work gets done in. */}
-        <div className="flex items-center gap-1 flex-wrap mt-2">
-          {urgent ? (
-            <span className="text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-600 text-white">Urgent</span>
-          ) : null}
-          {incident ? (
-            <span className="text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 ring-1 ring-rose-200">{g.glitch_type}</span>
-          ) : null}
-          {trade ? <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded ring-1 ' + trade.cls}>{trade.label}</span> : null}
-          {g.breezeway_task_id ? (
-            <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded ' +
-              (g.task_status === 'completed' ? 'bg-emerald-100 text-emerald-700'
-                : g.task_status === 'in_progress' ? 'bg-sky-100 text-sky-700'
-                : 'bg-app text-muted ring-1 ring-line')}>
-              {g.task_status === 'completed' ? 'Task done' : g.task_status === 'in_progress' ? 'Task running' : 'Task not started'}
-            </span>
-          ) : (
-            <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">No task yet</span>
-          )}
-          {refund > 0 ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">Refunded {money(refund)}</span> : null}
-          {owedRefund ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">Refund not logged</span> : null}
-          {(g as any).refund_needs_approval ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-violet-600 text-white">Needs approval</span> : null}
-          {due ? <span className={'text-[9.5px] font-bold px-1.5 py-0.5 rounded border ' + due.cls}>{due.label}</span> : null}
-          {g.assignee ? (
-            <span className="text-[9.5px] font-semibold text-muted inline-flex items-center gap-0.5 ml-auto">
-              <User2 size={9} />{g.assignee.split(' ')[0]}
-            </span>
-          ) : null}
+        {/* WHO DO I SEND, HOW LOUD, CAN I ACT TODAY. Urgent first — it is the only tag that
+            changes the ORDER work gets done in. */}
+        <div className="flex items-center gap-1 flex-wrap mt-1">
+          {urgent ? <Tag tone="roseSolid">Urgent</Tag> : null}
+          {incident ? <Tag tone="rose">{g.glitch_type}</Tag> : null}
+          {trade ? <span title={g.category || ''} className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ring-1 ' + trade.cls}>{trade.label}</span> : null}
+          {stay.now ? <Tag tone="emerald" title={'Guest in the unit: ' + fmtShort(g.check_in) + ' → ' + fmtShort(g.check_out)}>In house</Tag> : null}
+          {taskTag}
+          {refund > 0 ? <Tag tone="emerald" title="Refund given">{money(refund)}</Tag> : null}
+          {owedRefund ? <Tag tone="amber" title="Sitting in refund but no amount logged">Refund?</Tag> : null}
+          {(g as any).refund_needs_approval ? <Tag tone="violet" title="Refund over the cap, waiting on approval">Approval</Tag> : null}
+          {due ? <span className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md border ' + due.cls}>{due.label}</span> : null}
         </div>
       </button>
     </div>
