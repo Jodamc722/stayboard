@@ -24,11 +24,20 @@ export default async function ReservationDetail({ params }: { params: { id: stri
     .maybeSingle()
   if (!r) notFound()
 
-  const messages = r.conversation_id
+  // The booking row often has no conversation_id — the conversation mirror links back by
+  // reservation_id, so look there too (the same fallback lib/reservation-360 uses).
+  let convId: string | null = r.conversation_id || null
+  if (!convId) {
+    try {
+      const { data: c } = await supabaseAdmin().from('guesty_conversations').select('id').eq('reservation_id', params.id).order('last_message_at', { ascending: false }).limit(1)
+      convId = Array.isArray(c) && c.length ? String((c[0] as any).id) : null
+    } catch { convId = null }
+  }
+  const messages = convId
     ? (await supabase
         .from('guesty_messages')
         .select('*')
-        .eq('conversation_id', r.conversation_id)
+        .eq('conversation_id', convId)
         .order('sent_at', { ascending: true })
         .limit(200)).data ?? []
     : []
