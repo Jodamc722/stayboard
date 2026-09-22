@@ -1775,6 +1775,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const setVerdict = (next: Any) => patch('verdict', next)
   // A fixed order so a photo belongs to the same section every time the page renders, and so the
   // snapshot — which sits directly under The Month — is left clean rather than double-imaged.
+  // Everything the photo picker can offer. Onboarding decks carry content.photoPool; an owner
+  // review never has one, so without the gallery the picker opened on an empty grid and the only
+  // way to change a picture was to paste a URL.
+  const pickPool: string[] = (() => {
+    const a = Array.isArray(c.photoPool) ? (c.photoPool as string[]) : []
+    const b = Array.isArray(gallery) ? gallery : []
+    const seen: Record<string, true> = {}
+    return a.concat(b).filter(u => !!u && !seen[u] && (seen[u] = true))
+  })()
   const PHOTO_ORDER = ['pacing', 'plan', 'statement', 'ahead', 'voices', 'projects']
   const photoFor = (key: string): string | null => {
     const pics = Array.isArray(gallery) ? gallery : []
@@ -2561,11 +2570,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: t.ink, color: t.bg }}>Use</button>
             </div>
-            {(Array.isArray(c.photoPool) ? c.photoPool : []).length > 0 && (
+            {pickPool.length > 0 && (
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>Or pick one from the listing</p>
             )}
             <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))' }}>
-              {(Array.isArray(c.photoPool) ? c.photoPool : []).map((src: string, i: number) => (
+              {pickPool.map((src: string, i: number) => (
                 <button key={i} onClick={() => { photoPick.set(src); answerChanged(); setPhotoPick(null); setPhotoUrl('') }}
                   className="relative rounded-lg overflow-hidden" style={{ aspectRatio: '4 / 3', border: '2px solid ' + (src === photoPick.cur ? t.accent : 'transparent') }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -4530,6 +4539,48 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </div>
           )
 
+          // EVERY PHOTO ON THIS DECK IS SELECTABLE (Jon, 2026-09-22: "we can use more photos, all
+          // editiable and sletable"). Same picker the onboarding deck hangs off its images: the
+          // whole frame is the target in edit mode, because a button per photo becomes five
+          // buttons on a five-photo slide. The chosen image is stored per slide key on the report,
+          // so it survives a save and the share link; unset falls back to the gallery resolved
+          // from the report's own listings.
+          const photoAt = (k: string, i: number): string => {
+            const set = (c.slidePhotos || {}) as Any
+            const chosen = String(set[k] || '')
+            if (chosen) return chosen
+            const pics = Array.isArray(gallery) ? gallery : []
+            return pics.length ? pics[i % pics.length] : ''
+          }
+          const RPick = ({ k, i, style, alt }: { k: string; i: number; style?: Any; alt?: string }) => {
+            const cur = photoAt(k, i)
+            if (!cur && !edit) return null
+            return (
+              <div style={{ position: 'relative', overflow: 'hidden', background: t.chip, ...(style || {}) }}>
+                {cur ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={cur} alt={alt || ''} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : null}
+                {edit && (
+                  <button
+                    onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Photo for this slide', cur, set: u => patch('slidePhotos.' + k, u) }) }}
+                    className="sb-noprint" title="Change this photo"
+                    style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
+                    <span style={{ position: 'absolute', bottom: 9, right: 9, fontSize: 10.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111' }}>
+                      {cur ? 'Change' : 'Add a photo'}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )
+          }
+          /** A photograph across the foot of a slide. Adds imagery without touching the layout above it. */
+          const PhotoBand = ({ k, i }: { k: string; i: number }) => {
+            const has = !!photoAt(k, i)
+            if (!has && !edit) return null
+            return <RPick k={k} i={i} style={{ marginTop: 'auto', height: 132, borderRadius: 12, border: '1px solid ' + t.cardBorder }} />
+          }
+
           // A NOTE ON ANY SLIDE (Jon, 2026-09-22: "be able to add notes"). Stored per slide key on
           // the report, so it survives a save and travels with the share link. It shows to the
           // owner when it has words in it and offers itself as an empty line only while editing —
@@ -4556,9 +4607,21 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <Slide nav="Cover" warn={edit} bleed ground={GROUND.light}>
               <div style={{ position: 'absolute', inset: 0 }}>
                 <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: 452, background: t.chip, overflow: 'hidden' }}>
-                  {hero.heroImage ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={hero.heroImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  {hero.heroImage || edit ? (
+                    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                      {hero.heroImage ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={hero.heroImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : null}
+                      {edit && (
+                        <button onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Cover photo', cur: String(hero.heroImage || ''), set: u => patch('hero.heroImage', u) }) }}
+                          className="sb-noprint" style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
+                          <span style={{ position: 'absolute', bottom: 12, right: 12, fontSize: 10.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111' }}>
+                            {hero.heroImage ? 'Change' : 'Add a photo'}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   ) : null}
                 </div>
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 586 }} className="flex flex-col">
@@ -4641,6 +4704,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 </div>
               ) : null}
+              <PhotoBand k="snapshot" i={0} />
               <SlideNote k="snapshot" />
             </Slide>
           ) })
@@ -4791,6 +4855,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   )
                 })}
               </div>
+              <PhotoBand k="pacing" i={1} />
               <SlideNote k="pacing" />
             </Slide>
           ) })
@@ -4893,6 +4958,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   ))}
                 </div>
               </div>
+              <PhotoBand k="voices" i={2} />
               <SlideNote k="voices" />
             </Slide>
           ) })
@@ -5008,7 +5074,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </div>
                   ))}
                 </div>
-                <SlideNote k="projects" />
+                <PhotoBand k="projects" i={3} />
+              <SlideNote k="projects" />
               </Slide>
             ) })
           }
