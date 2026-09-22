@@ -95,7 +95,13 @@ export async function loadReservation360(db: any, reservationId: string, opts: {
   if (!r) return null
   const today = new Date().toISOString().slice(0, 10)
   const gKey = guestKeyOf(r.guest_email, r.guest_id, r.guest_name)
-  const conv = str(r.conversation_id) || null
+  // The booking row often has no conversation_id; the conversation mirror links back by
+  // reservation_id (backfilled in migration 007), so fall back to that.
+  let conv = str(r.conversation_id) || null
+  if (!conv) {
+    const c = await soft<any[]>(db.from('guesty_conversations').select('id').eq('reservation_id', reservationId).order('last_message_at', { ascending: false }).limit(1), [])
+    conv = c[0] ? str(c[0].id) : null
+  }
 
   // Everything keyed by this booking, in parallel.
   const [listing, profile, calls, glitches, claims, convRow, sentiment, resp, msgCount, reviewThis, tasks, orders, orderLink, notice, parking, history] = await Promise.all([
