@@ -75,7 +75,7 @@ export async function GET(req: Request) {
         // and owner; without those on the row the feed could only ever show everything, and the two
         // halves of the page would disagree about what you were looking at.
         const [{ data: ls }, { data: own }] = await Promise.all([
-          sb.from('guesty_listings').select('id, nickname, title, status, building, address_city').in('id', ids as string[]),
+          sb.from('guesty_listings').select('id, nickname, title, status, building, address_city, listed:raw->>isListed').in('id', ids as string[]),
           sb.from('guesty_owners').select('id, full_name, listing_ids').limit(2000),
         ])
         const ownerOf: Record<string, { id: string; name: string }> = {}
@@ -91,7 +91,8 @@ export async function GET(req: Request) {
           const o = ownerOf[String(l.id)]
           meta[l.id] = {
             name,
-            status: String(l.status || '').toLowerCase(),
+            // Unlisted in Guesty counts as no longer active (Jon, 2026-09-22) — it cannot be replied to.
+            status: String(l.listed) === 'false' ? 'inactive' : String(l.status || '').toLowerCase(),
             building: l.building || null,
             // buildingOf/marketOf are the same canonical registry the KPI board groups on, so a
             // unit cannot sit in one building up there and another one down here.

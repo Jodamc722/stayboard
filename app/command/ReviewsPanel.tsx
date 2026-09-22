@@ -96,6 +96,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   const [bulkBusy, setBulkBusy] = useState(false)
   const [allAi, setAllAi] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [dismissedLocal, setDismissedLocal] = useState<Record<string, boolean>>({})
   // REMOVED BY THE CHANNEL (2026-09-22). Guesty does not tell us when a channel pulls a review --
@@ -276,11 +277,27 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   async function postOne(r: Review): Promise<boolean> {
     const text = (drafts[r.id] || '').trim()
     if (!text) return false
-    const res = await fetch('/api/reviews/reply', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reviewId: r.id, reviewReply: text })
-    })
+    // Never spin (Jon, 2026-09-22): the browser gives up at 30 seconds and says so.
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), 30000)
+    let res: Response
+    try {
+      res = await fetch('/api/reviews/reply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctl.signal,
+        body: JSON.stringify({ reviewId: r.id, reviewReply: text })
+      })
+    } catch (e: any) {
+      throw new Error(e?.name === 'AbortError' ? 'Posting took over 30 seconds, so it was stopped. Nothing was posted — try again.' : String(e?.message || e))
+    } finally { clearTimeout(timer) }
     const d = await res.json().catch(() => ({}))
+    // LISTING NO LONGER ACTIVE: the server closed the review instead of posting. Take it off the
+    // list and say why, once.
+    if (d.closed) {
+      setDismissedLocal(x => ({ ...x, [r.id]: true }))
+      setS(prev => ({ ...prev, reviews: (prev.reviews || []).map(x => x.id === r.id ? { ...x, dismissed: true } : x) }))
+      setNote((r.listing_name ? r.listing_name + ': ' : '') + (d.message || 'Listing is no longer active — review closed.'))
+      return false
+    }
     if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
     // Optimistically reflect the posted reply so it shows immediately (text + replied state),
     // without waiting for the next Guesty sync.
@@ -290,7 +307,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
 
   async function post(r: Review) {
     setRowBusy(b => ({ ...b, [r.id]: true })); setErr(null)
-    try { await postOne(r); setPosted(p => ({ ...p, [r.id]: true })); setPostedAt(pa => ({ ...pa, [r.id]: Date.now() })) }
+    try { if (await postOne(r)) { setPosted(p => ({ ...p, [r.id]: true })); setPostedAt(pa => ({ ...pa, [r.id]: Date.now() })) } }
     catch (e: any) { setErr(e?.message || String(e)) }
     finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
   }
@@ -438,6 +455,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
         </IconBtn>
       </div>
       {err && <p className="text-[12px] text-rose-700 mb-2">{err}</p>}
+      {note && <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 flex items-center gap-2"><span className="flex-1">{note}</span><button onClick={() => setNote(null)} className="text-amber-700 hover:text-amber-900 font-semibold">OK</button></p>}
 
       {view === 'needs' && selectedIds.length > 0 && (
         <div className="rounded-xl px-3 py-2 mb-2 bg-brand-600 flex items-center justify-between sticky top-0 z-10">

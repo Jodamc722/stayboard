@@ -32,7 +32,37 @@ export async function POST(req: NextRequest) {
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now())
   if (!valid) return NextResponse.json({ error: 'Guesty token is refreshing - try again in a moment.' }, { status: 503 })
 
-  const r = await fetch(`${BASE}/reviews/${encodeURIComponent(reviewId)}/reply`, {
+  // LISTING NO LONGER ACTIVE (Jon, 2026-09-22: "it should say listing is no longer active and force
+  // close the review, should not just spin when post"). A review on a unit we no longer run cannot be
+  // answered — Guesty either refuses it or never answers. So check our own mirror first, and close the
+  // review (dismissed + out of the score) instead of sending anything.
+  const closeReview = async (why: string) => {
+    const patch: any = { dismissed: true, dismissed_by: 'auto: ' + why, dismissed_at: new Date().toISOString(), excluded_from_score: true, exclude_reason: why }
+    try { await sb.from('guesty_reviews').update(patch).eq('id', reviewId) }
+    catch { try { await sb.from('guesty_reviews').update({ excluded_from_score: true, exclude_reason: why }).eq('id', reviewId) } catch { /* best effort */ } }
+    try { revalidateTag('reviews') } catch {}
+    return NextResponse.json({ ok: false, closed: true, reason: why, message: 'Listing is no longer active — this review was closed. Nothing was posted.' }, { status: 200 })
+  }
+  try {
+    const { data: rv } = await sb.from('guesty_reviews').select('listing_id').eq('id', reviewId).maybeSingle()
+    const lid = rv?.listing_id
+    if (lid) {
+      const { data: l } = await sb.from('guesty_listings').select('status, listed:raw->>isListed, active:raw->>active').eq('id', lid).maybeSingle()
+      if (!l) return await closeReview('listing no longer active')
+      const st = String((l as any).status || '').toLowerCase()
+      if (['inactive', 'disabled', 'archived', 'deleted'].indexOf(st) >= 0 || String((l as any).active) === 'false' || String((l as any).listed) === 'false') {
+        return await closeReview('listing no longer active')
+      }
+    }
+  } catch { /* the check is a shortcut; Guesty's own answer below still decides */ }
+
+  // Never spin: Guesty gets 20 seconds to answer.
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), 20000)
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/reviews/${encodeURIComponent(reviewId)}/reply`, {
+    signal: ctl.signal,
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${tok!.access_token}`,
@@ -41,15 +71,18 @@ export async function POST(req: NextRequest) {
     },
     body: JSON.stringify({ reviewReply: String(reviewReply) })
   })
+  } catch (e: any) {
+    clearTimeout(timer)
+    const timedOut = e?.name === 'AbortError'
+    return NextResponse.json({ error: timedOut ? 'Guesty did not answer in 20 seconds, so nothing was posted. Try again in a minute.' : 'Could not reach Guesty: ' + String(e?.message || e).slice(0, 120) }, { status: 504 })
+  }
+  clearTimeout(timer)
   const body = await r.text().catch(() => '')
   if (!r.ok) {
-    const orphan = r.status === 404 && /externalPropertyId|REVIEWS_LISTING_NOT_FOUND/i.test(body)
-    if (orphan) {
-      // The review's listing isn't mapped on its channel - flag it so it stops counting toward
-      // the average / health score, but keep it visible for feedback.
-      try { await sb.from('guesty_reviews').update({ excluded_from_score: true, exclude_reason: 'listing not mapped on channel (cannot reply)' }).eq('id', reviewId) } catch { /* best effort */ }
-      return NextResponse.json({ error: "This listing isn't currently mapped on its channel, so the reply can't post here - reply directly in the channel if needed. This review has been excluded from your average score.", orphaned: true }, { status: 409 })
-    }
+    // The channel no longer knows this listing (unlisted, disconnected, retired): close it, same as
+    // the mirror check above — the review can never be answered from here.
+    const gone = (r.status === 404 && /externalPropertyId|REVIEWS_LISTING_NOT_FOUND|listing/i.test(body)) || /listing[^"]{0,40}(inactive|not active|unlisted|not found|disabled|deleted)/i.test(body)
+    if (gone) return await closeReview('listing no longer active')
     // Booking.com (and some channels) reject a second reply: the review is already answered and
     // the channel doesn't allow edits. Treat that as success - mark it replied so it stops nagging.
     const alreadyReplied = /already exists|does not allow update|ERR_REVIEWS_LIBRARY/i.test(body)
