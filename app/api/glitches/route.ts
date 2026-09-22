@@ -166,6 +166,9 @@ export async function POST(req: NextRequest) {
       reservation_notes: str(b.reservationNotes) || null,
       sentiment: (b.sentiment && typeof b.sentiment === 'object') ? b.sentiment : null,
       photos: Array.isArray(b.photos) ? b.photos.filter((x: any) => typeof x === 'string').slice(0, 20) : [],
+      // EVERY NEW GLITCH STARTS WITH SUPPORT (Jon, 2026-09-22: "it should default to Support").
+      // Support owns it until someone hands it on; an unowned card is how issues sit for days.
+      assignee: str(b.assignee) || 'Support',
       created_by: user.email || 'team',
       history: [{ at: new Date().toISOString(), by: user.email || 'team', action: 'created' }],
     }
