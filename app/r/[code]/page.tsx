@@ -7,6 +7,7 @@ import { hasEditCookie } from '@/lib/edit-access'
 import { ReportView } from '@/components/ReportView'
 import { reportGallery } from '@/lib/report-gallery'
 import { reportByListing } from '@/lib/report-listings'
+import { reportRecommendations } from '@/lib/report-recommendations'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,9 +36,10 @@ export default async function PublicReportPage({ params }: { params: { code: str
   // Section photography and the per-unit table, both derived from the report row rather than
   // stored on it, so every review that already exists gets them. Either failing costs its own
   // slide, never the report.
-  const [gallery, listingTable] = await Promise.all([
+  const [gallery, listingTable, recs] = await Promise.all([
     reportGallery(rep).catch(() => [] as string[]),
     reportByListing(rep).catch(() => null),
+    reportRecommendations(rep).catch(() => null),
   ])
-  return <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} gallery={gallery} listingTable={listingTable} />
+  return <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} gallery={gallery} listingTable={listingTable} recs={recs} />
 }

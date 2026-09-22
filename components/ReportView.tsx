@@ -979,7 +979,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 // ---------- main ----------
-export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: { initial: Any; canEdit: boolean; isTeam?: boolean; gallery?: string[]; listingTable?: Any }) {
+export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, recs }: { initial: Any; canEdit: boolean; isTeam?: boolean; gallery?: string[]; listingTable?: Any; recs?: Any }) {
   const [c, setC] = useState<Any>(initial.content || {})
   const [edit, setEdit] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -1816,7 +1816,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: 
   const presentCount = isOnboarding
     ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + onboardingListingSlides + customSecs.length
     : isReviewDeck
-    ? 1 + (['verdict', 'snapshot', 'listings', 'pacing', 'plan', 'statement', 'ahead', 'voices', 'projects']
+    ? 1 + (['verdict', 'snapshot', 'listings', 'pacing', 'plan', 'statement', 'ahead', 'voices', 'recs', 'projects']
         .filter(k => !isHidden(k)).length) + customSecs.length
     : ((['hero', 'snapshot',
     (c.pacing ? 'pacing' : null),
@@ -4811,6 +4811,44 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: 
                     </div>
                   ))}
                 </div>
+              </div>
+            </Slide>
+          ) })
+
+          // ── 8b · WHAT WE ARE DOING ABOUT IT (Jon, 2026-09-22) ─────────────
+          // Built from the review text itself through the same taxonomy the cleaner's task uses
+          // (lib/review-themes), so a theme is on this slide because guests wrote it down — with a
+          // count, a quote and the units behind it — and not because a model thought it sounded
+          // plausible. Top four: a page of twelve recommendations is a page nobody acts on.
+          if (recs && (recs.items || []).length && !hid('recs')) slides.push({ key: 'recs', node: (
+            <Slide nav="What we are improving" warn={edit} ground={GROUND.light}>
+              <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
+              <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: 0, maxWidth: '19ch' }}>
+                What guests raised, and what we are doing
+              </h2>
+              <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: t.muted, margin: '14px 0 0', maxWidth: '58ch' }}>
+                From {recs.reviews} review{recs.reviews === 1 ? '' : 's'} since {recs.from}
+                {recs.avgRating != null ? ', averaging ' + recs.avgRating.toFixed(2) : ''}
+                {recs.clean > 0 ? ' \u00b7 ' + recs.clean + ' raised nothing to fix' : ''}.
+              </p>
+              <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 20 }}>
+                {(recs.items as Any[]).slice(0, 4).map((r: Any) => (
+                  <div key={r.key} style={{ borderRadius: 14, background: t.chip, border: '1px solid ' + t.cardBorder, padding: '18px 20px' }}>
+                    <div className="flex items-baseline" style={{ gap: 8 }}>
+                      <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, margin: 0, textTransform: 'capitalize' }}>{String(r.label || '')}</p>
+                      <span style={{ fontSize: 11, color: t.muted }}>
+                        {r.mentions} guest{r.mentions === 1 ? '' : 's'}{r.units > 1 ? ' \u00b7 ' + r.units + ' units' : ''}
+                        {r.avgRating != null ? ' \u00b7 avg ' + r.avgRating.toFixed(1) : ''}
+                      </span>
+                    </div>
+                    {r.quote ? (
+                      <p style={{ fontSize: 12.5, lineHeight: 1.45, color: t.muted, margin: '9px 0 0', fontStyle: 'italic', borderLeft: '2px solid ' + t.cardBorder, paddingLeft: 10 }}>
+                        &ldquo;{String(r.quote)}&rdquo;
+                      </p>
+                    ) : null}
+                    <p style={{ fontSize: 13.5, lineHeight: 1.5, color: t.body, margin: '11px 0 0' }}>{String(r.action || '')}</p>
+                  </div>
+                ))}
               </div>
             </Slide>
           ) })
