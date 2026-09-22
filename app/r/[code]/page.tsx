@@ -31,6 +31,6 @@ export default async function PublicReportPage({ params }: { params: { code: str
   const unlocked = hasEditCookie()
   // Section photography for the owner review, resolved from the report's own listings rather than
   // stored on it — see lib/report-gallery. A failure here costs the pictures, never the report.
-  const gallery = await reportGallery((rep as any)?.content).catch(() => [] as string[])
+  const gallery = await reportGallery(rep).catch(() => [] as string[])
   return <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} gallery={gallery} />
 }

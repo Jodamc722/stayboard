@@ -20,11 +20,22 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 /** A photo is skipped when it is obviously not a room — floor plans and collages read as clip art. */
 const BAD = /(floor\s*-?plan|floorplan|collage|logo|watermark|map)/i
 
-export async function reportGallery(content: any, limit = 8): Promise<string[]> {
-  const byListing: any[] = Array.isArray(content?.byListing) ? content.byListing : []
-  const ids = byListing.map(l => String(l?.id || '')).filter(Boolean)
+/**
+ * Takes the whole owner_reports ROW, not its content.
+ *
+ * The first cut read content.byListing and shipped with zero photos on every existing review,
+ * because byListing is optional and none of the live reports carry it — the per-unit table is
+ * written only when the report is generated with it. `listing_ids` is a column on the report
+ * itself and is populated on all of them, which is the difference between a feature that works on
+ * the six reports that exist and one that only works on reports generated from now on.
+ */
+export async function reportGallery(report: any, limit = 8): Promise<string[]> {
+  const fromRow: any[] = Array.isArray(report?.listing_ids) ? report.listing_ids : []
+  const byListing: any[] = Array.isArray(report?.content?.byListing) ? report.content.byListing : []
+  const ids = (fromRow.length ? fromRow.map((x: any) => String(x || '')) : byListing.map(l => String(l?.id || '')))
+    .filter(Boolean)
   if (!ids.length) return []
-  // Biggest earners first: byListing is revenue-ordered, so the units an owner cares about lead.
+  // In the report's own order — revenue-ordered when it came from byListing, scope order otherwise.
   const wanted = ids.slice(0, 40)
   let rows: any[] = []
   try {
