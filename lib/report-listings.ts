@@ -20,34 +20,31 @@
 // no table at all, so `totals` is returned for the slide to show and for anyone to check.
 import 'server-only'
 import { pullReservations, metricsFor, resolveScope } from '@/lib/owner-report'
+import type { BasisRaw } from '@/lib/basis'
 
-export type ListingRow = {
+/**
+ * Rows carry the RAW basis components, not finished revenue figures.
+ *
+ * The first cut returned metricsFor's `accomRevenue` as "net" and put $101K on the slide under a
+ * snapshot card reading $109K. Both numbers were correct and they were answering different
+ * questions: the report's default basis is `netota` — accommodation BEFORE channel fees — and
+ * accomRevenue is the legacy base fare. A per-unit table that does not add up to the card above it
+ * is the single thing this slide cannot do, so the rows now hand back exactly what lib/basis needs
+ * and the slide runs basisTriple over them, the same function every other section uses.
+ */
+export type ListingRow = BasisRaw & {
   id: string
   name: string
   unit: string
   bedrooms: number | null
   building: string
-  /** Gross: accommodation before OTA host fees, plus cleaning. What the guest paid us. */
-  grossNum: number
-  /** Net of channel fees, accommodation only. The basis the statement is built on. */
-  netNum: number
   occPct: number
-  nights: number
-  availNights: number
   reservations: number
-  adr: number
-  grossAdr: number
-  revpar: number
-  grossRevpar: number
 }
 
 export type ListingTable = {
   rows: ListingRow[]
-  totals: {
-    grossNum: number; netNum: number; occPct: number; nights: number; availNights: number
-    reservations: number; adr: number; grossAdr: number; revpar: number; grossRevpar: number
-    units: number
-  }
+  totals: BasisRaw & { occPct: number; reservations: number; units: number }
   from: string
   to: string
 }
@@ -85,20 +82,18 @@ export async function reportByListing(report: any): Promise<ListingTable | null>
       unit: String(l.unit || ''),
       bedrooms: l.bedrooms ?? null,
       building: String(l.building || ''),
-      grossNum: m.grossRevenue,
-      netNum: m.accomRevenue,
-      occPct: m.occupancyPct,
-      nights: m.occupiedNights,
+      accomNum: m.accomRevenue,
+      accomGrossNum: m.accomGrossRevenue,
+      cleaningNum: m.cleaningRevenue,
+      feeNum: m.channelFees,
+      occNights: m.occupiedNights,
       availNights: m.availableNights,
+      occPct: m.occupancyPct,
       reservations: m.reservations,
-      adr: m.adr,
-      grossAdr: m.grossAdr,
-      revpar: m.revpar,
-      grossRevpar: m.grossRevpar,
     }
   })
   // Biggest earner first — the order an owner reads a portfolio in.
-  rows.sort((a, b) => b.grossNum - a.grossNum)
+  rows.sort((a, b) => (b.accomGrossNum + b.cleaningNum) - (a.accomGrossNum + a.cleaningNum))
 
   // The totals are recomputed over the WHOLE set rather than summed from the rows, because ADR and
   // RevPAR are ratios: averaging twelve units' ADRs is not the portfolio's ADR, and an owner who
@@ -107,10 +102,10 @@ export async function reportByListing(report: any): Promise<ListingTable | null>
   return {
     rows,
     totals: {
-      grossNum: all.grossRevenue, netNum: all.accomRevenue, occPct: all.occupancyPct,
-      nights: all.occupiedNights, availNights: all.availableNights, reservations: all.reservations,
-      adr: all.adr, grossAdr: all.grossAdr, revpar: all.revpar, grossRevpar: all.grossRevpar,
-      units: listings.length,
+      accomNum: all.accomRevenue, accomGrossNum: all.accomGrossRevenue,
+      cleaningNum: all.cleaningRevenue, feeNum: all.channelFees,
+      occNights: all.occupiedNights, availNights: all.availableNights,
+      occPct: all.occupancyPct, reservations: all.reservations, units: listings.length,
     },
     from, to: endIncl,
   }

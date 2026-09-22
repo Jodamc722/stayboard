@@ -8,7 +8,7 @@
 import { buildVerdict } from '@/lib/report-verdict'
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
-import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
+import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, BASIS_NOTE, basisTriple, isBasis } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 import { SAMPLE_STATEMENT, statementHasRows, statementIsHouseSample, STATEMENT_ALSO } from '@/lib/statement-sample'
 import {
@@ -4631,12 +4631,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: 
           if (listingTable && listingTable.rows.length && !hid('listings')) {
             const PER = 10
             const pages = Math.max(1, Math.ceil(listingTable.rows.length / PER))
+            // WHICH "NET". The report has three bases (lib/basis) and the snapshot's headline
+            // REVENUE card is drawn in whichever one the report is set to — netota by default,
+            // accommodation before channel fees. The Net column here uses that SAME basis, through
+            // the same basisTriple, so the total row lands on the card above rather than on a
+            // second, equally-correct number that quietly contradicts it.
+            const netBasis: Basis = (isBasis(bSection('byListing')) ? bSection('byListing') : 'netota') as Basis
+            const tri = (r: Any, b: Basis) => basisTriple(r as Any, b)
             const showGross = listingCols !== 'net'
             const showNet = listingCols !== 'gross'
+            // ADR and RevPAR follow whichever money is on the slide: showing a gross-only table
+            // with a net ADR beside it is how a reader ends up comparing two different things.
+            const ratioBasis: Basis = listingCols === 'gross' ? 'gross' : netBasis
             const cols: { key: string; label: string; w: number }[] = [
               { key: 'unit', label: 'Unit', w: 0 },
               ...(showGross ? [{ key: 'gross', label: 'Gross', w: 104 }] : []),
-              ...(showNet ? [{ key: 'net', label: 'Net', w: 104 }] : []),
+              ...(showNet ? [{ key: 'net', label: BASIS_SHORT[netBasis], w: 104 }] : []),
               { key: 'occ', label: 'Occ', w: 78 },
               { key: 'adr', label: 'ADR', w: 92 },
               { key: 'revpar', label: 'RevPAR', w: 92 },
@@ -4645,12 +4655,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: 
             const grid = cols.map(x => (x.w ? x.w + 'px' : 'minmax(0,1fr)')).join(' ')
             const cell = (r: Any, key: string): string => {
               if (key === 'unit') return String(r.unit || r.name || '')
-              if (key === 'gross') return usd(r.grossNum)
-              if (key === 'net') return usd(r.netNum)
+              if (key === 'gross') return usd(tri(r, 'gross').revenue)
+              if (key === 'net') return usd(tri(r, netBasis).revenue)
               if (key === 'occ') return Math.round(Number(r.occPct) || 0) + '%'
-              if (key === 'adr') return usd(listingCols === 'gross' ? r.grossAdr : r.adr)
-              if (key === 'revpar') return usd(listingCols === 'gross' ? r.grossRevpar : r.revpar)
-              if (key === 'nights') return String(r.nights ?? '')
+              if (key === 'adr') return usd(tri(r, ratioBasis).adr)
+              if (key === 'revpar') return usd(tri(r, ratioBasis).revpar)
+              if (key === 'nights') return String(r.occNights ?? '')
               return ''
             }
             for (let p = 0; p < pages; p++) {
@@ -4665,7 +4675,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: 
                         Performance by listing{pages > 1 ? ' · ' + (p + 1) + ' of ' + pages : ''}
                       </h2>
                       <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: t.muted, margin: '14px 0 0', maxWidth: '54ch' }}>
-                        {listingTable.totals.units} unit{listingTable.totals.units === 1 ? '' : 's'} over {listingTable.from} to {listingTable.to}. Gross is what the guest paid us; net is accommodation after channel fees.
+                        {listingTable.totals.units} unit{listingTable.totals.units === 1 ? '' : 's'}, {listingTable.from} to {listingTable.to}. Gross is accommodation plus cleaning; {BASIS_SHORT[netBasis].toLowerCase()} is {BASIS_NOTE[netBasis].toLowerCase()}. The total matches the snapshot.
                       </p>
                     </div>
                     {canEdit && (
