@@ -359,6 +359,92 @@ function Fold({ title, hint, open: start = true, children }: { title: string; hi
   )
 }
 
+function fmtPhone(v: string | null | undefined): string {
+  const d = String(v || '').replace(/\D/g, '')
+  const t = d.length === 11 && d[0] === '1' ? d.slice(1) : d
+  return t.length === 10 ? '(' + t.slice(0, 3) + ') ' + t.slice(3, 6) + '-' + t.slice(6) : String(v || '')
+}
+
+/** ASSIGN IT WHERE YOU SEE IT (Jon, 2026-09-22: "need to be able to assign"). The assignee and the
+ *  due date are edited in their own rows, like Asana — pick a name and it saves, and when the
+ *  glitch has a Breezeway task the crew's task is reassigned too (the update action does that). */
+function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; name: string }[]; onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const save = async (body: Record<string, any>) => {
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: g.id, ...body }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) setErr(j.error || 'Could not save'); else onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  const known = people.some(p => p.name === g.assignee)
+  return (
+    <span className="inline-flex items-center gap-2 flex-wrap">
+      <select value={g.assignee || ''} disabled={busy}
+        onChange={e => {
+          const name = e.target.value
+          const person = people.find(p => p.name === name)
+          save({ assignee: name, assigneePersonId: person ? person.id : null })
+        }}
+        className={'text-[13px] border border-line rounded-lg px-2 h-8 bg-white max-w-[240px] ' + (g.assignee ? 'font-semibold text-ink' : 'text-muted')}>
+        <option value="">No assignee</option>
+        {g.assignee && !known ? <option value={g.assignee}>{g.assignee}</option> : null}
+        {people.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+      </select>
+      {busy ? <Loader2 size={13} className="animate-spin text-muted" /> : null}
+      {err ? <span className="text-[12px] text-rose-700">{err}</span> : null}
+    </span>
+  )
+}
+function DueField({ g, onDone }: { g: Glitch; onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const closed = laneOf(g.status).key === 'closed'
+  const over = g.due_date && !closed && String(g.due_date).slice(0, 10) < todayET()
+  const save = async (v: string) => {
+    setBusy(true)
+    try {
+      await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: g.id, dueDate: v }) })
+      onDone()
+    } catch { /* the field just keeps its old value */ }
+    setBusy(false)
+  }
+  return (
+    <span className="inline-flex items-center gap-2">
+      <input type="date" value={String(g.due_date || '').slice(0, 10)} disabled={busy} onChange={e => save(e.target.value)}
+        className={'text-[13px] border rounded-lg px-2 h-8 bg-white ' + (over ? 'border-rose-300 text-rose-700 font-semibold' : 'border-line text-ink')} />
+      {over ? <span className="text-[12px] font-semibold text-rose-700">overdue</span> : null}
+    </span>
+  )
+}
+
+/** Work notes, typed straight onto the record and saved when you click away. */
+function WorkNotes({ g, onDone }: { g: Glitch; onDone: () => void }) {
+  const [v, setV] = useState(g.details || '')
+  const [saved, setSaved] = useState(false)
+  useEffect(() => { setV(g.details || '') }, [g.id, g.details])
+  const save = async () => {
+    if ((g.details || '') === v) return
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: g.id, details: v }) })
+      if (r.ok) { setSaved(true); setTimeout(() => setSaved(false), 1500); onDone() }
+    } catch { /* keeps the text in the box */ }
+  }
+  return (
+    <div className="mt-3">
+      <div className="flex items-center gap-2">
+        <span className="text-[12.5px] font-semibold text-muted">Work notes</span>
+        {saved ? <span className="text-[11.5px] text-emerald-700">Saved</span> : null}
+      </div>
+      <textarea value={v} onChange={e => setV(e.target.value)} onBlur={save} rows={v ? 3 : 1}
+        placeholder="What's been tried, parts ordered, what the guest was told…"
+        className="mt-1 w-full text-[13px] border border-line rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+    </div>
+  )
+}
+
 /** The live clock: how long this has been open, or how long it took to close. */
 function OpenClock({ g }: { g: Glitch }) {
   const [now, setNow] = useState(() => Date.now())
@@ -419,6 +505,9 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
   })()
   const dueOver = g.due_date && !closed && String(g.due_date).slice(0, 10) < todayET()
   const hist: any[] = Array.isArray((g as any).history) ? (g as any).history : []
+  // refund_approved defaults to 0, so "$0" is only a real decision when one was logged.
+  const refundLogged = refund > 0 || hist.some((h: any) => h && h.action === 'refund_logged')
+  const [showActivity, setShowActivity] = useState(false)
   const taskLabel = g.task_status === 'completed' ? 'Completed' : g.task_status === 'in_progress' ? 'In progress' : g.task_status ? 'Not started' : ''
   const taskTone = g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-800 ring-sky-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
   const chip = 'text-[11.5px] font-semibold px-2 py-0.5 rounded-md ring-1'
@@ -456,32 +545,29 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
       </div>
 
       <h2 className="text-[20px] sm:text-[22px] font-bold text-ink leading-snug mt-3">{headline}</h2>
+      {trade || g.glitch_type && g.glitch_type !== 'Glitch (Quality Issue)' ? (
+        <div className="flex items-center gap-1.5 mt-1.5">
+          {g.glitch_type && g.glitch_type !== 'Glitch (Quality Issue)' ? <span className={chip + ' bg-rose-50 text-rose-800 ring-rose-200'}>{g.glitch_type}</span> : null}
+          {trade ? <span className={chip + ' ' + trade.cls} title={g.category || ''}>{trade.label}</span> : null}
+        </div>
+      ) : null}
 
-      {/* THE FIELDS — everything a person looks for, in one column, no tabs. */}
-      <div className="mt-2 divide-y divide-line/60">
+      {/* THE FIELDS — one column, Asana-style. Every row is either a fact or the control that
+          changes it; nothing is repeated below. */}
+      <div className="mt-3 divide-y divide-line/60">
+        <FieldRow label="Assignee"><AssignField g={g} people={people} onDone={onChanged} /></FieldRow>
+        <FieldRow label="Due date"><DueField g={g} onDone={onChanged} /></FieldRow>
         <FieldRow label="Status">
-          <select value={lane.key} onChange={e => { const l = LANES.find(x => x.key === e.target.value); if (l) act(g.id, { action: 'move', status: l.write }) }}
-            className="text-[13px] font-semibold border border-line rounded-lg px-2 h-8 bg-white">
-            {LANES.map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
-          </select>
-        </FieldRow>
-        <FieldRow label="Priority">
-          <div className="flex gap-1 flex-wrap">
-            {[['urgent', 'Urgent'], ['high', 'High'], ['normal', 'Normal'], ['low', 'Low']].map(([k, label]) => {
-              const on = String(g.priority || 'urgent').toLowerCase() === k
-              return (
-                <button key={k} onClick={() => act(g.id, { action: 'priority', priority: k })}
-                  className={'text-[12px] font-semibold px-2.5 h-7 rounded-lg border ' +
-                    (on ? (k === 'urgent' ? 'bg-rose-600 text-white border-rose-600' : 'bg-ink text-white border-ink') : 'bg-white text-muted border-line hover:text-ink')}>
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-        </FieldRow>
-        <FieldRow label="Assignee">
-          {g.assignee ? <span className="font-semibold">{g.assignee}</span> : <span className="text-muted">No assignee</span>}
-          {g.due_date ? <span className={dueOver ? 'text-rose-700 font-semibold' : 'text-muted'}> · due {fmtDay(g.due_date)}</span> : null}
+          <span className="inline-flex items-center gap-2 flex-wrap">
+            <select value={lane.key} onChange={e => { const l = LANES.find(x => x.key === e.target.value); if (l) act(g.id, { action: 'move', status: l.write }) }}
+              className="text-[13px] font-semibold border border-line rounded-lg px-2 h-8 bg-white">
+              {LANES.map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
+            </select>
+            <select value={String(g.priority || 'urgent').toLowerCase()} onChange={e => act(g.id, { action: 'priority', priority: e.target.value })}
+              className={'text-[13px] font-semibold border rounded-lg px-2 h-8 ' + (String(g.priority || 'urgent').toLowerCase() === 'urgent' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-white border-line text-ink')}>
+              {[['urgent', 'Urgent'], ['high', 'High'], ['normal', 'Normal'], ['low', 'Low']].map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            </select>
+          </span>
         </FieldRow>
         <FieldRow label="Reported">
           <span className="font-semibold">{fmtStamp(g.created_at)}</span>
@@ -497,52 +583,40 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
             <span>
               <span className="font-semibold">{fmtDay(g.check_out)}</span>
               {nights ? <span className="text-muted"> · {nights} night{nights === 1 ? '' : 's'}</span> : null}
-              {stay.label ? <span className={chip + ' ml-2 ' + (stay.now ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : 'bg-app text-muted ring-line')}>{stay.label}</span> : null}
+              {stay.label ? <span className={'ml-1.5 ' + (stay.now ? 'text-emerald-700 font-semibold' : 'text-muted')}>· {stay.label.toLowerCase()}</span> : null}
             </span>
           ) : <span className="text-muted">—</span>}
         </FieldRow>
         <FieldRow label="Guest">
           <span className="font-semibold">{g.guest_name || 'Guest'}</span>
-          {[g.guest_phone, g.guest_email].filter(Boolean).length ? <span className="text-muted"> · {[g.guest_phone, g.guest_email].filter(Boolean).join(' · ')}</span> : null}
-          {g.guest_tone ? <span className={chip + ' ml-2 bg-app text-muted ring-line'}>{g.guest_tone}</span> : null}
-          <span className="ml-1.5 inline-block align-middle"><SentimentChip s={g.sentiment} /></span>
+          {g.guest_phone ? <a href={'tel:' + String(g.guest_phone).replace(/[^\d+]/g, '')} className="text-muted hover:text-ink"> · {fmtPhone(g.guest_phone)}</a> : null}
+          {g.guest_tone && g.guest_tone !== 'understanding' ? <span className="text-amber-800 font-semibold"> · {g.guest_tone}</span> : null}
+          {g.sentiment && g.sentiment.dissatisfied ? <span className="text-rose-700 font-semibold"> · unhappy in messages</span> : null}
         </FieldRow>
-        <FieldRow label="Booking">
-          {g.reservation_id ? (
-            <span>
-              {[g.channel, g.reservation_total ? money(g.reservation_total) : ''].filter(Boolean).join(' · ') || 'Linked'}
-              <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer"
-                className="ml-2 font-semibold text-brand-700 hover:underline">Open in Guesty ↗</a>
-            </span>
-          ) : <span className="text-muted">No reservation linked</span>}
-        </FieldRow>
-        <FieldRow label="Category">
-          <span className="inline-flex items-center gap-1.5 flex-wrap">
-            {trade ? <span className={chip + ' ' + trade.cls}>{trade.label}</span> : null}
-            <span className="text-muted">{g.category || 'Not set'}</span>
-          </span>
-        </FieldRow>
-        <FieldRow label="Breezeway task">
+        {g.reservation_id ? (
+          <FieldRow label="Booking">
+            {[g.channel ? String(g.channel).replace(/\d+$/, '').replace(/^./, c => c.toUpperCase()) : '', g.reservation_total ? money(g.reservation_total) : ''].filter(Boolean).join(' · ') || 'Linked'}
+            <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer"
+              className="ml-2 font-semibold text-brand-700 hover:underline">Guesty ↗</a>
+          </FieldRow>
+        ) : null}
+        <FieldRow label="Breezeway">
           {g.breezeway_task_id ? (
             <span className="inline-flex items-center gap-2 flex-wrap">
               {taskLabel ? <span className={chip + ' ' + taskTone}>{taskLabel}</span> : null}
-              <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer" className="font-semibold text-brand-700 hover:underline">Open ↗</a>
-              {g.task_report_url ? <a href={g.task_report_url} target="_blank" rel="noreferrer" className="font-semibold text-brand-700 hover:underline">Field report ↗</a> : null}
-              <button onClick={() => act(g.id, { action: 'checkTask' })} className="text-[12px] font-semibold text-muted hover:text-ink underline">Check status</button>
+              <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer" className="font-semibold text-brand-700 hover:underline">Task ↗</a>
+              {g.task_report_url ? <a href={g.task_report_url} target="_blank" rel="noreferrer" className="font-semibold text-brand-700 hover:underline">Report ↗</a> : null}
             </span>
           ) : (
-            <span className="inline-flex items-center gap-2">
-              <span className="text-muted">Not filed yet</span>
-              <button onClick={() => setPanel(panel === 'push' ? '' : 'push')} className="text-[12px] font-bold px-2.5 h-7 rounded-lg bg-ink text-white">Create the task</button>
-            </span>
+            <button onClick={() => setPanel(panel === 'push' ? '' : 'push')} className="text-[12px] font-bold px-2.5 h-7 rounded-lg bg-ink text-white">Create the task</button>
           )}
         </FieldRow>
         <FieldRow label="Refund">
           <button onClick={() => refundRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="text-left">
-            {refund > 0 || g.refund_approved === 0
-              ? <span className="font-semibold text-emerald-700">{money(refund)} given</span>
+            {refundLogged
+              ? <span className="font-semibold text-emerald-700">{refund > 0 ? money(refund) + ' given' : 'Declined ($0)'}</span>
               : <span className="text-muted">None logged</span>}
-            {rec != null ? <span className="text-muted"> · advisor suggests {money(rec)}</span> : null}
+            {rec != null && !refundLogged ? <span className="text-muted"> · suggested {money(rec)}</span> : null}
           </button>
         </FieldRow>
       </div>
@@ -562,9 +636,6 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
         ) : (
           <>
             <p className="text-[14px] text-ink leading-relaxed whitespace-pre-wrap mt-1.5">{overview || 'Nothing written.'}</p>
-            {g.sentiment && g.sentiment.excerpt ? (
-              <p className="text-[12.5px] text-muted mt-2 border-l-2 border-line pl-3 italic">&ldquo;{String(g.sentiment.excerpt).slice(0, 300)}&rdquo;</p>
-            ) : null}
           </>
         )}
         {(g.photos || []).length > 0 ? (
@@ -576,16 +647,12 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
             ))}
           </div>
         ) : null}
+        <WorkNotes g={g} onDone={onChanged} />
       </section>
 
       <div className="space-y-3 mt-3">
-        <Fold title="The job" hint={g.assignee ? g.assignee + (g.due_date ? ' · due ' + fmtShort(g.due_date) : '') : 'assignee, due date, work notes'}>
-          <GlitchManage g={g} people={people} onDone={onChanged} />
-          {g.details ? <p className="text-[12.5px] text-ink whitespace-pre-wrap mt-2">{g.details}</p> : null}
-        </Fold>
-
         <div ref={refundRef}>
-          <Fold title="Refund" hint={refund > 0 ? money(refund) + ' given' : rec != null ? 'advisor suggests ' + money(rec) : 'fix first; money last'}>
+          <Fold title="Refund" open={openRefund} hint={refundLogged ? (refund > 0 ? money(refund) + ' given' : 'declined') : rec != null ? 'suggested ' + money(rec) : 'work out a recommendation'}>
             <MoneyTab g={g} openRefund={openRefund} onChanged={onChanged} />
           </Fold>
         </div>
@@ -601,14 +668,16 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
         </Fold>
 
         {/* COMMENTS AND ACTIVITY — at the bottom, where Asana keeps them. */}
-        <Fold title="Comments" hint={hist.length ? hist.length + ' updates on the card' : undefined}>
+        <Fold title="Comments">
           <CommentThread type="glitch" id={g.id}
             label={(g.unit ? g.unit + ' — ' : '') + String(g.overview || 'glitch').split('\n')[0].slice(0, 60)}
             link="/glitches" taskId={g.breezeway_task_id || ''} reservationId={g.reservation_id || ''} />
           {hist.length ? (
             <div className="mt-3 border-t border-line/60 pt-2">
-              <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1">Activity</p>
-              <ul className="space-y-0.5">
+              <button onClick={() => setShowActivity(v => !v)} className="text-[12px] font-semibold text-muted hover:text-ink">
+                {showActivity ? 'Hide activity' : 'Show activity (' + hist.length + ')'}
+              </button>
+              {showActivity ? <ul className="space-y-0.5 mt-1">
                 {hist.slice().reverse().slice(0, 25).map((h: any, i: number) => (
                   <li key={i} className="text-[12px] text-muted">
                     <span className="text-ink font-medium">{String(h.by || 'team').split('@')[0]}</span>{' '}
@@ -618,7 +687,7 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
                     <span className="text-faint"> · {fmtStamp(h.at)}</span>
                   </li>
                 ))}
-              </ul>
+              </ul> : null}
             </div>
           ) : null}
         </Fold>
