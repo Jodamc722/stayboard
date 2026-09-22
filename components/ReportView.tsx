@@ -845,13 +845,34 @@ function SectionPhoto({ src, t }: { src?: string | null; t: Any }) {
 // ONE QUESTION ON THE CALL. `live` is true for anyone who can edit — including while presenting,
 // because filling these in during the meeting is the entire point of the document. An owner
 // reading it later sees the answer, or an honest "not discussed yet".
-function AskBlock({ ask, live, set, t }: { ask: Any; live: boolean; set: (v: string) => void; t: Any }) {
+// THE QUESTION ITSELF IS EDITABLE (Jon, 2026-09-22: "Need to be able to edir the qeistions on the
+// addinatl notes secitons too"). The answer box was always live on the call; the question above it
+// was fixed house copy, which is wrong the moment a call needs a question this owner's situation
+// actually raises. In edit mode the question and its hint are typed in place and saved on the
+// report, so the deck Jon walks in with is the deck he asks from.
+function AskBlock({ ask, live, set, t, edit, setQ, setHint, onRemove }: {
+  ask: Any; live: boolean; set: (v: string) => void; t: Any
+  edit?: boolean; setQ?: (v: string) => void; setHint?: (v: string) => void; onRemove?: () => void
+}) {
   const a = String(ask.a || '')
   const done = !!a.trim()
   return (
-    <div className="pl-5" style={{ borderLeft: '2px solid ' + (done ? t.good : t.rule) }}>
-      <p className="text-[15.5px] font-bold leading-snug" style={{ color: t.ink }}>{houseAsk(ask.q)}</p>
-      {ask.hint ? <p className="text-[13px] mt-1 leading-relaxed" style={{ color: t.muted }}>{ask.hint}</p> : null}
+    <div className="pl-5 relative" style={{ borderLeft: '2px solid ' + (done ? t.good : t.rule) }}>
+      <p className="text-[15.5px] font-bold leading-snug" style={{ color: t.ink }}>
+        {edit && setQ
+          ? <Ed v={String(ask.q || '')} set={setQ} edit placeholder="The question you want to ask" multiline />
+          : houseAsk(ask.q)}
+      </p>
+      {(ask.hint || (edit && setHint)) ? (
+        <p className="text-[13px] mt-1 leading-relaxed" style={{ color: t.muted }}>
+          {edit && setHint
+            ? <Ed v={String(ask.hint || '')} set={setHint} edit placeholder="A hint under it, if it needs one" multiline />
+            : String(ask.hint || '')}
+        </p>
+      ) : null}
+      {edit && onRemove ? (
+        <button onClick={onRemove} title="Remove this question" className="sb-noprint absolute" style={{ top: 0, right: 0, color: t.muted }}><X size={13} /></button>
+      ) : null}
       {live ? (
         <input
           value={a}
@@ -947,8 +968,10 @@ const SLIDE_H = CANVAS.h
 // and the spill warning still measures against the box the content actually has.
 const TextScale = createContext(1)
 
-function Slide({ nav, children, pad, bleed, warn, ground, h }: {
+function Slide({ nav, children, pad, bleed, warn, ground, h, noteKey }: {
   nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean; warn?: boolean
+  /** Which content.slideNotes entry this slide shows, so presenter notes can land on it. */
+  noteKey?: string
   /** Resolved background for this slide's tone. Set by the deck, never guessed here. */
   ground?: string
   /**
@@ -996,7 +1019,7 @@ function Slide({ nav, children, pad, bleed, warn, ground, h }: {
     return () => { clearTimeout(id); if (mo) mo.disconnect() }
   })
   return (
-    <div ref={box} className="sb-slide" data-nav={nav || undefined} data-tall={h && h > SLIDE_H ? '1' : undefined}
+    <div ref={box} className="sb-slide" data-nav={nav || undefined} data-note={noteKey || undefined} data-tall={h && h > SLIDE_H ? '1' : undefined}
       style={{ ...(ground ? { background: ground } : {}), ...(h && h > SLIDE_H ? { aspectRatio: String(SLIDE_W) + ' / ' + String(DESIGN_H) } : {}) }}>
       {/* Until the first measurement lands, scale 0 would flash a collapsed slide; hold it
           invisible for that one frame instead. */}
@@ -1172,11 +1195,20 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // the names are read off the DOM at present time rather than kept in a second list that would
   // silently drift out of step with what is actually on the page.
   const [navNames, setNavNames] = useState<string[]>([])
+  // The note key of each slide, read off the DOM at the same moment as its name, so a note typed
+  // while presenting lands on the slide actually on the glass (Jon, 2026-09-22: "Need to be able
+  // to see notes on the prester mode so i can add").
+  const [navNotes, setNavNotes] = useState<string[]>([])
   function readNavNames() {
-    setNavNames(slideEls().map((el, i) => {
+    const kids = slideEls()
+    setNavNames(kids.map((el, i) => {
       const n = el.querySelector('[data-nav]')
       const v = n ? String(n.getAttribute('data-nav') || '') : ''
       return v || (i === 0 ? 'Cover' : 'Slide ' + (i + 1))
+    }))
+    setNavNotes(kids.map(el => {
+      const n = el.querySelector('[data-note]')
+      return n ? String(n.getAttribute('data-note') || '') : ''
     }))
   }
   function enterPresent() {
@@ -1437,12 +1469,32 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   function addRecap(text: string, on: string) {
     const tx = String(text || '').trim()
     if (!tx) return
+    // THE OWNER REVIEW HAS NO RECAP SLIDE. The onboarding deck ends on one, which is where its
+    // notes belong; a review ends on the work we did. So on a review the note is appended to the
+    // slide that was on the glass when it was typed — the same content.slideNotes entry the
+    // slide already renders, so the owner sees it in context rather than as a list at the end.
+    if (!isOnboarding) {
+      const key = presentNoteKey()
+      if (key) {
+        const cur = String(((c.slideNotes || {}) as Any)[key] || '')
+        patch('slideNotes.' + key, cur ? cur + '\n' + tx : tx)
+        answerChanged()
+        return
+      }
+    }
     mutate(d => {
       const n = d.notes || (d.notes = {})
       n.recap = Array.isArray(n.recap) ? n.recap : []
       n.recap.push({ t: tx, on, at: new Date().toISOString() })
     })
     answerChanged()
+  }
+  /** The note key of the slide currently on the glass (or the first one, outside present mode). */
+  function presentNoteKey(): string {
+    if (present) return String(navNotes[slide] || '')
+    const el = scrollRef.current
+    const n = el ? el.querySelector('[data-note]') : null
+    return n ? String(n.getAttribute('data-note') || '') : ''
   }
   function editRecap(i: number, text: string) { patch('notes.recap.' + i + '.t', text); answerChanged() }
   function removeRecap(i: number) {
@@ -2391,7 +2443,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
       {/* PRESENTER NOTES: the button and drawer exist only for a signed-in presenter. An owner
           on the share link never sees them; the recap they produce lands on the last slide. */}
-      {canEdit && isOnboarding && (() => { const recap: Any[] = Array.isArray((c.notes || {}).recap) ? (c.notes || {}).recap : []; return (
+      {canEdit && (isOnboarding || isReviewDeck) && (() => { const recap: Any[] = Array.isArray((c.notes || {}).recap) ? (c.notes || {}).recap : []; return (
         <div className="sb-noprint fixed z-[64]" style={{ left: 16, bottom: 72 }}>
           {notesOpen ? (
             <div className="rounded-2xl shadow-2xl" style={{ width: 340, maxHeight: '62vh', display: 'flex', flexDirection: 'column', background: t.card, border: '1px solid ' + t.toolbarBorder }}>
@@ -2409,7 +2461,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   style={{ width: '100%', resize: 'none', fontSize: 13, lineHeight: 1.5, padding: '8px 10px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.bg, color: t.ink, fontFamily: 'inherit', outline: 'none' }}
                 />
                 <div className="flex items-center justify-between" style={{ marginTop: 6 }}>
-                  <span style={{ fontSize: 11, color: t.muted }}>{present && navNames[slide] ? 'On: ' + navNames[slide] : 'Lands on the last slide as the recap'}</span>
+                  <span style={{ fontSize: 11, color: t.muted }}>
+                    {isOnboarding
+                      ? (present && navNames[slide] ? 'On: ' + navNames[slide] : 'Lands on the last slide as the recap')
+                      : (presentNoteKey() ? 'Lands on ' + (present && navNames[slide] ? navNames[slide] : 'this slide') : 'Move to a slide that takes a note')}
+                  </span>
                   <button onClick={() => { addRecap(noteDraft, present ? (navNames[slide] || '') : ''); setNoteDraft('') }}
                     style={{ fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '5px 12px', background: t.ink, color: t.bg }}>Add</button>
                 </div>
@@ -2954,15 +3010,25 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
           const Asks = ({ k }: { k: string }) => {
             const as: Any[] = Array.isArray(sec(k).asks) ? sec(k).asks : []
-            if (!as.length) return null
+            if (!as.length && !edit) return null
             return (
               <div style={{ marginTop: 26 }}>
                 <p style={{ fontSize: 12, color: t.muted, marginBottom: 14 }}><Lab id="onTheCall" d="On the call" /></p>
                 <div className="flex flex-col" style={{ gap: 14 }}>
                   {as.map((a: Any, i: number) => (
-                    <AskBlock key={a.id || i} ask={a} live={canEdit} t={t} set={v => setAnswer(k, i, v)} />
+                    <AskBlock key={a.id || i} ask={a} live={canEdit} t={t} edit={edit}
+                      set={v => setAnswer(k, i, v)}
+                      setQ={v => patch(k + '.asks.' + i + '.q', v)}
+                      setHint={v => patch(k + '.asks.' + i + '.hint', v)}
+                      onRemove={() => mutate((d: Any) => { const sc = d[k]; if (sc && Array.isArray(sc.asks)) sc.asks.splice(i, 1) })} />
                   ))}
                 </div>
+                {edit ? (
+                  <button className="sb-noprint" style={{ marginTop: 12, fontSize: 12, fontWeight: 600, color: t.accent }}
+                    onClick={() => mutate((d: Any) => { const sc = d[k] || (d[k] = {}); sc.asks = Array.isArray(sc.asks) ? sc.asks : []; sc.asks.push({ id: 'a' + Date.now().toString(36), q: '', hint: '' }) })}>
+                    + Add a question
+                  </button>
+                ) : null}
               </div>
             )
           }
@@ -4680,11 +4746,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           const footLeft = [String(hero.title || ''), periodLabel].filter(Boolean).join(' · ')
 
           /** THE FRAME. Header, margins, footer — identical on every slide, set once. */
-          const Frame = ({ sec, subj, tone, n, children, nav }: { sec: string; subj?: string; tone: SlideTone; n: number; children: React.ReactNode; nav: string }) => {
+          const Frame = ({ sec, subj, tone, n, children, nav, note }: { sec: string; subj?: string; tone: SlideTone; n: number; children: React.ReactNode; nav: string; note?: string }) => {
             const dark = tone === 'dark'
             const meta1 = { fontSize: 9.5, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase' as const, color: dark ? D.muted : tint(0.45), margin: 0 }
             return (
-              <Slide nav={nav} warn={edit} pad={0} ground={GROUND[tone]}>
+              <Slide nav={nav} noteKey={note} warn={edit} pad={0} ground={GROUND[tone]}>
                 <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '40px 72px 38px' }}>
                   <div className="flex items-baseline justify-between" style={{ flex: '0 0 auto' }}>
                     <p style={meta1}>{sec}</p>
@@ -4866,7 +4932,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           if (verdict && !hid('verdict')) {
             const n = next()
             slides.push({ key: 'verdict', node: (
-              <Frame nav="The Month" sec="Performance" subj="The month" tone="light" n={n}>
+              <Frame note="verdict" nav="The Month" sec="Performance" subj="The month" tone="light" n={n}>
                 <Tick />
                 <H1 w="17ch">
                   <Ed v={verdict.headline || ''} set={x => setVerdict({ ...verdict, headline: x, edited: true })} edit={edit} multiline />
@@ -4903,7 +4969,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const lead = cards.find((x: Any) => String(x.key).toLowerCase() === 'revenue') || cards[0]
             const rest = cards.filter((x: Any) => x !== lead).slice(0, 6)
             slides.push({ key: 'snapshot', ai: true, node: (
-              <Frame nav="Snapshot" sec="Performance" subj={BASIS_NOTE[snapPrimary]} tone="tint" n={n}>
+              <Frame note="snapshot" nav="Snapshot" sec="Performance" subj={BASIS_NOTE[snapPrimary]} tone="tint" n={n}>
                 {edit && (
                   <div className="sb-noprint flex items-center flex-wrap" style={{ gap: 12, marginBottom: 18 }}>
                     <BasisPicker label="Big number" value={snapPrimary} onPick={(v: string) => setBasis('snapshotPrimary', v)} t={t} />
@@ -5009,7 +5075,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             }
             const best = listingTable.rows[0]
             slides.push({ key: 'listings', node: (
-              <Frame nav="By listing" sec="Portfolio" subj={BASIS_NOTE[netBasis]} tone="tint" n={n}>
+              <Frame note="listings" nav="By listing" sec="Portfolio" subj={BASIS_NOTE[netBasis]} tone="tint" n={n}>
                 <div className="flex items-end justify-between" style={{ gap: 24, flex: '0 0 auto' }}>
                   <div style={{ minWidth: 0 }}>
                     <Tick />
@@ -5086,7 +5152,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const n = next()
             const rows = (c.pacing.rows as Any[])
             slides.push({ key: 'pacing', ai: true, node: (
-              <Frame nav="Pacing" sec="Performance" subj="Against the market" tone="light" n={n}>
+              <Frame note="pacing" nav="Pacing" sec="Performance" subj="Against the market" tone="light" n={n}>
                 <RTitle k="pacing" />
                 <div style={{ marginTop: 20 }}>
                   {rows.map((r: Any, i: number) => {
@@ -5225,7 +5291,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               })
             })
             slides.push({ key: 'plan', ai: true, node: (
-              <Frame nav="Budget" sec="Performance" subj="Against budget" tone="dark" n={n}>
+              <Frame note="plan" nav="Budget" sec="Performance" subj="Against budget" tone="dark" n={n}>
                 <RTitle k="plan" dark />
 
                 {/* THE RAIL — every month on the report, the selected one lit and ruled. */}
@@ -5316,7 +5382,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           if (c.statement && ((c.statement.kpis || []).length || (c.statement.months || []).length) && !hid('statement')) {
             const n = next()
             slides.push({ key: 'statement', ai: true, node: (
-              <Frame nav="Owner statement" sec="Performance" subj="Your statement" tone="light" n={n}>
+              <Frame note="statement" nav="Owner statement" sec="Performance" subj="Your statement" tone="light" n={n}>
                 <RTitle k="statement" />
                 {(c.statement.kpis || []).length ? (
                   <div className="flex" style={{ gap: 44, marginTop: 26, flexWrap: 'wrap' }}>
@@ -5377,7 +5443,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 }
               })
             slides.push({ key: 'ahead', ai: true, node: (
-              <Frame nav="Looking ahead" sec="Ahead" subj="On the books" tone="light" n={n}>
+              <Frame note="ahead" nav="Looking ahead" sec="Ahead" subj="On the books" tone="light" n={n}>
                 <RTitle k="ahead" />
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, strip.length) + ', minmax(0,1fr))', gap: 22, alignItems: 'end', height: 218, marginTop: 24 }}>
                   {strip.map((x: Any, i: number) => {
@@ -5415,7 +5481,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const rest = quotes.slice(1, 3)
             const CIRC = 326.7
             slides.push({ key: 'voices', ai: true, node: (
-              <Frame nav="Guest voices" sec="Guests" subj={count ? count + ' reviews' : 'What guests said'} tone="light" n={n}>
+              <Frame note="voices" nav="Guest voices" sec="Guests" subj={count ? count + ' reviews' : 'What guests said'} tone="light" n={n}>
                 <div className="flex items-center" style={{ gap: 54 }}>
                   {avg != null ? (
                     <div style={{ width: 240, flexShrink: 0 }}>
@@ -5488,7 +5554,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             if (shown.length || edit) {
               const n = next()
               slides.push({ key: 'recs', node: (
-                <Frame nav="What we are improving" sec="Guests"
+                <Frame note="recs" nav="What we are improving" sec="Guests"
                   subj={recs.reviews ? recs.reviews + ' reviews · 90 days' : 'What we\u2019re acting on'} tone="tint" n={n}>
                   <Tick />
                   <H2 w="26ch">
@@ -5562,7 +5628,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             if (groups.length) {
               const n = next()
               slides.push({ key: 'projects', ai: true, node: (
-                <Frame nav="The work" sec="Ahead" subj="What we did" tone="light" n={n}>
+                <Frame note="projects" nav="The work" sec="Ahead" subj="What we did" tone="light" n={n}>
                   <RTitle k="projects" />
                   <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: '26px 34px' }}>
                     {groups.slice(0, 6).map((g: Any, i: number) => (
