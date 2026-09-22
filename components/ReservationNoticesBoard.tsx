@@ -11,10 +11,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Mail, Loader2, Check, AlertTriangle, Plus, RefreshCw, Search, Paperclip, Copy,
-  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud, CalendarClock, ChevronDown, ChevronRight, ExternalLink,
+  Trash2, X, Clock, Undo2, Settings, FileText, Download, DownloadCloud, ExternalLink,
 } from 'lucide-react'
-import Link from 'next/link'
 import { ReservationEmailsAdmin } from './ReservationEmailsAdmin'
+import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Pill, Tag, IconBtn, Tip } from '@/components/lean'
+
+type NTab = 'today' | 'upcoming' | 'sent'
 
 type Draft = { to: string; cc: string; subject: string; body: string; mailto: string; attach: boolean; attachName: string }
 type Row = {
@@ -53,6 +55,13 @@ function fmt(d?: string | null): string {
   if (!m) return String(d)
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   return MON[Number(m[2]) - 1] + ' ' + Number(m[3])
+}
+
+/** A sent_at timestamp as Eastern "Sep 22, 3:14 PM". */
+function when(ts?: string | null): string {
+  const t = Date.parse(String(ts || ''))
+  if (!Number.isFinite(t)) return ''
+  return new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })
 }
 
 /**
@@ -94,12 +103,11 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   const [needsMigration, setNeedsMigration] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
-  // Future bookings are visible by default: Salato, Nomad and District 225 are told as soon as
-  // the booking exists, so their work lives in Upcoming — hiding it hides most of the job.
-  const [showUpcoming, setShowUpcoming] = useState(true)
-  // Sent work CLOSES OUT. It stays reachable — a building claiming they were never told is exactly
-  // when you need the record — but it stops sitting in the middle of the list you are working.
-  const [showSent, setShowSent] = useState(false)
+  // TODAY · UPCOMING · SENT are tabs (lean pass, 2026-09-22). Upcoming carries its count on the tab:
+  // Salato, Nomad and District 225 are told as soon as the booking exists, so their work lives
+  // there. Sent work CLOSES OUT into its own tab — still reachable, because a building claiming it
+  // was never told is exactly when you need the record, but not in the list you are working.
+  const [tab, setTab] = useState<NTab>('today')
   const [q, setQ] = useState('')
   const [form, setForm] = useState<any | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
@@ -372,383 +380,305 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
     })
   }
 
+  const head = (
+    <LeanHead title={<span title="Buildings that won't let a guest in until their front desk has been told who is coming. Red means the guest is arriving and nothing has gone out. Recipients, wording and automation live under Settings.">Front-Desk Notices</span>}>
+      {counts.late > 0 && <Pill tone="rose" title="Guest arriving today and no notice has gone out">{counts.late} arriving, unsent</Pill>}
+      {counts.due > 0 && <Pill tone="amber" title="Past the building's cutoff — send now">{counts.due} past cutoff</Pill>}
+      <Pill tone={counts.toSend ? 'brand' : 'emerald'} title="Notices still to send for today">{counts.toSend} to send today</Pill>
+      {counts.sentToday > 0 && <Pill tone="emerald" title="Sent for today's arrivals">{counts.sentToday} sent</Pill>}
+      {counts.blocked > 0 && <Pill tone="amber" onClick={() => setShowSettings(true)} title="That building has no recipient yet — click to add one in Settings">{counts.blocked} no recipient</Pill>}
+    </LeanHead>
+  )
+
   if (needsMigration) {
     return (
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] text-amber-900 space-y-2">
-        <div className="font-semibold flex items-center gap-2"><AlertTriangle size={15} /> One migration to run first</div>
-        <div>Run <code className="px-1 rounded bg-white border border-amber-200">supabase/migrations/015_reservation_notices.sql</code> in the Supabase SQL editor, then reload this page.</div>
-        {/* PostgREST caches the schema, so a freshly-created table still reads as missing until it
-            reloads. Same trap as migration 013 — say the fix here rather than let it look broken. */}
-        <div>Already ran it and still seeing this? PostgREST is holding a stale schema. Run <code className="px-1 rounded bg-white border border-amber-200">NOTIFY pgrst, &apos;reload schema&apos;;</code> and reload.</div>
-      </div>
+      <>
+        {head}
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-5 text-[13px] text-amber-900 space-y-2">
+          <div className="font-semibold flex items-center gap-2"><AlertTriangle size={15} /> One migration to run first</div>
+          <div>Run <code className="px-1 rounded bg-white border border-amber-200">supabase/migrations/015_reservation_notices.sql</code> in the Supabase SQL editor, then reload this page.</div>
+          {/* PostgREST caches the schema, so a freshly-created table still reads as missing until it
+              reloads. Same trap as migration 013 — say the fix here rather than let it look broken. */}
+          <div>Already ran it and still seeing this? PostgREST is holding a stale schema. Run <code className="px-1 rounded bg-white border border-amber-200">NOTIFY pgrst, &apos;reload schema&apos;;</code> and reload.</div>
+        </div>
+      </>
     )
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={() => { setEditing(null); setForm({ ...EMPTY, property_id: (props.find(p => p.enabled) || props[0] || { id: '' }).id }) }}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[13px] font-semibold hover:bg-brand-700">
-          <Plus size={14} /> New notice
-        </button>
-        {/* A 256px box wrapped onto its own line on a phone and then used two thirds of it. */}
-        <div className="relative w-full sm:w-auto">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, building, code…"
-            className="rounded-lg border border-line pl-8 pr-2.5 py-1.5 text-[13px] w-full sm:w-64" />
-          {q.trim() && (
-            <button onClick={() => setQ('')} title="Clear" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={13} /></button>
-          )}
-        </div>
-        <button onClick={pull} disabled={pulling}
-          title="File any upcoming Guesty arrival that isn't on the desk yet. Runs automatically every 20 minutes."
-          className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
-          {pulling ? <Loader2 size={13} className="animate-spin" /> : <DownloadCloud size={13} />} Pull from Guesty
-        </button>
-        <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Refresh
-        </button>
-        <button onClick={() => setShowSettings(v => !v)}
-          title="Recipients, wording, lead time and what gets created automatically"
-          className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (showSettings ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink')}>
-          {showSettings ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<Settings size={13} /> Settings
-        </button>
-        {/* Three status chips beside each other were wider than a phone, so "to send today" —
-            the one that tells you whether you are done — was the piece that fell off. */}
-        <div className="ml-auto flex items-center gap-2 gap-y-1.5 flex-wrap text-[12px]">
-          {counts.late > 0 && <span className="px-2 py-1 rounded-lg bg-rose-100 text-rose-700 font-semibold">{counts.late} arriving, unsent</span>}
-          {counts.due > 0 && <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-800 font-semibold">{counts.due} past cutoff</span>}
-          <span className="text-muted">{counts.toSend} to send today{counts.sentToday ? ' · ' + counts.sentToday + ' sent' : ''}</span>
-        </div>
-      </div>
-
-      {q.trim() && (
-        <div className="text-[12px] text-muted">
-          {todayShown.length + upcomingShown.length} match{todayShown.length + upcomingShown.length === 1 ? '' : 'es'} for &ldquo;{q.trim()}&rdquo;
-          <span className="text-muted/70"> · searching today and upcoming</span>
-        </div>
-      )}
-
-      {counts.blocked > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-900 flex items-center gap-2 flex-wrap">
-          <AlertTriangle size={14} />
-          {counts.blocked} notice{counts.blocked === 1 ? '' : 's'} can&apos;t be sent — that building has no recipient yet.
-          <button onClick={() => setShowSettings(true)} className="inline-flex items-center gap-1 font-semibold underline"><Settings size={12} /> Add one in Settings</button>
-        </div>
-      )}
-      {err && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div>}
-      {msg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {msg}</div>}
-
-      {/* The same card as Users & admin, rendered here so the rules can be changed where the work
-          happens. Closing it reloads the desk, because a recipient or timing change alters what the
-          rows say about themselves. */}
-      {showSettings && (
-        <div className="space-y-2">
-          <ReservationEmailsAdmin isOwner={isOwner} />
-          <button onClick={() => { setShowSettings(false); load() }}
-            className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-            Done — back to the list
-          </button>
-        </div>
-      )}
-
-      {form && (
-        <div className="rounded-2xl border border-line bg-white overflow-hidden">
-          <div className="px-4 py-3 border-b border-line flex items-center gap-2">
-            <Mail size={15} className="text-brand-600" />
-            <span className="text-sm font-bold text-ink">{editing ? 'Edit notice' : 'New notice'}</span>
-            <button onClick={() => { setForm(null); setEditing(null) }} className="ml-auto text-muted hover:text-ink"><X size={15} /></button>
+    <div>
+      {head}
+      <LeanTabs<NTab>
+        tabs={[
+          { key: 'today', label: 'Today', n: todayShown.length },
+          { key: 'upcoming', label: 'Upcoming', n: upcomingShown.length },
+          { key: 'sent', label: 'Sent', n: sentShown.length },
+        ]}
+        value={tab} onChange={setTab}
+        right={<>
+          {/* Search counts show on every tab, so a match on another tab is never invisible. */}
+          <div className="relative w-full sm:w-52">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, building, code…"
+              className="rounded-lg border border-line pl-7 pr-6 py-1 text-[12px] w-full" />
+            {q.trim() && (
+              <button onClick={() => setQ('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>
+            )}
           </div>
-          <div className="p-4 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <span className={lbl}>Building *</span>
-                <select value={form.property_id} onChange={e => setForm({ ...form, property_id: e.target.value })} className={field}>
-                  <option value="">Choose…</option>
-                  {props.map(p => <option key={p.id} value={p.id}>{p.name}{p.to.trim() ? '' : ' (no recipient yet)'}</option>)}
-                </select>
+          <button onClick={() => { setEditing(null); setForm({ ...EMPTY, property_id: (props.find(p => p.enabled) || props[0] || { id: '' }).id }) }}
+            className="inline-flex items-center gap-1 rounded-lg bg-brand-600 text-white px-2.5 py-1 text-[12px] font-semibold hover:bg-brand-700">
+            <Plus size={13} /> New
+          </button>
+          <IconBtn title="Pull new arrivals from Guesty (runs by itself every 20 min)" onClick={pull} disabled={pulling}>
+            {pulling ? <Loader2 size={14} className="animate-spin" /> : <DownloadCloud size={14} />}
+          </IconBtn>
+          <IconBtn title="Refresh the list" onClick={load} disabled={loading}>
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          </IconBtn>
+          <IconBtn title="Settings — recipients, wording, lead time, automation" tone={showSettings ? 'brand' : undefined} onClick={() => setShowSettings(v => !v)}>
+            <Settings size={14} />
+          </IconBtn>
+        </>}
+      />
+
+      <div className="space-y-3">
+        {err && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-[12.5px] text-rose-700 flex items-center gap-2"><AlertTriangle size={13} className="shrink-0" /> {err}</div>}
+        {msg && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[12.5px] text-emerald-700 flex items-center gap-2"><Check size={13} className="shrink-0" /> {msg}</div>}
+
+        {/* The same card as Users & admin, rendered here so the rules can be changed where the work
+            happens. Closing it reloads the desk, because a recipient or timing change alters what the
+            rows say about themselves. */}
+        {showSettings && (
+          <div className="space-y-2">
+            <ReservationEmailsAdmin isOwner={isOwner} />
+            <button onClick={() => { setShowSettings(false); load() }}
+              className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line text-muted hover:text-ink">
+              Done — back to the list
+            </button>
+          </div>
+        )}
+
+        {form && (
+          <div className="rounded-2xl border border-line bg-white overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
+              <Mail size={15} className="text-brand-600" />
+              <span className="text-sm font-bold text-ink">{editing ? 'Edit notice' : 'New notice'}</span>
+              <span className="ml-auto"><Tip label="Close without saving"><button onClick={() => { setForm(null); setEditing(null) }} aria-label="Close without saving" className="text-muted hover:text-ink"><X size={15} /></button></Tip></span>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <span className={lbl}>Building *</span>
+                  <select value={form.property_id} onChange={e => setForm({ ...form, property_id: e.target.value })} className={field}>
+                    <option value="">Choose…</option>
+                    {props.map(p => <option key={p.id} value={p.id}>{p.name}{p.to.trim() ? '' : ' (no recipient yet)'}</option>)}
+                  </select>
+                </div>
+                <div><span className={lbl}>Unit *</span><input value={form.unit_no} onChange={e => setForm({ ...form, unit_no: e.target.value })} className={field} placeholder="e.g. 4418" /></div>
+                <div><span className={lbl}>Guest *</span><input value={form.guest_name} onChange={e => setForm({ ...form, guest_name: e.target.value })} className={field} /></div>
               </div>
-              <div><span className={lbl}>Unit *</span><input value={form.unit_no} onChange={e => setForm({ ...form, unit_no: e.target.value })} className={field} placeholder="e.g. 4418" /></div>
-              <div><span className={lbl}>Guest *</span><input value={form.guest_name} onChange={e => setForm({ ...form, guest_name: e.target.value })} className={field} /></div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div><span className={lbl}>Arrival *</span><input type="date" value={form.arrival_date} onChange={e => setForm({ ...form, arrival_date: e.target.value })} className={field} /></div>
-              <div><span className={lbl}>Departure</span><input type="date" value={form.departure_date} onChange={e => setForm({ ...form, departure_date: e.target.value })} className={field} /></div>
-              <div><span className={lbl}>ETA</span><input value={form.eta} onChange={e => setForm({ ...form, eta: e.target.value })} className={field} placeholder="e.g. 4:00 PM" /></div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <div><span className={lbl}>Guest phone</span><input value={form.guest_phone} onChange={e => setForm({ ...form, guest_phone: e.target.value })} className={field} /></div>
-              <div><span className={lbl}>Guest email</span><input value={form.guest_email} onChange={e => setForm({ ...form, guest_email: e.target.value })} className={field} /></div>
-              <div><span className={lbl}>Adults</span><input type="number" min={0} value={form.adults} onChange={e => setForm({ ...form, adults: e.target.value })} className={field} /></div>
-              <div><span className={lbl}>Children</span><input type="number" min={0} value={form.children} onChange={e => setForm({ ...form, children: e.target.value })} className={field} /></div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div><span className={lbl}>Pet(s)</span><input value={form.pets} onChange={e => setForm({ ...form, pets: e.target.value })} className={field} placeholder="blank if none" /></div>
-              <div><span className={lbl}>Breed</span><input value={form.pet_breed} onChange={e => setForm({ ...form, pet_breed: e.target.value })} className={field} /></div>
-              <div><span className={lbl}>Confirmation code</span><input value={form.confirmation_code} onChange={e => setForm({ ...form, confirmation_code: e.target.value })} className={field} /></div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-40">
-                {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {editing ? 'Save changes' : 'File it'}
-              </button>
-              <button onClick={() => { setForm(null); setEditing(null) }} className="text-[13px] font-semibold px-3 py-1.5 rounded-lg border border-line text-muted hover:text-ink">Cancel</button>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div><span className={lbl}>Arrival *</span><input type="date" value={form.arrival_date} onChange={e => setForm({ ...form, arrival_date: e.target.value })} className={field} /></div>
+                <div><span className={lbl}>Departure</span><input type="date" value={form.departure_date} onChange={e => setForm({ ...form, departure_date: e.target.value })} className={field} /></div>
+                <div><span className={lbl}>ETA</span><input value={form.eta} onChange={e => setForm({ ...form, eta: e.target.value })} className={field} placeholder="e.g. 4:00 PM" /></div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div><span className={lbl}>Guest phone</span><input value={form.guest_phone} onChange={e => setForm({ ...form, guest_phone: e.target.value })} className={field} /></div>
+                <div><span className={lbl}>Guest email</span><input value={form.guest_email} onChange={e => setForm({ ...form, guest_email: e.target.value })} className={field} /></div>
+                <div><span className={lbl}>Adults</span><input type="number" min={0} value={form.adults} onChange={e => setForm({ ...form, adults: e.target.value })} className={field} /></div>
+                <div><span className={lbl}>Children</span><input type="number" min={0} value={form.children} onChange={e => setForm({ ...form, children: e.target.value })} className={field} /></div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div><span className={lbl}>Pet(s)</span><input value={form.pets} onChange={e => setForm({ ...form, pets: e.target.value })} className={field} placeholder="blank if none" /></div>
+                <div><span className={lbl}>Breed</span><input value={form.pet_breed} onChange={e => setForm({ ...form, pet_breed: e.target.value })} className={field} /></div>
+                <div><span className={lbl}>Confirmation code</span><input value={form.confirmation_code} onChange={e => setForm({ ...form, confirmation_code: e.target.value })} className={field} /></div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-40">
+                  {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {editing ? 'Save changes' : 'File it'}
+                </button>
+                <button onClick={() => { setForm(null); setEditing(null) }} className="text-[13px] font-semibold px-3 py-1.5 rounded-lg border border-line text-muted hover:text-ink">Cancel</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {section('Today', todayShown, loading)}
-      {(counts.upcoming > 0 || upcomingShown.length > 0) && (
-        <div>
-          <button onClick={() => setShowUpcoming(v => !v)}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink mb-2">
-            <CalendarClock size={13} />
-            {showUpcoming ? 'Hide upcoming' : 'Show upcoming'} · {counts.upcomingToSend} to send
-          </button>
-          {/* A search must never be swallowed by a collapsed section — while something is typed the
-              upcoming block is forced open, otherwise a matching future booking looks like no result. */}
-          {(showUpcoming || q.trim().length > 0) && section('Upcoming', upcomingShown, false, true)}
-        </div>
-      )}
+        {tab === 'today' && (
+          loading && todayShown.length === 0
+            ? <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1.5" />Loading…</LeanEmpty>
+            : todayShown.length === 0
+              ? <LeanEmpty>{q.trim() ? 'No match today.' : 'Nothing arriving today — every building has been told.'}</LeanEmpty>
+              : <LeanList>{todayShown.map(renderRow)}</LeanList>
+        )}
 
-      {/* SENT — the closed-out work. Collapsed by default and grouped by the day it went out, so it
-          reads as a record of what was told to whom rather than as another queue. Search forces it
-          open for the same reason Upcoming opens: a hidden match looks like no match. */}
-      {sentShown.length > 0 && (
-        <div>
-          <button onClick={() => setShowSent(v => !v)}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink mb-2">
-            <Check size={13} />
-            {showSent ? 'Hide sent' : 'Show sent'} · {sentShown.length}
-          </button>
-          {(showSent || q.trim().length > 0) && section('Sent', sentShown, false, false, true)}
-        </div>
-      )}
+        {/* UPCOMING READS AS A CALENDAR, NOT A FILING CABINET. What someone needs from the days ahead
+            is "what is landing on Saturday", across every building at once — so the day leads, and
+            each day's rows keep the building order from Settings. */}
+        {tab === 'upcoming' && (
+          upcomingShown.length === 0
+            ? <LeanEmpty>Nothing upcoming.</LeanEmpty>
+            : groupByDay(upcomingShown).map(d => (
+              <LeanSection key={d.date} title={dayHeading(d.date, todayDate)} n={d.rows.length}>
+                <LeanList>{d.rows.map(renderRow)}</LeanList>
+              </LeanSection>
+            ))
+        )}
+
+        {/* SENT — the closed-out work, grouped by the day it went out, newest first. It reads as a
+            record of what was told to whom (the thing you need when a building says it never
+            arrived), not as another queue. */}
+        {tab === 'sent' && (
+          sentShown.length === 0
+            ? <LeanEmpty>Nothing sent yet.</LeanEmpty>
+            : groupBySentDay(sentShown).map(d => (
+              <LeanSection key={d.date} title={'Sent ' + dayHeading(d.date, todayDate)} n={d.rows.length}>
+                <LeanList>{d.rows.map(renderRow)}</LeanList>
+              </LeanSection>
+            ))
+        )}
+      </div>
     </div>
   )
 
-  // One row, used by both sections.
+  // ONE LINE PER NOTICE: Mark sent · guest · building unit · dates · tags · icon actions. The
+  // details, the form buttons, Edit / Delete and the email itself are behind the row.
   function renderRow(r: Row) {
-    const u = URGENCY[r.sent_at ? 'sent' : r.urgency] || URGENCY.upcoming
+    const open = openDraft === r.id
+    const pdfTitle = r.doc_path ? 'Registration form built and filed' : 'This building needs the registration form — not built yet'
     return (
-            <div key={r.id} className={'border-b border-line last:border-b-0 ' + (r.sent_at ? 'bg-emerald-50/30' : '')}>
-              <div className="flex items-center gap-2 px-4 py-3 flex-wrap">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {/* CLICK THE GUEST, LAND ON THE BOOKING. Anyone checking a notice against the
-                        source needs Guesty, not another StayBoard page — so the name is the link.
-                        Hand-typed notices have no reservation behind them and stay plain text. */}
-                    {r.reservation_id ? (
-                      <a href={'https://app.guesty.com/reservations/' + encodeURIComponent(r.reservation_id) + '/summary'}
-                        target="_blank" rel="noopener noreferrer"
-                        title="Open this booking in Guesty"
-                        className="text-[13px] font-semibold text-ink hover:text-brand-700 hover:underline decoration-dotted underline-offset-2 inline-flex items-center gap-1">
-                        {r.guest_name}<ExternalLink size={11} className="opacity-50" />
-                      </a>
+      <LeanRow key={r.id} tint={r.sent_at ? 'emerald' : r.urgency === 'late' ? 'rose' : undefined}
+        open={open} onToggle={() => setOpenDraft(open ? null : r.id)}
+        lead={r.sent_at ? undefined : (
+          <Tip label={'Mark sent — asks for your initials and ticks it in Guesty'}>
+            <button onClick={() => markSent(r)} className="shrink-0 inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-white text-emerald-700 px-2.5 h-8 text-[12px] font-semibold hover:bg-emerald-50">
+              <Check size={13} /> Mark sent
+            </button>
+          </Tip>
+        )}
+        name={r.guest_name}
+        meta={`${r.propertyName} ${r.unit_no} · ${fmt(r.arrival_date)}${r.departure_date ? '–' + fmt(r.departure_date) : ''}`}
+        tags={<>
+          {!r.sent_at && r.urgency === 'late' && <Tag tone="roseSolid" title={URGENCY.late.text}>Arriving · unsent</Tag>}
+          {!r.sent_at && r.urgency === 'due' && <Tag tone="amber" title={URGENCY.due.text}>Past cutoff</Tag>}
+          {r.attach && <Tag tone={r.doc_path ? 'brand' : 'amber'} title={pdfTitle}>{r.doc_path ? 'Form filed' : 'Needs form'}</Tag>}
+          {r.propertyMissing && <Tag tone="rose" title="This building is not in Settings">Not configured</Tag>}
+          {!r.hasRecipient && !r.propertyMissing && <Tag tone="amber" title="Add a recipient for this building in Settings">No recipient</Tag>}
+          {drafted[r.id] && !r.sent_at && <Tag tone="brand" title="Draft is waiting in support@'s Gmail">In drafts</Tag>}
+          {r.sent_at && <Tag tone="emerald" title={'Sent ' + when(r.sent_at)}>Sent {fmt(String(r.sent_at).slice(0, 10))}{r.sent_by ? ' · ' + r.sent_by : ''}</Tag>}
+        </>}
+        actions={<>
+          {r.reservation_id && (
+            <IconBtn title="Open this booking in Guesty" href={'https://app.guesty.com/reservations/' + encodeURIComponent(r.reservation_id) + '/summary'}><ExternalLink size={14} /></IconBtn>
+          )}
+          {r.attach && r.doc_path && (
+            <IconBtn title={'Open the filed form' + (r.doc_name ? ' — ' + r.doc_name : '')} tone="ok" onClick={() => openFiled(r)}><Download size={14} /></IconBtn>
+          )}
+          {r.sent_at && <IconBtn title="Not sent — put it back on the list" onClick={() => unmarkSent(r.id)}><Undo2 size={14} /></IconBtn>}
+        </>}
+      >
+        <div className="text-[12px] text-muted flex items-center gap-x-3 gap-y-1 flex-wrap">
+          {r.eta && <span>ETA {r.eta}</span>}
+          {r.leadHours != null && <span>{r.leadHours}h lead</span>}
+          {(r.adults || r.children) ? <span>{r.adults || 0} adult{r.adults === 1 ? '' : 's'}{r.children ? ' · ' + r.children + ' child' + (r.children === 1 ? '' : 'ren') : ''}</span> : null}
+          {r.pets && <span>Pet: {r.pets}{r.pet_breed ? ' (' + r.pet_breed + ')' : ''}</span>}
+          {r.confirmation_code && <span>{r.channel ? r.channel + ' ' : ''}{r.confirmation_code}</span>}
+          {r.sent_at && <span>Sent {when(r.sent_at)}{r.sent_by ? ' by ' + r.sent_by : ''}</span>}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {r.attach && !r.sent_at && (
+            <button onClick={() => makePdf(r)} disabled={pdfBusy === r.id}
+              title={r.doc_path ? 'Rebuild the registration form and replace the filed copy' : 'Build the registration form, download it and file it'}
+              className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
+              {pdfBusy === r.id ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+              {r.doc_path ? 'Rebuild form' : 'Build form'}
+            </button>
+          )}
+          <button onClick={() => startEdit(r)} className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line text-muted hover:text-ink">Edit</button>
+          <button onClick={() => remove(r.id, r.guest_name)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line text-muted hover:text-rose-600"><Trash2 size={12} /> Delete</button>
+        </div>
+
+        {(r.draft || r.sent_body) && (() => {
+          // A SENT NOTICE SHOWS WHAT WENT OUT, NOT WHAT WOULD GO OUT NOW. The snapshot is frozen at
+          // mark-sent; re-rendering from the current template would quietly rewrite history every
+          // time somebody edits a recipient or a line of wording.
+          const sentCopy = !!(r.sent_at && r.sent_body)
+          const to = sentCopy ? (r.sent_to || '') : (r.draft ? r.draft.to : '')
+          const cc = sentCopy ? (r.sent_cc || '') : (r.draft ? r.draft.cc : '')
+          const subject = sentCopy ? (r.sent_subject || '') : (r.draft ? r.draft.subject : '')
+          const body = sentCopy ? (r.sent_body || '') : (r.draft ? r.draft.body : '')
+          const attachName = sentCopy ? (r.sent_doc_name || '') : (r.draft && r.draft.attach ? r.draft.attachName : '')
+          return (
+            <div className={'rounded-xl border overflow-hidden ' + (sentCopy ? 'border-emerald-300' : 'border-line')}>
+              <div className={'px-3 py-2 border-b border-line text-[12px] space-y-0.5 ' + (sentCopy ? 'bg-emerald-50/60' : 'bg-app')}>
+                {sentCopy && (
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-800 pb-1">
+                    Sent {fmt(String(r.sent_at).slice(0, 10))}{r.sent_by ? ' by ' + r.sent_by : ''} — exactly as it went out
+                  </div>
+                )}
+                <div><strong>To:</strong> {to || <span className="text-rose-600">nobody — add a recipient in Settings</span>}</div>
+                <div><strong>CC:</strong> {cc}</div>
+                <div><strong>Subject:</strong> {subject}</div>
+                {attachName && (
+                  <div className={'flex items-start gap-1.5 pt-1 ' + (r.doc_path ? 'text-emerald-700' : 'text-amber-800')}>
+                    <Paperclip size={12} className="mt-0.5 flex-shrink-0" />
+                    {sentCopy ? (
+                      <span>
+                        <strong>{attachName}</strong> went with it.
+                        {r.doc_path
+                          ? <button onClick={() => openFiled(r)} className="ml-1 font-semibold underline decoration-dotted underline-offset-2 hover:text-emerald-900">Open the report</button>
+                          : ' The filed copy is no longer available.'}
+                      </span>
                     ) : (
-                      <span className="text-[13px] font-semibold text-ink">{r.guest_name}</span>
-                    )}
-                    <span className="text-[13px] text-muted">· {r.propertyName} {r.unit_no}</span>
-                    {r.attach && <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-50 text-brand-700"><Paperclip size={10} /> PDF</span>}
-                    {u.text && <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + u.chip}>{u.text}</span>}
-                    {r.propertyMissing && <span className="text-[11px] font-semibold text-rose-600">building not configured</span>}
-                    {!r.hasRecipient && !r.propertyMissing && <span className="text-[11px] font-semibold text-amber-700">no recipient</span>}
-                  </div>
-                  <div className="text-[12px] text-muted mt-0.5">
-                    {fmt(r.arrival_date)}{r.departure_date ? ' – ' + fmt(r.departure_date) : ''}
-                    {r.eta ? ' · ETA ' + r.eta : ''}
-                    {r.leadHours != null ? ' · ' + r.leadHours + 'h lead' : ''}
-                    {r.sent_at ? ' · sent ' + fmt(String(r.sent_at).slice(0, 10)) + (r.sent_by ? ' by ' + r.sent_by : '') : ''}
-                  </div>
-                </div>
-                <button onClick={() => startEdit(r)} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">Edit</button>
-                {r.attach && !r.sent_at && (
-                  <button onClick={() => makePdf(r)} disabled={pdfBusy === r.id}
-                    title={r.doc_path ? 'Rebuild the registration form and replace the filed copy' : 'Build the registration form, download it and file it'}
-                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink disabled:opacity-40">
-                    {pdfBusy === r.id ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
-                    {r.doc_path ? 'Rebuild form' : 'Build form'}
-                  </button>
-                )}
-                {r.attach && r.doc_path && (
-                  <button onClick={() => openFiled(r)} title={r.doc_name || 'Filed form'}
-                    className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
-                    <Download size={13} /> {r.sent_at ? 'Report' : 'Filed'}
-                  </button>
-                )}
-                {(r.draft || r.sent_body) && (
-                  // Toggles. When it IS open the button says so and says how to close it, because a
-                  // draft is tall enough to push this row off screen — someone who scrolled down to
-                  // read it should not have to hunt back up to work out how to get rid of it.
-                  <button onClick={() => setOpenDraft(openDraft === r.id ? null : r.id)}
-                    aria-expanded={openDraft === r.id}
-                    className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' + (openDraft === r.id ? 'border-brand-600 bg-brand-600 text-white hover:bg-brand-700' : 'border-brand-300 text-brand-700 hover:bg-brand-50')}>
-                    {openDraft === r.id
-                      ? <><X size={13} /> Close</>
-                      : <><Mail size={13} /> {r.sent_at ? 'Sent email' : 'Email draft'}</>}
-                  </button>
-                )}
-                {r.sent_at
-                  ? <button onClick={() => unmarkSent(r.id)} title="Put it back on the list as still to send" className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink"><Undo2 size={13} /> Not sent</button>
-                  : <button onClick={() => markSent(r)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50"><Check size={13} /> Mark sent</button>}
-                <button onClick={() => remove(r.id, r.guest_name)} className="text-muted hover:text-rose-600" title="Delete"><Trash2 size={14} /></button>
-              </div>
-
-              {openDraft === r.id && (r.draft || r.sent_body) && (() => {
-                // A SENT NOTICE SHOWS WHAT WENT OUT, NOT WHAT WOULD GO OUT NOW. The snapshot is
-                // frozen at mark-sent; re-rendering from the current template would quietly rewrite
-                // history every time somebody edits a recipient or a line of wording.
-                const sentCopy = !!(r.sent_at && r.sent_body)
-                const to = sentCopy ? (r.sent_to || '') : (r.draft ? r.draft.to : '')
-                const cc = sentCopy ? (r.sent_cc || '') : (r.draft ? r.draft.cc : '')
-                const subject = sentCopy ? (r.sent_subject || '') : (r.draft ? r.draft.subject : '')
-                const body = sentCopy ? (r.sent_body || '') : (r.draft ? r.draft.body : '')
-                const attachName = sentCopy ? (r.sent_doc_name || '') : (r.draft && r.draft.attach ? r.draft.attachName : '')
-                return (
-                <div className="px-4 pb-4">
-                  <div className={'rounded-xl border overflow-hidden ' + (sentCopy ? 'border-emerald-300' : 'border-line')}>
-                    <div className={'px-3 py-2 border-b border-line text-[12px] space-y-0.5 relative ' + (sentCopy ? 'bg-emerald-50/60' : 'bg-app')}>
-                      <button onClick={() => setOpenDraft(null)} title="Close (Esc)" aria-label="Close"
-                        className="absolute top-1.5 right-1.5 p-1 rounded-md text-muted hover:text-ink hover:bg-line/60">
-                        <X size={14} />
-                      </button>
-                      {sentCopy && (
-                        <div className="pr-7 text-[11px] font-semibold uppercase tracking-wider text-emerald-800 pb-1">
-                          Sent {fmt(String(r.sent_at).slice(0, 10))}{r.sent_by ? ' by ' + r.sent_by : ''} — exactly as it went out
-                        </div>
-                      )}
-                      <div className="pr-7"><strong>To:</strong> {to || <span className="text-rose-600">nobody — add a recipient in Settings</span>}</div>
-                      <div><strong>CC:</strong> {cc}</div>
-                      <div><strong>Subject:</strong> {subject}</div>
-                      {attachName && (
-                        <div className={'flex items-start gap-1.5 pt-1 ' + (r.doc_path ? 'text-emerald-700' : 'text-amber-800')}>
-                          <Paperclip size={12} className="mt-0.5 flex-shrink-0" />
-                          {sentCopy ? (
-                            <span>
-                              <strong>{attachName}</strong> went with it.
-                              {r.doc_path
-                                ? <button onClick={() => openFiled(r)} className="ml-1 font-semibold underline decoration-dotted underline-offset-2 hover:text-emerald-900">Open the report</button>
-                                : ' The filed copy is no longer available.'}
-                            </span>
-                          ) : (
-                            <span>
-                              <strong>Attach {attachName}</strong> before sending — a mail link can&apos;t carry the file.
-                              {r.doc_path
-                                ? <> It&apos;s already on the Gmail draft; if you need a copy,<button onClick={() => openFiled(r)} className="ml-1 font-semibold underline decoration-dotted underline-offset-2">open the filed form</button>.</>
-                                : ' Hit Build form first.'}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <pre className="px-3 py-2 text-[12px] whitespace-pre-wrap font-sans text-ink">{body}</pre>
-                    <div className="px-3 py-2 border-t border-line flex items-center gap-2 flex-wrap">
-                      {!sentCopy && r.draft && (
-                        <button onClick={() => addToDrafts(r.id, { to, cc, subject, body, wantsForm: !!r.attach })} disabled={!r.hasRecipient || draftBusy === r.id}
-                          title="Creates a ready-to-send draft in support@stay-hospitality.com's Gmail"
-                          className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg ' + (drafted[r.id] ? 'border border-emerald-300 text-emerald-700 bg-emerald-50' : r.hasRecipient ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-app text-muted opacity-50 cursor-not-allowed')}>
-                          {draftBusy === r.id ? <Loader2 size={13} className="animate-spin" /> : drafted[r.id] ? <Check size={13} /> : <Mail size={13} />}
-                          {drafted[r.id] ? 'In support@ drafts' : 'Add to drafts'}
-                        </button>
-                      )}
-                      {!sentCopy && r.draft && (
-                        <a href={r.draft.mailto} className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line ' + (r.hasRecipient ? 'text-muted hover:text-ink' : 'text-muted pointer-events-none opacity-50')}>
-                          <Mail size={13} /> Open in mail app
-                        </a>
-                      )}
-                      <button onClick={() => copyDraft({ to, cc, subject, body } as any)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-                        <Copy size={13} /> Copy email
-                      </button>
-                      {sentCopy && r.doc_path && (
-                        <button onClick={() => openFiled(r)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
-                          <Download size={13} /> Open the report
-                        </button>
-                      )}
-                      {/* A second way out, at the bottom — where you end up after reading it. */}
-                      <button onClick={() => setOpenDraft(null)}
-                        className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-                        <X size={13} /> Close
-                      </button>
-                      {!sentCopy && <span className="text-[11px] text-muted inline-flex items-center gap-1"><Clock size={11} /> Hit Mark sent once it&apos;s gone.</span>}
-                    </div>
-                    {draftErr[r.id] && (
-                      <div className="px-3 pb-2 text-[12px] text-rose-700 flex items-start gap-1.5">
-                        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                        <span>{draftErr[r.id]}{/support@/.test(draftErr[r.id]) ? <> — connect it under <b>Users &rarr; Morning Ops Brief &rarr; Mailbox connections</b>, signing into Google as support@.</> : null}</span>
-                      </div>
+                      <span>
+                        <strong>Attach {attachName}</strong> before sending — a mail link can&apos;t carry the file.
+                        {r.doc_path
+                          ? <> It&apos;s already on the Gmail draft; if you need a copy,<button onClick={() => openFiled(r)} className="ml-1 font-semibold underline decoration-dotted underline-offset-2">open the filed form</button>.</>
+                          : ' Hit Build form first.'}
+                      </span>
                     )}
                   </div>
-                </div>
-                )
-              })()}
-            </div>
-    )
-  }
-
-  /**
-   * A titled block of rows. Sent notices STAY here rather than disappearing — the day should read
-   * as a complete record of who has been told and who has not.
-   */
-  function section(title: string, list: Row[], busy: boolean, byDay = false, bySentDay = false) {
-    const tally = (rows: Row[]) =>
-      bySentDay
-        ? rows.length + (rows.length === 1 ? ' sent' : ' sent')
-        : rows.filter(r => !r.sent_at).length + ' to send' +
-          (rows.some(r => r.sent_at) ? ' · ' + rows.filter(r => r.sent_at).length + ' sent' : '')
-
-    // Buildings inside one day, which is what byDay renders under each date heading.
-    const buildingBlocks = (rows: Row[]) => groupByProperty(rows).map(g => (
-      <div key={g.name}>
-        <div className="px-4 py-1.5 bg-app border-b border-line flex items-center gap-2">
-          <span className="text-[12px] font-bold text-ink">{g.name}</span>
-          <span className="text-[11px] text-muted">{tally(g.rows)}</span>
-        </div>
-        {g.rows.map(renderRow)}
-      </div>
-    ))
-
-    return (
-      <div>
-        <div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">
-          {title} <span className="text-muted/70">· {tally(list)}</span>
-        </div>
-        <div className="rounded-2xl border border-line bg-white overflow-hidden">
-          {busy && list.length === 0 ? (
-            <div className="px-4 py-8 text-center text-[13px] text-muted"><Loader2 size={16} className="animate-spin inline mr-2" /> Loading…</div>
-          ) : list.length === 0 ? (
-            <div className="px-4 py-8 text-center text-[13px] text-muted">
-              {title === 'Today' ? 'Nothing arriving today — every building has been told.' : 'Nothing upcoming.'}
-            </div>
-          ) : bySentDay ? (
-            groupBySentDay(list).map(d => (
-              <div key={d.date}>
-                <div className="px-4 py-2 bg-emerald-50/70 border-b border-line flex items-center gap-2 sticky top-0 z-[1]">
-                  <Check size={13} className="text-emerald-700 flex-shrink-0" />
-                  <span className="text-[12px] font-bold text-emerald-800">Sent {dayHeading(d.date, todayDate)}</span>
-                  <span className="text-[11px] text-emerald-700/80">{d.rows.length}</span>
-                </div>
-                {buildingBlocks(d.rows)}
+                )}
               </div>
-            ))
-          ) : byDay ? (
-            // UPCOMING READS AS A CALENDAR, NOT A FILING CABINET. What someone needs from the days
-            // ahead is "what is landing on Saturday", across every building at once — grouping by
-            // building first buries Saturday's single Nomad arrival forty Elser rows down. So the
-            // day leads and the buildings nest inside it, which keeps each building's own block
-            // (own recipients, own wording) without hiding the shape of the week.
-            groupByDay(list).map(d => (
-              <div key={d.date}>
-                <div className="px-4 py-2 bg-brand-50/70 border-b border-line flex items-center gap-2 sticky top-0 z-[1]">
-                  <CalendarClock size={13} className="text-brand-700 flex-shrink-0" />
-                  <span className="text-[12px] font-bold text-brand-800">{dayHeading(d.date, todayDate)}</span>
-                  <span className="text-[11px] text-brand-700/80">{tally(d.rows)}</span>
-                </div>
-                {buildingBlocks(d.rows)}
+              <pre className="px-3 py-2 text-[12px] whitespace-pre-wrap font-sans text-ink">{body}</pre>
+              <div className="px-3 py-2 border-t border-line flex items-center gap-2 flex-wrap">
+                {!sentCopy && r.draft && (
+                  <button onClick={() => addToDrafts(r.id, { to, cc, subject, body, wantsForm: !!r.attach })} disabled={!r.hasRecipient || draftBusy === r.id}
+                    title="Creates a ready-to-send draft in support@stay-hospitality.com's Gmail"
+                    className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-lg ' + (drafted[r.id] ? 'border border-emerald-300 text-emerald-700 bg-emerald-50' : r.hasRecipient ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-app text-muted opacity-50 cursor-not-allowed')}>
+                    {draftBusy === r.id ? <Loader2 size={13} className="animate-spin" /> : drafted[r.id] ? <Check size={13} /> : <Mail size={13} />}
+                    {drafted[r.id] ? 'In support@ drafts' : 'Add to drafts'}
+                  </button>
+                )}
+                {!sentCopy && r.draft && (
+                  <a href={r.draft.mailto} className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line ' + (r.hasRecipient ? 'text-muted hover:text-ink' : 'text-muted pointer-events-none opacity-50')}>
+                    <Mail size={13} /> Open in mail app
+                  </a>
+                )}
+                <button onClick={() => copyDraft({ to, cc, subject, body } as any)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line text-muted hover:text-ink">
+                  <Copy size={13} /> Copy email
+                </button>
+                {sentCopy && r.doc_path && (
+                  <button onClick={() => openFiled(r)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+                    <Download size={13} /> Open the report
+                  </button>
+                )}
+                {/* A way out at the bottom — where you end up after reading a tall draft. Esc works too. */}
+                <button onClick={() => setOpenDraft(null)}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line text-muted hover:text-ink">
+                  <X size={13} /> Close
+                </button>
+                {!sentCopy && <span className="text-[11px] text-muted inline-flex items-center gap-1"><Clock size={11} /> Hit Mark sent once it&apos;s gone.</span>}
               </div>
-            ))
-          ) : buildingBlocks(list)}
-        </div>
-      </div>
+              {draftErr[r.id] && (
+                <div className="px-3 pb-2 text-[12px] text-rose-700 flex items-start gap-1.5">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span>{draftErr[r.id]}{/support@/.test(draftErr[r.id]) ? <> — connect it under <b>Users &rarr; Morning Ops Brief &rarr; Mailbox connections</b>, signing into Google as support@.</> : null}</span>
+                </div>
+              )}
+            </div>
+          )
+        })()}
+      </LeanRow>
     )
   }
 
@@ -791,18 +721,6 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
       const last = out[out.length - 1]
       if (last && last.date === d) last.rows.push(r)
       else out.push({ date: d, rows: [r] })
-    }
-    return out
-  }
-
-  /** Rows split into building blocks, keeping the order the API already sorted them into. */
-  function groupByProperty(list: Row[]): { name: string; rows: Row[] }[] {
-    const out: { name: string; rows: Row[] }[] = []
-    for (const r of list) {
-      const name = r.propertyName || 'Unassigned'
-      const last = out[out.length - 1]
-      if (last && last.name === name) last.rows.push(r)
-      else out.push({ name, rows: [r] })
     }
     return out
   }

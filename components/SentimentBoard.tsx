@@ -1,26 +1,33 @@
 'use client'
-// Guest-sentiment queue on the Messages page. Scans guest threads (AI), surfaces a warning
-// banner for dissatisfaction, lets the team open a thread or close it out. Adds visibility —
-// it never sends a message or changes a reservation.
+// Guest-sentiment queue on the Messages page. Scans guest threads (AI), flags dissatisfaction,
+// lets the team open a thread or close it out. Adds visibility — it never sends a message or
+// changes a reservation.
+//
+// LEAN PASS (2026-09-22): one row per thread (Open · guest · issue · tags · icon actions); the
+// quote, the AI's reason and the triggers are behind the row. The dissatisfaction banner became
+// header pills on the Messages page, fed by `onLoad`.
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, Frown, Meh, Smile, Check, Clock, RefreshCw, ChevronDown, ChevronUp, ShieldAlert } from 'lucide-react'
+import { AlertTriangle, Frown, Meh, Smile, Check, RefreshCw, Wrench, ClipboardCheck, Loader2 } from 'lucide-react'
+import { Tag, IconBtn, LeanList, LeanRow, LeanEmpty, Clamp, type Tone } from '@/components/lean'
 
-type Row = {
+export type SentimentRow = {
   id: string; guest: string; channel: string; listingName: string | null; building: string | null
   score: number | null; band: string; dissatisfied: boolean; triggers: string[]
   topIssue: string | null; reason: string | null; excerpt: string | null
   lastMessageAt: string | null; awaitingReply: boolean; status: string; preview: string; unread: number
 }
-type Summary = { total: number; open: number; dissatisfied: number; negative: number; awaitingNegative: number; unansweredNegative: number }
+type Row = SentimentRow
+export type SentimentSummary = { total: number; open: number; dissatisfied: number; negative: number; awaitingNegative: number; unansweredNegative: number }
+type Summary = SentimentSummary
 
 const CH: Record<string, string> = { airbnb: 'Airbnb', airbnb2: 'Airbnb', vrbo: 'VRBO', booking: 'Booking', 'booking.com': 'Booking', sms: 'SMS', email: 'Email', whatsapp: 'WhatsApp' }
 const TRIG: Record<string, string> = { ai_dissatisfaction: 'AI: dissatisfied', keyword: 'Risk keyword', low_score: 'Low score', unanswered_negative: 'Unanswered + negative' }
 
-function bandUi(band: string, score: number | null) {
-  if (band === 'negative') return { ring: 'bg-rose-50 text-rose-700 border-rose-200', Icon: Frown, label: 'Negative' }
-  if (band === 'positive') return { ring: 'bg-emerald-50 text-emerald-700 border-emerald-200', Icon: Smile, label: 'Positive' }
-  return { ring: 'bg-slate-50 text-slate-600 border-slate-200', Icon: Meh, label: 'Neutral' }
+function bandUi(band: string): { tone: Tone; Icon: any; label: string } {
+  if (band === 'negative') return { tone: 'rose', Icon: Frown, label: 'Negative' }
+  if (band === 'positive') return { tone: 'emerald', Icon: Smile, label: 'Positive' }
+  return { tone: 'slate', Icon: Meh, label: 'Neutral' }
 }
 function ago(s: string | null) {
   if (!s) return ''
@@ -39,7 +46,8 @@ if (/dirty|unclean|not clean|stain|hair|trash|linen|towel|smell/.test(text)) ret
 return { issueType: 'upset-guest', department: 'inspection', priority: 'high', title: 'Upset guest - unit inspection', check: 'Guest is showing dissatisfaction. Walk the unit: maintenance + cleanliness + amenities. Photos + notes.' }
 }
 
-export function SentimentBoard() {
+/** `onLoad` hands every load's rows and summary to the page (header pills, inbox sentiment tags). */
+export function SentimentBoard({ onLoad }: { onLoad?: (rows: SentimentRow[], summary: SentimentSummary | null) => void } = {}) {
   const [rows, setRows] = useState<Row[]>([])
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -47,7 +55,6 @@ export function SentimentBoard() {
   const [filter, setFilter] = useState<'attention' | 'all'>('attention')
   const [scanning, setScanning] = useState(false)
   const [scanMsg, setScanMsg] = useState<string | null>(null)
-  const [open, setOpen] = useState<Record<string, boolean>>({})
 const [qc, setQc] = useState<Record<string, { taskId: string; reportUrl: string | null }>>({})
 const [qcBusy, setQcBusy] = useState<Record<string, boolean>>({})
 
@@ -71,6 +78,8 @@ setQc(m)
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+  // Report up whenever the list changes (including the optimistic removal on Close out).
+  useEffect(() => { if (onLoad) onLoad(rows, summary) }, [rows, summary]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function close(id: string) {
     setRows(rs => rs.filter(r => r.id !== id))
@@ -112,84 +121,60 @@ async function scan() {
   }
 
   const shown = filter === 'attention' ? rows.filter(r => r.dissatisfied || r.band === 'negative' || r.triggers.length > 0) : rows
-  const flagged = summary ? summary.dissatisfied + summary.negative : 0
 
   return (
-    <section className="mb-6">
-      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><ShieldAlert size={15} className="text-brand-600" /> Guest sentiment</h2>
-        {/* Two filter buttons plus Scan now is ~300px — on a phone it needs to be able to break
-            onto a second line rather than push the heading off the screen. */}
-        <div className="flex items-center gap-2 flex-wrap gap-y-2">
-          <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
-            <button onClick={() => setFilter('attention')} className={`px-2.5 py-1 font-semibold ${filter === 'attention' ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>Needs attention</button>
-            <button onClick={() => setFilter('all')} className={`px-2.5 py-1 font-semibold ${filter === 'all' ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>All scored</button>
-          </div>
-          <button onClick={scan} disabled={scanning} className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-brand-200 text-brand-700 bg-brand-50 px-2.5 py-1.5 hover:bg-brand-100 disabled:opacity-50">
-            <RefreshCw size={13} className={scanning ? 'animate-spin' : ''} /> {scanning ? 'Scanning…' : 'Scan now'}
-          </button>
+    <section>
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
+          <button onClick={() => setFilter('attention')} className={`px-2.5 py-1 font-semibold ${filter === 'attention' ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>Needs attention</button>
+          <button onClick={() => setFilter('all')} className={`px-2.5 py-1 font-semibold border-l border-line ${filter === 'all' ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>All scored</button>
         </div>
+        <button onClick={scan} disabled={scanning} title="Score the last 30 days of guest threads with AI"
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-brand-200 text-brand-700 bg-brand-50 px-2.5 py-1 hover:bg-brand-100 disabled:opacity-50">
+          <RefreshCw size={13} className={scanning ? 'animate-spin' : ''} /> {scanning ? 'Scanning…' : 'Scan now'}
+        </button>
+        {scanMsg && <span className="text-[12px] text-muted">{scanMsg}</span>}
+        {err && <span className="text-[12px] text-rose-600 inline-flex items-center gap-1"><AlertTriangle size={12} /> {err}</span>}
       </div>
 
-      {/* warning banner */}
-      {summary && (summary.dissatisfied > 0 || summary.awaitingNegative > 0) && (
-        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 flex items-center gap-3 flex-wrap">
-          <AlertTriangle size={16} className="text-rose-600 shrink-0" />
-          <span className="text-[13px] text-rose-800 font-semibold">{summary.dissatisfied} guest{summary.dissatisfied === 1 ? '' : 's'} showing dissatisfaction</span>
-          {summary.awaitingNegative > 0 && <span className="text-[12px] text-rose-700">· {summary.awaitingNegative} negative + awaiting your reply</span>}
-          {summary.unansweredNegative > 0 && <span className="text-[12px] text-rose-700">· {summary.unansweredNegative} unanswered &gt; 2h</span>}
-        </div>
-      )}
-
-      {scanMsg && <div className="mb-3 text-[12px] text-muted inline-flex items-center gap-1.5"><Clock size={12} /> {scanMsg}</div>}
-      {err && <div className="mb-3 text-[12px] text-rose-600 inline-flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5" /> {err}</div>}
-
-      {loading ? (
-        <div className="bg-white rounded-2xl border border-line p-8 text-center text-muted text-sm">Loading sentiment…</div>
+      {loading && rows.length === 0 ? (
+        <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1.5" />Loading sentiment…</LeanEmpty>
       ) : shown.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-line p-8 text-center text-muted text-sm">
-          {rows.length === 0 ? <>No conversations scored yet. Click <strong>Scan now</strong> to analyze the last 30 days.</> : 'No threads need attention right now. 🎉'}
-        </div>
+        <LeanEmpty>{rows.length === 0 ? <>No conversations scored yet — <strong>Scan now</strong> analyzes the last 30 days.</> : 'No threads need attention right now.'}</LeanEmpty>
       ) : (
-        <div className="bg-white rounded-2xl border border-line shadow-soft divide-y divide-line/60 overflow-hidden">
+        <LeanList>
           {shown.map(r => {
-            const ui = bandUi(r.band, r.score); const Icon = ui.Icon; const isOpen = open[r.id]
+            const ui = bandUi(r.band); const Icon = ui.Icon
+            const q = qc[r.id]
             return (
-              <div key={r.id} className="px-4 py-3">
-                <div className="flex items-start gap-3">
-                  <span className={`mt-0.5 inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold shrink-0 ${ui.ring}`} title={`Score ${r.score ?? '—'}/5`}>
-                    <Icon size={13} /> {r.score ?? '—'}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-ink truncate">{r.guest}</span>
-                      <span className="text-[10px] uppercase tracking-wide text-muted font-semibold">{CH[r.channel] || r.channel}</span>
-                      {r.listingName && <span className="text-[11px] text-muted truncate">· {r.building || r.listingName}</span>}
-                      {r.awaitingReply && <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-full">Awaiting reply</span>}
-                      <span className="ml-auto text-[11px] text-muted shrink-0">{ago(r.lastMessageAt)}</span>
-                    </div>
-                    {r.topIssue && <div className="text-[13px] text-ink mt-0.5"><span className="font-medium">{r.topIssue}</span></div>}
-                    {r.excerpt && <div className="text-[12px] text-muted italic mt-0.5 truncate">“{r.excerpt}”</div>}
-                    {r.triggers.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {r.triggers.map(t => <span key={t} className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">{TRIG[t] || t}</span>)}
-                      </div>
-                    )}
-                    {isOpen && r.reason && <div className="text-[12px] text-ink/70 mt-2 bg-app rounded-lg px-3 py-2">{r.reason}</div>}
-                    {/* Four actions on one line — Open thread / Close out / Create QC task / Why —
-                        is well over a phone's width, so the row wraps instead of overflowing. */}
-                    <div className="flex items-center gap-3 mt-2 flex-wrap gap-y-1.5">
-                      <Link href={`/messages/${r.id}`} className="text-[12px] font-semibold text-brand-700 hover:underline">Open thread →</Link>
-                      <button onClick={() => close(r.id)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-700 hover:underline"><Check size={13} /> Close out</button>
-{qc[r.id] ? (qc[r.id].reportUrl ? <a href={qc[r.id].reportUrl as string} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-semibold text-violet-700 hover:underline">QC task created &rarr;</a> : <span className="text-[12px] font-semibold text-violet-700">QC task created</span>) : <button onClick={() => createQc(r)} disabled={!!qcBusy[r.id]} className="inline-flex items-center gap-1 text-[12px] font-semibold text-violet-700 hover:underline disabled:opacity-50" title="Create a targeted inspection/maintenance task in Breezeway with this guest's issue - only on your click">{qcBusy[r.id] ? 'Creating...' : 'Create QC task'}</button>}
-                      {r.reason && <button onClick={() => setOpen(o => ({ ...o, [r.id]: !o[r.id] }))} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink ml-auto">{isOpen ? <>Less <ChevronUp size={13} /></> : <>Why <ChevronDown size={13} /></>}</button>}
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <LeanRow key={r.id}
+                lead={<Link href={`/messages/${r.id}`} className="shrink-0 inline-flex items-center rounded-full bg-brand-600 text-white px-3 h-8 text-[12px] font-semibold hover:bg-brand-700">Open</Link>}
+                name={r.guest}
+                meta={[r.topIssue || r.building || r.listingName, ago(r.lastMessageAt)].filter(Boolean).join(' · ')}
+                tags={<>
+                  <Tag tone={ui.tone} title={`AI sentiment score ${r.score ?? '—'}/5`}><Icon size={10} className="inline -mt-px mr-0.5" />{r.dissatisfied ? 'Unhappy' : ui.label} {r.score ?? ''}</Tag>
+                  <Tag>{CH[r.channel] || r.channel}</Tag>
+                  {r.awaitingReply && <Tag tone="rose" title="Latest message is from the guest">Needs reply</Tag>}
+                  {q && <Tag tone="violet" title={`Breezeway task ${q.taskId}`}>QC task</Tag>}
+                </>}
+                actions={<>
+                  {q
+                    ? (q.reportUrl ? <IconBtn title="Open the QC task in Breezeway" tone="brand" href={q.reportUrl}><ClipboardCheck size={14} /></IconBtn> : null)
+                    : <IconBtn title="Create a Breezeway QC task for this issue" disabled={!!qcBusy[r.id]} onClick={() => createQc(r)}>{qcBusy[r.id] ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={14} />}</IconBtn>}
+                  <IconBtn title="Close out — handled, drop it from the list" tone="ok" onClick={() => close(r.id)}><Check size={15} /></IconBtn>
+                </>}
+              >
+                <div className="text-[12px] text-muted">{[r.building, r.listingName].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' · ') || 'No unit on the thread'}</div>
+                {r.topIssue && <div className="text-[13px] text-ink font-medium">{r.topIssue}</div>}
+                {r.excerpt && <Clamp text={`“${r.excerpt}”`} />}
+                {r.reason && <div className="text-[12px] text-ink/70 bg-app rounded-lg px-3 py-2">{r.reason}</div>}
+                {r.triggers.length > 0 && (
+                  <div className="flex flex-wrap gap-1">{r.triggers.map(t => <Tag key={t} tone="amber">{TRIG[t] || t}</Tag>)}</div>
+                )}
+              </LeanRow>
             )
           })}
-        </div>
+        </LeanList>
       )}
     </section>
   )

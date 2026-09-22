@@ -1,9 +1,11 @@
 'use client'
 // GUEST ORDERS BOARD — the team's side of the vending machine. One glance answers: what needs
 // approving, what is paid and scheduled, what is with the crew today, what failed and why.
-// Every row is a card with the ONLY buttons that make sense for its status.
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ShoppingBag, Check, X, RefreshCw, Copy, Send, Loader2, AlertTriangle, ExternalLink, Truck, Link2, Zap, Palette, Package } from 'lucide-react'
+// Every row is one line with the ONE verb its status wants first (Approve / Push / Delivered); the
+// items, notes, payment steps and every other button that makes sense for the status open under it.
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Check, X, RefreshCw, Copy, Send, Loader2, AlertTriangle, ExternalLink, Truck, Link2, Zap, Palette, Package } from 'lucide-react'
+import { LeanHead, LeanTabs, LeanList, LeanRow, LeanEmpty, Pill, Tag, IconBtn, Tip, type Tone } from '@/components/lean'
 import { InventoryBoard } from '@/components/InventoryBoard'
 import { CouponsPanel } from '@/components/CouponsPanel'
 import { KNOWN_BUILDINGS } from '@/lib/segments'
@@ -25,16 +27,16 @@ const money = (n: number) => '$' + (Math.round(n * 100) / 100).toFixed(2)
 const day = (s: string | null) => s ? new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '—'
 const when = (s: string | null) => s ? new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
 
-const CHIP: Record<string, { label: string; cls: string }> = {
-  submitted: { label: 'Needs approval', cls: 'bg-amber-100 text-amber-900' },
-  approved: { label: 'Charging…', cls: 'bg-amber-100 text-amber-900' },
-  awaiting_payment: { label: 'Awaiting payment', cls: 'bg-orange-100 text-orange-900' },
-  payment_failed: { label: 'Charge failed', cls: 'bg-rose-100 text-rose-800' },
-  paid: { label: 'Paid · scheduled', cls: 'bg-sky-100 text-sky-900' },
-  pushed: { label: 'With the team', cls: 'bg-indigo-100 text-indigo-900' },
-  delivered: { label: 'Delivered', cls: 'bg-emerald-100 text-emerald-900' },
-  declined: { label: 'Declined', cls: 'bg-neutral-200 text-neutral-700' },
-  cancelled: { label: 'Cancelled', cls: 'bg-neutral-200 text-neutral-700' },
+const CHIP: Record<string, { label: string; tone: Tone }> = {
+  submitted: { label: 'Needs approval', tone: 'amber' },
+  approved: { label: 'Charging…', tone: 'amber' },
+  awaiting_payment: { label: 'Awaiting payment', tone: 'amber' },
+  payment_failed: { label: 'Charge failed', tone: 'rose' },
+  paid: { label: 'Paid · scheduled', tone: 'sky' },
+  pushed: { label: 'With the team', tone: 'violet' },
+  delivered: { label: 'Delivered', tone: 'emerald' },
+  declined: { label: 'Declined', tone: 'slate' },
+  cancelled: { label: 'Cancelled', tone: 'slate' },
 }
 const LANES: { key: string; label: string; statuses: string[] }[] = [
   { key: 'approve', label: 'Needs approval', statuses: ['submitted', 'approved'] },
@@ -49,7 +51,7 @@ const LANES: { key: string; label: string; statuses: string[] }[] = [
 // them as separate tabs rather than one board is what stops either becoming a wall of numbers.
 const TABS = ['orders', 'links', 'catalog', 'stock', 'coupons'] as const
 type Tab = typeof TABS[number]
-const TAB_LABEL: Record<Tab, string> = { orders: 'Orders', links: 'Links · upcoming arrivals', catalog: 'Catalog · items & pricing', stock: 'Stock · per shelf', coupons: 'Coupon codes' }
+const TAB_LABEL: Record<Tab, string> = { orders: 'Orders', links: 'Links', catalog: 'Catalog', stock: 'Stock', coupons: 'Coupons' }
 
 export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canMoney: boolean }) {
   const [data, setData] = useState<Data | null>(null)
@@ -122,197 +124,209 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
     return L ? all.filter(o => L.statuses.indexOf(o.status) >= 0) : all
   }, [data, lane])
 
-  if (err) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div>
-  if (!data) return <div className="text-sm text-muted py-8 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading orders…</div>
+  const head = (pills?: ReactNode) => (
+    <LeanHead title={<span title="Pre-arrival extras guests pick from their reservation link. Approve, it is charged on the card in Guesty, then pushed to Breezeway and the crew on the delivery day.">Guest Orders</span>}>{pills}</LeanHead>
+  )
+  if (err) return <>{head()}<div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div></>
+  if (!data) return <>{head()}<LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1.5" />Loading orders…</LeanEmpty></>
 
   const manual = data.config.chargeMode === 'manual'
   const todayDue = data.orders.filter(o => (o.status === 'paid' || o.status === 'pushed') && o.delivery_date && o.delivery_date <= data.today).length
+  const pickLane = (k: string) => { setTab('orders'); setLane(lane === k ? 'all' : k) }
 
   return (
-    <div className="space-y-4">
-      {!data.config.enabled ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900 flex items-start gap-2">
-          <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
-          <div><b>Automation is off.</b> Links are not being created for arrivals and paid orders are not being pushed to the team. Turn it on in <a href="/users" className="underline font-semibold">App settings → Guest orders</a>. Everything on this board still works by hand.</div>
-        </div>
-      ) : null}
+    <div>
+      {/* LEAN PASS (2026-09-22): the five lane tiles are header pills; clicking one filters Orders to
+          that lane (click again for all). Every lane is also in the Orders filter dropdown. */}
+      {head(<>
+        {!data.config.enabled && <Pill tone="amber" onClick={() => { window.location.href = '/users' }} title="Automation is off: links are not being created for arrivals and paid orders are not pushed to the team. Everything here still works by hand. Click to open App settings, Guest orders.">Automation off</Pill>}
+        {counts.approve ? <Pill tone="amber" onClick={() => pickLane('approve')} title="Baskets waiting for approval">{counts.approve} to approve</Pill> : null}
+        {counts.money ? <Pill tone="rose" onClick={() => pickLane('money')} title="Awaiting payment or the charge failed">{counts.money} payment</Pill> : null}
+        <Pill tone="sky" onClick={() => pickLane('scheduled')} title="Paid and scheduled for delivery">{counts.scheduled || 0} scheduled</Pill>
+        <Pill tone="violet" onClick={() => pickLane('crew')} title={`With the team${todayDue ? ` · ${todayDue} due today or earlier` : ''}`}>{counts.crew || 0} with team{todayDue ? ` · ${todayDue} due` : ''}</Pill>
+      </>)}
 
-      <div className={'grid grid-cols-2 sm:grid-cols-5 gap-2 ' + (tab === 'stock' || tab === 'catalog' || tab === 'coupons' ? 'hidden' : '')}>
-        {LANES.map(l => (
-          <button key={l.key} onClick={() => { setTab('orders'); setLane(lane === l.key ? 'all' : l.key) }} className={'rounded-2xl border px-3.5 py-3 text-left transition ' + (lane === l.key ? 'border-brand-400 bg-brand-50' : 'border-line bg-white hover:border-brand-200')}>
-            <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">{l.label}</div>
-            <div className="text-2xl font-bold text-ink mt-0.5 tabular-nums">{counts[l.key] || 0}</div>
-            {l.key === 'crew' && todayDue ? <div className="text-[11px] text-indigo-700 mt-0.5">{todayDue} due today</div> : null}
-          </button>
-        ))}
-      </div>
+      <LeanTabs<Tab>
+        tabs={TABS.map(t => ({ key: t, label: TAB_LABEL[t], n: t === 'orders' ? shown.length : t === 'links' ? data.links.length : null }))}
+        value={tab} onChange={setTab}
+        right={<>
+          {tab === 'orders' && (
+            <select value={lane} onChange={e => setLane(e.target.value)} title="Show one lane" className="text-[12px] py-1 px-2 rounded-lg border border-line bg-white text-ink">
+              <option value="all">All open</option>
+              {LANES.map(l => <option key={l.key} value={l.key}>{l.label} ({counts[l.key] || 0})</option>)}
+            </select>
+          )}
+          {canEdit ? <IconBtn title="Design studio — the guest ordering page" href="/guest-orders/design"><Palette size={14} /></IconBtn> : null}
+          <Tip label="Live orders link for the team (opens a new tab)">
+            <a href="/orders-live" target="_blank" aria-label="Live orders link for the team" className="shrink-0 inline-flex items-center justify-center rounded-lg border border-line bg-white w-8 h-8 text-muted hover:text-ink hover:bg-app"><ExternalLink size={14} /></a>
+          </Tip>
+          {canMoney ? <IconBtn title="Run now — create due links and push due orders" onClick={() => act('run_cron', '')} disabled={!!busy}><Zap size={14} /></IconBtn> : null}
+        </>}
+      />
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="inline-flex rounded-xl border border-line bg-white p-0.5 flex-wrap">
-          {TABS.map(t => <button key={t} onClick={() => setTab(t)} className={'px-3.5 py-1.5 rounded-lg text-[13px] font-semibold ' + (tab === t ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{TAB_LABEL[t]}</button>)}
-        </div>
-        <div className="flex items-center gap-2">
-          {canEdit ? <a href="/guest-orders/design" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300"><Palette size={13} /> Design studio</a> : null}
-          <a href="/orders-live" target="_blank" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300"><ExternalLink size={13} /> Live link for the team</a>
-          {canMoney ? <button onClick={() => act('run_cron', '')} disabled={!!busy} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50"><Zap size={13} /> Run now</button> : null}
-        </div>
-      </div>
-
-      {flash ? <div className={'rounded-xl px-3.5 py-2.5 text-[13px] ' + (flash.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200')}>{flash.text}</div> : null}
+      {flash ? <div className={'mb-3 rounded-lg px-3 py-1.5 text-[12.5px] ' + (flash.tone === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200')}>{flash.text}</div> : null}
 
       {tab === 'stock' || tab === 'catalog' ? <InventoryBoard canEdit={canEdit} view={tab} onSwitchView={v => setTab(v)} /> : null}
       {tab === 'coupons' ? <CouponsPanel canEdit={canEdit} canMoney={canMoney} buildings={KNOWN_BUILDINGS.map(b => b.label)} /> : null}
 
       {tab === 'orders' ? (
         shown.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-line bg-white px-4 py-10 text-center">
-            <ShoppingBag size={22} className="mx-auto text-muted" />
-            <div className="text-sm font-semibold text-ink mt-2">No orders here</div>
-            <div className="text-[12.5px] text-muted mt-1">Guests order from the link in their reservation’s “{data.config.customFieldName}” field. New baskets land in <b>Needs approval</b>.</div>
-          </div>
+          <LeanEmpty>No orders here. Guests order from the link in their reservation&apos;s &ldquo;{data.config.customFieldName}&rdquo; field; new baskets land in Needs approval.</LeanEmpty>
         ) : (
-          <div className="space-y-3">
+          <LeanList>
             {shown.map(o => {
-              const chip = CHIP[o.status] || { label: o.status, cls: 'bg-neutral-200 text-neutral-700' }
+              const chip = CHIP[o.status] || { label: o.status, tone: 'slate' as Tone }
               const b = (a: string) => busy === o.id + ':' + a
-              const inHouse = o.check_in && data.today > o.check_in
+              const inHouse = !!(o.check_in && data.today > o.check_in)
+              const staleApproved = o.status === 'approved' && !!o.approved_at && Date.now() - new Date(o.approved_at).getTime() > 10 * 60_000
+              const needsApproval = o.status === 'submitted' || staleApproved
+              const btn = 'shrink-0 inline-flex items-center gap-1 rounded-full px-3 h-8 text-[12px] font-semibold disabled:opacity-50'
+              // THE VERB FIRST: the one thing this status wants done, as the row's lead button.
+              const lead = !canEdit ? undefined
+                : needsApproval && canMoney ? <Tip label={o.status === 'approved' ? 'Retry the charge in Guesty' : manual ? 'Approve the order' : 'Approve and charge the card in Guesty'}><button onClick={() => act('approve', o.id)} disabled={!!busy} className={btn + ' bg-emerald-600 text-white hover:bg-emerald-700'}>{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {o.status === 'approved' ? 'Retry' : 'Approve'}</button></Tip>
+                : o.status === 'paid' ? <Tip label="Push to Breezeway and the crew now"><button onClick={() => act('push_now', o.id)} disabled={!!busy} className={btn + ' bg-ink text-white'}>{b('push_now') ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Push</button></Tip>
+                : o.status === 'pushed' ? <Tip label="Mark delivered"><button onClick={() => act('delivered', o.id)} disabled={!!busy} className={btn + ' bg-emerald-600 text-white hover:bg-emerald-700'}><Check size={13} /> Delivered</button></Tip>
+                : undefined
+              const itemsText = o.items.map(l => l.qty + '× ' + l.name).join(', ')
+              const deliverDue = !!o.delivery_date && o.delivery_date <= data.today && o.status !== 'delivered'
               return (
-                <div key={o.id} className="rounded-2xl border border-line bg-white overflow-hidden">
-                  <div className="px-4 py-3 flex flex-wrap items-start gap-x-4 gap-y-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[15px] font-bold text-ink">{o.unit || 'Unit'}</span>
-                        <span className={'text-[11px] font-semibold px-2 py-0.5 rounded-full ' + chip.cls}>{chip.label}</span>
-                        {o.building ? <span className="text-[11.5px] text-muted">{o.building}</span> : null}
-                      </div>
-                      <div className="text-[12.5px] text-muted mt-0.5">{o.guest_name || 'Guest'} · {day(o.check_in)} → {day(o.check_out)}{inHouse ? ' · in-house' : ''} · ordered {when(o.submitted_at)}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[17px] font-bold text-ink tabular-nums">{money(o.total_usd)}</div>
-                      {o.discount_usd ? <div className="text-[11.5px] text-emerald-700 font-semibold">−{money(o.discount_usd)}{o.coupon_code ? ' · code ' + o.coupon_code : o.discount_note ? ' · ' + o.discount_note : ''}</div> : null}
-                      {o.delivery_date ? <div className={'text-[11.5px] ' + (o.delivery_date <= data.today && o.status !== 'delivered' ? 'text-indigo-700 font-semibold' : 'text-muted')}>Deliver {o.delivery_date === data.today ? 'today' : day(o.delivery_date)}{o.delivery_note ? ' · ' + o.delivery_note : ''}</div>
-                        : o.delivery_note ? <div className="text-[11.5px] text-amber-700 font-semibold">{o.delivery_note}</div> : null}
-                    </div>
+                <LeanRow key={o.id} tint={o.status === 'payment_failed' || o.charge_error || o.push_error ? 'rose' : needsApproval ? 'amber' : undefined}
+                  lead={lead}
+                  name={o.unit || 'Unit'}
+                  meta={`${o.guest_name || 'Guest'} · ${day(o.check_in)}–${day(o.check_out)}${o.building ? ' · ' + o.building : ''}`}
+                  tags={<>
+                    <Tag tone={chip.tone}>{chip.label}</Tag>
+                    <Tag title={itemsText + ' · ordered ' + when(o.submitted_at)}>{money(o.total_usd)}</Tag>
+                    {o.discount_usd ? <Tag tone="emerald" title={o.coupon_code ? 'Coupon ' + o.coupon_code : o.discount_note || 'Discount'}>−{money(o.discount_usd)}</Tag> : null}
+                    {inHouse && <Tag>In-house</Tag>}
+                    {o.delivery_date ? <Tag tone={deliverDue ? 'violet' : 'slate'} title={o.delivery_note || 'Delivery day'}>Deliver {o.delivery_date === data.today ? 'today' : day(o.delivery_date)}</Tag>
+                      : o.delivery_note ? <Tag tone="amber" title={o.delivery_note}>Delivery?</Tag> : null}
+                    {o.charge_error && <Tag tone="rose" title={o.charge_error}>Charge error</Tag>}
+                    {o.push_error && <Tag tone="rose" title={o.push_error}>Push failed</Tag>}
+                    {o.folio_note && <Tag tone="amber" title={o.folio_note}>Folio</Tag>}
+                    {o.stock_note && /SHORT/.test(o.stock_note) && <Tag tone="rose" title={o.stock_note}>Short stock</Tag>}
+                    {o.guest_note && <Tag title={o.guest_note}>Note</Tag>}
+                  </>}
+                  actions={<IconBtn title="Open the guest's order page" href={'/order/' + o.link_code}><Link2 size={14} /></IconBtn>}
+                >
+                  <div className="flex flex-wrap gap-1.5">
+                    {o.items.map((l, i) => <span key={i} className="text-[12px] px-2 py-0.5 rounded-lg bg-app border border-line text-ink"><b>{l.qty}×</b> {l.name}</span>)}
                   </div>
-                  <div className="px-4 pb-3">
-                    <div className="flex flex-wrap gap-1.5">
-                      {o.items.map((l, i) => <span key={i} className="text-[12.5px] px-2 py-1 rounded-lg bg-app border border-line text-ink"><b>{l.qty}×</b> {l.name}</span>)}
-                    </div>
-                    {o.requested_delivery && o.requested_delivery !== 'auto' ? <div className="mt-2 text-[12px] text-ink"><span className="text-muted">Guest asked for:</span> {o.requested_delivery === 'asap' ? 'as soon as possible' : o.requested_delivery === 'arrival' ? 'arrival day' : day(o.requested_date || null)}</div> : null}
-                    {o.guest_note ? <div className="mt-2 text-[12.5px] italic text-muted">“{o.guest_note}”</div> : null}
-                    {o.payment_note ? <div className="mt-2 text-[12px] text-emerald-800">{o.payment_note}</div> : null}
-                    {o.charge_error ? <div className="mt-2 text-[12.5px] text-rose-700 bg-rose-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {o.charge_error}</div> : null}
-                    {o.push_error ? <div className="mt-2 text-[12.5px] text-rose-700 bg-rose-50 rounded-lg px-3 py-2">Push failed: {o.push_error}</div> : null}
-                    {o.folio_note ? <div className="mt-2 text-[12.5px] text-amber-800 bg-amber-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {o.folio_note}</div> : null}
-                    {o.stock_note ? <div className={'mt-2 text-[12px] ' + (/SHORT/.test(o.stock_note) ? 'text-rose-700 font-semibold' : 'text-muted')}><Package size={12} className="inline mr-1 -mt-0.5" />{o.stock_note}</div> : null}
-                    {o.status === 'pushed' || o.status === 'delivered' ? (
-                      <div className="mt-2 text-[12px] text-muted"><Truck size={12} className="inline mr-1 -mt-0.5" />{o.assignee_names.length ? o.assignee_names.join(' + ') : 'unassigned'}{o.assign_note ? ' — ' + o.assign_note : ''}{o.breezeway_task_id ? ' · Breezeway #' + o.breezeway_task_id : ''}{o.delivered_at ? ' · delivered ' + when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : ''}</div>
-                    ) : null}
-                    {o.decline_reason ? <div className="mt-2 text-[12px] text-muted">Declined: {o.decline_reason}</div> : null}
+                  <div className="text-[12px] text-muted">
+                    Ordered {when(o.submitted_at)} · {money(o.subtotal_usd)} items{o.tax_usd ? ' + ' + money(o.tax_usd) + ' tax' : ''}
+                    {o.discount_usd ? ' · −' + money(o.discount_usd) + (o.coupon_code ? ' code ' + o.coupon_code : o.discount_note ? ' ' + o.discount_note : '') : ''}
+                    {o.delivery_note ? ' · ' + o.delivery_note : ''}
+                  </div>
+                  {o.requested_delivery && o.requested_delivery !== 'auto' ? <div className="text-[12px] text-ink"><span className="text-muted">Guest asked for:</span> {o.requested_delivery === 'asap' ? 'as soon as possible' : o.requested_delivery === 'arrival' ? 'arrival day' : day(o.requested_date || null)}</div> : null}
+                  {o.guest_note ? <div className="text-[12.5px] italic text-muted">“{o.guest_note}”</div> : null}
+                  {o.payment_note ? <div className="text-[12px] text-emerald-800">{o.payment_note}</div> : null}
+                  {o.charge_error ? <div className="text-[12.5px] text-rose-700 bg-rose-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {o.charge_error}</div> : null}
+                  {o.push_error ? <div className="text-[12.5px] text-rose-700 bg-rose-50 rounded-lg px-3 py-2">Push failed: {o.push_error}</div> : null}
+                  {o.folio_note ? <div className="text-[12.5px] text-amber-800 bg-amber-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {o.folio_note}</div> : null}
+                  {o.stock_note ? <div className={'text-[12px] ' + (/SHORT/.test(o.stock_note) ? 'text-rose-700 font-semibold' : 'text-muted')}><Package size={12} className="inline mr-1 -mt-0.5" />{o.stock_note}</div> : null}
+                  {o.status === 'pushed' || o.status === 'delivered' ? (
+                    <div className="text-[12px] text-muted"><Truck size={12} className="inline mr-1 -mt-0.5" />{o.assignee_names.length ? o.assignee_names.join(' + ') : 'unassigned'}{o.assign_note ? ' — ' + o.assign_note : ''}{o.breezeway_task_id ? ' · Breezeway #' + o.breezeway_task_id : ''}{o.delivered_at ? ' · delivered ' + when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : ''}</div>
+                  ) : null}
+                  {o.decline_reason ? <div className="text-[12px] text-muted">Declined: {o.decline_reason}</div> : null}
 
-                    {(o.status === 'awaiting_payment' || o.status === 'payment_failed') && canMoney ? (() => {
-                      // Whoever opens this card should not have to work out what to do next. The
-                      // amount is the total INCLUDING tax — it is the figure to type into Guesty.
-                      const link = o.collect_method === 'payment_link'
-                      const airbnb = o.collect_method === 'airbnb_resolution'
-                      const head = airbnb ? 'Request through the Airbnb Resolution Center'
-                        : link ? 'Send a Guesty payment link'
-                        : o.collect_card ? 'Charge the ' + o.collect_card + ' on file' : 'Charge the card on file in Guesty'
-                      const ref = 'Guest order ' + o.id.slice(0, 8) + ' · ' + o.items.map(l => l.qty + '× ' + l.name).join(', ')
-                      return (
-                        <div className={'mt-3 rounded-xl border px-3 py-3 ' + (link || airbnb ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50')}>
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="text-[12.5px] font-semibold text-ink">{head}</div>
-                            <a href={'https://app.guesty.com/reservations/' + o.reservation_id + '/summary'} target="_blank" rel="noreferrer" className="text-[11.5px] font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Open in Guesty <ExternalLink size={11} /></a>
-                          </div>
-                          <div className="mt-2 flex flex-wrap items-end gap-3">
-                            <div>
-                              <div className="text-[10.5px] uppercase tracking-wide text-muted font-semibold">Amount to charge</div>
-                              <div className="text-[24px] font-bold text-ink tabular-nums leading-tight">{money(o.total_usd)}</div>
-                              <div className="text-[11.5px] text-muted tabular-nums">{money(o.subtotal_usd)} items{o.tax_usd ? ' + ' + money(o.tax_usd) + ' tax' : ' · no tax'}</div>
-                            </div>
-                            <button onClick={() => copy('amt:' + o.id, o.total_usd.toFixed(2))} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-white border border-line text-ink"><Copy size={12} /> {copied === 'amt:' + o.id ? 'Copied' : 'Copy amount'}</button>
-                            <button onClick={() => copy('ref:' + o.id, ref)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-white border border-line text-ink"><Copy size={12} /> {copied === 'ref:' + o.id ? 'Copied' : 'Copy note'}</button>
-                          </div>
-                          <div className="mt-2 text-[11.5px] text-muted">The charge is already on the Guesty folio, so charging the card or a payment link both settle it. Mark paid here once the money lands.</div>
+                  {(o.status === 'awaiting_payment' || o.status === 'payment_failed') && canMoney ? (() => {
+                    // Whoever opens this row should not have to work out what to do next. The amount
+                    // is the total INCLUDING tax — it is the figure to type into Guesty.
+                    const link = o.collect_method === 'payment_link'
+                    const airbnb = o.collect_method === 'airbnb_resolution'
+                    const headline = airbnb ? 'Request through the Airbnb Resolution Center'
+                      : link ? 'Send a Guesty payment link'
+                      : o.collect_card ? 'Charge the ' + o.collect_card + ' on file' : 'Charge the card on file in Guesty'
+                    const ref = 'Guest order ' + o.id.slice(0, 8) + ' · ' + itemsText
+                    return (
+                      <div className={'rounded-xl border px-3 py-2.5 ' + (link || airbnb ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50')}>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[12.5px] font-semibold text-ink">{headline}</span>
+                          <span className="text-[15px] font-bold text-ink tabular-nums" title={money(o.subtotal_usd) + ' items' + (o.tax_usd ? ' + ' + money(o.tax_usd) + ' tax' : ' · no tax')}>{money(o.total_usd)}</span>
+                          <button onClick={() => copy('amt:' + o.id, o.total_usd.toFixed(2))} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg bg-white border border-line text-ink"><Copy size={12} /> {copied === 'amt:' + o.id ? 'Copied' : 'Amount'}</button>
+                          <button onClick={() => copy('ref:' + o.id, ref)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg bg-white border border-line text-ink"><Copy size={12} /> {copied === 'ref:' + o.id ? 'Copied' : 'Note'}</button>
+                          <a href={'https://app.guesty.com/reservations/' + o.reservation_id + '/summary'} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Open in Guesty <ExternalLink size={11} /></a>
                         </div>
-                      )
-                    })() : null}
-
-                    {canEdit ? (
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {o.status === 'submitted' || (o.status === 'approved' && o.approved_at && Date.now() - new Date(o.approved_at).getTime() > 10 * 60_000) ? (<>
-                          {canMoney ? <button onClick={() => act('approve', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50">{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {o.status === 'approved' ? 'Retry charge' : manual ? 'Approve' : 'Approve & charge'}</button> : <span className="text-[12px] text-muted">Approval needs full access</span>}
-                          {o.status === 'submitted' ? <button onClick={() => { const reason = window.prompt('Reason for the guest (optional)') || ''; act('decline', o.id, { reason }) }} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50"><X size={13} /> Decline</button> : null}
-                        </>) : o.status === 'approved' ? <span className="text-[12px] text-muted inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Charging in Guesty — refresh in a moment</span> : null}
-                        {o.status === 'awaiting_payment' || o.status === 'payment_failed' ? (<>
-                          {canMoney && !manual ? <button onClick={() => act('approve', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50">{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Retry charge</button> : null}
-                          {canMoney ? (
-                            <span className="inline-flex items-center gap-1.5 flex-wrap">
-                              <select value={settle[o.id] || 'guesty'} onChange={e => setSettle(p => ({ ...p, [o.id]: e.target.value as any }))} className="text-[12px] px-2 py-1.5 rounded-lg border border-line bg-white text-ink" title="Where the money was actually taken — it decides what we write back to Guesty">
-                                <option value="guesty">Taken in Guesty</option>
-                                <option value="external">Taken elsewhere — record it in Guesty</option>
-                                <option value="outside">Taken elsewhere — don’t touch Guesty</option>
-                              </select>
-                              <input value={paidNote[o.id] || ''} onChange={e => setPaidNote(p => ({ ...p, [o.id]: e.target.value }))} placeholder="note (optional)" className="text-[12px] px-2 py-1.5 rounded-lg border border-line w-32" />
-                              <button onClick={() => act('mark_paid', o.id, { note: paidNote[o.id] || '', settle: settle[o.id] || 'guesty' })} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50"><Check size={13} /> Mark paid</button>
-                            </span>
-                          ) : null}
-                          <button onClick={() => act('decline', o.id, { reason: 'could not collect payment' })} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50"><X size={13} /> Decline</button>
-                        </>) : null}
-                        {o.status === 'paid' ? (<>
-                          <button onClick={() => act('push_now', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50">{b('push_now') ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Push to team now</button>
-                          <span className="inline-flex items-center gap-1.5 text-[12px] text-muted">Deliver:
-                            {inHouse ? <button onClick={() => act('set_delivery', o.id, { date: 'asap' })} disabled={!!busy} className="px-2 py-1 rounded-lg border border-line bg-white text-ink font-semibold disabled:opacity-50">ASAP</button>
-                              : <button onClick={() => act('set_delivery', o.id, { date: 'arrival' })} disabled={!!busy} className="px-2 py-1 rounded-lg border border-line bg-white text-ink font-semibold disabled:opacity-50">Arrival day</button>}
-                            <input type="date" defaultValue={o.delivery_date || ''} min={o.check_in || undefined} onChange={e => { if (e.target.value) act('set_delivery', o.id, { date: e.target.value }) }} className="px-2 py-1 rounded-lg border border-line text-ink" title="Pick a date" />
-                          </span>
-                          {canMoney ? <button onClick={() => { if (window.confirm('Cancel this paid order? Refund it in Guesty separately.')) act('cancel', o.id) }} disabled={!!busy} className="text-[12px] text-muted hover:text-rose-700 px-2">Cancel</button> : null}
-                        </>) : null}
-                        {o.status === 'pushed' ? (<>
-                          <button onClick={() => act('delivered', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50"><Check size={13} /> Delivered</button>
-                          <button onClick={() => act('push_now', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-white border border-line text-ink disabled:opacity-50"><RefreshCw size={13} /> Re-notify</button>
-                        </>) : null}
-                        <a href={'/order/' + o.link_code} target="_blank" className="text-[12px] text-muted hover:text-ink px-2 inline-flex items-center gap-1"><Link2 size={12} /> guest page</a>
+                        <div className="mt-1 text-[11.5px] text-muted">The charge is already on the Guesty folio, so the card or a payment link both settle it. Mark paid here once the money lands.</div>
                       </div>
-                    ) : null}
-                  </div>
-                </div>
+                    )
+                  })() : null}
+
+                  {canEdit ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {needsApproval ? (<>
+                        {/* Approve itself is the row's lead button. */}
+                        {canMoney ? null : <span className="text-[12px] text-muted">Approval needs full access</span>}
+                        {o.status === 'submitted' ? <button onClick={() => { const reason = window.prompt('Reason for the guest (optional)') || ''; act('decline', o.id, { reason }) }} disabled={!!busy} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-white border border-line text-ink disabled:opacity-50"><X size={13} /> Decline</button> : null}
+                      </>) : o.status === 'approved' ? <span className="text-[12px] text-muted inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Charging in Guesty — refresh in a moment</span> : null}
+                      {o.status === 'awaiting_payment' || o.status === 'payment_failed' ? (<>
+                        {canMoney && !manual ? <button onClick={() => act('approve', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-white border border-line text-ink disabled:opacity-50">{b('approve') ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Retry charge</button> : null}
+                        {canMoney ? (
+                          <span className="inline-flex items-center gap-1.5 flex-wrap">
+                            <select value={settle[o.id] || 'guesty'} onChange={e => setSettle(p => ({ ...p, [o.id]: e.target.value as any }))} className="text-[12px] px-2 py-1 rounded-lg border border-line bg-white text-ink" title="Where the money was actually taken — it decides what we write back to Guesty">
+                              <option value="guesty">Taken in Guesty</option>
+                              <option value="external">Taken elsewhere — record it in Guesty</option>
+                              <option value="outside">Taken elsewhere — don’t touch Guesty</option>
+                            </select>
+                            <input value={paidNote[o.id] || ''} onChange={e => setPaidNote(p => ({ ...p, [o.id]: e.target.value }))} placeholder="note (optional)" className="text-[12px] px-2 py-1 rounded-lg border border-line w-32" />
+                            <button onClick={() => act('mark_paid', o.id, { note: paidNote[o.id] || '', settle: settle[o.id] || 'guesty' })} disabled={!!busy} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-emerald-600 text-white disabled:opacity-50"><Check size={13} /> Mark paid</button>
+                          </span>
+                        ) : null}
+                        <button onClick={() => act('decline', o.id, { reason: 'could not collect payment' })} disabled={!!busy} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-white border border-line text-ink disabled:opacity-50"><X size={13} /> Decline</button>
+                      </>) : null}
+                      {o.status === 'paid' ? (<>
+                        <span className="inline-flex items-center gap-1.5 text-[12px] text-muted">Deliver:
+                          {inHouse ? <button onClick={() => act('set_delivery', o.id, { date: 'asap' })} disabled={!!busy} className="px-2 py-1 rounded-lg border border-line bg-white text-ink font-semibold disabled:opacity-50">ASAP</button>
+                            : <button onClick={() => act('set_delivery', o.id, { date: 'arrival' })} disabled={!!busy} className="px-2 py-1 rounded-lg border border-line bg-white text-ink font-semibold disabled:opacity-50">Arrival day</button>}
+                          <input type="date" defaultValue={o.delivery_date || ''} min={o.check_in || undefined} onChange={e => { if (e.target.value) act('set_delivery', o.id, { date: e.target.value }) }} className="px-2 py-1 rounded-lg border border-line text-ink" title="Pick a delivery date" />
+                        </span>
+                        {canMoney ? <button onClick={() => { if (window.confirm('Cancel this paid order? Refund it in Guesty separately.')) act('cancel', o.id) }} disabled={!!busy} className="text-[12px] text-muted hover:text-rose-700 px-2">Cancel order</button> : null}
+                      </>) : null}
+                      {o.status === 'pushed' ? (
+                        <button onClick={() => act('push_now', o.id)} disabled={!!busy} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-white border border-line text-ink disabled:opacity-50"><RefreshCw size={13} /> Re-notify the crew</button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </LeanRow>
               )
             })}
-          </div>
+          </LeanList>
         )
       ) : tab === 'links' ? (
         <div className="space-y-3">
           {canEdit ? (
-            <div className="rounded-2xl border border-line bg-white px-4 py-3 flex flex-wrap items-center gap-2">
-              <div className="text-[12.5px] text-muted flex-1 min-w-[200px]">Links are created automatically {data.config.createDaysBefore} days before arrival and written to the reservation’s <b>{data.config.customFieldName}</b> field. Need one sooner? Paste a Guesty reservation id.</div>
-              <input value={newRes} onChange={e => setNewRes(e.target.value)} placeholder="Guesty reservation id" className="text-[12.5px] px-2.5 py-1.5 rounded-lg border border-line w-56" />
-              <button onClick={() => { if (newRes.trim()) act('create_link', '', { reservationId: newRes.trim() }) }} disabled={!!busy || !newRes.trim()} className="inline-flex items-center gap-1 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50"><Link2 size={13} /> Create & copy link</button>
+            <div className="flex flex-wrap items-center gap-2">
+              <input value={newRes} onChange={e => setNewRes(e.target.value)} placeholder="Guesty reservation id"
+                title={`Links are created automatically ${data.config.createDaysBefore} days before arrival and written to the reservation's ${data.config.customFieldName} field. Need one sooner? Paste a Guesty reservation id.`}
+                className="text-[12px] px-2.5 py-1 rounded-lg border border-line w-full sm:w-56" />
+              <button onClick={() => { if (newRes.trim()) act('create_link', '', { reservationId: newRes.trim() }) }} disabled={!!busy || !newRes.trim()} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white disabled:opacity-50"><Link2 size={13} /> Create & copy link</button>
+              <span className="text-[11px] text-muted">Auto {data.config.createDaysBefore}d before arrival</span>
             </div>
           ) : null}
-          <div className="rounded-2xl border border-line bg-white overflow-hidden">
-            <table className="w-full text-[12.5px]">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted border-b border-line"><th className="px-3 py-2">Arrives</th><th className="px-3 py-2">Unit</th><th className="px-3 py-2">Guest</th><th className="px-3 py-2">In Guesty</th><th className="px-3 py-2">Opened</th><th className="px-3 py-2">Orders</th><th className="px-3 py-2"></th></tr></thead>
-              <tbody>
-                {data.links.length === 0 ? <tr><td colSpan={7} className="px-3 py-6 text-center text-muted">No links yet — they appear as arrivals enter the window{data.config.enabled ? '' : ' once automation is on'}.</td></tr> : null}
-                {data.links.map(l => (
-                  <tr key={l.code} className="border-b border-line/60 last:border-0">
-                    <td className="px-3 py-2 whitespace-nowrap">{day(l.check_in)}</td>
-                    <td className="px-3 py-2 font-semibold text-ink">{l.unit || '—'}<div className="text-[11px] text-muted font-normal">{l.building || ''}</div></td>
-                    <td className="px-3 py-2">{l.guest_name || '—'}<div className="text-[11px] text-muted">{l.source || ''}</div></td>
-                    <td className="px-3 py-2">{l.sent_at ? <span className="text-emerald-700">✓ {when(l.sent_at)}</span> : l.send_error ? <span className="text-rose-700" title={l.send_error}>✗ {l.send_error.slice(0, 60)}</span> : <span className="text-muted">not yet</span>}</td>
-                    <td className="px-3 py-2">{l.opened_at ? <span className="text-emerald-700">✓</span> : <span className="text-muted">—</span>}</td>
-                    <td className="px-3 py-2 tabular-nums">{l.orders || ''}</td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <button onClick={async () => { try { await navigator.clipboard.writeText(l.url); setFlash({ tone: 'ok', text: 'Copied ' + l.url }) } catch { setFlash({ tone: 'bad', text: l.url }) } }} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg border border-line bg-white hover:border-brand-300"><Copy size={12} /> Copy</button>
-                      {canEdit && !l.sent_at ? <button onClick={() => act('write_link', '', { code: l.code })} disabled={!!busy} className="ml-1.5 inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg border border-line bg-white hover:border-brand-300 disabled:opacity-50"><Send size={12} /> Write to Guesty</button> : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {data.links.length === 0 ? (
+            <LeanEmpty>No links yet — they appear as arrivals enter the window{data.config.enabled ? '' : ' once automation is on'}.</LeanEmpty>
+          ) : (
+            <LeanList>
+              {data.links.map(l => (
+                <LeanRow key={l.code}
+                  name={l.unit || '—'}
+                  meta={`${l.guest_name || '—'} · arrives ${day(l.check_in)}${l.building ? ' · ' + l.building : ''}`}
+                  tags={<>
+                    {l.source && <Tag>{l.source}</Tag>}
+                    {l.sent_at ? <Tag tone="emerald" title={'Written to Guesty ' + when(l.sent_at)}>In Guesty</Tag>
+                      : l.send_error ? <Tag tone="rose" title={l.send_error}>Guesty error</Tag>
+                      : <Tag title="Not written to the reservation yet">Not in Guesty</Tag>}
+                    {l.opened_at && <Tag tone="brand" title="The guest has opened the link">Opened</Tag>}
+                    {l.orders ? <Tag tone="violet">{l.orders} order{l.orders === 1 ? '' : 's'}</Tag> : null}
+                  </>}
+                  actions={<>
+                    <IconBtn title="Copy the guest's order link" onClick={async () => { try { await navigator.clipboard.writeText(l.url); setFlash({ tone: 'ok', text: 'Copied ' + l.url }) } catch { setFlash({ tone: 'bad', text: l.url }) } }}><Copy size={14} /></IconBtn>
+                    {canEdit && !l.sent_at ? <IconBtn title="Write the link to the reservation in Guesty" onClick={() => act('write_link', '', { code: l.code })} disabled={!!busy}><Send size={14} /></IconBtn> : null}
+                  </>}
+                />
+              ))}
+            </LeanList>
+          )}
         </div>
       ) : null}
     </div>

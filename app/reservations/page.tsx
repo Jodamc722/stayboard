@@ -1,9 +1,11 @@
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { DateFilter } from '@/components/DateFilter'
 import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
-import { CalendarDays, LogIn, LogOut, Users, DollarSign, Clock, RefreshCw, AlertTriangle } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanEmpty, IconBtn } from '@/components/lean'
 
 export const dynamic = 'force-dynamic'
 
@@ -84,8 +86,9 @@ function statusStyle(s?: string | null): string {
   const k = (s || '').toLowerCase().replace(/[^a-z_]/g, '')
   return STATUS_STYLE[k] || 'bg-app text-muted'
 }
+const TAG_CLS = 'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md'
 
-export default async function ReservationsPage({ searchParams }: { searchParams?: { date?: string } }) {
+export default async function ReservationsPage({ searchParams }: { searchParams?: { date?: string; tab?: string } }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -145,84 +148,64 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
   const live = up.filter(r => !isCanceled(r.status))
   const arrivingToday = live.filter(r => r.check_in === todayStr)
   const departingToday = live.filter(r => r.check_out === todayStr && r.check_in !== todayStr)
-  const todayIds = new Set([...arrivingToday, ...departingToday].map(r => r.id))
+  const todayIds = new Set(arrivingToday.concat(departingToday).map(r => r.id))
   const futureArrivals = live
     .filter(r => r.check_in && r.check_in > todayStr && !todayIds.has(r.id))
     .slice(0, 60)
   const staying = live.filter(r => r.check_in && r.check_out && r.check_in < todayStr && r.check_out > todayStr && !todayIds.has(r.id))
+  const pastShown = pastRows.slice(0, 40)
 
-  const sections: { key: string; title: string; Icon: any; accent: string; rows: any[] }[] = [
-    { key: 'arr', title: `Arriving ${dl}`, Icon: LogIn, accent: 'text-emerald-600', rows: arrivingToday },
-    { key: 'dep', title: `Departing ${dl}`, Icon: LogOut, accent: 'text-rose-600', rows: departingToday },
-    { key: 'stay', title: 'In-house', Icon: Users, accent: 'text-brand-600', rows: staying },
-    { key: 'soon', title: 'Upcoming arrivals', Icon: CalendarDays, accent: 'text-brand-600', rows: futureArrivals },
-  ].filter(s => s.rows.length > 0)
+  // LEAN PASS (2026-09-22): the five stacked sections are tabs, driven by ?tab= so this stays a
+  // server page. Default is the first tab with anything in it, arrivals first.
+  const TABS: { key: string; label: string; rows: any[]; n: number }[] = [
+    { key: 'arr', label: `Arriving ${dl}`, rows: arrivingToday, n: arrivingToday.length },
+    { key: 'dep', label: `Departing ${dl}`, rows: departingToday, n: departingToday.length },
+    { key: 'stay', label: 'In-house', rows: staying, n: staying.length },
+    { key: 'soon', label: 'Upcoming', rows: futureArrivals, n: futureArrivals.length },
+    { key: 'past', label: 'Past', rows: pastShown, n: pastTotal },
+  ]
+  const tabParam = (searchParams?.tab || '').trim()
+  const active = TABS.find(t => t.key === tabParam) || TABS.find(t => t.rows.length > 0) || TABS[0]
+  const tabHref = (k: string) => `/reservations?tab=${k}${viewingToday ? '' : `&date=${todayStr}`}`
 
   const totalSynced = sync?.items_synced ?? 0
   const lastSync = sync?.last_sync_at ?? null
 
   return (
     <Shell>
-      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><CalendarDays size={13} /> Bookings</p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Reservations</h1>
-          <div className="mt-3"><DateFilter selected={todayStr} isToday={viewingToday} /></div>
-          <p className="text-sm text-muted mt-1">{up.length} active · {pastTotal} past · upcoming arrivals first.</p>
-        </div>
-        <div className="text-[11px] text-muted flex items-center gap-1.5">
-          <RefreshCw size={12} /> Synced {fmtSync(lastSync)}{totalSynced ? ` · ${totalSynced.toLocaleString()} total` : ''}
-        </div>
-      </header>
-
-      {sync?.last_error && (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-800 flex items-center gap-2">
-          <AlertTriangle size={14} /> Last sync reported an issue — figures may be stale.
-        </div>
-      )}
-
-      {/* KPI band */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-        <Kpi label={`Check-ins ${dl}`} value={checkInsToday} Icon={LogIn} accent />
-        <Kpi label={`Check-outs ${dl}`} value={checkOutsToday} Icon={LogOut} />
-        <Kpi label={`In-house ${viewingToday ? 'now' : 'on ' + dl}`} value={inHouse} Icon={Users} />
-        <Kpi label="Arrivals next 7d" value={arrivals7Count} Icon={CalendarDays} />
-        <Kpi label="Booked rev · 7d" value={fmtMoney(revenue7, currency)} Icon={DollarSign} />
-      </div>
+      <LeanHead title="Reservations">
+        <Pill tone="emerald" title={`Check-ins ${dl}`}>{checkInsToday} in</Pill>
+        <Pill tone="rose" title={`Check-outs ${dl}`}>{checkOutsToday} out</Pill>
+        <Pill tone="brand" title={`In-house ${viewingToday ? 'now' : 'on ' + dl}`}>{inHouse} in-house</Pill>
+        <Pill title="Arrivals in the next 7 days">{arrivals7Count} next 7d</Pill>
+        <Pill title="Booked revenue on arrivals in the next 7 days">{fmtMoney(revenue7, currency)} 7d</Pill>
+        {sync?.last_error && <Pill tone="amber" title="The last Guesty sync reported an issue — figures may be stale">Sync issue</Pill>}
+      </LeanHead>
 
       {up.length === 0 && pastRows.length === 0 ? (
-        <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">No reservations synced yet.</div>
+        <LeanEmpty>No reservations synced yet.</LeanEmpty>
       ) : (
         <>
-          {sections.length === 0 ? (
-            <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted mb-6">No active reservations on the books.</div>
-          ) : (
-            <div className="space-y-5 mb-8">
-              {sections.map(sec => (
-                <section key={sec.key} className="rounded-2xl border border-line bg-white overflow-hidden">
-                  <div className="px-4 py-3 border-b border-line flex items-center justify-between gap-2">
-                    <h2 className="font-semibold text-ink text-sm inline-flex items-center gap-1.5">
-                      <sec.Icon size={15} className={`${sec.accent} shrink-0`} /> {sec.title}
-                    </h2>
-                    <span className="text-[10px] uppercase tracking-wider text-muted font-semibold tabular-nums">{sec.rows.length}</span>
-                  </div>
-                  <ResRows rows={sec.rows} todayStr={todayStr} cfMap={cfMap} />
-                </section>
-             )) }
+          <div className="flex items-center gap-2 flex-wrap mb-3">
+            <div className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px] max-w-full overflow-x-auto">
+              {TABS.map(t => (
+                <Link key={t.key} href={tabHref(t.key)} scroll={false}
+                  className={`px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 whitespace-nowrap ${active.key === t.key ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
+                  {t.label}{t.n ? <span className="ml-1 opacity-70 tabular-nums">{t.n}</span> : null}
+                </Link>
+              ))}
             </div>
-          )}
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              <DateFilter selected={todayStr} isToday={viewingToday} />
+              <span className="text-[11px] text-muted" title={`${up.length} active · ${pastTotal} past${totalSynced ? ` · ${totalSynced.toLocaleString()} synced in total` : ''}`}>Synced {fmtSync(lastSync)}</span>
+            </div>
+          </div>
 
-          {/* Recent past stays */}
-          {pastRows.length > 0 && (
-            <section className="rounded-2xl border border-line bg-white overflow-hidden">
-              <div className="px-4 py-3 border-b border-line flex items-center justify-between gap-2">
-                <h2 className="font-semibold text-ink text-sm inline-flex items-center gap-1.5">
-                  <Clock size={15} className="text-muted shrink-0" /> Recent past stays
-                </h2>
-                <span className="text-[10px] uppercase tracking-wider text-muted font-semibold tabular-nums">{Math.min(pastRows.length, 40)}</span>
-              </div>
-              <ResRows rows={pastRows.slice(0, 40)} todayStr={todayStr} muted cfMap={cfMap} />
-            </section>
+          {active.rows.length === 0
+            ? <LeanEmpty>{active.key === 'past' ? 'No past stays.' : 'Nothing here.'}</LeanEmpty>
+            : <ResRows rows={active.rows} cfMap={cfMap} />}
+          {active.key === 'past' && pastTotal > pastShown.length && (
+            <p className="text-[11px] text-muted mt-2 px-1">Latest {pastShown.length} of {pastTotal} past stays.</p>
           )}
         </>
       )}
@@ -230,93 +213,54 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
   )
 }
 
-// ── Row list ─────────────────────────────────────────────────────────────────
-function ResRows({ rows, todayStr, muted, cfMap }: { rows: any[]; todayStr: string; muted?: boolean; cfMap: Record<string, string> }) {
+// ── One line per reservation ─────────────────────────────────────────────────
+// Guest, unit + dates, then tags (channel, status when it isn't plain "confirmed", total, balance
+// due, custom-field count). Building, nights, paid and the Guesty custom fields sit behind the row.
+function ResRows({ rows, cfMap }: { rows: any[]; cfMap: Record<string, string> }) {
   return (
-    <>
-      {/* Column header — desktop */}
-      <div className="hidden md:grid grid-cols-[1.6fr_1.3fr_120px_56px_92px] gap-3 px-4 py-2 border-b border-line text-[10px] uppercase tracking-wider font-semibold text-muted">
-        <span>Guest</span><span>Listing</span><span>Dates</span><span className="text-center">Nights</span><span className="text-right">Total</span>
-      </div>
-      <div className="divide-y divide-line">
-        {rows.map(r => {
-          const total = Number(r.money_total) || 0
-          const paid = Number(r.money_paid) || 0
-          const owed = total - paid
-          const cur = r.money_currency || 'USD'
-          const building = rollupBuilding(r.listing_name)
-          const canceled = /cancel|declin/i.test(r.status || '')
-          const cf = filledCustomFields(r.custom_fields, cfMap)
-          return (
-            <div key={r.id} className={`${muted ? 'opacity-80' : ''} hover:bg-app transition-colors`}>
-              <div className="grid grid-cols-2 md:grid-cols-[1.6fr_1.3fr_120px_56px_92px] gap-x-3 gap-y-1 px-4 py-3 items-center">
-              {/* Guest */}
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className={`font-medium text-sm truncate ${canceled ? 'text-muted line-through' : 'text-ink'}`}>{r.guest_name || 'Guest'}</span>
-                </div>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  {r.source && <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${sourceStyle(r.source)}`}>{r.source}</span>}
-                  {r.status && <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${statusStyle(r.status)}`}>{String(r.status).replace(/_/g, ' ')}</span>}
-                  <a href={`https://app.guesty.com/reservations/${r.id}/summary`} target="_blank" rel="noopener noreferrer" title="Open in Guesty" className="text-[10px] font-semibold text-muted hover:text-brand-700 whitespace-nowrap">Guesty ↗</a>
-                </div>
-              </div>
-
-              {/* Listing */}
-              <div className="min-w-0 text-right md:text-left">
-                <div className="text-sm text-ink truncate">{r.listing_name || 'Unassigned'}</div>
-                {building && building !== (r.listing_name || '').trim() && (
-                  <div className="text-[11px] text-muted truncate">{building}</div>
-                )}
-              </div>
-
-              {/* Dates */}
-              <div className="text-[12px] tabular-nums col-span-2 md:col-span-1 flex items-center gap-1.5 md:block">
-                <span className="text-ink">
-                  <span className="text-muted text-[10px] mr-1">{fmtWeekday(r.check_in)}</span>{fmtDay(r.check_in)}
-                </span>
-                <span className="text-muted mx-1 md:mx-0 md:hidden">→</span>
-                <span className="text-ink md:block">
-                  <span className="text-muted text-[10px] mr-1 md:inline">{fmtWeekday(r.check_out)}</span>{fmtDay(r.check_out)}
-                </span>
-              </div>
-
-              {/* Nights */}
-              <div className="hidden md:block text-center text-sm text-muted tabular-nums">{Number(r.nights) || '—'}</div>
-
-              {/* Total */}
-              <div className="text-right">
-                <div className="text-sm font-semibold text-ink tabular-nums">{fmtMoney(total, cur)}</div>
-                {owed > 0.5 && !canceled && (
-                  <div className="text-[10px] text-amber-700 tabular-nums">{fmtMoney(owed, cur)} due</div>
-                )}
-              </div>
-              </div>
-              {cf.length > 0 && (
-                <div className="px-4 pb-2.5 -mt-1 flex flex-wrap gap-1">
-                  {cf.map((f, i) => (
-                    <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-line whitespace-nowrap">
-                      <span className="text-slate-400">{f.name}:</span> {f.value.length > 32 ? f.value.slice(0, 32) + '…' : f.value}
-                    </span>
-                 )) }
-                </div>
-              )}
+    <LeanList>
+      {rows.map(r => {
+        const total = Number(r.money_total) || 0
+        const paid = Number(r.money_paid) || 0
+        const owed = total - paid
+        const cur = r.money_currency || 'USD'
+        const building = rollupBuilding(r.listing_name)
+        const canceled = /cancel|declin/i.test(r.status || '')
+        const cf = filledCustomFields(r.custom_fields, cfMap)
+        const status = String(r.status || '').replace(/_/g, ' ')
+        const nights = Number(r.nights) || 0
+        return (
+          <LeanRow key={r.id}
+            name={<span className={canceled ? 'line-through text-muted' : ''}>{r.guest_name || 'Guest'}</span>}
+            meta={`${r.listing_name || 'Unassigned'} · ${fmtWeekday(r.check_in)} ${fmtDay(r.check_in)} – ${fmtWeekday(r.check_out)} ${fmtDay(r.check_out)}`}
+            tags={<>
+              {r.source && <span title="Booking channel" className={`${TAG_CLS} ${sourceStyle(r.source)}`}>{r.source}</span>}
+              {status && !/^confirmed$/i.test(status) && <span title="Guesty status" className={`${TAG_CLS} ${statusStyle(r.status)}`}>{status}</span>}
+              <Tag title={`Total${nights ? ` for ${nights} night${nights === 1 ? '' : 's'}` : ''}`}>{fmtMoney(total, cur)}</Tag>
+              {owed > 0.5 && !canceled && <Tag tone="amber" title="Balance not yet paid">{fmtMoney(owed, cur)} due</Tag>}
+              {cf.length > 0 && <Tag title={cf.map(f => `${f.name}: ${f.value}`).join('\n')}>{cf.length} field{cf.length === 1 ? '' : 's'}</Tag>}
+            </>}
+            actions={<IconBtn title="Open in Guesty" href={`https://app.guesty.com/reservations/${r.id}/summary`}><ExternalLink size={14} /></IconBtn>}
+          >
+            <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px] text-muted">
+              {building && building !== (r.listing_name || '').trim() && <span>{building}</span>}
+              <span>{nights || '—'} night{nights === 1 ? '' : 's'}</span>
+              <span className="tabular-nums">{fmtMoney(total, cur)} total · {fmtMoney(paid, cur)} paid</span>
+              {status && <span className={`px-1.5 py-0.5 rounded ${statusStyle(r.status)}`}>{status}</span>}
+              {r.guest_email && <span className="truncate max-w-[16rem]">{r.guest_email}</span>}
             </div>
-          )
-        })}
-      </div>
-    </>
-  )
-}
-
-// ── KPI card ─────────────────────────────────────────────────────────────────
-function Kpi({ label, value, Icon, accent }: { label: string; value: any; Icon?: any; accent?: boolean }) {
-  return (
-    <div className={`rounded-xl border px-3 py-3 ${accent ? 'bg-brand-50 border-brand-200' : 'border-line bg-white'}`}>
-      <div className={`text-2xl font-bold tabular-nums flex items-center gap-1.5 ${accent ? 'text-brand-700' : 'text-ink'}`}>
-        {Icon && <Icon size={16} className={accent ? 'text-brand-600' : 'text-muted'} />}{value}
-      </div>
-      <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mt-1">{label}</div>
-    </div>
+            {cf.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {cf.map((f, i) => (
+                  <span key={i} className="text-[10.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 break-words max-w-full">
+                    <span className="text-slate-400">{f.name}:</span> {f.value}
+                  </span>
+                ))}
+              </div>
+            )}
+          </LeanRow>
+        )
+      })}
+    </LeanList>
   )
 }

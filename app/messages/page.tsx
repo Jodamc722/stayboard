@@ -1,21 +1,15 @@
 import { redirect } from 'next/navigation'
 import { pageRows } from '@/lib/db-page'
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { SyncNowButton } from '@/components/SyncNowButton'
-import { SentimentBoard } from '@/components/SentimentBoard'
-import { MessageSquare, Gauge, Timer, Zap, Reply, Inbox, Mail, PhoneCall, Voicemail, PhoneMissed } from 'lucide-react'
+import { MessagesInbox, type InboxItem } from '@/components/MessagesInbox'
+import { LeanHead, Pill, type Tone } from '@/components/lean'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { listPhoneThreads, type PhoneThreadSummary } from '@/lib/phone-threads'
 import { talkrouteConfigured } from '@/lib/talkroute'
 
 export const dynamic = 'force-dynamic'
-
-const CHANNEL_LABELS: Record<string, string> = {
-  airbnb: 'Airbnb', airbnb2: 'Airbnb', vrbo: 'VRBO', booking: 'Booking', 'booking.com': 'Booking',
-  sms: 'SMS', email: 'Email', whatsapp: 'WhatsApp', other: 'Other'
-}
 
 type Msg = { conversation_id: string; sender: string; sender_name?: string | null; sent_at: string }
 
@@ -74,147 +68,39 @@ export default async function MessagesPage() {
   }
   const kpis = computeKpis((msgs as Msg[] | null) ?? [], list)
 
-  // One list, two sources, newest first.
-  type Item = { kind: 'guesty'; at: string; c: any } | { kind: 'phone'; at: string; t: PhoneThreadSummary }
-  const items: Item[] = (list.map((c: any) => ({ kind: 'guesty' as const, at: String(c.last_message_at || ''), c })) as Item[])
+  // One list, two sources, newest first. Only the fields the inbox shows cross to the client.
+  const items: InboxItem[] = (list.map((c: any) => ({
+    kind: 'guesty' as const, at: String(c.last_message_at || ''),
+    c: { id: c.id, guest_name: c.guest_name, channel: c.channel, listing_id: c.listing_id, last_message_at: c.last_message_at, last_message_preview: c.last_message_preview, unread_count: c.unread_count },
+  })) as InboxItem[])
     .concat(phone.map(t => ({ kind: 'phone' as const, at: t.lastAt, t })))
     .sort((a, b) => b.at.localeCompare(a.at))
   const phoneAwaiting = phone.filter(t => t.awaiting).length
+  const lastResponderById: Record<string, string> = {}
+  Array.from(kpis.lastResponderById.entries()).forEach(([k, v]) => { lastResponderById[k] = v })
+
+  // LEAN PASS (2026-09-22): the six KPI tiles are four pills; what each number means (and the
+  // score's formula, which used to be a paragraph at the bottom) is in the pill's hover title.
+  const tone = (t: 'good' | 'amber' | 'red' | 'neutral'): Tone => t === 'good' ? 'emerald' : t === 'amber' ? 'amber' : t === 'red' ? 'rose' : 'slate'
+  const scoreTone = kpis.score == null ? 'neutral' : kpis.score >= 80 ? 'good' : kpis.score >= 60 ? 'amber' : 'red'
+  const avgTone = kpis.avgFirstMs == null ? 'neutral' : kpis.avgFirstMs <= HOUR_MS ? 'good' : kpis.avgFirstMs <= 4 * HOUR_MS ? 'amber' : 'red'
+  const waiting = kpis.awaitingReply + phoneAwaiting
+  const scoreTitle = `Response score 0–100 over the last ${kpis.sampleConvos} conversations: % answered within 1h × 60 (the benchmark OTAs reward) + avg response time × 25 (full credit ≤1h, sliding to 0 by ~8h) + reply rate × 15.`
+  const avgTitle = `Average first reply ${fmtDur(kpis.avgFirstMs)} · median ${fmtDur(kpis.medianFirstMs)}${kpis.sampleReplies ? ` across ${kpis.sampleReplies} guest-to-host replies` : ''} · ${kpis.withinHourPct == null ? '—' : kpis.withinHourPct + '%'} within 1h · reply rate ${kpis.replyRatePct == null ? '—' : kpis.replyRatePct + '%'}. Replying under an hour boosts OTA ranking.`
 
   return (
     <Shell>
-      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><MessageSquare size={13} /> Guest comms</p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Messages</h1>
-          <p className="text-sm text-muted mt-1">
-            {sync?.last_sync_at ? `Last synced ${timeAgo(new Date(sync.last_sync_at))} · ` : ''}
-            <strong className="text-ink/80">{list.length}</strong> Guesty threads{phoneOn ? <> · <strong className="text-ink/80">{phone.length}</strong> phone threads{phoneAwaiting ? <> (<span className="text-rose-600 font-semibold">{phoneAwaiting} need a reply</span>)</> : null}</> : null} · response stats over last <strong className="text-ink/80">{kpis.sampleConvos}</strong> conversations
-          </p>
-        </div>
+      <LeanHead title="Messages">
+        <Pill tone={tone(scoreTone)} title={scoreTitle}>Score {kpis.score == null ? '—' : kpis.score}</Pill>
+        <Pill tone={tone(avgTone)} title={avgTitle}>Reply {fmtDur(kpis.avgFirstMs)}</Pill>
+        <Pill tone={waiting === 0 ? 'emerald' : waiting <= 5 ? 'amber' : 'rose'} title={`Threads whose latest message is from the guest${phoneOn ? ` (${kpis.awaitingReply} Guesty · ${phoneAwaiting} phone)` : ''}`}>{waiting} waiting</Pill>
+        <Pill tone={kpis.unread === 0 ? 'emerald' : kpis.unread <= 10 ? 'amber' : 'rose'} title="Unread Guesty messages">{kpis.unread} unread</Pill>
+        <span className="text-[11px] text-muted" title={`${list.length} Guesty threads${phoneOn ? ` · ${phone.length} phone threads` : ''}`}>{sync?.last_sync_at ? `synced ${timeAgo(new Date(sync.last_sync_at))}` : 'never synced'}</span>
         <SyncNowButton />
-      </header>
+      </LeanHead>
 
-      {/* KPI band */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
-        <ScoreKpi value={kpis.score} />
-        <Kpi
-          label="Avg response time"
-          Icon={Timer}
-          value={fmtDur(kpis.avgFirstMs)}
-          tone={kpis.avgFirstMs == null ? 'neutral' : kpis.avgFirstMs <= HOUR_MS ? 'good' : kpis.avgFirstMs <= 4 * HOUR_MS ? 'amber' : 'red'}
-        />
-        <Kpi
-          label="% within 1h"
-          Icon={Zap}
-          value={kpis.withinHourPct == null ? '—' : `${kpis.withinHourPct}%`}
-          tone={kpis.withinHourPct == null ? 'neutral' : kpis.withinHourPct >= 75 ? 'good' : kpis.withinHourPct >= 50 ? 'amber' : 'red'}
-        />
-        <Kpi
-          label="Reply rate"
-          Icon={Reply}
-          value={kpis.replyRatePct == null ? '—' : `${kpis.replyRatePct}%`}
-          tone={kpis.replyRatePct == null ? 'neutral' : kpis.replyRatePct >= 90 ? 'good' : kpis.replyRatePct >= 75 ? 'amber' : 'red'}
-        />
-        <Kpi
-          label="Awaiting reply"
-          Icon={Inbox}
-          value={kpis.awaitingReply}
-          tone={kpis.awaitingReply === 0 ? 'good' : kpis.awaitingReply <= 5 ? 'amber' : 'red'}
-        />
-        <Kpi
-          label="Unread"
-          Icon={Mail}
-          value={kpis.unread}
-          tone={kpis.unread === 0 ? 'good' : kpis.unread <= 10 ? 'amber' : 'red'}
-        />
-      </div>
-
-      <SentimentBoard />
-
-      {items.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-line p-16 text-center text-muted shadow-soft">
-          No conversations cached yet. Click <strong>Sync now</strong> above.
-        </div>
-      ) : (
-        <div className="bg-white rounded-2xl border border-line shadow-soft divide-y divide-line/60 overflow-hidden">
-          {items.map(it => {
-            if (it.kind === 'phone') return <PhoneRow key={'p' + it.t.number} t={it.t} unit={unitById[it.t.listingId] || ''} />
-            const c = it.c
-            const awaiting = kpis.awaitingIds.has(c.id)
-            return (
-              <Link key={c.id} href={`/messages/${c.id}`} className="flex items-start gap-3 px-3 sm:px-5 py-3 hover:bg-app/40 transition-colors">
-                <Avatar name={c.guest_name} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline justify-between gap-2">
-                    {/* The channel, unit and "Awaiting reply" pills are all flex-shrink-0, so on a
-                        phone they took the whole row and truncated the guest's name to a couple of
-                        characters. Letting them wrap gives the name back its line. */}
-                    <div className="flex items-center gap-2 min-w-0 flex-wrap gap-y-1">
-                      <span className="font-medium text-ink truncate">{c.guest_name || 'Guest'}</span>
-                      <span className="text-[10px] text-muted uppercase tracking-[0.08em] font-semibold flex-shrink-0">{CHANNEL_LABELS[c.channel] || c.channel}</span>
-                      {unitById[c.listing_id] && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded flex-shrink-0">Unit {unitById[c.listing_id]}</span>}
-                      {awaiting && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-full flex-shrink-0" title="Latest message is from the guest — awaiting host reply">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" /> Awaiting reply
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs text-muted flex-shrink-0">{c.last_message_at ? rel(c.last_message_at) : ''}</span>
-                  </div>
-                  <p className={`text-sm truncate mt-0.5 ${c.unread_count > 0 ? 'text-ink font-medium' : 'text-muted'}`}>
-                    {c.last_message_preview || <span className="italic text-line">(no preview)</span>}
-                  </p>
-                  {!awaiting && kpis.lastResponderById.get(c.id) && (
-                    <p className="text-[10px] text-muted mt-0.5">Last replied by {kpis.lastResponderById.get(c.id)}</p>
-                  )}
-                </div>
-                {c.unread_count > 0 && (
-                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-brand-500 text-white text-[10px] font-semibold flex-shrink-0">{c.unread_count}</span>
-                )}
-              </Link>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Model note */}
-      <div className="mt-4 rounded-xl border border-line bg-white px-4 py-3 text-[12px] text-muted">
-        <div className="flex items-center gap-1.5 font-semibold text-ink mb-1"><Gauge size={13} /> How the response score works</div>
-        Blended 0–100 from message bodies: <b className="text-ink">% within 1h × 60</b> (the benchmark OTAs reward) · <b className="text-ink">avg response time × 25</b> (full credit ≤1h, sliding to 0 by ~8h) · <b className="text-ink">reply rate × 15</b>.
-        Median first-reply gap: <b className="text-ink">{fmtDur(kpis.medianFirstMs)}</b>{kpis.sampleReplies ? ` across ${kpis.sampleReplies} guest→host replies` : ''}. Replying under an hour boosts OTA ranking; threads whose latest message is a guest are flagged <span className="text-rose-600 font-medium">Awaiting reply</span>.
-      </div>
+      <MessagesInbox items={items} unitById={unitById} awaitingIds={Array.from(kpis.awaitingIds)} lastResponderById={lastResponderById} />
     </Shell>
-  )
-}
-
-/* ---------- A phone thread in the list (Talkroute) ---------- */
-
-function PhoneRow({ t, unit }: { t: PhoneThreadSummary; unit: string }) {
-  const Icon = t.lastKind === 'voicemail' ? Voicemail : t.lastKind === 'call' ? (t.awaiting ? PhoneMissed : PhoneCall) : MessageSquare
-  const label = t.lastKind === 'voicemail' ? 'Voicemail' : t.lastKind === 'call' ? 'Call' : 'SMS'
-  return (
-    <Link href={`/messages/phone/${t.number}`} className="flex items-start gap-3 px-3 sm:px-5 py-3 hover:bg-app/40 transition-colors">
-      <Avatar name={t.guestName || t.display} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0 flex-wrap gap-y-1">
-            <span className="font-medium text-ink truncate">{t.guestName || t.display}</span>
-            <span className="text-[10px] text-muted uppercase tracking-[0.08em] font-semibold flex-shrink-0 inline-flex items-center gap-1"><Icon size={11} /> {label} · Talkroute</span>
-            {unit && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded flex-shrink-0">Unit {unit}</span>}
-            {!t.reservationId && <span className="text-[10px] text-muted bg-app px-1.5 py-0.5 rounded flex-shrink-0" title="No booking has this phone number">Unmatched</span>}
-            {t.awaiting && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-full flex-shrink-0" title="Latest is from the guest — a text, a voicemail or a missed call">
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" /> Needs a reply
-              </span>
-            )}
-          </div>
-          <span className="text-xs text-muted flex-shrink-0">{t.lastAt ? rel(t.lastAt) : ''}</span>
-        </div>
-        <p className={`text-sm truncate mt-0.5 ${t.unread ? 'text-ink font-medium' : 'text-muted'}`}>{t.preview || <span className="italic text-line">(no preview)</span>}</p>
-        <p className="text-[10px] text-muted mt-0.5">{t.display}{t.counts.texts ? ` · ${t.counts.texts} texts` : ''}{t.counts.voicemails ? ` · ${t.counts.voicemails} voicemail${t.counts.voicemails === 1 ? '' : 's'}` : ''}{t.counts.calls ? ` · ${t.counts.calls} call${t.counts.calls === 1 ? '' : 's'}` : ''}</p>
-      </div>
-    </Link>
   )
 }
 
@@ -317,54 +203,7 @@ function computeKpis(msgs: Msg[], convos: any[]): Kpis {
   }
 }
 
-/* ---------- UI bits ---------- */
-
-const TONE = {
-  good:    { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', icon: 'text-emerald-500' },
-  amber:   { bg: 'bg-amber-50',   border: 'border-amber-200',   text: 'text-amber-700',   icon: 'text-amber-500' },
-  red:     { bg: 'bg-rose-50',    border: 'border-rose-200',    text: 'text-rose-700',    icon: 'text-rose-500' },
-  neutral: { bg: 'bg-white',      border: 'border-line',        text: 'text-ink',         icon: 'text-muted' },
-} as const
-
-function Kpi({ label, value, Icon, tone = 'neutral' }: { label: string; value: any; Icon: any; tone?: keyof typeof TONE }) {
-  const t = TONE[tone]
-  return (
-    <div className={`rounded-xl border px-3 py-3 ${t.bg} ${t.border}`}>
-      <div className={`text-2xl font-bold tabular-nums ${t.text} flex items-center gap-1.5`}>
-        <Icon size={16} className={t.icon} /> {value}
-      </div>
-      <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mt-1">{label}</div>
-    </div>
-  )
-}
-
-function ScoreKpi({ value }: { value: number | null }) {
-  const tone: keyof typeof TONE = value == null ? 'neutral' : value >= 80 ? 'good' : value >= 60 ? 'amber' : 'red'
-  const t = TONE[tone]
-  return (
-    <div className={`rounded-xl border px-3 py-3 ${value == null ? 'bg-white border-line' : `${t.bg} ${t.border}`}`}>
-      <div className={`text-2xl font-bold tabular-nums ${value == null ? 'text-ink' : t.text} flex items-center gap-1.5`}>
-        <Gauge size={16} className={value == null ? 'text-muted' : t.icon} /> {value == null ? '—' : value}
-        {value != null && <span className="text-xs font-semibold text-muted">/100</span>}
-      </div>
-      <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mt-1">Response score</div>
-    </div>
-  )
-}
-
-function Avatar({ name }: { name: string | null }) {
-  const init = (name || 'G').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
-  let h = 0
-  const seed = name || 'G'
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360
-  const bg = `hsl(${h}, 55%, 92%)`
-  const fg = `hsl(${h}, 45%, 32%)`
-  return (
-    <div className="w-10 h-10 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0" style={{ background: bg, color: fg }}>
-      {init}
-    </div>
-  )
-}
+/* ---------- Formatting ---------- */
 
 function fmtDur(ms: number | null) {
   if (ms == null) return '—'
@@ -379,16 +218,6 @@ function fmtDur(ms: number | null) {
   return rh ? `${d}d ${rh}h` : `${d}d`
 }
 
-function rel(iso: string) {
-  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
-  if (m < 1)  return 'now'
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h`
-  const d = Math.floor(h / 24)
-  if (d < 7)  return `${d}d`
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
 function timeAgo(d: Date) {
   const m = Math.floor((Date.now() - d.getTime()) / 60_000)
   if (m < 1) return 'just now'

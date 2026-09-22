@@ -1,6 +1,7 @@
 'use client'
 import { useRouter, usePathname } from 'next/navigation'
-import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { Tip } from '@/components/lean'
 
 // Day picker for operational pages. Defaults to "today"; selecting any date drives the
 // whole page via the ?date=YYYY-MM-DD search param. Clearing it (Today) returns to live today.
@@ -18,24 +19,22 @@ export function DateFilter({ selected, isToday }: { selected: string; isToday: b
     go(d.toISOString().slice(0, 10))
   }
 
+  const arrow = 'w-7 h-7 inline-flex items-center justify-center rounded-lg border border-line bg-white text-muted hover:text-ink hover:border-brand-200'
   return (
     // Phone: the date input is forced to 16px (iOS zooms anything smaller), so arrows + input +
-    // "Today" no longer fit on 375px and the row dragged the page sideways. Let it wrap instead.
-    <div className="inline-flex items-center gap-1.5 flex-wrap gap-y-2 max-w-full">
-      <CalendarDays size={14} className="text-muted" />
-      <button onClick={() => shift(-1)} aria-label="Previous day"
-        className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-line bg-white text-muted hover:text-ink hover:border-brand-200">
-        <ChevronLeft size={15} />
-      </button>
-      <input type="date" value={selected} onChange={e => go(e.target.value)}
-        className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm text-ink focus:outline-none focus:border-brand-500" />
-      <button onClick={() => shift(1)} aria-label="Next day"
-        className="w-7 h-7 inline-flex items-center justify-center rounded-lg border border-line bg-white text-muted hover:text-ink hover:border-brand-200">
-        <ChevronRight size={15} />
-      </button>
+    // "Today" may not fit on 375px. Let it wrap instead of dragging the page sideways.
+    <div className="inline-flex items-center gap-1 flex-wrap gap-y-2 max-w-full">
+      <Tip label="Previous day">
+        <button onClick={() => shift(-1)} aria-label="Previous day" className={arrow}><ChevronLeft size={15} /></button>
+      </Tip>
+      <input type="date" value={selected} onChange={e => go(e.target.value)} title="Show a different day"
+        className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink focus:outline-none focus:border-brand-500" />
+      <Tip label="Next day">
+        <button onClick={() => shift(1)} aria-label="Next day" className={arrow}><ChevronRight size={15} /></button>
+      </Tip>
       {!isToday && (
         <button onClick={() => router.push(pathname)}
-          className="text-[12px] font-medium rounded-lg px-2.5 py-1.5 border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100">
+          className="text-[12px] font-medium rounded-lg px-2.5 py-1 border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100">
           Today
         </button>
       )}
