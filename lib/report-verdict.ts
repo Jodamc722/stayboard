@@ -165,18 +165,44 @@ function aheadLine(c: Any): VerdictLine | null {
   }
 }
 
-/** What we are doing about it — the half of the question the numbers never answer. */
+/**
+ * What we are doing about it — the half of the question the numbers never answer.
+ *
+ * THE BOILERPLATE TRAP, found live on the 17WEST September report. Its three guest themes were all
+ * praise, and the third one's action read "We run departure checklists and pre-arrival inspections
+ * on every turn." That is a true sentence about how we always operate, and as the closing line of
+ * an owner summary it is filler — it describes standing practice, not a response to anything that
+ * happened this month. An owner who reads one line of boilerplate stops trusting the other three.
+ *
+ * So a theme's action only qualifies when it reads as a RESPONSE: not attached to a theme the
+ * report itself labelled a highlight, and not phrased as what we always do. Everything else falls
+ * through to the work actually completed on the property, which is concrete and checkable, and
+ * failing that the line is simply omitted.
+ */
+const PRAISE = /highlight|great|excellent|loved|positive/i
+const STANDING_PRACTICE = /^\s*we\s+(keep|maintain|run|continue|always|remain|ensure|provide)\b/i
+
 function actionLine(c: Any): VerdictLine | null {
   const themes: Any[] = Array.isArray(c?.voices?.themes) ? c.voices.themes : []
-  // A theme whose title reads as a highlight is praise, not a problem. The owner wants to know what
-  // we are fixing, so a genuine issue wins over a compliment every time.
-  const issue = themes.find(t => !/highlight/i.test(str(t.title)) && clean(t.action))
-  const action = clean(issue?.action)
+  const response = themes.find(t => {
+    const action = clean(t?.action)
+    if (!action) return false
+    if (PRAISE.test(str(t?.title))) return false
+    if (STANDING_PRACTICE.test(action)) return false
+    return true
+  })
+  const action = clean(response?.action)
   if (action) return { key: 'action', tone: 'flat', text: action }
+
   const weeks: Any[] = Array.isArray(c?.projects?.weeks) ? c.projects.weeks : []
   let items = 0
-  for (const w of weeks) for (const g of (w.groups || [])) items += (g.items || []).length
-  if (items > 0) return { key: 'action', tone: 'flat', text: `${items} piece${items === 1 ? '' : 's'} of work completed on the property this period — the detail is below.` }
+  for (const w of weeks) for (const g of (w?.groups || [])) items += (g?.items || []).length
+  if (items > 0) {
+    return {
+      key: 'action', tone: 'flat',
+      text: `${items} piece${items === 1 ? '' : 's'} of work were completed on the property this period — the detail is below.`,
+    }
+  }
   return null
 }
 
