@@ -5,7 +5,8 @@
 // project items be removed/added, and sections be hidden/shown (content.omit).
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { buildVerdict } from '@/lib/report-verdict'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, basisTriple } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
@@ -773,6 +774,74 @@ function SectionShell({ id, title, hidden, edit, onToggle, onAi, children }: {
   )
 }
 
+// ── THE MONTH ───────────────────────────────────────────────────────────────────────────────────
+// The page an owner reads if they read nothing else (Jon, 2026-09-22). Three numbers, a verdict
+// sentence and the handful of facts that answer "how did we do and what are you doing about it".
+//
+// Everything is DERIVED from the report's own content by lib/report-verdict, so every review that
+// already exists gained this page on deploy without being regenerated. Editing any line writes the
+// whole block into content.verdict, and from then on the typed words win — which is why the edit
+// handler materialises the derived object rather than patching a field that does not exist yet.
+function TheMonth({ v, t, edit, setVerdict }: { v: Any; t: Any; edit: boolean; setVerdict: (next: Any) => void }) {
+  if (!v) return null
+  const TONE: Record<string, string> = { good: t.good, watch: t.accent, flat: t.sub }
+  const setLine = (i: number, text: string) => {
+    const lines = (v.lines || []).map((l: Any, j: number) => (j === i ? { ...l, text } : l))
+    setVerdict({ ...v, lines, edited: true })
+  }
+  return (
+    <section className="pt-16 sm:pt-24">
+      <Eyebrow>THE MONTH</Eyebrow>
+      <h2 className="mt-2 text-[30px] sm:text-[40px] font-extrabold tracking-tight leading-[1.08]" style={{ color: t.ink }}>
+        <Ed v={v.headline || ''} set={x => setVerdict({ ...v, headline: x, edited: true })} edit={edit} multiline />
+      </h2>
+
+      {(v.numbers || []).length > 0 && (
+        <div className="mt-7 grid gap-3" style={{ gridTemplateColumns: 'repeat(' + Math.min(3, v.numbers.length) + ', minmax(0,1fr))' }}>
+          {v.numbers.map((n: Any) => (
+            <div key={n.key} className="rounded-2xl px-5 py-5" style={{ background: t.card, border: '1px solid ' + t.cardBorder }}>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: t.accent }}>{n.label}</p>
+              <p className="mt-1.5 text-[34px] sm:text-[42px] font-extrabold leading-none tracking-tight" style={{ color: t.ink }}>{n.value}</p>
+              {n.sub ? <p className="mt-1.5 text-[12px]" style={{ color: t.muted }}>{n.sub}</p> : null}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(v.lines || []).length > 0 && (
+        <ul className="mt-7 space-y-3.5">
+          {v.lines.map((l: Any, i: number) => (
+            <li key={l.key || i} className="flex gap-3.5">
+              <span className="mt-[9px] shrink-0 rounded-full" style={{ width: 7, height: 7, background: TONE[l.tone] || t.sub }} />
+              <p className="text-[17px] sm:text-[19px] leading-[1.5]" style={{ color: t.body }}>
+                <Ed v={l.text || ''} set={x => setLine(i, x)} edit={edit} multiline />
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-6 text-[12px]" style={{ color: t.muted }}>
+        Everything below is the detail behind these lines.
+      </p>
+    </section>
+  )
+}
+
+// ── THE SECTION PHOTOGRAPH ──────────────────────────────────────────────────────────────────────
+// One of the two devices Jon took from the onboarding deck (2026-09-22): a picture of the thing
+// being discussed, introducing each section. Optional by design — a report whose listings carry no
+// usable photos renders exactly as it did before rather than showing a broken frame, which is what
+// makes this safe to switch on for every existing review at once.
+function SectionPhoto({ src, t }: { src?: string | null; t: Any }) {
+  if (!src) return null
+  return (
+    <div className="mb-8 overflow-hidden rounded-[20px] sb-sectionphoto" style={{ border: '1px solid ' + t.cardBorder }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="" loading="lazy" className="w-full object-cover" style={{ height: 'clamp(150px, 24vw, 260px)' }} />
+    </div>
+  )
+}
+
 // ONE QUESTION ON THE CALL. `live` is true for anyone who can edit — including while presenting,
 // because filling these in during the meeting is the entire point of the document. An owner
 // reading it later sees the answer, or an honest "not discussed yet".
@@ -910,7 +979,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 // ---------- main ----------
-export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit: boolean; isTeam?: boolean }) {
+export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any; canEdit: boolean; isTeam?: boolean; gallery?: string[] }) {
   const [c, setC] = useState<Any>(initial.content || {})
   const [edit, setEdit] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -1684,6 +1753,22 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
   // actually clears it from the reviews already out there. Older projection reports predate
   // meta.kind, so their hero label stands in for it.
   const isOnboarding = String((c.meta || {}).kind || '') === 'onboarding'
+
+  // THE MONTH + SECTION PHOTOGRAPHY (Jon, 2026-09-22 rebuild). Both are derived rather than stored,
+  // so every review that already existed gained them on deploy. `gallery` is resolved server-side
+  // from the report's own listings (lib/report-gallery) and is empty when nothing usable came back,
+  // in which case every section falls back to plain typography.
+  const verdict = useMemo(() => (isOnboarding ? null : buildVerdict(c)), [c, isOnboarding])
+  const setVerdict = (next: Any) => patch('verdict', next)
+  // A fixed order so a photo belongs to the same section every time the page renders, and so the
+  // snapshot — which sits directly under The Month — is left clean rather than double-imaged.
+  const PHOTO_ORDER = ['pacing', 'plan', 'statement', 'ahead', 'voices', 'projects']
+  const photoFor = (key: string): string | null => {
+    const pics = Array.isArray(gallery) ? gallery : []
+    if (!pics.length) return null
+    const i = PHOTO_ORDER.indexOf(key)
+    return i >= 0 && i < pics.length ? pics[i] : null
+  }
   // THE MARK, ON EVERY OWNER-FACING REPORT (Jon, 2026-09-16: "here our logo, brand all our owner
   // facing reports"). One asset in /public, used by the review, the projection and the onboarding
   // alike; a report can still override it from its own content. The file is black ink on
@@ -2527,7 +2612,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             </div>
           </header>
         ) : (
-        <header className="relative pt-14 pb-12 text-center border-b" style={{ borderColor: t.rule }}>
+        <header className="relative pt-20 sm:pt-28 pb-16 sm:pb-20 text-center border-b" style={{ borderColor: t.rule }}>
           {edit && (
             <button onClick={() => openAi('hero')} className="absolute top-4 right-4 inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.accent }}>
               <Sparkles size={11} /> AI
@@ -2547,15 +2632,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
           <p className="mt-5 text-[12px] font-bold uppercase tracking-[0.3em]" style={{ color: t.gold }}>
             <Ed v={hero.dateLabel || 'OWNER REVIEW'} set={v => patch('hero.dateLabel', v)} edit={edit} />
           </p>
-          <h1 className="mt-2 text-5xl sm:text-6xl font-black tracking-tight" style={{ color: t.ink }}>
+          <h1 className="mt-2.5 text-[52px] sm:text-[76px] font-black tracking-[-0.03em] leading-[0.95]" style={{ color: t.ink }}>
             <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
           </h1>
-          <p className="mt-5 text-lg sm:text-xl font-medium max-w-2xl mx-auto" style={{ color: t.body }}>
+          <p className="mt-6 text-lg sm:text-[22px] font-medium max-w-2xl mx-auto leading-[1.45]" style={{ color: t.body }}>
             <Ed v={isOnboarding ? houseLine(hero.headline, HERO_HEADLINE) : (hero.headline || '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
           </p>
           {hero.heroImage && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={hero.heroImage} alt="" className="mt-8 w-full rounded-2xl object-cover" style={{ maxHeight: 420, border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 48px -28px rgba(0,0,0,0.35)' }} />
+            <img src={hero.heroImage} alt="" className="mt-10 w-full rounded-[22px] object-cover" style={{ height: 'clamp(260px, 44vw, 520px)', border: '1px solid ' + t.cardBorder, boxShadow: '0 30px 60px -32px rgba(0,0,0,0.38)' }} />
           )}
           <p className="mt-8 text-[12px] uppercase tracking-[0.18em] font-semibold" style={{ color: t.footA }}>
             <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />  ·  STAY HOSPITALITY
@@ -4367,14 +4452,21 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         })()}
 
         {!isOnboarding && (<>
+        {/* ---------- THE MONTH — the verdict page (Jon, 2026-09-22) ---------- */}
+        {verdict && !isHidden('verdict') ? (
+          <SectionShell id="verdict" title="The Month" hidden={isHidden('verdict')} edit={edit} onToggle={() => toggleSection('verdict')}>
+            <TheMonth v={verdict} t={t} edit={edit} setVerdict={setVerdict} />
+          </SectionShell>
+        ) : null}
         {/* ---------- SNAPSHOT ---------- */}
         <SectionShell id="snapshot" title="Snapshot" hidden={isHidden('snapshot')} edit={edit} onToggle={() => toggleSection('snapshot')} onAi={() => openAi('snapshot')}>
-          <div className="pt-12">
+          <div className="pt-16 sm:pt-24">
+            <SectionPhoto src={photoFor('snapshot')} t={t} />
             <Eyebrow>SNAPSHOT</Eyebrow>
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
               <Ed v={snap.headline || ''} set={v => patch('snapshot.headline', v)} edit={edit} multiline />
             </h2>
-            <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
+            <p className="mt-2.5 text-[16px] sm:text-[17px] leading-[1.55] max-w-[64ch]" style={{ color: t.body }}>
               <Ed v={snap.subtitle || ''} set={v => patch('snapshot.subtitle', v)} edit={edit} />
             </p>
             {edit && (
@@ -4694,12 +4786,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         {/* ---------- PACING (only when data exists) ---------- */}
         {c.pacing && (
           <SectionShell id="pacing" title="Pacing" hidden={isHidden('pacing')} edit={edit} onToggle={() => toggleSection('pacing')} onAi={() => openAi('pacing')}>
-            <div className="pt-12">
+            <div className="pt-16 sm:pt-24">
+              <SectionPhoto src={photoFor('pacing')} t={t} />
               <Eyebrow>PACING VS. MARKET</Eyebrow>
               <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
                 <Ed v={c.pacing.headline || ''} set={v => patch('pacing.headline', v)} edit={edit} multiline />
               </h2>
-              <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
+              <p className="mt-2.5 text-[16px] sm:text-[17px] leading-[1.55] max-w-[64ch]" style={{ color: t.body }}>
                 <Ed v={c.pacing.subtitle || ''} set={v => patch('pacing.subtitle', v)} edit={edit} />
               </p>
               <div className="mt-6 space-y-4">
@@ -4731,7 +4824,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         {/* ---------- PERFORMANCE VS PLAN ---------- */}
         {plan && (
           <SectionShell id="plan" title="Plan" hidden={isHidden('plan')} edit={edit} onToggle={() => toggleSection('plan')} onAi={() => openAi('plan')}>
-            <div className="pt-12">
+            <div className="pt-16 sm:pt-24">
+              <SectionPhoto src={photoFor('plan')} t={t} />
               <Eyebrow>PERFORMANCE VS. PLAN</Eyebrow>
               <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
                 <Ed v={plan.headline || ''} set={v => patch('plan.headline', v)} edit={edit} multiline />
@@ -4775,13 +4869,14 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
         {/* ---------- OWNER STATEMENT (P3 — renders when present) ---------- */}
         {c.statement && (
           <SectionShell id="statement" title="Statement" hidden={isHidden('statement')} edit={edit} onToggle={() => toggleSection('statement')} onAi={() => openAi('statement')}>
-            <div className="pt-12">
+            <div className="pt-16 sm:pt-24">
+              <SectionPhoto src={photoFor('statement')} t={t} />
               <Eyebrow>OWNER STATEMENT</Eyebrow>
               <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
                 <Ed v={c.statement.headline || ''} set={v => patch('statement.headline', v)} edit={edit} multiline />
               </h2>
               {(c.statement.subtitle || edit) && (
-                <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
+                <p className="mt-2.5 text-[16px] sm:text-[17px] leading-[1.55] max-w-[64ch]" style={{ color: t.body }}>
                   <Ed v={c.statement.subtitle || ''} set={v => patch('statement.subtitle', v)} edit={edit} placeholder="Subtitle…" />
                 </p>
               )}
@@ -5103,7 +5198,8 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
         {/* ---------- LOOKING AHEAD ---------- */}
         <SectionShell id="ahead" title="Looking Ahead" hidden={isHidden('ahead')} edit={edit} onToggle={() => toggleSection('ahead')} onAi={() => openAi('ahead')}>
-          <div className="pt-12">
+          <div className="pt-16 sm:pt-24">
+            <SectionPhoto src={photoFor('ahead')} t={t} />
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Eyebrow>LOOKING AHEAD</Eyebrow>
               {edit && (ahead.months || []).some((m: Any) => hasBasisRaw(m)) && (
@@ -5113,7 +5209,7 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
               <Ed v={ahead.headline || ''} set={v => patch('ahead.headline', v)} edit={edit} multiline />
             </h2>
-            <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
+            <p className="mt-2.5 text-[16px] sm:text-[17px] leading-[1.55] max-w-[64ch]" style={{ color: t.body }}>
               <Ed v={ahead.subtitle || ''} set={v => patch('ahead.subtitle', v)} edit={edit} />
             </p>
             <div className={'mt-6 grid gap-4 ' + (((ahead.months || []).length >= 3) ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
@@ -5293,12 +5389,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
         {/* ---------- GUEST VOICES ---------- */}
         <SectionShell id="voices" title="Guest Voices" hidden={isHidden('voices')} edit={edit} onToggle={() => toggleSection('voices')} onAi={() => openAi('voices')}>
-          <div className="pt-12">
+          <div className="pt-16 sm:pt-24">
+            <SectionPhoto src={photoFor('voices')} t={t} />
             <Eyebrow>GUEST VOICES</Eyebrow>
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
               <Ed v={voices.headline || ''} set={v => patch('voices.headline', v)} edit={edit} multiline />
             </h2>
-            <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
+            <p className="mt-2.5 text-[16px] sm:text-[17px] leading-[1.55] max-w-[64ch]" style={{ color: t.body }}>
               <Ed v={voices.subtitle || ''} set={v => patch('voices.subtitle', v)} edit={edit} />
             </p>
             {voices.kpi && (
@@ -5399,12 +5496,13 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
 
         {/* ---------- PROJECTS ---------- */}
         <SectionShell id="projects" title="Projects" hidden={isHidden('projects')} edit={edit} onToggle={() => toggleSection('projects')} onAi={() => openAi('projects')}>
-          <div className="pt-12">
+          <div className="pt-16 sm:pt-24">
+            <SectionPhoto src={photoFor('projects')} t={t} />
             <Eyebrow>PROJECTS</Eyebrow>
             <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
               <Ed v={projects.headline || ''} set={v => patch('projects.headline', v)} edit={edit} multiline />
             </h2>
-            <p className="mt-1 text-[13px]" style={{ color: t.sub }}>
+            <p className="mt-2.5 text-[16px] sm:text-[17px] leading-[1.55] max-w-[64ch]" style={{ color: t.body }}>
               <Ed v={projects.subtitle || ''} set={v => patch('projects.subtitle', v)} edit={edit} />
             </p>
             {edit && (

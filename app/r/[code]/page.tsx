@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
 import { hasEditCookie } from '@/lib/edit-access'
 import { ReportView } from '@/components/ReportView'
+import { reportGallery } from '@/lib/report-gallery'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,5 +29,8 @@ export default async function PublicReportPage({ params }: { params: { code: str
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const unlocked = hasEditCookie()
-  return <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} />
+  // Section photography for the owner review, resolved from the report's own listings rather than
+  // stored on it — see lib/report-gallery. A failure here costs the pictures, never the report.
+  const gallery = await reportGallery((rep as any)?.content).catch(() => [] as string[])
+  return <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} gallery={gallery} />
 }
