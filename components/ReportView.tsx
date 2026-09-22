@@ -2911,14 +2911,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             { k: 'nextup', label: 'What happens next' },
           ]
           const askSecs = CORE.concat(EXTRA)
-          const open: { label: string; q: string }[] = []
+          // EACH OPEN ITEM REMEMBERS WHERE IT CAME FROM (Jon, 2026-09-22: "Still cant edit").
+          // This roll-up was built as flat {label, q} strings, so the closing slide could list an
+          // open question but had no way back to the ask it came from — the one list a presenter
+          // actually works through at the end of a call was the one list that was read-only. Each
+          // row now carries its section key and index, so the question is editable and the answer
+          // is typed right here, closing the item off the same slide it is listed on.
+          const open: { label: string; q: string; k: string; i: number }[] = []
           // The communication slide no longer shows its questions (Jon, 2026-09-21), so they
           // neither count nor appear as open on the last slide.
           const asksShown = (k: string) => !hid(k) && k !== 'comms'
           for (const x of askSecs) {
             if (!asksShown(x.k)) continue
             const as: Any[] = Array.isArray(sec(x.k).asks) ? sec(x.k).asks : []
-            for (const a of as) if (!String(a.a || '').trim()) open.push({ label: x.label, q: houseAsk(a.q) })
+            as.forEach((a: Any, ai: number) => {
+              if (!String(a.a || '').trim()) open.push({ label: x.label, q: houseAsk(a.q), k: x.k, i: ai })
+            })
           }
           const answered = askSecs.reduce((n, x) => n + (!asksShown(x.k) ? 0 : (sec(x.k).asks || []).filter((a: Any) => String(a.a || '').trim()).length), 0)
           const totalAsks = answered + open.length
@@ -4586,7 +4594,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ) : open.map((o, oi) => (
                           <div key={oi} style={{ display: 'grid', gridTemplateColumns: '120px 1fr', columnGap: 18, padding: '9px 0', borderTop: '1px solid ' + t.rule }}>
                             <span style={{ fontSize: 11.5, color: t.muted }}>{o.label}</span>
-                            <span style={{ fontSize: 13.5, color: t.ink }}>{o.q}</span>
+                            <div style={{ minWidth: 0 }}>
+                              <span style={{ fontSize: 13.5, color: t.ink, display: 'block' }}>
+                                {canEdit
+                                  ? <Ed v={String((sec(o.k).asks || [])[o.i]?.q || o.q)} set={v => { patch(o.k + '.asks.' + o.i + '.q', v); answerChanged() }} edit multiline />
+                                  : o.q}
+                              </span>
+                              {canEdit ? (
+                                <input
+                                  value={String((sec(o.k).asks || [])[o.i]?.a || '')}
+                                  onChange={e => setAnswer(o.k, o.i, e.target.value)}
+                                  placeholder="answer it here&hellip;"
+                                  className="onb-ask w-full text-[13px] pb-1"
+                                  style={{ marginTop: 4, background: 'transparent', border: 0, borderBottom: '1px dashed ' + t.rule, color: t.ink, fontFamily: 'inherit' }}
+                                />
+                              ) : null}
+                            </div>
                           </div>
                         ))}
                       </div>

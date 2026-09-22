@@ -405,7 +405,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
       { id: 's5', q: 'Owner stays: how often, and with how much notice?', hint: 'Notice is the whole game. Two weeks costs nothing; two days costs a booking. The clean after an owner stay is billed at cost.' },
     ],
     ramp: [
-      { id: 'r1', q: 'Comfortable opening below target rate for the first 30–45 nights?' },
+      { id: 'r1', q: 'Is there a nightly rate you would not want us to go below?', hint: 'We price to what the market will pay, not below it \u2014 this is your floor, if you have one.' },
       { id: 'r2', q: 'Any date this unit needs to be earning by?', hint: 'Mortgage, assessment, a number you told someone.' },
     ],
     season: [

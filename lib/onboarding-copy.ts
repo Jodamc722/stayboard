@@ -134,6 +134,12 @@ export const SECTION_SUB: Record<string, CopyPair> = {
 // Discussion questions, by exact retired text. Decks store them per section; a stored question
 // matching a retired one is shown in its shorter form.
 export const ASK_REWRITES: Record<string, string> = {
+  // Jon, 2026-09-22: "we would never give up rev for reviews." The ramp question asked an owner
+  // to bless opening BELOW target rate, which is the same discount-for-proof trade the ramp copy
+  // just stopped making. What we actually need from them is the opposite: a floor, so pricing to
+  // early demand never crosses a line they care about.
+  'Comfortable opening below target rate for the first 30–45 nights?': 'Is there a nightly rate you would not want us to go below?',
+  'Comfortable opening below target rate for the first 30-45 nights?': 'Is there a nightly rate you would not want us to go below?',
   'Anything we got wrong, or that you are taking out?': 'Anything incorrect, or being removed?',
   'Anything here you would be upset to see damaged?': 'Anything you would not want damaged?',
   'Anything in the description that is not true, or that you would never say?': 'Anything in the description that is inaccurate?',
