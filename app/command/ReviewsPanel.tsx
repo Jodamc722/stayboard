@@ -1,6 +1,7 @@
 'use client'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban, RefreshCw, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, XCircle, RefreshCw, Trash2, ChevronDown, Undo2 } from 'lucide-react'
+import { Tag, Clamp, IconBtn, LeanList, LeanEmpty, type Tone } from '@/components/lean'
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; removed?: boolean; removedReason?: string | null; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string }
 
@@ -67,7 +68,22 @@ const ratingFrac = (n: number | null) => n == null ? -1 : (n <= 5 ? n / 5 : n / 
 const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
 const fmtDate = (s?: string) => { if (!s) return ""; const d = new Date(s); return isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) }
 
-export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: ReviewFeedFilter; focusUnit?: string; focusNonce?: number }) {
+/** What the feed reports up to the page (tab counts, header pill, default tab). */
+export type FeedCounts = { loading: boolean; needs: number; overdue: number; replied: number; unmapped: number; dismissed: number; total: number }
+
+// LEAN PASS (2026-09-22): each review is one header line (score, unit, guest, channel, date, reply
+// clock) with the text clamped to two lines and ONE primary action — "Approve & post" once a draft
+// exists, else "Draft reply". Every other button lives behind the row's "More".
+//
+// `mode`: 'needs' shows only the reply queue (the page's "To reply" tab); 'all' shows the status
+// sub-tabs. Left out, the panel behaves as it always did (sub-tabs shown).
+export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, onOpenAll }: {
+  filter?: ReviewFeedFilter; focusUnit?: string; focusNonce?: number
+  mode?: 'needs' | 'all'
+  onCounts?: (c: FeedCounts) => void
+  /** Where "see the replied ones" goes when the panel is locked to the reply queue. */
+  onOpenAll?: () => void
+}) {
   const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string; segments?: boolean }>({ loading: true })
   const [tab, setTab] = useState<'needs' | 'replied' | 'unmapped' | 'dismissed'>('needs')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
@@ -88,6 +104,8 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
   // row responds before the round-trip.
   const [removedLocal, setRemovedLocal] = useState<Record<string, boolean>>({})
   const [loadedAt, setLoadedAt] = useState<number | null>(null)
+  // Which rows have their "More" open.
+  const [more, setMore] = useState<Record<string, boolean>>({})
 
   // "Answer N reviews" on a failing unit upstairs types that unit into this box, rather than
   // re-scoping the whole page behind the manager's back.
@@ -152,14 +170,14 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
   // Reply SLA - bad reviews deserve an answer within a day, everything else within three.
   // The clock turns this queue from "a list" into "who has been waiting longest" (median first
   // reply was 367 hours when this shipped; the badge is the fix).
-  const slaState = (r: Review): { overdueH: number; label: string; cls: string } | null => {
+  const slaState = (r: Review): { overdueH: number; label: string; tone: Tone } | null => {
     if (!r.created_at) return null
     const ageH = (Date.now() - new Date(r.created_at).getTime()) / 3600000
     if (!Number.isFinite(ageH)) return null
     const dueH = isLow(r.rating) ? 24 : 72
     const over = ageH - dueH
-    if (over >= 0) return { overdueH: over, label: 'reply overdue ' + (over >= 48 ? Math.round(over / 24) + 'd' : Math.max(1, Math.round(over)) + 'h'), cls: 'bg-red-100 text-red-700' }
-    return { overdueH: over, label: 'due in ' + (-over >= 48 ? Math.round(-over / 24) + 'd' : Math.max(1, Math.round(-over)) + 'h'), cls: -over <= 8 ? 'bg-amber-100 text-amber-700' : 'bg-app text-muted' }
+    if (over >= 0) return { overdueH: over, label: 'overdue ' + (over >= 48 ? Math.round(over / 24) + 'd' : Math.max(1, Math.round(over)) + 'h'), tone: 'rose' }
+    return { overdueH: over, label: 'due in ' + (-over >= 48 ? Math.round(-over / 24) + 'd' : Math.max(1, Math.round(-over)) + 'h'), tone: -over <= 8 ? 'amber' : 'slate' }
   }
 
   // Filter by building / unit / channel via the search box (matches the listing name + channel),
@@ -198,6 +216,13 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
   const selectedIds = needs.filter(r => selected[r.id])
   // How many unreplied reviews are past their SLA — the number that should make someone act.
   const overdueCount = needs.filter(r => { const st = slaState(r); return !!st && st.overdueH >= 0 }).length
+  const totalCount = (s.reviews || []).filter(matchQ).length
+  // The page shows these as tab counts and in the header; it also picks its default tab from them.
+  useEffect(() => {
+    if (onCounts) onCounts({ loading: s.loading, needs: needs.length, overdue: overdueCount, replied: replied.length, unmapped: unmapped.length, dismissed: dismissedList.length, total: totalCount })
+  }, [onCounts, s.loading, needs.length, overdueCount, replied.length, unmapped.length, dismissedList.length, totalCount])
+  // Locked to the reply queue on the page's "To reply" tab; otherwise the panel's own sub-tab.
+  const view = mode === 'needs' ? 'needs' : tab
 
   function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
 
@@ -327,83 +352,100 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
     finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
   }
 
+  // ── ROW PARTS (plain functions, not components, so a re-render never remounts a row) ─────────
+  const head = (r: Review, extra?: ReactNode) => (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <Tag tone={isLow(r.rating) ? 'rose' : 'emerald'} title="Guest score">{'★ '}{fmtRating(r.rating, r.channel)}</Tag>
+      <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.listing_name}</span>
+      {r.guest && <span className="text-[12px] text-muted truncate max-w-[10rem]">{r.guest}</span>}
+      {r.channel && <Tag>{r.channel}</Tag>}
+      {r.created_at && <span className="text-[11.5px] text-muted whitespace-nowrap">{fmtDate(r.created_at)}</span>}
+      {extra}
+      {isRemoved(r) && <Tag title={'The channel took this review down — not counted in scores' + (r.removedReason ? ' · ' + r.removedReason : '')}>Removed</Tag>}
+    </div>
+  )
+  const text = (r: Review) => !r.content ? null
+    : isRemoved(r) ? <p className="text-[12.5px] text-muted/60 line-through line-clamp-2">{r.content}</p>
+      : <Clamp text={r.content} />
+  const moreBtn = (r: Review, label = 'More') => (
+    <button onClick={() => setMore(m => ({ ...m, [r.id]: !m[r.id] }))} title={more[r.id] ? 'Hide the other actions' : 'Rewrite, research, dismiss, follow up…'}
+      className="inline-flex items-center gap-0.5 text-[12px] font-semibold px-2 py-1 rounded-lg border border-line text-muted hover:text-ink hover:bg-app">
+      {label} <ChevronDown size={13} className={more[r.id] ? 'rotate-180 transition' : 'transition'} />
+    </button>
+  )
+  const btn2 = 'inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg border disabled:opacity-50'
+  const removedBtn = (r: Review, disabled?: boolean) => (
+    // REMOVED IS NOT DISMISSED. Dismiss means "no reply needed" and leaves the review in every
+    // score. Removed means the channel took it down, so it comes out of the average, the briefs,
+    // the owner reports and the guidebook.
+    <button onClick={() => setRemoved(r, isRemoved(r))} disabled={disabled}
+      title={isRemoved(r) ? 'Put this review back — it counts in scores again' : 'The channel took this review down — stop counting it in every score, brief and owner report'}
+      className={`${btn2} ${isRemoved(r) ? 'text-slate-700 border-slate-300 bg-slate-100 hover:bg-slate-200' : 'text-muted border-line hover:bg-app'}`}>
+      <Trash2 size={12} /> {isRemoved(r) ? 'Restore' : 'Removed by channel'}
+    </button>
+  )
+
+  const subTab = (k: 'needs' | 'replied' | 'unmapped' | 'dismissed', label: string, n: number, title?: string, extra?: ReactNode) => (
+    <button key={k} onClick={() => setTab(k)} title={title}
+      className={'inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 border-l border-line first:border-l-0 whitespace-nowrap ' + (tab === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>
+      {label} <span className="opacity-70 tabular-nums">{s.loading ? '…' : n}</span>{extra}
+    </button>
+  )
+
   return (
-    <section className="rounded-2xl border border-brand-200 bg-white overflow-hidden lg:col-span-3">
-      <div className="px-4 py-3 border-b border-line">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-ink text-sm flex items-center gap-1.5"><MessageSquareWarning size={14} className="text-brand-600" /> Reviews</h2>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-muted">
-              {s.loading ? 'Loading…' : loadedAt ? 'Updated ' + agoLabel(loadedAt) : 'Live from Guesty'}
-            </span>
-            <button onClick={() => load()} disabled={s.loading}
-              title="Pull the review list again"
-              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-muted border border-line hover:bg-app hover:text-ink disabled:opacity-50">
-              <RefreshCw size={12} className={s.loading ? 'animate-spin' : ''} /> Refresh
-            </button>
+    <section>
+      {/* ── TOOLBAR: status sub-tabs (All reviews), search, queue tools, refresh — one line ─────── */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-2">
+        {mode !== 'needs' && (
+          <div className="inline-flex rounded-lg border border-line overflow-hidden max-w-full overflow-x-auto">
+            {subTab('needs', 'Needs a reply', needs.length, 'Unreplied, most overdue first',
+              !s.loading && overdueCount > 0 ? <span className="ml-0.5 px-1 rounded bg-rose-100 text-rose-700 font-bold" title="Unreplied past SLA (24h for low scores, 72h otherwise)">{overdueCount}</span> : null)}
+            {subTab('replied', 'Replied', replied.length)}
+            {subTab('unmapped', 'Not synced', unmapped.length, 'Reviews on listings not connected to their channel — can’t be replied to, and never count toward scores')}
+            {subTab('dismissed', 'Dismissed', dismissedList.length, 'Cleared as no-reply-needed — off the list but still counted in scores. Undo moves one back.')}
           </div>
-        </div>
-        <div className="flex items-center gap-1 mt-2 flex-wrap">
-          <button onClick={() => setTab('needs')}
-            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'needs' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
-            <MessageSquareWarning size={12} /> Needs a reply <span className={`ml-0.5 px-1 rounded ${tab === 'needs' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : needs.length}</span>
-            {!s.loading && overdueCount > 0 && <span className="ml-0.5 px-1 rounded bg-red-100 text-red-700 font-bold" title="Unreplied past SLA (24h for ≤3★, 72h otherwise)">{overdueCount} overdue</span>}
-          </button>
-          <button onClick={() => setTab('replied')}
-            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'replied' ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
-            <CheckCircle2 size={12} /> Replied <span className={`ml-0.5 px-1 rounded ${tab === 'replied' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : replied.length}</span>
-          </button>
-          <button onClick={() => setTab('unmapped')}
-            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'unmapped' ? 'bg-slate-600 text-white' : 'text-muted border border-line hover:bg-app'}`} title="Reviews on listings not synced to their channel — shown for visibility, can't be replied to, and never count toward scores">
-            <PlugZap size={12} /> Not synced <span className={`ml-0.5 px-1 rounded ${tab === 'unmapped' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : unmapped.length}</span>
-          </button>
-          <button onClick={() => setTab('dismissed')}
-            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${tab === 'dismissed' ? 'bg-slate-600 text-white' : 'text-muted border border-line hover:bg-app'}`} title="Reviews you cleared as no-reply-needed — off the list but still counted in scores">
-            <XCircle size={12} /> Dismissed <span className={`ml-0.5 px-1 rounded ${tab === 'dismissed' ? 'bg-white/20' : 'bg-app'}`}>{s.loading ? '…' : dismissedList.length}</span>
-          </button>
-          {tab === 'needs' && !s.loading && needs.length > 0 && (
-            <div className="ml-auto flex items-center gap-1.5">
-              <button onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-muted border border-line hover:bg-app">
-                {sortDir === 'desc' ? <ArrowDownWideNarrow size={12} /> : <ArrowUpNarrowWide size={12} />} {sortDir === 'desc' ? 'High → Low' : 'Low → High'}
-              </button>
-              <button onClick={draftAllAI} disabled={allAi}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
-                <Sparkles size={12} /> {allAi ? 'Drafting…' : 'Draft all with AI'}
-              </button>
-              <button onClick={() => setSelected(needs.every(r => selected[r.id]) ? {} : Object.fromEntries(needs.map(r => [r.id, true])))}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-muted border border-line hover:bg-app">
-                {needs.every(r => selected[r.id]) ? <CheckSquare size={12} /> : <Square size={12} />} {needs.every(r => selected[r.id]) ? 'Clear' : 'Select all'}
-              </button>
-            </div>
-          )}
-        </div>
-        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by building, unit, owner or channel… (e.g. Capri, 214, airbnb)"
-          className="mt-2 w-full text-xs text-ink bg-app border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-        {/* Say so when the board above is narrowing this list, or an empty tab reads as a broken
-            feed rather than as a filter doing its job. */}
+        )}
+        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search unit, building, owner, channel"
+          title="e.g. Capri, 214, airbnb"
+          className="flex-1 min-w-[9rem] text-[12px] text-ink bg-white border border-line rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        {/* Say so when the filter bar is narrowing this list, or an empty tab reads as a broken feed. */}
         {barOn && (
-          <p className="text-[11px] text-muted mt-1.5">
-            Narrowed by the filters at the top of the page
-            {filter && filter.building !== 'all' ? ' · ' + filter.building : ''}
-            {filter && filter.market !== 'all' ? ' · ' + filter.market : ''}
-            {filter && filter.channel !== 'all' ? ' · ' + filter.channel : ''}
-            {filter && filter.owner !== 'all' ? ' · one owner' : ''}.
-          </p>
+          <Tag title={'Narrowed by the filters at the top of the page'
+            + (filter && filter.building !== 'all' ? ' · ' + filter.building : '')
+            + (filter && filter.market !== 'all' ? ' · ' + filter.market : '')
+            + (filter && filter.channel !== 'all' ? ' · ' + filter.channel : '')
+            + (filter && filter.owner !== 'all' ? ' · one owner' : '')}>filtered</Tag>
         )}
         {barOn && s.segments === false && (
-          <p className="text-[11px] text-amber-800 mt-1">Reading live from Guesty right now, which does not carry building or owner on a review — so the filters above are not being applied to this list.</p>
+          <Tag tone="amber" title="Reading live from Guesty right now, which does not carry building or owner on a review — so the filters are not being applied to this list">filters off</Tag>
         )}
-        {err && <p className="text-[11px] text-red-600 mt-1.5">{err}</p>}
+        {view === 'needs' && !s.loading && needs.length > 0 && (<>
+          <IconBtn title={sortDir === 'desc' ? 'Ties: high to low rating — click for low to high' : 'Ties: low to high rating — click for high to low'} onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}>
+            {sortDir === 'desc' ? <ArrowDownWideNarrow size={14} /> : <ArrowUpNarrowWide size={14} />}
+          </IconBtn>
+          <button onClick={draftAllAI} disabled={allAi} title="Write an AI draft for every review in the queue (about 5 a minute)"
+            className={`${btn2} text-brand-700 border-brand-200 bg-brand-50 hover:bg-brand-100`}>
+            <Sparkles size={12} /> {allAi ? 'Drafting…' : 'Draft all'}
+          </button>
+          <IconBtn title={needs.every(r => selected[r.id]) ? 'Clear the selection' : 'Select all for bulk posting'}
+            onClick={() => setSelected(needs.every(r => selected[r.id]) ? {} : Object.fromEntries(needs.map(r => [r.id, true])))}>
+            {needs.every(r => selected[r.id]) ? <CheckSquare size={14} /> : <Square size={14} />}
+          </IconBtn>
+        </>)}
+        <span className="text-[11px] text-muted whitespace-nowrap">{s.loading ? 'Loading…' : loadedAt ? agoLabel(loadedAt) : 'Live'}</span>
+        <IconBtn title="Pull the review list again" onClick={() => load()} disabled={s.loading}>
+          <RefreshCw size={13} className={s.loading ? 'animate-spin' : ''} />
+        </IconBtn>
       </div>
+      {err && <p className="text-[12px] text-rose-700 mb-2">{err}</p>}
 
-      {tab === 'needs' && selectedIds.length > 0 && (
-        <div className="px-4 py-2.5 bg-brand-600 flex items-center justify-between sticky top-0 z-10">
-          <span className="text-xs font-semibold text-white inline-flex items-center gap-1.5"><CheckSquare size={14} /> {selectedIds.length} selected</span>
+      {view === 'needs' && selectedIds.length > 0 && (
+        <div className="rounded-xl px-3 py-2 mb-2 bg-brand-600 flex items-center justify-between sticky top-0 z-10">
+          <span className="text-[12px] font-semibold text-white inline-flex items-center gap-1.5"><CheckSquare size={14} /> {selectedIds.length} selected</span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelected({})} className="text-xs font-medium text-white/80 hover:text-white">Clear</button>
+            <button onClick={() => setSelected({})} className="text-[12px] font-medium text-white/80 hover:text-white">Clear</button>
             <button onClick={postSelected} disabled={bulkBusy}
-              className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-white text-brand-700 hover:bg-brand-50 disabled:opacity-50">
+              className="inline-flex items-center gap-1 text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-white text-brand-700 hover:bg-brand-50 disabled:opacity-50">
               <Send size={12} /> {bulkBusy ? 'Posting…' : `Approve & post ${selectedIds.length}`}
             </button>
           </div>
@@ -411,189 +453,173 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
       )}
 
       {s.loading ? (
-        <div className="px-4 py-8 text-center text-sm text-muted">Loading reviews from Guesty…</div>
+        <LeanEmpty>Loading reviews from Guesty…</LeanEmpty>
       ) : s.error ? (
-        <div className="px-4 py-6 text-center text-sm text-muted">
+        <LeanEmpty>
           Couldn&rsquo;t load reviews ({String(s.error).slice(0, 80)}).
           <button onClick={() => load()} className="ml-1.5 font-semibold text-brand-700 underline">Try again</button>
-        </div>
-      ) : tab === 'replied' ? (
-        replied.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-muted">No replied reviews yet.</div>
-        ) : (
-          <ul className="divide-y divide-line/70">
+        </LeanEmpty>
+      ) : view === 'replied' ? (
+        replied.length === 0 ? <LeanEmpty>No replied reviews yet.</LeanEmpty> : (
+          <LeanList>
             {replied.map(r => (
-              <li key={r.id} className="px-4 py-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                    <Star size={11} /> {fmtRating(r.rating, r.channel)}
-                  </span>
-                  <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
-                  {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
-                {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><CheckCircle2 size={11} /> Replied</span>
-                </div>
-                {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
-                {r.reply ? (
-                  <div className="mt-2 flex gap-1.5 text-xs text-ink bg-app border border-line rounded-lg p-2">
-                    <MessageSquare size={12} className="text-brand-600 shrink-0 mt-0.5" />
-                    <span className="whitespace-pre-wrap leading-relaxed">{r.reply}</span>
+              <li key={r.id}>
+                <div className="flex items-start gap-2.5 px-3 sm:px-4 py-2">
+                  <div className="flex-1 min-w-0 space-y-1">
+                    {head(r, <Tag tone="emerald">Replied</Tag>)}
+                    {text(r)}
                   </div>
-                ) : (
-                  <p className="text-[10px] text-muted mt-1.5 italic">Reply posted (text not returned by the channel).</p>
+                  {moreBtn(r, 'Reply')}
+                </div>
+                {more[r.id] && (
+                  <div className="px-3 sm:px-4 pb-3 space-y-2">
+                    {r.reply ? (
+                      <div className="flex gap-1.5 text-[12px] text-ink bg-app border border-line rounded-lg p-2">
+                        <MessageSquare size={12} className="text-brand-600 shrink-0 mt-0.5" />
+                        <span className="whitespace-pre-wrap leading-relaxed">{r.reply}</span>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted italic">Reply posted (text not returned by the channel).</p>
+                    )}
+                    {/* A reply does not fix a dirty unit. On a low review the follow-up matters MORE
+                        once the public answer is out — but only where the score warrants it. */}
+                    {isLow(r.rating) && <ReviewFollowUp r={r} />}
+                  </div>
                 )}
-                {/* A reply does not fix a dirty unit. On a low review the follow-up matters MORE once
-                    the public answer is out, so the actions live here too — but only where the score
-                    warrants it, otherwise every five-star review grows buttons nobody needs. */}
-                {isLow(r.rating) && <ReviewFollowUp r={r} />}
               </li>
             ))}
-          </ul>
+          </LeanList>
         )
-      ) : tab === 'unmapped' ? (
-        unmapped.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-muted">No unsynced listings. Everything is connected. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /></div>
-        ) : (
-          <>
-            <div className="px-4 pt-3 pb-1 text-[11px] text-muted">These reviews are on listings no longer connected to their channel, so <b>they can't be replied to</b> — shown here for visibility only. Confirmed: they are <b>excluded from your health and OTA scores</b> (positive or negative), so they are not helping or hurting your numbers.</div>
-            <ul className="divide-y divide-line/70">
-              {unmapped.map(r => (
-                <li key={r.id} className="px-4 py-3 border-l-[3px] border-slate-300 bg-slate-50/40">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                      <Star size={11} /> {fmtRating(r.rating, r.channel)}
-                    </span>
-                    <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
-                    {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
-                {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
-                    <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><Ban size={11} /> Can't reply</span>
-                    <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded inline-flex items-center gap-1"><PlugZap size={11} /> {r.reason || 'Not synced'}</span>
-                  </div>
-                  {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
-                </li>
-             )) }
-            </ul>
-          </>
+      ) : view === 'unmapped' ? (
+        unmapped.length === 0 ? <LeanEmpty>No unsynced listings — everything is connected.</LeanEmpty> : (
+          <LeanList>
+            {unmapped.map(r => (
+              <li key={r.id} className="bg-slate-50/40">
+                <div className="px-3 sm:px-4 py-2 space-y-1">
+                  {head(r, <>
+                    <Tag tone="rose" title="The listing is not connected to its channel, so there is nothing to reply through">Can&rsquo;t reply</Tag>
+                    <Tag title="Excluded from health and OTA scores, positive or negative">{r.reason || 'Not synced'}</Tag>
+                  </>)}
+                  {text(r)}
+                </div>
+              </li>
+            ))}
+          </LeanList>
         )
-      ) : tab === 'dismissed' ? (
-        dismissedList.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-muted">No dismissed reviews.</div>
-        ) : (
-          <>
-            <div className="px-4 pt-3 pb-1 text-[11px] text-muted">Reviews you cleared as &ldquo;no reply needed.&rdquo; They still count toward your scores — they&rsquo;re just off the reply list. Hit Undo to move one back.</div>
-            <ul className="divide-y divide-line/70">
-              {dismissedList.map(r => (
-                <li key={r.id} className="px-4 py-3">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                      <Star size={11} /> {fmtRating(r.rating, r.channel)}
-                    </span>
-                    <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
-                    {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
-                {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
-                    <button onClick={() => undismiss(r)} disabled={rowBusy[r.id]} className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">Undo</button>
+      ) : view === 'dismissed' ? (
+        dismissedList.length === 0 ? <LeanEmpty>No dismissed reviews.</LeanEmpty> : (
+          <LeanList>
+            {dismissedList.map(r => (
+              <li key={r.id}>
+                <div className="flex items-start gap-2.5 px-3 sm:px-4 py-2">
+                  <div className="flex-1 min-w-0 space-y-1">
+                    {head(r)}
+                    {text(r)}
                   </div>
-                  {isRemoved(r) && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 mt-1.5">
-                      <XCircle size={10} /> Removed{r.removedReason ? ' · ' + r.removedReason : ''}
-                    </span>
-                  )}
-                  {r.content && <p className={`text-xs mt-1.5 whitespace-pre-wrap leading-relaxed ${isRemoved(r) ? 'line-through text-muted/60' : 'text-muted'}`}>{r.content}</p>}
-                  <button onClick={() => setRemoved(r, isRemoved(r))}
-                    title={isRemoved(r) ? 'Put this review back — it counts in scores again' : 'The channel took this review down — stop counting it in every score, brief and owner report'}
-                    className={`mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border ${isRemoved(r) ? 'text-slate-700 border-slate-300 bg-slate-100 hover:bg-slate-200' : 'text-muted border-line hover:bg-app'}`}>
-                    <Trash2 size={11} /> {isRemoved(r) ? 'Restore' : 'Removed by channel'}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => undismiss(r)} disabled={rowBusy[r.id]} title="Put it back on the reply list"
+                      className={`${btn2} text-brand-700 border-brand-200 bg-brand-50 hover:bg-brand-100`}><Undo2 size={12} /> Undo</button>
+                    <IconBtn title={isRemoved(r) ? 'Restore — the review counts in scores again' : 'Removed by the channel — stop counting it in every score'}
+                      onClick={() => setRemoved(r, isRemoved(r))}><Trash2 size={13} /></IconBtn>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </LeanList>
         )
       ) : needs.length === 0 ? (
-        <div className="px-4 py-8 text-center text-sm text-muted">All caught up — nothing awaiting a reply. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" /><br/><button onClick={() => setTab('replied')} className="mt-2 text-xs font-semibold text-brand-600 hover:underline">See the {replied.length} replied reviews →</button></div>
+        <LeanEmpty>
+          All caught up — nothing waiting on a reply. <CheckCircle2 size={14} className="inline -mt-0.5 text-emerald-500" />
+          <button onClick={() => { setTab('replied'); if (mode === 'needs' && onOpenAll) onOpenAll() }} className="ml-2 font-semibold text-brand-700 hover:underline">See the {replied.length} replied</button>
+        </LeanEmpty>
       ) : (
-        <ul className="divide-y divide-line/70">
-          {needs.map(r => (
-            <li key={r.id} className={`px-4 py-3 border-l-[3px] transition-colors ${selected[r.id] ? 'bg-brand-50/70 border-brand-500' : 'border-transparent'}`}>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button onClick={() => setSelected(sel => ({ ...sel, [r.id]: !sel[r.id] }))}
-                  className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${selected[r.id] ? 'bg-brand-600 text-white' : 'text-muted border border-line hover:bg-app'}`}>
-                  {selected[r.id] ? <CheckSquare size={14} /> : <Square size={14} />} {selected[r.id] ? 'Selected' : 'Select'}
-                </button>
-                <span className={`text-[11px] font-bold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${isLow(r.rating) ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                  <Star size={11} /> {fmtRating(r.rating, r.channel)}
-                </span>
-                <span className="text-sm font-medium text-ink truncate">{r.listing_name}</span>{r.guest && <span className="text-[11px] text-muted whitespace-nowrap">· {r.guest}</span>}
-                {r.channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{r.channel}</span>}
-                {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
-                {/* Reply-due clock — the queue is ordered by it, so it belongs on the row you act on. */}
-                {(() => { const sla = slaState(r); return sla ? <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${sla.cls}`}>{sla.label}</span> : null })()}
-              </div>
-              {isRemoved(r) && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 mt-1.5">
-                  <XCircle size={10} /> Removed{r.removedReason ? ' · ' + r.removedReason : ''}
-                </span>
-              )}
-              {r.content && <p className={`text-xs mt-1.5 whitespace-pre-wrap leading-relaxed ${isRemoved(r) ? 'line-through text-muted/60' : 'text-muted'}`}>{r.content}</p>}
-
-              <div className="mt-2">
-                <textarea value={drafts[r.id] ?? ''} onChange={e => setDraft(r.id, e.target.value)} rows={4}
-                  placeholder={aiBusy[r.id] ? 'Writing the AI reply…' : 'No AI draft yet — hit “Rewrite with AI”, or “Draft all with AI” up top.'}
-                  className="w-full text-xs text-ink bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-                <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  <button onClick={() => post(r)} disabled={rowBusy[r.id] || bulkBusy || !(drafts[r.id] || '').trim()}
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
-                    <Send size={12} /> {rowBusy[r.id] ? 'Posting…' : 'Approve & post'}
-                  </button>
-                  <button onClick={() => rewriteAI(r)} disabled={aiBusy[r.id] || rowBusy[r.id]}
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">
-                    <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
-                  </button>
-                  <button onClick={() => { const i = window.prompt('How should the AI adjust this reply? (e.g. warmer, shorter, more professional, or: let them know we resolved the issue)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
-                    disabled={aiBusy[r.id] || rowBusy[r.id]}
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
-                    Rephrase…
-                  </button>
-                  <button onClick={() => doResearch(r)} disabled={aiBusy[r.id] || rowBusy[r.id]}
-                    title="Check what our ops systems show was actually completed at this property, then draft a reply that can say so with confidence"
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
-                    {research[r.id]?.loading ? 'Checking…' : research[r.id]?.open ? 'Hide research' : 'Research'}
-                  </button>
-                  <button onClick={() => dismiss(r)} disabled={rowBusy[r.id]} title="No reply needed — clear this off the list (reversible, doesn't affect scores)"
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
-                    <XCircle size={12} /> Dismiss
-                  </button>
-                  {/* REMOVED IS NOT DISMISSED. Dismiss means "no reply needed" and leaves the
-                      review in every score. Removed means the channel took it down, so it comes
-                      out of the average, the briefs, the owner reports and the guidebook. */}
-                  <button onClick={() => setRemoved(r, isRemoved(r))} disabled={rowBusy[r.id]}
-                    title={isRemoved(r) ? 'Put this review back — it counts in scores again' : 'The channel took this review down — stop counting it in every score, brief and owner report'}
-                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border disabled:opacity-50 ${isRemoved(r) ? 'text-slate-700 border-slate-300 bg-slate-100 hover:bg-slate-200' : 'text-muted border-line hover:bg-app'}`}>
-                    <Trash2 size={12} /> {isRemoved(r) ? 'Restore' : 'Removed by channel'}
-                  </button>
-                  <span className="text-[10px] text-muted">Posts publicly to {r.channel || 'the channel'} via Guesty.</span>
-                </div>
-                {research[r.id]?.open && !research[r.id]?.loading && (
-                  <div className="mt-2 rounded-lg border border-line bg-app/60 p-2.5">
-                    {research[r.id]?.evidence ? (
-                      <>
-                        <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1">Verified work at this property (internal — never posted)</div>
-                        <pre className="text-[11px] text-ink whitespace-pre-wrap font-sans leading-relaxed">{research[r.id].evidence.replace(/^Verified internal record[^\n]*\n/, '')}</pre>
-                        <button onClick={() => rewriteAI(r, undefined, true)} disabled={aiBusy[r.id] || rowBusy[r.id]}
-                          className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
-                          <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Draft detailed reply from this'}
-                        </button>
-                      </>
+        <LeanList>
+          {needs.map(r => {
+            const hasDraft = !!(drafts[r.id] || '').trim()
+            const sla = slaState(r)
+            const busy = !!aiBusy[r.id] || !!rowBusy[r.id]
+            return (
+              <li key={r.id} className={selected[r.id] ? 'bg-brand-50/60' : ''}>
+                <div className="flex items-start gap-2.5 px-3 sm:px-4 py-2">
+                  <IconBtn title={selected[r.id] ? 'Unselect' : 'Select for bulk posting'} tone={selected[r.id] ? 'brand' : undefined}
+                    onClick={() => setSelected(sel => ({ ...sel, [r.id]: !sel[r.id] }))}>
+                    {selected[r.id] ? <CheckSquare size={14} /> : <Square size={14} />}
+                  </IconBtn>
+                  <div className="flex-1 min-w-0 space-y-1">
+                    {/* Reply-due clock — the queue is ordered by it, so it belongs on the row. */}
+                    {head(r, sla ? <Tag tone={sla.tone} title="Reply due within 24h for a low score, 72h otherwise">{sla.label}</Tag> : null)}
+                    {text(r)}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                    {hasDraft ? (
+                      <button onClick={() => post(r)} disabled={rowBusy[r.id] || bulkBusy} title={'Posts publicly to ' + (r.channel || 'the channel') + ' via Guesty'}
+                        className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+                        <Send size={12} /> {rowBusy[r.id] ? 'Posting…' : 'Approve & post'}
+                      </button>
                     ) : (
-                      <p className="text-[11px] text-muted">No completed work on record for this property in the last 45 days — the reply should not claim anything was fixed.</p>
+                      <button onClick={() => rewriteAI(r)} disabled={busy} title="Write a reply with AI — you review it before anything posts"
+                        className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+                        <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Draft reply'}
+                      </button>
                     )}
+                    {moreBtn(r)}
+                  </div>
+                </div>
+
+                {(hasDraft || aiBusy[r.id] || more[r.id]) && (
+                  <div className="px-3 sm:px-4 pb-2">
+                    <textarea value={drafts[r.id] ?? ''} onChange={e => setDraft(r.id, e.target.value)} rows={3}
+                      placeholder={aiBusy[r.id] ? 'Writing the AI reply…' : 'Type a reply, or hit Draft reply.'}
+                      className="w-full text-[12px] text-ink bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
                   </div>
                 )}
-                <ReviewFollowUp r={r} />
-              </div>
-            </li>
-          ))}
-        </ul>
+
+                {more[r.id] && (
+                  <div className="px-3 sm:px-4 pb-3 space-y-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {hasDraft && (
+                        <button onClick={() => rewriteAI(r)} disabled={busy} className={`${btn2} text-brand-700 border-brand-200 bg-brand-50 hover:bg-brand-100`}>
+                          <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
+                        </button>
+                      )}
+                      <button onClick={() => { const i = window.prompt('How should the AI adjust this reply? (e.g. warmer, shorter, more professional, or: let them know we resolved the issue)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
+                        disabled={busy} className={`${btn2} text-muted border-line hover:bg-app`}>
+                        Rephrase…
+                      </button>
+                      <button onClick={() => doResearch(r)} disabled={busy}
+                        title="Check what our ops systems show was actually completed at this property, then draft a reply that can say so with confidence"
+                        className={`${btn2} text-muted border-line hover:bg-app`}>
+                        {research[r.id]?.loading ? 'Checking…' : research[r.id]?.open ? 'Hide research' : 'Research'}
+                      </button>
+                      <button onClick={() => dismiss(r)} disabled={rowBusy[r.id]} title="No reply needed — clear this off the list (reversible, doesn't affect scores)"
+                        className={`${btn2} text-muted border-line hover:bg-app`}>
+                        <XCircle size={12} /> Dismiss
+                      </button>
+                      {removedBtn(r, rowBusy[r.id])}
+                    </div>
+                    {research[r.id]?.open && !research[r.id]?.loading && (
+                      <div className="rounded-lg border border-line bg-app/60 p-2.5">
+                        {research[r.id]?.evidence ? (
+                          <>
+                            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1">Verified work at this property (internal — never posted)</div>
+                            <pre className="text-[11px] text-ink whitespace-pre-wrap font-sans leading-relaxed">{research[r.id].evidence.replace(/^Verified internal record[^\n]*\n/, '')}</pre>
+                            <button onClick={() => rewriteAI(r, undefined, true)} disabled={busy}
+                              className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+                              <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Draft detailed reply from this'}
+                            </button>
+                          </>
+                        ) : (
+                          <p className="text-[11px] text-muted">No completed work on record here in the last 45 days — the reply should not claim anything was fixed.</p>
+                        )}
+                      </div>
+                    )}
+                    <ReviewFollowUp r={r} />
+                  </div>
+                )}
+              </li>
+            )
+          })}
+        </LeanList>
       )}
     </section>
   )
@@ -698,9 +724,8 @@ function ReviewFollowUp({ r }: { r: Review }) {
   )
 
   return (
-    <div className="mt-2 pt-2 border-t border-line/60">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-muted font-semibold">Do something about it</span>
+    <div>
+      <div className="flex flex-wrap items-center gap-1.5">
         {done ? (
           done !== 'created'
             ? <a href={'https://app.breezeway.io/task/' + done} target="_blank" rel="noreferrer" className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300">Task created {'\u2197'}</a>
@@ -721,7 +746,7 @@ function ReviewFollowUp({ r }: { r: Review }) {
           </div>
           <div>
             <label className="block text-[10px] uppercase tracking-wide text-muted font-semibold">Who</label>
-            <input list="rev-people" value={who} onChange={e => setWho(e.target.value)} placeholder="leave blank to assign later" className="text-xs border border-line rounded-md px-2 py-1 bg-white w-56" />
+            <input list="rev-people" value={who} onChange={e => setWho(e.target.value)} placeholder="leave blank to assign later" className="text-xs border border-line rounded-md px-2 py-1 bg-white w-48 max-w-full" />
             <datalist id="rev-people">{people.map((p: any) => <option key={p.id} value={p.name} />)}</datalist>
           </div>
           <span className="text-[10px] text-muted pb-1">Quality inspection {'\u00b7'} inspection</span>
