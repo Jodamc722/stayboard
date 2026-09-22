@@ -6,6 +6,7 @@
 // and refuses to let a claim move forward while the evidence that gets claims denied is missing.
 // The gates are shown as a checklist rather than as an error on submit, because "what is still
 // missing" is the question the person filing actually has.
+import { StayPanel } from '@/components/StayPanel'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -147,6 +148,10 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
           {claim.amount_paid != null && <div className="text-sm font-semibold text-emerald-700 tabular-nums mt-0.5">{money(claim.amount_paid)} recovered</div>}
         </div>
       </header>
+
+      {/* THE FULL PICTURE of the stay this claim is about — the glitches logged during it, calls,
+          messages and sentiment, the review it left (2026-09-22). */}
+      {claim.reservation_id && <div className="mb-4"><StayPanel reservationId={claim.reservation_id} compact /></div>}
 
       {/* THE CLOCK. Two dates: the one we set ourselves, and the one the channel enforces. */}
       {u !== 'none' && (

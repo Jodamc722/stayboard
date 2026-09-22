@@ -7,6 +7,7 @@ import PolishButton from './PolishButton'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil, GraduationCap } from 'lucide-react'
 import { Pill, Tag, IconBtn } from './lean'
+import { StayPanel } from './StayPanel'
 import CommentThread from './CommentThread'
 import UnitCalendar from './UnitCalendar'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
@@ -438,6 +439,8 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
                 className="text-[12px] font-semibold text-brand-700 hover:underline mt-1.5 inline-block">Open in Guesty ↗</a>
             ) : null}
           </section>
+
+          {g.reservation_id ? <StayPanel reservationId={g.reservation_id} compact hide={['issues']} /> : null}
 
           <UnitSignals g={g} />
 

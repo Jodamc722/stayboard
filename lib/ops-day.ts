@@ -137,7 +137,7 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
     db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,bedrooms,status,lat:raw->address->>lat,lng:raw->address->>lng,city2:raw->address->>city,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime'),
     db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department').eq('scheduled_date', today).limit(2000),
     db.from('qc_tasks').select('listing_id,status,issue_type,report_url').neq('status', 'closed').limit(300),
-    db.from('guesty_reservations').select('listing_id,check_in,check_out,status,guest_name,nights').or('check_out.eq.' + today + ',check_in.eq.' + today).limit(1000),
+    db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name,nights').or('check_out.eq.' + today + ',check_in.eq.' + today).limit(1000),
   ])
   // NOTE: compare status EXACTLY — /active/i also matches 'inactive', which silently counted all
   // 48 inactive listings (e.g. every Waves unit) as vacant.
@@ -180,12 +180,16 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
   const outNights: Record<string, number> = {}
   const inNights: Record<string, number> = {}
   const inGuest: Record<string, string> = {}
+  // RESERVATION IDS (2026-09-22) so a unit row can open the full picture of the stay (StayPanel).
+  const outResId: Record<string, string> = {}
+  const inResId: Record<string, string> = {}
+  const houseResId: Record<string, string> = {}
   for (const r of resRows as any[]) {
     if (!isLiveStay(r.status)) continue
     const id = String(r.listing_id)
     const n = Number(r.nights)
-    if (str(r.check_out).slice(0, 10) === today) { outToday[id] = r.guest_name || 'Guest'; if (Number.isFinite(n) && n > 0) outNights[id] = n }
-    if (str(r.check_in).slice(0, 10) === today) { inToday[id] = true; if (Number.isFinite(n) && n > 0) inNights[id] = n; inGuest[id] = str(r.guest_name) || 'Guest' }
+    if (str(r.check_out).slice(0, 10) === today) { outToday[id] = r.guest_name || 'Guest'; if (r.id) outResId[id] = String(r.id); if (Number.isFinite(n) && n > 0) outNights[id] = n }
+    if (str(r.check_in).slice(0, 10) === today) { inToday[id] = true; if (r.id) inResId[id] = String(r.id); if (Number.isFinite(n) && n > 0) inNights[id] = n; inGuest[id] = str(r.guest_name) || 'Guest' }
   }
   const qcByListing: Record<string, any[]> = {}
   for (const q of qcRows as any[]) {
@@ -244,6 +248,7 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
     if (!isLiveStay(r.status)) continue
     const id = String(r.listing_id)
     occupied[id] = r.guest_name || 'Guest'
+    if (r.id && str(r.check_in).slice(0, 10) < today) houseResId[id] = String(r.id)
     const out = str(r.check_out).slice(0, 10)
     if (out && (!occupiedUntil[id] || out > occupiedUntil[id])) occupiedUntil[id] = out
     if (str(r.check_in).slice(0, 10) < today) {
@@ -368,6 +373,7 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
         nights: outNights[t.listingId] ?? null,
         arrivingNights: inNights[t.listingId] ?? null,
         arrivingGuest: inGuest[t.listingId] || null,
+        outReservationId: outResId[t.listingId] || null, inReservationId: inResId[t.listingId] || null, houseReservationId: houseResId[t.listingId] || null,
         qc: qcByListing[t.listingId] || [], tasks: [],
         // Survives the market filter — see the note above the task builder.
         noUnit: t.listingId === NO_UNIT,
@@ -389,6 +395,7 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
       city: li.city || null, address: (li as any).address || null, bedrooms: (li as any).bedrooms ?? null, building: (li as any).building || null, lat: li.lat || null, lng: li.lng || null,
       sameDayTurn: !!(outToday[id] && inToday[id]), nights: outNights[id] ?? null,
       arrivingNights: inNights[id] ?? null, arrivingGuest: inGuest[id] || null,
+      outReservationId: outResId[id] || null, inReservationId: inResId[id] || null,
       qc: qcByListing[id] || [], guestyOnly: true,
       tasks: [{
         id: 'guesty:' + id, listingId: id, unit: nm, market: li.market, market2: li.market2 || null, dept: 'housekeeping',

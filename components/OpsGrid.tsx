@@ -46,6 +46,7 @@ import { DayPlanPanel } from '@/components/DayPlanPanel'
 import { ReviewTab, ReviewCount } from '@/components/ReviewTab'
 import { DueCalendar, DueCount } from '@/components/DueCalendar'
 import { VacantTab } from '@/components/VacantTab'
+import { StayPanel } from '@/components/StayPanel'
 import { Tag as LTag, Tip as LTip } from '@/components/lean'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
@@ -74,6 +75,8 @@ export type GUnit = {
   checkOutTime?: string | null; sameDayTurn: boolean; nights?: number | null; arrivingNights?: number | null
   qc?: { issue: string; status: string; reportUrl: string | null }[]
   tasks: GTask[]; late: boolean; atRisk: boolean; unassigned: boolean; allDone: boolean; guestyOnly?: boolean
+  /** The stays touching this unit today — for the full picture (StayPanel). */
+  outReservationId?: string | null; inReservationId?: string | null; houseReservationId?: string | null
 }
 export type GVacant = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number; needsClean?: boolean }
 export type GCat = { key: string; label: string; icon: string }
@@ -404,6 +407,8 @@ type Row = {
   atRisk?: boolean
   /** When this unit's clean is projected to finish, and by how much it misses the deadline. */
   lands?: GTask['landsAt']
+  /** The bookings touching this unit today, each opening the full picture of that stay. */
+  stays?: { label: string; id: string }[]
   /** People rows only: what the capacity model says this person's day costs. */
   priced?: { loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string } | null
   /** True when a market filter is on, so the priced day covers more than the row's own counts. */
@@ -630,6 +635,18 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
               level, at the people level, and at the push level"). Same list as the band above —
               the unit row asks what this unit is owed, the person row asks what this person could
               pick up where they already are. Renders nothing when the answer is nothing. */}
+          {/* THE STAYS BEHIND THIS ROW (2026-09-22): the guest leaving, arriving or in the unit, each
+              with the full picture — issues, calls, messages and sentiment, prior stays, reviews. */}
+          {mode === 'units' && (row.stays || []).length > 0 && (
+            <div className="mt-2 space-y-1.5">
+              {(row.stays || []).map(st => (
+                <div key={st.id}>
+                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-muted mb-0.5">{st.label}</div>
+                  <StayPanel reservationId={st.id} compact hide={['tasks']} />
+                </div>
+              ))}
+            </div>
+          )}
           {mode === 'units'
             ? <UnitSuggestions listingId={row.listingId} unit={row.title} />
             : <PersonSuggestions name={row.title} />}
@@ -1045,6 +1062,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           outAt: u.checkOutTime || null, inAt: u.arrivingAt || null,
           // The clean's own projection, if the model could price it.
           lands: (u.tasks.find(t => t.type === 'departure_clean' && !t.done)?.landsAt) || null,
+          stays: ([['Leaving', u.outReservationId], ['Arriving', u.inReservationId], ['In house', u.houseReservationId]] as [string, string | null | undefined][])
+            .filter(([, id]) => !!id).map(([label, id]) => ({ label, id: String(id) })),
         } as Row
       })
       // A UNIT WITH A PROBLEM AND NO WORK ON IT IS THE WHOLE POINT OF A GLITCH.

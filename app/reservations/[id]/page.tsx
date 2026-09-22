@@ -8,6 +8,7 @@ import { STAGE_LABEL, money, daysUntil, clockRunning } from '@/lib/claims'
 import { ReservationOrders } from '@/components/ReservationOrders'
 import { ContactHistory } from '@/components/ContactHistory'
 import { loadContactHistory } from '@/lib/reservation-contact'
+import { StayPanel } from '@/components/StayPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -108,6 +109,10 @@ export default async function ReservationDetail({ params }: { params: { id: stri
           <a href={`https://app.guesty.com/reservations/${params.id}/summary`} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:text-brand-700 mt-1 inline-block">Open in Guesty ↗</a>
         </div>
       </header>
+
+      {/* THE FULL PICTURE (2026-09-22) — guest history, calls, messages + sentiment, issues, claims,
+          reviews and field work for this booking, from the same loader every page uses. */}
+      <div className="mb-6"><StayPanel reservationId={params.id} /></div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <section className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">

@@ -251,7 +251,7 @@ export const CS_TOOLS: EveTool[] = [
       const gl = await safe(ctx.db.from('glitches').select('id,overview,status,unit,created_at').eq('reservation_id', row.id).order('created_at', { ascending: false }).limit(10), { data: [] } as any)
       const cl = await safe(ctx.db.from('claims').select('id,stage,summary,amount_sought,amount_paid,deadline_on').eq('reservation_id', row.id).is('deleted_at', null).order('deadline_on', { ascending: true }).limit(10), { data: [] } as any)
       const prof = row.guest_email
-        ? await safe(ctx.db.from('guest_profiles').select('vip,tags,notes').eq('guest_key', lc(row.guest_email)).maybeSingle(), { data: null } as any)
+        ? await safe(ctx.db.from('guest_profiles').select('vip,tags,notes').eq('guest_key', 'e:' + lc(row.guest_email)).maybeSingle(), { data: null } as any)
         : { data: null } as any
 
       return {

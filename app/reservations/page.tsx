@@ -231,7 +231,7 @@ function ResRows({ rows, cfMap }: { rows: any[]; cfMap: Record<string, string> }
         const nights = Number(r.nights) || 0
         return (
           <LeanRow key={r.id}
-            name={<span className={canceled ? 'line-through text-muted' : ''}>{r.guest_name || 'Guest'}</span>}
+            name={<Link href={'/reservations/' + r.id} className={'hover:underline ' + (canceled ? 'line-through text-muted' : '')}>{r.guest_name || 'Guest'}</Link>}
             meta={`${r.listing_name || 'Unassigned'} · ${fmtWeekday(r.check_in)} ${fmtDay(r.check_in)} – ${fmtWeekday(r.check_out)} ${fmtDay(r.check_out)}`}
             tags={<>
               {r.source && <span title="Booking channel" className={`${TAG_CLS} ${sourceStyle(r.source)}`}>{r.source}</span>}

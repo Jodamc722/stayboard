@@ -21,6 +21,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck, FileText, X } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
 import { IconBtn, Tip } from '@/components/lean'
+import { StayPanel } from '@/components/StayPanel'
 
 type Recovery = { listingId: string; rating: number; channel: string; guest: string; content: string; at: string; openDays: number; reviewsSince: number }
 type Glitch = { id: string; overview: string; status: string; at: string }
@@ -740,6 +741,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                 </RowTools>
                 <ProofLine p={r.proof} done={r.done} kind="welcome" />
                 <CallNote p={r.proof} />
+                <StayPanel reservationId={r.id} compact />
                 {r.recovery && !r.done && <RecoveryNote rec={r.recovery} unit={r.listing} />}
                 <WelcomeScript r={r} draft={draft} setDraft={setDraft} onSaveNote={() => saveNote(r.id)} saving={saving === r.id} saved={saved === r.id} />
                 {failedId === r.id && error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> <span>{error}</span></p>}
@@ -810,6 +812,7 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                 </RowTools>
                 <ProofLine p={r.proof} done={r.done} kind="post" />
                 <CallNote p={r.proof} />
+                <StayPanel reservationId={r.id} compact />
                 {r.glitches.length > 0 && (
                   <div className="text-[12px] text-rose-800"><b>Logged during stay:</b> {r.glitches.map(g => `${shortDay(g.at)} ${g.overview || 'Issue'} (${g.status || 'open'})`).join(' · ')}</div>
                 )}

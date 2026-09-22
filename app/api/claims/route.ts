@@ -201,11 +201,25 @@ export async function POST(req: NextRequest) {
       assignee_email: str(b.assignee) || str(user.email) || null,
       history: [{ at: new Date().toISOString(), by: str(user.email) || 'team', action: 'created', to: 'draft' }],
     }
+    // A CLAIM PULLS THE GLITCH (Jon, 2026-09-22: "if a claim is created but there was a glitch for the
+    // guest, it should pull that information"). Every guest issue already logged on this booking is
+    // written into the claim's notes and history at creation, so the claim opens with what happened
+    // during the stay instead of starting blank. The live list also shows on the claim via StayPanel.
+    try {
+      const { data: gl } = await db.from('glitches').select('id,overview,status,category,created_at,refund_approved')
+        .eq('reservation_id', reservationId).order('created_at', { ascending: true }).limit(10)
+      const gs = Array.isArray(gl) ? gl : []
+      if (gs.length) {
+        const lines = gs.map((g: any) => '• ' + str(g.created_at).slice(0, 10) + ' — ' + (str(g.overview) || 'Guest issue') + (g.category ? ' [' + str(g.category) + ']' : '') + ' (' + (str(g.status) || 'open') + (Number(g.refund_approved) ? ', refunded $' + Math.round(Number(g.refund_approved)) : '') + ')')
+        row.notes = 'Guest issues logged during this stay:\n' + lines.join('\n')
+        row.history.push({ at: new Date().toISOString(), by: 'system', action: 'linked glitches', to: gs.map((g: any) => str(g.id)).join(',') })
+      }
+    } catch { /* the claim is still worth creating without them */ }
     let ins = await db.from('claims').insert(row).select('id').single()
     if (ins.error && /column|schema/i.test(ins.error.message)) {
       // Migration 020 (due dates) has not run on this database yet — save the claim rather than
       // failing in the user's face over a column they cannot add.
-      delete row.due_on; delete row.due_source; delete row.deposit_held
+      delete row.due_on; delete row.due_source; delete row.deposit_held; delete row.notes
       ins = await db.from('claims').insert(row).select('id').single()
     }
     const { data, error } = ins

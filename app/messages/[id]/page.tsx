@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
+import { StayPanel } from '@/components/StayPanel'
 import { MessageThread } from '@/components/MessageThread'
 import { ArrowLeft } from 'lucide-react'
 
@@ -74,6 +75,8 @@ export default async function MessageThreadPage({ params }: { params: { id: stri
   return (
     <Shell>
       <Link href="/messages" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-3"><ArrowLeft size={15} /> All conversations</Link>
+      {/* The whole booking behind this thread — issues, calls, prior stays, reviews (2026-09-22). */}
+      {reservation && reservation.id && convo.reservation_id ? <div className="mb-3"><StayPanel reservationId={String(reservation.id)} compact hide={['messages']} /></div> : null}
       <MessageThread
         conversationId={convo.id}
         channel={channel}
