@@ -25,6 +25,27 @@ import 'server-only'
 import { pullReviews } from '@/lib/owner-report'
 import { THEMES, looksNegative, sentenceAbout } from '@/lib/review-themes'
 
+// THE SAFETY RULE THIS SLIDE HAS TO OBEY TOO.
+//
+// Every AI-written word in an owner report runs under one standing instruction (see
+// app/api/reports/generate and ai-edit): "Never admit fault or liability, never mention
+// pests/bed bugs/security incidents, never disparage a guest." This slide is deterministic, so it
+// never passes through the model that enforces that — which meant the first version was free to do
+// precisely what the paragraph beside it is forbidden from doing.
+//
+// Two consequences, both deliberate:
+//
+//   PESTS AND SECURITY ARE OFF THIS SLIDE. Not softened, off. They are handled directly with the
+//   owner, not discovered in a performance report. If Jon wants them here, it is a one-line change
+//   and a decision he should make knowingly rather than one this code makes for him.
+//
+//   QUOTES ARE SCREENED. The first live run pulled, verbatim, "I have photo's of a piss stain on
+//   the 'clean bed'." That is the single most useful sentence in the whole dataset and it is not
+//   something a tool should place in a client document unattended. The theme, the count and the
+//   recommendation all survive; the sentence falls back to another guest's, or to none.
+const OFF_LIMITS = new Set(['pests', 'safety', 'security'])
+const GRAPHIC = /\b(piss|pissed|shit|fuck\w*|cunt|bastard|urine|feces|faeces|poop|vomit|puke|blood|bloody|semen|needle|cockroach|roaches?|bed ?bugs?)\b/i
+
 /** What we tell an OWNER we are doing, per theme. The crew-facing version stays in review-themes. */
 const OWNER_ACTION: Record<string, string> = {
   cleanliness: 'Tightening the departure clean on surfaces, floors and under furniture, and re-inspecting this unit before the next arrival.',
@@ -97,6 +118,7 @@ export async function reportRecommendations(report: any): Promise<Recommendation
   const items: Recommendation[] = []
 
   for (const theme of THEMES) {
+    if (OFF_LIMITS.has(theme.key)) continue
     let mentions = 0
     const units = new Set<string>()
     const ratings: number[] = []
@@ -112,7 +134,10 @@ export async function reportRecommendations(report: any): Promise<Recommendation
       raisedAnything.add(i)
       if (r.listing_id) units.add(String(r.listing_id))
       if (Number.isFinite(Number(r.rating))) ratings.push(Number(r.rating))
-      // Keep the sentence from the lowest-rated review — the clearest statement of the problem.
+      // Keep the sentence from the lowest-rated review — the clearest statement of the problem —
+      // but never one that cannot go in front of an owner. A theme with no printable sentence still
+      // gets its count and its recommendation; it just makes its case without the quote.
+      if (GRAPHIC.test(sentence)) return
       if (!quote || (Number.isFinite(Number(r.rating)) && Number(r.rating) <= Math.min(...ratings))) quote = sentence
     })
     if (!mentions) continue
