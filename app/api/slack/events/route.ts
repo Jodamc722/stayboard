@@ -43,7 +43,7 @@ import { resolveLighthouseEmail, identityHint } from '@/lib/slack-identity'
 import { accessForEmail } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
 import { tierFor, tierNote } from '@/lib/eve/slack-tier'
-import { tagIsFront, detectLang, translate } from '@/lib/eve/slack-triage'
+import { tagIsFront, detectLang, translate, worthTranslating } from '@/lib/eve/slack-triage'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -264,12 +264,16 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   // tokens of tool schemas, atlas and memories) answering a question nobody asked. Now it is one
   // Haiku call, and a message with nothing to translate costs nothing at all.
   //
-  // Silence is a real answer here. If the language cannot be told apart with confidence, she says
-  // nothing rather than posting a guessed translation in front of the whole company.
+  // IT TRANSLATES REGARDLESS, AND IN EVERY CHANNEL. Jon, 2026-09-22: "As long as Eve is tagged at
+  // the very end of the message, then Eve translates it... This should work across all channels."
+  // An earlier cut gated this on a local language heuristic and stayed silent when it could not
+  // tell, which is the worst failure available: a real message tagged, nothing back, and no way to
+  // tell that from Eve being broken. The heuristic is only a hint to the translator now; the model
+  // decides the language. The one case still skipped is a message with nothing to translate — a
+  // bare link, a unit number, an emoji — because there is no translation of "401".
   if (!tagIsFront(String(ev.text || ''), me)) {
-    const lang = detectLang(question)
-    if (!lang) return ok()
-    const out = await translate(question, lang)
+    if (!worthTranslating(question)) return ok()
+    const out = await translate(question, detectLang(question))
     if (out) await say(channel, threadTs, out)
     return ok()
   }
