@@ -146,7 +146,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         .gte('last_message_at', prevFrom + 'T00:00:00Z').order('last_message_at').range(a, b), 4),
       db.from('guesty_reviews')
         .select('id,listing_id,rating,content,guest_name,channel,created_at,has_reply')
-        .gte('created_at', from + 'T00:00:00Z').lte('rating', 3)
+        .gte('created_at', from + 'T00:00:00Z').lte('rating', 3).is('removed_at', null)
         .order('created_at', { ascending: false }).limit(60),
       // PAGED (2026-09-03): both were .limit(1000) — the cap itself. Glitches over two windows
       // and open requests can exceed it; the counts under-reported exactly when they mattered.

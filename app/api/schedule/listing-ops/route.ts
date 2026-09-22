@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const since = daysAgoISO(DAYS)
   const [{ data: reviews }, { data: qcs }, { data: listing }, { data: glitchRows }] = await Promise.all([
-    db.from('guesty_reviews').select('rating,content,guest_name,created_at').eq('listing_id', listingId).order('created_at', { ascending: false }).limit(40),
+    db.from('guesty_reviews').select('rating,content,guest_name,created_at').eq('listing_id', listingId).is('removed_at', null).order('created_at', { ascending: false }).limit(40),
     db.from('qc_tasks').select('breezeway_task_id,report_url,issue_type,status,department,created_at').eq('listing_id', listingId).eq('status', 'open'),
     db.from('guesty_listings').select('nickname,title').eq('id', listingId).limit(1).maybeSingle(),
     // PREVIOUS GLITCHES (new). Open ones first — an unresolved glitch is a live instruction — but

@@ -181,7 +181,7 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
   const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
   const [reviewRows, glitchRes, maintRes] = await Promise.all([
     pageAll((a, b) => db.from('guesty_reviews').select('listing_id,rating')
-      .gte('created_at', yearAgo + 'T00:00:00Z').order('created_at').range(a, b), 5),
+      .gte('created_at', yearAgo + 'T00:00:00Z').is('removed_at', null).eq('excluded_from_score', false).order('created_at').range(a, b), 5),
     // PAGED (2026-09-03): both reads were capped at 1,000 by PostgREST whatever the limit said.
     pageRows<any>((a, b) => db.from('glitches').select('id,listing_id,unit,status').not('status', 'in', '("done","resolved","closed")').order('id').range(a, b), 4),
     pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id')

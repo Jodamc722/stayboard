@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
     sb.from('guesty_listings')
       .select('id, title, nickname, building, unit, room_type, tags, address_full, address_city, address_state, bedrooms, bathrooms, max_occupancy, amenities, status, pictures, raw')
       .eq('id', listingId).single(),
-    sb.from('guesty_reviews').select('rating, content').eq('listing_id', listingId).order('created_at', { ascending: false }).limit(40),
+    sb.from('guesty_reviews').select('rating, content').eq('listing_id', listingId).is('removed_at', null).eq('excluded_from_score', false).order('created_at', { ascending: false }).limit(40),
   ])
   if (error || !listing) return NextResponse.json({ error: 'listing not found' }, { status: 404 })
 

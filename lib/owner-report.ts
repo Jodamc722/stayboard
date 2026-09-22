@@ -357,6 +357,7 @@ export async function pullReviews(listingIds: string[], from: string, asOf: stri
     .from('guesty_reviews')
     .select('rating, content, guest_name, listing_id, created_at, channel')
     .in('listing_id', listingIds)
+    .is('removed_at', null)
     .gte('created_at', from + 'T00:00:00Z')
     .lte('created_at', asOf + 'T23:59:59Z')
     .order('created_at', { ascending: false })

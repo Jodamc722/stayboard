@@ -91,7 +91,7 @@ async function pullQuotes(slug: string, keywords: string[], limit: number) {
   if (!ids.length) return []
   const { data: revs } = await db.from('guesty_reviews')
     .select('id,listing_id,rating,content,channel,created_at')
-    .in('listing_id', ids).gte('rating', 4)
+    .in('listing_id', ids).gte('rating', 4).is('removed_at', null)
     .order('created_at', { ascending: false }).limit(600)
   const out: { text: string; who: string; source: string; date: string }[] = []
   const seen: string[] = []

@@ -230,7 +230,7 @@ async function worthKnowing(ids: Set<string> | null, today: string, unitName: (l
     const since = new Date(Date.now() - 30 * 86400000).toISOString()
     const { data } = await db.from('guesty_reviews')
       .select('listing_id,rating,content,channel,created_at')
-      .gte('created_at', since).order('created_at', { ascending: false }).limit(400)
+      .gte('created_at', since).is('removed_at', null).order('created_at', { ascending: false }).limit(400)
     const { ratingToStars } = await import('./optimize-score')
     const seen = new Set<string>()
     for (const r of ((data || []) as any[])) {

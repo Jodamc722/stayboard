@@ -1,8 +1,8 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban, RefreshCw } from 'lucide-react'
+import { Star, MessageSquareWarning, CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, PlugZap, XCircle, Ban, RefreshCw, Trash2 } from 'lucide-react'
 
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; removed?: boolean; removedReason?: string | null; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string }
 
 // THE FEED OBEYS THE BOARD ABOVE IT (Jon, 2026-09-09: "the main page should be KPI and where we can
 // review or respond to reviews"). One filter bar on /reviews drives the numbers AND this list, so a
@@ -82,6 +82,11 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
   const [err, setErr] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [dismissedLocal, setDismissedLocal] = useState<Record<string, boolean>>({})
+  // REMOVED BY THE CHANNEL (2026-09-22). Guesty does not tell us when a channel pulls a review --
+  // the sync upserts by id and never deletes -- so a person says so here and every score, brief,
+  // owner report and guidebook stops counting it. Local state mirrors the dismiss pattern so the
+  // row responds before the round-trip.
+  const [removedLocal, setRemovedLocal] = useState<Record<string, boolean>>({})
   const [loadedAt, setLoadedAt] = useState<number | null>(null)
 
   // "Answer N reviews" on a failing unit upstairs types that unit into this box, rather than
@@ -175,6 +180,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
     matchBar(r) && (!q || `${r.listing_name || ''} ${r.building || ''} ${r.ownerName || ''} ${r.channel || ''}`.toLowerCase().includes(q))
   const barOn = !!filter && (filter.market !== 'all' || filter.building !== 'all' || filter.owner !== 'all' || filter.channel !== 'all')
   const isDismissed = (r: Review) => !!r.dismissed || !!dismissedLocal[r.id]
+  const isRemoved = (r: Review) => (removedLocal[r.id] !== undefined ? removedLocal[r.id] : !!r.removed)
   const needs = (s.reviews || [])
     .filter(r => !r.hasReply && !posted[r.id] && !isDismissed(r) && matchQ(r))
     // Most-overdue first (the SLA is the queue order); the rating toggle breaks ties.
@@ -273,6 +279,26 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
     } finally {
       setPosted(p => ({ ...p, ...done })); setPostedAt(pa => ({ ...pa, ...Object.fromEntries(Object.keys(done).map(id => [id, Date.now()])) })); setSelected({}); setBulkBusy(false)
     }
+  }
+
+  async function setRemoved(r: Review, undo: boolean) {
+    if (!undo) {
+      const why = window.prompt('Mark this review as removed by ' + (r.channel || 'the channel') + '?\n\nOptional: why was it removed? (e.g. Airbnb policy violation, retracted by guest)')
+      if (why === null) return
+      setRemovedLocal(d => ({ ...d, [r.id]: true }))
+      try {
+        const res = await fetch('/api/reviews/removed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewId: r.id, reason: why }) })
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not mark it removed')
+        setS(prev => ({ ...prev, reviews: (prev.reviews || []).map(x => x.id === r.id ? { ...x, removed: true, removedReason: why || null } : x) }))
+      } catch (e: any) { setErr(e?.message || String(e)); setRemovedLocal(d => ({ ...d, [r.id]: false })) }
+      return
+    }
+    setRemovedLocal(d => ({ ...d, [r.id]: false }))
+    try {
+      const res = await fetch('/api/reviews/removed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewId: r.id, undo: true }) })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not restore it')
+      setS(prev => ({ ...prev, reviews: (prev.reviews || []).map(x => x.id === r.id ? { ...x, removed: false, removedReason: null } : x) }))
+    } catch (e: any) { setErr(e?.message || String(e)); setRemovedLocal(d => ({ ...d, [r.id]: true })) }
   }
 
   async function dismiss(r: Review) {
@@ -467,7 +493,17 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
                 {r.created_at && <span className="text-[10px] text-muted whitespace-nowrap font-medium">{fmtDate(r.created_at)}</span>}
                     <button onClick={() => undismiss(r)} disabled={rowBusy[r.id]} className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg text-brand-700 border border-brand-200 bg-brand-50 hover:bg-brand-100 disabled:opacity-50">Undo</button>
                   </div>
-                  {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
+                  {isRemoved(r) && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 mt-1.5">
+                      <XCircle size={10} /> Removed{r.removedReason ? ' · ' + r.removedReason : ''}
+                    </span>
+                  )}
+                  {r.content && <p className={`text-xs mt-1.5 whitespace-pre-wrap leading-relaxed ${isRemoved(r) ? 'line-through text-muted/60' : 'text-muted'}`}>{r.content}</p>}
+                  <button onClick={() => setRemoved(r, isRemoved(r))}
+                    title={isRemoved(r) ? 'Put this review back — it counts in scores again' : 'The channel took this review down — stop counting it in every score, brief and owner report'}
+                    className={`mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border ${isRemoved(r) ? 'text-slate-700 border-slate-300 bg-slate-100 hover:bg-slate-200' : 'text-muted border-line hover:bg-app'}`}>
+                    <Trash2 size={11} /> {isRemoved(r) ? 'Restore' : 'Removed by channel'}
+                  </button>
                 </li>
               ))}
             </ul>
@@ -493,7 +529,12 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
                 {/* Reply-due clock — the queue is ordered by it, so it belongs on the row you act on. */}
                 {(() => { const sla = slaState(r); return sla ? <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${sla.cls}`}>{sla.label}</span> : null })()}
               </div>
-              {r.content && <p className="text-xs text-muted mt-1.5 whitespace-pre-wrap leading-relaxed">{r.content}</p>}
+              {isRemoved(r) && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 mt-1.5">
+                  <XCircle size={10} /> Removed{r.removedReason ? ' · ' + r.removedReason : ''}
+                </span>
+              )}
+              {r.content && <p className={`text-xs mt-1.5 whitespace-pre-wrap leading-relaxed ${isRemoved(r) ? 'line-through text-muted/60' : 'text-muted'}`}>{r.content}</p>}
 
               <div className="mt-2">
                 <textarea value={drafts[r.id] ?? ''} onChange={e => setDraft(r.id, e.target.value)} rows={4}
@@ -521,6 +562,14 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce }: { filter?: Revie
                   <button onClick={() => dismiss(r)} disabled={rowBusy[r.id]} title="No reply needed — clear this off the list (reversible, doesn't affect scores)"
                     className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-muted border border-line hover:bg-app disabled:opacity-50">
                     <XCircle size={12} /> Dismiss
+                  </button>
+                  {/* REMOVED IS NOT DISMISSED. Dismiss means "no reply needed" and leaves the
+                      review in every score. Removed means the channel took it down, so it comes
+                      out of the average, the briefs, the owner reports and the guidebook. */}
+                  <button onClick={() => setRemoved(r, isRemoved(r))} disabled={rowBusy[r.id]}
+                    title={isRemoved(r) ? 'Put this review back — it counts in scores again' : 'The channel took this review down — stop counting it in every score, brief and owner report'}
+                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border disabled:opacity-50 ${isRemoved(r) ? 'text-slate-700 border-slate-300 bg-slate-100 hover:bg-slate-200' : 'text-muted border-line hover:bg-app'}`}>
+                    <Trash2 size={12} /> {isRemoved(r) ? 'Restore' : 'Removed by channel'}
                   </button>
                   <span className="text-[10px] text-muted">Posts publicly to {r.channel || 'the channel'} via Guesty.</span>
                 </div>

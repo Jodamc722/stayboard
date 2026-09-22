@@ -157,7 +157,7 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
       // review raws is megabytes of payload for two numbers.
       page(() => db.from('guesty_reviews')
         .select('listing_id,rating,content,guest_name,channel,created_at,cats:raw->rawReview->category_ratings,cats2:raw->raw->category_ratings')
-        .in('listing_id', ids).gte('created_at', revFrom).order('created_at', { ascending: false }), 4),
+        .in('listing_id', ids).gte('created_at', revFrom).is('removed_at', null).eq('excluded_from_score', false).order('created_at', { ascending: false }), 4),
       db.from('guesty_reservations')
         .select('listing_id,check_in,check_out,status,guest_name,nights,guests:raw->guests')
         .in('listing_id', ids).lte('check_in', addDays(date, 60)).gte('check_out', addDays(date, -1))

@@ -454,7 +454,7 @@ async function unitContext(db: any, listingIds: string[], excludeReviewIds: stri
       .is('finished_at', null).limit(500)
       .then((x: any) => x, () => ({ data: [] })),
     db.from('guesty_reviews').select('id, listing_id, rating, content, created_at')
-      .in('listing_id', listingIds).gte('created_at', since90 + 'T00:00:00Z')
+      .in('listing_id', listingIds).gte('created_at', since90 + 'T00:00:00Z').is('removed_at', null)
       .order('created_at', { ascending: false }).limit(400)
       .then((x: any) => x, () => ({ data: [] })),
   ])
@@ -527,7 +527,7 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
   const [{ data: revRows }, { data: listings }, { data: existing }, { data: bzProps }] = await Promise.all([
     db.from('guesty_reviews')
       .select('id, listing_id, rating, content, guest_name, channel, created_at')
-      .gte('created_at', since + 'T00:00:00Z')
+      .gte('created_at', since + 'T00:00:00Z').is('removed_at', null)
       .order('created_at', { ascending: false }).limit(500),
     db.from('guesty_listings').select('id, nickname, title, building, address_city').limit(2000),
     db.from('auto_inspections').select('reservation_id, listing_id, task_id, check_in').like('reservation_id', 'rev:%'),

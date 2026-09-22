@@ -159,7 +159,7 @@ export async function buildMaintBrief(market: MaintMarket, lang: BriefLang = 'en
       const since = new Date(Date.now() - 30 * 86400000).toISOString()
       const { data } = await db.from('guesty_reviews')
         .select('listing_id, rating, content, channel, created_at')
-        .in('listing_id', ids).gte('created_at', since)
+        .in('listing_id', ids).gte('created_at', since).is('removed_at', null)
         .order('created_at', { ascending: false }).limit(200)
       for (const r of (data || []) as any[]) {
         const lid = String(r.listing_id)

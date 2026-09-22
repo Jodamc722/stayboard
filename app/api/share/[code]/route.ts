@@ -243,6 +243,7 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
         pageRows<any>((a, b) => db.from('guesty_reviews')
           .select('listing_id, guest_name, rating, created_at')
           .in('listing_id', idList.slice(0, 400))
+          .is('removed_at', null).eq('excluded_from_score', false)
           .gte('created_at', twoYears).order('id').range(a, b), 10),
         pageRows<any>((a, b) => db.from('guest_profiles').select('*').order('guest_key').range(a, b), 10),
         getRestrictedChannels(),

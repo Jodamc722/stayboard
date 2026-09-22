@@ -131,6 +131,17 @@ export async function GET(req: Request) {
         ;(dz || []).forEach((d: any) => dismissedIds.add(d.id))
       } catch { /* column not present yet */ }
 
+      // REMOVED BY THE CHANNEL (2026-09-22). Same resilience as `dismissed`: pre-migration the
+      // column is absent and this yields an empty set, so the page still renders. A removed
+      // review stays ON this page, struck through -- it is the only surface that shows it, since
+      // every score, brief, owner report and guidebook now filters it out.
+      const removedRows = new Map<string, string | null>()
+      try {
+        const { data: rz } = await sb.from('guesty_reviews').select('id,removed_reason')
+          .not('removed_at', 'is', null).gte('created_at', sinceIso)
+        ;(rz || []).forEach((d: any) => removedRows.set(d.id, d.removed_reason || null))
+      } catch { /* migration 107 not run yet */ }
+
       const reviews: any[] = []
       const unmapped: any[] = []
       for (const r of rows as any[]) {
@@ -144,8 +155,10 @@ export async function GET(req: Request) {
         if (!m) reason = 'Listing not synced'
         else if (DEAD_STATUSES.has(m.status)) reason = 'Listing inactive'
         else if (r.excluded_from_score) reason = r.exclude_reason || 'Not mapped on channel'
-        if (reason) unmapped.push({ ...shape(r, m), reason })
-        else reviews.push({ ...shape(r, m), dismissed: dismissedIds.has(r.id) })
+        const removed = removedRows.has(r.id)
+        const removedReason = removed ? removedRows.get(r.id) || null : null
+        if (reason && !removed) unmapped.push({ ...shape(r, m), reason })
+        else reviews.push({ ...shape(r, m), dismissed: dismissedIds.has(r.id), removed, removedReason })
       }
 
       return NextResponse.json({ reviews, unmapped, segments: true })

@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const since = new Date(Date.now() - 60 * 86400000).toISOString()
   const [{ data: reviews }, { data: outs }, { data: staying }, { data: qcs }, { data: listings }] = await Promise.all([
-    db.from('guesty_reviews').select('listing_id,rating,content,guest_name,created_at').lte('rating', 3).gte('created_at', since).order('created_at', { ascending: false }).limit(400),
+    db.from('guesty_reviews').select('listing_id,rating,content,guest_name,created_at').lte('rating', 3).gte('created_at', since).is('removed_at', null).order('created_at', { ascending: false }).limit(400),
     db.from('guesty_reservations').select('listing_id,status').eq('check_out', date).limit(2000),
     db.from('guesty_reservations').select('listing_id,status').lte('check_in', date).gt('check_out', date).limit(5000),
     db.from('qc_tasks').select('listing_id,status,issue_type'),

@@ -90,7 +90,7 @@ export const GUEST_TOOLS: EveTool[] = [
       for (const r of stays) { const k = String((r as any).listing_id); if (k && !seenL[k]) { seenL[k] = true; listingIds.push(k) } }
       const nm = String(stays[0].guest_name || name)
       const [revRes, gliRes, claimRes] = await Promise.all([
-        safe(ctx.db.from('guesty_reviews').select('listing_id,rating,content,channel,created_at,has_reply').ilike('guest_name', `%${nm}%`).order('created_at', { ascending: false }).limit(20), { data: [] } as any),
+        safe(ctx.db.from('guesty_reviews').select('listing_id,rating,content,channel,created_at,has_reply').ilike('guest_name', `%${nm}%`).is('removed_at', null).order('created_at', { ascending: false }).limit(20), { data: [] } as any),
         safe(ctx.db.from('glitches').select('id,overview,status,unit,listing_id,created_at,refund_approved,reservation_id').ilike('guest_name', `%${nm}%`).order('created_at', { ascending: false }).limit(20), { data: [] } as any),
         safe(ctx.db.from('claims').select('id,stage,summary,amount_sought,amount_paid,check_out,property').ilike('guest_name', `%${nm}%`).is('deleted_at', null).order('created_at', { ascending: false }).limit(10), { data: [] } as any),
       ])
