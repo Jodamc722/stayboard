@@ -41,8 +41,9 @@ export const RAMP_SUBTITLE: CopyPair = {
     'A new listing has no reviews and no standing in any channel’s ranking.',
     'It starts with no reviews and no standing in any channel’s ranking. If yours is already live, this is the curve you are on.',
     'No reviews yet, no ranking yet. If yours is already live, this is the curve you are on.',
+    'New listings start with no reviews and no search ranking. Here is what to expect.',
   ],
-  current: 'New listings start with no reviews and no search ranking. Here is what to expect.',
+  current: 'New listings start with no reviews and no search ranking. Here is the curve, and how we shorten it.',
 }
 
 // Jon, 2026-09-18: "less wordy if possible, I can share more details on the call." The lines
@@ -64,18 +65,29 @@ export const SUPPORT_NOTE: CopyPair = {
   current: 'For non-urgent requests and anything in writing. Monitored every business day.',
 }
 
-export const RAMP_BANDS_RETIRED_MARKS = ['Expect low occupancy and a rate you will not love', 'first owner report worth judging us on', 'a rate you will not love', 'whose numbers mean anything']
+// Jon, 2026-09-22: "we would never give up rev for reviews." The old ramp said the opening rate
+// was "set below target to win the first bookings" and that a normal-looking month one meant we
+// had "priced too high and gave up reviews" — which reads as a manager who discounts an owner's
+// asset to buy itself social proof. That is not what happens and it is not what we would sell.
+//
+// What actually happens: a listing with no reviews and no ranking CONVERTS worse at the same
+// price, so the rate the market will pay for it in week one is genuinely lower than the rate it
+// will pay in week twelve. We price to that demand and take every night that clears it. Reviews
+// are what we earn from nights we would otherwise have left empty — not a trade, a by-product.
+// The retired marks below carry the old wording out of decks already generated.
+export const RAMP_BANDS_RETIRED_MARKS = ['Expect low occupancy and a rate you will not love', 'first owner report worth judging us on', 'a rate you will not love', 'whose numbers mean anything', 'Opening rate set below target', 'Goal: five completed stays and five reviews', 'Rates move toward market']
 export const RAMP_BANDS: { k: string; v: string }[] = [
-  { k: 'Days 1–30', v: 'Opening rate set below target to win the first bookings. Expect lower occupancy and rate. Goal: five completed stays and five reviews.' },
-  { k: 'Days 31–60', v: 'Reviews improve placement. Rates move toward market; occupancy rises first.' },
-  { k: 'Days 61–90', v: 'Enough history to price at market. The first month to judge performance on.' },
+  { k: 'Days 1–30', v: 'With no reviews and no ranking, the listing converts at a lower rate than it will later. We price to what the market will actually pay each night and take every booking that clears it.' },
+  { k: 'Days 31–60', v: 'Early reviews lift placement in search. Occupancy climbs first, and rate follows it up as the listing earns its position.' },
+  { k: 'Days 61–90', v: 'Enough history to hold market rate. The first month whose numbers reflect the asset rather than its age.' },
 ]
 export const RAMP_NOTE: CopyPair = {
   retired: [
     'We would rather tell you this now than have you read month one as a failure. If month one looks like a normal month, we priced too high and left reviews on the table.',
     'If month one looks like a normal month, we priced too high and left reviews on the table.',
+    'If month one looks normal, we priced too high and gave up reviews.',
   ],
-  current: 'If month one looks normal, we priced too high and gave up reviews.',
+  current: 'We do not trade revenue for reviews. Every night is priced to the best rate the market will pay that day — the reviews come from filling nights that would otherwise have gone empty.',
 }
 
 // Jon, 2026-09-18: "keep it professional, short and clear. We don't need fluff." Section titles

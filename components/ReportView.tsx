@@ -2957,13 +2957,28 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             if (!as.length) return null
             return (
               <div style={{ marginTop: 26 }}>
-                <p style={{ fontSize: 12, color: t.muted, marginBottom: 14 }}>On the call</p>
+                <p style={{ fontSize: 12, color: t.muted, marginBottom: 14 }}><Lab id="onTheCall" d="On the call" /></p>
                 <div className="flex flex-col" style={{ gap: 14 }}>
                   {as.map((a: Any, i: number) => (
                     <AskBlock key={a.id || i} ask={a} live={canEdit} t={t} set={v => setAnswer(k, i, v)} />
                   ))}
                 </div>
               </div>
+            )
+          }
+
+          // EVERY WORD ON THIS DECK IS EDITABLE (Jon, 2026-09-22: "on owner onboarding we need to
+          // be able to edit all texts"). The section copy always was; what was not, and what an
+          // owner still reads, are the fixed LABELS — "On the call", "Password", "Category",
+          // "Worth adding". They are written once here and stored per report under
+          // content.labels.<id>, so a label Jon retypes on one owner's deck stays retyped on that
+          // deck and every other deck keeps the house wording.
+          const Lab = ({ id, d, style, className }: { id: string; d: string; style?: Any; className?: string }) => {
+            const saved = String((c.labels || {})[id] || '').trim()
+            return (
+              <span className={className} style={style}>
+                <Ed v={saved || d} set={v => patch('labels.' + id, v)} edit={edit} />
+              </span>
             )
           }
 
@@ -3341,7 +3356,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <p style={{ fontSize: 13.5, color: t.muted, marginTop: 7 }}>{stripChannelCount(L.sub)}</p>
                       </div>
                       <div style={{ flex: '1 1 0', minWidth: 0 }}>
-                        <p style={{ fontSize: 12, color: t.muted, marginBottom: 7 }}>What it leads with</p>
+                        <p style={{ fontSize: 12, color: t.muted, marginBottom: 7 }}><Lab id="listingLeads" d="What it leads with" /></p>
                         <p style={{
                           fontSize: 16, lineHeight: 1.45, color: t.ink, fontWeight: 500,
                           display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
@@ -3417,7 +3432,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           </p>
                         </div>
                       ) : (
-                        <p style={{ fontSize: 12, color: t.muted, whiteSpace: 'nowrap' }}>The words a guest reads</p>
+                        <p style={{ fontSize: 12, color: t.muted, whiteSpace: 'nowrap' }}><Lab id="listingWords" d="The words a guest reads" /></p>
                       )}
                     </div>
 
@@ -3564,7 +3579,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
                       <div>
                         <div style={{ width: 30, height: 2, background: brass, marginBottom: 14 }} />
-                        <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}>What the listing says it has</p>
+                        <p className="onb-h" style={{ fontSize: 30, color: t.ink, lineHeight: 1.2 }}><Lab id="listingHas" d="What the listing says it has" /></p>
                         <p style={{ fontSize: 13, color: t.muted, marginTop: 7 }}>{L.name}</p>
                       </div>
                       {canEdit && (
@@ -3591,7 +3606,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       {/* on the listing */}
                       <div className="flex flex-col" style={{ minHeight: 0 }}>
                         <div className="flex items-baseline justify-between" style={{ paddingBottom: 8, borderBottom: '1px solid ' + t.ink, marginBottom: 11 }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}>On the listing</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: t.ink }}><Lab id="listingOn" d="On the listing" /></span>
                           <span className="tabular-nums" style={{ fontSize: 12, color: t.muted }}>{have.length}</span>
                         </div>
                         <div className="onb-scroll" style={{ flex: 1, minHeight: 0, paddingRight: 8 }}>
@@ -3614,7 +3629,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       {/* everything they can add: the ones worth adding first, then the rest */}
                       <div className="flex flex-col" style={{ minHeight: 0 }}>
                         <div className="flex items-baseline justify-between" style={{ paddingBottom: 8, borderBottom: '1px solid ' + brass, marginBottom: 11, gap: 12 }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: t.ink, whiteSpace: 'nowrap' }}>Add to the listing</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: t.ink, whiteSpace: 'nowrap' }}><Lab id="listingAdd" d="Add to the listing" /></span>
                           {canEdit ? (
                             <input value={amenQ} onChange={e => setAmenQ(e.target.value)} placeholder={'Filter…'}
                               style={{ fontSize: 11.5, padding: '3px 10px', borderRadius: 999, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink, width: 112, outline: 'none' }} />
@@ -3624,7 +3639,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         </div>
                         <div className="onb-scroll" style={{ flex: 1, minHeight: 0, paddingRight: 8 }}>
                           {missingQ.length > 0 && (
-                            <p style={{ fontSize: 10, letterSpacing: '0.11em', textTransform: 'uppercase', color: brass, fontWeight: 700, marginBottom: 5 }}>Worth adding</p>
+                            <p style={{ fontSize: 10, letterSpacing: '0.11em', textTransform: 'uppercase', color: brass, fontWeight: 700, marginBottom: 5 }}><Lab id="listingWorth" d="Worth adding" /></p>
                           )}
                           {missingQ.map((sg: Any) => (
                             <div key={sg.name}
@@ -3935,15 +3950,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       )}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 26, marginTop: 20, paddingTop: 18, borderTop: '1px solid ' + t.rule }}>
                         <div>
-                          <p style={{ fontSize: 12, color: t.muted }}>You sign in as</p>
+                          <p style={{ fontSize: 12, color: t.muted }}><Lab id="signInAs" d="You sign in as" /></p>
                           <p style={{ fontSize: 14.5, color: t.ink, marginTop: 3, wordBreak: 'break-all' }}>
                             <Ed v={String(sec('guesty').loginEmail || '')} set={v => patch('guesty.loginEmail', v)} edit={edit} placeholder="owner@email.com" />
                             {!String(sec('guesty').loginEmail || '') && !edit ? <span style={{ color: t.gold }}>set up on this call</span> : null}
                           </p>
                         </div>
                         <div>
-                          <p style={{ fontSize: 12, color: t.muted }}>Password</p>
-                          <p style={{ fontSize: 14.5, color: t.body, marginTop: 3 }}>Set from your invite email.</p>
+                          <p style={{ fontSize: 12, color: t.muted }}><Lab id="password" d="Password" /></p>
+                          <p style={{ fontSize: 14.5, color: t.body, marginTop: 3 }}><Lab id="passwordNote" d="Set from your invite email." /></p>
                         </div>
                       </div>
                     </div>
@@ -4073,8 +4088,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     {/* the summary — and the control */}
                     <div className="flex flex-col" style={{ minHeight: 0 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 12px', background: t.chip, borderRadius: '6px 6px 0 0' }}>
-                        <span style={{ fontSize: 11, color: t.sub }}>Category</span>
-                        <span style={{ fontSize: 11, color: t.sub }}>Monthly amount</span>
+                        <span style={{ fontSize: 11, color: t.sub }}><Lab id="stmtCategory" d="Category" /></span>
+                        <span style={{ fontSize: 11, color: t.sub }}><Lab id="stmtAmount" d="Monthly amount" /></span>
                       </div>
                       {(st.summary || []).map((ln: Any, i: number) => {
                         const name = String(ln.k || '')
