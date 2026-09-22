@@ -793,7 +793,21 @@ export async function POST(req: NextRequest) {
         nxt ? { label: nxt.label.toUpperCase(), status: paceStatus(nxt.m.occupancyPct, false, 1), occPct: nxt.m.occupancyPct, adr: '$' + nxt.m.adr, revpar: '$' + nxt.m.revpar, note: str(ai.aheadNotes?.next).slice(0, 260), ...aheadRaw(nxt.m) } : null,
         nxt2 ? { label: nxt2.label.toUpperCase(), status: paceStatus(nxt2.m.occupancyPct, false, 2), occPct: nxt2.m.occupancyPct, adr: '$' + nxt2.m.adr, revpar: '$' + nxt2.m.revpar, note: str(ai.aheadNotes?.third).slice(0, 260), ...aheadRaw(nxt2.m) } : null,
       ].filter(Boolean) as any,
-      strip: mAhead.map(m => ({ month: m.short, occPct: m.m.occupancyPct })),
+      // THE STRIP CARRIES ITS OWN NUMBERS (fixed 2026-09-22). It used to be {month, occPct} and
+      // nothing else, while `months` above held rate and revenue for only the current month and
+      // the two after it. The deck draws six columns off the strip, so four of them had a bar and
+      // an occupancy and no way to answer "what rate are those bookings at?" — even though
+      // monthsAhead() had already computed the full MetricSet for every month in the horizon and
+      // we were throwing it away. Jon, 2026-09-22: "there is a booking so we shoild see the actual
+      // gorss adr right". Right.
+      strip: mAhead.map(m => ({
+        month: m.short, label: m.label, iso: m.iso,
+        occPct: m.m.occupancyPct,
+        adr: '$' + m.m.adr, revpar: '$' + m.m.revpar,
+        grossAdr: '$' + m.m.grossAdr, grossRevpar: '$' + m.m.grossRevpar,
+        reservations: m.m.reservations,
+        ...aheadRaw(m.m),
+      })),
     },
     voices: {
       headline: "What guests said — and what we're addressing.",

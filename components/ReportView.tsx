@@ -5575,34 +5575,49 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             // Build the strip from the months themselves so every column keeps its own figures —
             // ahead.strip carries only a label and an occupancy, which is what the hover was
             // missing.
-            // THE FIGURES COME OFF THE MONTH'S OWN RAW NUMBERS (fixed 2026-09-22). The first cut
-            // read m.adr / m.revpar / m.revenue straight off the row — fields a month carrying the
-            // three-basis raw model does not have. Every line of the hover card resolved to "—",
-            // the card had nothing to show, and the hover looked broken rather than empty.
+            // EACH COLUMN USES ITS OWN MONTH'S NUMBERS (fixed 2026-09-22).
             //
-            // Jon, 2026-09-22: "that should be gorss rev, gross adr, gross revpaar". A month on
-            // the books is quoted gross, because that is the number an owner compares to a budget,
-            // so the card is computed at the gross basis regardless of the slide's own basis, and
-            // says so on every line. A hand-set ADR or RevPAR override still wins, the same way it
-            // does on the scroll report.
+            // Jon: "it's not accurate to the month. October is November." He was reading a real
+            // off-by-one. ahead.strip runs [previous month, current, +1 …] while ahead.months
+            // starts at the CURRENT month and holds only three entries, and the first cut matched
+            // a strip column to a month by the first three letters of its label with a POSITIONAL
+            // fallback — so the closed month at the head of the strip fell through to months[0]
+            // and wore the current month's rate, and every column after the third had nothing.
+            // A chart that labels one month and prints another's ADR is worse than one that prints
+            // nothing, and it is the kind of error an owner catches before we do.
+            //
+            // The generator now writes the full MetricSet onto every strip entry, so a column
+            // reads its own figures and needs no lookup at all. Reports generated before that
+            // still match by ISO month or exact label — never by position, and never by index.
             const ms = (ahead.months as Any[]) || []
-            const strip: Any[] = (Array.isArray(ahead.strip) && ahead.strip.length ? (ahead.strip as Any[]) : ms)
-              .slice(0, 6)
-              .map((x: Any, i: number) => {
-                const m = ms.find((y: Any) => String(y.label || '').slice(0, 3) === String(x.month || x.label || '').slice(0, 3)) || ms[i] || {}
-                const g = hasBasisRaw(m) ? basisStrings(m, 'gross') : null
-                const av = aheadValues(m, 'gross')
-                return {
-                  month: String(x.month || x.label || '').replace(/\s+\d{4}$/, '').slice(0, 3),
-                  full: String(m.label || x.label || ''),
-                  occPct: x.occPct != null ? x.occPct : m.occPct,
-                  adr: av.adr || (g ? g.adr : ''),
-                  revpar: av.revpar || (g ? g.revpar : ''),
-                  revenue: g ? g.rev : (m.revenue != null ? usd(m.revenue) : ''),
-                  nights: m.nights != null ? String(m.nights) : (m.occNights != null ? String(m.occNights) : ''),
-                  res: m.reservations != null ? String(m.reservations) : '',
-                }
-              })
+            const stripRaw: Any[] = Array.isArray(ahead.strip) && ahead.strip.length ? (ahead.strip as Any[]) : ms
+            const norm = (v: Any) => String(v || '').replace(/\s+\d{4}$/, '').trim().slice(0, 3).toLowerCase()
+            const strip: Any[] = stripRaw.slice(0, 6).map((x: Any) => {
+              // The month's own record, when this report predates the fuller strip.
+              const m = ms.find((y: Any) => (x.iso && y.iso ? String(y.iso) === String(x.iso) : false))
+                || ms.find((y: Any) => norm(y.label) === norm(x.month || x.label)) || {}
+              const src = hasBasisRaw(x) ? x : (hasBasisRaw(m) ? m : null)
+              const g = src ? basisStrings(src, 'gross') : null
+              const av = src ? aheadValues(src, 'gross') : null
+              return {
+                month: norm(x.month || x.label) ? String(x.month || x.label).replace(/\s+\d{4}$/, '').slice(0, 3) : '',
+                full: String(x.label || m.label || ''),
+                iso: String(x.iso || m.iso || ''),
+                occPct: x.occPct != null ? x.occPct : m.occPct,
+                adr: (av && av.adr) || (g ? g.adr : '') || String(x.grossAdr || ''),
+                revpar: (av && av.revpar) || (g ? g.revpar : '') || String(x.grossRevpar || ''),
+                revenue: g ? g.rev : '',
+                nights: x.occNights != null ? String(x.occNights) : (m.occNights != null ? String(m.occNights) : ''),
+                res: x.reservations != null ? String(x.reservations) : (m.reservations != null ? String(m.reservations) : ''),
+              }
+            })
+            // The report's own month is the one to mark, not whichever column happens to be first —
+            // the strip opens on the month that just closed.
+            const thisMonth = String(meta.period || '').trim()
+            const curIx = Math.max(0, strip.findIndex((x: Any) => (
+              (x.iso && String(x.iso).slice(0, 7) === String(initial.period_start || '').slice(0, 7))
+              || (thisMonth && norm(x.full) === norm(thisMonth))
+            )))
             slides.push({ key: 'ahead', ai: true, node: (
               <Frame note="ahead" nav="Looking ahead" sec="Ahead" subj="On the books" tone="light" n={n}>
                 <RTitle k="ahead" />
@@ -5621,7 +5636,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ['Reservations', String(x.res || '')],
                       ]} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
                         <Fig size={26}>{Math.round(pct) + '%'}</Fig>
-                        <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === 0 ? t.accent : tint(0.22), height: Math.max(4, (pct / 100) * 142) }} />
+                        <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === curIx ? t.accent : tint(0.22), height: Math.max(4, (pct / 100) * 142) }} />
                         <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: tint(0.45), marginTop: 12 }}>{String(x.month || '')}</span>
                         {/* The rate used to print here AND in the hover card. One of them had to go,
                             and the hover is the one that can hold the whole row. */}
