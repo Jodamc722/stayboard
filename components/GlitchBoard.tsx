@@ -368,7 +368,7 @@ function fmtPhone(v: string | null | undefined): string {
 /** ASSIGN IT WHERE YOU SEE IT (Jon, 2026-09-22: "need to be able to assign"). The assignee and the
  *  due date are edited in their own rows, like Asana — pick a name and it saves, and when the
  *  glitch has a Breezeway task the crew's task is reassigned too (the update action does that). */
-function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; name: string }[]; onDone: () => void }) {
+function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; name: string; departments?: string[]; role?: string | null }[]; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const save = async (body: Record<string, any>) => {
@@ -381,6 +381,22 @@ function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; n
     setBusy(false)
   }
   const known = people.some(p => p.name === g.assignee)
+  // 120+ names is a wall. Maintenance first — they fix most glitches — then the office, then
+  // housekeeping; one entry per name (Breezeway lists some people twice).
+  const groups = (() => {
+    const seen = new Set<string>()
+    const maint: typeof people = [], office: typeof people = [], hk: typeof people = []
+    for (const p of people.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+      const k = p.name.trim().toLowerCase()
+      if (!k || seen.has(k)) continue
+      seen.add(k)
+      const d = (p.departments || []).map(x => String(x).toLowerCase())
+      if (d.includes('maintenance')) maint.push(p)
+      else if (!d.length || String(p.role || '') === 'office') office.push(p)
+      else hk.push(p)
+    }
+    return [['Maintenance', maint], ['Office', office], ['Housekeeping', hk]] as [string, typeof people][]
+  })()
   return (
     <span className="inline-flex items-center gap-2 flex-wrap">
       <select value={g.assignee || ''} disabled={busy}
@@ -392,7 +408,11 @@ function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; n
         className={'text-[13px] border border-line rounded-lg px-2 h-8 bg-white max-w-[240px] ' + (g.assignee ? 'font-semibold text-ink' : 'text-muted')}>
         <option value="">No assignee</option>
         {g.assignee && !known ? <option value={g.assignee}>{g.assignee}</option> : null}
-        {people.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+        {groups.map(([label, list]) => list.length ? (
+          <optgroup key={label} label={label}>
+            {list.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+          </optgroup>
+        ) : null)}
       </select>
       {busy ? <Loader2 size={13} className="animate-spin text-muted" /> : null}
       {err ? <span className="text-[12px] text-rose-700">{err}</span> : null}
