@@ -9,10 +9,12 @@
 // nothing either — this only ever acts on a definite 404.
 import 'server-only'
 import { getSetting, setSetting } from './app-settings'
-import { checkGmailDraftExists } from './gmail-send'
+import { checkGmailDraftExists, foundInSent } from './gmail-send'
 import { supabaseAdmin } from './supabase-admin'
 import { getToken } from './guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from './guesty-custom-fields'
+import { mergeProperties, RESERVATION_EMAILS_KEY, type PropertyEmail } from './reservation-emails'
+import { buildDraft, type Notice } from './reservation-draft'
 
 const KEY = 'support_draft_watch'
 const SUPPORT_FROM = 'support@stay-hospitality.com'
@@ -139,4 +141,88 @@ export async function checkSupportDrafts(): Promise<{ checked: number; markedSen
   }
   await setSetting(KEY, keep, 'support-drafts').catch(() => null)
   return { checked: list.length, markedSent: marked }
+}
+
+
+/**
+ * THE SENT FOLDER IS THE AUTHORITY (Jon, 2026-09-22: "If the email is marked sent in the inbox
+ * for the Elser or Front Desk notices, please mark it sent").
+ *
+ * checkSupportDrafts() above closes the loop only for notices WE drafted and are still watching,
+ * and its evidence is "the draft left the Drafts folder" — which a deletion satisfies just as well
+ * as a send. That is why this file and notice-drafts.ts carry so much repair code.
+ *
+ * This sweep asks the direct question instead: is this notice's subject sitting in support@'s
+ * Sent folder? That catches every path the watch misses —
+ *   · a notice someone sent by hand from Gmail without using "Add to drafts" at all,
+ *   · a draft we filed whose watch entry was trimmed, lost, or cleared by a repair pass,
+ *   · a draft the desk deleted and then retyped and sent themselves.
+ * and it never mistakes a deletion for a send, because a deleted draft is not in Sent.
+ *
+ * SAFETY, because the failure mode here is a building that never gets told:
+ *   · it only ever marks UNSENT notices sent — it cannot un-send anything;
+ *   · an inconclusive answer (no Gmail read scope, a network wobble) changes nothing;
+ *   · the search is scoped to the notice's own rendered subject, which carries the unit and the
+ *     dates, and to mail sent after the notice was created;
+ *   · a notice with no resolvable subject is skipped rather than guessed at.
+ */
+export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: number; limit?: number } = {}): Promise<{
+  scanned: number; markedSent: number; inconclusive: number; notFound: number; errors: string[]
+}> {
+  const out = { scanned: 0, markedSent: 0, inconclusive: 0, notFound: 0, errors: [] as string[] }
+  const back = opts.backDays == null ? 21 : opts.backDays
+  const ahead = opts.aheadDays == null ? 14 : opts.aheadDays
+  const day = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10)
+  try {
+    const db = supabaseAdmin()
+    const props: PropertyEmail[] = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null).catch(() => null))
+    const pById: Record<string, PropertyEmail> = {}
+    for (const p of props) pById[String(p.id)] = p
+
+    const { data: rows, error } = await db.from(TABLE).select('*')
+      .is('sent_at', null).is('deleted_at', null)
+      .gte('arrival_date', day(-back)).lte('arrival_date', day(ahead))
+      .order('arrival_date', { ascending: true })
+      .limit(opts.limit == null ? 60 : opts.limit)
+    if (error) { out.errors.push('read: ' + String(error.message || '').slice(0, 120)); return out }
+
+    const watchCur = await getSetting<DraftWatch[]>(KEY, []).catch(() => [] as DraftWatch[])
+    let watch = Array.isArray(watchCur) ? watchCur : []
+    let watchChanged = false
+
+    for (const n of (rows || []) as any[]) {
+      out.scanned++
+      try {
+        const p0 = pById[String(n.property_id || '')]
+        if (!p0) continue
+        let subject = String(n.sent_subject || '').trim()
+        if (!subject) { try { subject = String(buildDraft(p0, n as Notice).subject || '').trim() } catch { subject = '' } }
+        if (!subject) continue
+        // Look no further back than the notice itself: an identical subject from a previous stay
+        // in the same unit must not close out this one.
+        const created = Date.parse(String(n.created_at || '')) || (Date.now() - back * 864e5)
+        const since = Math.floor(Math.max(created, Date.now() - (back + 7) * 864e5) / 1000)
+        const hit = await foundInSent(SUPPORT_FROM, subject, since)
+        if (hit === null) { out.inconclusive++; continue }
+        if (hit !== true) { out.notFound++; continue }
+
+        const now = new Date().toISOString()
+        const patch: any = { sent_at: now, sent_by: 'GMAIL', updated_at: now, sent_subject: subject }
+        let { error: uErr } = await db.from(TABLE).update(patch).eq('id', n.id)
+        if (uErr && /column .* does not exist|schema cache|sent_subject/i.test(String(uErr.message || ''))) {
+          const r2 = await db.from(TABLE).update({ sent_at: now, sent_by: 'GMAIL', updated_at: now }).eq('id', n.id)
+          uErr = r2.error as any
+        }
+        if (uErr) { out.errors.push('update ' + String(n.id) + ': ' + String(uErr.message || '').slice(0, 90)); continue }
+        if (n.reservation_id) await guestyMarkSent(String(n.reservation_id), String(n.property_id || ''))
+        // Nothing left to watch for this notice — it is closed.
+        const before = watch.length
+        watch = watch.filter(w => String(w?.nid || '') !== String(n.id))
+        if (watch.length !== before) watchChanged = true
+        out.markedSent++
+      } catch (e: any) { out.errors.push(String(e?.message || e).slice(0, 120)) }
+    }
+    if (watchChanged) { try { await setSetting(KEY, watch, 'sent-sweep') } catch { /* next run */ } }
+  } catch (e: any) { out.errors.push(String(e?.message || e).slice(0, 150)) }
+  return out
 }

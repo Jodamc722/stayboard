@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { createGmailDraft, type GmailAttachment } from '@/lib/gmail-send'
-import { watchSupportDraft, checkSupportDrafts } from '@/lib/support-drafts'
+import { watchSupportDraft, checkSupportDrafts, sweepSentInGmail } from '@/lib/support-drafts'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -69,12 +69,22 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, from: SUPPORT_FROM, watching: !!(noticeId && r.id), attached: attachedName || null, formMissing })
 }
 
-// GET ?check=1 — sweep the watched drafts. The board calls this on load, so opening the page is
-// what reconciles Gmail with the app; nothing needs a human to remember it.
-export async function GET() {
+// GET ?check=1 — reconcile Gmail with the app. The board calls this on load, so opening the page
+// is what closes the loop; nothing needs a human to remember it.
+//
+// TWO PASSES, and the second is the one that matters (Jon, 2026-09-22: "If the email is marked
+// sent in the inbox for the Elser or Front Desk notices, please mark it sent"):
+//   1. the watched drafts — closes out notices WE filed, on "the draft left Drafts".
+//   2. the Sent folder — closes out every notice whose subject is actually sitting in support@'s
+//      Sent, however it got there, including ones typed and sent by hand.
+// Neither can un-send anything, and an inconclusive Gmail answer changes nothing.
+export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  const u = new URL(req.url)
+  const back = Number(u.searchParams.get('backDays') || '') || undefined
   const res = await checkSupportDrafts()
-  return NextResponse.json({ ok: true, ...res })
+  const sent = await sweepSentInGmail(back ? { backDays: back } : {}).catch(() => null)
+  return NextResponse.json({ ok: true, ...res, sentSweep: sent })
 }
