@@ -5,7 +5,7 @@ import PolishButton from './PolishButton'
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
 // Breezeway task for the field, and move the card along the escalation path.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil, GraduationCap } from 'lucide-react'
+import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil, GraduationCap, Check } from 'lucide-react'
 import { Pill, Tag, IconBtn } from './lean'
 import { StayPanel } from './StayPanel'
 import CommentThread from './CommentThread'
@@ -34,6 +34,7 @@ type Glitch = {
   refund_recommended?: number | null; refund_reasoning?: any; refund_note?: string | null
   refund_needs_approval?: boolean | null; refund_approved_by?: string | null; refund_approved_at?: string | null
   closed_at?: string | null; closed_at_estimated?: boolean | null
+  history?: any[] | null
   created_at: string
 }
 type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null; notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null; guestyUrl: string }
@@ -300,10 +301,86 @@ export function GlitchBoard() {
   )
 }
 
-// ── THE RECORD ──────────────────────────────────────────────────────────────────────────────────
-// One sheet, in the order somebody actually works it: what happened → who it happened to → what we
-// know about this unit → the job → the money → the conversation. Everything here used to unfold
-// inside the lane itself, which is why the board felt like it fell apart when you clicked a card.
+// ── THE RECORD, ASANA-STYLE (Jon, 2026-09-22) ───────────────────────────────────────────────────
+// "Tabs is not great vs Asana style — the team thinks it's a bit clunky, they are used to Asana."
+// "We need to also be able to see reported date, check-in date and check-out date." "Maybe a
+// ticker, days open."
+//
+// One scrolling page, the way an Asana task reads: a Mark complete button and a live "open for"
+// clock at the top, the issue as the title, then a column of labelled fields — status, priority,
+// assignee, due, reported, check-in, check-out, guest, booking, the Breezeway job, the refund —
+// then the description, photos, and the sections that used to hide behind tabs, each with its own
+// heading and a fold. Comments and the card's activity sit at the bottom, where Asana puts them.
+// Nothing is behind a tab any more; the whole record is one scroll.
+
+/** "3d 4h", "5h 12m", "14m" — the length of an interval, short. */
+function span(ms: number): string {
+  const m = Math.max(0, Math.floor(ms / 60000))
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60
+  if (d > 0) return d + 'd ' + h + 'h'
+  if (h > 0) return h + 'h ' + mm + 'm'
+  return mm + 'm'
+}
+function fmtStamp(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return d.toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+function fmtDay(ymd: string | null | undefined): string {
+  const s = String(ymd || '').slice(0, 10)
+  if (!s) return ''
+  const d = new Date(s + 'T12:00:00')
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/** A labelled row, Asana's field layout: label on the left, value on the right. */
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[112px_1fr] sm:grid-cols-[140px_1fr] gap-3 items-start py-1.5">
+      <span className="text-[12.5px] text-muted pt-0.5">{label}</span>
+      <div className="text-[13px] text-ink min-w-0">{children}</div>
+    </div>
+  )
+}
+
+/** A heading with a fold — every section is on the page, any of them can be tucked away. */
+function Fold({ title, hint, open: start = true, children }: { title: string; hint?: React.ReactNode; open?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(start)
+  return (
+    <section className="border-t border-line pt-3">
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 text-left">
+        <span className={'text-[11px] text-muted transition-transform ' + (open ? 'rotate-90' : '')}>▶</span>
+        <span className="text-[14px] font-bold text-ink">{title}</span>
+        {hint ? <span className="text-[12px] text-muted truncate">{hint}</span> : null}
+      </button>
+      {open ? <div className="mt-2.5">{children}</div> : null}
+    </section>
+  )
+}
+
+/** The live clock: how long this has been open, or how long it took to close. */
+function OpenClock({ g }: { g: Glitch }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t) }, [])
+  const start = Date.parse(g.created_at)
+  if (!Number.isFinite(start)) return null
+  const closed = laneOf(g.status).key === 'closed'
+  const end = closed && g.closed_at ? Date.parse(g.closed_at) : now
+  const days = (end - start) / 86400000
+  const tone = closed ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
+    : days >= 3 ? 'bg-rose-50 text-rose-800 ring-rose-200'
+    : days >= 1 ? 'bg-amber-50 text-amber-800 ring-amber-200'
+    : 'bg-sky-50 text-sky-800 ring-sky-200'
+  return (
+    <span className={'inline-flex items-center gap-1.5 text-[12px] font-bold px-2.5 h-8 rounded-xl ring-1 tabular-nums ' + tone}
+      title={'Reported ' + fmtStamp(g.created_at) + (closed && g.closed_at ? ' · closed ' + fmtStamp(g.closed_at) : '')}>
+      {closed ? null : <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
+      {closed ? 'Closed in ' + span(end - start) : 'Open ' + span(end - start)}
+    </span>
+  )
+}
+
 function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDeleted }: {
   g: Glitch
   people: { id: number; name: string; departments: string[] }[]
@@ -313,45 +390,46 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
   openRefund: boolean
   onDeleted: (trashId: string, label: string) => void
 }) {
-  const [tab, setTab] = useState<'work' | 'money' | 'talk'>('work')
   const [panel, setPanel] = useState<'' | 'edit' | 'push'>('')
-  // FIXING A TYPO SHOULD START WHERE THE TYPO IS (Sulaman, 2026-09-17: "once the Glitch is created,
-  // there is no option to edit or modify the details in case there is a typo or any other error").
-  //
-  // There was an option — "Edit the details", a quiet outline button at the FOOT of this tab, past
-  // the photos, the stay and the whole crew section. Somebody re-reading what they just typed is
-  // looking at the words, not scrolling to the bottom of a tab to find a settings-shaped control.
-  // So the same editor is now reachable from beside the text it edits, and opening it scrolls to
-  // it — a panel that appears off-screen has not really opened.
+  // FIXING A TYPO SHOULD START WHERE THE TYPO IS (Sulaman, 2026-09-17). The editor opens beside
+  // the description and scrolls into view.
   const editRef = useRef<HTMLElement | null>(null)
   const openEdit = useCallback(() => {
     setPanel('edit')
     setTimeout(() => editRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60)
   }, [])
-  const lane = laneOf(g.status)
-  const refund = Number(g.refund_approved) || 0
+  const refundRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => { if (openRefund) setTimeout(() => refundRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120) }, [openRefund])
 
-  const Tab = ({ k, label }: { k: 'work' | 'money' | 'talk'; label: string }) => (
-    <button onClick={() => setTab(k)}
-      className={'text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
-        (tab === k ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>
-      {label}
-    </button>
-  )
+  const lane = laneOf(g.status)
+  const closed = lane.key === 'closed'
+  const refund = Number(g.refund_approved) || 0
+  const rec = Number.isFinite(Number(g.refund_recommended)) && g.refund_recommended != null ? Number(g.refund_recommended) : null
+  const stay = stayState(g.check_in, g.check_out)
+  const nights = g.check_in && g.check_out
+    ? Math.round((Date.parse(String(g.check_out).slice(0, 10)) - Date.parse(String(g.check_in).slice(0, 10))) / 86400000) : null
+  const trade = tradeOf(g.category)
+  const overview = String(g.overview || '').trim()
+  // The issue is the title, the way an Asana task is named: the first sentence, not the whole report.
+  const headline = (() => {
+    const first = overview.split(/\n/)[0].replace(/^(the\s+)?guests?\s+(has\s+|have\s+)?(reported|said|says|mentioned|complained)\s+(that\s+)?/i, '')
+    const dot = first.search(/[.!?](\s|$)/)
+    const t = (dot > 10 ? first.slice(0, dot) : first).trim()
+    return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Guest issue'
+  })()
+  const dueOver = g.due_date && !closed && String(g.due_date).slice(0, 10) < todayET()
+  const hist: any[] = Array.isArray((g as any).history) ? (g as any).history : []
+  const taskLabel = g.task_status === 'completed' ? 'Completed' : g.task_status === 'in_progress' ? 'In progress' : g.task_status ? 'Not started' : ''
+  const taskTone = g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-800 ring-sky-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
+  const chip = 'text-[11.5px] font-semibold px-2 py-0.5 rounded-md ring-1'
 
   return (
     <Sheet open onClose={onClose} wide
       title={g.unit || 'Guest issue'}
-      subtitle={<span>{g.guest_name || 'Guest'}{g.category ? ' · ' + g.category : ''} · <span className="font-semibold">{lane.label}</span></span>}
+      subtitle={<span>{g.market ? g.market + ' · ' : ''}{lane.label}</span>}
       footer={
         <div className="flex items-center gap-2 flex-wrap">
-          {LANES.filter(l => l.key !== lane.key).map(l => (
-            <button key={l.key} onClick={() => act(g.id, { action: 'move', status: l.write })}
-              className={'text-[12px] font-semibold px-3 h-9 rounded-xl border ' +
-                (l.key === 'closed' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>
-              {l.key === 'closed' ? 'Close it' : 'Move to ' + l.label}
-            </button>
-          ))}
+          <span className="text-[11.5px] text-muted">Created {fmtStamp(g.created_at)}{g.reported_by ? ' by ' + String(g.reported_by).split('@')[0] : ''}</span>
           <div className="flex-1" />
           <DeleteButton title="Delete this glitch record. The Breezeway task, if any, stays." onDelete={async () => {
             try {
@@ -365,134 +443,186 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
         </div>
       }>
 
-      <div className="flex items-center gap-1.5 flex-wrap mb-4">
-        <Tab k="work" label="The issue" />
-        <Tab k="money" label={refund > 0 ? 'Money · ' + money(refund) : 'Money'} />
-        <Tab k="talk" label="Comments" />
+      {/* TOP BAR: complete it, where it sits, and how long it has been open. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={() => act(g.id, { action: 'move', status: closed ? 'ops' : 'closed' })}
+          className={'inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
+            (closed ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-ink border-line hover:border-emerald-500 hover:text-emerald-700')}>
+          <Check size={14} /> {closed ? 'Completed — reopen' : 'Mark complete'}
+        </button>
+        <OpenClock g={g} />
+        {dueOver ? <span className={chip + ' bg-rose-50 text-rose-800 ring-rose-200'}>Overdue</span> : null}
+        {g.refund_needs_approval ? <span className={chip + ' bg-violet-50 text-violet-800 ring-violet-200'}>Refund awaiting approval</span> : null}
       </div>
 
-      {tab === 'work' ? (
-        <div className="space-y-4">
-          {/* HOW LOUD IS THIS — settable before any task exists, which is when triage happens. */}
-          <section className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] uppercase tracking-wider font-bold text-muted">Priority</span>
+      <h2 className="text-[20px] sm:text-[22px] font-bold text-ink leading-snug mt-3">{headline}</h2>
+
+      {/* THE FIELDS — everything a person looks for, in one column, no tabs. */}
+      <div className="mt-2 divide-y divide-line/60">
+        <FieldRow label="Status">
+          <select value={lane.key} onChange={e => { const l = LANES.find(x => x.key === e.target.value); if (l) act(g.id, { action: 'move', status: l.write }) }}
+            className="text-[13px] font-semibold border border-line rounded-lg px-2 h-8 bg-white">
+            {LANES.map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
+          </select>
+        </FieldRow>
+        <FieldRow label="Priority">
+          <div className="flex gap-1 flex-wrap">
             {[['urgent', 'Urgent'], ['high', 'High'], ['normal', 'Normal'], ['low', 'Low']].map(([k, label]) => {
               const on = String(g.priority || 'urgent').toLowerCase() === k
               return (
                 <button key={k} onClick={() => act(g.id, { action: 'priority', priority: k })}
-                  className={'text-[12px] font-bold px-2.5 h-8 rounded-xl border transition ' +
-                    (on
-                      ? (k === 'urgent' ? 'bg-rose-600 text-white border-rose-600' : 'bg-ink text-white border-ink')
-                      : 'bg-white text-muted border-line hover:text-ink')}>
+                  className={'text-[12px] font-semibold px-2.5 h-7 rounded-lg border ' +
+                    (on ? (k === 'urgent' ? 'bg-rose-600 text-white border-rose-600' : 'bg-ink text-white border-ink') : 'bg-white text-muted border-line hover:text-ink')}>
                   {label}
                 </button>
               )
             })}
-          </section>
+          </div>
+        </FieldRow>
+        <FieldRow label="Assignee">
+          {g.assignee ? <span className="font-semibold">{g.assignee}</span> : <span className="text-muted">No assignee</span>}
+          {g.due_date ? <span className={dueOver ? 'text-rose-700 font-semibold' : 'text-muted'}> · due {fmtDay(g.due_date)}</span> : null}
+        </FieldRow>
+        <FieldRow label="Reported">
+          <span className="font-semibold">{fmtStamp(g.created_at)}</span>
+          {g.incident_date && String(g.incident_date).slice(0, 10) !== String(g.created_at).slice(0, 10)
+            ? <span className="text-muted"> · happened {fmtDay(g.incident_date)}</span> : null}
+          {g.reported_via ? <span className="text-muted"> · via {String(g.reported_via).replace(/_/g, ' ')}</span> : null}
+        </FieldRow>
+        <FieldRow label="Check-in">
+          {g.check_in ? <span className="font-semibold">{fmtDay(g.check_in)}</span> : <span className="text-muted">No reservation linked</span>}
+        </FieldRow>
+        <FieldRow label="Check-out">
+          {g.check_out ? (
+            <span>
+              <span className="font-semibold">{fmtDay(g.check_out)}</span>
+              {nights ? <span className="text-muted"> · {nights} night{nights === 1 ? '' : 's'}</span> : null}
+              {stay.label ? <span className={chip + ' ml-2 ' + (stay.now ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : 'bg-app text-muted ring-line')}>{stay.label}</span> : null}
+            </span>
+          ) : <span className="text-muted">—</span>}
+        </FieldRow>
+        <FieldRow label="Guest">
+          <span className="font-semibold">{g.guest_name || 'Guest'}</span>
+          {[g.guest_phone, g.guest_email].filter(Boolean).length ? <span className="text-muted"> · {[g.guest_phone, g.guest_email].filter(Boolean).join(' · ')}</span> : null}
+          {g.guest_tone ? <span className={chip + ' ml-2 bg-app text-muted ring-line'}>{g.guest_tone}</span> : null}
+          <span className="ml-1.5 inline-block align-middle"><SentimentChip s={g.sentiment} /></span>
+        </FieldRow>
+        <FieldRow label="Booking">
+          {g.reservation_id ? (
+            <span>
+              {[g.channel, g.reservation_total ? money(g.reservation_total) : ''].filter(Boolean).join(' · ') || 'Linked'}
+              <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer"
+                className="ml-2 font-semibold text-brand-700 hover:underline">Open in Guesty ↗</a>
+            </span>
+          ) : <span className="text-muted">No reservation linked</span>}
+        </FieldRow>
+        <FieldRow label="Category">
+          <span className="inline-flex items-center gap-1.5 flex-wrap">
+            {trade ? <span className={chip + ' ' + trade.cls}>{trade.label}</span> : null}
+            <span className="text-muted">{g.category || 'Not set'}</span>
+          </span>
+        </FieldRow>
+        <FieldRow label="Breezeway task">
+          {g.breezeway_task_id ? (
+            <span className="inline-flex items-center gap-2 flex-wrap">
+              {taskLabel ? <span className={chip + ' ' + taskTone}>{taskLabel}</span> : null}
+              <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer" className="font-semibold text-brand-700 hover:underline">Open ↗</a>
+              {g.task_report_url ? <a href={g.task_report_url} target="_blank" rel="noreferrer" className="font-semibold text-brand-700 hover:underline">Field report ↗</a> : null}
+              <button onClick={() => act(g.id, { action: 'checkTask' })} className="text-[12px] font-semibold text-muted hover:text-ink underline">Check status</button>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-2">
+              <span className="text-muted">Not filed yet</span>
+              <button onClick={() => setPanel(panel === 'push' ? '' : 'push')} className="text-[12px] font-bold px-2.5 h-7 rounded-lg bg-ink text-white">Create the task</button>
+            </span>
+          )}
+        </FieldRow>
+        <FieldRow label="Refund">
+          <button onClick={() => refundRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="text-left">
+            {refund > 0 || g.refund_approved === 0
+              ? <span className="font-semibold text-emerald-700">{money(refund)} given</span>
+              : <span className="text-muted">None logged</span>}
+            {rec != null ? <span className="text-muted"> · advisor suggests {money(rec)}</span> : null}
+          </button>
+        </FieldRow>
+      </div>
+      {panel === 'push' && !g.breezeway_task_id ? <div className="mt-2"><PushPanel g={g} people={people} onDone={() => { setPanel(''); onChanged() }} act={act} /></div> : null}
 
-          <section>
-            <div className="flex items-baseline gap-2 mb-1.5">
-              <p className="text-[11px] uppercase tracking-wider font-bold text-muted">What the guest said</p>
-              <button onClick={openEdit} title="Fix a typo, or change the unit, guest or category"
-                className="text-[11px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
-                <Pencil size={11} /> Edit
-              </button>
-            </div>
-            <p className="text-[13.5px] text-ink leading-relaxed whitespace-pre-wrap">{g.overview}</p>
+      {/* DESCRIPTION — the guest's words, in full. */}
+      <section className="border-t border-line pt-3 mt-3" ref={editRef as any}>
+        <div className="flex items-center gap-2">
+          <span className="text-[14px] font-bold text-ink">Description</span>
+          <button onClick={() => (panel === 'edit' ? setPanel('') : openEdit())} title="Fix a typo, or change the unit, guest or category"
+            className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
+            <Pencil size={12} /> {panel === 'edit' ? 'Done editing' : 'Edit'}
+          </button>
+        </div>
+        {panel === 'edit' ? (
+          <div className="mt-2"><EditGlitch g={g} onDone={() => { setPanel(''); onChanged() }} /></div>
+        ) : (
+          <>
+            <p className="text-[14px] text-ink leading-relaxed whitespace-pre-wrap mt-1.5">{overview || 'Nothing written.'}</p>
             {g.sentiment && g.sentiment.excerpt ? (
               <p className="text-[12.5px] text-muted mt-2 border-l-2 border-line pl-3 italic">&ldquo;{String(g.sentiment.excerpt).slice(0, 300)}&rdquo;</p>
             ) : null}
-            <div className="flex items-center gap-1.5 flex-wrap mt-2">
-              <SentimentChip s={g.sentiment} />
-              {g.reported_via ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">via {String(g.reported_via).replace(/_/g, ' ')}</span> : null}
-              {g.guest_tone ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">guest {g.guest_tone}</span> : null}
-              {g.incident_date ? <span className="text-[10px] text-muted">happened {fmtShort(g.incident_date)}</span> : null}
-            </div>
-          </section>
+          </>
+        )}
+        {(g.photos || []).length > 0 ? (
+          <div className="flex gap-1.5 flex-wrap mt-3">
+            {(g.photos || []).map((u, i) => (
+              <a key={i} href={glitchPhotoSrc(u)} target="_blank" rel="noreferrer">
+                <img src={glitchPhotoSrc(u)} alt="" className="w-24 h-24 object-cover rounded-lg border border-line" />
+              </a>
+            ))}
+          </div>
+        ) : null}
+      </section>
 
-          {(g.photos || []).length > 0 ? (
-            <section>
-              <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">Photos</p>
-              <div className="flex gap-1.5 flex-wrap">
-                {(g.photos || []).map((u, i) => (
-                  <a key={i} href={glitchPhotoSrc(u)} target="_blank" rel="noreferrer">
-                    <img src={glitchPhotoSrc(u)} alt="" className="w-20 h-20 object-cover rounded-lg border border-line" />
-                  </a>
-                ))}
-              </div>
-            </section>
-          ) : null}
+      <div className="space-y-3 mt-3">
+        <Fold title="The job" hint={g.assignee ? g.assignee + (g.due_date ? ' · due ' + fmtShort(g.due_date) : '') : 'assignee, due date, work notes'}>
+          <GlitchManage g={g} people={people} onDone={onChanged} />
+          {g.details ? <p className="text-[12.5px] text-ink whitespace-pre-wrap mt-2">{g.details}</p> : null}
+        </Fold>
 
-          <section className="rounded-xl bg-app ring-1 ring-line px-3.5 py-3">
-            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">The stay</p>
-            <p className="text-[12.5px] text-ink">
-              {g.check_in ? fmtShort(g.check_in) + ' → ' + fmtShort(g.check_out) : 'No reservation linked'}
-              {g.reservation_total ? ' · ' + money(g.reservation_total) : ''}
-              {g.channel ? ' · ' + g.channel : ''}
-            </p>
-            <p className="text-[12px] text-muted mt-0.5">
-              {[g.guest_phone, g.guest_email].filter(Boolean).join(' · ') || 'No contact on file'}
-            </p>
-            {g.reservation_notes ? <p className="text-[12px] text-muted mt-1.5">Notes: {String(g.reservation_notes).slice(0, 300)}</p> : null}
-            {g.reservation_id ? (
-              <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer"
-                className="text-[12px] font-semibold text-brand-700 hover:underline mt-1.5 inline-block">Open in Guesty ↗</a>
-            ) : null}
-          </section>
-
-          {g.reservation_id ? <StayPanel reservationId={g.reservation_id} compact hide={['issues']} /> : null}
-
-          <UnitSignals g={g} />
-
-          <section>
-            <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">The Breezeway job</p>
-            {g.breezeway_task_id ? (
-              <div className="rounded-xl ring-1 ring-line bg-white px-3.5 py-3">
-                <p className="text-[12.5px] text-ink">
-                  <span className="font-semibold">{g.task_status === 'completed' ? 'Completed' : g.task_status === 'in_progress' ? 'In progress' : 'Not started'}</span>
-                  {g.assignee ? ' · ' + g.assignee : ' · nobody assigned'}
-                  {g.due_date ? ' · due ' + fmtShort(g.due_date) : ''}
-                </p>
-                <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                  <a href={'https://app.breezeway.io/task/' + g.breezeway_task_id} target="_blank" rel="noreferrer"
-                    className="text-[12px] font-semibold px-2.5 h-8 inline-flex items-center rounded-lg border border-line bg-white text-brand-700">Open in Breezeway ↗</a>
-                  {g.task_report_url ? <a href={g.task_report_url} target="_blank" rel="noreferrer" className="text-[12px] font-semibold px-2.5 h-8 inline-flex items-center rounded-lg border border-line bg-white">Field report</a> : null}
-                  <button onClick={() => act(g.id, { action: 'checkTask' })} className="text-[12px] font-semibold px-2.5 h-8 rounded-lg border border-line bg-white">Check status</button>
-                </div>
-                <div className="mt-2.5"><GlitchManage g={g} people={people} onDone={onChanged} /></div>
-              </div>
-            ) : (
-              <>
-                <p className="text-[12.5px] text-muted mb-2">Nothing has been filed for the crew yet.</p>
-                <button onClick={() => setPanel(panel === 'push' ? '' : 'push')}
-                  className="text-[12.5px] font-bold px-3.5 h-9 rounded-xl bg-ink text-white">Create the task</button>
-                {panel === 'push' ? <div className="mt-2"><PushPanel g={g} people={people} onDone={() => { setPanel(''); onChanged() }} act={act} /></div> : null}
-              </>
-            )}
-          </section>
-
-          <section ref={editRef as any}>
-            <button onClick={() => (panel === 'edit' ? setPanel('') : openEdit())}
-              className="text-[12px] font-semibold px-2.5 h-8 rounded-lg border border-line bg-white text-muted hover:text-ink inline-flex items-center gap-1.5">
-              <Pencil size={12} /> {panel === 'edit' ? 'Done editing' : 'Edit the details'}
-            </button>
-            {panel === 'edit' ? (
-              <div className="mt-2">
-                <p className="text-[11.5px] text-muted mb-2">Anything typed in wrong — the words, the unit, the guest, the category, the date.</p>
-                <EditGlitch g={g} onDone={() => { setPanel(''); onChanged() }} />
-              </div>
-            ) : null}
-          </section>
+        <div ref={refundRef}>
+          <Fold title="Refund" hint={refund > 0 ? money(refund) + ' given' : rec != null ? 'advisor suggests ' + money(rec) : 'fix first; money last'}>
+            <MoneyTab g={g} openRefund={openRefund} onChanged={onChanged} />
+          </Fold>
         </div>
-      ) : null}
 
-      {tab === 'money' ? <MoneyTab g={g} openRefund={openRefund} onChanged={onChanged} /> : null}
+        {g.reservation_id ? (
+          <Fold title="The stay" hint="messages, calls, other issues on this booking" open={false}>
+            <StayPanel reservationId={g.reservation_id} compact hide={['issues']} />
+          </Fold>
+        ) : null}
 
-      {tab === 'talk' ? (
-        <CommentThread type="glitch" id={g.id}
-          label={(g.unit ? g.unit + ' — ' : '') + String(g.overview || 'glitch').split('\n')[0].slice(0, 60)}
-          link="/glitches" taskId={g.breezeway_task_id || ''} reservationId={g.reservation_id || ''} />
-      ) : null}
+        <Fold title="This unit" hint="history and signals" open={false}>
+          <UnitSignals g={g} />
+        </Fold>
+
+        {/* COMMENTS AND ACTIVITY — at the bottom, where Asana keeps them. */}
+        <Fold title="Comments" hint={hist.length ? hist.length + ' updates on the card' : undefined}>
+          <CommentThread type="glitch" id={g.id}
+            label={(g.unit ? g.unit + ' — ' : '') + String(g.overview || 'glitch').split('\n')[0].slice(0, 60)}
+            link="/glitches" taskId={g.breezeway_task_id || ''} reservationId={g.reservation_id || ''} />
+          {hist.length ? (
+            <div className="mt-3 border-t border-line/60 pt-2">
+              <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1">Activity</p>
+              <ul className="space-y-0.5">
+                {hist.slice().reverse().slice(0, 25).map((h: any, i: number) => (
+                  <li key={i} className="text-[12px] text-muted">
+                    <span className="text-ink font-medium">{String(h.by || 'team').split('@')[0]}</span>{' '}
+                    {String(h.action || '').replace(/_/g, ' ')}
+                    {h.to ? ' → ' + (LANES.find(l => l.statuses.indexOf(String(h.to)) >= 0)?.label || h.to) : ''}
+                    {h.amount != null ? ' · $' + h.amount : ''}
+                    <span className="text-faint"> · {fmtStamp(h.at)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </Fold>
+      </div>
     </Sheet>
   )
 }
@@ -899,6 +1029,11 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
   const urgent = String(g.priority || '').toLowerCase() === 'urgent' && !closed
   const trade = tradeOf(g.category)
   const stay = stayState(g.check_in, g.check_out)
+  // DAYS OPEN on the card (Jon, 2026-09-22: "a ticker, days open"). Grey under a day, amber from
+  // one, red from three — the age of the complaint is what the board should make hard to ignore.
+  const ageMs = Date.now() - Date.parse(g.created_at)
+  const ageDays = ageMs / 86400000
+  const age = !closed && Number.isFinite(ageMs) ? (ageDays >= 1 ? Math.floor(ageDays) + 'd' : Math.max(1, Math.floor(ageMs / 3600000)) + 'h') : ''
 
   const taskTag = g.breezeway_task_id
     ? (g.task_status === 'completed' ? <Tag tone="emerald" title="Breezeway task completed">Task done</Tag>
@@ -917,6 +1052,10 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
       <button onClick={onOpen} title={hover} className="w-full text-left px-2.5 py-2 min-w-0">
         <div className="flex items-center gap-1.5 min-w-0">
           <p className="text-[13px] font-semibold text-ink truncate flex-1 min-w-0">{g.unit || 'No unit'}</p>
+          {age ? (
+            <span title={'Open for ' + age} className={'shrink-0 text-[10.5px] font-bold tabular-nums px-1.5 py-[2px] rounded-md ' +
+              (ageDays >= 3 ? 'bg-rose-50 text-rose-700' : ageDays >= 1 ? 'bg-amber-50 text-amber-800' : 'bg-app text-muted')}>{age}</span>
+          ) : null}
           {g.assignee ? (
             <span className="shrink-0 text-[10.5px] font-semibold text-muted inline-flex items-center gap-0.5" title={'Assigned to ' + g.assignee}>
               <User2 size={10} />{g.assignee.split(' ')[0]}
