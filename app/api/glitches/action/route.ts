@@ -162,6 +162,17 @@ export async function POST(req: NextRequest) {
       if (b.dueDate !== undefined) patch.due_date = /^\d{4}-\d{2}-\d{2}$/.test(str(b.dueDate)) ? str(b.dueDate) : null
       if (b.assignee !== undefined) patch.assignee = str(b.assignee) || null
       if (b.assigneePersonId !== undefined) { const pid = Number(b.assigneePersonId); patch.assignee_person_id = Number.isFinite(pid) && pid > 0 ? pid : null }
+      // Assigned to an app user (2026-09-22): tell them. The card link opens the board.
+      if (b.assigneeEmail && str(b.assignee) && str(b.assignee) !== str(g.assignee)) {
+        try {
+          const { notify } = await import('@/lib/notify')
+          await notify([str(b.assigneeEmail)], {
+            kind: 'assignment', actor: user.email || undefined, link: '/glitches',
+            title: 'Glitch assigned to you: ' + (str(g.unit) || 'guest issue'),
+            body: str(g.overview).split('\n')[0].slice(0, 200),
+          })
+        } catch { /* the assignment still saves */ }
+      }
       // ASSIGN REACHES THE CREW (Jon, 2026-09-02: "should be able to assign"). Saving an owner
       // here used to write only our row — the Breezeway task, the thing the crew actually looks
       // at, kept its old assignee. When the glitch has a task, the assignment now goes there too.
