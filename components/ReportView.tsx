@@ -4763,12 +4763,30 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </div>
                 {(c.pacing.rows as Any[]).map((r: Any, i: number) => {
                   const behind = /^[-−]/.test(String(r.delta || ''))
+                  // THE CHART JON ASKED TO KEEP (2026-09-22: "also keep some of the pacing
+                  // charts"). Two bars on one scale say "well ahead here, barely ahead there" at a
+                  // glance; four columns of numbers make the reader do that work themselves. The
+                  // numbers stay — the bar is the shape of the gap, not a replacement for it.
+                  const val = (v: Any) => { const n = Number(String(v || '').replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? n : 0 }
+                  const a = val(r.ours), b = val(r.comps), top = Math.max(a, b, 1)
                   return (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) 1fr 1fr 1fr', gap: 16, padding: '15px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.5) }}>
-                      <p style={{ fontSize: 16, color: t.ink, margin: 0, fontWeight: 500 }}>{String(r.metric || '')}</p>
-                      <p style={{ fontSize: 22, color: t.ink, margin: 0, textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{String(r.ours || '')}</p>
-                      <p style={{ fontSize: 18, color: t.muted, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String(r.comps || '')}</p>
-                      <p style={{ fontSize: 18, margin: 0, textAlign: 'right', fontWeight: 600, color: behind ? t.downGray : t.good, fontVariantNumeric: 'tabular-nums' }}>{String(r.delta || '')}</p>
+                    <div key={i} style={{ padding: '12px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.5) }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) 1fr 1fr 1fr', gap: 16, alignItems: 'baseline' }}>
+                        <p style={{ fontSize: 15.5, color: t.ink, margin: 0, fontWeight: 500 }}>{String(r.metric || '')}</p>
+                        <p style={{ fontSize: 21, color: t.ink, margin: 0, textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{String(r.ours || '')}</p>
+                        <p style={{ fontSize: 17, color: t.muted, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String(r.comps || '')}</p>
+                        <p style={{ fontSize: 17, margin: 0, textAlign: 'right', fontWeight: 600, color: behind ? t.downGray : t.good, fontVariantNumeric: 'tabular-nums' }}>{String(r.delta || '')}</p>
+                      </div>
+                      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div className="flex items-center" style={{ gap: 9 }}>
+                          <span style={{ fontSize: 9.5, letterSpacing: '0.1em', color: t.muted, width: 36, flexShrink: 0 }}>US</span>
+                          <span style={{ height: 9, borderRadius: 999, background: t.barB, width: Math.max(2, (a / top) * 100) + '%' }} />
+                        </div>
+                        <div className="flex items-center" style={{ gap: 9 }}>
+                          <span style={{ fontSize: 9.5, letterSpacing: '0.1em', color: t.muted, width: 36, flexShrink: 0 }}>COMP</span>
+                          <span style={{ height: 9, borderRadius: 999, background: t.barA, width: Math.max(2, (b / top) * 100) + '%' }} />
+                        </div>
+                      </div>
                     </div>
                   )
                 })}
@@ -4823,6 +4841,32 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 ))}
               </div>
+              {/* The months-ahead occupancy strip. buildPptx has drawn this on the exported deck
+                  since P5 while the web deck had nothing — same data, same paceBar colours, which
+                  are the per-theme triple already run through the palette validator. */}
+              {(() => {
+                const strip: Any[] = Array.isArray(ahead.strip) && ahead.strip.length
+                  ? (ahead.strip as Any[]).slice(0, 8)
+                  : ((ahead.months as Any[]) || []).slice(0, 8).map((m: Any) => ({ month: String(m.label || '').replace(/\s+\d{4}$/, '').slice(0, 3), occPct: m.occPct }))
+                if (strip.length < 3) return null
+                return (
+                  <div style={{ marginTop: 28 }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 12px' }}>Months ahead &middot; occupancy on the books</p>
+                    <div className="flex items-end" style={{ gap: 10, height: 92 }}>
+                      {strip.map((x: Any, i: number) => {
+                        const pct = Math.max(0, Math.min(100, Number(x.occPct) || 0))
+                        return (
+                          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: t.ink, marginBottom: 5, fontVariantNumeric: 'tabular-nums' }}>{Math.round(pct)}%</span>
+                            <span style={{ width: '100%', borderRadius: 6, background: paceBar(t, pct, i === 0, Math.max(1, i)), height: Math.max(4, (pct / 100) * 58) }} />
+                            <span style={{ fontSize: 10.5, color: t.muted, marginTop: 7, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{String(x.month || '')}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
               <SlideNote k="ahead" />
             </Slide>
           ) })
