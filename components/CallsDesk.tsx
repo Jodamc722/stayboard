@@ -100,18 +100,6 @@ type Kpis = {
 
 // Sort weight inside a day — lux first (Jon: "lux calls get priority"), then recovery, big, standard.
 const TIER_RANK: Record<Tier, number> = { lux: 0, recovery: 1, big: 2, standard: 3 }
-const TIER_META: Record<Tier, { label: string; Icon: any; cls: string }> = {
-  recovery: { label: 'Recovery', Icon: HeartHandshake, cls: 'bg-rose-600 text-white' },
-  lux: { label: 'Luxury', Icon: Crown, cls: 'bg-violet-600 text-white' },
-  big: { label: 'Big booking', Icon: Gem, cls: 'bg-emerald-600 text-white' },
-  standard: { label: 'Standard', Icon: PhoneCall, cls: 'bg-slate-100 text-slate-600' },
-}
-const REASON_META: Record<string, { label: string; Icon: any; cls: string }> = {
-  glitch: { label: 'Issue during stay', Icon: Wrench, cls: 'bg-rose-100 text-rose-700' },
-  recovery: { label: 'Unit in recovery', Icon: HeartHandshake, cls: 'bg-amber-100 text-amber-800' },
-  direct: { label: 'Direct booking', Icon: Globe, cls: 'bg-indigo-100 text-indigo-700' },
-  value: { label: 'High-value stay', Icon: Star, cls: 'bg-emerald-100 text-emerald-700' },
-}
 
 const money = (n: number) => n ? '$' + Math.round(n).toLocaleString() : ''
 const who = (e: string) => e ? (e.split('@')[0] || e) : ''
@@ -223,17 +211,6 @@ function Chip({ Icon, children, tone }: { Icon: any; children: any; tone?: 'warn
   return <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11.5px] ${cls}`}><Icon size={11} className="shrink-0" />{children}</span>
 }
 
-/** One line on the card: the unit is in recovery. The review itself is behind the click (Jon:
- *  "only show the review if you click into it"). */
-function RecoveryFlag({ rec }: { rec: Recovery }) {
-  return (
-    <div className="text-[12px] text-rose-800 inline-flex items-center gap-1.5 flex-wrap">
-      <HeartHandshake size={13} className="shrink-0" />
-      <b>Recovery</b> · last review {rec.rating.toFixed(1)}★{rec.channel ? ` on ${rec.channel}` : ''} {shortDay(rec.at)} · {rec.openDays} {rec.openDays === 1 ? 'day' : 'days'} without a good one
-      <span className="text-rose-800/70">— open the script for what they said.</span>
-    </div>
-  )
-}
 /** Inside the script: what the last guest wrote, and what this call is for. */
 function RecoveryNote({ rec, unit }: { rec: Recovery; unit: string }) {
   return (
@@ -361,19 +338,6 @@ function WelcomeScript({ r, draft, setDraft, onSaveNote, saving, saved }: {
   )
 }
 
-// ── OUTCOME ROW: how every call ends ────────────────────────────────────────────────────────────
-function OutcomeRow({ busy, onReached, onVoicemail, onNoAnswer, attempts, compact }: {
-  busy: boolean; onReached: () => void; onVoicemail: () => void; onNoAnswer: () => void; attempts: number; compact?: boolean
-}) {
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <button onClick={onReached} disabled={busy} className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Reached</button>
-      <button onClick={onVoicemail} disabled={busy} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-ink hover:bg-app disabled:opacity-50"><Voicemail size={13} /> Left voicemail</button>
-      <button onClick={onNoAnswer} disabled={busy} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-semibold text-muted hover:text-ink disabled:opacity-50"><PhoneOff size={13} /> No answer{attempts > 0 ? ` (${attempts} so far)` : ''}</button>
-      {!compact && <span className="text-[11px] text-muted/70">Voicemail counts as called. No answer keeps it on the sheet.</span>}
-    </div>
-  )
-}
 
 export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, me, talkroute = false, callers = [] }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; me: string; talkroute?: boolean; callers?: string[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
@@ -441,7 +405,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // ── POST-CHECKOUT ACTIONS ──
   async function post(id: string, outcome: 'happy' | 'issue' | 'no_answer' | 'claim' | 'undo') {
     let by = myName || who(me)
-    if (outcome !== 'undo') { const n = askName(); if (n === null) return; by = n }
+    if (outcome !== 'undo' && !myName) { const n = askName(); if (n === null) return; by = n }
     const note = (draft[id] || '').trim()
     setBusy(id); setError(null); setFailedId(null)
     try {
@@ -482,14 +446,8 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   const allSorted = rows.filter(r => r.check_in >= today).sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (b.value - a.value))
   const shownOut = [...outRows].sort((a, b) => (Number(a.done) - Number(b.done)) || b.check_out.localeCompare(a.check_out))
 
-  // Grouped by arrival day (Jon: "organized by the day of arrival"), mandatory first inside a day.
-  const groupByDay = (xs: Row[]) => {
-    const m = new Map<string, Row[]>()
-    const ordered = [...xs].sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (Number(!!b.recovery) - Number(!!a.recovery)) || (b.value - a.value))
-    for (const r of ordered) { if (!m.has(r.check_in)) m.set(r.check_in, []); m.get(r.check_in)!.push(r) }
-    return m
-  }
-  const dayLabel = (d: string) => d === today ? 'Today — closes tonight' : d === nextDay(today) ? 'Tomorrow' : shortDay(d)
+  // By arrival day, then lux > recovery > big > standard, then value (Jon: "organized by the day of arrival").
+  const byArrival = (xs: Row[]) => [...xs].sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (Number(!!b.recovery) - Number(!!a.recovery)) || (b.value - a.value))
 
   // THREE LANES, NOT ONE LIST (Jon, 2026-09-15: "make it more clear what calls need to be done. I
   // would organize it by mandatory calls, unit recovery calls, and welcome calls").
@@ -528,56 +486,64 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   })) as any[]).sort((a, b) => String(b.when).localeCompare(String(a.when)))
 
   const TABS = [
-    { key: 'welcome' as const, label: 'Welcome calls', n: duePending.length },
+    { key: 'welcome' as const, label: 'To call', n: duePending.length },
     { key: 'post' as const, label: 'Post-checkout', n: kpis.postDue },
-    { key: 'done' as const, label: 'Completed', n: doneCalls.length },
+    { key: 'done' as const, label: 'Done', n: doneCalls.length },
     { key: 'board' as const, label: 'Scoreboard', n: null as number | null },
-    { key: 'all' as const, label: 'All arrivals', n: rows.length },
+    { key: 'all' as const, label: 'Next 14 days', n: null as number | null },
   ]
 
+  // The two numbers the desk is judged on, in one line (the 7-day strip lives on the Scoreboard tab).
+  const mTot = kpis.mandatoryDoneToday + kpis.mandatoryOpen
+  const oDone = Math.max(0, kpis.calledToday - kpis.mandatoryDoneToday)
+  const oTot = oDone + Math.max(0, kpis.dueNow - kpis.mandatoryOpen) + kpis.postDue
+  const listProps = { today, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }
+  function setCaller(v: string) { setMyName(v); try { window.localStorage.setItem('wc_caller_name', v) } catch { /* ignore */ } }
+
   return (
-    <div className="space-y-4">
-      <header>
-        <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><PhoneCall size={13} /> Guest calls</p>
-        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Calls desk</h1>
-        <p className="text-sm text-muted mt-1">Mandatory calls are called — every one, every day. Other calls get completed. A welcome call is due from 72 hours before arrival and must be done by the arrival day; anything still open that night closes out as a miss.</p>
+    <div className="space-y-3">
+      <CallerOptions names={callers} />
+      <header className="flex items-end justify-between gap-3 flex-wrap">
+        <h1 className="text-2xl font-bold text-ink tracking-tight inline-flex items-center gap-2"><PhoneCall size={20} className="text-brand-600" /> Calls</h1>
+        <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
+          <span className={`rounded-lg px-2 py-1 font-semibold tabular-nums ${!mTot ? 'bg-slate-100 text-muted' : kpis.mandatoryOpen ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>Must call {kpis.mandatoryDoneToday}/{mTot}</span>
+          <span className="rounded-lg px-2 py-1 font-semibold tabular-nums bg-slate-100 text-ink">Other {oDone}/{oTot}</span>
+          {kpis.lastChance > 0 && <span className="rounded-lg px-2 py-1 font-semibold bg-rose-600 text-white">{kpis.lastChance} close tonight</span>}
+          {kpis.closedOut > 0 && <span className="rounded-lg px-2 py-1 font-semibold bg-slate-100 text-muted">{kpis.closedOut} missed</span>}
+        </div>
       </header>
 
-      {/* THE SCORE, TODAY — the two numbers the desk is judged on (Jon, 2026-09-09: "mandatory units
-          need to be called 100%, and other calls should be completed"), then the same two by day. */}
-      <DayScore today={today} mandatoryDone={kpis.mandatoryDoneToday} mandatoryOpen={kpis.mandatoryOpen}
-        otherDone={Math.max(0, kpis.calledToday - kpis.mandatoryDoneToday)} otherOpen={Math.max(0, kpis.dueNow - kpis.mandatoryOpen) + kpis.postDue}
-        chips={[
-          kpis.recoveryFailed ? 'recovery could not be worked out' : `${kpis.recoveryUnits} unit${kpis.recoveryUnits === 1 ? '' : 's'} awaiting a good review`,
-          `${kpis.postDue} post-checkout due`,
-          kpis.coverage == null ? null : `${kpis.coverage}% of arrivals called, last 7 days`,
-          kpis.lastChance ? `${kpis.lastChance} arriving today close tonight` : null,
-        ].filter(Boolean) as string[]} />
-
-      <div className="lh-actions flex items-center gap-2 flex-wrap">
-        <div className="inline-flex rounded-xl border border-line overflow-hidden text-[13px]">
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px]">
           {TABS.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
-              className={`px-2.5 sm:px-3.5 py-2 font-semibold border-l border-line first:border-l-0 inline-flex items-center gap-1.5 ${tab === t.key ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
-              {t.key === 'board' && <BarChart3 size={13} />}{t.label}{t.n != null ? ` (${t.n})` : ''}
+              className={`px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ${tab === t.key ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
+              {t.label}{t.n ? <span className="ml-1 opacity-70 tabular-nums">{t.n}</span> : null}
             </button>
           ))}
         </div>
-        <span className="text-[12px] text-muted">{kpis.pending} open in the next 14 days{kpis.closedOut ? ` · ${kpis.closedOut} closed incomplete` : ''}{myName ? ` · you are ${myName}` : ''}</span>
-        <a href="/reviews#recovery" className="text-[12px] font-semibold text-rose-700 inline-flex items-center gap-1 hover:underline"><HeartHandshake size={12} /> {kpis.recoveryFailed ? 'Recovery units' : `${kpis.recoveryUnits} unit${kpis.recoveryUnits === 1 ? '' : 's'} in recovery`} → Reviews</a>
+        <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted">
+          Calling as
+          <input value={myName} onChange={e => setCaller(e.target.value)} list="lh-callers" placeholder="your name"
+            className="w-[110px] rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink focus:outline-none focus:border-brand-600" />
+        </label>
       </div>
 
-      {kpis.recoveryFailed && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-800 flex items-start gap-2">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-          <span>The review scan came back short, so recovery calls could not be worked out this load — this is <b>not</b> a sign that no unit is in recovery. Reload in a minute; if it keeps happening, say so. Luxury, big-booking and standard calls below are unaffected.</span>
-        </div>
-      )}
-      {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
+      {kpis.recoveryFailed && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-800 flex items-center gap-2"><AlertTriangle size={13} className="shrink-0" /> Review scan came back short — recovery tags may be missing. Reload in a minute.</div>}
+      {error && !failedId && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-center gap-2"><AlertTriangle size={13} className="shrink-0" /> {error}</div>}
 
       {tab === 'done' && <CompletedList rows={doneCalls} />}
 
-      {tab === 'board' && <Scoreboard />}
+      {tab === 'board' && (
+        <div className="space-y-4">
+          <DayScore today={today} mandatoryDone={kpis.mandatoryDoneToday} mandatoryOpen={kpis.mandatoryOpen} otherDone={oDone} otherOpen={Math.max(0, kpis.dueNow - kpis.mandatoryOpen) + kpis.postDue}
+            chips={[
+              kpis.recoveryFailed ? '' : `${kpis.recoveryUnits} unit${kpis.recoveryUnits === 1 ? '' : 's'} in recovery`,
+              kpis.coverage == null ? '' : `${kpis.coverage}% of arrivals called, last 7 days`,
+            ].filter(Boolean)} />
+          <Scoreboard />
+        </div>
+      )}
 
       {tab === 'post' && (
         <PostCheckoutList rows={shownOut} openId={openId} setOpenId={setOpenId} draft={draft} setDraft={setDraft}
@@ -586,122 +552,33 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 
       {tab === 'welcome' && (
         duePending.length === 0 ? (
-          <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">Nothing due. Everyone arriving today and in the next 72 hours has had their call. Nice.</div>
+          <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">Nothing due — everyone arriving in the next 72 hours has had their call.</div>
         ) : (
-          <div className="space-y-6">
-            {LANES.map(lane => {
-              const byDay = groupByDay(lane.rows)
-              const todayN = lane.rows.filter(r => r.check_in === today).length
-              return (
-                <section key={lane.key}>
-                  <div className={'rounded-xl px-3.5 py-2.5 mb-2 border ' + (lane.must ? 'border-rose-200 bg-rose-50/70' : 'border-line bg-white')}>
-                    <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                      <h2 className={'text-[14px] font-bold ' + (lane.must ? 'text-rose-800' : 'text-ink')}>
-                        {lane.title}
-                        <span className="ml-2 text-[12px] font-semibold tabular-nums">{lane.rows.length}</span>
-                        {todayN ? <span className="ml-1.5 text-[12px] font-semibold">· {todayN} today</span> : null}
-                      </h2>
-                      <span className={'text-[11px] font-bold uppercase tracking-wider ' + (lane.must ? 'text-rose-700' : 'text-muted')}>
-                        {lane.must ? 'must be 100%' : 'complete what you can'}
-                      </span>
-                    </div>
-                    <div className={'text-[12px] mt-0.5 ' + (lane.must ? 'text-rose-900/80' : 'text-muted')}>
-                      {lane.why}
-                      {lane.key === 'recovery' && recoveryInMust
-                        ? <> · {recoveryInMust} more recovery unit{recoveryInMust === 1 ? '' : 's'} sit{recoveryInMust === 1 ? 's' : ''} in <b>Must call</b> above</>
-                        : null}
-                    </div>
-                  </div>
-                  {/* By day of arrival inside each lane (Jon), today first — today's arrivals are the
-                      deadline: no call by tonight and the row closes as incomplete. */}
-                  <div className="space-y-3">
-                    {Array.from(byDay.entries()).map(([d, xs]) => (
-                      <div key={d}>
-                        <h3 className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${d === today ? 'text-rose-700' : 'text-muted'}`}>{dayLabel(d)} — {xs.length}</h3>
-                        <WelcomeList rows={xs} talkroute={talkroute} callers={callers} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }} />
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )
-            })}
+          <div className="space-y-4">
+            {LANES.map(lane => (
+              <section key={lane.key}>
+                <h2 className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 px-1 flex items-center gap-2 ${lane.must ? 'text-rose-700' : 'text-muted'}`}>
+                  {lane.title} <span className="tabular-nums">{lane.rows.length}</span>
+                  {lane.must && <span className="normal-case tracking-normal font-semibold text-rose-600/80">· 100%</span>}
+                </h2>
+                <WelcomeList rows={byArrival(lane.rows)} {...listProps} />
+              </section>
+            ))}
           </div>
         )
       )}
 
       {tab === 'all' && (
         allSorted.length === 0
-          ? <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No upcoming reservations.</div>
-          : <WelcomeList rows={allSorted} talkroute={talkroute} callers={callers} {...{ openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }} />
+          ? <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">No upcoming reservations.</div>
+          : <WelcomeList rows={allSorted} {...listProps} />
       )}
 
-      {talkroute
-        ? <p className="text-[11px] text-muted"><PhoneCall size={11} className="inline" /> <b>Calls are tracked from Talkroute.</b> Dial the guest from the Talkroute app; when the call ends, Lighthouse matches it to the booking by phone number and marks it — answered is Reached, a short answered call is Voicemail (both count), missed or hung up adds an attempt and keeps the card. Every match writes the <b>Welcome Call</b> field and a dated note in Guesty. Use <i>Log by hand</i> only for a call made from a personal phone.</p>
-        : <p className="text-[11px] text-muted"><StickyNote size={11} className="inline" /> Reached and Voicemail write the <b>Welcome Call</b> field on the reservation in Guesty and append your note to the reservation notes. No answer, Take it and post-checkout outcomes are logged in Lighthouse (the post-checkout note goes to Guesty too). After midnight, any welcome call whose guest arrived today and any post-checkout call past its 48 hours closes as incomplete.</p>}
-    </div>
-  )
-}
-
-/** The manual outcome buttons, folded away when Talkroute is doing the marking. */
-function ManualFold({ children, label }: { children: ReactNode; label?: string }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="mt-2">
-      <button onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} /> {label || 'Log by hand (call made from a personal phone)'}</button>
-      {open && children}
-    </div>
-  )
-}
-
-/**
- * CLOSE IT OUT (2026-09-21, Jon: "We need it to close that call in the call desk as completed, or
- * give you the option to complete it, saying that it's been done, but you can also add a note").
- *
- * Talkroute closes a call by itself the moment the guest picks up. What it cannot judge is a call
- * that rang out, a guest reached on a personal phone, or a conversation that happened but needs a
- * line of context. So the card carries the human close-out in the open — not behind a fold — with
- * a note box beside it, because the note is the part that has to be typed while it is fresh.
- *
- * The note rides along with the outcome: /api/welcome-call appends it to the reservation notes in
- * Guesty on the same write that marks the call done.
- */
-function CompleteStrip({ r, busy, draft, setDraft, onComplete, talkroute, callers, me }: {
-  r: Row; busy: boolean
-  draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
-  onComplete: (o: 'reached' | 'voicemail' | 'no_answer', caller: string) => void
-  talkroute: boolean; callers: string[]; me: string
-}) {
-  const [by, setBy] = useState(me)
-  const seen = !!r.proof.lastAttemptAt
-  const answered = r.proof.lastResult === 'answered'
-  const talked = r.proof.talkSeconds >= 60 ? `${Math.round(r.proof.talkSeconds / 60)} min` : `${r.proof.talkSeconds}s`
-  return (
-    <div className="mt-1.5">
-      {seen && (
-        <div className={`text-[11px] mb-1 ${answered ? 'text-brand-700' : 'text-muted'}`}>
-          {answered
-            ? <>Call made {day(r.proof.lastAttemptAt)}{r.proof.talkSeconds ? ` · ${talked}` : ''} — mark it complete?</>
-            : <>{r.attempts || 1} attempt{(r.attempts || 1) === 1 ? '' : 's'}, never answered.</>}
-        </div>
-      )}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <input value={by} onChange={e => setBy(e.target.value)} list="lh-callers" placeholder="Who called"
-          title="Who made this call — Talkroute cannot tell us for outbound calls"
-          className="w-[116px] rounded-lg border border-line bg-white px-2 py-1.5 text-[12px] text-ink focus:outline-none focus:border-brand-600" />
-        <input value={draft[r.id] || ''} onChange={e => setDraft(d => ({ ...d, [r.id]: e.target.value }))}
-          placeholder="Note (optional) — goes to Guesty"
-          className="flex-1 min-w-[150px] rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] text-ink focus:outline-none focus:border-brand-600" />
-        <button onClick={() => onComplete('reached', by)} disabled={busy}
-          className="inline-flex items-center gap-1 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12px] font-semibold hover:bg-brand-700 disabled:opacity-50">
-          {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Complete
-        </button>
-        <button onClick={() => onComplete('voicemail', by)} disabled={busy} title="Left a voicemail — counts as completed"
-          className="inline-flex items-center justify-center rounded-lg border border-line bg-white w-[30px] h-[30px] text-muted hover:text-ink disabled:opacity-50"><Voicemail size={13} /></button>
-        {!seen && (
-          <button onClick={() => onComplete('no_answer', by)} disabled={busy} title={`No answer${r.attempts > 0 ? ` (${r.attempts} so far)` : ''}`}
-            className="inline-flex items-center justify-center rounded-lg border border-line bg-white w-[30px] h-[30px] text-muted hover:text-ink disabled:opacity-50"><PhoneOff size={13} /></button>
-        )}
-      </div>
+      <p className="text-[11px] text-muted/80">
+        {talkroute
+          ? 'Dial from the Call button — Talkroute marks answered calls complete on its own. Use ✓ / voicemail / no-answer for anything it can’t judge.'
+          : '✓ and voicemail write the Welcome Call field and your note to Guesty.'}
+      </p>
     </div>
   )
 }
@@ -754,105 +631,122 @@ function CallerOptions({ names }: { names: string[] }) {
 
 function nextDay(ymd: string) { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10) }
 
-// ── ONE WELCOME-CALL CARD LIST ─────────────────────────────────────────────────────────────────
-function WelcomeList({ rows, talkroute, callers, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }: {
-  rows: Row[]; talkroute: boolean; callers: string[]; openId: string | null; setOpenId: (v: string | null) => void
+// ── ONE LINE PER CALL (2026-09-22, Jon: "So noisy, should be clean, one liners and tags" · "Call
+// button and essential info"). The line is: the Call button, who, where, then tags. Tags carry every
+// flag the old card spelled out in sentences — the arrival day, why the call is mandatory, the
+// channel, a balance to collect, what the phone system saw. Everything else (script, notes, the
+// recording summary, Guesty, claim, undo) is one click away behind the row, not on it.
+const TAG_TONE: Record<string, string> = {
+  slate: 'bg-slate-100 text-slate-600',
+  rose: 'bg-rose-100 text-rose-700',
+  roseSolid: 'bg-rose-600 text-white',
+  violet: 'bg-violet-100 text-violet-700',
+  emerald: 'bg-emerald-100 text-emerald-700',
+  amber: 'bg-amber-100 text-amber-800',
+  brand: 'bg-brand-50 text-brand-700',
+}
+function Tag({ tone = 'slate', title, children }: { tone?: string; title?: string; children: ReactNode }) {
+  return <span title={title} className={`shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ${TAG_TONE[tone] || TAG_TONE.slate}`}>{children}</span>
+}
+function CallBtn({ phone }: { phone: string }) {
+  if (!phone) return <span title="No phone on file" className="shrink-0 inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-400 px-2.5 h-8 text-[12px] font-semibold"><PhoneOff size={13} /> No #</span>
+  return (
+    <a href={`tel:${phone.replace(/[^+\d]/g, '')}`} title={`Call ${phone} (opens Talkroute)`}
+      className="shrink-0 inline-flex items-center gap-1 rounded-full bg-brand-600 text-white px-3 h-8 text-[12px] font-semibold hover:bg-brand-700 shadow-sm">
+      <PhoneCall size={13} /> Call
+    </a>
+  )
+}
+function IconBtn({ title, onClick, disabled, tone, children }: { title: string; onClick: () => void; disabled?: boolean; tone?: 'ok' | 'bad'; children: ReactNode }) {
+  const cls = tone === 'ok' ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : tone === 'bad' ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-line text-muted hover:text-ink hover:bg-app'
+  return <button onClick={onClick} disabled={disabled} title={title} aria-label={title} className={`shrink-0 inline-flex items-center justify-center rounded-lg border bg-white w-8 h-8 disabled:opacity-40 ${cls}`}>{children}</button>
+}
+function dayTag(d: string, today: string) {
+  if (d === today) return <Tag tone="roseSolid" title="Arrives today — the call closes tonight">Today</Tag>
+  if (d === nextDay(today)) return <Tag tone="amber">Tomorrow</Tag>
+  let wd = ''
+  try { wd = new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' }) } catch { /* ignore */ }
+  return <Tag>{wd} {String(Number(d.slice(8, 10)))}</Tag>
+}
+/** The small utility strip at the top of an opened row: number + copy, Guesty, claim / undo. */
+function RowTools({ id, phone, copied, copyPhone, children }: { id: string; phone: string; copied: string | null; copyPhone: (id: string, p: string) => void; children?: ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 flex-wrap text-[12px] text-muted">
+      {phone
+        ? <span className="inline-flex items-center gap-1.5"><span className="font-semibold text-ink tabular-nums">{phone}</span>
+            {copied === id ? <span className="text-emerald-700 inline-flex items-center gap-1"><Check size={11} /> Copied</span> : <button onClick={() => copyPhone(id, phone)} className="hover:text-ink inline-flex items-center gap-1"><Copy size={11} /> Copy</button>}
+          </span>
+        : <span>No phone on file</span>}
+      <a href={`https://app.guesty.com/reservations/${id}/summary`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:text-ink"><Globe size={11} /> Guesty</a>
+      {children}
+    </div>
+  )
+}
+
+function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }: {
+  rows: Row[]; today: string; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; copied: string | null; copyPhone: (id: string, p: string) => void
   welcome: (id: string, o: 'reached' | 'voicemail' | 'no_answer' | 'claim' | 'undo', caller?: string) => void
   saveNote: (id: string) => void; saving: string | null; saved: string | null; myName: string
-  /** The row a save failed on, and what to say about it — shown against that row, not only up top. */
   failedId: string | null; error: string | null
 }) {
   return (
-    <ul className="rounded-2xl border border-line bg-white divide-y divide-line overflow-hidden">
-      <CallerOptions names={callers} />
+    <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
       {rows.map(r => {
         const ch = channelOf(r.source)
+        const pol = channelPolicy(ch)
         const open = openId === r.id
-        const T = TIER_META[r.tier]
-        const mine = !!r.claimedBy && myName && r.claimedBy.toLowerCase() === myName.toLowerCase()
-        const rowBg = r.done ? '' : r.recovery ? 'bg-rose-50/50' : r.mandatory ? 'bg-brand-50/40' : ''
+        const live = !r.done && !r.closed
+        const mine = !!r.claimedBy && !!myName && r.claimedBy.toLowerCase() === myName.toLowerCase()
+        const isBusy = busy === r.id
+        const owes = !pol.merchantOfRecord && !r.status.paidFull && r.status.balance > 0
+        const talked = r.proof.lastResult === 'answered' && r.proof.lastAttemptAt
         return (
-          <li key={r.id} className={`px-3 sm:px-4 py-2.5 flex flex-col gap-1.5 ${rowBg}`}>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-ink inline-flex items-center gap-2 flex-wrap">
-                  {r.guest || 'Guest'}
-                  {r.value > 0 && <span className="text-[12px] font-bold text-emerald-700">{money(r.value)}</span>}
-                  <Badge cls="bg-slate-100 text-slate-600">{ch}</Badge>
-                  {r.mandatory && !r.done && <Badge cls={T.cls} Icon={T.Icon}>{T.label} · mandatory</Badge>}
-                  {r.recovery && r.tier !== 'recovery' && !r.done && <Badge cls="bg-rose-600 text-white" Icon={HeartHandshake}>Bad review</Badge>}
-                  {r.lastChance && !r.done && !r.closed && <Badge cls="bg-rose-700 text-white" Icon={Clock}>Today · closes tonight</Badge>}
-                  {r.dueToday && !r.lastChance && !r.done && !r.closed && <Badge cls="bg-rose-600 text-white" Icon={Clock}>Today</Badge>}
-                  {r.due && !r.dueToday && !r.done && !r.closed && <Badge cls="bg-rose-100 text-rose-700" Icon={Clock}>Due · 72h</Badge>}
-                  {r.done && <Badge cls="bg-emerald-100 text-emerald-700" Icon={r.outcome === 'voicemail' ? Voicemail : Check}>{r.outcome === 'voicemail' ? 'Voicemail' : 'Reached'}</Badge>}
-                  {!r.done && r.outcome === 'no_answer' && <Badge cls="bg-slate-200 text-slate-700" Icon={PhoneOff}>No answer ×{r.attempts}</Badge>}
-                  {!r.done && r.claimedBy && <Badge cls={mine ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-800'} Icon={Hand}>{mine ? 'You have it' : `On it: ${r.claimedBy}`}</Badge>}
-                  {(r.closed || r.incomplete) && !r.done && <Badge cls="bg-slate-200 text-slate-600" Icon={PhoneOff}>Incomplete · closed</Badge>}
-                  {r.sensitive && <Badge cls="bg-rose-100 text-rose-700" Icon={ShieldAlert}>Sensitive</Badge>}
+          <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
+            <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+              <CallBtn phone={r.phone} />
+              <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-0 text-left">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.guest || 'Guest'}</span>
+                  <span className="text-[12px] text-muted truncate max-w-[14rem]">{r.listing}{r.status.nights ? ` · ${r.status.nights}n` : ''}</span>
+                  {dayTag(r.check_in, today)}
+                  {r.tier === 'lux' && <Tag tone="violet">Luxury</Tag>}
+                  {r.tier === 'big' && <Tag tone="emerald">Big {money(r.value)}</Tag>}
+                  {r.recovery && <Tag tone="rose" title={`Last review ${r.recovery.rating.toFixed(1)}★ — ${r.recovery.openDays}d without a good one`}>Recovery {r.recovery.rating.toFixed(1)}★</Tag>}
+                  <Tag>{ch}</Tag>
+                  {owes && <Tag tone="amber">Owes {money(r.status.balance)}</Tag>}
+                  {r.sensitive && <Tag tone="rose">Sensitive</Tag>}
+                  {r.done && <Tag tone="emerald">{r.outcome === 'voicemail' ? 'Voicemail' : 'Reached'}{r.calledBy ? ` · ${who(r.calledBy)}` : ''}</Tag>}
+                  {live && talked && <Tag tone="brand" title="Talkroute saw an answered call">Talked {talkMins(r.proof.talkSeconds)}</Tag>}
+                  {live && !talked && r.attempts > 0 && <Tag>No answer ×{r.attempts}</Tag>}
+                  {live && r.claimedBy && <Tag tone="amber">{mine ? 'You have it' : `Taken · ${r.claimedBy}`}</Tag>}
+                  {r.closed && !r.done && <Tag>Closed · missed</Tag>}
+                  {r.proof.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'} title={r.proof.note}>Call notes</Tag>}
                 </div>
-                <div className="text-[12px] text-muted mt-0.5 flex items-center gap-2 flex-wrap">
-                  <span>{r.listing} · {shortDay(r.check_in)}{r.status.nights ? ` · ${r.status.nights}n` : ''}</span>
-                  {r.phone
-                    ? <>
-                        <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} title="Calls through the Talkroute desktop app" className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={11} /> {r.phone}</a>
-                        {copied === r.id ? <span className="text-emerald-700 inline-flex items-center gap-1"><Check size={11} /> Copied</span> : <button onClick={() => copyPhone(r.id, r.phone)} className="text-muted hover:text-ink"><Copy size={11} /></button>}
-                      </>
-                    : <span className="text-muted/70">No phone on file</span>}
+              </button>
+              {live && (
+                <div className="flex items-center gap-1">
+                  <IconBtn title="Reached — complete" tone="ok" disabled={isBusy} onClick={() => welcome(r.id, 'reached', myName)}>{isBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}</IconBtn>
+                  <IconBtn title="Left voicemail — counts as complete" disabled={isBusy} onClick={() => welcome(r.id, 'voicemail', myName)}><Voicemail size={14} /></IconBtn>
+                  <IconBtn title={`No answer${r.attempts ? ` (${r.attempts} so far)` : ''} — stays on the list`} disabled={isBusy} onClick={() => welcome(r.id, 'no_answer', myName)}><PhoneOff size={14} /></IconBtn>
                 </div>
-                {r.done && (r.calledBy || r.callValue) && <div className="text-[11px] text-emerald-700 mt-0.5">{r.calledBy ? `${r.outcome === 'voicemail' ? 'Voicemail by' : 'Called by'} ${who(r.calledBy)}` : 'Called'}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}</div>}
-                {!r.done && r.outcome === 'no_answer' && r.calledBy && !r.proof.lastAttemptAt && <div className="text-[11px] text-muted mt-0.5">Last tried by {who(r.calledBy)}</div>}
+              )}
+              <button onClick={() => setOpenId(open ? null : r.id)} title="Script and notes" className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button>
+            </div>
+            {failedId === r.id && error && !open && <p className="px-4 pb-2 text-[12px] text-rose-700 flex items-start gap-1.5"><AlertTriangle size={12} className="mt-0.5 shrink-0" /> {error}</p>}
+            {open && (
+              <div className="px-3 sm:px-4 pb-3 space-y-2">
+                <RowTools id={r.id} phone={r.phone} copied={copied} copyPhone={copyPhone}>
+                  {live && !r.claimedBy && <button onClick={() => welcome(r.id, 'claim', myName)} disabled={isBusy} className="inline-flex items-center gap-1 hover:text-ink"><Hand size={11} /> Take it</button>}
+                  {r.done && <button onClick={() => welcome(r.id, 'undo')} disabled={isBusy} className="inline-flex items-center gap-1 hover:text-ink">Undo</button>}
+                </RowTools>
                 <ProofLine p={r.proof} done={r.done} kind="welcome" />
                 <CallNote p={r.proof} />
-
-              </div>
-              <div className="flex items-center gap-2 flex-wrap gap-y-2">
-                <a href={`https://app.guesty.com/reservations/${r.id}/summary`} target="_blank" rel="noopener noreferrer" title="Open this reservation in Guesty" className="inline-flex items-center justify-center rounded-lg border border-line w-[30px] h-[30px] text-muted hover:text-ink"><Globe size={13} /></a>
-                <button onClick={() => setOpenId(open ? null : r.id)} title="Call script, notes and more outcomes" className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold ${open ? 'border-brand-600 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink'}`}><ScrollText size={13} /> Script <ChevronDown size={11} className={open ? 'rotate-180 transition' : 'transition'} /></button>
-                {r.closed && !r.done ? (
-                  <span className="text-[12px] text-muted/70">Closed out &mdash; never completed</span>
-                ) : r.done ? (
-                  <button onClick={() => welcome(r.id, 'undo')} disabled={busy === r.id} className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-ink disabled:opacity-50">{busy === r.id ? <Loader2 size={13} className="animate-spin" /> : null} Undo</button>
-                ) : (
-                  <>
-                    {!r.claimedBy && <button onClick={() => welcome(r.id, 'claim')} disabled={busy === r.id} title="Lock this call to you so nobody else dials the same guest" className="inline-flex items-center justify-center rounded-lg border border-amber-300 bg-amber-50 w-[30px] h-[30px] text-amber-800 hover:bg-amber-100 disabled:opacity-50"><Hand size={13} /></button>}
-                    {talkroute
-                      ? (r.proof.lastAttemptAt
-                          ? <span title="Talkroute has a call to this guest on record" className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-[12px] font-semibold text-brand-700"><PhoneCall size={13} /> Call made</span>
-                          : <span title="No call to this guest has reached Talkroute yet" className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-app px-2.5 py-1.5 text-[12px] font-semibold text-muted"><PhoneOff size={13} /> No call yet</span>)
-                      : <button onClick={() => welcome(r.id, 'reached')} disabled={busy === r.id} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === r.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Reached</button>}
-                  </>
-                )}
-              </div>
-            </div>
-
-            {r.recovery && !r.done && <RecoveryFlag rec={r.recovery} />}
-
-            {/* The human close-out, in the open. Talkroute completes an answered call by itself;
-                this is for everything it cannot judge — and for the note. */}
-            {!r.done && !r.closed && (
-              <CompleteStrip r={r} busy={busy === r.id} draft={draft} setDraft={setDraft} talkroute={talkroute}
-                callers={callers} me={myName}
-                onComplete={(o, caller) => welcome(r.id, o, caller)} />
-            )}
-
-            {open && (
-              <>
-                {r.recovery && <RecoveryNote rec={r.recovery} unit={r.listing} />}
+                {r.recovery && !r.done && <RecoveryNote rec={r.recovery} unit={r.listing} />}
                 <WelcomeScript r={r} draft={draft} setDraft={setDraft} onSaveNote={() => saveNote(r.id)} saving={saving === r.id} saved={saved === r.id} />
-                {!r.done && !r.closed && (
-                  <ManualFold label="More outcomes">
-                    <OutcomeRow busy={busy === r.id} attempts={r.attempts} compact
-                      onReached={() => welcome(r.id, 'reached')} onVoicemail={() => welcome(r.id, 'voicemail')} onNoAnswer={() => welcome(r.id, 'no_answer')} />
-                  </ManualFold>
-                )}
-                {failedId === r.id && error && (
-                  <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-start gap-1.5">
-                    <AlertTriangle size={13} className="mt-0.5 shrink-0" /> <span>{error}</span>
-                  </p>
-                )}
-              </>
+                {failedId === r.id && error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> <span>{error}</span></p>}
+              </div>
             )}
           </li>
         )
@@ -862,99 +756,85 @@ function WelcomeList({ rows, talkroute, callers, openId, setOpenId, draft, setDr
 }
 
 // ── POST-CHECKOUT ───────────────────────────────────────────────────────────────────────────────
-// Only guests leaving a RECOVERY unit (Jon). A different call with a different shape: one question
-// asked well, and the answer decides whether a glitch gets raised before the review does.
+// Only guests leaving a RECOVERY unit (Jon). Same one-line shape; the three outcomes are
+// All good / They raised an issue / No answer.
+const REASON_TAG: Record<string, { label: string; tone: string }> = {
+  glitch: { label: 'Issue in stay', tone: 'rose' },
+  recovery: { label: 'Recovery', tone: 'rose' },
+  direct: { label: 'Direct', tone: 'brand' },
+  value: { label: 'High value', tone: 'emerald' },
+}
 function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAct, copied, copyPhone }: {
   rows: OutRow[]; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; onAct: (id: string, o: 'happy' | 'issue' | 'no_answer' | 'claim' | 'undo') => void
   copied: string | null; copyPhone: (id: string, p: string) => void
 }) {
-  if (rows.length === 0) {
-    return <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">
-      Nobody checked out of a recovery unit in the last 48 hours.
-    </div>
-  }
+  if (rows.length === 0) return <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">Nobody checked out of a recovery unit in the last 48 hours.</div>
   return (
-    <>
-      <p className="text-[12px] text-muted">Guests who checked out of a unit still waiting for a good review, in the last 48 hours. Hear the complaint on the phone instead of reading it in a review — if they raise something, log it as an issue and it becomes a job. After 48 hours the call closes out.</p>
-      <ul className="rounded-2xl border border-line bg-white divide-y divide-line overflow-hidden">
-        {rows.map(r => {
-          const open = openId === r.id
-          return (
-            <li key={r.id} className={`px-4 py-3 flex flex-col gap-3 ${!r.done && r.glitches.length ? 'bg-rose-50/40' : ''}`}>
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-ink inline-flex items-center gap-2 flex-wrap">
-                    {r.guest || 'Guest'}
-                    {r.value > 0 && <span className="text-[12px] font-bold text-emerald-700">{money(r.value)}</span>}
-                    {r.reasons.map(k => { const m = REASON_META[k]; return m ? <Badge key={k} cls={m.cls} Icon={m.Icon}>{m.label}</Badge> : null })}
-                    {r.done && <Badge cls="bg-emerald-100 text-emerald-700" Icon={Check}>{r.outcome === 'issue' ? 'Called · issue' : 'Called'}</Badge>}
-                    {!r.done && r.outcome === 'no_answer' && <Badge cls="bg-slate-200 text-slate-700" Icon={PhoneOff}>No answer ×{r.attempts}</Badge>}
-                    {!r.done && r.claimedBy && <Badge cls="bg-amber-100 text-amber-800" Icon={Hand}>On it: {r.claimedBy}</Badge>}
-                    {(r.closed || r.incomplete) && !r.done && <Badge cls="bg-slate-200 text-slate-600" Icon={PhoneOff}>Incomplete · closed</Badge>}
-                  </div>
-                  <div className="text-[12px] text-muted mt-0.5">{r.listing} · {r.nights} {r.nights === 1 ? 'night' : 'nights'} · checked out {shortDay(r.check_out)}</div>
-                  {(r.calledBy || r.callNote) && !(r.proof.lastAttemptAt && !r.done) && <div className="text-[11px] text-emerald-700 mt-0.5">{r.calledBy ? `${r.outcome === 'no_answer' ? 'Tried by' : 'Called by'} ${who(r.calledBy)}` : ''}{r.calledAt ? ` · ${day(r.calledAt)}` : ''}{r.callNote ? ` · ${r.callNote.slice(0, 60)}` : ''}</div>}
-                  <ProofLine p={r.proof} done={r.done} kind="post" />
-                  <CallNote p={r.proof} />
-                  {r.phone ? (
-                    <div className="text-[12px] mt-1 inline-flex items-center gap-2 flex-wrap">
-                      <a href={`tel:${r.phone.replace(/[^+\d]/g, '')}`} className="font-semibold text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><PhoneCall size={12} /> {r.phone}</a>
-                      {copied === r.id ? <span className="text-emerald-700 inline-flex items-center gap-1"><Check size={11} /> Copied</span> : <button onClick={() => copyPhone(r.id, r.phone)} className="text-muted hover:text-ink inline-flex items-center gap-1"><Copy size={11} /> Copy</button>}
-                    </div>
-                  ) : <div className="text-[11px] text-muted/70 mt-1">No phone on file</div>}
+    <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
+      {rows.map(r => {
+        const open = openId === r.id
+        const live = !r.done && !r.closed
+        const isBusy = busy === r.id
+        const talked = r.proof.lastResult === 'answered' && r.proof.lastAttemptAt
+        return (
+          <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
+            <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+              <CallBtn phone={r.phone} />
+              <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-0 text-left">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.guest || 'Guest'}</span>
+                  <span className="text-[12px] text-muted truncate max-w-[14rem]">{r.listing} · out {shortDay(r.check_out)}</span>
+                  {r.reasons.map(k => { const m = REASON_TAG[k]; return m ? <Tag key={k} tone={m.tone}>{m.label}{k === 'value' && r.value ? ` ${money(r.value)}` : ''}</Tag> : null })}
+                  {r.done && <Tag tone={r.outcome === 'issue' ? 'rose' : 'emerald'}>{r.outcome === 'issue' ? 'Issue raised' : 'All good'}{r.calledBy ? ` · ${who(r.calledBy)}` : ''}</Tag>}
+                  {live && talked && <Tag tone="brand">Talked {talkMins(r.proof.talkSeconds)}</Tag>}
+                  {live && !talked && r.attempts > 0 && <Tag>No answer ×{r.attempts}</Tag>}
+                  {live && r.claimedBy && <Tag tone="amber">Taken · {r.claimedBy}</Tag>}
+                  {r.closed && !r.done && <Tag>Closed · missed</Tag>}
+                  {r.proof.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'} title={r.proof.note}>Call notes</Tag>}
                 </div>
-                <div className="flex items-center gap-2 flex-wrap gap-y-2">
-                  <a href={`https://app.guesty.com/reservations/${r.id}/summary`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-muted hover:text-ink"><Globe size={13} /> Guesty</a>
-                  <button onClick={() => setOpenId(open ? null : r.id)} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold ${open ? 'border-brand-600 text-brand-700 bg-brand-50' : 'border-line text-muted hover:text-ink'}`}><ScrollText size={13} /> Call <ChevronDown size={12} className={open ? 'rotate-180 transition' : 'transition'} /></button>
-                  {r.done ? <button onClick={() => onAct(r.id, 'undo')} disabled={busy === r.id} className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-ink disabled:opacity-50">{busy === r.id ? <Loader2 size={13} className="animate-spin" /> : null} Undo</button>
-                    : (!r.closed && !r.claimedBy) ? <button onClick={() => onAct(r.id, 'claim')} disabled={busy === r.id} className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"><Hand size={13} /> Take it</button> : null}
+              </button>
+              {live && (
+                <div className="flex items-center gap-1">
+                  <IconBtn title="All good" tone="ok" disabled={isBusy} onClick={() => onAct(r.id, 'happy')}>{isBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}</IconBtn>
+                  <IconBtn title="They raised an issue" tone="bad" disabled={isBusy} onClick={() => onAct(r.id, 'issue')}><AlertTriangle size={14} /></IconBtn>
+                  <IconBtn title={`No answer${r.attempts ? ` (${r.attempts} so far)` : ''}`} disabled={isBusy} onClick={() => onAct(r.id, 'no_answer')}><PhoneOff size={14} /></IconBtn>
                 </div>
+              )}
+              <button onClick={() => setOpenId(open ? null : r.id)} title="Script and notes" className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button>
+            </div>
+            {open && (
+              <div className="px-3 sm:px-4 pb-3 space-y-2">
+                <RowTools id={r.id} phone={r.phone} copied={copied} copyPhone={copyPhone}>
+                  {live && !r.claimedBy && <button onClick={() => onAct(r.id, 'claim')} disabled={isBusy} className="inline-flex items-center gap-1 hover:text-ink"><Hand size={11} /> Take it</button>}
+                  {r.done && <button onClick={() => onAct(r.id, 'undo')} disabled={isBusy} className="inline-flex items-center gap-1 hover:text-ink">Undo</button>}
+                  <a href="/glitches" className="inline-flex items-center gap-1 hover:text-ink"><Wrench size={11} /> Log an issue</a>
+                </RowTools>
+                <ProofLine p={r.proof} done={r.done} kind="post" />
+                <CallNote p={r.proof} />
+                {r.glitches.length > 0 && (
+                  <div className="text-[12px] text-rose-800"><b>Logged during stay:</b> {r.glitches.map(g => `${shortDay(g.at)} ${g.overview || 'Issue'} (${g.status || 'open'})`).join(' · ')}</div>
+                )}
+                {r.recovery && !r.done && <RecoveryNote rec={r.recovery} unit={r.listing} />}
+                <div className="rounded-xl border border-line bg-slate-50 p-3 text-[12.5px] leading-relaxed">
+                  <ol className="list-decimal pl-5 space-y-1 text-muted marker:text-muted/60">
+                    <li>&ldquo;Hi {r.guest || 'there'}, this is [you] with Stay Hospitality — I saw you checked out {shortDay(r.check_out)} and wanted to thank you personally. Do you have a minute?&rdquo;</li>
+                    {r.glitches.length > 0
+                      ? <li className="text-rose-800"><b>Name it first:</b> &ldquo;I know {r.glitches[0].overview ? r.glitches[0].overview.toLowerCase() : 'something came up'} during your stay — how was that handled from your side?&rdquo;</li>
+                      : <li><b>The one question:</b> &ldquo;Was there anything that wasn&rsquo;t right, even something small?&rdquo; Then wait.</li>}
+                    <li>Issue raised: apologise once, say what will be fixed, mark it <b>Issue</b>.</li>
+                    <li>Happy: ask for a review. Close: &ldquo;Book with us directly next time.&rdquo;</li>
+                  </ol>
+                </div>
+                <NoteBox id={r.id} prior={r.notes} draft={draft} setDraft={setDraft} saving={false} saved={false}
+                  placeholder="What they said — saved to Guesty when you pick an outcome." />
               </div>
-
-              {r.glitches.length > 0 && !r.done && (
-                <div className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[12px]">
-                  <div className="font-bold text-rose-800 flex items-center gap-1.5"><Wrench size={13} /> Logged during their stay</div>
-                  <ul className="mt-1 space-y-0.5 text-rose-900">
-                    {r.glitches.map(g => <li key={g.id}>· {shortDay(g.at)} — {g.overview || 'Issue'} <span className="text-rose-700/70">({g.status || 'open'})</span></li>)}
-                  </ul>
-                </div>
-              )}
-              {r.recovery && !r.done && <RecoveryFlag rec={r.recovery} />}
-
-              {open && !r.closed && (
-                <div className="rounded-xl border border-line bg-slate-50 p-3.5 text-[12.5px] space-y-3 leading-relaxed">
-                  {r.recovery && <RecoveryNote rec={r.recovery} unit={r.listing} />}
-                  <div>
-                    <div className="font-bold text-ink flex items-center gap-1.5"><PhoneCall size={13} /> The call</div>
-                    <ol className="mt-1 list-decimal pl-5 space-y-1 text-muted marker:text-muted/60">
-                      <li>&ldquo;Hi {r.guest || 'there'}, this is [you] with Stay Hospitality — I saw you checked out {shortDay(r.check_out)} and wanted to thank you personally. Do you have a minute?&rdquo;</li>
-                      {r.glitches.length > 0
-                        ? <li className="text-rose-800"><b>Name it first:</b> &ldquo;I know {r.glitches[0].overview ? r.glitches[0].overview.toLowerCase() : 'something came up'} during your stay — I want to hear how that was handled from your side.&rdquo;</li>
-                        : <li><b>The one question:</b> &ldquo;Was there anything about the place that wasn&rsquo;t right, even something small?&rdquo; Then wait — do not fill the silence.</li>}
-                      <li>If they raise something: apologise once, say specifically what will be fixed, and <b>log it as an issue</b> below so it becomes a job.</li>
-                      <li>If they were happy: &ldquo;That means a lot — if you have a moment, a review really helps us.&rdquo; Only ask for the review when they have said they were happy.</li>
-                      <li>Close: &ldquo;Next time you&rsquo;re down, book with us directly and I&rsquo;ll take care of you.&rdquo;</li>
-                    </ol>
-                  </div>
-                  <NoteBox id={r.id} prior={r.notes} draft={draft} setDraft={setDraft} saving={false} saved={false}
-                    placeholder="What they said — saved to the reservation in Guesty when you pick an outcome below." />
-                  {!r.done && (
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button onClick={() => onAct(r.id, 'happy')} disabled={busy === r.id} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-emerald-700 disabled:opacity-50">{busy === r.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} All good</button>
-                      <button onClick={() => onAct(r.id, 'issue')} disabled={busy === r.id} className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 text-white px-3.5 py-2 text-[13px] font-semibold hover:bg-rose-700 disabled:opacity-50"><AlertTriangle size={14} /> They raised an issue</button>
-                      <button onClick={() => onAct(r.id, 'no_answer')} disabled={busy === r.id} className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-[12px] font-semibold text-muted hover:text-ink disabled:opacity-50"><PhoneOff size={13} /> No answer{r.attempts ? ` (${r.attempts} so far)` : ''}</button>
-                      <a href="/glitches" className="text-[12px] font-semibold text-brand-600 hover:underline ml-auto">Log the issue →</a>
-                    </div>
-                  )}
-                </div>
-              )}
-            </li>
-          )
-        })}
-      </ul>
-    </>
+            )}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
