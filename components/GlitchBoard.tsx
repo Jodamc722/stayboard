@@ -5,13 +5,14 @@ import PolishButton from './PolishButton'
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
 // Breezeway task for the field, and move the card along the escalation path.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil } from 'lucide-react'
+import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil, GraduationCap } from 'lucide-react'
 import CommentThread from './CommentThread'
 import UnitCalendar from './UnitCalendar'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
 import { Sheet } from './Sheet'
 import { StepDots, StepBar, Field, Chips, type Step } from './Steps'
 import { ImageDrop } from './ImageDrop'
+import { RefundTraining, TeachFromGlitch } from './RefundTraining'
 
 type Glitch = {
   id: string; status: string; glitch_type: string | null; category: string | null
@@ -185,6 +186,10 @@ export function GlitchBoard() {
   const [panel, setPanel] = useState<string>('')  // '<id>:edit' | '<id>:push'
   const [showTrash, setShowTrash] = useState(false)
   const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
+  // TRAIN THE ADVISOR (Jon, 2026-09-22) — admins and glitch-board leads only.
+  const [canTrain, setCanTrain] = useState(false)
+  const [showTrain, setShowTrain] = useState(false)
+  useEffect(() => { fetch('/api/glitches/training', { cache: 'no-store' }).then(r => r.json()).then(j => setCanTrain(!!j?.canTrain)).catch(() => {}) }, [])
 
   const load = useCallback(async () => {
     try {
@@ -228,11 +233,17 @@ export function GlitchBoard() {
         {markets.map(m => (
           <button key={m} onClick={() => setMarket(m)} className={'text-sm font-medium px-3 py-1.5 rounded-lg border transition ' + (market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:bg-app')}>{m === 'all' ? 'All markets' : m}</button>
         ))}
-        <button onClick={() => setShowTrash(!showTrash)} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><Trash2 size={13} /> Recently deleted</button>
+        {canTrain ? (
+          <button onClick={() => setShowTrain(true)} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100 inline-flex items-center gap-1.5"><GraduationCap size={14} /> Train refund advisor</button>
+        ) : null}
+        <button onClick={() => setShowTrash(!showTrash)} className={(canTrain ? '' : 'ml-auto ') + 'text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5'}><Trash2 size={13} /> Recently deleted</button>
         <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5"><RefreshCw size={13} /> Refresh</button>
       </div>
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
       {showTrash && <TrashDrawer kind="glitch" onRestored={load} onClose={() => setShowTrash(false)} />}
+      <Sheet open={showTrain} onClose={() => setShowTrain(false)} title="Train the refund advisor" subtitle="House guidance and saved cases — read on every recommendation">
+        {showTrain ? <RefundTraining compact /> : null}
+      </Sheet>
       {showNew && <NewGlitch onDone={() => { setShowNew(false); load() }} onCancel={() => setShowNew(false)} />}
 
       <GlitchKpis rows={rows} />
@@ -623,19 +634,29 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
   const [err, setErr] = useState('')
   const [showLog, setShowLog] = useState(openRefund)
   const refund = Number(g.refund_approved) || 0
+  // Answers to its questions and the tone, sent back with the next ask.
+  const [answers, setAnswers] = useState('')
+  const [tone, setTone] = useState('')
+  const [canTrain, setCanTrain] = useState(false)
+  useEffect(() => { fetch('/api/glitches/training', { cache: 'no-store' }).then(r => r.json()).then(j => setCanTrain(!!j?.canTrain)).catch(() => {}) }, [])
 
   const ask = async () => {
     setBusy(true); setErr('')
     try {
       const r = await fetch('/api/glitches/advise', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, answers, tone }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.message || j?.error || 'Could not work out a recommendation.')
       setRec(j)
+      onChanged()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }
+  const read = rec?.read || null
+  const S = read?.sources || null
+  const hrs = (h: number | null | undefined) => h == null ? '—' : h < 1 ? Math.round(h * 60) + ' min' : h < 48 ? h + ' h' : (Math.round(h / 2.4) / 10) + ' days'
+  const when = (v: string) => v ? new Date(v).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
 
   // THE FIELD IS `recommendation.refund`. The first version read `recommendation.amount ?? provisional`
   // — and `provisional` is a BOOLEAN ("this needs more facts"), so Number(true) rendered every
@@ -703,7 +724,7 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
               {rec?.recommendation?.pctOfStay ? <span className="text-[12px] font-semibold text-muted ml-1.5">{rec.recommendation.pctOfStay}% of the stay</span> : null}
             </p>
             {isProvisional ? (
-              <p className="text-[11.5px] font-bold text-amber-700">Provisional — it is missing facts, see below.</p>
+              <p className="text-[11.5px] font-bold text-amber-700">{rec?.guessed ? 'Best judgment — some facts are assumed. Confirm them below to firm it up.' : 'Provisional — it is missing facts, see below.'}</p>
             ) : null}
           </>
         ) : rec ? (
@@ -720,12 +741,40 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
           </p>
         )}
         {rec?.summary ? <p className="text-[12.5px] text-ink mt-1.5 leading-relaxed">{rec.summary}</p> : null}
+        {(rec?.evidence || []).length ? (
+          <div className="mt-2">
+            <p className="text-[11.5px] font-bold text-ink">What decided it</p>
+            <ul className="mt-0.5 space-y-0.5">
+              {rec.evidence.map((e: any, i: number) => (
+                <li key={i} className="text-[12px] text-ink/85 leading-snug">
+                  <span className="text-[10.5px] font-bold uppercase tracking-wide text-muted mr-1.5">{e.source}</span>{e.fact}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {(rec?.questions || []).length ? (
           <div className="mt-2">
-            <p className="text-[11.5px] font-bold text-amber-800">It needs to know:</p>
+            <p className="text-[11.5px] font-bold text-amber-800">To firm it up:</p>
             <ul className="list-disc pl-4">
               {(rec.questions || []).map((q: string, i: number) => <li key={i} className="text-[12px] text-amber-900">{q}</li>)}
             </ul>
+          </div>
+        ) : null}
+        {rec ? (
+          <div className="mt-2 space-y-1.5">
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[11.5px] font-semibold text-muted mr-1">Guest tone:</span>
+              {['understanding', 'frustrated', 'angry', 'fishing'].map(t => (
+                <button key={t} onClick={() => setTone(tone === t ? '' : t)}
+                  className={'text-[11.5px] font-semibold px-2 h-7 rounded-lg border ' + ((tone || (rec?.classification?.toneSource && !String(rec.classification.toneSource).startsWith('read') ? rec.classification.tone : '')) === t ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line')}>
+                  {t === 'fishing' ? 'angling for a discount' : t}
+                </button>
+              ))}
+            </div>
+            <textarea value={answers} onChange={e => setAnswers(e.target.value)} rows={2}
+              placeholder="Answer its questions here — e.g. “fixed at 4pm same day, we brought a portable AC, guest was fine after”"
+              className="w-full text-[12.5px] border border-line rounded-lg px-2.5 py-1.5 bg-white" />
           </div>
         ) : null}
         {why.length ? (
@@ -735,7 +784,7 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
         ) : null}
         {rec?.classification ? (
           <p className="text-[11.5px] text-muted mt-1.5">
-            {[rec.classification.category, rec.classification.severity, rec.stay?.channel,
+            {[(rec.classification.issues || []).map((i: any) => i.label + ' (' + i.severity + ')').join(', '), rec.classification.tone ? 'tone ' + rec.classification.tone : '', rec.stay?.channel,
               rec.stay?.nights ? rec.stay.nights + ' nights' : '',
               rec.stay?.nightlyRate ? money(rec.stay.nightlyRate) + '/night' : '',
               rec.confidence ? rec.confidence + ' confidence' : ''].filter(Boolean).join(' · ')}
@@ -752,10 +801,62 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
         <button onClick={ask} disabled={busy}
           className="mt-2 text-[12.5px] font-bold px-3 h-9 rounded-xl bg-ink text-white disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
           {busy ? <Loader2 size={13} className="animate-spin" /> : null}
-          {rec ? 'Ask again' : 'Work out a recommendation'}
+          {rec ? (answers.trim() || tone ? 'Ask again with these answers' : 'Ask again') : 'Work out a recommendation'}
         </button>
+        {busy ? <p className="text-[11.5px] text-muted mt-1">Reading the booking, messages, calls, texts, voicemails and the Breezeway clock…</p> : null}
         {err ? <p className="text-[12px] font-semibold text-rose-700 mt-1.5">{err}</p> : null}
       </section>
+
+      {/* WHAT IT READ (Jon, 2026-09-22: "it should look at every single aspect of the reservation").
+          Shown so the team can see the recommendation is built on the whole record, and can spot a
+          missing source (no calls matched, no task linked) before trusting the number. */}
+      {read ? (
+        <section className="rounded-xl ring-1 ring-line bg-white px-3.5 py-3">
+          <p className="text-[11px] uppercase tracking-wider font-bold text-muted">What it read</p>
+          {S ? (
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {[
+                ['Guest messages', S.guestMessages], ['Our replies', S.ourMessages],
+                ['Calls', S.calls + (S.calls ? ' (' + S.answeredCalls + ' answered)' : '')], ['Texts', S.texts], ['Voicemails', S.voicemails],
+                ['Breezeway tasks', S.tasks], ['Team comments', S.comments], ['Card events', S.historyEvents],
+              ].map(([k, v]) => (
+                <span key={String(k)} className={'text-[11.5px] px-2 py-0.5 rounded-md ring-1 ' + (String(v) === '0' ? 'ring-line text-faint' : 'ring-line text-ink bg-app')}>
+                  {k} <b className="tabular-nums">{String(v)}</b>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <p className="text-[11px] uppercase tracking-wider font-bold text-muted mt-3">The Breezeway clock</p>
+          <p className="text-[12px] text-muted">Reported {when(read.clock?.reportedAt)}{read.clock?.band ? ' · reads as ' + String(read.clock.band).replace('_', ' ') : ''}{read.clock?.fixHours != null ? ' · fixed ' + hrs(read.clock.fixHours) + ' after the report' : ''}</p>
+          {(read.tasks || []).length ? (
+            <div className="mt-1.5 space-y-1.5">
+              {read.tasks.map((t: any) => (
+                <div key={t.id} className={'rounded-lg ring-1 px-2.5 py-1.5 ' + (t.linked ? 'ring-brand-200 bg-brand-50/50' : 'ring-line')}>
+                  <p className="text-[12px] font-semibold text-ink">{t.linked ? 'This issue’s task' : 'Other job during the stay'}: {t.name}{t.assignee ? ' · ' + t.assignee : ''}</p>
+                  <p className="text-[11.5px] text-muted tabular-nums">
+                    Created {when(t.createdAt)} (+{hrs(t.toCreatedH)}) → started {when(t.startedAt)} (+{hrs(t.toStartedH)}) → finished {when(t.finishedAt)} (+{hrs(t.toFinishedH)})
+                    {t.minutesWorked != null ? ' · ' + t.minutesWorked + ' min on site' : ''}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-[12px] text-faint mt-1">No Breezeway task linked or found on the unit during the stay.</p>}
+        </section>
+      ) : null}
+
+      {(rec?.precedents || []).length ? (
+        <section className="rounded-xl ring-1 ring-line bg-white px-3.5 py-3">
+          <p className="text-[11px] uppercase tracking-wider font-bold text-muted">Cases like this the team saved</p>
+          {rec.precedents.map((p: any, i: number) => (
+            <div key={i} className="mt-1.5">
+              <p className="text-[12px] text-ink"><b>{money(p.paid)}</b>{p.pct != null ? ' (' + p.pct + '%)' : ''} · {p.unit} · {p.category} — {p.what}</p>
+              {p.lesson ? <p className="text-[11.5px] text-muted">Lesson: {p.lesson}</p> : null}
+            </div>
+          ))}
+        </section>
+      ) : null}
+
+      {canTrain ? <TeachFromGlitch glitchId={g.id} paidDefault={refund > 0 || g.refund_approved === 0 ? refund : (recommended ?? null)} /> : null}
 
       {/* WHAT A BAD REVIEW WOULD COST ON THIS UNIT — arithmetic from its real reviews on this
           channel. It moves urgency and where in the band we land, never the band itself, and it is
