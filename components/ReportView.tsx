@@ -4824,6 +4824,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // deck showing last week's answer. Now the cover and the snapshot resolve through the
           // same basisStrings() the scroll view uses, against that slide's own chosen basis, and a
           // typed override still wins over both.
+          // WHERE THE NUMBERS LIVE. Both default OFF, which is the de-duplication Jon asked for:
+          // the snapshot is the one slide that carries the month's figures, with the second basis
+          // under each of them. Either can be switched back on per report, in edit mode.
+          const showCoverStats = c.showCoverStats === true
+          const showVerdictNumbers = c.showVerdictNumbers === true
           const SM = snap.metrics
           /** The second line under a figure: the same metric on another basis, or nothing.
            *  Jon, 2026-09-22: "on the original owner reporting, you could do net and fees, and then
@@ -5016,7 +5021,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       <h1 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 66, lineHeight: 1.02, letterSpacing: '-0.028em', color: '#fff', margin: 0, maxWidth: '13ch' }}>
                         <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
                       </h1>
-                      {cards.length ? (
+                      {/* THE COVER NO LONGER RECITES THE SNAPSHOT (Jon, 2026-09-22: "the first
+                          three slides basically show the same data"). Cover, The Month and
+                          Snapshot were each printing revenue, occupancy and rate, so an owner read
+                          the same four numbers three times before anything new was said. The
+                          numbers live on ONE slide now; the cover carries the property, the period
+                          and the month's sentence. It can be switched back on per report for a
+                          deck that will only ever be seen as a single page. */}
+                      {showCoverStats && cards.length ? (
                         <div className="flex" style={{ marginTop: 32, borderTop: '1px solid rgba(255,255,255,0.20)', paddingTop: 20 }}>
                           {cards.slice(0, 4).map((x: Any, i: number, arr: Any[]) => (
                             <div key={x.key || i} style={{ paddingRight: i === arr.length - 1 ? 0 : 44, marginRight: i === arr.length - 1 ? 0 : 44, borderRight: i === arr.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.14)' }}>
@@ -5026,10 +5038,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           ))}
                         </div>
                       ) : (
-                        <p style={{ fontSize: 18, lineHeight: 1.6, color: 'rgba(255,255,255,0.86)', margin: '18px 0 0', maxWidth: '44ch' }}>
-                          <Ed v={hero.headline || ''} set={v => patch('hero.headline', v)} edit={edit} multiline />
+                        <p style={{ fontSize: 19, lineHeight: 1.55, color: 'rgba(255,255,255,0.88)', margin: '20px 0 0', maxWidth: '44ch' }}>
+                          <Ed v={hero.headline || (verdict ? String(verdict.headline || '') : '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
                         </p>
                       )}
+                      {edit ? (
+                        <button className="sb-noprint" onClick={() => patch('showCoverStats', !showCoverStats)}
+                          style={{ marginTop: 16, fontSize: 11, fontWeight: 600, padding: '5px 11px', borderRadius: 999, background: 'rgba(255,255,255,0.14)', color: '#fff' }}>
+                          {showCoverStats ? 'Take the numbers off the cover' : 'Put the numbers on the cover'}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -5053,7 +5071,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </Lead>
                   ))}
                 </div>
-                {(verdict.numbers || []).length ? (
+                {showVerdictNumbers && (verdict.numbers || []).length ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.min(3, (verdict.numbers || []).length) + ', minmax(0,1fr))', borderTop: '1px solid ' + tint(0.12), marginTop: 34, paddingTop: 22 }}>
                     {(verdict.numbers || []).slice(0, 3).map((x: Any) => (
                       <div key={x.key} style={{ paddingRight: 34 }}>
@@ -5062,6 +5080,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       </div>
                     ))}
                   </div>
+                ) : null}
+                {edit ? (
+                  <button className="sb-noprint" onClick={() => patch('showVerdictNumbers', !showVerdictNumbers)}
+                    style={{ marginTop: 18, fontSize: 11, fontWeight: 600, padding: '5px 11px', borderRadius: 999, background: tint(0.07), color: tint(0.62), alignSelf: 'flex-start' }}>
+                    {showVerdictNumbers ? 'Hide the figures — the snapshot has them' : 'Show the three figures here too'}
+                  </button>
                 ) : null}
                 <SlideNote k="verdict" />
               </Frame>
