@@ -979,7 +979,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 // ---------- main ----------
-export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any; canEdit: boolean; isTeam?: boolean; gallery?: string[] }) {
+export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: { initial: Any; canEdit: boolean; isTeam?: boolean; gallery?: string[]; listingTable?: Any }) {
   const [c, setC] = useState<Any>(initial.content || {})
   const [edit, setEdit] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -1759,6 +1759,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any
   // from the report's own listings (lib/report-gallery) and is empty when nothing usable came back,
   // in which case every section falls back to plain typography.
   const verdict = useMemo(() => (isOnboarding ? null : buildVerdict(c)), [c, isOnboarding])
+  // DECK OR REPORT (Jon, 2026-09-22: "more like a powerpoint view"). The review now renders on the
+  // same fixed 1120x630 canvas as the onboarding deck — which is what lib/deck was built for — and
+  // opens there. The scrolling report is kept behind a toggle rather than deleted because the
+  // period resync, the basis pickers and the attach-a-PDF buttons all live in its sections; losing
+  // them to make the owner view prettier would be a bad trade.
+  const [reviewDeck, setReviewDeck] = useState(true)
+  // Which money the per-listing slide shows. Jon asked for gross AND net "but make it a selecter"
+  // (2026-09-22) — both by default, because the two answer different questions: gross is what the
+  // guest paid us, net is what the statement is built on, and an owner asking "what did 515 make?"
+  // usually means the first while their accountant means the second.
+  const [listingCols, setListingCols] = useState<'both' | 'gross' | 'net'>('both')
+  const isReviewDeck = !isOnboarding && reviewDeck
+  const isDeck = isOnboarding || isReviewDeck
   const setVerdict = (next: Any) => patch('verdict', next)
   // A fixed order so a photo belongs to the same section every time the page renders, and so the
   // snapshot — which sits directly under The Month — is left clean rather than double-imaged.
@@ -1802,6 +1815,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any
     : 0
   const presentCount = isOnboarding
     ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + onboardingListingSlides + customSecs.length
+    : isReviewDeck
+    ? 1 + (['verdict', 'snapshot', 'listings', 'pacing', 'plan', 'statement', 'ahead', 'voices', 'projects']
+        .filter(k => !isHidden(k)).length) + customSecs.length
     : ((['hero', 'snapshot',
     (c.pacing ? 'pacing' : null),
     (plan ? 'plan' : null),
@@ -1820,6 +1836,18 @@ export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any
            cover most of the report it is meant to be editing, so it only sticks from 640px up. */
         <div className="sb-noprint z-20 sm:sticky sm:top-0 flex items-center justify-end gap-2 px-4 py-2.5 flex-wrap" style={{ background: t.toolbarBg, backdropFilter: 'blur(6px)', borderBottom: '1px solid ' + t.rule }}>
           <div className="mr-auto flex items-center gap-2 flex-wrap">
+            {/* DECK OR REPORT (Jon, 2026-09-22). Deck is what the owner sees; Report is where the
+                period resync, the basis pickers and the attach buttons live. */}
+            {!isOnboarding && (
+              <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+                {([[true, 'Deck'], [false, 'Report']] as [boolean, string][]).map(([v, lab]) => (
+                  <button key={lab} onClick={() => setReviewDeck(v)} className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                    style={reviewDeck === v ? { background: t.ink, color: t.bg } : { color: t.sub }}>
+                    {lab}
+                  </button>
+                ))}
+              </span>
+            )}
             <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
               {Object.keys(THEMES).map(k => (
                 <button key={k} onClick={() => switchTheme(k)} className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
@@ -2553,7 +2581,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any
         </div>
       )}
 
-      <div ref={scrollRef} onScroll={onPresentScroll} className={present ? ('sb-present' + (isOnboarding ? ' sb-present-deck' : '')) : ('sb-report ' + (isOnboarding ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
+      <div ref={scrollRef} onScroll={onPresentScroll} className={present ? ('sb-present' + (isDeck ? ' sb-present-deck' : '')) : ('sb-report ' + (isDeck ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
 
         {/* ---------- COVER ---------- */}
         {/* AN ONBOARDING OPENS ON THEIR PROPERTY, NOT ON OUR LOGO. The review report's cover — a
@@ -2612,6 +2640,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any
             </div>
           </header>
         ) : (
+        isReviewDeck ? null : (
         <header className="relative pt-20 sm:pt-28 pb-16 sm:pb-20 text-center border-b" style={{ borderColor: t.rule }}>
           {edit && (
             <button onClick={() => openAi('hero')} className="absolute top-4 right-4 inline-flex items-center gap-1 rounded-full shadow px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.accent }}>
@@ -2646,7 +2675,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any
             <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />  ·  STAY HOSPITALITY
           </p>
         </header>
-        )}
+        ))}
 
 
         {/* ═══════════ OWNER ONBOARDING — the deck ═══════════
@@ -4451,7 +4480,382 @@ export function ReportView({ initial, canEdit, isTeam, gallery }: { initial: Any
           )
         })()}
 
-        {!isOnboarding && (<>
+        {/* ═══════════ OWNER REVIEW — the deck ═══════════
+            Jon, 2026-09-22: "look at the onboarding style format, more like a powerpoint view."
+            lib/deck was written for exactly this — "the owner report moves onto it next… it
+            inherits the system instead of re-deriving it by eye" — so these slides use the same
+            1120x630 canvas, the same seven type sizes and the same three grounds as the onboarding
+            deck rather than a second set tuned by hand.
+
+            THE RHYTHM. light, light, tint, light, tint, dark, light, tint — never two darks, never
+            more than two lights before a change. The one dark slide is the budget, because that is
+            the slide an owner actually stops on. */}
+        {isReviewDeck && (() => {
+          const D = { ink: '#ffffff', body: 'rgba(255,255,255,0.86)', muted: 'rgba(255,255,255,0.56)', rule: 'rgba(255,255,255,0.22)' }
+          const GROUND: Record<SlideTone, string> = { light: t.card, tint: blend(t.bg, t.ink, 0.07), dark: t.band }
+          const usd = (n: Any) => {
+            const v = Number(n)
+            if (!Number.isFinite(v)) return '—'
+            const a = Math.abs(v)
+            if (a >= 1_000_000) return '$' + (v / 1_000_000).toFixed(2) + 'M'
+            if (a >= 10_000) return '$' + Math.round(v / 1000) + 'K'
+            return '$' + Math.round(v).toLocaleString()
+          }
+          const hid = (k: string) => isHidden(k)
+
+          // One title block, so every slide's head is the same head.
+          const RTitle = ({ k, dark, narrow }: { k: string; dark?: boolean; narrow?: boolean }) => {
+            const sec = (c as Any)[k] || {}
+            return (
+              <div>
+                <div style={{ width: 30, height: 2, background: dark ? D.ink : t.accent, marginBottom: 18 }} />
+                <h2 style={{ fontSize: narrow ? 34 : TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: dark ? D.ink : t.ink, maxWidth: narrow ? '15ch' : '19ch', margin: 0 }}>
+                  <Ed v={sec.headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
+                </h2>
+                {(sec.subtitle || edit) ? (
+                  <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: dark ? D.muted : t.muted, maxWidth: '54ch' }}>
+                    <Ed v={sec.subtitle || ''} set={v => patch(k + '.subtitle', v)} edit={edit} multiline />
+                  </p>
+                ) : null}
+              </div>
+            )
+          }
+
+          // A number, at the size a number earns on a slide.
+          const Stat = ({ label, value, sub, dark, big }: { label: string; value: string; sub?: string; dark?: boolean; big?: boolean }) => (
+            <div>
+              <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: dark ? D.muted : t.accent, margin: 0 }}>{label}</p>
+              <p style={{ fontSize: big ? 56 : 40, lineHeight: 1.02, letterSpacing: '-0.03em', fontWeight: 600, color: dark ? D.ink : t.ink, margin: '8px 0 0' }}>{value}</p>
+              {sub ? <p style={{ fontSize: 12.5, color: dark ? D.muted : t.muted, margin: '7px 0 0', lineHeight: 1.45 }}>{sub}</p> : null}
+            </div>
+          )
+
+          const slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
+
+          // ── 1 · COVER — text left, the property bleeding off the right edge ──
+          slides.push({ key: 'hero', node: (
+            <Slide nav="Cover" warn={edit} bleed ground={GROUND.light}>
+              <div style={{ position: 'absolute', inset: 0 }}>
+                <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: 452, background: t.chip, overflow: 'hidden' }}>
+                  {hero.heroImage ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={hero.heroImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : null}
+                </div>
+                <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 586 }} className="flex flex-col">
+                  {mark.logo ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={mark.logo} alt={mark.word} style={{ height: 30, width: 'auto', alignSelf: 'flex-start', objectFit: 'contain' }} />
+                  ) : (
+                    <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.42em', color: t.ink, margin: 0 }}>{mark.word}</p>
+                  )}
+                  <div style={{ marginTop: 'auto' }}>
+                    <p style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.26em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>
+                      <Ed v={hero.dateLabel || 'OWNER REVIEW'} set={v => patch('hero.dateLabel', v)} edit={edit} />
+                    </p>
+                    <h1 style={{ fontSize: TYPE.display.size, lineHeight: TYPE.display.line, letterSpacing: TYPE.display.track, fontWeight: 600, color: t.ink, margin: '14px 0 0', maxWidth: '13ch' }}>
+                      <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
+                    </h1>
+                    <p style={{ fontSize: TYPE.lead.size, lineHeight: TYPE.lead.line, color: t.body, margin: '18px 0 0', maxWidth: '40ch' }}>
+                      <Ed v={hero.headline || ''} set={v => patch('hero.headline', v)} edit={edit} multiline />
+                    </p>
+                    <p style={{ fontSize: TYPE.micro.size, letterSpacing: TYPE.micro.track, color: t.muted, margin: '28px 0 0' }}>
+                      <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />
+                      {'  ·  '}{meta.asOf ? new Date(String(meta.asOf) + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </Slide>
+          ) })
+
+          // ── 2 · THE MONTH — the verdict, as the slide it always wanted to be ──
+          if (verdict && !hid('verdict')) slides.push({ key: 'verdict', node: (
+            <Slide nav="The Month" warn={edit} ground={GROUND.light}>
+              <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
+              <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>The month</p>
+              <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: '12px 0 0', maxWidth: '20ch' }}>
+                <Ed v={verdict.headline || ''} set={x => setVerdict({ ...verdict, headline: x, edited: true })} edit={edit} multiline />
+              </h2>
+              <div className="flex" style={{ gap: 48, marginTop: 34 }}>
+                {(verdict.numbers || []).map((n: Any) => (
+                  <Stat key={n.key} label={n.label} value={n.value} sub={n.sub} />
+                ))}
+              </div>
+              <div style={{ marginTop: 34, display: 'flex', flexDirection: 'column', gap: 13 }}>
+                {(verdict.lines || []).map((l: Any, i: number) => (
+                  <div key={l.key || i} className="flex" style={{ gap: 13 }}>
+                    <span style={{ marginTop: 9, flexShrink: 0, width: 7, height: 7, borderRadius: 999, background: l.tone === 'good' ? t.good : l.tone === 'watch' ? t.accent : t.muted }} />
+                    <p style={{ fontSize: 17.5, lineHeight: 1.5, color: t.body, margin: 0, maxWidth: '72ch' }}>
+                      <Ed v={l.text || ''} set={x => setVerdict({ ...verdict, edited: true, lines: (verdict.lines || []).map((y: Any, j: number) => (j === i ? { ...y, text: x } : y)) })} edit={edit} multiline />
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </Slide>
+          ) })
+
+          // ── 3 · SNAPSHOT — the four cards, at slide scale ──
+          if (!hid('snapshot')) slides.push({ key: 'snapshot', ai: true, node: (
+            <Slide nav="Snapshot" warn={edit} ground={GROUND.light}>
+              <RTitle k="snapshot" />
+              <div className="flex" style={{ gap: 40, marginTop: 40, flexWrap: 'wrap' }}>
+                {((snap.cards || []) as Any[]).slice(0, 4).map((card: Any) => (
+                  <div key={card.key} style={{ minWidth: 190 }}>
+                    <Stat label={String(card.label || '')} value={String(card.override || card.value || '')} sub={card.gross ? 'Gross ' + card.gross : ''} />
+                  </div>
+                ))}
+              </div>
+              {snap.ytd && (snap.ytd.stats || []).length ? (
+                <div style={{ marginTop: 'auto', paddingTop: 30 }}>
+                  <div style={{ borderRadius: 14, background: t.band, padding: '22px 26px' }} className="flex items-center" >
+                    <p style={{ fontSize: 14.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.86)', margin: 0, maxWidth: '46ch', flex: 1 }}>{String(snap.ytd.text || '')}</p>
+                    <div className="flex" style={{ gap: 36 }}>
+                      {(snap.ytd.stats as Any[]).slice(0, 3).map((x: Any, i: number) => (
+                        <div key={i} style={{ textAlign: 'right' }}>
+                          <p style={{ fontSize: 26, fontWeight: 600, color: '#fff', margin: 0, letterSpacing: '-0.02em' }}>{String(x.value || '')}</p>
+                          <p style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: '4px 0 0' }}>{String(x.label || '')}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </Slide>
+          ) })
+
+          // ── 4 · PERFORMANCE BY LISTING (Jon, 2026-09-22) ──────────────────
+          // Derived at render (lib/report-listings) because byListing has never been populated.
+          // Ten rows a slide: eleven starts clipping the footer at this type size, and a table that
+          // runs off the bottom of a slide is the failure mode the canvas exists to prevent.
+          if (listingTable && listingTable.rows.length && !hid('listings')) {
+            const PER = 10
+            const pages = Math.max(1, Math.ceil(listingTable.rows.length / PER))
+            const showGross = listingCols !== 'net'
+            const showNet = listingCols !== 'gross'
+            const cols: { key: string; label: string; w: number }[] = [
+              { key: 'unit', label: 'Unit', w: 0 },
+              ...(showGross ? [{ key: 'gross', label: 'Gross', w: 104 }] : []),
+              ...(showNet ? [{ key: 'net', label: 'Net', w: 104 }] : []),
+              { key: 'occ', label: 'Occ', w: 78 },
+              { key: 'adr', label: 'ADR', w: 92 },
+              { key: 'revpar', label: 'RevPAR', w: 92 },
+              { key: 'nights', label: 'Nights', w: 78 },
+            ]
+            const grid = cols.map(x => (x.w ? x.w + 'px' : 'minmax(0,1fr)')).join(' ')
+            const cell = (r: Any, key: string): string => {
+              if (key === 'unit') return String(r.unit || r.name || '')
+              if (key === 'gross') return usd(r.grossNum)
+              if (key === 'net') return usd(r.netNum)
+              if (key === 'occ') return Math.round(Number(r.occPct) || 0) + '%'
+              if (key === 'adr') return usd(listingCols === 'gross' ? r.grossAdr : r.adr)
+              if (key === 'revpar') return usd(listingCols === 'gross' ? r.grossRevpar : r.revpar)
+              if (key === 'nights') return String(r.nights ?? '')
+              return ''
+            }
+            for (let p = 0; p < pages; p++) {
+              const rows = listingTable.rows.slice(p * PER, p * PER + PER)
+              const last = p === pages - 1
+              slides.push({ key: 'listings', node: (
+                <Slide nav={'By listing' + (pages > 1 ? ' ' + (p + 1) : '')} warn={edit} ground={GROUND.tint}>
+                  <div className="flex items-start justify-between" style={{ gap: 24 }}>
+                    <div>
+                      <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
+                      <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: 0, maxWidth: '19ch' }}>
+                        Performance by listing{pages > 1 ? ' · ' + (p + 1) + ' of ' + pages : ''}
+                      </h2>
+                      <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: t.muted, margin: '14px 0 0', maxWidth: '54ch' }}>
+                        {listingTable.totals.units} unit{listingTable.totals.units === 1 ? '' : 's'} over {listingTable.from} to {listingTable.to}. Gross is what the guest paid us; net is accommodation after channel fees.
+                      </p>
+                    </div>
+                    {canEdit && (
+                      <span className="sb-noprint inline-flex items-center rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.cardBorder, flexShrink: 0 }}>
+                        {([['both', 'Both'], ['gross', 'Gross'], ['net', 'Net']] as [string, string][]).map(([k, lab]) => (
+                          <button key={k} onClick={() => setListingCols(k as Any)} className="rounded-full px-3 py-1" style={{ fontSize: 12, fontWeight: 600, ...(listingCols === k ? { background: t.ink, color: t.bg } : { color: t.sub }) }}>{lab}</button>
+                        ))}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ marginTop: 28 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 12, paddingBottom: 9, borderBottom: '1px solid ' + t.cardBorder }}>
+                      {cols.map(x => (
+                        <p key={x.key} style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right' }}>{x.label}</p>
+                      ))}
+                    </div>
+                    {rows.map((r: Any) => (
+                      <div key={r.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 12, padding: '9px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.5) }}>
+                        {cols.map(x => (
+                          <p key={x.key} style={{ fontSize: x.key === 'unit' ? 14 : 14.5, color: x.key === 'unit' ? t.ink : t.body, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right', fontWeight: x.key === 'unit' ? 500 : 400, fontVariantNumeric: 'tabular-nums', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {cell(r, x.key)}
+                          </p>
+                        ))}
+                      </div>
+                    ))}
+                    {last ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 12, padding: '12px 0 0', borderTop: '2px solid ' + t.ink, marginTop: 4 }}>
+                        {cols.map(x => (
+                          <p key={x.key} style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {x.key === 'unit' ? 'All ' + listingTable.totals.units + ' units' : cell(listingTable.totals, x.key)}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </Slide>
+              ) })
+            }
+          }
+
+          // ── 5 · PACING vs THE MARKET ──────────────────────────────────────
+          if (c.pacing && (c.pacing.rows || []).length && !hid('pacing')) slides.push({ key: 'pacing', ai: true, node: (
+            <Slide nav="Pacing" warn={edit} ground={GROUND.light}>
+              <RTitle k="pacing" />
+              <div style={{ marginTop: 36 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) 1fr 1fr 1fr', gap: 16, paddingBottom: 10, borderBottom: '1px solid ' + t.cardBorder }}>
+                  {['', 'Us', 'Comp set', 'Difference'].map((h, i) => (
+                    <p key={i} style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
+                  ))}
+                </div>
+                {(c.pacing.rows as Any[]).map((r: Any, i: number) => {
+                  const behind = /^[-−]/.test(String(r.delta || ''))
+                  return (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) 1fr 1fr 1fr', gap: 16, padding: '15px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.5) }}>
+                      <p style={{ fontSize: 16, color: t.ink, margin: 0, fontWeight: 500 }}>{String(r.metric || '')}</p>
+                      <p style={{ fontSize: 22, color: t.ink, margin: 0, textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{String(r.ours || '')}</p>
+                      <p style={{ fontSize: 18, color: t.muted, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String(r.comps || '')}</p>
+                      <p style={{ fontSize: 18, margin: 0, textAlign: 'right', fontWeight: 600, color: behind ? t.downGray : t.good, fontVariantNumeric: 'tabular-nums' }}>{String(r.delta || '')}</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </Slide>
+          ) })
+
+          // ── 6 · AGAINST THE BUDGET — the deck's one dark slide ─────────────
+          if (plan && (plan.months || []).length && !hid('plan')) slides.push({ key: 'plan', ai: true, node: (
+            <Slide nav="Budget" warn={edit} ground={GROUND.dark}>
+              <RTitle k="plan" dark />
+              <div className="flex" style={{ gap: 22, marginTop: 34 }}>
+                {(plan.months as Any[]).slice(0, 3).map((m: Any, i: number) => (
+                  <div key={i} style={{ flex: 1, borderRadius: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid ' + D.rule, padding: '20px 22px' }}>
+                    <div className="flex items-center" style={{ gap: 9 }}>
+                      <p style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: '0.16em', color: D.ink, margin: 0 }}>{String(m.label || '')}</p>
+                      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em', padding: '3px 8px', borderRadius: 999, background: /pacing/i.test(String(m.status)) ? t.accent : 'rgba(255,255,255,0.16)', color: '#fff' }}>{String(m.status || '')}</span>
+                    </div>
+                    <div style={{ marginTop: 14 }}>
+                      {(m.rows || []).map((r: Any, j: number) => (
+                        <div key={j} className="flex items-baseline justify-between" style={{ gap: 10, padding: '6px 0' }}>
+                          <p style={{ fontSize: 13, color: D.muted, margin: 0 }}>{String(r.metric || '')}</p>
+                          <p style={{ fontSize: 14.5, margin: 0, color: D.ink, fontVariantNumeric: 'tabular-nums' }}>
+                            {String(r.actual || '')} <span style={{ color: r.good ? '#7fd6a6' : 'rgba(255,255,255,0.5)', fontWeight: 600 }}>{String(r.delta || '')}</span>
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    {m.note ? <p style={{ fontSize: 11.5, lineHeight: 1.45, color: D.muted, margin: '12px 0 0' }}>{String(m.note)}</p> : null}
+                  </div>
+                ))}
+              </div>
+            </Slide>
+          ) })
+
+          // ── 7 · LOOKING AHEAD ─────────────────────────────────────────────
+          if ((ahead.months || []).length && !hid('ahead')) slides.push({ key: 'ahead', ai: true, node: (
+            <Slide nav="Looking ahead" warn={edit} ground={GROUND.light}>
+              <RTitle k="ahead" />
+              <div className="flex" style={{ gap: 22, marginTop: 38 }}>
+                {(ahead.months as Any[]).slice(0, 4).map((m: Any, i: number) => (
+                  <div key={i} style={{ flex: 1, borderRadius: 14, background: t.chip, border: '1px solid ' + t.cardBorder, padding: '22px 24px' }}>
+                    <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>{String(m.label || '').replace(/\s+\d{4}$/, '')}</p>
+                    <p style={{ fontSize: 42, fontWeight: 600, letterSpacing: '-0.03em', color: t.ink, margin: '10px 0 0', lineHeight: 1 }}>{Math.round(Number(m.occPct) || 0)}%</p>
+                    <p style={{ fontSize: 12, color: t.muted, margin: '6px 0 0' }}>on the books</p>
+                    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid ' + t.cardBorder }}>
+                      <p style={{ fontSize: 13, color: t.body, margin: 0, fontVariantNumeric: 'tabular-nums' }}>ADR {String(m.adr || '—')}</p>
+                      <p style={{ fontSize: 13, color: t.body, margin: '3px 0 0', fontVariantNumeric: 'tabular-nums' }}>RevPAR {String(m.revpar || '—')}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Slide>
+          ) })
+
+          // ── 8 · WHAT GUESTS SAID ──────────────────────────────────────────
+          if (((voices.quotes || []).length || (voices.themes || []).length) && !hid('voices')) slides.push({ key: 'voices', ai: true, node: (
+            <Slide nav="Guest voices" warn={edit} ground={GROUND.tint}>
+              <RTitle k="voices" />
+              <div className="flex" style={{ gap: 34, marginTop: 32 }}>
+                <div style={{ flex: 1.15, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {(voices.quotes as Any[] || []).slice(0, 3).map((q: Any, i: number) => (
+                    <div key={i} style={{ borderLeft: '2px solid ' + t.accent, paddingLeft: 16 }}>
+                      <p style={{ fontSize: 15, lineHeight: 1.5, color: t.ink, margin: 0 }}>&ldquo;{String(q.text || '')}&rdquo;</p>
+                      <p style={{ fontSize: 11.5, color: t.muted, margin: '6px 0 0' }}>{[q.guest, q.unit].filter(Boolean).join(' · ')}</p>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {(voices.themes as Any[] || []).slice(0, 3).map((th: Any, i: number) => (
+                    <div key={i}>
+                      <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, margin: 0 }}>{String(th.title || '')}</p>
+                      <p style={{ fontSize: 13, lineHeight: 1.45, color: t.muted, margin: '4px 0 0' }}>{String(th.action || th.body || '')}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Slide>
+          ) })
+
+          // ── 9 · THE WORK ──────────────────────────────────────────────────
+          if ((projects.weeks || []).length && !hid('projects')) {
+            const groups: Any[] = []
+            for (const w of (projects.weeks as Any[])) for (const g of (w.groups || [])) {
+              const found = groups.find((x: Any) => x.category === g.category)
+              if (found) found.items = found.items.concat(g.items || [])
+              else groups.push({ category: g.category, items: (g.items || []).slice() })
+            }
+            if (groups.length) slides.push({ key: 'projects', ai: true, node: (
+              <Slide nav="The work" warn={edit} ground={GROUND.light}>
+                <RTitle k="projects" />
+                <div style={{ marginTop: 32, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 26 }}>
+                  {groups.slice(0, 6).map((g: Any, i: number) => (
+                    <div key={i}>
+                      <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>{String(g.category || '')}</p>
+                      <div style={{ marginTop: 10 }}>
+                        {(g.items || []).slice(0, 5).map((it: string, j: number) => (
+                          <p key={j} style={{ fontSize: 13, lineHeight: 1.5, color: t.body, margin: '0 0 6px' }}>{String(it)}</p>
+                        ))}
+                        {(g.items || []).length > 5 ? <p style={{ fontSize: 12, color: t.muted, margin: 0 }}>+{(g.items || []).length - 5} more</p> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Slide>
+            ) })
+          }
+
+          // ── 10 · ANYTHING JON ADDED ───────────────────────────────────────
+          customSecs.forEach((cs: Any, i: number) => slides.push({ key: 'custom', node: (
+            <Slide nav={String(cs.title || 'Note')} warn={edit} ground={i % 2 ? GROUND.tint : GROUND.light}>
+              {cs.eyebrow ? <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>{String(cs.eyebrow)}</p> : null}
+              <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: '12px 0 0', maxWidth: '19ch' }}>{String(cs.title || '')}</h2>
+              <p style={{ fontSize: TYPE.lead.size, lineHeight: TYPE.lead.line, color: t.body, margin: '20px 0 0', maxWidth: '62ch', whiteSpace: 'pre-wrap' }}>{String(cs.body || '')}</p>
+            </Slide>
+          ) }))
+
+          return (
+            <TextScale.Provider value={textScale}>
+              {slides.map((sl, i) => (
+                <SectionShell key={sl.key + '-' + i} id={sl.key + '-' + i} title={sl.key}
+                  hidden={false} edit={edit} onToggle={() => toggleSection(sl.key)}
+                  onAi={sl.ai ? () => openAi(sl.key) : undefined}>
+                  {sl.node}
+                </SectionShell>
+              ))}
+            </TextScale.Provider>
+          )
+        })()}
+
+        {!isOnboarding && !isReviewDeck && (<>
         {/* ---------- THE MONTH — the verdict page (Jon, 2026-09-22) ---------- */}
         {verdict && !isHidden('verdict') ? (
           <SectionShell id="verdict" title="The Month" hidden={isHidden('verdict')} edit={edit} onToggle={() => toggleSection('verdict')}>
