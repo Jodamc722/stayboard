@@ -176,6 +176,30 @@ export function exposureFor(f: ReviewFacts): Exposure {
   const oneHard = oneCrosses.filter(c => c.hard)
 
   let cause = ''
+
+  // ALREADY UNDER THE FLOOR. Found on 2026-09-22 testing this against a live glitch: Botanica 2208
+  // sits at 4.18 over 11 reviews, so it is beneath every hard floor and `crosses` is therefore
+  // empty — the damage has already happened. Read naively that looks like SAFETY ("a bad review
+  // breaks nothing") when it is the opposite: this is the worst-placed listing we own, it is the
+  // one actively losing bookings, and on a thin review count it needs dozens of good stays to climb
+  // back. A unit in that state gets the full treatment, not a shrug.
+  // Which hard floors is it ALREADY under? Below the lowest is an emergency; below a higher one is
+  // a listing that has already lost placement and is quietly costing us bookings every week.
+  const hardFloors = floorsFor(channel).filter(x => x.hard)
+  const lowestHard = hardFloors.length ? hardFloors[hardFloors.length - 1] : null
+  const breached = hardFloors.filter(x => average < x.at)
+  if (breached.length) {
+    const worst = breached[breached.length - 1]
+    const atRockBottom = !!lowestHard && average < lowestHard.at
+    level = atRockBottom ? 'critical' : 'high'
+    cause = `already below ${worst.label}`
+    // Roughly how many clean five-star stays it takes to climb back over the floor it is under.
+    const climb = Math.max(1, Math.ceil(((worst.at - average) * count) / Math.max(0.01, 5 - worst.at)))
+    lines.push(`This listing is already at ${inScale(average, channel)}, under ${worst.label} — ${worst.why}. ${atRockBottom
+      ? 'Nothing further "breaks" because it is already broken, and that is the emergency rather than the reassurance: it is losing bookings now.'
+      : 'It has already slipped, so the job here is climbing back rather than holding a line.'} On ${count} review${count === 1 ? '' : 's'} it needs roughly ${climb} straight five-star stay${climb === 1 ? '' : 's'} to clear ${worst.label} again. Every stay here is a recovery stay.`)
+  }
+
   if (count < 10) {
     level = 'critical'; cause = `only ${count} review${count === 1 ? '' : 's'} to absorb it`
     lines.push(`Only ${count} review${count === 1 ? '' : 's'} on this channel. Every single one moves the number by ${ifThree ? ifThree.drop.toFixed(2) : '—'} or more, so there is nothing here to absorb a bad night.`)
