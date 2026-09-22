@@ -10,6 +10,7 @@
 // by the live engine through /api/refunds/playbook — nothing on this page is typed in beside the
 // code that decides it.
 import { useCallback, useEffect, useState } from 'react'
+import { RefundTraining } from './RefundTraining'
 import {
   Wrench, HandHeart, DollarSign, PenLine, Clock, AlertTriangle, ShieldCheck, Loader2,
   ChevronDown, ChevronRight, Eye, EyeOff, Star, Check, Info,
@@ -19,7 +20,7 @@ const card = 'bg-white border border-line rounded-2xl shadow-soft'
 const money = (n: any) => (n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 const mins = (m: number) => (m < 60 ? `${m} min` : `${Math.round(m / 60)} hr`)
 
-type Tab = 'ladder' | 'matrix' | 'scenarios' | 'categories' | 'authority'
+type Tab = 'ladder' | 'matrix' | 'scenarios' | 'categories' | 'authority' | 'train'
 
 const LEVEL_TONE: Record<string, string> = {
   critical: 'bg-rose-50 text-rose-800 ring-rose-200',
@@ -54,6 +55,7 @@ export function RefundPlaybook() {
   const tabs: [Tab, string][] = [
     ['ladder', 'The order of operations'], ['matrix', 'The matrix'], ['scenarios', 'Scenarios'],
     ['categories', 'By category'], ['authority', 'Who signs'],
+    ...(d.canSeeMoney ? [['train', 'Train the advisor'] as [Tab, string]] : []),
   ]
 
   return (
@@ -84,6 +86,7 @@ export function RefundPlaybook() {
       {tab === 'scenarios' && <ScenariosTab d={d} />}
       {tab === 'categories' && <CategoriesTab d={d} />}
       {tab === 'authority' && <AuthorityTab d={d} reload={() => load(nightly)} />}
+      {tab === 'train' && <RefundTraining />}
     </div>
   )
 }
