@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyConfigured, listRecentReviews } from '@/lib/guesty'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -183,20 +184,27 @@ export async function GET(req: NextRequest) {
       if (deep) {
         const all = await listRecentReviews(8000)
         const guesty = new Set(all.map(r => str(r.id)).filter(Boolean))
-        // Only trust the comparison if the pull actually looks complete. A short pull means a
-        // paging failure, and every id we hold would read as "removed".
-        const plausible = guesty.size >= Math.floor(ourTotal * 0.9)
+        // OUR SIDE HAS TO BE COMPLETE TOO. `reviews` above is one PostgREST read, and PostgREST
+        // caps a read at 1,000 rows whatever the .limit() says (the same trap lib/projections.ts
+        // was paged for on 2026-09-03). Comparing 1,000 of our 4,000 rows would prove a quarter of
+        // the question and read as if it had proved all of it, so the deep pass pages every row.
+        const mine = await pageRows<any>((a, b) => db.from('guesty_reviews')
+          .select('id,channel,created_at,rating').order('id').range(a, b), 12)
+        // Only trust the comparison if BOTH sides came back whole. A short pull on either side
+        // means a paging failure, and every id we hold would read as "removed".
+        const plausible = guesty.size >= Math.floor(ourTotal * 0.9) && !mine.truncated && mine.rows.length >= Math.floor(ourTotal * 0.9)
         const gone = plausible
-          ? reviews.filter(r => str(r.id) && !guesty.has(str(r.id)))
+          ? mine.rows.filter((r: any) => str(r.id) && !guesty.has(str(r.id)))
           : []
         ;(live as any).deep = {
           guestyTotal: guesty.size,
+          oursCompared: plausible ? mine.rows.length : 0,
           oursInWindow: reviews.length,
           oursTotal: ourTotal,
           trustworthy: plausible,
           note: plausible
-            ? 'Guesty served at least 90% of what we hold, so a gap is a real gap.'
-            : 'The pull came back short — treat this as a failed read, not as removed reviews.',
+            ? 'Both sides came back whole, so a gap is a real gap. Our count is a high-water mark (nothing is ever deleted here), so if Guesty dropped removed reviews its total would sit BELOW ours.'
+            : 'One side came back short — treat this as a failed read, not as removed reviews.',
           inOursNotInGuesty: gone.slice(0, 50).map(r => ({
             id: str(r.id), channel: str(r.channel), createdAt: r.created_at, rating: r.rating,
           })),
