@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { hasEditCookie } from '@/lib/edit-access'
 import { resolveScope, pullTasks, weekBuckets, type ReportListing } from '@/lib/owner-report'
 import { aiFetch } from '@/lib/ai-usage'
+import { reconcilePacing, type OurTruth } from '@/lib/pacing-check'
 import { requireLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
@@ -52,13 +53,13 @@ async function fetchDocBlock(url: string): Promise<any | null> {
   } catch { return null }
 }
 
-async function parsePacing(url: string, scopeLabel: string, periodLabel: string, ourOccPct?: number) {
+async function parsePacing(url: string, scopeLabel: string, periodLabel: string, truth?: OurTruth) {
   const block = await fetchDocBlock(url)
   if (!block) return null
   const text = await anthropic({
     model: DOC_MODEL, max_tokens: 900,
     system: 'You extract market-pacing figures from PriceLabs reports for an owner report. Output STRICT JSON only.',
-    messages: [{ role: 'user', content: [block, { type: 'text', text: 'This is a PriceLabs pacing/market report for the property "' + scopeLabel + '" (period: ' + periodLabel + '). Extract OUR property vs the market/comp set. CRITICAL chart-reading rules: in PriceLabs "Pacing vs Market" charts the legend maps each line - the "Your Occupancy"/"Your ADR"/"Your RevPAR" series (solid dark/black line) is OUR property, and the "Market ..." series (solid red line) is the comp set; dash-dot lines are last year - ignore them. Read each series at the most recent stay dates (at or after the "This Week" marker). Before answering, double-check you have NOT swapped the two: "ours" must come from the "Your ..." series only. Return JSON: {"subtitle": one line naming the pull window + comp set (e.g. "Jul 2026 pacing - vs PriceLabs ABB comp set (13 listings)"), "rows": [{"metric": "RevPAR"|"ADR"|"Occupancy", "ours": display value like "$265" or "82%", "comps": same format, "delta": signed advantage like "+56%" or "+25 pts" (negative if behind)}]}. Include only metrics actually present. If the document has no usable comparison, return {"rows": []}.' }] }],
+    messages: [{ role: 'user', content: [block, { type: 'text', text: 'This is a PriceLabs pacing/market report for the property "' + scopeLabel + '" (period: ' + periodLabel + '). Extract OUR property vs the market/comp set. CRITICAL chart-reading rules: in PriceLabs "Pacing vs Market" charts the legend maps each line - the "Your Occupancy"/"Your ADR"/"Your RevPAR" series (solid dark/black line) is OUR property, and the "Market ..." series (solid red line) is the comp set; dash-dot lines are last year - ignore them. Read each series at the most recent stay dates (at or after the "This Week" marker). Before answering, double-check you have NOT swapped the two: "ours" must come from the "Your ..." series only. DO NOT report RevPAR - it is occupancy x ADR and we compute it ourselves; reading a third line off the chart is where this goes wrong. Report Occupancy and ADR only, and prefer a printed/labelled number over estimating the height of a line against the axis. If a value is not printed and you are estimating, still give your best read - but never invent a metric the document does not show. Return JSON: {"subtitle": one line naming the pull window + comp set (e.g. "Jul 2026 pacing - vs PriceLabs ABB comp set (13 listings)"), "rows": [{"metric": "RevPAR"|"ADR"|"Occupancy", "ours": display value like "$265" or "82%", "comps": same format, "delta": signed advantage like "+56%" or "+25 pts" (negative if behind)}]}. Include only metrics actually present. If the document has no usable comparison, return {"rows": []}.' }] }],
   })
   const j = parseJson(text)
   if (!j || !Array.isArray(j.rows) || !j.rows.length) return null
@@ -66,24 +67,20 @@ async function parsePacing(url: string, scopeLabel: string, periodLabel: string,
     metric: str(r?.metric).slice(0, 20), ours: str(r?.ours).slice(0, 16), comps: str(r?.comps).slice(0, 16), delta: str(r?.delta).slice(0, 16),
   })).filter((r: any) => r.metric && r.ours)
   if (!rows.length) return null
-  // Deterministic anti-swap: our own occupancy is authoritative, so if the parsed "ours" occupancy is
-  // farther from it than the comp value is, PriceLabs' "Your"/"Market" lines were read backwards -> flip.
-  const numOf = (s: any) => { const m = String(s == null ? '' : s).match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : NaN }
-  const flipDelta = (d: any) => { const s = String(d == null ? '' : d).trim(); if (/^[-−]/.test(s)) return '+' + s.replace(/^[-−]/, ''); if (/^\+/.test(s)) return '-' + s.replace(/^\+/, ''); return s }
-  if (typeof ourOccPct === 'number' && ourOccPct > 0) {
-    const occ = rows.find((r: any) => /occup/i.test(r.metric))
-    if (occ) {
-      const o = numOf(occ.ours), c = numOf(occ.comps)
-      if (isFinite(o) && isFinite(c) && Math.abs(c - ourOccPct) < Math.abs(o - ourOccPct)) {
-        for (const r of rows) { const t = r.ours; r.ours = r.comps; r.comps = t; r.delta = flipDelta(r.delta) }
-      }
-    }
-  }
-  const ahead = rows.every((r: any) => !String(r.delta).trim().startsWith('-') && !String(r.delta).trim().startsWith('−'))
+  // EVERY NUMBER ON THIS SLIDE IS RECONCILED BEFORE AN OWNER SEES IT (2026-09-22). The model
+  // reads a chart; reconcilePacing checks the result against arithmetic and against our own
+  // board, derives RevPAR rather than trusting a third eyeballed line, recomputes the deltas,
+  // and drops anything that still cannot be true. See lib/pacing-check.ts for the 17WEST case
+  // that forced this.
+  const fixed = reconcilePacing(rows, truth || {})
+  if (!fixed.rows.length) return null
+  const ahead = fixed.ahead
+
   return {
     headline: ahead ? 'Ahead of the market across the board.' : 'How we stack up against the market.',
     subtitle: str(j.subtitle).slice(0, 140) || 'vs. PriceLabs comp set',
-    rows,
+    rows: fixed.rows,
+    notes: fixed.notes,
   }
 }
 
@@ -247,9 +244,18 @@ export async function POST(req: NextRequest) {
     const url = str(body?.url)
     if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 })
     const periodLabel = str(rep.period_start) + ' to ' + str(rep.period_end)
-    const occCard = (((rep.content || {}).snapshot || {}).cards || []).find((c: any) => c && (String(c.key) === 'occupancy' || /occup/i.test(String(c.label))))
-    const ourOccPct = occCard ? Number(String(occCard.value).replace(/[^\d.]/g, '')) : undefined
-    const section = await parsePacing(url, scopeLabel, periodLabel, ourOccPct && ourOccPct > 0 ? ourOccPct : undefined)
+    // OUR OWN BOARD IS THE ANCHOR. The snapshot cards were computed from Guesty by this app and
+    // foot against each other (occupancy x ADR = RevPAR); the PDF is an outside reading of a
+    // chart. Hand all three over so a swapped series or a misread line is caught deterministically.
+    const cards: any[] = (((rep.content || {}).snapshot || {}).cards || [])
+    const card = (k: string, re: RegExp) => cards.find((c: any) => c && (String(c.key) === k || re.test(String(c.label))))
+    const num = (c: any) => { if (!c) return undefined; const n = Number(String(c.value).replace(/[^\d.]/g, '')); return isFinite(n) && n > 0 ? n : undefined }
+    const truth = {
+      occPct: num(card('occupancy', /occup/i)),
+      adr: num(card('adr', /\badr\b/i)),
+      revpar: num(card('revpar', /revpar/i)),
+    }
+    const section = await parsePacing(url, scopeLabel, periodLabel, truth)
     if (!section) return NextResponse.json({ error: 'Could not read a market comparison out of that PDF.' }, { status: 422 })
     return NextResponse.json({ ok: true, section })
   }

@@ -1486,7 +1486,15 @@ export function ReportView({ initial, canEdit, isTeam }: { initial: Any; canEdit
     const url = await uploadOne(f)
     if (url) {
       const section = await parseAttach({ kind: 'pacing', url })
-      if (section) patch('pacing', section)
+      if (section) {
+        patch('pacing', section)
+        // SAY WHEN THE READ WAS CORRECTED (2026-09-22). The PDF is read off a chart, so the
+        // server reconciles it against arithmetic and our own board before it lands on the
+        // slide. A silent correction is the same trap as a silent misread -- Jon has to know
+        // which numbers came out of the document and which ones we fixed.
+        const notes: string[] = Array.isArray((section as any).notes) ? (section as any).notes : []
+        if (notes.length) setAttachMsg('Read and corrected: ' + notes.join(' '))
+      }
     }
     setBusy(''); e.target.value = ''
   }
