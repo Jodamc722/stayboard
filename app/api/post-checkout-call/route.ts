@@ -13,6 +13,7 @@
 //   POST { reservationId, outcome, note, by }  -> log the call
 //   POST { reservationId, undo: true }         -> remove the log (mis-click)
 import { NextRequest, NextResponse } from 'next/server'
+import { signedInName } from '@/lib/caller-name'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
@@ -51,7 +52,8 @@ export async function POST(req: NextRequest) {
 
   const outcome: Outcome = (OUTCOMES as readonly string[]).includes(String(body?.outcome)) ? body.outcome : 'happy'
   const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 1000) : ''
-  const by = (typeof body?.by === 'string' && body.by.trim()) ? body.by.trim().slice(0, 80) : String(user.email || '').toLowerCase()
+  // The signed-in person, always — a typed name is ignored (Jon, 2026-09-22).
+  const by = await signedInName(supabaseAdmin(), String(user.email || ''))
   const callerEmail = String(user.email || '').toLowerCase()
   // "No answer" is logged like the others, but the board keeps the row on the list: a call nobody
   // picked up is a call still to make, with the useful addition that you can see who already tried.

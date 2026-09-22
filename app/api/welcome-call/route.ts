@@ -4,6 +4,7 @@
 //   POST { reservationId, done }  -> set the welcome_call field in Guesty + local mirror
 // Logged-in users only (the ops team marks calls).
 import { NextRequest, NextResponse } from 'next/server'
+import { signedInName } from '@/lib/caller-name'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken as refreshGuestyToken } from '@/lib/guesty'
@@ -155,7 +156,8 @@ export async function POST(req: NextRequest) {
   const TIERS = ['recovery', 'lux', 'big', 'standard']
   const tier = TIERS.indexOf(String(body?.tier)) >= 0 ? String(body.tier) : 'standard'
   const value = typeof body?.value === 'string' ? body.value : (outcome === 'voicemail' ? 'Voicemail left' : done ? 'Completed' : '')
-  const by = (typeof body?.by === 'string' && body.by.trim()) ? body.by.trim().slice(0, 80) : String(user.email || '').toLowerCase()
+  // The signed-in person, always — a typed name is ignored (Jon, 2026-09-22).
+  const by = await signedInName(supabaseAdmin(), String(user.email || ''))
   const callerEmail = String(user.email || '').toLowerCase()
   const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 1000) : ''
   if (!reservationId) return NextResponse.json({ error: 'reservationId required' }, { status: 400 })

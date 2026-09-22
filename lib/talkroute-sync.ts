@@ -42,8 +42,12 @@ import { WELCOME_AHEAD_DAYS, WELCOME_GRACE_DAYS, POST_GRACE_DAYS, addDays, isCom
 import { isLiveStay } from './stay-status'
 import { callerDeviceOf, callerNameOf, talkroutePeople, getPeopleMap, backfillCallers, type TrPerson, type PeopleMap } from './talkroute-people'
 
+/** How far before arrival an outbound call still counts as the welcome call. */
+const WELCOME_MATCH_AHEAD_DAYS = 30
+
 // Guesty's reservation customFields carry no field name in the mirror; the Welcome Call definition
 // id is known from live data (app/api/welcome-call/route.ts uses the same constant).
+
 const WELCOME_FIELD_ID = '68d59ad7e34f25001311d85a'
 
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -120,7 +124,9 @@ export function classifyCall(callYmd: string, direction: string, candidates: Res
   if (!candidates.length) return null
   let best: { res: ResLite; kind: 'welcome' | 'post_checkout' | 'stay'; rank: number } | null = null
   for (const r of candidates) {
-    const inWelcome = direction === 'outbound' && callYmd >= addDays(r.check_in, -WELCOME_AHEAD_DAYS) && callYmd <= addDays(r.check_in, WELCOME_GRACE_DAYS)
+    // ANY outbound call before arrival counts (Jon, 2026-09-22: "outbound call before arrival") — not only
+    // inside the desk's 72-hour window. A guest reached a week out has had their welcome call.
+    const inWelcome = direction === 'outbound' && callYmd >= addDays(r.check_in, -WELCOME_MATCH_AHEAD_DAYS) && callYmd <= addDays(r.check_in, WELCOME_GRACE_DAYS)
     const inPost = callYmd >= r.check_out && callYmd <= addDays(r.check_out, POST_GRACE_DAYS)
     const inStay = callYmd >= addDays(r.check_in, -1) && callYmd <= addDays(r.check_out, 1)
     const kind: 'welcome' | 'post_checkout' | 'stay' | null = inWelcome ? 'welcome' : inPost ? 'post_checkout' : inStay ? 'stay' : null
@@ -140,7 +146,7 @@ export function classifyCall(callYmd: string, direction: string, candidates: Res
 // and the desk backfills them from Guesty on every page load without saving. The matcher needs
 // them saved. Arrivals in the welcome runway plus the last week of departures — a small set.
 async function backfillPhones(sb: any, today: string, errors: string[]): Promise<number> {
-  const lo = addDays(today, -7), hi = addDays(today, WELCOME_AHEAD_DAYS + 1)
+  const lo = addDays(today, -7), hi = addDays(today, 14)
   const { data } = await sb.from('guesty_reservations').select('id,status,guestId:raw->guest->>_id')
     .is('guest_phone', null).gte('check_out', lo).lte('check_in', hi).limit(60)
   const rows = (data || []).filter((r: any) => r.guestId && isLiveStay(r.status))

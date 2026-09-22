@@ -22,6 +22,7 @@ import { getToken } from '@/lib/guesty'
 import { unstable_cache } from 'next/cache'
 import { ymdET } from '@/lib/team-schedule'
 import { loadCallsDesk } from '@/lib/call-desk'
+import { signedInName } from '@/lib/caller-name'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,9 +69,11 @@ export default async function CallsPage() {
     for (const r of missing) if (pmap[r.guestId]) r.phone = pmap[r.guestId]
   }
 
+  const meName = await signedInName(supabaseAdmin(), String(user.email || ''))
+
   return (
     <Shell>
-      <CallsDesk rows={d.rows} outRows={d.outRows} kpis={d.kpis as any} today={d.today} me={String(user.email || '')} talkroute={d.talkroute} callers={d.callers} />
+      <CallsDesk meName={meName} rows={d.rows} outRows={d.outRows} kpis={d.kpis as any} today={d.today} me={String(user.email || '')} talkroute={d.talkroute} callers={d.callers} />
     </Shell>
   )
 }

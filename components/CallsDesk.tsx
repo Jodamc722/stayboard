@@ -18,8 +18,9 @@
 // The script panel is the one built earlier today: facts as chips, the must-dos in the only box,
 // six steps, the building guide behind a toggle, notes last.
 import { useEffect, useState, type ReactNode } from 'react'
-import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck, FileText } from 'lucide-react'
+import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck, FileText, X } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
+import { IconBtn, Tip } from '@/components/lean'
 
 type Recovery = { listingId: string; rating: number; channel: string; guest: string; content: string; at: string; openDays: number; reviewsSince: number }
 type Glitch = { id: string; overview: string; status: string; at: string }
@@ -339,7 +340,7 @@ function WelcomeScript({ r, draft, setDraft, onSaveNote, saving, saved }: {
 }
 
 
-export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, me, talkroute = false, callers = [] }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; me: string; talkroute?: boolean; callers?: string[] }) {
+export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, me, meName = '', talkroute = false }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; me: string; meName?: string; talkroute?: boolean; callers?: string[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
   const [outRows, setOutRows] = useState<OutRow[]>(initialOut)
   const [tab, setTab] = useState<'welcome' | 'post' | 'done' | 'board' | 'all'>('welcome')
@@ -354,28 +355,18 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
-  const [myName, setMyName] = useState<string>('')
-  useEffect(() => { try { setMyName(window.localStorage.getItem('wc_caller_name') || who(me)) } catch { setMyName(who(me)) } }, [me])
-
-  function askName(): string | null {
-    const last = myName || who(me)
-    const entered = window.prompt('Your name (who made this call)?', last)
-    if (entered === null) return null
-    const by = entered.trim() || last
-    try { window.localStorage.setItem('wc_caller_name', by) } catch { /* ignore */ }
-    setMyName(by)
-    return by
-  }
+  // Who is pressing the buttons is whoever is signed in (Jon, 2026-09-22) — the server credits the
+  // call to that account; this copy is only for "You have it" and the note strip.
+  const myName = meName || who(me)
+  // THE NOTE AFTER A MARK (Jon, 2026-09-22: "if you mark it should show or allow you to add notes").
+  // A marked welcome call leaves the To-call list at once, so the note box cannot live on its row —
+  // it sits at the top of the list, names the guest, and writes to Guesty on Save.
+  const [noteAfter, setNoteAfter] = useState<{ id: string; guest: string; label: string } | null>(null)
 
   // ── WELCOME CALL ACTIONS ──
-  async function welcome(id: string, outcome: 'reached' | 'voicemail' | 'no_answer' | 'claim' | 'undo', caller?: string) {
+  async function welcome(id: string, outcome: 'reached' | 'voicemail' | 'no_answer' | 'claim' | 'undo') {
     const row = rows.find(x => x.id === id); if (!row) return
-    let by = myName || who(me)
-    // The card's own "who called" picker supersedes the prompt — asking again for something the
-    // person just typed is how a two-second close-out becomes a five-second one.
-    if (caller && caller.trim()) by = caller.trim()
-    else if (outcome !== 'undo' && outcome !== 'claim') { const n = askName(); if (n === null) return; by = n }
-    if (outcome === 'claim' && !by) { const n = askName(); if (n === null) return; by = n }
+    const by = myName
     const note = (draft[id] || '').trim()
     setBusy(id); setError(null); setFailedId(null)
     try {
@@ -389,6 +380,9 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
         return { ...x, done: true, outcome, calledBy: j.by || by, calledAt: j.at || new Date().toISOString(), callValue: j.callValue || x.callValue, notes: j.notes || x.notes, claimedBy: '', attempts: j.attempts || (x.attempts + 1) }
       }))
       if (outcome !== 'claim') setDraft(d => ({ ...d, [id]: '' }))
+      if (outcome === 'reached' || outcome === 'voicemail' || outcome === 'no_answer') {
+        setNoteAfter({ id, guest: row.guest || 'Guest', label: outcome === 'reached' ? 'Reached' : outcome === 'voicemail' ? 'Voicemail left' : 'No answer' })
+      }
     } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setBusy(null) }
   }
   async function saveNote(id: string) {
@@ -399,13 +393,13 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       const j = await readReply(r); if (!r.ok) throw new Error(j?.error || 'Failed to save note.')
       setRows(prev => prev.map(x => x.id === id ? { ...x, notes: j.notes || x.notes } : x))
       setDraft(d => ({ ...d, [id]: '' })); setSaved(id); setTimeout(() => setSaved(s => s === id ? null : s), 1800)
+      setNoteAfter(n => n && n.id === id ? null : n)
     } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setSaving(null) }
   }
 
   // ── POST-CHECKOUT ACTIONS ──
   async function post(id: string, outcome: 'happy' | 'issue' | 'no_answer' | 'claim' | 'undo') {
-    let by = myName || who(me)
-    if (outcome !== 'undo' && !myName) { const n = askName(); if (n === null) return; by = n }
+    const by = myName
     const note = (draft[id] || '').trim()
     setBusy(id); setError(null); setFailedId(null)
     try {
@@ -418,6 +412,10 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
         return { ...x, done: outcome !== 'no_answer', outcome, calledBy: j.by || by, calledAt: j.at || new Date().toISOString(), callNote: note, attempts: j.attempts ?? x.attempts, claimedBy: '' }
       }))
       if (outcome !== 'claim') setDraft(d => ({ ...d, [id]: '' }))
+      if (outcome === 'happy' || outcome === 'issue' || outcome === 'no_answer') {
+        const g = outRows.find(x => x.id === id)
+        setNoteAfter({ id, guest: (g && g.guest) || 'Guest', label: outcome === 'happy' ? 'All good' : outcome === 'issue' ? 'Issue raised' : 'No answer' })
+      }
       if (j.noteSynced === false) setError('Call logged. The note could not be written to Guesty — add it there by hand if it matters.')
     } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setBusy(null) }
   }
@@ -498,11 +496,9 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   const oDone = Math.max(0, kpis.calledToday - kpis.mandatoryDoneToday)
   const oTot = oDone + Math.max(0, kpis.dueNow - kpis.mandatoryOpen) + kpis.postDue
   const listProps = { today, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }
-  function setCaller(v: string) { setMyName(v); try { window.localStorage.setItem('wc_caller_name', v) } catch { /* ignore */ } }
 
   return (
     <div className="space-y-3">
-      <CallerOptions names={callers} />
       <header className="flex items-end justify-between gap-3 flex-wrap">
         <h1 className="text-2xl font-bold text-ink tracking-tight inline-flex items-center gap-2"><PhoneCall size={20} className="text-brand-600" /> Calls</h1>
         <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
@@ -522,15 +518,25 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
             </button>
           ))}
         </div>
-        <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted">
-          Calling as
-          <input value={myName} onChange={e => setCaller(e.target.value)} list="lh-callers" placeholder="your name"
-            className="w-[110px] rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink focus:outline-none focus:border-brand-600" />
-        </label>
+        <span className="ml-auto text-[12px] text-muted">Signed in as <b className="text-ink">{myName}</b></span>
       </div>
 
       {kpis.recoveryFailed && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-800 flex items-center gap-2"><AlertTriangle size={13} className="shrink-0" /> Review scan came back short — recovery tags may be missing. Reload in a minute.</div>}
       {error && !failedId && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-center gap-2"><AlertTriangle size={13} className="shrink-0" /> {error}</div>}
+
+      {noteAfter && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2 flex items-center gap-2 flex-wrap">
+          <Check size={14} className="text-emerald-700 shrink-0" />
+          <span className="text-[12.5px] text-ink"><b>{noteAfter.label}</b> · {noteAfter.guest} <span className="text-muted">— by {myName}</span></span>
+          <input autoFocus value={draft[noteAfter.id] || ''} onChange={e => { const v = e.target.value; const id = noteAfter.id; setDraft(d => ({ ...d, [id]: v })) }}
+            onKeyDown={e => { if (e.key === 'Enter') saveNote(noteAfter.id); if (e.key === 'Escape') setNoteAfter(null) }}
+            placeholder="Add a note — goes to the reservation in Guesty"
+            className="flex-1 min-w-[180px] rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] text-ink focus:outline-none focus:border-brand-600" />
+          <button onClick={() => saveNote(noteAfter.id)} disabled={saving === noteAfter.id || !(draft[noteAfter.id] || '').trim()}
+            className="inline-flex items-center gap-1 rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-40">{saving === noteAfter.id ? <Loader2 size={12} className="animate-spin" /> : <StickyNote size={12} />} Save note</button>
+          <IconBtn title="No note — close" onClick={() => setNoteAfter(null)}><X size={14} /></IconBtn>
+        </div>
+      )}
 
       {tab === 'done' && <CompletedList rows={doneCalls} />}
 
@@ -593,7 +599,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 function CompletedList({ rows }: { rows: any[] }) {
   if (!rows.length) return <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No calls completed yet.</div>
   return (
-    <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
+    <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
       {rows.map(r => {
         const vm = r.outcome === 'voicemail'
         return (
@@ -624,11 +630,6 @@ function CompletedList({ rows }: { rows: any[] }) {
   )
 }
 
-/** One shared list of caller names for every card's picker. */
-function CallerOptions({ names }: { names: string[] }) {
-  return <datalist id="lh-callers">{names.map(n => <option key={n} value={n} />)}</datalist>
-}
-
 function nextDay(ymd: string) { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10) }
 
 // ── ONE LINE PER CALL (2026-09-22, Jon: "So noisy, should be clean, one liners and tags" · "Call
@@ -649,17 +650,13 @@ function Tag({ tone = 'slate', title, children }: { tone?: string; title?: strin
   return <span title={title} className={`shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ${TAG_TONE[tone] || TAG_TONE.slate}`}>{children}</span>
 }
 function CallBtn({ phone }: { phone: string }) {
-  if (!phone) return <span title="No phone on file" className="shrink-0 inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-400 px-2.5 h-8 text-[12px] font-semibold"><PhoneOff size={13} /> No #</span>
+  if (!phone) return <Tip label="No phone number on file"><span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-400 px-2.5 h-8 text-[12px] font-semibold"><PhoneOff size={13} /> No #</span></Tip>
   return (
-    <a href={`tel:${phone.replace(/[^+\d]/g, '')}`} title={`Call ${phone} (opens Talkroute)`}
+    <Tip label={`Call ${phone} in Talkroute`}><a href={`tel:${phone.replace(/[^+\d]/g, '')}`}
       className="shrink-0 inline-flex items-center gap-1 rounded-full bg-brand-600 text-white px-3 h-8 text-[12px] font-semibold hover:bg-brand-700 shadow-sm">
       <PhoneCall size={13} /> Call
-    </a>
+    </a></Tip>
   )
-}
-function IconBtn({ title, onClick, disabled, tone, children }: { title: string; onClick: () => void; disabled?: boolean; tone?: 'ok' | 'bad'; children: ReactNode }) {
-  const cls = tone === 'ok' ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : tone === 'bad' ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-line text-muted hover:text-ink hover:bg-app'
-  return <button onClick={onClick} disabled={disabled} title={title} aria-label={title} className={`shrink-0 inline-flex items-center justify-center rounded-lg border bg-white w-8 h-8 disabled:opacity-40 ${cls}`}>{children}</button>
 }
 function dayTag(d: string, today: string) {
   if (d === today) return <Tag tone="roseSolid" title="Arrives today — the call closes tonight">Today</Tag>
@@ -687,12 +684,12 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
   rows: Row[]; today: string; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; copied: string | null; copyPhone: (id: string, p: string) => void
-  welcome: (id: string, o: 'reached' | 'voicemail' | 'no_answer' | 'claim' | 'undo', caller?: string) => void
+  welcome: (id: string, o: 'reached' | 'voicemail' | 'no_answer' | 'claim' | 'undo') => void
   saveNote: (id: string) => void; saving: string | null; saved: string | null; myName: string
   failedId: string | null; error: string | null
 }) {
   return (
-    <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
+    <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
       {rows.map(r => {
         const ch = channelOf(r.source)
         const pol = channelPolicy(ch)
@@ -727,18 +724,18 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
               </button>
               {live && (
                 <div className="flex items-center gap-1">
-                  <IconBtn title="Reached — complete" tone="ok" disabled={isBusy} onClick={() => welcome(r.id, 'reached', myName)}>{isBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}</IconBtn>
-                  <IconBtn title="Left voicemail — counts as complete" disabled={isBusy} onClick={() => welcome(r.id, 'voicemail', myName)}><Voicemail size={14} /></IconBtn>
-                  <IconBtn title={`No answer${r.attempts ? ` (${r.attempts} so far)` : ''} — stays on the list`} disabled={isBusy} onClick={() => welcome(r.id, 'no_answer', myName)}><PhoneOff size={14} /></IconBtn>
+                  <IconBtn title="Reached the guest — mark complete" tone="ok" disabled={isBusy} onClick={() => welcome(r.id, 'reached')}>{isBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}</IconBtn>
+                  <IconBtn title="Left a voicemail — counts as complete" disabled={isBusy} onClick={() => welcome(r.id, 'voicemail')}><Voicemail size={14} /></IconBtn>
+                  <IconBtn title={`No answer${r.attempts ? ` (${r.attempts} so far)` : ''} — stays on the list to try again`} disabled={isBusy} onClick={() => welcome(r.id, 'no_answer')}><PhoneOff size={14} /></IconBtn>
                 </div>
               )}
-              <button onClick={() => setOpenId(open ? null : r.id)} title="Script and notes" className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button>
+              <Tip label={open ? 'Close' : 'Script, notes & details'}><button onClick={() => setOpenId(open ? null : r.id)} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button></Tip>
             </div>
             {failedId === r.id && error && !open && <p className="px-4 pb-2 text-[12px] text-rose-700 flex items-start gap-1.5"><AlertTriangle size={12} className="mt-0.5 shrink-0" /> {error}</p>}
             {open && (
               <div className="px-3 sm:px-4 pb-3 space-y-2">
                 <RowTools id={r.id} phone={r.phone} copied={copied} copyPhone={copyPhone}>
-                  {live && !r.claimedBy && <button onClick={() => welcome(r.id, 'claim', myName)} disabled={isBusy} className="inline-flex items-center gap-1 hover:text-ink"><Hand size={11} /> Take it</button>}
+                  {live && !r.claimedBy && <button onClick={() => welcome(r.id, 'claim')} disabled={isBusy} className="inline-flex items-center gap-1 hover:text-ink"><Hand size={11} /> Take it</button>}
                   {r.done && <button onClick={() => welcome(r.id, 'undo')} disabled={isBusy} className="inline-flex items-center gap-1 hover:text-ink">Undo</button>}
                 </RowTools>
                 <ProofLine p={r.proof} done={r.done} kind="welcome" />
@@ -772,7 +769,7 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
 }) {
   if (rows.length === 0) return <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">Nobody checked out of a recovery unit in the last 48 hours.</div>
   return (
-    <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
+    <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
       {rows.map(r => {
         const open = openId === r.id
         const live = !r.done && !r.closed
@@ -797,12 +794,12 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
               </button>
               {live && (
                 <div className="flex items-center gap-1">
-                  <IconBtn title="All good" tone="ok" disabled={isBusy} onClick={() => onAct(r.id, 'happy')}>{isBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}</IconBtn>
-                  <IconBtn title="They raised an issue" tone="bad" disabled={isBusy} onClick={() => onAct(r.id, 'issue')}><AlertTriangle size={14} /></IconBtn>
-                  <IconBtn title={`No answer${r.attempts ? ` (${r.attempts} so far)` : ''}`} disabled={isBusy} onClick={() => onAct(r.id, 'no_answer')}><PhoneOff size={14} /></IconBtn>
+                  <IconBtn title="Guest was happy — all good" tone="ok" disabled={isBusy} onClick={() => onAct(r.id, 'happy')}>{isBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}</IconBtn>
+                  <IconBtn title="Guest raised an issue" tone="bad" disabled={isBusy} onClick={() => onAct(r.id, 'issue')}><AlertTriangle size={14} /></IconBtn>
+                  <IconBtn title={`No answer${r.attempts ? ` (${r.attempts} so far)` : ''} — try again later`} disabled={isBusy} onClick={() => onAct(r.id, 'no_answer')}><PhoneOff size={14} /></IconBtn>
                 </div>
               )}
-              <button onClick={() => setOpenId(open ? null : r.id)} title="Script and notes" className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button>
+              <Tip label={open ? 'Close' : 'Script, notes & details'}><button onClick={() => setOpenId(open ? null : r.id)} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button></Tip>
             </div>
             {open && (
               <div className="px-3 sm:px-4 pb-3 space-y-2">

@@ -101,7 +101,7 @@ export function Tip({ label, children }: { label: string; children: ReactNode })
 
 /** A list container for LeanRows. */
 export function LeanList({ children }: { children: ReactNode }) {
-  return <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">{children}</ul>
+  return <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">{children}</ul>
 }
 
 /**
