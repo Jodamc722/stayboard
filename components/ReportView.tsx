@@ -13,6 +13,7 @@ import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 import { SAMPLE_STATEMENT, statementHasRows, statementIsHouseSample, STATEMENT_ALSO } from '@/lib/statement-sample'
 import {
   houseLine, houseRows, agendaStale, channelBodyStale, statementAlsoRowsStale, AGENDA_ROWS, HERO_HEADLINE,
+  AI_HEADLINE, AI_SUBTITLE, AI_PILLARS, AI_NOTE,
   CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
   WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_BANDS_RETIRED_MARKS, RAMP_NOTE,
   SECTION_HEAD, SECTION_SUB, SEASON_LABEL, houseAsk,
@@ -932,14 +933,29 @@ function ChartTip({ title, rows, dark, children, style, className }: {
   className?: string
 }) {
   const [on, setOn] = useState(false)
-  const live = rows.filter(r => r[1] && r[1] !== '—')
+  // A slide clips its own overflow, so a card opening upward from a mark near the top of the
+  // frame would be cut in half. Measure against the slide on the way in and flip it downward.
+  const [below, setBelow] = useState(false)
+  const wrap = useRef<HTMLDivElement>(null)
+  // A row with nothing in it is dropped rather than printed as an em dash, and a card left with
+  // only one line is not shown at all — the mark already prints that number.
+  const live = rows.filter(r => r[1] && String(r[1]).trim() && r[1] !== '—')
   return (
-    <div className={className} style={{ position: 'relative', ...(style || {}) }}
-      onMouseEnter={() => setOn(true)} onMouseLeave={() => setOn(false)}>
+    <div ref={wrap} className={className} style={{ position: 'relative', ...(style || {}) }}
+      onMouseEnter={() => {
+        const el = wrap.current
+        if (el) {
+          const slide = el.closest('.sb-slide')
+          if (slide) setBelow(el.getBoundingClientRect().top - slide.getBoundingClientRect().top < 120)
+        }
+        setOn(true)
+      }}
+      onMouseLeave={() => setOn(false)}>
       {children}
-      {on && live.length ? (
+      {on && live.length > 1 ? (
         <div className="sb-noprint" style={{
-          position: 'absolute', bottom: 'calc(100% + 9px)', left: '50%', transform: 'translateX(-50%)',
+          position: 'absolute', left: '50%', transform: 'translateX(-50%)',
+          ...(below ? { top: 'calc(100% + 9px)' } : { bottom: 'calc(100% + 9px)' }),
           zIndex: 8, whiteSpace: 'nowrap', pointerEvents: 'none', borderRadius: 9, padding: '10px 13px',
           background: dark ? '#ffffff' : '#0E2436', color: dark ? '#0E2436' : '#ffffff',
           boxShadow: '0 10px 30px -12px rgba(0,0,0,0.55)',
@@ -1935,7 +1951,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // JON'S EIGHT, PLUS ANY EXTRA SWITCHED BACK ON (see the onboarding block below). Present mode
   // counts slides off this, so a deck with the extras off says "6 of 8" and not "6 of 17".
   const onboardingSectionKeys = ['welcome', 'agenda', 'team', 'overview', 'listings', 'guesty', 'statement', 'notes',
-    'unit', 'strategy', 'ramp', 'season', 'tech', 'money', 'comms', 'checklist', 'nextup']
+    'unit', 'strategy', 'ramp', 'season', 'ai', 'tech', 'money', 'comms', 'checklist', 'nextup']
   const onboardingListingSlides = isOnboarding && !isHidden('listings')
     ? (Array.isArray((c.listings || {}).items) ? (c.listings as Any).items.length : 0)
     : 0
@@ -2890,7 +2906,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           ]
           const EXTRA: { k: string; label: string }[] = [
             { k: 'unit', label: 'Your unit' }, { k: 'strategy', label: 'Goals & strategy' },
-            { k: 'tech', label: 'Your tech' }, { k: 'money', label: 'Billables' },
+            { k: 'ai', label: 'How we run it' }, { k: 'tech', label: 'Your tech' }, { k: 'money', label: 'Billables' },
             { k: 'comms', label: 'Communication' }, { k: 'checklist', label: 'Still to do' },
             { k: 'nextup', label: 'What happens next' },
           ]
@@ -3990,6 +4006,62 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </Slide>
           ) })
 
+          // ── HOW WE RUN IT — the software, and what it buys the owner ───────
+          // Jon, 2026-09-22: "AI Slides on onbarind about how we are really using it, new
+          // features, etc and how it will help us imporve."
+          //
+          // Every owner in this market has heard "we use AI" from four other managers, so the
+          // only version of this slide worth showing names things that run today and can be
+          // checked on the call — Eve answering in the crew channel in Spanish, a review becoming
+          // a task on a named unit, this report being generated rather than typed. The dark ground
+          // is deliberate: it is the second and last punctuation slide in the deck, and this is
+          // the one place we are allowed to make a claim about ourselves.
+          if (!hid('ai')) slides.push({ key: 'ai', ai: true, node: (
+            <Slide nav="How we run it" warn={edit} ground={GROUND.dark}>
+              <div className="flex flex-col h-full">
+                <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 16 }} />
+                <p className="onb-h" style={{ fontSize: 34, color: D.ink, lineHeight: 1.15, maxWidth: '24ch' }}>
+                  <Ed v={houseLine(sec('ai').headline, AI_HEADLINE)} set={v => patch('ai.headline', v)} edit={edit} multiline />
+                </p>
+                <p style={{ fontSize: 15, color: D.muted, marginTop: 10, maxWidth: '68ch' }}>
+                  <Ed v={houseLine(sec('ai').subtitle, AI_SUBTITLE)} set={v => patch('ai.subtitle', v)} edit={edit} multiline />
+                </p>
+
+                <div className="flex-1 min-h-0 flex flex-col justify-center">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '22px 40px' }}>
+                    {houseRows<Any>(sec('ai').pillars, [], AI_PILLARS as Any[]).slice(0, 4).map((b: Any, i: number) => (
+                      <div key={i} style={{ paddingTop: 13, borderTop: '1px solid ' + D.rule }}>
+                        <div className="flex items-baseline" style={{ gap: 10 }}>
+                          <span style={{ fontSize: 12, color: t.accent, fontWeight: 700 }}>{'0' + (i + 1)}</span>
+                          <p style={{ fontSize: 14.5, fontWeight: 600, color: D.ink }}>
+                            <Ed v={b.k || ''} set={v => patch('ai.pillars.' + i + '.k', v)} edit={edit} />
+                          </p>
+                        </div>
+                        <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.muted, marginTop: 6 }}>
+                          <Ed v={b.v || ''} set={v => patch('ai.pillars.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  {/* WHAT IS COMING sits BELOW what already runs, never above it, and stays empty
+                      unless someone types into it — a roadmap line on an empty deck is a promise
+                      nobody made. */}
+                  {(String(sec('ai').next || '').trim() || edit) ? (
+                    <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.body, marginTop: 20, paddingLeft: 14, borderLeft: '2px solid ' + t.accent, maxWidth: '84ch' }}>
+                      <span style={{ fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', fontSize: 10.5, color: t.accent, marginRight: 8 }}>Next</span>
+                      <Ed v={String(sec('ai').next || '')} set={v => patch('ai.next', v)} edit={edit} multiline placeholder="What we are building now, if it is worth mentioning on this call\u2026" />
+                    </p>
+                  ) : null}
+                  <p style={{ fontSize: 14, lineHeight: 1.6, color: D.body, marginTop: 20, maxWidth: '84ch' }}>
+                    <Ed v={houseLine(sec('ai').note, AI_NOTE)} set={v => patch('ai.note', v)} edit={edit} multiline />
+                  </p>
+                  <Asks k="ai" />
+                </div>
+                <Foot label="How we run it" dark />
+              </div>
+            </Slide>
+          ) })
+
           // ── 6 · THE OWNER PORTAL ───────────────────────────────────────────
           if (!hid('guesty')) slides.push({ key: 'guesty', ai: true, node: (
             <Slide nav="Owner portal" warn={edit} bleed ground={GROUND.tint}>
@@ -4465,24 +4537,38 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       </div>
                     )}
                     {/* Questions of the deck's own, added on this slide (Jon, 2026-09-21). */}
-                    {(edit || ((sec('notes').asks || []) as Any[]).length > 0) && (
+                    {(canEdit || ((sec('notes').asks || []) as Any[]).length > 0) && (
                       <div style={{ marginTop: 22 }}>
                         {((sec('notes').asks || []) as Any[]).map((a: Any, i: number) => (
-                          <div key={a.id || i} style={{ display: 'grid', gridTemplateColumns: edit ? '1fr 24px' : '1fr', columnGap: 12, padding: '8px 0', borderTop: '1px solid ' + t.rule }}>
+                          <div key={a.id || i} style={{ display: 'grid', gridTemplateColumns: canEdit ? '1fr 24px' : '1fr', columnGap: 12, padding: '8px 0', borderTop: '1px solid ' + t.rule }}>
                             <div>
+                              {/* Jon, 2026-09-22: "Not able to edit the questions other notes in the
+                                  onbaorind deck." The question was only typeable inside Edit mode,
+                                  while the answer beneath it was live for any signed-in presenter —
+                                  so on the call, where the deck is NOT in edit mode, the question
+                                  was frozen. Both are live for a presenter now. */}
                               <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
-                                {edit ? <Ed v={String(a.q || '')} set={v => patch('notes.asks.' + i + '.q', v)} edit={edit} placeholder="Question" /> : houseAsk(a.q)}
+                                {canEdit
+                                  ? <Ed v={String(a.q || '')} set={v => { patch('notes.asks.' + i + '.q', v); answerChanged() }} edit placeholder="Question" multiline />
+                                  : houseAsk(a.q)}
                               </p>
+                              {(a.hint || canEdit) ? (
+                                <p style={{ fontSize: 12, color: t.muted, marginTop: 2 }}>
+                                  {canEdit
+                                    ? <Ed v={String(a.hint || '')} set={v => { patch('notes.asks.' + i + '.hint', v); answerChanged() }} edit placeholder="A hint, if it needs one" multiline />
+                                    : String(a.hint || '')}
+                                </p>
+                              ) : null}
                               {canEdit ? (
                                 <input value={String(a.a || '')} onChange={e => setAnswer('notes', i, e.target.value)} placeholder="answer&hellip;"
                                   className="onb-ask mt-1.5 w-full text-[13.5px] pb-1"
                                   style={{ background: 'transparent', border: 0, borderBottom: '1px ' + (String(a.a || '').trim() ? 'solid ' + t.accent : 'dashed ' + t.rule), color: t.ink, fontFamily: 'inherit' }} />
                               ) : String(a.a || '').trim() ? <p style={{ fontSize: 13.5, color: t.body, marginTop: 4 }}>{String(a.a)}</p> : null}
                             </div>
-                            {edit ? <button onClick={() => mutate(d => { const n = d.notes || {}; if (Array.isArray(n.asks)) n.asks.splice(i, 1) })} title="Remove" style={{ color: t.muted, alignSelf: 'start' }}><X size={13} /></button> : null}
+                            {canEdit ? <button onClick={() => mutate(d => { const n = d.notes || {}; if (Array.isArray(n.asks)) n.asks.splice(i, 1) })} title="Remove" style={{ color: t.muted, alignSelf: 'start' }}><X size={13} /></button> : null}
                           </div>
                         ))}
-                        {edit ? (
+                        {canEdit ? (
                           <button
                             onClick={() => mutate(d => { const n = d.notes || (d.notes = {}); n.asks = Array.isArray(n.asks) ? n.asks : []; n.asks.push({ id: 'n' + Date.now(), q: '' }) })}
                             className="sb-noprint"
@@ -5430,16 +5516,32 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             // Build the strip from the months themselves so every column keeps its own figures —
             // ahead.strip carries only a label and an occupancy, which is what the hover was
             // missing.
+            // THE FIGURES COME OFF THE MONTH'S OWN RAW NUMBERS (fixed 2026-09-22). The first cut
+            // read m.adr / m.revpar / m.revenue straight off the row — fields a month carrying the
+            // three-basis raw model does not have. Every line of the hover card resolved to "—",
+            // the card had nothing to show, and the hover looked broken rather than empty.
+            //
+            // Jon, 2026-09-22: "that should be gorss rev, gross adr, gross revpaar". A month on
+            // the books is quoted gross, because that is the number an owner compares to a budget,
+            // so the card is computed at the gross basis regardless of the slide's own basis, and
+            // says so on every line. A hand-set ADR or RevPAR override still wins, the same way it
+            // does on the scroll report.
             const ms = (ahead.months as Any[]) || []
             const strip: Any[] = (Array.isArray(ahead.strip) && ahead.strip.length ? (ahead.strip as Any[]) : ms)
               .slice(0, 6)
               .map((x: Any, i: number) => {
                 const m = ms.find((y: Any) => String(y.label || '').slice(0, 3) === String(x.month || x.label || '').slice(0, 3)) || ms[i] || {}
+                const g = hasBasisRaw(m) ? basisStrings(m, 'gross') : null
+                const av = aheadValues(m, 'gross')
                 return {
                   month: String(x.month || x.label || '').replace(/\s+\d{4}$/, '').slice(0, 3),
                   full: String(m.label || x.label || ''),
                   occPct: x.occPct != null ? x.occPct : m.occPct,
-                  adr: m.adr, revpar: m.revpar, revenue: m.revenue, gross: m.gross, nights: m.nights,
+                  adr: av.adr || (g ? g.adr : ''),
+                  revpar: av.revpar || (g ? g.revpar : ''),
+                  revenue: g ? g.rev : (m.revenue != null ? usd(m.revenue) : ''),
+                  nights: m.nights != null ? String(m.nights) : (m.occNights != null ? String(m.occNights) : ''),
+                  res: m.reservations != null ? String(m.reservations) : '',
                 }
               })
             slides.push({ key: 'ahead', ai: true, node: (
@@ -5451,11 +5553,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     return (
                       <ChartTip key={i} title={x.full || x.month} rows={[
                         ['Occupancy', Math.round(pct) + '%'],
-                        ['ADR', x.adr ? String(x.adr) : '—'],
-                        ['RevPAR', x.revpar ? String(x.revpar) : '—'],
-                        ['Revenue', x.revenue != null ? usd(x.revenue) : '—'],
-                        ['Gross', x.gross != null ? usd(x.gross) : '—'],
-                        ['Nights sold', x.nights != null ? String(x.nights) : '—'],
+                        ['Gross revenue', String(x.revenue || '')],
+                        ['Gross ADR', String(x.adr || '')],
+                        ['Gross RevPAR', String(x.revpar || '')],
+                        ['Nights on the books', String(x.nights || '')],
+                        ['Reservations', String(x.res || '')],
                       ]} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
                         <Fig size={26}>{Math.round(pct) + '%'}</Fig>
                         <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === 0 ? t.accent : tint(0.22), height: Math.max(4, (pct / 100) * 142) }} />

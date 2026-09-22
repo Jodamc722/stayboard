@@ -26,6 +26,7 @@ import { CHANNEL_BODY, CHANNEL_COUNT } from './channel-marks'
 import { STATEMENT_ALSO } from './statement-sample'
 import {
   AGENDA_ROWS, HERO_HEADLINE, CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
+  AI_HEADLINE, AI_SUBTITLE, AI_PILLARS, AI_NOTE,
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL, teamSubtitle, WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_NOTE,
   CHANNELS_HEADLINE, SEASON_SUBTITLE, GUESTY_SUBTITLE, STATEMENT_HEADLINE, STATEMENT_SUBTITLE, NOTES_SUBTITLE,
 } from './onboarding-copy'
@@ -137,6 +138,8 @@ export type OnboardingContent = {
     shots: string[]
   }>
   tech: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; asks: Ask[] }>
+  /** How Stay actually uses its own software, and what it buys the owner (Jon, 2026-09-22). */
+  ai: Sec<{ headline: string; subtitle: string; pillars: KV[]; note: string; next: string; asks: Ask[] }>
   team: Sec<{
     headline: string; subtitle: string
     people: { name: string; role: string; blurb: string; photo?: string | null; phone?: string; email?: string }[]
@@ -408,6 +411,9 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
     season: [
       { id: 'e1', q: 'Any owner dates to block this season?' },
       { id: 'e2', q: 'Any renovation, special assessment or HOA work coming?' },
+    ],
+    ai: [
+      { id: 'ai1', q: 'Anything you would rather a person always handled?', hint: 'Some owners want every guest refund decision to come from a human. That is a setting, not an argument.' },
     ],
     tech: [
       { id: 't1', q: 'Anything already installed we should keep?', hint: 'An HOA lock standard, a Ring, a Nest you like, a mesh network.' },
@@ -759,6 +765,15 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       portalUrl: t.portalUrl,
       loginEmail: i.ownerEmail || '',
       shots: t.portalShots,
+    },
+    ai: {
+      headline: AI_HEADLINE.current,
+      subtitle: AI_SUBTITLE.current,
+      pillars: AI_PILLARS,
+      note: AI_NOTE.current,
+      next: '',
+      asks: asks('ai'),
+      photo: pic(7),
     },
     tech: {
       headline: 'The technology in your unit',

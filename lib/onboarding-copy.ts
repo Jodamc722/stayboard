@@ -420,3 +420,29 @@ export function statementHighlightsStale(rows: unknown): boolean {
     return false
   })
 }
+
+
+// ── AI AT STAY ───────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-22: "What can be cool is AI Slides on onbarind about how we are really using it,
+// new features, etc and how it will help us imporve."
+//
+// The rule for this slide is that every line names something that actually runs today. An owner
+// who has sat through four management pitches has heard "we use AI" from all four; the only way
+// it lands is specifics they can check — Eve answering in Spanish in the crew channel, a review
+// becoming a task on a named unit, this report being generated rather than typed. Anything we
+// are still building goes on the last line, marked as what is coming, and never above it.
+export const AI_HEADLINE: CopyPair = { retired: [], current: 'What we automate, and what we do not' }
+export const AI_SUBTITLE: CopyPair = {
+  retired: [],
+  current: 'Four things run on our own software every day. None of them replace the person who answers your call.',
+}
+export const AI_PILLARS: { k: string; v: string }[] = [
+  { k: 'A teammate on every message', v: 'Eve reads every booking, guest thread and task across the portfolio and has the reply drafted before anyone opens a laptop — in English or Spanish, so the crew and the guest read the same instruction.' },
+  { k: 'Problems found before a review is', v: 'Guest messages and reviews are read for what went wrong and turned into a specific task on that specific unit. The point is to fix it during the stay rather than answer for it afterwards.' },
+  { k: 'Listings that keep up', v: 'Photos ordered, copy written per channel, and rates set against a live comp set — so the listing working for you this month is not last year\u2019s listing.' },
+  { k: 'This report, generated', v: 'Your monthly review is built from the bookings, reviews and work orders themselves. Nobody types a summary from memory, and nothing gets rounded in our favour.' },
+]
+export const AI_NOTE: CopyPair = {
+  retired: [],
+  current: 'What it buys you is speed and consistency: faster answers, problems caught earlier, and a report you can check. Judgement calls — pricing your unit, spending your money, what to tell you — stay with the people you met on slide three.',
+}
