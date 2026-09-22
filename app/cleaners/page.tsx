@@ -5,7 +5,7 @@ import { Shell } from '@/components/Shell'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { unstable_cache } from 'next/cache'
-import { Sparkles, Users, Timer, CheckCheck, Wrench } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanSection, LeanEmpty } from '@/components/lean'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,64 +76,51 @@ const getData = unstable_cache(async () => {
 }, ['cleaner-kpis-v1'], { tags: ['cleaner-kpis'], revalidate: 600 })
 
 // Wrapped in <Shell> 2026-08-20 — the cleaner KPI board had no navigation on it.
+// LEAN PASS (2026-09-22): one-line header with the four totals as pills, one row per cleaner with
+// the QC tier as a tag (the ladder is in the tag's hover), and the maintenance units as rows.
+const QC_HELP = 'QC ladder by same-day completion: 95%+ spot-check · 85–94% inspect · under 85% retrain'
+
 export default async function CleanersPage() {
   const { cleaners, issues, totals, since } = await getData()
   return (
     <Shell>
-      <div className="space-y-6">
-        <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-brand-600 inline-flex items-center gap-1.5"><Sparkles size={13} /> Team</div>
-          <h1 className="text-3xl font-extrabold text-ink mt-1">Cleaner KPIs</h1>
-          <p className="text-sm text-muted mt-1">Rolling 90 days from live Breezeway tasks (since {since}). Multi-assigned cleans count for every person on the task. <b className="text-ink">QC status</b> is the on-time (same-day) completion tier: ≥95% spot-check · 85–94% inspect · &lt;85% retrain.</p>
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><CheckCheck size={12} /> Cleans (90d)</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.cleans}</div></div>
-          <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><Users size={12} /> Active cleaners</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.cleaners}</div></div>
-          <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><Timer size={12} /> Avg time / clean</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.avgMin}m</div></div>
-          <div className="rounded-2xl border border-line bg-white px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold inline-flex items-center gap-1"><CheckCheck size={12} /> Same-day finish</div><div className="text-2xl font-extrabold text-ink mt-0.5">{totals.sameDayPct}%</div></div>
-        </div>
-        {/* Seven columns; w-full inside a scroller just shrinks them to the phone, so "QC status"
-            and "Hubs" were unreadable slivers. min-w keeps the columns and scrolls the card. */}
-        <div className="overflow-x-auto rounded-2xl border border-line bg-white">
-          <table className="w-full text-[13px] border-collapse min-w-[760px]">
-            <thead>
-              <tr className="bg-app/60 text-muted text-[10px] uppercase tracking-wider text-left">
-                <th className="px-3 py-2.5 font-semibold">Cleaner</th>
-                <th className="px-3 py-2.5 font-semibold text-right">Cleans</th>
-                <th className="px-3 py-2.5 font-semibold text-right">Per day</th>
-                <th className="px-3 py-2.5 font-semibold text-right">Avg time</th>
-                <th className="px-3 py-2.5 font-semibold text-right">Same-day</th>
-                <th className="px-3 py-2.5 font-semibold" title="QC ladder by same-day completion — ≥95% spot-check · 85–94% inspect · <85% retrain">QC status</th>
-                <th className="px-3 py-2.5 font-semibold">Hubs</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cleaners.map(c => (
-                <tr key={c.name} className="border-t border-line">
-                  <td className="px-3 py-2 font-semibold text-ink">{c.name}</td>
-                  <td className="px-3 py-2 text-right text-ink">{c.cleans}</td>
-                  <td className="px-3 py-2 text-right text-muted">{c.perDay}</td>
-                  <td className="px-3 py-2 text-right text-muted">{c.avgMin != null ? c.avgMin + 'm' : String.fromCharCode(8212)}</td>
-                  <td className="px-3 py-2 text-right">{c.sameDayPct != null ? <span className={c.sameDayPct >= 95 ? 'text-emerald-700 font-semibold' : c.sameDayPct >= 85 ? 'text-amber-700 font-semibold' : 'text-rose-700 font-semibold'}>{c.sameDayPct}%</span> : <span className="text-muted">{String.fromCharCode(8212)}</span>}</td>
-                  <td className="px-3 py-2">{c.sameDayPct == null ? <span className="text-muted">{String.fromCharCode(8212)}</span> : (() => { const t = c.sameDayPct >= 95 ? { l: 'Spot-check', k: 'bg-emerald-50 text-emerald-700 border-emerald-200' } : c.sameDayPct >= 85 ? { l: 'Inspect', k: 'bg-amber-50 text-amber-700 border-amber-200' } : { l: 'Retrain', k: 'bg-rose-50 text-rose-700 border-rose-200' }; return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${t.k}`}>{t.l}</span> })()}</td>
-                  <td className="px-3 py-2 text-muted">{c.topHubs}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="rounded-2xl border border-line bg-white p-4">
-          <div className="text-sm font-bold text-ink inline-flex items-center gap-1.5 mb-2"><Wrench size={14} className="text-amber-600" /> Units with the most maintenance (90d)</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+      <LeanHead title="Cleaners">
+        <Pill title={'Departure cleans, rolling 90 days from live Breezeway tasks (since ' + since + '). Multi-assigned cleans count for every person on the task.'}>{totals.cleans} cleans</Pill>
+        <Pill title="Cleaners with 10+ departure cleans in the window">{totals.cleaners} cleaners</Pill>
+        <Pill title="Average clock time per departure clean">{totals.avgMin}m / clean</Pill>
+        <Pill tone={totals.sameDayPct >= 95 ? 'emerald' : totals.sameDayPct >= 85 ? 'amber' : 'rose'} title={'Finished the same day they were scheduled. ' + QC_HELP}>{totals.sameDayPct}% same-day</Pill>
+      </LeanHead>
+      <LeanSection title="Cleaners · 90 days" n={cleaners.length}>
+        {!cleaners.length ? <LeanEmpty>No cleaner with 10+ cleans in the last 90 days.</LeanEmpty> : (
+          <LeanList>
+            {cleaners.map(c => {
+              const tier = c.sameDayPct == null ? null
+                : c.sameDayPct >= 95 ? { l: 'Spot-check', t: 'emerald' as const }
+                  : c.sameDayPct >= 85 ? { l: 'Inspect', t: 'amber' as const }
+                    : { l: 'Retrain', t: 'rose' as const }
+              return (
+                <LeanRow key={c.name} name={c.name}
+                  meta={c.cleans + ' cleans · ' + c.perDay + '/day · ' + (c.avgMin != null ? c.avgMin + 'm avg' : 'no time')}
+                  tags={<>
+                    {c.sameDayPct != null ? <Tag tone={tier ? tier.t : 'slate'} title="Same-day finish rate">{c.sameDayPct}% same-day</Tag> : null}
+                    {tier ? <Tag tone={tier.t} title={QC_HELP}>{tier.l}</Tag> : null}
+                    {c.topHubs ? <Tag title="Top hubs by cleans">{c.topHubs}</Tag> : null}
+                  </>} />
+              )
+            })}
+          </LeanList>
+        )}
+      </LeanSection>
+      <LeanSection title="Most maintenance · 90 days" n={issues.length}>
+        {!issues.length ? <LeanEmpty>No maintenance tasks in the last 90 days.</LeanEmpty> : (
+          <LeanList>
             {issues.map(i => (
-              <div key={i.unit} className="rounded-xl border border-line px-3 py-2 flex items-center justify-between gap-2">
-                <span className="text-[13px] font-medium text-ink truncate">{i.unit}</span>
-                <span className="text-[12px] text-muted shrink-0">{i.n} tasks{i.open ? ' - ' + i.open + ' open' : ''}</span>
-              </div>
+              <LeanRow key={i.unit} name={i.unit} meta={i.n + ' tasks'}
+                tags={i.open ? <Tag tone="amber" title="Maintenance tasks not finished yet">{i.open} open</Tag> : null} />
             ))}
-          </div>
-        </div>
-      </div>
+          </LeanList>
+        )}
+      </LeanSection>
     </Shell>
   )
 }

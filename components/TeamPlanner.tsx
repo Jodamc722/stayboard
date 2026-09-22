@@ -9,7 +9,8 @@
 // work — you saw "3" and had to switch views to learn what the 3 were. In the new view every day
 // opens in place, so there is nothing to switch to.
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Loader2, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { LeanHead, Pill, IconBtn } from './lean'
 import { PlannerView, PlannerLegend, type PDay, type PBlock, type PGroup } from './PlannerView'
 import { ScheduleLaborStrip, type ScheduleLaborData } from './ScheduleLaborStrip'
 import { DayCleans } from './DayCleans'
@@ -58,30 +59,42 @@ export function TeamPlanner() {
   }, [from, to, dept, crew])
   useEffect(() => { load() }, [load])
 
-  if (!data && busy) return (
-    <div className="rounded-2xl bg-white ring-1 ring-line p-12 text-center text-sm text-muted">
-      <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Building the planner…
-    </div>
+  // LEAN PASS (2026-09-22): the page header lives here so its pills can carry the numbers that
+  // used to be an amber banner and a footer paragraph.
+  const head = (
+    <LeanHead title="Weekly Planner">
+      {data && !data.counts.rosterWeeks ? <Pill tone="rose" title="No roster saved for these weeks — set who is on and off on the Turnover Schedule">No roster</Pill> : null}
+      {data && data.counts.rosterWeeks && data.counts.clashes ? <Pill tone="amber" title="Days where the roster and the work disagree — ringed in amber below">{data.counts.clashes} clash{data.counts.clashes === 1 ? '' : 'es'}</Pill> : null}
+      {data && data.counts.unassignedDropped ? <Pill tone="amber" title="Jobs with nobody assigned in Breezeway yet">{data.counts.unassignedDropped} unassigned</Pill> : null}
+      {data ? <Pill title={'Long stay = ' + data.rules.longStayNights + '+ nights, big arrival = $' + data.rules.bigBookingUsd.toLocaleString() + '+ (Users → Task automation). On/off comes from the Turnover Schedule roster; the work is what is assigned in Breezeway.'}>{data.rules.longStayNights}+n · ${data.rules.bigBookingUsd.toLocaleString()}+</Pill> : null}
+    </LeanHead>
   )
-  if (err && !data) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err}</div>
+
+  if (!data && busy) return (
+    <>{head}<div className="rounded-2xl bg-white ring-1 ring-line p-12 text-center text-sm text-muted">
+      <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Building the planner…
+    </div></>
+  )
+  if (err && !data) return <>{head}<div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err}</div></>
   if (!data) return null
 
   const chip = (on: boolean) =>
-    'text-[12.5px] font-semibold px-3 h-9 rounded-xl border transition ' +
+    'text-[12px] font-semibold px-2.5 h-8 rounded-lg border transition ' +
     (on ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/25')
 
   return (
-    <div className="space-y-5">
-      {/* which trade — the biggest decision on the screen, so it sits alone above everything */}
+    <div className="space-y-3">
+      {head}
+      {/* which trade — the biggest decision on the screen, so it leads the control line */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white">
-          <button onClick={() => setDept('cleaning')} className={'text-[13px] font-bold px-4 h-9 ' + (dept === 'cleaning' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Cleaning</button>
-          <button onClick={() => setDept('maintenance')} className={'text-[13px] font-bold px-4 h-9 border-l border-line ' + (dept === 'maintenance' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Maintenance</button>
+          <button onClick={() => setDept('cleaning')} className={'text-[12.5px] font-bold px-3 h-8 ' + (dept === 'cleaning' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Cleaning</button>
+          <button onClick={() => setDept('maintenance')} className={'text-[12.5px] font-bold px-3 h-8 border-l border-line ' + (dept === 'maintenance' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Maintenance</button>
         </div>
         {dept === 'cleaning' ? (
           <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white">
-            <button onClick={() => setCrew('inhouse')} className={'text-[13px] font-bold px-4 h-9 ' + (crew === 'inhouse' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>In-house</button>
-            <button onClick={() => setCrew('vendor')} className={'text-[13px] font-bold px-4 h-9 border-l border-line ' + (crew === 'vendor' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Vendor</button>
+            <button onClick={() => setCrew('inhouse')} className={'text-[12.5px] font-bold px-3 h-8 ' + (crew === 'inhouse' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>In-house</button>
+            <button onClick={() => setCrew('vendor')} className={'text-[12.5px] font-bold px-3 h-8 border-l border-line ' + (crew === 'vendor' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Vendor</button>
           </div>
         ) : null}
 
@@ -91,33 +104,30 @@ export function TeamPlanner() {
           {/* WHATEVER DATES YOU SELECT (Jon). The arrows still shift a week at a time because that
               is how the week is usually read; the two date fields are there for anything else. */}
           <input type="date" value={from} max={to} onChange={e => { const v = e.target.value; if (v) { setFrom(v); if (v > to) setTo(addDays(v, 6)) } }}
-            aria-label="From" className="h-9 rounded-xl border border-line bg-white px-2.5 text-[12.5px] text-ink" />
+            aria-label="From" className="h-8 rounded-lg border border-line bg-white px-2.5 text-[12.5px] text-ink" />
           <span className="text-[12px] text-muted">to</span>
           <input type="date" value={to} min={from} onChange={e => e.target.value && setTo(e.target.value)}
-            aria-label="To" className="h-9 rounded-xl border border-line bg-white px-2.5 text-[12.5px] text-ink" />
-          <button onClick={() => { setFrom(addDays(from, -7)); setTo(addDays(to, -7)) }} aria-label="Earlier"
-            className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink"><ChevronLeft size={15} /></button>
+            aria-label="To" className="h-8 rounded-lg border border-line bg-white px-2.5 text-[12.5px] text-ink" />
+          <IconBtn title="Back a week" onClick={() => { setFrom(addDays(from, -7)); setTo(addDays(to, -7)) }}><ChevronLeft size={15} /></IconBtn>
           {from !== todayET()
-            ? <button onClick={() => { setFrom(todayET()); setTo(addDays(todayET(), 13)) }} className="text-[12.5px] font-semibold px-3 h-9 rounded-xl border border-line bg-white text-ink">Back to today</button>
+            ? <button onClick={() => { setFrom(todayET()); setTo(addDays(todayET(), 13)) }} className="text-[12px] font-semibold px-2.5 h-8 rounded-lg border border-line bg-white text-ink">Today</button>
             : null}
-          <button onClick={() => { setFrom(addDays(from, 7)); setTo(addDays(to, 7)) }} aria-label="Later"
-            className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink"><ChevronRight size={15} /></button>
-          <button onClick={load} disabled={busy} aria-label="Refresh"
-            className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink disabled:opacity-40"><RefreshCw size={14} className={busy ? 'animate-spin' : ''} /></button>
+          <IconBtn title="Forward a week" onClick={() => { setFrom(addDays(from, 7)); setTo(addDays(to, 7)) }}><ChevronRight size={15} /></IconBtn>
+          <IconBtn title="Reload the planner" onClick={load} disabled={busy}><RefreshCw size={14} className={busy ? 'animate-spin' : ''} /></IconBtn>
         </div>
       </div>
 
       {/* which view, then which market — and, on the calendar, how it is grouped */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white mr-1">
-          <button onClick={() => setView('cleans')} className={'text-[12.5px] font-semibold px-3 h-9 ' + (view === 'cleans' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Cleans</button>
-          <button onClick={() => setView('calendar')} className={'text-[12.5px] font-semibold px-3 h-9 border-l border-line ' + (view === 'calendar' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Calendar</button>
+          <button onClick={() => setView('cleans')} className={'text-[12px] font-semibold px-2.5 h-8 ' + (view === 'cleans' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Cleans</button>
+          <button onClick={() => setView('calendar')} className={'text-[12px] font-semibold px-2.5 h-8 border-l border-line ' + (view === 'calendar' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>Calendar</button>
         </div>
         {view === 'calendar' ? (
           <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white mr-1">
             {GROUPS.map(g => (
               <button key={g.key} onClick={() => setGroup(g.key)}
-                className={'text-[12.5px] font-semibold px-3 h-9 border-l border-line first:border-l-0 ' + (group === g.key ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{g.label}</button>
+                className={'text-[12px] font-semibold px-2.5 h-8 border-l border-line first:border-l-0 ' + (group === g.key ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{g.label}</button>
             ))}
           </div>
         ) : null}
@@ -125,19 +135,8 @@ export function TeamPlanner() {
         {data.markets.map(m => (
           <button key={m.market} onClick={() => setMarket(m.market.toLowerCase())} className={chip(market === m.market.toLowerCase())}>{m.market}</button>
         ))}
+        {crew === 'vendor' ? <span className="ml-1"><Pill tone="violet" title="Vendor-serviced buildings. Their crews rarely carry a Breezeway assignee, so a clean with nobody on it is filed under the vendor's name; Botanica has no Breezeway tasks and its checkouts come from Guesty. No labor here — not our payroll.">Vendor crews</Pill></span> : null}
       </div>
-
-      {/* anything that actually needs a human — one line, or nothing at all */}
-      {data.counts.clashes || !data.counts.rosterWeeks ? (
-        <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-2.5 flex items-start gap-2">
-          <AlertTriangle size={14} className="text-amber-600 mt-0.5 shrink-0" />
-          <p className="text-[12.5px] text-amber-900">
-            {!data.counts.rosterWeeks
-              ? 'No roster saved for these weeks — set who is on and off on the Turnover Schedule.'
-              : data.counts.clashes + ' day' + (data.counts.clashes === 1 ? '' : 's') + ' where the roster and the work disagree — ringed in amber below.'}
-          </p>
-        </div>
-      ) : null}
 
       {data.labor && dept === 'cleaning' ? <ScheduleLaborStrip data={data.labor} /> : null}
 
@@ -146,29 +145,12 @@ export function TeamPlanner() {
         ? <DayCleans days={data.days} blocks={data.markets} dept={dept} marketFilter={market} labor={data.labor} canManage onChanged={load} />
         : null}
 
-      {crew === 'vendor' ? (
-        <p className="text-[12px] text-muted">
-          Vendor-serviced buildings. Their crews rarely carry a Breezeway assignee, so a clean with nobody on it is
-          filed under the vendor's name; Botanica has no Breezeway tasks at all and its checkouts come from Guesty.
-          Labor is not shown here — this is not our payroll.
-        </p>
-      ) : null}
-
       {view === 'calendar' ? (
         <>
           <PlannerView days={data.days} blocks={data.markets} dept={dept} marketFilter={market} group={group} showLinks />
           <PlannerLegend dept={dept} />
         </>
       ) : null}
-
-      <p className="text-[11.5px] text-muted leading-relaxed max-w-3xl">
-        Who is on and off comes from the roster on the Turnover Schedule; the numbers are the work actually
-        assigned in Breezeway. Long stay is {data.rules.longStayNights}+ nights and a big arrival is
-        ${data.rules.bigBookingUsd.toLocaleString()}+, both read from Users → Task automation so this screen,
-        Slack and the ops brief always agree. Vendor-serviced markets get no block of their own — their work
-        only appears when one of our rostered people is on it, on that person's row.
-        {data.counts.unassignedDropped ? ' ' + data.counts.unassignedDropped + ' job' + (data.counts.unassignedDropped === 1 ? ' has' : 's have') + ' nobody assigned yet.' : ''}
-      </p>
     </div>
   )
 }

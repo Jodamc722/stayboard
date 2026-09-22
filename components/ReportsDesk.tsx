@@ -2,7 +2,8 @@
 // Owner Reports desk: list of generated reports + the New-report flow
 // (pick buildings, period, as-of → generate → open the share page).
 import { useEffect, useRef, useState } from 'react'
-import { FileText, Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X } from 'lucide-react'
+import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
 type StatementPick = {
   id: string; ownerId: string; ownerName: string; month: string; label: string
@@ -290,71 +291,61 @@ export function ReportsDesk() {
       : /projection/i.test(String(r.title || '')) ? 'projection' : 'review'
   const shownReports = listKind === 'all' ? reports : reports.filter(r => kindOfRow(r) === listKind)
 
+  const nKind = (k: 'review' | 'projection' | 'onboarding') => reports.filter(r => kindOfRow(r) === k).length
+  const KIND_TAG: Record<'review' | 'projection' | 'onboarding', { l: string; t: 'brand' | 'violet' | 'emerald' }> = {
+    review: { l: 'Review', t: 'brand' }, projection: { l: 'Projection', t: 'violet' }, onboarding: { l: 'Onboarding', t: 'emerald' },
+  }
+  // Hover text for the three document types — the explainer paragraphs that used to sit under the toggle.
+  const KIND_HELP: Record<'review' | 'projection' | 'onboarding', string> = {
+    review: 'Performance review for a period: revenue, occupancy, reviews and completed work pulled automatically.',
+    projection: 'Next season’s net owner revenue per unit, with property health and ADR-upside recommendations. Edit any wording in place after generating.',
+    onboarding: 'The kickoff call as a document: listing reviewed on every channel, strategy, ramp, team, billables and a worked statement. Answers save live on the call; the boilerplate is the house template.',
+  }
+
   return (
-    <div className="space-y-5">
-      {/* New report */}
-      <section className="rounded-2xl border border-line bg-white p-5">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h2 className="text-sm font-bold text-ink flex items-center gap-1.5"><Sparkles size={14} className="text-brand-600" /> New owner report</h2>
-            <p className="text-[12px] text-muted mt-0.5">Pick properties + a period. Revenue, occupancy, reviews and completed work are pulled automatically.</p>
-          </div>
-          {!showNew && (
-            /* On a phone this wrapped onto its own line and sat alone in an empty band next to
-               nothing. Full width there instead — it is the primary action on the page. */
-            <button onClick={() => setShowNew(true)} className="w-full sm:w-auto justify-center sm:justify-start inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-4 py-2 hover:bg-brand-700">
-              <Plus size={14} /> New report
-            </button>
-          )}
-        </div>
-        {showNew && (
-          <div className="mt-4 space-y-4">
-            <div>
-              <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Report type</p>
-              <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden w-fit">
-                <button onClick={() => setKind('review')}
-                  className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (kind === 'review' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+    <div className="space-y-4">
+      <LeanHead title="Owner Reports">
+        <Pill title="Owner documents generated so far">{reports.length} report{reports.length === 1 ? '' : 's'}</Pill>
+        {!showNew && (
+          <button onClick={() => setShowNew(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white text-[12.5px] font-semibold px-3 py-1.5 hover:bg-brand-700">
+            <Plus size={14} /> New report
+          </button>
+        )}
+      </LeanHead>
+      {/* New report — only on screen while it is being built */}
+      {showNew && (
+      <section className="rounded-2xl border border-line bg-white p-4">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-[13.5px] font-bold text-ink flex items-center gap-1.5 mr-1"><Sparkles size={14} className="text-brand-600" /> New report</h2>
+              <div className="flex items-center rounded-lg border border-line bg-neutral-50 overflow-hidden w-fit">
+                <button onClick={() => setKind('review')} title={KIND_HELP.review}
+                  className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'review' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                   Owner review
                 </button>
-                <button onClick={() => setKind('projection')}
-                  className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (kind === 'projection' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                <button onClick={() => setKind('projection')} title={KIND_HELP.projection}
+                  className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'projection' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                   Season projection
                 </button>
-                <button onClick={() => setKind('onboarding')}
-                  className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (kind === 'onboarding' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                <button onClick={() => setKind('onboarding')} title={KIND_HELP.onboarding}
+                  className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'onboarding' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                   Owner onboarding
                 </button>
               </div>
-              {kind === 'onboarding' && (
-                <p className="mt-1.5 text-[12px] text-muted">
-                  The kickoff call as a document: their listing reviewed on every channel, the strategy, the ramp, the team,
-                  how billables work, and a worked statement. Questions are filled in live on the call and answers save themselves.
-                  The boilerplate is the house template &mdash; edit it once and every future onboarding starts from it.
-                </p>
-              )}
-              {/* THE PROJECTION BUILDER LIVES HERE (Jon, 2026-08-25: "remove the projections tab,
-                  in the owner reports it should have a projection builder"). Projections stopped
-                  being a place you navigate to — it is a thing you build for an owner, so the entry
-                  point is this toggle, and the model editor is one link off it rather than a sidebar
-                  row you have to know exists. The editor keeps its page, its API and its role gate;
-                  when Eric's app connects, the budget/forecast side lands behind that same link. */}
+              {/* THE PROJECTION BUILDER LIVES HERE (Jon, 2026-08-25): projections are built for an
+                  owner from this toggle; the model editor is one link off it (own page, API, gate). */}
               {kind === 'projection' && (
-                <div className="mt-1.5">
-                  <p className="text-[12px] text-muted">
-                    Next season&rsquo;s net owner revenue per unit, with property health and ADR-upside recommendations.
-                    Generate, then edit any wording in place; hidden sections can be re-enabled on the report.
-                  </p>
-                  <a href="/projections"
-                    className="mt-1.5 inline-flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:border-ink/30 text-ink"
-                    title="Every month, unit and lever behind these numbers — occupancy, ADR, length of stay, management and building splits">
-                    Adjust the model &rarr;
-                  </a>
-                </div>
+                <a href="/projections"
+                  className="inline-flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1 rounded-lg border border-line bg-white hover:border-ink/30 text-ink"
+                  title="Every month, unit and lever behind these numbers — occupancy, ADR, length of stay, management and building splits">
+                  Adjust the model &rarr;
+                </a>
               )}
+              <span className="ml-auto"><IconBtn title="Close without generating" onClick={() => { setShowNew(false); setMsg('') }}><X size={14} /></IconBtn></span>
             </div>
             <div>
               <div className="flex items-center gap-3 flex-wrap mb-2">
-                <p className="text-[11px] uppercase tracking-wider text-muted font-semibold">Who is this for</p>
+                <p className="text-[11px] uppercase tracking-wider text-muted font-semibold">For</p>
                 <span className="inline-flex items-center rounded-lg border border-line bg-neutral-50 overflow-hidden">
                   <button onClick={() => setScopeMode('owner')}
                     className={'px-3 py-1 text-[12px] font-semibold ' + (scopeMode === 'owner' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
@@ -418,8 +409,8 @@ export function ReportsDesk() {
                           )
                         })}
                       </div>
-                      <p className="mt-2 text-[12px] text-muted">
-                        <b className="text-ink">{ownerLabel}</b> — the document is titled for them and covers the units ticked above.
+                      <p className="mt-2 text-[12px] text-muted" title="The document is titled for them and covers the units ticked above">
+                        For <b className="text-ink">{ownerLabel}</b>
                       </p>
                     </div>
                   )}
@@ -456,8 +447,8 @@ export function ReportsDesk() {
                     {!units.length && <span className="text-sm text-muted italic">Loading units…</span>}
                   </div>
                   {unitRows.length > 0 && (
-                    <p className="mt-2 text-[12px] text-muted">
-                      <b className="text-ink">{unitLabel}</b> — the document covers these units and nothing else.
+                    <p className="mt-2 text-[12px] text-muted" title="The document covers these units and nothing else">
+                      For <b className="text-ink">{unitLabel}</b>
                     </p>
                   )}
                 </div>
@@ -502,13 +493,12 @@ export function ReportsDesk() {
                   </label>
                 </>
               ) : (
-                <span className="text-[12.5px] text-muted pb-2">Period: next high season (Nov–Apr), straight from the projection model.</span>
+                <span className="pb-2"><Tag title="The season comes straight from the projection model">Next high season · Nov–Apr</Tag></span>
               )}
               <button onClick={generate} disabled={generating || !scopeReady}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-5 py-2 hover:bg-brand-700 disabled:opacity-50">
                 {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : kind === 'onboarding' ? 'Generate onboarding' : 'Generate report'}
               </button>
-              <button onClick={() => { setShowNew(false); setMsg('') }} className="text-sm text-muted hover:text-ink px-2 py-2">Cancel</button>
             </div>
             {picked.length > 0 && (
               <div>
@@ -533,7 +523,6 @@ export function ReportsDesk() {
                         </button>
                       ))}
                     </div>
-                    <p className="text-[11px] text-muted mt-1.5">{(STMT_MODES.find(m => m.id === stmtMode) || STMT_MODES[0]).hint}</p>
                   </div>
                 )}
                 {!stmtLoading && !stmtList.length ? (
@@ -566,27 +555,28 @@ export function ReportsDesk() {
                     })}
                   </div>
                 )}
-                <p className="text-[11px] text-muted mt-1.5">
-                  Figures come straight from the recognised Guesty owner ledger &mdash; net is what the owner earned, paid is what actually settled.
-                  {stmtPicked.length === 1
-                    ? ' One statement selected: the report gets a single-owner statement section for that month.'
-                    : stmtPicked.length > 1
-                      ? ' ' + stmtPicked.length + ' statements selected: the report rolls them up by month, with a per-owner breakdown.'
-                      : ' Nothing selected — the report will be generated without an Owner Statement section.'}
-                </p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <Tag tone={stmtPicked.length ? 'brand' : 'amber'}
+                    title={'Figures come straight from the recognised Guesty owner ledger — net is what the owner earned, paid is what actually settled. '
+                      + (stmtPicked.length === 1 ? 'One statement: the report gets a single-owner statement section for that month.'
+                        : stmtPicked.length > 1 ? 'Several statements: the report rolls them up by month, with a per-owner breakdown.'
+                          : 'Nothing selected: the report is generated without an Owner Statement section.')}>
+                    {stmtPicked.length === 1 ? 'Single-statement section' : stmtPicked.length > 1 ? 'Rolled up by month' : 'No statement section'}
+                  </Tag>
+                </div>
               </div>
             )}
             <div>
-              <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2">Optional attachments</p>
+              <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-2" title="Performance vs Plan appears automatically when the property has a stored budget. A PriceLabs pacing PDF adds Pacing vs Market; a hero photo becomes the cover.">Optional attachments</p>
               <div className="flex flex-wrap items-center gap-2">
                 <input ref={pacingRef} type="file" accept="application/pdf" className="hidden" onChange={onPacingPick} />
                 <input ref={heroRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onHeroPick} />
                 <button onClick={() => pacingRef.current && pacingRef.current.click()} disabled={!!uploading}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
+                  title="Adds a Pacing vs Market section" className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
                   {uploading === 'pacing' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} PriceLabs pacing PDF
                 </button>
                 <button onClick={() => heroRef.current && heroRef.current.click()} disabled={!!uploading}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
+                  title="Used on the cover" className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
                   {uploading === 'hero' ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} Hero photo
                 </button>
               </div>
@@ -595,73 +585,60 @@ export function ReportsDesk() {
                   {pacing && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
                       Pacing: {pacing.name}
-                      <button onClick={() => setPacing(null)} className="hover:text-red-600"><X size={11} /></button>
+                      <Tip label="Remove the pacing PDF"><button onClick={() => setPacing(null)} aria-label="Remove the pacing PDF" className="hover:text-red-600"><X size={11} /></button></Tip>
                     </span>
                   )}
                   {heroImg && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
                       Hero: {heroImg.name}
-                      <button onClick={() => setHeroImg(null)} className="hover:text-red-600"><X size={11} /></button>
+                      <Tip label="Remove the hero photo"><button onClick={() => setHeroImg(null)} aria-label="Remove the hero photo" className="hover:text-red-600"><X size={11} /></button></Tip>
                     </span>
                   )}
                 </div>
               )}
             </div>
             {msg && <p className="text-[13px] text-amber-700">{msg}</p>}
-            <p className="text-[11px] text-muted">Performance vs Plan appears automatically when the property has a stored budget. Attach a PriceLabs pacing PDF to add &ldquo;Pacing vs Market&rdquo;, and a hero photo for the cover. The Owner Statement section is built from the statements selected above.</p>
           </div>
-        )}
       </section>
+      )}
 
-      {/* List */}
-      <section className="rounded-2xl border border-line bg-white overflow-hidden">
-        {loading ? (
-          <div className="text-sm text-muted italic py-10 text-center">Loading reports…</div>
-        ) : !reports.length ? (
-          <div className="text-sm text-muted italic py-10 text-center">No reports yet — generate the first one above.</div>
-        ) : (
-          /* Five columns — title, period, as-of, status, actions — do not fit a phone, and the
-             report title in the first column is itself the link you tap, so the table keeps its
-             widths and scrolls in its own box rather than squeezing every date onto two lines. */
-          <div className="lh-hscroll">
-          <table className="w-full min-w-[680px] sm:min-w-0 text-sm">
-            <thead>
-              <tr className="text-left border-b border-line bg-app/50">
-                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-muted font-semibold">Report</th>
-                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-muted font-semibold">Period</th>
-                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-muted font-semibold">As of</th>
-                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-muted font-semibold">Status</th>
-                <th className="px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {reports.map(r => (
-                <tr key={r.id} className="border-b border-line last:border-0 hover:bg-app/40">
-                  <td className="px-4 py-3">
-                    <a href={'/r/' + r.code} className="font-semibold text-ink hover:text-brand-700 inline-flex items-center gap-1.5">
-                      <FileText size={14} className="text-muted" /> {r.title}
-                    </a>
-                  </td>
-                  <td className="px-4 py-3 text-muted tabular-nums">{r.period_start} → {r.period_end}</td>
-                  <td className="px-4 py-3 text-muted tabular-nums">{r.as_of}</td>
-                  <td className="px-4 py-3">
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 uppercase tracking-wider">{r.status}</span>
-                  </td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap">
-                    <a href={'/r/' + r.code} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 hover:text-brand-800 mr-3">
-                      <ExternalLink size={12} /> Open
-                    </a>
-                    <button onClick={() => remove(r.id)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-muted hover:text-red-600">
-                      <Trash2 size={12} /> Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        )}
-      </section>
+      {/* List — one row per document, filtered by kind */}
+      <LeanTabs
+        tabs={[
+          { key: 'all' as const, label: 'All', n: reports.length },
+          { key: 'review' as const, label: 'Reviews', n: nKind('review') },
+          { key: 'projection' as const, label: 'Projections', n: nKind('projection') },
+          { key: 'onboarding' as const, label: 'Onboarding', n: nKind('onboarding') },
+        ]}
+        value={listKind} onChange={setListKind} />
+      {loading ? (
+        <LeanEmpty><Loader2 size={13} className="inline animate-spin mr-1.5" />Loading reports…</LeanEmpty>
+      ) : !shownReports.length ? (
+        <LeanEmpty>{reports.length ? 'None of this kind yet.' : 'No reports yet — press New report.'}</LeanEmpty>
+      ) : (
+        <LeanList>
+          {shownReports.map(r => {
+            const k = KIND_TAG[kindOfRow(r)]
+            return (
+              <LeanRow key={r.id}
+                name={<a href={'/r/' + r.code} className="hover:text-brand-700">{r.title}</a>}
+                meta={r.period_start + ' – ' + r.period_end}
+                tags={<>
+                  <Tag tone={k.t}>{k.l}</Tag>
+                  <Tag title={'Data as of ' + r.as_of}>as of {r.as_of}</Tag>
+                  <Tag tone="brand" title="Report status">{r.status}</Tag>
+                </>}
+                actions={<>
+                  <Tip label="Open in a new tab">
+                    <a href={'/r/' + r.code} target="_blank" rel="noreferrer" aria-label="Open in a new tab"
+                      className="shrink-0 inline-flex items-center justify-center rounded-lg border border-line bg-white w-8 h-8 text-muted hover:text-ink hover:bg-app"><ExternalLink size={14} /></a>
+                  </Tip>
+                  <IconBtn title="Delete report (the link stops working)" tone="bad" onClick={() => remove(r.id)}><Trash2 size={14} /></IconBtn>
+                </>} />
+            )
+          })}
+        </LeanList>
+      )}
     </div>
   )
 }

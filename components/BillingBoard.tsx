@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, Download, ChevronDown, ChevronRight, Search, ExternalLink, AlertTriangle, Check, X, Pencil } from 'lucide-react'
 import { useAccess } from '@/lib/useAccess'
+import { LeanHead, Pill, Tag, IconBtn, Tip } from '@/components/lean'
 
 type Item = { key: string; description: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: 'cost' | 'supply' | 'extra' }
 type Task = {
@@ -84,7 +85,7 @@ function AddTask({ units, month, onDone }: { units: { id: string; name: string }
   }
   return (
     <div className="rounded-2xl border border-line bg-white p-4 shadow-soft space-y-2">
-      <div className="text-[11px] uppercase tracking-[0.14em] text-brand-600 font-bold">Add a billable task — created in Breezeway</div>
+      <div className="text-[12.5px] font-bold text-ink" title="Created in Breezeway; billed immediately when an amount is set">Add a billable task</div>
       {err ? <div className="text-[12px] text-rose-600">{err}</div> : null}
       <div className="flex flex-wrap items-center gap-2">
         <select value={listingId} onChange={e => setListingId(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px] max-w-[240px]">
@@ -311,8 +312,8 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
             <span className="text-[11px] text-muted block truncate">
               {showUnit ? t.unit + (t.building ? ' · ' + t.building : '') + ' · ' : ''}
               {t.scheduledDate || (t.finishedAt || '').slice(0, 10) || 'undated'}
-              {t.reviewedBy ? <span className="text-emerald-600 font-semibold"> · ✓ {String(t.reviewedBy).split('@')[0]}{t.reviewedAt ? ' ' + String(t.reviewedAt).slice(5, 10) : ''}</span> : null}
-              {t.note ? ' · 📝 ' + t.note : ''}
+              {t.reviewedBy ? <span className="text-emerald-600 font-semibold" title="Reviewed"> · ✓ {String(t.reviewedBy).split('@')[0]}{t.reviewedAt ? ' ' + String(t.reviewedAt).slice(5, 10) : ''}</span> : null}
+              {t.note ? <span title={'Billing note: ' + t.note}> · note: {t.note}</span> : null}
             </span>
             {/* MORE THAN ONE COST? SHOW WHAT THEY ARE (Jon, 2026-08-09: "supplies cost should show
                 as a line item in the review process if more than one cost"). A single billed
@@ -376,21 +377,23 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
           ) : <span className="tabular-nums font-bold text-ink">{money(t.billedAmount)}</span>}
         </div>
         <div className="col-span-1 flex items-center justify-end gap-1.5">
-          {!t.hasDetail ? <span title="Billing detail not pulled yet"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /></span> : null}
-          {done ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : null}
+          {!t.hasDetail ? <Tip label="Billing detail not pulled yet"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /></Tip> : null}
+          {done ? <Tip label="Finished in Breezeway"><Check className="w-3.5 h-3.5 text-emerald-500" /></Tip> : null}
           {t.reviewedBy === 'auto' ? (
-            <span title="Departure clean — auto-reviewed" className="rounded-md w-5 h-5 text-[11px] font-bold leading-none bg-emerald-100 text-emerald-600 inline-flex items-center justify-center">✓</span>
+<Tip label="Departure clean — auto-reviewed"><span className="rounded-md w-5 h-5 text-[11px] font-bold leading-none bg-emerald-100 text-emerald-600 inline-flex items-center justify-center">✓</span></Tip>
           ) : canEdit ? (
+            <Tip label={t.reviewedBy ? 'Reviewed by ' + String(t.reviewedBy).split('@')[0] + ' — click to clear' : 'Mark reviewed'}>
             <button
               onClick={() => saveAdjust({ reviewed: !t.reviewedBy }, 'rev',
                 { reviewedBy: t.reviewedBy ? null : 'you', reviewedAt: t.reviewedBy ? null : new Date().toISOString() })}
-              title={t.reviewedBy ? 'Reviewed by ' + t.reviewedBy + (t.reviewedAt ? ' · ' + t.reviewedAt.slice(0, 10) : '') + ' — click to clear' : 'Mark this task reviewed (review as you go — no month-end audit)'}
+              aria-label={t.reviewedBy ? 'Clear review' : 'Mark reviewed'}
               className={'rounded-md w-5 h-5 text-[11px] font-bold leading-none ' + (t.reviewedBy ? 'bg-emerald-500 text-white' : 'border border-line text-muted hover:text-emerald-600 hover:border-emerald-300')}>
               ✓
             </button>
-          ) : (t.reviewedBy ? <span title={'Reviewed by ' + t.reviewedBy} className="rounded-md w-5 h-5 text-[11px] font-bold leading-none bg-emerald-500 text-white inline-flex items-center justify-center">✓</span> : null)}
-          <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" title="Open this task in Breezeway"
-            className="text-muted hover:text-brand-600"><ExternalLink className="w-3.5 h-3.5" /></a>
+            </Tip>
+          ) : (t.reviewedBy ? <Tip label={'Reviewed by ' + String(t.reviewedBy).split('@')[0]}><span className="rounded-md w-5 h-5 text-[11px] font-bold leading-none bg-emerald-500 text-white inline-flex items-center justify-center">✓</span></Tip> : null)}
+          <Tip label="Open in Breezeway"><a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" aria-label="Open in Breezeway"
+            className="text-muted hover:text-brand-600"><ExternalLink className="w-3.5 h-3.5" /></a></Tip>
         </div>
       </div>
       {open ? (
@@ -429,7 +432,7 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
                 disabled={!canEdit || busy === 'ai'}
                 title="Rewrite the tech's title/notes into a clean owner-facing service line — review, then save"
                 className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">
-                {busy === 'ai' ? 'Polishing…' : '✨ AI polish'}
+                {busy === 'ai' ? 'Polishing…' : 'AI polish'}
               </button>
             </div>
           </div>
@@ -486,10 +489,10 @@ function TaskRow({ t, canEdit, onPatch, onSync, selected, onSelect, defaultRate,
                       <span className="tabular-nums font-semibold">{money(it.amount)}</span>
                     )}
                     {it.originalAmount != null && canEdit ? (
-                      <button onClick={() => resetItem(it)} title="Reset to the Breezeway amount" className="text-[12px] text-muted hover:text-ink font-semibold">↺</button>
+                      <Tip label="Reset to the Breezeway amount"><button onClick={() => resetItem(it)} aria-label="Reset to the Breezeway amount" className="text-[12px] text-muted hover:text-ink font-semibold">↺</button></Tip>
                     ) : null}
                     {isOurs(it) && canEdit ? (
-                      <button onClick={() => removeExtra(extras.indexOf(it))} className="text-muted hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                      <Tip label="Remove this line item"><button onClick={() => removeExtra(extras.indexOf(it))} aria-label="Remove this line item" className="text-muted hover:text-rose-600"><X className="w-3.5 h-3.5" /></button></Tip>
                     ) : null}
                   </div>
                 ))}
@@ -627,13 +630,13 @@ function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; r
             className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-40">{saving ? 'Saving…' : 'Save rates'}</button>
         ) : null}
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Kpi label="Actual hours" value={(totals.minutes / 60).toFixed(1) + 'h'} sub="Breezeway time on task" />
-        <Kpi label="Billable labor" value={money(totals.billed)} sub="rate math on these tasks" />
-        <Kpi label="Labor cost" value={money(totals.cost)} sub={money(totals.costInhouse) + ' in-house · ' + money(totals.costVendor) + ' vendor'} />
-        <Kpi label="Margin" value={money(totals.billed - totals.cost)} sub={totals.cost > 0 ? Math.round(((totals.billed - totals.cost) / totals.cost) * 100) + '% over cost' : 'set rates below'} />
-        <Kpi label="Wages · Homebase" value={wagesFor != null ? money(wagesFor) : '—'} sub={wagesNote} />
-        <Kpi label="Billable vs wages" value={wagesFor != null ? money(totals.billed - wagesFor) : '—'} sub="charges entered − payroll" />
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <Pill title="Breezeway time on task (crew Start/Complete taps). A task with several assignees splits its time and billable labor evenly.">{(totals.minutes / 60).toFixed(1)}h actual</Pill>
+        <Pill tone="brand" title="Billable labor — rate math on these tasks">{money(totals.billed)} billable</Pill>
+        <Pill title={'Labor cost at the rates below (what YOU pay per hour, loaded — they stay in this app): ' + money(totals.costInhouse) + ' in-house · ' + money(totals.costVendor) + ' vendor'}>{money(totals.cost)} cost</Pill>
+        <Pill tone={totals.billed - totals.cost < 0 ? 'rose' : 'emerald'} title={totals.cost > 0 ? Math.round(((totals.billed - totals.cost) / totals.cost) * 100) + '% over cost' : 'Set rates below'}>{money(totals.billed - totals.cost)} margin</Pill>
+        <Pill title={'Wages from Homebase — ' + wagesNote}>{wagesFor != null ? money(wagesFor) : '—'} wages</Pill>
+        <Pill tone={wagesFor != null && totals.billed - wagesFor < 0 ? 'rose' : 'slate'} title="Billable vs wages: charges entered − payroll">{wagesFor != null ? money(totals.billed - wagesFor) : '—'} vs wages</Pill>
       </div>
       <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
         {/* Person / tasks / hours / billable / rate / cost is a 12-column system — collapsing it
@@ -677,9 +680,8 @@ function LaborView({ tasks, rates, canEdit, onRates, month }: { tasks: Task[]; r
         })}
         </div>
         </div>
-        {!people.length ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">No one has time on task for this filter yet.</div> : null}
+        {!people.length ? <div className="px-4 py-4 text-center text-[12.5px] text-muted">No one has time on task for this filter yet.</div> : null}
       </div>
-      <p className="text-[11.5px] text-muted">Actual hours come from the crew&apos;s Start/Complete taps in Breezeway (total time on task). When a task has several assignees, its time and billable labor are split evenly between them. Rates are what YOU pay per hour (loaded) — they stay in this app.</p>
     </div>
   )
 }
@@ -729,6 +731,9 @@ export function BillingBoard() {
   const [bulkRateType, setBulkRateType] = useState('hourly')
   const [bulkAmt, setBulkAmt] = useState('')
   const [rateDraft, setRateDraft] = useState<string | null>(null)
+  // LEAN PASS (2026-09-22): the rarely used filters and the per-market table sit behind toggles.
+  const [moreFilters, setMoreFilters] = useState(false)
+  const [showMarkets, setShowMarkets] = useState(false)
 
   // One query string for every fetch on this board, so the tiles, the table below them and the
   // task list can never be looking at different windows.
@@ -929,12 +934,27 @@ export function BillingBoard() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Money</div>
-          <h1 className="text-2xl font-bold text-ink tracking-tight">Billable Hours</h1>
-          <p className="text-[12.5px] text-muted mt-0.5">Breezeway tasks organized for billing — review the cost, fix the rate, export by billing owner.</p>
-        </div>
+      {/* THE HEADER (Jon, 2026-08-10: "labor should be payroll"). The pills are the numbers that
+          decide whether this work makes money: billed, billable, payroll, the gap, the hours. Every
+          pill covers the SELECTED WINDOW except "billed", which is the filtered view. */}
+      {(() => {
+        const mp = data && data.maintenancePayroll ? data.maintenancePayroll : null
+        const winLabel = data && data.custom
+          ? new Date(String(data.from) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            + ' – ' + new Date(String(data.to) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          : new Date(String(data?.month || month) + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        const margin = mp ? mp.billed - mp.cost : null
+        return (
+          <LeanHead title="Billable Hours">
+            <Pill title={'Billed to owners — ' + filtered.length + ' tasks in view. Costs + supplies (owner-billable line items): ' + money(kpis.items)}>{money(kpis.billed)} billed</Pill>
+            <Pill tone="brand" title={mp ? 'Billable maintenance — ' + mp.tasksWithBilling + ' of ' + mp.tasks + ' tasks carry a cost' : 'No maintenance data'}>{mp ? money(mp.billed) : '—'} billable</Pill>
+            <Pill title={mp ? 'Payroll (Homebase) — ' + mp.hours + 'h clocked · ' + mp.people + (mp.people === 1 ? ' person' : ' people') : 'Homebase unavailable'}>{mp ? money(mp.cost) : '—'} payroll</Pill>
+            <Pill tone={margin == null ? 'slate' : margin < 0 ? 'rose' : 'emerald'} title={'Labor margin (billable − payroll) · ' + winLabel}>{margin == null ? '—' : (margin < 0 ? '−' : '') + money(Math.abs(margin))} margin</Pill>
+            <Pill title="Actual hours — time on task (crew taps)">{(kpis.minutes / 60).toFixed(1)}h</Pill>
+          </LeanHead>
+        )
+      })()}
+      <div className="flex items-center gap-2 flex-wrap">
         {/* Eight controls wrapped to four stacked rows on a phone — ~250px of screen before the
             first dollar figure. One swipeable strip instead; the month pager leads it, so the
             primary control is still fully visible at rest and the exports are one swipe away. */}
@@ -949,14 +969,14 @@ export function BillingBoard() {
               <span className="text-muted text-[12px]">to</span>
               <input type="date" value={rTo} min={rFrom || undefined} onChange={e => setRTo(e.target.value)}
                 className="text-[12.5px] font-semibold text-ink bg-transparent focus:outline-none" aria-label="To date" />
-              <button onClick={() => setRangeOn(false)} title="Back to whole months"
-                className="ml-1 text-muted hover:text-ink"><X className="w-3.5 h-3.5" /></button>
+              <Tip label="Back to whole months"><button onClick={() => setRangeOn(false)} aria-label="Back to whole months"
+                className="ml-1 text-muted hover:text-ink"><X className="w-3.5 h-3.5" /></button></Tip>
             </div>
           ) : (
             <div className="flex items-center rounded-xl border border-line bg-white shadow-soft overflow-hidden">
-              <button className="px-2.5 py-1.5 text-muted hover:text-ink" onClick={() => setMonth(m => shiftMonth(m, -1))} aria-label="Previous month">‹</button>
+              <Tip label="Previous month"><button className="px-2.5 py-1.5 text-muted hover:text-ink" onClick={() => setMonth(m => shiftMonth(m, -1))} aria-label="Previous month">‹</button></Tip>
               <span className="px-2 text-[12.5px] font-semibold text-ink whitespace-nowrap">{monthLabel(month)}</span>
-              <button className="px-2.5 py-1.5 text-muted hover:text-ink" onClick={() => setMonth(m => shiftMonth(m, 1))} aria-label="Next month">›</button>
+              <Tip label="Next month"><button className="px-2.5 py-1.5 text-muted hover:text-ink" onClick={() => setMonth(m => shiftMonth(m, 1))} aria-label="Next month">›</button></Tip>
             </div>
           )}
           {!rangeOn ? (
@@ -966,9 +986,7 @@ export function BillingBoard() {
               Custom range
             </button>
           ) : null}
-          <button onClick={reload} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
-            <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin' : '')} /> Refresh
-          </button>
+          <IconBtn title="Reload the board" onClick={reload}><RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin' : '')} /></IconBtn>
           {canEdit ? (
             <button onClick={() => setAddOpen(v => !v)} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft">
               + Add task
@@ -998,15 +1016,15 @@ export function BillingBoard() {
               {translating || 'ES→EN titles'}
             </button>
           ) : null}
-          <a href={exportUrl('csv')} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
+          <a href={exportUrl('csv')} title="Download the window as CSV" className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft inline-flex items-center gap-1.5">
             <Download className="w-3.5 h-3.5" /> CSV
           </a>
-          <a href={exportUrl('xls')} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
-            <Download className="w-3.5 h-3.5" /> Excel by owner
+          <a href={exportUrl('xls')} title="Download an Excel workbook, one sheet per owner" className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft inline-flex items-center gap-1.5">
+            <Download className="w-3.5 h-3.5" /> Excel
           </a>
           <a href={exportUrl('zip')} title="One billable-labor sheet per owner, named for the owner, zipped"
             className="rounded-xl bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
-            <Download className="w-3.5 h-3.5" /> All owners (ZIP)
+            <Download className="w-3.5 h-3.5" /> ZIP
           </a>
         </div>
       </div>
@@ -1015,54 +1033,34 @@ export function BillingBoard() {
 
       {addOpen && data ? <AddTask units={data.units || []} month={month} onDone={() => { setAddOpen(false); reload() }} /> : null}
 
-      {/* THE ROW (Jon, 2026-08-10: "labor should be payroll"). The old Labor tile multiplied a
-          Breezeway rate by hours and read $0.00 on every single task, because not one task in
-          the system carries a rate — it was a tile that could never say anything. It is replaced
-          by the three numbers that actually decide whether this work makes money: what we can
-          bill for the labor, what the crew cost us, and the gap. Every tile covers the SELECTED
-          WINDOW, not the filtered view, so nothing on this screen is scoped differently to
-          anything else on it. */}
-      {(() => {
-        const mp = data && data.maintenancePayroll ? data.maintenancePayroll : null
-        const winLabel = data && data.custom
-          ? new Date(String(data.from) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-            + ' – ' + new Date(String(data.to) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-          : new Date(String(data?.month || month) + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-        const margin = mp ? mp.billed - mp.cost : null
-        return (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <Kpi label="Billed to owners" value={money(kpis.billed)} sub={filtered.length + ' tasks in view'} />
-            <Kpi label="Billable" value={mp ? money(mp.billed) : '—'}
-              sub={mp ? mp.tasksWithBilling + ' of ' + mp.tasks + ' tasks carry a cost' : 'no maintenance data'} />
-            <Kpi label="Payroll" value={mp ? money(mp.cost) : '—'}
-              sub={mp ? mp.hours + 'h clocked · ' + mp.people + (mp.people === 1 ? ' person' : ' people') : 'Homebase unavailable'} />
-            <Kpi label="Labor margin" value={margin == null ? '—' : (margin < 0 ? '−' : '') + money(Math.abs(margin))}
-              sub={winLabel} tone={margin == null ? undefined : margin < 0 ? 'bad' : 'good'} />
-            <Kpi label="Costs + supplies" value={money(kpis.items)} sub="owner-billable line items" />
-            <Kpi label="Actual hours" value={(kpis.minutes / 60).toFixed(1) + 'h'} sub="time on task (crew taps)" />
-          </div>
-        )
-      })()}
-
       {/* Coverage caveat + the per-market split. The summary strip that used to sit here is gone —
           its numbers are the tiles above now, and repeating them was the only thing it did. */}
+      {/* Coverage caveat + the per-market split, one line: tags for what makes the margin a floor,
+          the market table one click away. */}
       {data && data.maintenancePayroll ? (() => {
         const mp = data.maintenancePayroll!
         const noTime = mp.tasks - mp.tasksWithTime
         const pct = mp.hours > 0 ? Math.round((mp.hoursOnTask / mp.hours) * 100) : null
+        const caveat = noTime > 0 || (pct != null && pct < 90)
+        const markets = data.maintenanceByMarket || []
+        if (!caveat && !markets.length) return null
         return (
-          <div className="rounded-xl border border-line bg-white px-4 py-3">
-            {(noTime > 0 || (pct != null && pct < 90)) && (
-              <div className="mb-2 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                {mp.tasks > mp.tasksWithBilling ? <><b>{mp.tasks - mp.tasksWithBilling}</b> of {mp.tasks} maintenance tasks have no cost entered in Breezeway, so they bill the owner nothing.{' '}
-                  <button onClick={() => { setDept('maintenance'); setNeedsPrice(true); setView('all') }} className="font-bold underline decoration-dotted underline-offset-2">Show them</button>. </> : null}
-                {pct != null ? <>Only <b>{mp.hoursOnTask}h</b> of the crew&apos;s <b>{mp.hours}h</b> clocked ({pct}%) landed on a task {'\u2014'} read the margin above as a floor, not a verdict.</> : null}
-              </div>
-            )}
-            {(data.maintenanceByMarket || []).length > 0 && (
-              /* Reference table, five numeric columns: on a phone it scrolls in its own box —
-                 bleeding to the card edge so it does not look cut off inside the padding. */
-              <div className="lh-hscroll -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {caveat && mp.tasks > mp.tasksWithBilling ? (
+              <button onClick={() => { setDept('maintenance'); setNeedsPrice(true); setView('all') }}
+                title={(mp.tasks - mp.tasksWithBilling) + ' of ' + mp.tasks + ' maintenance tasks have no cost entered in Breezeway, so they bill the owner nothing — click to show them'}>
+                <Tag tone="amber">{mp.tasks - mp.tasksWithBilling} of {mp.tasks} no cost</Tag>
+              </button>
+            ) : null}
+            {caveat && pct != null ? <Tag tone={pct < 90 ? 'amber' : 'slate'} title={'Only ' + mp.hoursOnTask + 'h of the crew’s ' + mp.hours + 'h clocked landed on a task — read the margin as a floor, not a verdict'}>{pct}% of hours on task</Tag> : null}
+            {markets.length ? (
+              <button onClick={() => setShowMarkets(v => !v)} className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
+                {showMarkets ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />} By market
+              </button>
+            ) : null}
+            {showMarkets && markets.length ? (
+              /* Reference table, five numeric columns: on a phone it scrolls in its own box. */
+              <div className="w-full rounded-xl border border-line bg-white px-4 py-2 lh-hscroll">
               <table className="w-full min-w-[480px] sm:min-w-0 text-[12.5px]">
                 <thead>
                   <tr className="text-[10px] uppercase tracking-wider text-muted">
@@ -1074,7 +1072,7 @@ export function BillingBoard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(data.maintenanceByMarket || []).map(r => (
+                  {markets.map(r => (
                     <tr key={r.market} className="border-t border-line/60">
                       <td className="py-1 font-semibold text-ink">{r.market}</td>
                       <td className="py-1 text-right tabular-nums text-muted" title={r.tasksWithTime + ' with time logged'}>{r.tasks}<span className="text-[10px]"> ({r.tasksWithTime} timed)</span></td>
@@ -1086,20 +1084,20 @@ export function BillingBoard() {
                 </tbody>
               </table>
               </div>
-            )}
+            ) : null}
           </div>
         )
       })() : null}
 
       {data && data.missingDetail > 0 && canEdit ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3 flex-wrap">
-          <AlertTriangle className="w-4 h-4 text-amber-500" />
-          <span className="text-[12.5px] text-amber-800">
-            <strong>{data.missingDetail}</strong> tasks this month have no billing detail yet (costs, supplies and bill-to live on the per-task pull).
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 flex items-center gap-2 flex-wrap">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+          <span className="text-[12.5px] text-amber-800" title="Costs, supplies and bill-to live on the per-task pull">
+            <strong>{data.missingDetail}</strong> tasks without billing detail
           </span>
           <button onClick={pullDetails} disabled={!!pulling}
-            className="rounded-lg bg-amber-600 text-white px-3 py-1 text-[12px] font-semibold disabled:opacity-50">
-            {pulling ? 'Pulling… ' + pulling.done + '/' + pulling.total : 'Pull details from Breezeway'}
+            className="rounded-lg bg-amber-600 text-white px-2.5 py-0.5 text-[12px] font-semibold disabled:opacity-50">
+            {pulling ? 'Pulling… ' + pulling.done + '/' + pulling.total : 'Pull details'}
           </button>
         </div>
       ) : null}
@@ -1122,21 +1120,9 @@ export function BillingBoard() {
         </div>
         {view !== 'labor' ? (
           <>
-            {DEPTS.map(d => (
-              <button key={d} onClick={() => setDept(d)}
-                className={'rounded-full px-3 py-1 text-[12px] font-semibold ring-1 ring-inset ' + (dept === d ? 'bg-ink text-white ring-ink' : 'bg-white text-muted ring-line hover:text-ink')}>
-                {d === 'all' ? 'All departments' : d}
-              </button>
-            ))}
-            <label className="flex items-center gap-1.5 text-[12px] text-muted">
-              <input type="checkbox" checked={completedOnly} onChange={e => setCompletedOnly(e.target.checked)} /> Completed only
-            </label>
-            <label className="flex items-center gap-1.5 text-[12px] text-muted">
-              <input type="checkbox" checked={billableOnly} onChange={e => setBillableOnly(e.target.checked)} /> Billable only
-            </label>
-            <label className="flex items-center gap-1.5 text-[12px] text-muted">
-              <input type="checkbox" checked={showExcluded} onChange={e => setShowExcluded(e.target.checked)} /> Show excluded
-            </label>
+            <select value={dept} onChange={e => setDept(e.target.value)} aria-label="Department" className="rounded-lg border border-line bg-white px-1.5 py-1 text-[12px]">
+              {DEPTS.map(d => <option key={d} value={d}>{d === 'all' ? 'All departments' : d}</option>)}
+            </select>
             {needsPriceCount > 0 || needsPrice ? (
               <button onClick={() => setNeedsPrice(v => !v)}
                 title="Finished tasks billing the owner $0 — click to see just those, price them, click again to go back"
@@ -1158,6 +1144,20 @@ export function BillingBoard() {
                 All
               </button>
             </span>
+            <button onClick={() => setMoreFilters(v => !v)} title="Completed / billable / excluded, sort order and the hourly charge"
+              className={'rounded-lg border px-2 py-1 text-[12px] font-semibold ' + (moreFilters ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>
+              Filters{(!completedOnly || !billableOnly || showExcluded) ? ' •' : ''}
+            </button>
+            {moreFilters ? (<>
+            <label className="flex items-center gap-1.5 text-[12px] text-muted">
+              <input type="checkbox" checked={completedOnly} onChange={e => setCompletedOnly(e.target.checked)} /> Completed only
+            </label>
+            <label className="flex items-center gap-1.5 text-[12px] text-muted">
+              <input type="checkbox" checked={billableOnly} onChange={e => setBillableOnly(e.target.checked)} /> Billable only
+            </label>
+            <label className="flex items-center gap-1.5 text-[12px] text-muted">
+              <input type="checkbox" checked={showExcluded} onChange={e => setShowExcluded(e.target.checked)} /> Show excluded
+            </label>
             <span className="flex items-center gap-1 text-[12px] text-muted">
               Sort
               <select value={sortKey} onChange={e => setSortKey(e.target.value as any)} className="rounded-lg border border-line bg-white px-1.5 py-1 text-[12px]">
@@ -1167,8 +1167,8 @@ export function BillingBoard() {
                 <option value="hours">hours</option>
                 <option value="task">task name</option>
               </select>
-              <button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')} title="Flip sort direction"
-                className="rounded-lg border border-line bg-white px-1.5 py-1 font-semibold">{sortDir === 'asc' ? '↑' : '↓'}</button>
+              <Tip label="Flip sort direction"><button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')} aria-label="Flip sort direction"
+                className="rounded-lg border border-line bg-white px-1.5 py-1 font-semibold">{sortDir === 'asc' ? '↑' : '↓'}</button></Tip>
             </span>
             {view === 'owner' ? (
               <span className="flex items-center gap-1 text-[12px] text-muted">
@@ -1204,6 +1204,7 @@ export function BillingBoard() {
                 />/h
               </span>
             ) : null}
+            </>) : null}
           </>
         ) : null}
         </div>
@@ -1268,7 +1269,7 @@ export function BillingBoard() {
       ) : null}
 
       {loading && !data ? (
-        <div className="rounded-2xl border border-line bg-white p-10 text-center text-[13px] text-muted">Loading the month…</div>
+        <div className="rounded-2xl border border-line bg-white px-4 py-6 text-center text-[13px] text-muted">Loading the month…</div>
       ) : null}
 
       {view === 'labor' && data ? (
@@ -1285,7 +1286,7 @@ export function BillingBoard() {
             {sortedFlat.map(t => <TaskRow key={t.id} t={t} canEdit={canEdit} onPatch={patchTask} onSync={scheduleSync} defaultRate={data.defaultRate} showUnit
               selected={!!sel[t.id]} onSelect={canEdit ? () => toggleSel(t.id) : undefined} />)}
           </TaskTable>
-          {!sortedFlat.length && !loading ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
+          {!sortedFlat.length && !loading ? <div className="px-4 py-5 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
         </div>
       ) : null}
 
@@ -1302,23 +1303,21 @@ export function BillingBoard() {
             const revCount = o.tasks.filter(t => t.reviewedBy).length
             return (
               <div key={k} className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-                <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
+                <div className="px-4 py-2 flex items-center gap-3 flex-wrap">
                   {canEdit ? <input type="checkbox" checked={allSel} onChange={e => setMany(o.tasks.map(t => t.id), e.target.checked)}
                     title="Select every task for this owner" aria-label="Select all tasks for this owner" className="accent-ink" /> : null}
-                  <span className="w-8 h-8 rounded-full bg-brand-50 text-brand-700 font-bold text-[12px] inline-flex items-center justify-center shrink-0">{initials(o.g.ownerName)}</span>
                   <button onClick={() => setOpenOwners(s => ({ ...s, [k]: !open }))} className="flex items-center gap-2 min-w-0 text-left">
                     {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
-                    <span className="min-w-0">
-                      <span className="font-bold text-ink block truncate">{o.g.ownerName}</span>
-                      <span className="text-[11px] text-muted block">{unitKeys.length} unit{unitKeys.length === 1 ? '' : 's'} · {o.tasks.length} tasks · {hours(o.minutes)} · <span className={revCount === o.tasks.length && o.tasks.length ? 'text-emerald-600 font-semibold' : ''}>{revCount}/{o.tasks.length} reviewed</span></span>
+                    <span className="min-w-0 flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-ink truncate">{o.g.ownerName}</span>
+                      <span className="text-[11.5px] text-muted">{unitKeys.length}u · {o.tasks.length} tasks · {hours(o.minutes)}</span>
+                      <Tag tone={revCount === o.tasks.length && o.tasks.length ? 'emerald' : 'slate'} title="Tasks marked reviewed">{revCount}/{o.tasks.length} reviewed</Tag>
                     </span>
                   </button>
                   <span className="grow" />
                   <span className="font-bold text-ink tabular-nums text-[15px]">{money(o.billed)}</span>
                   {o.g.ownerId ? (
-                    <a href={exportUrl('xls', o.g.ownerId)} className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] text-brand-600 font-semibold inline-flex items-center gap-1">
-                      <Download className="w-3 h-3" /> Export
-                    </a>
+                    <IconBtn title={'Download ' + o.g.ownerName + '’s sheet (Excel)'} href={exportUrl('xls', o.g.ownerId)}><Download className="w-3.5 h-3.5" /></IconBtn>
                   ) : null}
                   {canEdit ? (
                     <button onClick={() => toggleReview(rk, true)} title="Sign off this owner for the month — moves them to Ready to download"
@@ -1349,13 +1348,13 @@ export function BillingBoard() {
               </div>
             )
           })}
-          {!byOwner.length && !loading ? <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
+          {!byOwner.length && !loading ? <div className="rounded-2xl border border-line bg-white px-4 py-5 text-center text-[12.5px] text-muted">Nothing matches this filter.</div> : null}
 
           {byOwner.some(o => reviews[o.g.ownerId || 'unassigned']) ? (
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 overflow-hidden">
               <div className="px-4 py-3 flex items-center gap-3 flex-wrap border-b border-emerald-200">
                 <Check className="w-4 h-4 text-emerald-600" />
-                <span className="font-bold text-emerald-800">Reviewed &amp; closed out — ready to download</span>
+                <span className="font-bold text-emerald-800">Ready to download</span>
                 <span className="text-[11.5px] text-emerald-700">{byOwner.filter(o => reviews[o.g.ownerId || 'unassigned']).length} owners · {money(byOwner.filter(o => reviews[o.g.ownerId || 'unassigned']).reduce((s, o) => s + o.billed, 0))}</span>
                 <span className="grow" />
                 <a href={exportUrl('zip') + '&reviewed=1'} className="rounded-lg bg-emerald-600 text-white px-2.5 py-1 text-[12px] font-semibold inline-flex items-center gap-1">
