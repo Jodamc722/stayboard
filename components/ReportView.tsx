@@ -4646,7 +4646,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: 
             const cols: { key: string; label: string; w: number }[] = [
               { key: 'unit', label: 'Unit', w: 0 },
               ...(showGross ? [{ key: 'gross', label: 'Gross', w: 104 }] : []),
-              ...(showNet ? [{ key: 'net', label: BASIS_SHORT[netBasis], w: 104 }] : []),
+              ...(showNet ? [{ key: 'net', label: netBasis === 'net' ? 'Net' : netBasis === 'gross' ? 'Gross' : 'Net', w: 104 }] : []),
               { key: 'occ', label: 'Occ', w: 78 },
               { key: 'adr', label: 'ADR', w: 92 },
               { key: 'revpar', label: 'RevPAR', w: 92 },
@@ -4675,7 +4675,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable }: 
                         Performance by listing{pages > 1 ? ' · ' + (p + 1) + ' of ' + pages : ''}
                       </h2>
                       <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: t.muted, margin: '14px 0 0', maxWidth: '54ch' }}>
-                        {listingTable.totals.units} unit{listingTable.totals.units === 1 ? '' : 's'}, {listingTable.from} to {listingTable.to}. Gross is accommodation plus cleaning; {BASIS_SHORT[netBasis].toLowerCase()} is {BASIS_NOTE[netBasis].toLowerCase()}. The total matches the snapshot.
+                        {listingTable.totals.units} unit{listingTable.totals.units === 1 ? '' : 's'}, {listingTable.from} to {listingTable.to}. Gross is accommodation plus cleaning; net is {BASIS_NOTE[netBasis].toLowerCase()}. Same basis and window as the snapshot, counted live.
                       </p>
                     </div>
                     {canEdit && (
