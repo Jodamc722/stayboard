@@ -9,7 +9,8 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { useCachedFetch } from '@/lib/swr'
 import Link from 'next/link'
-import { Activity, Search, ChevronDown, AlertTriangle, Star, MessageSquare, Building2, Wrench, ArrowRight, Info, Send, CheckCircle2, Clock, Loader2, FileText, Copy, Check } from 'lucide-react'
+import { Search, Star, Wrench, ArrowRight, Info, Send, CheckCircle2, Clock, Loader2, FileText, Copy, Check } from 'lucide-react'
+import { LeanList, LeanRow, LeanEmpty, Tag, Pill as LPill, IconBtn, Clamp } from '@/components/lean'
 
 type Channel = { label: string; score: number; band: string; avgStars: number | null; reviewCount: number; responseRate: number | null; badge: string | null }
 type Issue = { key: string; severity: 'critical' | 'high' | 'medium' | 'low'; title: string; action: string; owner: string }
@@ -192,219 +193,181 @@ export function HealthBoard() {
   }
 
   const s = data?.summary
+  const bandN = (bd: string) => !s ? null : bd === 'critical' ? s.critical : bd === 'risk' ? s.atRisk : bd === 'watch' ? s.watch : bd === 'healthy' ? (s.elite || 0) + (s.healthy || 0) : null
+  const WEIGHTS = 'Weighted: Ops & Guest 45% (rating, reviews, response, open work) · Listing Optimization 30% (title, amenities, booking settings, content) · Revenue 25% (RevPAR vs building peers)'
+  const chName = (c: string) => c === 'bookingcom' ? 'Booking.com' : c === 'airbnb' ? 'Airbnb' : c === 'vrbo' ? 'Vrbo' : c === 'expedia' ? 'Expedia' : 'Other'
 
   return (
     <div>
-      <p className="text-[12.5px] text-muted mb-4">One weighted health score per unit, built from three pillars: <b className="text-ink">Ops &amp; Guest</b> (rating, reviews, response, open work — 45%), <b className="text-ink">Listing Optimization</b> (title, amenities, booking settings, content — 30%), and <b className="text-ink">Revenue</b> (RevPAR vs building peers — 25%). Hover any score for the breakdown.</p>
-
       {loading ? (
-        <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Scoring the portfolio…</div>
+        <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1.5 -mt-0.5" />Scoring the portfolio…</LeanEmpty>
       ) : !s ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-10 text-center text-sm text-rose-700">{data?.error || 'Could not load health data.'}</div>
+        <LeanEmpty><span className="text-rose-700">{data?.error || 'Could not load health data.'}</span></LeanEmpty>
       ) : (
         <>
-          {/* Overall hero + the three pillar averages that compose it */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div className="rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3.5">
-              <div className="text-[11px] uppercase tracking-wider text-brand-700/80 font-semibold">Avg Health Score</div>
-              <div className="flex items-end gap-2 mt-0.5"><span className="text-4xl font-bold text-brand-700 tabular-nums">{s.avgScore}</span><span className="text-[11px] text-brand-700/70 mb-1.5">weighted composite</span></div>
-            </div>
-            <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
-              <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Ops &amp; Guest · 45%</div>
-              <div className="flex items-end gap-2 mt-0.5"><span className="text-3xl font-bold text-ink tabular-nums">{s.avgOps}</span><span className="text-[11px] text-muted mb-1">CS &amp; Ops</span></div>
-            </div>
-            <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
-              <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Listing Opt · 30%</div>
-              <div className="flex items-end gap-2 mt-0.5"><span className="text-3xl font-bold text-ink tabular-nums">{s.avgListing}</span><span className="text-[11px] text-muted mb-1">controllable</span></div>
-            </div>
-            <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
-              <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">Revenue · 25%</div>
-              <div className="flex items-end gap-2 mt-0.5"><span className="text-3xl font-bold text-ink tabular-nums">{s.avgRevenue}</span><span className="text-[11px] text-muted mb-1">RevPAR vs peers</span></div>
-            </div>
-          </div>
-          {/* Band counts */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-            <Kpi label="Elite + Healthy" value={(s.elite || 0) + (s.healthy || 0)} tone="emerald" />
-            <Kpi label="Watch" value={s.watch} tone="amber" />
-            <Kpi label="At risk" value={s.atRisk} tone="orange" />
-            <Kpi label="Critical" value={s.critical} tone="rose" />
-            <Kpi label="Open actions" value={s.openActions} />
+          {/* One line of numbers: the composite, the three pillars that make it, open actions. */}
+          <div className="flex items-center gap-1.5 flex-wrap mb-2">
+            <LPill tone="brand" title={`Average Health Score — ${WEIGHTS}`}>Health {s.avgScore}</LPill>
+            <LPill title="Ops & Guest pillar (45%): rating, reviews, response, open work">Ops {s.avgOps}</LPill>
+            <LPill title="Listing Optimization pillar (30%): title, amenities, booking settings, content">Listing {s.avgListing}</LPill>
+            <LPill title="Revenue pillar (25%): RevPAR vs building peers">Revenue {s.avgRevenue}</LPill>
+            <LPill tone="violet" title="Open inspection actions across the portfolio">{s.openActions ?? '—'} actions</LPill>
+            <details className="relative ml-auto text-[11.5px] text-muted">
+              <summary className="cursor-pointer list-none inline-flex items-center gap-1 hover:text-ink"><Info size={12} /> How it&apos;s scored</summary>
+              <div className="absolute right-0 z-20 mt-1 w-[18rem] rounded-xl border border-line bg-white p-3 shadow-soft space-y-1.5 text-[11.5px] text-ink/80">
+                <p>{WEIGHTS}. Hover any score for its breakdown.</p>
+                {/* Why the score leans on Airbnb: reviews are weighted by each channel's real share of
+                    booking volume, so the channel that actually fills the calendar drives the score. */}
+                {s.channelWeighting && s.channelWeighting.total > 0 && (
+                  <p>Reviews weighted by booking volume ({s.channelWeighting.window}): {s.channelWeighting.channels.filter((c: any) => c.bookings > 0).map((c: any) => `${chName(c.channel)} ${c.sharePct}% → ×${c.reviewWeight}`).join(' · ')}.</p>
+                )}
+                <p>Not yet scored: {data!.dataPending.join(' · ')}. {s.reviewsAnalyzed} reviews analyzed.</p>
+              </div>
+            </details>
           </div>
 
-          {/* Controls */}
+          {/* Controls — one line */}
           <div className="flex items-center gap-2 flex-wrap mb-3">
-            <div className="relative flex-1 min-w-[220px]">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building, issue…" className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-line bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            <div className="relative flex-1 min-w-[180px]">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building, issue…" className="w-full pl-8 pr-3 py-1.5 text-[12.5px] rounded-lg border border-line bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
             </div>
-            {view === 'units' && (
-              <button onClick={copyPortfolio} title="Copy a Slack-ready Health Score Inspection report for the units currently shown" className="px-3 py-2 text-sm font-semibold rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 inline-flex items-center gap-1.5">
-                {copied === '__portfolio__' ? <><Check size={15} /> Copied</> : <><Copy size={15} /> Copy inspection report</>}
-              </button>
-            )}
-            <div className="inline-flex rounded-xl border border-line overflow-hidden text-sm">
+            <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
               {(['units', 'buildings'] as const).map(v => (
-                <button key={v} onClick={() => setView(v)} className={`px-3 py-2 font-medium capitalize ${view === v ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app'}`}>{v}</button>
+                <button key={v} onClick={() => setView(v)} className={`px-2.5 py-1 font-semibold capitalize ${view === v ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>{v}</button>
               ))}
             </div>
             {view === 'units' && (
-              <div className="inline-flex rounded-xl border border-line overflow-hidden text-sm">
-                {(['all', 'critical', 'risk', 'watch', 'healthy'] as const).map(bd => (
-                  <button key={bd} onClick={() => setBand(bd)} className={`px-3 py-2 font-medium capitalize ${band === bd ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app'}`}>{bd === 'risk' ? 'At risk' : bd}</button>
-                ))}
-              </div>
+              <>
+                <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] max-w-full overflow-x-auto">
+                  {(['all', 'critical', 'risk', 'watch', 'healthy'] as const).map(bd => {
+                    const n = bandN(bd)
+                    return (
+                      <button key={bd} onClick={() => setBand(bd)} title={bd === 'healthy' ? 'Elite + Healthy' : undefined}
+                        className={`px-2.5 py-1 font-semibold capitalize whitespace-nowrap border-l border-line first:border-l-0 ${band === bd ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
+                        {bd === 'risk' ? 'At risk' : bd}{n ? <span className="ml-1 opacity-70 tabular-nums">{n}</span> : null}
+                      </button>
+                    )
+                  })}
+                </div>
+                <IconBtn title={copied === '__portfolio__' ? 'Copied' : 'Copy a Slack-ready inspection report for the units shown'} tone="brand" onClick={copyPortfolio}>
+                  {copied === '__portfolio__' ? <Check size={14} /> : <Copy size={14} />}
+                </IconBtn>
+              </>
             )}
           </div>
 
           {view === 'buildings' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {data!.buildings.map(b => {
-                const ui = BAND[b.band] || BAND.neutral
-                return (
-                  <div key={b.name} className="rounded-2xl border border-line bg-white p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-semibold text-ink text-sm inline-flex items-center gap-1.5"><Building2 size={14} className="text-brand-600" /> {b.name}</h3>
-                      <Pill score={b.score} band={b.band} />
-                    </div>
-                    <div className="text-[12px] text-muted mt-2 flex flex-wrap gap-x-3 gap-y-1">
-                      <span>{b.units} units</span>
-                      {b.mean != null && <span>mean {b.mean}</span>}
-                      {b.min != null && <span>weakest {b.min}</span>}
-                      {b.weak > 0 && <span className="text-rose-600 font-medium inline-flex items-center gap-1"><AlertTriangle size={11} /> {b.weak} below 70</span>}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-line bg-white overflow-hidden">
-              {rows.length === 0 ? <div className="px-4 py-10 text-center text-sm text-muted">No units match.</div> : rows.map(r => {
-                const ui = BAND[r.band] || BAND.neutral
+            <LeanList>
+              {data!.buildings.map(b => (
+                <LeanRow key={b.name}
+                  lead={<Pill score={b.score} band={b.band} />}
+                  name={b.name}
+                  meta={`${b.units} units`}
+                  tags={<>
+                    {b.mean != null && <Tag title="Mean unit Health Score">mean {b.mean}</Tag>}
+                    {b.min != null && <Tag title="Weakest unit's Health Score">low {b.min}</Tag>}
+                    {b.weak > 0 && <Tag tone="rose" title="Units scoring below 70">{b.weak} below 70</Tag>}
+                  </>}
+                />
+              ))}
+            </LeanList>
+          ) : rows.length === 0 ? <LeanEmpty>No units match.</LeanEmpty> : (
+            <LeanList>
+              {rows.map(r => {
                 const isOpen = open === r.id
                 return (
-                  <div key={r.id} className="border-b border-line last:border-0">
-                    <button onClick={() => setOpen(isOpen ? null : r.id)} className="w-full text-left px-4 py-3 hover:bg-app/60 flex items-center gap-3">
-                      <ScoreCell score={r.score} band={r.band} pillars={r.pillars} />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-ink truncate">{r.internalName || r.name}</div>
-                        {r.internalName && r.internalName !== r.name && <div className="text-[11px] text-muted/80 truncate">{r.name}</div>}
-                        <div className="text-[11px] text-muted flex flex-wrap gap-x-2.5 gap-y-0.5 mt-0.5">
-                          {r.building && <span className="inline-flex items-center gap-1"><Building2 size={10} /> {r.building}</span>}
-                          {r.avgStars != null && <span className="inline-flex items-center gap-0.5" title={r.lowConfidence ? 'Thin sample (<5 reviews) — score shrunk toward portfolio average until more reviews land' : undefined}><Star size={10} className="text-amber-500 fill-amber-500" />{r.avgStars} · {r.reviewCount}{r.lowConfidence ? '⚠' : ''}</span>}
-                          {r.responseRate != null && <span>{r.responseRate}% replied</span>}
-                          <span>optimize {r.optimizeScore}</span>
-                          {r.topIssue && <span className="text-rose-600 font-medium">{r.topIssue}{r.recurring.includes(r.topIssue) ? ' (recurring)' : ''}</span>}
+                  <LeanRow key={r.id}
+                    open={isOpen} onToggle={() => setOpen(isOpen ? null : r.id)}
+                    lead={<ScoreCell score={r.score} band={r.band} pillars={r.pillars} />}
+                    name={<span title={r.internalName && r.internalName !== r.name ? r.name : undefined}>{r.internalName || r.name}</span>}
+                    meta={r.building || undefined}
+                    tags={<>
+                      {r.topIssue && <Tag tone="rose" title="Top issue">{r.topIssue}{r.recurring.includes(r.topIssue) ? ' · recurring' : ''}</Tag>}
+                      {r.avgStars != null && <Tag title={`${r.reviewCount} reviews${r.lowConfidence ? ' · thin sample (<5 reviews): score shrunk toward the portfolio average until more reviews land' : ''}`}>{r.avgStars}★ · {r.reviewCount}{r.lowConfidence ? ' ⚠' : ''}</Tag>}
+                      {r.responseRate != null && <Tag title="Share of reviews replied to">{r.responseRate}% replied</Tag>}
+                      <Tag title="Optimize Score">opt {r.optimizeScore}</Tag>
+                      {r.channels.slice(0, 4).map(c => (
+                        <span key={c.label} className="hidden md:inline-flex">
+                          <Tag tone={c.band === 'critical' || c.band === 'risk' ? 'rose' : c.band === 'watch' ? 'amber' : c.band === 'neutral' ? 'slate' : 'emerald'}
+                            title={`${c.label}: ${c.score}${c.avgStars != null ? ` · ${c.avgStars}★ · ${c.reviewCount} rev` : ''}${c.badge ? ` · ${c.badge}` : ''}`}>{c.label.slice(0, 3)} {c.score}</Tag>
+                        </span>
+                      ))}
+                      {r.issues.length > 0 && <Tag tone="brand" title="Open inspection actions — open the row">{r.issues.length} action{r.issues.length > 1 ? 's' : ''}</Tag>}
+                    </>}
+                    actions={<IconBtn title="Open unit" href={`/listings/${r.id}`}><ArrowRight size={14} /></IconBtn>}
+                  >
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-1">
+                      {/* breakdown + channels */}
+                      <div>
+                        <div className="space-y-3 mb-3">
+                          <PillarBlock label="Ops & Guest" sub="rating · reviews · response · open work · 45%" score={r.pillars.ops} band={r.pillars.opsBand}>
+                            {([['Rating', r.breakdown.rating, 32], ['Volume', r.breakdown.volume, 9], ['Response', r.breakdown.response, 10], ['Ops', r.breakdown.ops, 9], ['Issues', -r.breakdown.penalty, 0]] as [string, number, number][]).map(([l, v, m]) => (
+                              <span key={l} className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink">{l} <b className="tabular-nums">{v > 0 && m > 0 ? `${v}/${m}` : v}</b></span>
+                            ))}
+                          </PillarBlock>
+                          <PillarBlock label="Listing Optimization" sub="title · amenities · booking settings · content · 30%" score={r.pillars.listing} band={r.pillars.listingBand}>
+                            <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Overall optimize score — the controllable conversion lever">Optimize <b className="tabular-nums">{r.optimizeScore}</b></span>
+                            <Link href={`/listings/${r.id}`} className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-brand-700 font-medium inline-flex items-center gap-1 hover:bg-brand-50">Fix content <ArrowRight size={11} /></Link>
+                          </PillarBlock>
+                          <PillarBlock label="Revenue" sub="RevPAR vs building peers · 25%" score={r.pillars.revenue} band={r.pillars.revenueBand}>
+                            {r.pillars.revparIndex != null && <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="RevPAR (revenue per available night, last 90 days) vs this building's median earning unit — blends rate and occupancy">RevPAR <b className="tabular-nums">{r.pillars.revparIndex}×</b> peers{r.pillars.revpar != null && <span className="text-muted"> · ${r.pillars.revpar}/night</span>}</span>}
+                            <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Occupancy last 90 days vs this building's median earning unit">Occupancy {r.pillars.occPct != null ? <b className="tabular-nums">{r.pillars.occPct}%</b> : <b>—</b>}{r.pillars.occIndex != null && <span className="text-muted"> · {r.pillars.occIndex}× peers</span>}</span>
+                            {r.pillars.revenue == null && <span className="text-[11px] px-2 py-1 rounded-lg bg-app border border-line text-muted italic">no building peers yet</span>}
+                          </PillarBlock>
                         </div>
-                      </div>
-                      {/* per-OTA chips */}
-                      <div className="hidden md:flex items-center gap-1.5">
-                        {r.channels.slice(0, 4).map(c => {
-                          const cb = BAND[c.band] || BAND.neutral
-                          return <span key={c.label} title={`${c.label}: ${c.score}${c.avgStars != null ? ` · ${c.avgStars}★ · ${c.reviewCount} rev` : ''}${c.badge ? ` · ${c.badge}` : ''}`} className={`text-[10px] font-semibold px-1.5 py-1 rounded ${cb.bg} ${cb.text} inline-flex items-center gap-1`}>{c.label.slice(0, 3)} {c.score}</span>
-                        })}
-                      </div>
-                      {r.issues.length > 0 && <span className="text-[10px] font-semibold text-brand-700 bg-brand-50 px-1.5 py-1 rounded">{r.issues.length} action{r.issues.length > 1 ? 's' : ''}</span>}
-                      <ChevronDown size={16} className={`text-muted shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                    </button>
-                    {isOpen && (
-                      <div className="px-4 pb-4 bg-app/40">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
-                          {/* breakdown + channels */}
-                          <div>
-                            <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-2">Health breakdown · <b className="text-ink normal-case">overall {r.score}</b></div>
-                            <div className="space-y-3 mb-3">
-                              <PillarBlock label="Ops & Guest" sub="rating · reviews · response · open work · 45%" score={r.pillars.ops} band={r.pillars.opsBand}>
-                                {([['Rating', r.breakdown.rating, 32], ['Volume', r.breakdown.volume, 9], ['Response', r.breakdown.response, 10], ['Ops', r.breakdown.ops, 9], ['Issues', -r.breakdown.penalty, 0]] as [string, number, number][]).map(([l, v, m]) => (
-                                  <span key={l} className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink">{l} <b className="tabular-nums">{v > 0 && m > 0 ? `${v}/${m}` : v}</b></span>
-                                ))}
-                              </PillarBlock>
-                              <PillarBlock label="Listing Optimization" sub="title · amenities · booking settings · content · 30%" score={r.pillars.listing} band={r.pillars.listingBand}>
-                                <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Overall optimize score — the controllable conversion lever">Optimize <b className="tabular-nums">{r.optimizeScore}</b></span>
-                                <Link href={`/listings/${r.id}`} className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-brand-700 font-medium inline-flex items-center gap-1 hover:bg-brand-50">Fix content <ArrowRight size={11} /></Link>
-                              </PillarBlock>
-                              <PillarBlock label="Revenue" sub="RevPAR vs building peers · 25%" score={r.pillars.revenue} band={r.pillars.revenueBand}>
-                                {r.pillars.revparIndex != null && <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="RevPAR (revenue per available night, last 90 days) vs this building's median earning unit — blends rate and occupancy">RevPAR <b className="tabular-nums">{r.pillars.revparIndex}×</b> peers{r.pillars.revpar != null && <span className="text-muted"> · ${r.pillars.revpar}/night</span>}</span>}
-                                <span className="text-[11px] px-2 py-1 rounded-lg bg-white border border-line text-ink" title="Occupancy last 90 days vs this building's median earning unit">Occupancy {r.pillars.occPct != null ? <b className="tabular-nums">{r.pillars.occPct}%</b> : <b>—</b>}{r.pillars.occIndex != null && <span className="text-muted"> · {r.pillars.occIndex}× peers</span>}</span>
-                                {r.pillars.revenue == null && <span className="text-[11px] px-2 py-1 rounded-lg bg-app border border-line text-muted italic">no building peers yet</span>}
-                              </PillarBlock>
-                            </div>
-                            <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">By channel</div>
-                            <div className="space-y-1.5">
-                              {r.channels.length === 0 ? <div className="text-[12px] text-muted italic">No channel reviews yet.</div> : r.channels.map(c => {
-                                const cb = BAND[c.band] || BAND.neutral
-                                return (
-                                  <div key={c.label} className="flex items-center justify-between gap-2 text-[12px] bg-white border border-line rounded-lg px-2.5 py-1.5">
-                                    <span className="font-medium text-ink">{c.label}{c.badge && <span className="ml-1.5 text-[10px] text-emerald-700 bg-emerald-50 px-1 rounded">{c.badge}</span>}</span>
-                                    <span className="inline-flex items-center gap-2 text-muted">{c.avgStars != null && <span className="inline-flex items-center gap-0.5"><Star size={10} className="text-amber-500 fill-amber-500" />{c.avgStars}</span>}<span>{c.reviewCount} rev</span><span className={`font-bold tabular-nums ${cb.text}`}>{c.score}</span></span>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                          {/* Health Score Inspection — actions, Breezeway push, shareable report */}
-                          <div>
-                            <div className="flex items-center justify-between gap-2 mb-1.5">
-                              <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">Health Score Inspection</div>
-                              <button onClick={() => copy(r.id, buildUnitReport(r))} title="Copy this unit's inspection report (Slack-ready) to send a supervisor" className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-brand-700 bg-white hover:bg-brand-50 inline-flex items-center gap-1">
-                                {copied === r.id ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy report</>}
-                              </button>
-                            </div>
-                            {r.issues.length === 0 ? <div className="text-[12px] text-emerald-700 inline-flex items-center gap-1">Nothing flagged - this unit is healthy.</div> : (
-                              <div className="space-y-2">
-                                {r.issues.map((i, k) => {
-                                  const dept = fieldDeptFor(i.key, i.owner)
-                                  const pushed = pushedMap[`${r.id}__${i.title}`] || null
-                                  return (
-                                    <div key={k} className="bg-white border border-line rounded-lg p-2.5">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="text-[13px] font-semibold text-ink">{i.title}</span>
-                                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEV[i.severity]}`}>{i.severity}</span>
-                                      </div>
-                                      <div className="text-[12px] text-muted mt-1">{i.action}</div>
-                                      <div className="flex items-center justify-between gap-2 mt-1.5 flex-wrap">
-                                        <span className="text-[11px] text-brand-700 font-medium inline-flex items-center gap-1"><Wrench size={11} /> {i.owner}</span>
-                                        {dept ? <BreezewayPush listingId={r.id} unitName={r.internalName || r.name} issue={i} pushed={pushed} />
-                                          : <span className="text-[10px] text-muted italic">Desk task — not a Breezeway field item</span>}
-                                      </div>
-                                    </div>
-                                  )
-                                })}
+                        <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">By channel</div>
+                        <div className="space-y-1">
+                          {r.channels.length === 0 ? <div className="text-[12px] text-muted">No channel reviews yet.</div> : r.channels.map(c => {
+                            const cb = BAND[c.band] || BAND.neutral
+                            return (
+                              <div key={c.label} className="flex items-center justify-between gap-2 text-[12px] bg-white border border-line rounded-lg px-2.5 py-1">
+                                <span className="font-medium text-ink">{c.label}{c.badge && <span className="ml-1.5 text-[10px] text-emerald-700 bg-emerald-50 px-1 rounded">{c.badge}</span>}</span>
+                                <span className="inline-flex items-center gap-2 text-muted">{c.avgStars != null && <span className="inline-flex items-center gap-0.5"><Star size={10} className="text-amber-500 fill-amber-500" />{c.avgStars}</span>}<span>{c.reviewCount} rev</span><span className={`font-bold tabular-nums ${cb.text}`}>{c.score}</span></span>
                               </div>
-                            )}
-                            <Link href={`/listings/${r.id}`} className="mt-2 inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 hover:text-brand-800">Open unit <ArrowRight size={13} /></Link>
-                          </div>
+                            )
+                          })}
                         </div>
                       </div>
-                    )}
-                  </div>
+                      {/* Health Score Inspection — actions, Breezeway push, shareable report */}
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                          <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">Inspection</div>
+                          <IconBtn title={copied === r.id ? 'Copied' : "Copy this unit's inspection report (Slack-ready)"} onClick={() => copy(r.id, buildUnitReport(r))}>
+                            {copied === r.id ? <Check size={13} /> : <Copy size={13} />}
+                          </IconBtn>
+                        </div>
+                        {r.issues.length === 0 ? <div className="text-[12px] text-emerald-700">Nothing flagged — healthy.</div> : (
+                          <div className="space-y-1.5">
+                            {r.issues.map((i, k) => {
+                              const dept = fieldDeptFor(i.key, i.owner)
+                              const pushed = pushedMap[`${r.id}__${i.title}`] || null
+                              return (
+                                <div key={k} className="bg-white border border-line rounded-lg px-2.5 py-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[13px] font-semibold text-ink">{i.title}</span>
+                                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${SEV[i.severity]}`}>{i.severity}</span>
+                                    <span className="text-[11px] text-brand-700 font-medium inline-flex items-center gap-1" title="Owner"><Wrench size={11} /> {i.owner}</span>
+                                    <span className="ml-auto">
+                                      {dept ? <BreezewayPush listingId={r.id} unitName={r.internalName || r.name} issue={i} pushed={pushed} />
+                                        : <span className="text-[10.5px] text-muted" title="Desk task — not a Breezeway field item">Desk task</span>}
+                                    </span>
+                                  </div>
+                                  <Clamp text={i.action} />
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </LeanRow>
                 )
               })}
-            </div>
+            </LeanList>
           )}
-
-          {/* Why the score leans on Airbnb: reviews are weighted by each channel's real share of
-              booking volume, so the channel that actually fills the calendar drives the score. */}
-          {s.channelWeighting && s.channelWeighting.total > 0 && (
-            <div className="mt-4 text-[11px] text-muted inline-flex items-start gap-1.5"><Info size={13} className="mt-0.5 shrink-0" />
-              <span>Reviews are weighted by booking volume ({s.channelWeighting.window}):{' '}
-                {s.channelWeighting.channels.filter((c: any) => c.bookings > 0).map((c: any) => `${c.channel === 'bookingcom' ? 'Booking.com' : c.channel === 'airbnb' ? 'Airbnb' : c.channel === 'vrbo' ? 'Vrbo' : c.channel === 'expedia' ? 'Expedia' : 'Other'} ${c.sharePct}% → ×${c.reviewWeight}`).join(' · ')}.
-                A review on the channel that books the most moves the score the most.</span>
-            </div>
-          )}
-
-          <div className="mt-4 text-[11px] text-muted inline-flex items-start gap-1.5"><Info size={13} className="mt-0.5 shrink-0" /> Not yet scored (added as data connects): {data!.dataPending.join(' · ')}. {s.reviewsAnalyzed} reviews analyzed.</div>
         </>
       )}
-    </div>
-  )
-}
-
-function Kpi({ label, value, accent, tone }: { label: string; value: any; accent?: boolean; tone?: string }) {
-  const toneC = tone === 'emerald' ? 'text-emerald-700' : tone === 'amber' ? 'text-amber-700' : tone === 'orange' ? 'text-orange-700' : tone === 'rose' ? 'text-rose-700' : accent ? 'text-brand-700' : 'text-ink'
-  return (
-    <div className={`rounded-xl border px-3 py-3 ${accent ? 'bg-brand-50 border-brand-200' : 'bg-white border-line'}`}>
-      <div className={`text-2xl font-bold tabular-nums ${toneC}`}>{value ?? '—'}</div>
-      <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mt-1">{label}</div>
     </div>
   )
 }

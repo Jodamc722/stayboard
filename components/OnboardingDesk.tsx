@@ -2,6 +2,7 @@
 // ONBOARDING DESK — mint links, watch progress, assign to the live listing (Jon, 2026-09-02).
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X } from 'lucide-react'
+import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, Clamp, type Tone } from '@/components/lean'
 import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, TIERS, TIER_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category, type Tier } from '@/lib/onboarding'
 
 type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number; items: number; confirmed: number; photos: number; pct: number }
@@ -36,26 +37,37 @@ export function OnboardingDesk() {
 
   return (
     <div>
+      {/* One link per new unit: details → rooms → inventory and photos. Works before the unit is in
+          Guesty; assign it to the listing when it goes live. */}
+      <LeanHead title="Onboarding">
+        <Pill tone="amber" title="Links not finished yet (not started or being walked)">{stats.open} in progress</Pill>
+        <Pill tone="emerald" title="Walk finished — ready to assign to a live Guesty listing">{stats.complete} ready</Pill>
+        <Pill title="Assigned to a live listing">{stats.linked} assigned</Pill>
+      </LeanHead>
+
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        <button onClick={() => setCreating(true)} className={BTN + ' bg-ink text-white'}><Plus size={15} /> New onboarding link</button>
-        <button onClick={() => setStandardOpen(true)} className={BTN + ' border border-line bg-white text-ink'}><Settings2 size={15} /> Inventory standard</button>
-        <div className="relative"><Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building, owner" className={INPUT + ' pl-8 w-64'} /></div>
-        <div className="ml-auto flex items-center gap-1.5 text-[12.5px]">
-          {(['open', 'all'] as const).map(f => <button key={f} onClick={() => setFilter(f)} className={'px-3 py-1.5 rounded-full border font-semibold ' + (filter === f ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{f === 'open' ? 'In progress + ready' : 'All'}</button>)}
+        <button onClick={() => setCreating(true)} className={BTN + ' bg-ink text-white'}><Plus size={14} /> New link</button>
+        <div className="relative flex-1 min-w-[160px] max-w-xs">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building, owner" className="w-full rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px] focus:outline-none focus:border-ink" />
         </div>
-      </div>
-      <div className="grid grid-cols-3 gap-2 mb-4 max-w-lg">
-        {[['In progress', stats.open, 'text-amber-800'], ['Ready to assign', stats.complete, 'text-emerald-800'], ['Assigned to a listing', stats.linked, 'text-ink']].map(([l, n, c]) => (
-          <div key={l as string} className="rounded-2xl border border-line bg-white px-3 py-2.5"><div className="text-[11px] uppercase tracking-wide text-muted font-semibold">{l}</div><div className={'text-[24px] font-bold tabular-nums ' + c}>{n}</div></div>
-        ))}
+        <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
+          {(['open', 'all'] as const).map(f => (
+            <button key={f} onClick={() => setFilter(f)} title={f === 'open' ? 'Hide assigned and archived links' : 'Every link, including assigned'}
+              className={'px-2.5 py-1 font-semibold border-l border-line first:border-l-0 ' + (filter === f ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>
+              {f === 'open' ? 'Open' : 'All'}
+            </button>
+          ))}
+        </div>
+        <span className="ml-auto"><IconBtn title="Inventory standard — what a new unit should hold" onClick={() => setStandardOpen(true)}><Settings2 size={14} /></IconBtn></span>
       </div>
 
       {standardOpen && <StandardSheet onClose={() => setStandardOpen(false)} />}
       {creating && <CreateSheet onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await load() }} />}
-      {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
-      {loading ? <div className="py-10 text-center text-muted text-[14px]"><Loader2 className="animate-spin inline mr-2" size={16} />Loading…</div>
-        : shown.length === 0 ? <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-[14px] text-muted">{units.length ? 'Nothing matches.' : 'No onboarding links yet. Mint one for the next unit and send it to whoever walks it.'}</div>
-        : <div className="space-y-2">{shown.map(u => <UnitCard key={u.id} u={u} listings={listings} onChanged={load} />)}</div>}
+      {err && <p className="text-[12.5px] text-rose-600 font-semibold mb-2">{err}</p>}
+      {loading ? <LeanEmpty><Loader2 className="animate-spin inline mr-1.5 -mt-0.5" size={14} />Loading…</LeanEmpty>
+        : shown.length === 0 ? <LeanEmpty>{units.length ? 'Nothing matches.' : 'No onboarding links yet — mint one for the next unit.'}</LeanEmpty>
+        : <LeanList>{shown.map(u => <UnitCard key={u.id} u={u} listings={listings} onChanged={load} />)}</LeanList>}
     </div>
   )
 }
@@ -85,14 +97,14 @@ function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (
         {made ? (
           <div>
             <h2 className="text-[17px] font-bold text-ink">Link ready — {made.name}</h2>
-            <p className="text-[13px] text-muted mt-1">Send it to whoever walks the unit. It opens on any phone, no login. The walker fills in the details, the rooms generate, and the photos and inventory land here.</p>
+            <p className="text-[12.5px] text-muted mt-1" title="The walker fills in the details, the rooms generate, and the photos and inventory land here.">Send it to whoever walks the unit — any phone, no login.</p>
             <div className="mt-3 flex gap-2"><input readOnly value={made.url} className={INPUT + ' flex-1 text-[13px]'} onFocus={e => e.currentTarget.select()} /><button onClick={copy} className={BTN + ' bg-ink text-white'}>{copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copied' : 'Copy'}</button></div>
             <div className="mt-4 flex gap-2"><a href={made.url} target="_blank" rel="noreferrer" className={BTN + ' border border-line bg-white text-ink'}>Open it <ExternalLink size={13} /></a><button onClick={onCreated} className={BTN + ' bg-ink text-white ml-auto'}>Done</button></div>
           </div>
         ) : (
           <div>
             <h2 className="text-[17px] font-bold text-ink">New onboarding link</h2>
-            <p className="text-[13px] text-muted mt-1 mb-3">Only a name is required — everything else can be filled in on the phone, in the unit.</p>
+            <p className="text-[12.5px] text-muted mt-1 mb-3">Only a name is required.</p>
             <div className="grid grid-cols-2 gap-2.5">
               <input value={name} onChange={e => setName(e.target.value)} placeholder="Unit name (e.g. Elser 3707)" className={INPUT + ' col-span-2'} autoFocus />
               <input value={building} onChange={e => setBuilding(e.target.value)} placeholder="Building" className={INPUT} />
@@ -114,6 +126,7 @@ function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
 function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; onChanged: () => Promise<void> }) {
   const [assigning, setAssigning] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [pick, setPick] = useState('')
   const [lq, setLq] = useState('')
   const [busy, setBusy] = useState(false)
@@ -121,47 +134,52 @@ function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; on
   const url = typeof window !== 'undefined' ? window.location.origin + '/onboard/' + u.code : '/onboard/' + u.code
   const post = async (body: any) => { setBusy(true); try { const r = await fetch('/api/onboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.error || 'failed'); await onChanged() } catch (e: any) { alert(String(e?.message || e)) } setBusy(false) }
   const hits = useMemo(() => { const n = lq.trim().toLowerCase(); return (n ? listings.filter(l => (l.name + ' ' + l.building).toLowerCase().includes(n)) : listings).slice(0, 8) }, [listings, lq])
-  const st = u.status === 'linked' ? ['Assigned', 'bg-ink text-white'] : u.status === 'complete' ? ['Ready to assign', 'bg-emerald-100 text-emerald-800'] : u.status === 'in_progress' ? ['In progress', 'bg-amber-100 text-amber-800'] : ['Not started', 'bg-app text-muted']
+  const st: [string, Tone] = u.status === 'linked' ? ['Assigned', 'slate'] : u.status === 'complete' ? ['Ready', 'emerald'] : u.status === 'in_progress' ? ['In progress', 'amber'] : ['Not started', 'slate']
   const p = u.progress
+  const open = expanded || assigning
   return (
-    <div className="rounded-2xl border border-line bg-white px-4 py-3">
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className={'text-[10.5px] font-bold uppercase px-2 py-0.5 rounded ' + st[1]}>{st[0]}</span>
-        <span className="text-[15px] font-bold text-ink">{u.name}</span>
-        <span className="text-[12.5px] text-muted">{[u.building, u.unit_no && '#' + u.unit_no, describeUnit(u.details || {}), u.owner_name].filter(Boolean).join(' · ')}</span>
-        {u.listing_name && <span className="text-[12px] font-semibold text-ink/80 inline-flex items-center gap-1"><Link2 size={12} /> {u.listing_name}</span>}
-        <span className="ml-auto flex items-center gap-1.5">
-          <button onClick={async () => { try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {} }} className={BTN + ' border border-line bg-white text-ink'} title={url}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy link'}</button>
-          <a href={'/onboard/' + u.code} target="_blank" rel="noreferrer" className={BTN + ' border border-line bg-white text-ink'}>Open <ExternalLink size={13} /></a>
-          {u.status !== 'linked'
-            ? <button onClick={() => setAssigning(a => !a)} className={BTN + ' ' + (assigning ? 'border border-ink bg-white text-ink' : 'bg-ink text-white')}><Link2 size={13} /> Assign to property</button>
-            : <button onClick={() => post({ action: 'unassign', id: u.id })} disabled={busy} className={BTN + ' border border-line bg-white text-muted'}><Unlink size={13} /> Unassign</button>}
-          <button onClick={() => { if (confirm('Archive "' + u.name + '"? The link stops working.')) post({ action: 'archive', id: u.id }) }} disabled={busy} className="w-9 h-9 rounded-lg border border-line bg-white text-muted grid place-items-center" aria-label="Archive"><Archive size={14} /></button>
-        </span>
-      </div>
-      {p.rooms > 0 && (
-        <div className="mt-2 flex items-center gap-3 text-[12px] text-muted">
-          <span className="w-40 h-1.5 rounded-full bg-app overflow-hidden"><span className={'block h-full ' + (p.pct === 100 ? 'bg-emerald-500' : 'bg-brand-600')} style={{ width: Math.max(2, p.pct) + '%' }} /></span>
-          <span><b className="text-ink">{p.confirmed}</b>/{p.items} items confirmed</span>
-          <span><b className="text-ink">{p.roomsChecked}</b>/{p.rooms} rooms done</span>
-          <span className="inline-flex items-center gap-1"><Camera size={12} /> {p.photos}</span>
+    <LeanRow
+      open={open} onToggle={() => { if (open) { setExpanded(false); setAssigning(false) } else setExpanded(true) }}
+      lead={u.status !== 'linked'
+        ? <button onClick={() => setAssigning(a => !a)} title="Pick the live Guesty listing this unit became"
+            className={'shrink-0 inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] font-bold ' + (assigning ? 'border border-ink bg-white text-ink' : 'bg-ink text-white')}><Link2 size={12} /> Assign</button>
+        : undefined}
+      name={u.name}
+      meta={[u.building, u.unit_no && '#' + u.unit_no, describeUnit(u.details || {}), u.owner_name].filter(Boolean).join(' · ')}
+      tags={<>
+        <Tag tone={st[1]}>{st[0]}</Tag>
+        {p.rooms > 0 && <Tag tone={p.pct === 100 ? 'emerald' : 'brand'} title={`${p.confirmed}/${p.items} items confirmed · ${p.roomsChecked}/${p.rooms} rooms done · ${p.photos} photos`}>{p.pct}%</Tag>}
+        {u.buy > 0 && <Tag tone="amber" title="Items the walk found missing">{u.buy} to buy</Tag>}
+        {u.listing_name && <Tag title="Assigned Guesty listing">{u.listing_name}</Tag>}
+      </>}
+      actions={<>
+        <IconBtn title={copied ? 'Copied' : 'Copy the walker link'} onClick={async () => { try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {} }}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconBtn>
+        <IconBtn title="Open the walker link" href={'/onboard/' + u.code}><ExternalLink size={14} /></IconBtn>
+        {u.status === 'linked' && <IconBtn title="Unassign from the listing" disabled={busy} onClick={() => post({ action: 'unassign', id: u.id })}><Unlink size={14} /></IconBtn>}
+        <IconBtn title="Archive — the link stops working" tone="bad" disabled={busy} onClick={() => { if (confirm('Archive "' + u.name + '"? The link stops working.')) post({ action: 'archive', id: u.id }) }}><Archive size={14} /></IconBtn>
+      </>}
+    >
+      {p.rooms > 0 ? (
+        <div className="flex items-center gap-3 flex-wrap text-[12px] text-muted">
+          <span className="w-32 h-1.5 rounded-full bg-app overflow-hidden"><span className={'block h-full ' + (p.pct === 100 ? 'bg-emerald-500' : 'bg-brand-600')} style={{ width: Math.max(2, p.pct) + '%' }} /></span>
+          <span><b className="text-ink">{p.confirmed}</b>/{p.items} items</span>
+          <span><b className="text-ink">{p.roomsChecked}</b>/{p.rooms} rooms</span>
+          <span className="inline-flex items-center gap-1" title="Photos"><Camera size={12} /> {p.photos}</span>
           {u.buy > 0 && <span className="inline-flex items-center gap-1 text-amber-800 font-semibold"><ShoppingCart size={12} /> {u.buy} to buy</span>}
           {u.order_id && <a href={'/ffe/order/' + u.order_id} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline">Purchase order <ExternalLink size={11} /></a>}
           {u.buy > 0 && !u.order_id && <button onClick={() => post({ action: 'order', code: u.code })} disabled={busy} className="font-semibold text-brand-700 hover:underline">Create purchase order</button>}
           <span className="ml-auto">updated {new Date(u.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
         </div>
-      )}
+      ) : <p className="text-[12px] text-muted">Not walked yet · updated {new Date(u.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>}
       {assigning && (
-        <div className="mt-3 pt-3 border-t border-line">
-          <div className="text-[12.5px] text-muted mb-1.5">Pick the live Guesty listing this unit became. Nothing in the inventory changes — it just becomes readable by listing.</div>
-          <div className="flex gap-2 flex-wrap items-center">
-            <input value={lq} onChange={e => { setLq(e.target.value); setPick('') }} placeholder="Search listings…" className={INPUT + ' w-64'} />
-            <div className="flex gap-1.5 flex-wrap">{hits.map(l => <button key={l.id} onClick={() => setPick(l.id)} className={'px-3 py-1.5 rounded-full border text-[12.5px] font-semibold ' + (pick === l.id ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{l.name}</button>)}</div>
-            <button onClick={() => post({ action: 'assign', id: u.id, listingId: pick })} disabled={busy || !pick} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Assign</button>
-          </div>
+        // Assigning changes nothing in the inventory — it just becomes readable by listing.
+        <div className="flex gap-2 flex-wrap items-center pt-1">
+          <input value={lq} onChange={e => { setLq(e.target.value); setPick('') }} placeholder="Search Guesty listings…" className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] w-56 max-w-full focus:outline-none focus:border-ink" />
+          <div className="flex gap-1.5 flex-wrap">{hits.map(l => <button key={l.id} onClick={() => setPick(l.id)} className={'px-2.5 py-1 rounded-full border text-[12px] font-semibold ' + (pick === l.id ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{l.name}</button>)}</div>
+          <button onClick={() => post({ action: 'assign', id: u.id, listingId: pick })} disabled={busy || !pick} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Assign</button>
         </div>
       )}
-    </div>
+    </LeanRow>
   )
 }
 
@@ -219,16 +237,20 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
       <div className="bg-white w-full sm:max-w-3xl max-h-[92vh] rounded-t-2xl sm:rounded-2xl flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-line flex items-start gap-3">
           <div className="flex-1 min-w-0">
-            <h2 className="text-[17px] font-bold text-ink">Inventory standard</h2>
-            <p className="text-[12.5px] text-muted">What a new unit is expected to hold, by room. The rule of the house: <b className="text-ink">2 per max guest</b> on anything a guest uses at a meal or a shower; one per unit for the rest. {edited ? <span className="text-amber-800 font-semibold">Edited from the defaults.</span> : 'Using the researched STR defaults.'}</p>
+            {/* What a new unit is expected to hold, by room. House rule: 2 per max guest on anything a
+                guest uses at a meal or a shower; one per unit for the rest. */}
+            <h2 className="text-[17px] font-bold text-ink inline-flex items-center gap-2 flex-wrap" title="What a new unit should hold, by room. House rule: 2 per max guest on anything used at a meal or a shower; one per unit for the rest.">
+              Inventory standard
+              {edited ? <Tag tone="amber">Edited</Tag> : <Tag title="Using the researched STR defaults">Defaults</Tag>}
+            </h2>
           </div>
           <label className="text-[12px] text-muted inline-flex items-center gap-1.5 whitespace-nowrap">Preview for <input type="number" min={1} max={20} value={occ} onChange={e => setOcc(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} className={INPUT + ' w-14 py-1.5'} /> guests</label>
-          <button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center shrink-0" aria-label="Close"><X size={15} /></button>
+          <IconBtn title="Close" onClick={onClose}><X size={15} /></IconBtn>
         </div>
         <div className="px-4 pt-3 flex gap-1.5 flex-wrap">
           {KIND_ORDER.map(k => <button key={k} onClick={() => { setKind(k); setOpen(null) }} className={'px-3 py-1.5 rounded-full border text-[12.5px] font-semibold ' + (kind === k ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{ROOM_KIND_LABEL[k]} <span className="opacity-60">{(std && std[k] || []).length}</span></button>)}
         </div>
-        {kindNote[kind] && <p className="px-4 pt-2 text-[12px] text-muted">{kindNote[kind]}</p>}
+        {kindNote[kind] && <div className="px-4 pt-2 [&>p]:text-muted [&>p]:text-[12px]"><Clamp text={kindNote[kind]!} lines={2} /></div>}
         <div className="flex-1 overflow-auto px-4 py-3 space-y-4">
           {!std ? <div className="py-8 text-center text-muted text-[14px]"><Loader2 className="animate-spin inline mr-2" size={16} />Loading…</div> : TIERS.map(tier => {
             const idx = rows.map((r, i) => [r, i] as const).filter(([r]) => (r.tier || 'must') === tier)
@@ -236,7 +258,7 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
               <section key={tier} className="rounded-2xl border border-line overflow-hidden">
                 <div className={'px-3 py-2 flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide ' + (tier === 'must' ? 'bg-ink text-white' : tier === 'recommended' ? 'bg-brand-50 text-brand-800' : 'bg-app text-muted')}>
                   {TIER_LABEL[tier]} <span className="font-semibold normal-case tracking-normal opacity-70">{idx.length}</span>
-                  <span className="hidden sm:inline font-normal normal-case tracking-normal opacity-70 truncate">— {tierNote[tier]}</span>
+                  <span className="font-normal normal-case tracking-normal opacity-70 cursor-help" title={tierNote[tier]}>ⓘ</span>
                   <button onClick={() => add(tier)} className={'ml-auto inline-flex items-center gap-1 normal-case tracking-normal font-bold text-[12px] ' + (tier === 'must' ? 'text-white/90' : 'text-brand-700')}><Plus size={13} /> Add</button>
                 </div>
                 {!idx.length && <div className="px-3 py-3 text-[12.5px] text-muted">Nothing here yet.</div>}
@@ -248,7 +270,7 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
                         {it.only && <span className="hidden sm:inline text-[11px] whitespace-nowrap rounded-full px-2 py-0.5 bg-app text-muted border border-line" title="Only when">{ONLY_LABEL[it.only]}</span>}
                         <button onClick={() => setOpen(open === i ? null : i)} className={'text-[12.5px] whitespace-nowrap rounded-lg px-2.5 py-1.5 border ' + (open === i ? 'border-ink bg-ink text-white' : 'border-line bg-app text-ink/80 hover:border-ink')} title="Change the rule">{ruleText(it)}</button>
                         <span className="w-10 text-right font-bold tabular-nums text-[14px]" title={'For ' + occ + ' guests'}>{it.perBed ? (/pillow/i.test(it.name) ? '4' : String(it.qty)) : qtyFor(it, occ)}</span>
-                        <button onClick={() => remove(i)} className="w-8 h-8 rounded-lg border border-line text-muted grid place-items-center shrink-0" aria-label="Remove"><Trash2 size={13} /></button>
+                        <IconBtn title="Remove this item" tone="bad" onClick={() => remove(i)}><Trash2 size={13} /></IconBtn>
                       </div>
                       {open === i && (
                         <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[12.5px]">
@@ -273,10 +295,9 @@ function StandardSheet({ onClose }: { onClose: () => void }) {
           })}
         </div>
         <div className="px-4 py-3 border-t border-line flex items-center gap-2 flex-wrap">
-          <button onClick={() => save(false)} disabled={busy || !dirty} className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save standard</button>
+          <button onClick={() => save(false)} disabled={busy || !dirty} title="Applies to rooms generated from now on. Units already walked keep their numbers." className={BTN + ' bg-ink text-white'}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save standard</button>
           <button onClick={() => { if (confirm('Put the researched defaults back? Your edits to the standard are discarded.')) save(true) }} disabled={busy} className={BTN + ' border border-line bg-white text-muted'}><RotateCcw size={13} /> Reset to defaults</button>
           {msg && <span className="text-[12.5px] text-ink/80">{msg}</span>}
-          <span className="ml-auto text-[11.5px] text-muted">Applies to rooms generated from now on. Units already walked keep their numbers.</span>
         </div>
       </div>
     </div>

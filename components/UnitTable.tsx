@@ -10,6 +10,7 @@
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Search, ArrowUpDown, Download, Loader2, Check, AlertTriangle, X, Square, CheckSquare } from 'lucide-react'
+import { LeanList, LeanRow, LeanEmpty, Tag, IconBtn, Tip } from '@/components/lean'
 
 export type UnitRow = {
   // `name` is the OPS name ("Arya 1704/1") — what a human scans the table for. `marketingTitle`
@@ -80,6 +81,7 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
   const [sort, setSort] = useState<SortKey>('score')
   const [dir, setDir] = useState<1 | -1>(1)
   const [showDead, setShowDead] = useState(false)
+  const [showFilters, setShowFilters] = useState(false)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   // Bulk run state. Runs strictly ONE unit at a time: these routes each make a real Anthropic call
   // and the org rate limit is low enough that a parallel fan-out just produces a wall of 429s.
@@ -186,95 +188,104 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
     </th>
   )
 
+  const visibleTotal = units.filter(u => showDead || !u.dead).length
+  const Pick = ({ id, name, size }: { id: string; name: string; size: number }) => (
+    <Tip label={picked.has(id) ? 'Unselect' : 'Select for a bulk run'}>
+      <button onClick={() => togglePick(id)} aria-label={`Select ${name}`} className="text-muted hover:text-ink">
+        {picked.has(id) ? <CheckSquare size={size} className="text-brand-600" /> : <Square size={size} />}
+      </button>
+    </Tip>
+  )
+
   return (
     <div>
-      {/* controls */}
-      <div className="flex flex-wrap items-center gap-2 mb-2.5">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+      {/* controls — one line; the quality filters sit behind "Filters" */}
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
             value={q} onChange={e => setQ(e.target.value)}
             placeholder="Search unit, title or nickname…"
-            className="w-full rounded-xl border border-line bg-white pl-9 pr-3 py-2 text-[13px] text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-brand-200"
+            className="w-full rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px] text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-brand-200"
           />
         </div>
         <select value={building} onChange={e => setBuilding(e.target.value)}
-          className="rounded-xl border border-line bg-white px-3 py-2 text-[13px] text-ink focus:outline-none focus:ring-2 focus:ring-brand-200">
+          className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink focus:outline-none focus:ring-2 focus:ring-brand-200">
           <option value="">All buildings</option>
           {buildings.map(b => <option key={b} value={b}>{b}</option>)}
         </select>
-        <button onClick={exportCsv} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12.5px] font-semibold text-muted hover:text-ink">
-          <Download size={13} /> CSV
-        </button>
-      </div>
-
-      <div className="lh-actions flex flex-wrap gap-1.5 mb-3">
-        {FILTERS.map(f => {
-          const on = active.has(f.key)
-          return (
-            <button key={f.key} onClick={() => toggleFilter(f.key)}
-              className={`text-[11.5px] font-medium px-2.5 py-1 rounded-full border transition-colors ${on ? 'bg-brand-600 text-white border-brand-600' : TONE[f.tone] + ' hover:opacity-80'}`}>
-              {f.label} · {counts[f.key]}
-            </button>
-          )
-        })}
-        <button onClick={() => setShowDead(d => !d)}
-          className={`text-[11.5px] font-medium px-2.5 py-1 rounded-full border ${showDead ? 'bg-brand-600 text-white border-brand-600' : 'bg-app text-muted border-line'}`}>
-          Include inactive
+        <button onClick={() => setShowFilters(f => !f)}
+          className={`rounded-lg border px-2.5 py-1 text-[12px] font-semibold ${showFilters || active.size || showDead ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-line bg-white text-muted hover:text-ink'}`}>
+          Filters{active.size + (showDead ? 1 : 0) ? ` · ${active.size + (showDead ? 1 : 0)}` : ''}
         </button>
         {(active.size > 0 || q || building) && (
-          <button onClick={() => { setActive(new Set()); setQ(''); setBuilding('') }}
-            className="text-[11.5px] font-medium px-2.5 py-1 rounded-full border border-line bg-white text-muted hover:text-ink inline-flex items-center gap-1">
-            <X size={11} /> Clear
+          <IconBtn title="Clear search and filters" onClick={() => { setActive(new Set()); setQ(''); setBuilding('') }}><X size={14} /></IconBtn>
+        )}
+        <span className="text-[12px] text-muted tabular-nums" title={`Money is ${basisLabel} over the last ${revLabel} · rating over ${periodLabel}`}>
+          {rows.length}/{visibleTotal}
+        </span>
+        <IconBtn title="Download these rows as CSV" onClick={exportCsv}><Download size={14} /></IconBtn>
+      </div>
+
+      {showFilters && (
+        <div className="lh-actions flex flex-wrap gap-1.5 mb-2">
+          {FILTERS.map(f => {
+            const on = active.has(f.key)
+            return (
+              <button key={f.key} onClick={() => toggleFilter(f.key)}
+                className={`text-[11.5px] font-medium px-2 py-0.5 rounded-full border transition-colors ${on ? 'bg-brand-600 text-white border-brand-600' : TONE[f.tone] + ' hover:opacity-80'}`}>
+                {f.label} · {counts[f.key]}
+              </button>
+            )
+          })}
+          <button onClick={() => setShowDead(d => !d)}
+            className={`text-[11.5px] font-medium px-2 py-0.5 rounded-full border ${showDead ? 'bg-brand-600 text-white border-brand-600' : 'bg-app text-muted border-line'}`}>
+            Include inactive
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="text-[12px] text-muted mb-2">
-        Showing <b className="text-ink tabular-nums">{rows.length}</b> of {units.filter(u => showDead || !u.dead).length} units · money is <b className="text-ink">{basisLabel}</b> over the last {revLabel} · rating over {periodLabel}
-      </div>
-
-      {/* PHONE: the same twelve columns as a stacked card per unit. A 980px table on a 375px
-          screen is a sideways drag through thirteen columns to find one number, and this is the
-          board Jon opens standing in a building — so on a phone each unit becomes one card with
-          its headline (name, building, score) on top and every metric below as a labelled cell.
-          Same rows, same sort, same filters: `rows` feeds both. The table is unchanged from 640px
-          up. */}
-      <div className="rounded-2xl border border-line bg-white divide-y divide-line sm:hidden">
-        {rows.length === 0 && (
-          <div className="px-4 py-10 text-center text-sm text-muted">No units match those filters.</div>
+      {/* PHONE: a 980px table on a 375px screen is a sideways drag through thirteen columns, and this
+          is the board Jon opens standing in a building — so on a phone each unit is ONE row (name,
+          building, score, problem tags) and the full metric set opens underneath. Same rows, same
+          sort, same filters: `rows` feeds both. The table is unchanged from 640px up. */}
+      <div className="sm:hidden">
+        {rows.length === 0 ? <LeanEmpty>No units match those filters.</LeanEmpty> : (
+          <LeanList>
+            {rows.map(u => (
+              <LeanRow key={u.id}
+                lead={<>
+                  {canEdit && <Pick id={u.id} name={u.name} size={16} />}
+                  <span className={`shrink-0 inline-flex items-center justify-center min-w-[2.1rem] px-1.5 py-0.5 rounded-md ring-1 font-bold tabular-nums text-[12px] ${scoreClass(u.score)}`} title="Optimize Score">{u.score}</span>
+                </>}
+                name={<Link href={`/listings/${u.id}`} title={u.marketingTitle || undefined} className={u.dead ? 'opacity-50' : ''}>{u.name}</Link>}
+                meta={u.building}
+                tags={<>
+                  {u.dead && <Tag>Inactive</Tag>}
+                  {u.sections === 0 && <Tag tone="rose" title="No description sections">No desc</Tag>}
+                  {u.photos < 10 && <Tag tone="rose" title="Under 10 photos">{u.photos} photos</Tag>}
+                  {u.mustFix > 0 && <Tag tone="rose" title="Missing a safety amenity">Safety</Tag>}
+                  {!u.lastOptimized && <Tag tone="amber">Never optimized</Tag>}
+                </>}
+              >
+                <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[12px]">
+                  <Cell label="Desc" value={`${u.sections}/6`} tone={u.sections === 0 ? 'bad' : u.sections < 6 ? 'warn' : ''} />
+                  <Cell label="Photos" value={`${u.photos}${u.photoQuality != null ? ` · ${u.photoQuality}` : ' · —'}`} tone={u.photos < 10 ? 'bad' : ''} />
+                  <Cell label="Amen" value={`${u.amenities}${u.mustFix > 0 ? ' ⚠' : ''}`} tone={u.mustFix > 0 ? 'bad' : ''} />
+                  <Cell label="Rating" value={u.rating != null ? `${u.rating.toFixed(2)}★` : '—'} />
+                  <Cell label="Occ" value={pct(u.occupancy)} />
+                  {showMoney && <Cell label="ADR" value={money(u.adr)} />}
+                  {showMoney && <Cell label="RevPAR" value={money(u.revpar)} />}
+                  <Cell label="Optimized" value={shortDate(u.lastOptimized)} tone={u.lastOptimized ? '' : 'warn'} />
+                </dl>
+                {u.marketingTitle && u.marketingTitle !== u.name && <p className="text-[11.5px] text-muted">{u.marketingTitle}</p>}
+                <p className="text-[12px] text-muted">
+                  Next fix: {u.topGap ? <span><b className="text-ink tabular-nums">+{u.topGap.points.toFixed(1)}</b> {u.topGap.label}</span> : <span className="text-emerald-700">nothing</span>}
+                </p>
+              </LeanRow>
+            ))}
+          </LeanList>
         )}
-        {rows.map(u => (
-          <div key={u.id} className={`p-3 ${u.dead ? 'opacity-50' : ''}`}>
-            <div className="flex items-start gap-2">
-              {canEdit && (
-                <button onClick={() => togglePick(u.id)} aria-label={`Select ${u.name}`} className="text-muted mt-0.5 shrink-0">
-                  {picked.has(u.id) ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} />}
-                </button>
-              )}
-              <div className="min-w-0 flex-1">
-                <Link href={`/listings/${u.id}`} className="block font-semibold text-ink text-[13.5px] leading-snug break-words">{u.name}</Link>
-                {u.marketingTitle && u.marketingTitle !== u.name && <span className="block text-[11px] text-muted leading-snug line-clamp-1">{u.marketingTitle}</span>}
-                <div className="text-[11.5px] text-muted">{u.building}</div>
-              </div>
-              <span className={`shrink-0 inline-flex items-center justify-center min-w-[2.1rem] px-1.5 py-0.5 rounded-md ring-1 font-bold tabular-nums ${scoreClass(u.score)}`}>{u.score}</span>
-            </div>
-            <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-1.5 text-[12px]">
-              <Cell label="Desc" value={`${u.sections}/6`} tone={u.sections === 0 ? 'bad' : u.sections < 6 ? 'warn' : ''} />
-              <Cell label="Photos" value={`${u.photos}${u.photoQuality != null ? ` · ${u.photoQuality}` : ' · —'}`} tone={u.photos < 10 ? 'bad' : ''} />
-              <Cell label="Amen" value={`${u.amenities}${u.mustFix > 0 ? ' ⚠' : ''}`} tone={u.mustFix > 0 ? 'bad' : ''} />
-              <Cell label="Rating" value={u.rating != null ? `${u.rating.toFixed(2)}★` : '—'} />
-              <Cell label="Occ" value={pct(u.occupancy)} />
-              {showMoney && <Cell label="ADR" value={money(u.adr)} />}
-              {showMoney && <Cell label="RevPAR" value={money(u.revpar)} />}
-              <Cell label="Optimized" value={shortDate(u.lastOptimized)} tone={u.lastOptimized ? '' : 'warn'} />
-            </dl>
-            <div className="mt-2 text-[12px] text-muted">
-              <span className="text-[10px] uppercase tracking-[0.09em] font-semibold text-muted">Next fix</span>{' '}
-              {u.topGap ? <span><b className="text-ink tabular-nums">+{u.topGap.points.toFixed(1)}</b> {u.topGap.label}</span> : <span className="text-emerald-700">nothing</span>}
-            </div>
-          </div>
-        ))}
       </div>
 
       {/* table */}
@@ -284,9 +295,11 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
             <tr className="border-b border-line">
               {canEdit && (
                 <th className="px-2.5 py-2 w-8">
-                  <button onClick={toggleAll} aria-label="Select all shown" className="text-muted hover:text-ink">
-                    {allShownPicked ? <CheckSquare size={14} /> : <Square size={14} />}
-                  </button>
+                  <Tip label={allShownPicked ? 'Unselect all shown' : 'Select all shown'}>
+                    <button onClick={toggleAll} aria-label="Select all shown" className="text-muted hover:text-ink">
+                      {allShownPicked ? <CheckSquare size={14} /> : <Square size={14} />}
+                    </button>
+                  </Tip>
                 </th>
               )}
               <Th k="name">Unit</Th>
@@ -305,39 +318,35 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={canEdit ? 13 : 12} className="px-4 py-10 text-center text-sm text-muted">No units match those filters.</td></tr>
+              <tr><td colSpan={canEdit ? 13 : 12} className="px-4 py-6 text-center text-[13px] text-muted">No units match those filters.</td></tr>
             )}
             {rows.map(u => (
               <tr key={u.id} className={`border-b border-line/60 last:border-b-0 hover:bg-app/40 ${u.dead ? 'opacity-50' : ''}`}>
                 {canEdit && (
-                  <td className="px-2.5 py-2">
-                    <button onClick={() => togglePick(u.id)} aria-label={`Select ${u.name}`} className="text-muted hover:text-ink">
-                      {picked.has(u.id) ? <CheckSquare size={14} className="text-brand-600" /> : <Square size={14} />}
-                    </button>
-                  </td>
+                  <td className="px-2.5 py-1.5"><Pick id={u.id} name={u.name} size={14} /></td>
                 )}
-                <td className="px-2.5 py-2 max-w-[280px]">
-                  <Link href={`/listings/${u.id}`} className="font-semibold text-ink hover:text-brand-700 block truncate">{u.name}</Link>
-                  {u.marketingTitle && u.marketingTitle !== u.name && <span className="block text-[11px] text-muted truncate" title={u.marketingTitle}>{u.marketingTitle}</span>}
+                <td className="px-2.5 py-1.5 max-w-[280px]">
+                  {/* The guest-facing title is on hover — the ops name is what people scan for. */}
+                  <Link href={`/listings/${u.id}`} title={u.marketingTitle && u.marketingTitle !== u.name ? u.marketingTitle : undefined} className="font-semibold text-ink hover:text-brand-700 block truncate">{u.name}</Link>
                 </td>
-                <td className="px-2.5 py-2 text-muted whitespace-nowrap">{u.building}</td>
-                <td className="px-2.5 py-2 text-right">
+                <td className="px-2.5 py-1.5 text-muted whitespace-nowrap">{u.building}</td>
+                <td className="px-2.5 py-1.5 text-right">
                   <span className={`inline-flex items-center justify-center min-w-[2.1rem] px-1.5 py-0.5 rounded-md ring-1 font-bold tabular-nums ${scoreClass(u.score)}`}>{u.score}</span>
                 </td>
-                <td className={`px-2.5 py-2 text-right tabular-nums ${u.sections === 0 ? 'text-rose-700 font-semibold' : u.sections < 6 ? 'text-amber-700' : 'text-muted'}`}>{u.sections}/6</td>
-                <td className={`px-2.5 py-2 text-right tabular-nums whitespace-nowrap ${u.photos < 10 ? 'text-rose-700 font-semibold' : 'text-ink'}`}>
+                <td className={`px-2.5 py-1.5 text-right tabular-nums ${u.sections === 0 ? 'text-rose-700 font-semibold' : u.sections < 6 ? 'text-amber-700' : 'text-muted'}`} title="Description sections filled, of 6">{u.sections}/6</td>
+                <td className={`px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap ${u.photos < 10 ? 'text-rose-700 font-semibold' : 'text-ink'}`} title="Photo count · AI photo quality">
                   {u.photos}{u.photoQuality != null ? <span className="text-muted"> · {u.photoQuality}</span> : <span className="text-muted"> · —</span>}
                 </td>
-                <td className="px-2.5 py-2 text-right tabular-nums text-muted">
-                  {u.amenities}{u.mustFix > 0 && <AlertTriangle size={11} className="inline ml-1 text-rose-600" />}
+                <td className="px-2.5 py-1.5 text-right tabular-nums text-muted">
+                  {u.amenities}{u.mustFix > 0 && <span title="Missing a safety amenity"><AlertTriangle size={11} className="inline ml-1 text-rose-600" /></span>}
                 </td>
-                <td className="px-2.5 py-2 text-right tabular-nums text-muted whitespace-nowrap">{u.rating != null ? `${u.rating.toFixed(2)}★` : '—'}</td>
-                <td className="px-2.5 py-2 text-right tabular-nums text-ink">{pct(u.occupancy)}</td>
-                {showMoney && <td className="px-2.5 py-2 text-right tabular-nums text-ink">{money(u.adr)}</td>}
-                {showMoney && <td className="px-2.5 py-2 text-right tabular-nums text-ink">{money(u.revpar)}</td>}
-                <td className={`px-2.5 py-2 whitespace-nowrap ${u.lastOptimized ? 'text-muted' : 'text-amber-700 font-semibold'}`}>{shortDate(u.lastOptimized)}</td>
-                <td className="px-2.5 py-2 text-muted max-w-[220px]">
-                  {u.topGap ? <span className="truncate block"><b className="text-ink tabular-nums">+{u.topGap.points.toFixed(1)}</b> {u.topGap.label}</span> : <span className="text-emerald-700">nothing</span>}
+                <td className="px-2.5 py-1.5 text-right tabular-nums text-muted whitespace-nowrap">{u.rating != null ? `${u.rating.toFixed(2)}★` : '—'}</td>
+                <td className="px-2.5 py-1.5 text-right tabular-nums text-ink">{pct(u.occupancy)}</td>
+                {showMoney && <td className="px-2.5 py-1.5 text-right tabular-nums text-ink">{money(u.adr)}</td>}
+                {showMoney && <td className="px-2.5 py-1.5 text-right tabular-nums text-ink">{money(u.revpar)}</td>}
+                <td className={`px-2.5 py-1.5 whitespace-nowrap ${u.lastOptimized ? 'text-muted' : 'text-amber-700 font-semibold'}`}>{shortDate(u.lastOptimized)}</td>
+                <td className="px-2.5 py-1.5 text-muted max-w-[220px]">
+                  {u.topGap ? <span className="truncate block" title={u.topGap.label}><b className="text-ink tabular-nums">+{u.topGap.points.toFixed(1)}</b> {u.topGap.label}</span> : <span className="text-emerald-700">nothing</span>}
                 </td>
               </tr>
             ))}
@@ -345,14 +354,15 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
         </table>
       </div>
 
-      {/* bulk bar */}
+      {/* bulk bar — generate-only, one unit at a time (see bulk() above) */}
       {canEdit && picked.size > 0 && (
-        <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 flex flex-wrap items-center gap-2.5">
-          <span className="text-[13px] font-semibold text-brand-700">{picked.size} unit{picked.size === 1 ? '' : 's'} selected</span>
+        <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 flex flex-wrap items-center gap-2"
+          title="Generate-only: these draft and store, they never push to Guesty. Runs one unit at a time to stay inside the AI rate limit.">
+          <span className="text-[12.5px] font-semibold text-brand-700">{picked.size} selected</span>
           {run ? (
-            <span className="text-[12.5px] text-brand-700 inline-flex items-center gap-2">
-              <Loader2 size={13} className="animate-spin" /> {run.label} — {run.done} of {run.total}{run.failed ? ` (${run.failed} failed)` : ''}
-              <button onClick={() => { stopRef.current = true }} className="ml-1 rounded-lg border border-brand-300 bg-white px-2 py-0.5 text-[11.5px] font-semibold text-brand-700">Stop</button>
+            <span className="text-[12px] text-brand-700 inline-flex items-center gap-2">
+              <Loader2 size={13} className="animate-spin" /> {run.label} {run.done}/{run.total}{run.failed ? ` · ${run.failed} failed` : ''}
+              <button onClick={() => { stopRef.current = true }} className="rounded-lg border border-brand-300 bg-white px-2 py-0.5 text-[11.5px] font-semibold text-brand-700">Stop</button>
             </span>
           ) : (
             <>
@@ -362,17 +372,16 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
                 className="rounded-lg border border-brand-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-brand-700 hover:bg-brand-50">Enhance photos</button>
               <button onClick={() => bulk('Mirror originals', '/api/photo-enhance', id => ({ listingId: id, mirrorOnly: true }))}
                 className="rounded-lg border border-brand-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-brand-700 hover:bg-brand-50">Back up originals</button>
-              <button onClick={() => setPicked(new Set())}
-                className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold text-muted hover:text-ink">Clear</button>
-              <span className="text-[11.5px] text-brand-700/80 basis-full">Generate-only — these draft and store, they never push to Guesty. Runs one unit at a time to stay inside the AI rate limit.</span>
+              <Tag tone="brand" title="Nothing here pushes to Guesty — approve each unit on its own page">Draft only</Tag>
+              <span className="ml-auto"><IconBtn title="Clear selection" onClick={() => setPicked(new Set())}><X size={14} /></IconBtn></span>
             </>
           )}
         </div>
       )}
       {runMsg && (
-        <div className="mt-3 rounded-xl border border-line bg-white px-4 py-2.5 text-[12.5px] text-ink inline-flex items-start gap-2">
+        <p className="mt-2 text-[12.5px] text-ink flex items-start gap-1.5">
           <Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> {runMsg}
-        </div>
+        </p>
       )}
     </div>
   )

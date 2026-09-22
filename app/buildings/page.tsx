@@ -3,6 +3,7 @@
 //   All units  — every unit, searchable/sortable/filterable, with occupancy, ADR and RevPAR
 //   Fix next   — the score turned into a ranked worklist, deep-linked to the panel that fixes it
 //   Health     — the weighted Health Score board (was its own /health tab until the September audit)
+//   Bulk copy  — Other notes across whole properties (canEdit only; was a button above Buildings)
 //
 // "All units" and "Fix next" were added 2026-08-21. /listings was retired on 2026-08-11 and
 // redirects here, which left no way to reach one of 233 units without first knowing its building —
@@ -26,7 +27,8 @@ import { FixNext, type FixItem } from '@/components/FixNext'
 import { HealthBoard } from '@/components/HealthBoard'
 import { unitRevenue, REV_WINDOWS, windowFor, windowRange } from '@/lib/unit-revenue'
 import { BASES, BASIS_SHORT, BASIS_NOTE, type Basis } from '@/lib/basis'
-import { Building2, Rows3, Wrench, Activity } from 'lucide-react'
+import { LeanHead, Pill, LeanEmpty } from '@/components/lean'
+import { AlertTriangle } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,8 +45,8 @@ const PERIODS = [
 const DEFAULT_PERIOD = '90'
 function periodFor(v?: string) { return PERIODS.find(p => p.key === v) || PERIODS.find(p => p.key === DEFAULT_PERIOD)! }
 
-type View = 'buildings' | 'units' | 'fix' | 'health'
-function viewFor(v?: string): View { return v === 'units' || v === 'fix' || v === 'health' ? v : 'buildings' }
+type View = 'buildings' | 'units' | 'fix' | 'health' | 'copy'
+function viewFor(v?: string): View { return v === 'units' || v === 'fix' || v === 'health' || v === 'copy' ? v : 'buildings' }
 
 // Heavy: pulls every listing's Guesty `raw` to compute scores. Cache the rollup across requests and
 // recompute at most every 2 minutes so the portfolio page loads instantly instead of recomputing each hit.
@@ -220,6 +222,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
   // /health sees the tab here, anyone who could not is shown Buildings instead of a blank.
   const canHealth = atLeast(access.levels['health'], 'view')
   if (view === 'health' && !canHealth) view = 'buildings'
+  if (view === 'copy' && !canEdit) view = 'buildings'
 
   let unitsWithMoney = units
   let revenueNote: string | null = null
@@ -235,42 +238,46 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
         return r ? { ...u, occupancy: r.occupancy, adr: showMoney ? r.adr : null, revpar: showMoney ? r.revpar : null } : u
       })
       const covered = units.filter(u => rev[u.id]).length
-      if (covered === 0) revenueNote = 'No reservations found in this window — the occupancy, ADR and RevPAR columns are empty, not zero.'
+      if (covered === 0) revenueNote = 'No reservations in this window — money columns are empty, not zero.'
     } catch {
-      revenueNote = 'Could not load revenue for this window. Quality columns are still accurate; the money columns are blank.'
+      revenueNote = 'Revenue did not load — quality columns are fine, money columns are blank.'
     }
   }
 
   const buildingNames = Array.from(new Set(units.map(u => u.building))).sort((a, b) => a.localeCompare(b))
 
-  const TABS: { key: View; label: string; Icon: any; href: string }[] = [
-    { key: 'buildings', label: 'Buildings', Icon: Building2, href: '/buildings' },
-    { key: 'units', label: 'All units', Icon: Rows3, href: '/buildings?v=units' },
-    { key: 'fix', label: 'Fix next', Icon: Wrench, href: '/buildings?v=fix' },
-    ...(canHealth ? [{ key: 'health' as View, label: 'Health Score', Icon: Activity, href: '/buildings?v=health' }] : []),
+  // Tabs are LINKS, not client state: the Units view is the only one that pays for the revenue
+  // read above, so the view has to be in the URL for the server to know.
+  const hrefFor = (v: View) => {
+    const qs = new URLSearchParams()
+    if (v !== 'buildings') qs.set('v', v)
+    if (period.key !== DEFAULT_PERIOD) qs.set('d', period.key)
+    if (v === 'units') { if (revWin.key !== '90') qs.set('rev', revWin.key); if (basis !== 'gross') qs.set('b', basis) }
+    return `/buildings${qs.toString() ? `?${qs}` : ''}`
+  }
+  const fixUnits = new Set(fixes.map(f => f.unitId)).size
+  const TABS: { key: View; label: string; n?: number | null; title?: string }[] = [
+    { key: 'buildings', label: 'Buildings', n: buildings.length },
+    { key: 'units', label: 'Units', n: units.filter(u => !u.dead).length },
+    { key: 'fix', label: 'Fix next', n: fixUnits, title: 'Units with an open Optimize Score gap' },
+    ...(canHealth ? [{ key: 'health' as View, label: 'Health', title: 'Weighted Health Score per unit' }] : []),
+    // Other notes is house boilerplate chosen by whole properties (Jon, 2026-09-16); Guest access,
+    // Neighborhood and Getting around are edited on each property's own page.
+    ...(canEdit ? [{ key: 'copy' as View, label: 'Bulk copy', title: 'Bulk edit Other notes across properties' }] : []),
   ]
+  const seg = (on: boolean) => `px-2 py-1 rounded-lg text-[12px] font-semibold transition-colors ${on ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink'}`
 
   return (
     <Shell>
-      <header className="mb-5 flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><Building2 size={13} /> Portfolio</p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Properties</h1>
-          <p className="text-sm text-muted mt-1">
-            {buildings.length} buildings · {totalUnits} units
-            {portfolioAvg != null && <> · portfolio Optimize Score <b className="text-ink">{portfolioAvg}</b></>}
-            {portfolioRating != null && (
-              <> · guest rating <b className="text-ink">{portfolioRating.toFixed(2)}★</b> all time
-                {portfolioRatingP != null
-                  ? <> · <b className="text-ink">{portfolioRatingP.toFixed(2)}★</b> in {period.label.toLowerCase()} ({portfolioReviewsP})</>
-                  : <> · no reviews in {period.label.toLowerCase()}</>}
-              </>
-            )}
-          </p>
-        </div>
-
+      <LeanHead title="Properties">
+        <Pill title={`${buildings.length} buildings · ${totalUnits} units`}>{totalUnits} units</Pill>
+        {portfolioAvg != null && <Pill tone="brand" title="Portfolio Optimize Score: average of every active unit (all time)">Score {portfolioAvg}</Pill>}
+        {portfolioRating != null && <Pill tone="amber" title={`Guest rating, all time · ${portfolioReviews} reviews`}>{portfolioRating.toFixed(2)}★ all</Pill>}
+        <Pill tone={portfolioRatingP != null ? 'amber' : 'slate'} title={portfolioRatingP != null ? `Guest rating over ${period.label.toLowerCase()} · ${portfolioReviewsP} reviews` : `No reviews in ${period.label.toLowerCase()}`}>
+          {portfolioRatingP != null ? `${portfolioRatingP.toFixed(2)}★` : '—'} {period.key === 'all' ? 'all' : period.key === '365' ? '12m' : period.key + 'd'}
+        </Pill>
         {/* Rating window. Only the guest rating follows this — Optimize Score is all-time. */}
-        <nav className="inline-flex rounded-xl border border-line bg-white p-0.5 shrink-0" aria-label="Rating period">
+        <nav className="inline-flex rounded-xl border border-line bg-white p-0.5" aria-label="Rating period">
           {PERIODS.map(p => {
             const on = p.key === period.key
             const qs = new URLSearchParams()
@@ -280,48 +287,37 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
             if (basis !== 'gross') qs.set('b', basis)
             return (
               <Link key={p.key} href={`/buildings${qs.toString() ? `?${qs}` : ''}`} prefetch={false}
-                aria-current={on ? 'page' : undefined}
-                className={`px-2.5 py-1 rounded-lg text-[12px] font-semibold transition-colors ${on ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink'}`}>
-                {p.label}
+                aria-current={on ? 'page' : undefined} title={`Rating over ${p.label.toLowerCase()} (Optimize Score is always all-time)`} className={seg(on)}>
+                {p.key === 'all' ? 'All' : p.key === '365' ? '12m' : p.key + 'd'}
               </Link>
             )
           })}
         </nav>
-      </header>
+      </LeanHead>
 
-      <div className="lh-actions flex flex-wrap items-center gap-2 mb-5">
-        <nav className="inline-flex rounded-xl border border-line bg-white p-1" aria-label="Portfolio view">
+      <div className="lh-actions flex items-center gap-2 flex-wrap mb-3">
+        <nav className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px] max-w-full overflow-x-auto" aria-label="Portfolio view">
           {TABS.map(t => {
-            const qs = new URLSearchParams()
-            if (t.key !== 'buildings') qs.set('v', t.key)
-            if (period.key !== DEFAULT_PERIOD) qs.set('d', period.key)
-            if (t.key === 'units') { if (revWin.key !== '90') qs.set('rev', revWin.key); if (basis !== 'gross') qs.set('b', basis) }
             const on = t.key === view
             return (
-              <Link key={t.key} href={`/buildings${qs.toString() ? `?${qs}` : ''}`} prefetch={false}
+              <Link key={t.key} href={hrefFor(t.key)} prefetch={false} title={t.title}
                 aria-current={on ? 'page' : undefined}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${on ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink'}`}>
-                <t.Icon size={14} /> {t.label}
+                className={`px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 whitespace-nowrap ${on ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
+                {t.label}{t.n ? <span className="ml-1 opacity-70 tabular-nums">{t.n}</span> : null}
               </Link>
             )
           })}
         </nav>
 
         {view === 'units' && (
-          <>
+          <div className="ml-auto flex items-center gap-2 flex-wrap">
             <nav className="inline-flex rounded-xl border border-line bg-white p-0.5" aria-label="Revenue window">
               {REV_WINDOWS.map(w => {
                 const qs = new URLSearchParams({ v: 'units' })
                 if (period.key !== DEFAULT_PERIOD) qs.set('d', period.key)
                 if (w.key !== '90') qs.set('rev', w.key)
                 if (basis !== 'gross') qs.set('b', basis)
-                const on = w.key === revWin.key
-                return (
-                  <Link key={w.key} href={`/buildings?${qs}`} prefetch={false}
-                    className={`px-2.5 py-1 rounded-lg text-[12px] font-semibold transition-colors ${on ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink'}`}>
-                    {w.label}
-                  </Link>
-                )
+                return <Link key={w.key} href={`/buildings?${qs}`} prefetch={false} title="Window for occupancy, ADR and RevPAR" className={seg(w.key === revWin.key)}>{w.label}</Link>
               })}
             </nav>
             <nav className="inline-flex rounded-xl border border-line bg-white p-0.5" aria-label="Revenue basis">
@@ -330,33 +326,22 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
                 if (period.key !== DEFAULT_PERIOD) qs.set('d', period.key)
                 if (revWin.key !== '90') qs.set('rev', revWin.key)
                 if (bk !== 'gross') qs.set('b', bk)
-                const on = bk === basis
-                return (
-                  <Link key={bk} href={`/buildings?${qs}`} prefetch={false} title={BASIS_NOTE[bk]}
-                    className={`px-2.5 py-1 rounded-lg text-[12px] font-semibold transition-colors ${on ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink'}`}>
-                    {BASIS_SHORT[bk]}
-                  </Link>
-                )
+                return <Link key={bk} href={`/buildings?${qs}`} prefetch={false} title={BASIS_NOTE[bk]} className={seg(bk === basis)}>{BASIS_SHORT[bk]}</Link>
               })}
             </nav>
-          </>
+          </div>
         )}
       </div>
 
       {revenueNote && (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12.5px] text-amber-800">{revenueNote}</div>
+        <p className="mb-3 text-[12px] text-amber-800 flex items-center gap-1.5"><AlertTriangle size={12} className="shrink-0" /> {revenueNote}</p>
       )}
 
-      {/* OTHER NOTES IS THE ONE SECTION THAT BELONGS UP HERE. Jon, 2026-09-16: Guest access,
-          Neighborhood and Getting around describe one building and are edited on that property's
-          page; Other notes is house boilerplate, chosen by whole properties. */}
-      {view === 'buildings' && canEdit && (
-        <div className="mb-5"><BulkListingCopy scope="portfolio" /></div>
-      )}
+      {view === 'copy' && <BulkListingCopy scope="portfolio" defaultOpen />}
 
       {view === 'buildings' && (
         buildings.length === 0
-          ? <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No listings synced yet.</div>
+          ? <LeanEmpty>No listings synced yet.</LeanEmpty>
           : <BuildingGrid buildings={buildings} workByBuilding={workByBuilding} periodLabel={period.label} />
       )}
 

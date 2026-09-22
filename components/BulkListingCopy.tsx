@@ -9,7 +9,8 @@
 // The layout follows the section list Jon sent — a label column on the left, the text on the right,
 // one row per section — so it reads like the place the copy actually lives instead of a form.
 import { useEffect, useMemo, useState } from 'react'
-import { Check, X, Sparkles, AlertTriangle, RefreshCw, Loader2, PencilLine, Building2, MessageSquarePlus } from 'lucide-react'
+import { Check, X, Sparkles, AlertTriangle, RefreshCw, Loader2, PencilLine, Building2, MessageSquarePlus, Info } from 'lucide-react'
+import { IconBtn, Tip } from '@/components/lean'
 
 type SectionKey = 'access' | 'neighborhood' | 'transit' | 'notes'
 type Section = { key: SectionKey; label: string; scopes: ('property' | 'portfolio')[]; hint: string; rows: number; max: number }
@@ -36,10 +37,12 @@ const PROMPT_HINT: Record<SectionKey, string> = {
   notes: 'e.g. keep it short, mention the no-parties rule…',
 }
 
-export function BulkListingCopy({ scope, building }: { scope: 'property' | 'portfolio'; building?: string }) {
+// `defaultOpen` (optional, lean pass 2026-09-22): the Properties page's Bulk copy tab opens straight
+// into the editor; the property page keeps the collapsed button.
+export function BulkListingCopy({ scope, building, defaultOpen }: { scope: 'property' | 'portfolio'; building?: string; defaultOpen?: boolean }) {
   const sections = useMemo(() => SECTIONS.filter(s => s.scopes.indexOf(scope) >= 0), [scope])
 
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(!!defaultOpen)
   const [loading, setLoading] = useState(false)
   const [units, setUnits] = useState<Unit[]>([])
   const [props, setProps] = useState<Property[]>([])
@@ -188,18 +191,16 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
 
   return (
     <section className="rounded-2xl border border-brand-200 bg-white p-4 mb-5">
-      <div className="flex items-start justify-between gap-2 mb-1">
+      <div className="flex items-center justify-between gap-2 mb-3">
         <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5">
           <PencilLine size={14} className="text-brand-600" />
           {scope === 'portfolio' ? 'Other notes — across properties' : 'Location copy — ' + (building || 'this property')}
+          <Tip label={scope === 'portfolio' ? 'House boilerplate — location copy lives on each property page' : 'Building-level copy — one property at a time'}>
+            <Info size={13} className="text-muted" />
+          </Tip>
         </h2>
-        <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={16} /></button>
+        <IconBtn title="Close the editor" onClick={() => setOpen(false)}><X size={15} /></IconBtn>
       </div>
-      <p className="text-[11px] text-muted mb-3 max-w-2xl">
-        {scope === 'portfolio'
-          ? 'Other notes is house boilerplate, so it is written across whole properties. Guest access, Neighborhood and Getting around describe one building and are edited on that property’s page.'
-          : 'Guest access, Neighborhood and Getting around describe the building, not the unit — one lobby, one block, one set of directions — so they can only be set a property at a time. Other notes can be set here for this property, or across properties from the Properties page.'}
-      </p>
 
       {results ? (
         <div>
@@ -220,7 +221,7 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
           <button onClick={() => location.reload()} className="mt-3 inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 underline underline-offset-2"><RefreshCw size={12} /> Reload</button>
         </div>
       ) : loading ? (
-        <div className="text-[12px] text-muted inline-flex items-center gap-1.5 py-6"><Loader2 size={14} className="animate-spin" /> Reading what these listings say today…</div>
+        <div className="text-[12px] text-muted inline-flex items-center gap-1.5 py-4"><Loader2 size={14} className="animate-spin" /> Loading current copy…</div>
       ) : (
         <>
           {/* AI ------------------------------------------------------------- */}
@@ -231,15 +232,13 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
                 placeholder={scope === 'portfolio' ? 'Optional: what the boilerplate must say…' : 'Optional: mention the new garage entrance, the shuttle…'}
                 className="flex-1 min-w-[220px] px-2.5 py-1.5 text-[13px] rounded-lg border border-line bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
               <button onClick={() => draft('all')} disabled={!!drafting}
+                title={scope === 'portfolio'
+                  ? 'Written to be true of every property — no addresses, distances or building names.'
+                  : 'Grounded in this building’s verified facts and what its units already say. You edit before anything is pushed.'}
                 className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg bg-brand-600 text-white px-2.5 py-1.5 hover:bg-brand-700 disabled:opacity-50">
                 {drafting === 'all' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                 Draft {sections.length === 1 ? 'it' : 'all'} with AI
               </button>
-            </div>
-            <div className="text-[10px] text-muted mt-1.5">
-              {scope === 'portfolio'
-                ? 'Written to be true of every property we manage — no addresses, no distances, no building names.'
-                : 'Grounded in this building’s verified facts and what its units already say. It keeps what is concrete and true; you edit before anything is pushed.'}
             </div>
             {rationale && <div className="text-[11px] text-ink mt-1.5 italic">{rationale}</div>}
           </div>
@@ -252,9 +251,8 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
               const isStd = scope === 'property' && (standard[s.key] || '').trim() && v.trim() === String(standard[s.key]).trim()
               return (
                 <div key={s.key} className={`sm:flex gap-3 p-3 ${i ? 'border-t border-line' : ''}`}>
-                  <div className="sm:w-40 shrink-0 mb-1.5 sm:mb-0">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-ink/70">{s.label}</div>
-                    <div className="text-[10px] text-muted mt-0.5 hidden sm:block">{s.hint}</div>
+                  <div className="sm:w-32 shrink-0 mb-1.5 sm:mb-0">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-ink/70 cursor-help" title={s.hint}>{s.label}</div>
                     <div className="flex items-center gap-2.5 mt-1.5">
                       <button onClick={() => draft(s.key)} disabled={!!drafting}
                         className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:underline disabled:opacity-50">
@@ -338,12 +336,12 @@ export function BulkListingCopy({ scope, building }: { scope: 'property' | 'port
               </div>
               {drift > 0 && (
                 <div className="text-[11px] text-muted mb-2">
-                  {drift} of {units.length} unit{units.length === 1 ? '' : 's'} currently differ from this property&rsquo;s saved standard.
+                  {drift}/{units.length} differ from the saved standard
                 </div>
               )}
               <label className="flex items-start gap-2 text-[12px] text-ink mb-3 cursor-pointer">
                 <input type="checkbox" checked={saveStandard} onChange={e => setSaveStandard(e.target.checked)} className="mt-0.5 accent-ink" />
-                <span>Save this as {building || 'the property'}&rsquo;s standard <span className="text-muted">— it pre-fills next time, and units that drift off it are counted above.</span></span>
+                <span title="It pre-fills next time, and units that drift off it are counted">Save as {building || 'the property'}&rsquo;s standard</span>
               </label>
             </>
           )}
