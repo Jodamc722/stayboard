@@ -36,8 +36,8 @@
 // (Jon, 2026-09-22: "Its only english and spanish"): Spanish becomes English, English becomes
 // Spanish, anything else is left alone. The other thing skipped is a message with nothing in it
 // to translate -- a bare link, a number, an emoji -- because there is no translation of "401".
-import { aiFetch } from '@/lib/ai-usage'
-import { modelFor } from '@/lib/ai-models'
+import { anthropicMessages, textOf } from '@/lib/anthropic-call'
+import { modelPairFor } from '@/lib/ai-models'
 
 export type Lang = 'es' | 'en'
 
@@ -114,22 +114,21 @@ export async function translate(text: string, hint: Lang | null): Promise<string
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return null
   try {
-    const model = await modelFor('translate')
+    // THROUGH anthropicMessages, NOT aiFetch DIRECTLY. A model id the account cannot see comes
+    // back 404, and calling the API raw would turn that into `null` -- which here means Eve posts
+    // NOTHING and looks broken, with no way to tell it apart from the rule not firing. The shared
+    // helper retries once on the tier's fallback, which is exactly the failure this must survive.
+    const { model, fallback } = await modelPairFor('translate')
     const lead = hint === 'es' ? 'This looks like Spanish.\n\n'
       : hint === 'en' ? 'This looks like English.\n\n'
       : ''
-    const r = await aiFetch('translate', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model, max_tokens: 700,
-        system: SYSTEM,
-        messages: [{ role: 'user', content: lead + String(text).slice(0, 4000) }],
-      }),
-    })
-    const d: any = await r.json().catch(() => ({}))
+    const r = await anthropicMessages(key, {
+      model, max_tokens: 700,
+      system: SYSTEM,
+      messages: [{ role: 'user', content: lead + String(text).slice(0, 4000) }],
+    }, fallback, 'translate')
     if (!r.ok) return null
-    const out = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('').trim() : ''
+    const out = String(textOf(r.data) || '').trim()
     if (!out || /^SKIP\.?$/i.test(out)) return null
     return out
   } catch { return null }
