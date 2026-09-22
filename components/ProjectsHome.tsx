@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Plus, Lock, Repeat, ListChecks, KanbanSquare, Loader2, Truck, ChevronRight, ChevronDown, MoreHorizontal, Archive, Trash2, RotateCcw, ShieldAlert, Check, Circle } from 'lucide-react'
 import { ACCENT_CLS, iconOf, accentOf } from '@/lib/projects-shared'
+import { Pill, LeanHead, Tip, LeanEmpty } from '@/components/lean'
 
 type P = {
   id: string; title: string; summary: string | null; kind?: string; category?: string; template_key?: string | null; stage: string; due_on: string | null; recurs?: any
@@ -138,10 +139,10 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
 
   return (
     <div className="pb-16">
-      <header className="mb-3 flex items-center gap-3">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-[20px] font-bold text-ink tracking-tight inline-flex items-center gap-2"><KanbanSquare size={16} className="text-muted" /> Projects</h1>
-        </div>
+      <LeanHead title="Projects" icon={<KanbanSquare size={20} className="text-muted" />}>
+        {mine && mine.groups.overdue.length > 0 && <Pill tone="rose" title="Your tasks past their due date">{mine.groups.overdue.length} overdue</Pill>}
+        {mine && mine.groups.today.length > 0 && <Pill tone="amber" title="Your tasks due today">{mine.groups.today.length} today</Pill>}
+        {mine && <Pill title={mine.groups.week.length + ' due this week · ' + mine.total + ' open tasks on you'}>{mine.total} open</Pill>}
         {canEdit && (
           <span className="relative inline-flex">
             <button onClick={() => setNewMenu(v => !v)} className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-bold hover:bg-brand-700"><Plus size={13} /> New <ChevronDown size={12} /></button>
@@ -158,20 +159,13 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
             </>)}
           </span>
         )}
-      </header>
+      </LeanHead>
 
       {/* ── MY TASKS: overdue and due today, right here, completable in place ── */}
       <section className="mb-4 rounded-2xl border border-line bg-white overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-1.5 bg-app/60 border-b border-line">
           <ListChecks size={13} className="text-muted" />
           <span className="text-[12.5px] font-bold text-ink">My tasks</span>
-          {mine && (
-            <span className="text-[11.5px] text-muted flex items-center gap-2 flex-wrap">
-              {mine.groups.overdue.length > 0 && <span className="text-rose-700 font-bold">{mine.groups.overdue.length} overdue</span>}
-              {mine.groups.today.length > 0 && <span className="text-amber-800 font-semibold">{mine.groups.today.length} today</span>}
-              <span>{mine.groups.week.length} this week · {mine.total} open</span>
-            </span>
-          )}
           <Link href="/projects/mine" className="ml-auto text-[12px] font-semibold text-muted hover:text-ink">All my tasks →</Link>
         </div>
         {!mine ? (
@@ -191,10 +185,10 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
                 const isDone = doneIds[it.id] || it.status === 'done'
                 return (
                   <div key={it.id} className={'flex items-center gap-2 px-3 border-t border-line first:border-t-0 ' + (isDone ? 'opacity-50' : '')} style={{ minHeight: 32 }}>
-                    <button onClick={() => !isDone && completeMine(it)} disabled={isDone}
-                      className={'w-[18px] h-[18px] rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + (isDone ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-line text-muted hover:border-ink')} title="Mark done">
+                    <Tip label={isDone ? 'Done' : 'Mark done'}><button onClick={() => !isDone && completeMine(it)} disabled={isDone} aria-label="Mark done"
+                      className={'w-[18px] h-[18px] rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + (isDone ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-line text-muted hover:border-ink')}>
                       {isDone ? <Check size={10} strokeWidth={3} /> : <Circle size={0} />}
-                    </button>
+                    </button></Tip>
                     <Link href={'/projects/' + it.projectId + '?task=' + it.id} className={'min-w-0 flex-1 text-[13px] truncate hover:underline ' + (isDone ? 'line-through text-muted' : 'text-ink')}>{it.title}</Link>
                     <span className="text-[11px] text-muted truncate max-w-[160px] hidden sm:inline">{it.project}</span>
                     {it.due && <span className={'shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] tabular-nums ' + (tone === 'late' ? 'bg-rose-100 text-rose-700 border-rose-200 font-bold' : tone === 'today' ? 'bg-amber-100 text-amber-800 border-amber-200 font-bold' : 'bg-white text-muted border-line')}>{tone === 'today' ? 'Today' : niceDay(it.due)}</span>}
@@ -212,12 +206,7 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
       {err && <p className="mb-3 text-[12.5px] text-rose-700">{err}</p>}
       {projects === null && <p className="py-10 text-center text-[13px] text-muted inline-flex items-center gap-2 w-full justify-center"><Loader2 size={14} className="animate-spin" /> Loading projects…</p>}
 
-      {projects && projects.length === 0 && (
-        <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center">
-          <p className="text-[14px] font-semibold text-ink">Nothing here yet.</p>
-          <p className="text-[12.5px] text-muted mt-1 max-w-md mx-auto">A project is the work that does not fit a task. Start one from a template, or make a private board for yourself.</p>
-        </div>
-      )}
+      {projects && projects.length === 0 && <LeanEmpty>No projects yet{canEdit ? ' — start one with New.' : '.'}</LeanEmpty>}
 
       {groups.map(g => { const I = g.icon; const folded = !!(g as any).quiet && !openGroups[g.key]; return (
         <section key={g.key} className="mb-5">
@@ -245,7 +234,7 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
                   <Link href={'/projects/' + p.id} className="flex items-center gap-2.5 min-w-0 flex-1 py-1.5">
                     <span className={'w-7 h-7 rounded-lg border grid place-items-center text-[15px] shrink-0 ' + ac.soft} aria-hidden>{iconOf(p)}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-semibold text-ink truncate">{p.title}{p.recurs && <Repeat size={10} className="inline ml-1.5 text-muted" />}</span>
+                      <span className="block text-[13px] font-semibold text-ink truncate">{p.title}{p.recurs && <span title="Repeats on a schedule" className="inline-flex"><Repeat size={10} className="inline ml-1.5 text-muted" /></span>}</span>
                       {(h.reason || p.building || p.market) && (
                         <span className="block text-[11px] text-muted truncate">
                           {h.reason && <span className={'font-semibold ' + (h.state === 'late' ? 'text-rose-700' : h.state === 'due' ? 'text-amber-700' : '')}>{h.reason}</span>}
@@ -351,11 +340,11 @@ function ProjectMenu({ p, busy, onArchive, onDelete }: {
   }, [open])
   return (
     <div ref={box} className="absolute top-2 right-2 z-20">
-      <button onClick={e => { e.preventDefault(); setOpen(o => !o) }} disabled={busy}
-        title="Archive or delete"
+      <Tip label="Archive or delete"><button onClick={e => { e.preventDefault(); setOpen(o => !o) }} disabled={busy}
+        aria-label="Archive or delete"
         className={'rounded-lg border border-line bg-white/90 backdrop-blur px-1 py-0.5 text-muted hover:text-ink shadow-sm ' + (open ? '' : 'opacity-0 group-hover/card:opacity-100 focus:opacity-100')}>
         {busy ? <Loader2 size={14} className="animate-spin" /> : <MoreHorizontal size={14} />}
-      </button>
+      </button></Tip>
       {open && (
         <div className="absolute right-0 mt-1 w-[232px] rounded-xl border border-line bg-white shadow-2xl p-1 text-left">
           <button onClick={e => { e.preventDefault(); setOpen(false); onArchive() }}

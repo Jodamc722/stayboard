@@ -10,6 +10,8 @@
 // call flips the item to task_created AND dispatches the install task) so it closes out in the field
 // worklist with a proof photo. Data: /api/audit?orders=1 (session-auth).
 import { useEffect, useState } from 'react'
+import { ShoppingCart, ChevronDown, MoreHorizontal, DollarSign, Link2, Sparkles, Zap, Loader2 } from 'lucide-react'
+import { Tag, Pill, LeanHead, LeanTabs, IconBtn, Tip, LeanEmpty, Clamp, type Tone } from '@/components/lean'
 
 type Row = { id: string; audit_id: string; listing_id: string; room: string; kind: string; title: string | null; qty: number | null; note: string | null; photo_url: string | null; severity?: string | null; status: string; details: any; created_at: string; unit: string; building: string; breezeway_task_id?: string | null; report_url?: string | null }
 
@@ -416,41 +418,55 @@ export function OrderDesk() {
     setBriefBusy(false)
   }
 
-  if (loading) return <div className="text-sm text-muted">Loading orders…</div>
-  if (err) return <div className="text-sm text-rose-600">{err}</div>
+  const head = (
+    <LeanHead title="Purchasing" icon={<ShoppingCart size={20} className="text-muted" />}>
+      {nUrgent > 0 ? <Pill tone="roseSolid" title="High-severity lines — a guest is affected. Click to show all open." onClick={() => { setTf('all'); setQ('') }}>{nUrgent} urgent</Pill> : null}
+      {nNew > 0 ? <Pill tone="violet" title="Reported from the field in the last 48h">{nNew} new</Pill> : null}
+      <Pill tone="amber" title={'Needs your approval · ' + money(mMine)} onClick={() => setTf('blocked')}>{nMine} awaiting you</Pill>
+      <Pill tone="violet" title={'Sent to the owner, no answer yet · ' + money(mOwner)}>{nOwner} with owner</Pill>
+      <Pill tone="emerald" title="Approved and ready to buy (not yet ordered)" onClick={() => setTf('ready')}>{money(mReady)} approved</Pill>
+    </LeanHead>
+  )
+  if (loading) return <>{head}<LeanEmpty>Loading orders…</LeanEmpty></>
+  if (err) return <>{head}<div className="text-[12.5px] text-rose-600">{err}</div></>
+
+  const STAGE_TONE: Record<Stage, Tone> = { blocked: 'amber', owner: 'violet', supply: 'sky', later: 'slate', ready: 'emerald', ordered: 'sky', arriving: 'violet', received: 'emerald', installed: 'slate' }
+  const btn = 'text-[11.5px] font-semibold px-2 py-1 rounded-lg disabled:opacity-50 '
+  const ctl = 'text-[12px] border border-line rounded-lg px-2 py-1 bg-white'
 
   // ---- shared bits ----
   const actionBtn = (it: Row) => {
     const st = stageOf(it)
     if (st === 'blocked') return (
       <span className="flex items-center gap-1">
-        <button onClick={() => setApproval(it, 'gm_approved')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-600 text-white disabled:opacity-50">GM approve</button>
-        <button onClick={() => setApproval(it, 'owner_pending')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-violet-300 text-violet-700">→ Owner</button>
+        <button onClick={() => setApproval(it, 'gm_approved')} disabled={busy === it.id} className={btn + 'bg-emerald-600 text-white'}>GM approve</button>
+        <button onClick={() => setApproval(it, 'owner_pending')} disabled={busy === it.id} title="Send to the owner for approval" className={btn + 'border border-violet-300 text-violet-700'}>→ Owner</button>
       </span>
     )
-    if (st === 'owner') return <button onClick={() => setApproval(it, 'gm_approved')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted disabled:opacity-50">Override ✓</button>
+    if (st === 'owner') return <button onClick={() => setApproval(it, 'gm_approved')} disabled={busy === it.id} title="Approve it yourself without waiting for the owner" className={btn + 'border border-line text-muted'}>Override ✓</button>
     // Owner said "I will supply it" — the desk's job is to close the loop, not to buy. Arrived
     // marks it received so it still gets an install task; Buy anyway takes it back over.
     if (st === 'supply') return (
       <span className="flex items-center gap-1">
-        <button onClick={() => markReceived(it)} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-teal-600 text-white disabled:opacity-50">Arrived</button>
-        <button onClick={() => setApproval(it, 'gm_approved')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted disabled:opacity-50">Buy anyway</button>
+        <button onClick={() => markReceived(it)} disabled={busy === it.id} className={btn + 'bg-teal-600 text-white'}>Arrived</button>
+        <button onClick={() => setApproval(it, 'gm_approved')} disabled={busy === it.id} className={btn + 'border border-line text-muted'}>Buy anyway</button>
       </span>
     )
     if (st === 'later') return (
       <span className="flex items-center gap-1">
-        <button onClick={() => setApproval(it, 'owner_pending')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-violet-300 text-violet-700 disabled:opacity-50">Ask again</button>
-        <button onClick={() => setStatus(it, 'dismissed')} disabled={busy === it.id} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted disabled:opacity-50">Close</button>
+        <button onClick={() => setApproval(it, 'owner_pending')} disabled={busy === it.id} className={btn + 'border border-violet-300 text-violet-700'}>Ask again</button>
+        <button onClick={() => setStatus(it, 'dismissed')} disabled={busy === it.id} className={btn + 'border border-line text-muted'}>Close</button>
       </span>
     )
-    if (st === 'installed') return <span className="text-[11px] font-semibold text-emerald-700">Installed ✓</span>
-    return <button onClick={() => advance(it)} disabled={busy === it.id} className={'text-[11px] font-semibold px-2 py-1 rounded-lg text-white disabled:opacity-50 ' + (st === 'ready' ? 'bg-emerald-600' : 'bg-ink')}>{busy === it.id ? '…' : advLabel(st)}</button>
+    if (st === 'installed') return <Tag tone="emerald">Installed ✓</Tag>
+    return <button onClick={() => advance(it)} disabled={busy === it.id} className={btn + 'text-white ' + (st === 'ready' ? 'bg-emerald-600' : 'bg-ink')}>{busy === it.id ? '…' : advLabel(st)}</button>
   }
 
-  // What the owner actually said on the review sheet, verbatim, on the row itself. An answer that
-  // only lives in a status pill is an answer nobody acts on.
+  // What the owner actually said on the review sheet. An answer that only lives in a status pill is
+  // an answer nobody acts on — so the row carries an "Owner said" tag (hover for the words) and the
+  // full answer, link and questions sit at the top of the row's detail.
   const SUPPLY_SAID: Record<string, string> = { link: 'wants a link from us', self: 'buying it themselves', ordered: 'already ordered it' }
-  const ownerSaid = (it: Row) => {
+  const ownerBits = (it: Row) => {
     const d = (it.details && typeof it.details === 'object') ? it.details : {}
     const o = d.owner && typeof d.owner === 'object' ? d.owner : null
     const qs: any[] = Array.isArray(d.questions) ? d.questions : []
@@ -461,11 +477,17 @@ export function OrderDesk() {
     else if (o && o.choice === 'approve') bits.push('Owner approved' + (o.option ? ' the ' + String(o.option) + ' option' : ''))
     else if (o && o.choice === 'no') bits.push('Owner declined')
     if (o && o.note) bits.push(String(o.note))
+    return { o, qs, bits }
+  }
+  const ownerSaid = (it: Row) => {
+    const ob = ownerBits(it)
+    if (!ob) return null
+    const { o, qs, bits } = ob
     return (
-      <div className="mt-1.5 ml-6 rounded-lg border border-sky-200 bg-sky-50/70 px-2 py-1.5">
-        {bits.length ? <div className="text-[11px] font-semibold text-sky-900">{bits.join(' · ')}</div> : null}
+      <div className="w-full rounded-lg border border-sky-200 bg-sky-50/70 px-2 py-1.5">
+        {bits.length ? <div className="text-[11.5px] font-semibold text-sky-900">{bits.join(' · ')}</div> : null}
         {o && o.link ? <a href={String(o.link)} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-sky-700 break-all">{String(o.link)}</a> : null}
-        {qs.map((qq: any, i: number) => <div key={i} className="text-[11px] text-ink"><span className="font-bold">Owner asked:</span> {String(qq && qq.q)}</div>)}
+        {qs.map((qq: any, i: number) => <div key={i} className="text-[11.5px] text-ink"><span className="font-bold">Owner asked:</span> {String(qq && qq.q)}</div>)}
       </div>
     )
   }
@@ -475,41 +497,44 @@ export function OrderDesk() {
     const link = it.details && it.details.link ? String(it.details.link) : ''
     const urgent = isUrgent(it)
     const fresh = isNew(it)
-    // The stage pill is NOISE when the whole list is already that stage - only show it when this
+    // The stage tag is NOISE when the whole list is already that stage - only show it when this
     // line differs from the filter you are looking at.
     const showStage = tf === 'all' || (FILTERS.find(x => x.key === tf) || { stages: [] as Stage[] }).stages.indexOf(st) < 0 || st === 'owner'
     const dim = (st === 'blocked' || st === 'owner') && !urgent
+    const ob = ownerBits(it)
+    const open = moreFor === it.id
     return (
-      <div key={it.id} className={'rounded-lg border p-2 ' + (urgent ? 'border-rose-200 border-l-4 border-l-rose-500 bg-rose-50/50' : 'border-line ' + (dim ? 'bg-neutral-50/60' : ''))}>
-        <div className="flex flex-wrap items-center gap-2">
-          <input type="checkbox" checked={!!sel[it.id]} onChange={e => setSel(s => ({ ...s, [it.id]: e.target.checked }))} className="shrink-0" />
-          <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded border ' + (it.kind === 'add' ? 'bg-sky-100 text-sky-800 border-sky-300' : 'bg-rose-100 text-rose-700 border-rose-300')}>{it.kind === 'add' ? 'Add' : 'Replace'}</span>
-          <span className={'text-sm font-semibold ' + (dim ? 'text-muted' : 'text-ink')}>{it.qty && it.qty > 1 ? it.qty + '× ' : ''}{it.title}</span>
-          {it.details && it.details.restock ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-100 text-amber-800 border-amber-300" title={'Below par — ' + (it.details.have != null ? it.details.have : '?') + ' of ' + (it.details.par != null ? it.details.par : '?')}>Restock</span> : null}
-          {it.details && it.details.source === 'field_request' ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-violet-100 text-violet-800 border-violet-300" title={'Reported from the field' + (it.details.requestedBy ? ' by ' + it.details.requestedBy : '') + (it.details.ref ? ' · ' + it.details.ref : '')}>{it.details.ref || 'Field'}</span> : null}
-          {showUnit ? <span className="text-[11px] text-muted">{it.unit}</span> : null}
-          {it.room ? <span className="text-[11px] text-muted">{it.room}</span> : null}
-          {urgent ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white">Urgent</span> : null}
-          {fresh ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-600 text-white">New</span> : null}
-          {isRec(it) ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-slate-100 text-slate-600 border-slate-200" title="Nice to have - par does not require it">Recommendation</span> : null}
-          {showStage ? <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full ' + STAGE_CLS[st]}>{STAGE_LABEL[st]}</span> : null}
-          <span className="ml-auto flex items-center gap-2">
-            <span className={'w-[74px] text-right tabular-nums text-[13px] font-semibold ' + (estOf(it) ? 'text-ink' : 'text-muted/50 font-normal')}>{estOf(it) ? money(lineCost(it)) : 'no price'}</span>
+      <div key={it.id} className={'px-3 py-1.5 ' + (urgent ? 'border-l-4 border-l-rose-500 bg-rose-50/50' : dim ? 'bg-neutral-50/60' : '')}>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Tip label="Select for bulk actions"><input type="checkbox" checked={!!sel[it.id]} onChange={e => setSel(s => ({ ...s, [it.id]: e.target.checked }))} className="shrink-0" /></Tip>
+          <span onClick={() => setMoreFor(m => m === it.id ? '' : it.id)} className={'cursor-pointer text-[13px] font-semibold truncate max-w-[18rem] ' + (dim ? 'text-muted' : 'text-ink')}>{it.qty && it.qty > 1 ? it.qty + '× ' : ''}{it.title}</span>
+          {(showUnit || it.room) ? <span className="text-[12px] text-muted truncate max-w-[14rem]">{[showUnit ? it.unit : '', it.room || ''].filter(Boolean).join(' · ')}</span> : null}
+          <Tag tone={it.kind === 'add' ? 'sky' : 'rose'}>{it.kind === 'add' ? 'Add' : 'Replace'}</Tag>
+          {urgent ? <Tag tone="roseSolid" title="High severity — a guest is affected">Urgent</Tag> : null}
+          {fresh ? <Tag tone="violet" title="Reported from the field in the last 48h">New</Tag> : null}
+          {it.details && it.details.restock ? <Tag tone="amber" title={'Below par — ' + (it.details.have != null ? it.details.have : '?') + ' of ' + (it.details.par != null ? it.details.par : '?')}>Restock</Tag> : null}
+          {it.details && it.details.source === 'field_request' ? <Tag tone="violet" title={'Reported from the field' + (it.details.requestedBy ? ' by ' + it.details.requestedBy : '') + (it.details.ref ? ' · ' + it.details.ref : '')}>{it.details.ref || 'Field'}</Tag> : null}
+          {isRec(it) ? <Tag title="Nice to have - par does not require it">Rec</Tag> : null}
+          {showStage ? <Tag tone={STAGE_TONE[st]}>{STAGE_LABEL[st]}</Tag> : null}
+          {ob ? <Tag tone="sky" title={ob.bits.join(' · ') || 'The owner left a question'}>{ob.qs.length && !ob.bits.length ? 'Owner asked' : 'Owner said'}</Tag> : null}
+          {it.note ? <Tag title={it.note}>Note</Tag> : null}
+          <span className="ml-auto flex items-center gap-1.5">
+            <span className={'text-right tabular-nums text-[13px] font-semibold ' + (estOf(it) ? 'text-ink' : 'text-muted/50 font-normal text-[11.5px]')}>{estOf(it) ? money(lineCost(it)) : 'no price'}</span>
             {actionBtn(it)}
-            <button onClick={() => setMoreFor(m => m === it.id ? '' : it.id)} className="text-[11px] font-semibold px-1.5 py-1 rounded-lg border border-line text-muted">⋯</button>
+            <IconBtn title={open ? 'Close' : 'Price, link, AI options, notes & dismiss'} onClick={() => setMoreFor(m => m === it.id ? '' : it.id)}><MoreHorizontal size={14} /></IconBtn>
           </span>
         </div>
-        {ownerSaid(it)}
-        {moreFor === it.id ? (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-6">
-            {it.photo_url ? <a href={it.photo_url} target="_blank" rel="noreferrer"><img src={it.photo_url} alt="" className="h-7 w-7 rounded object-cover" /></a> : null}
-            <button onClick={() => askEst(it)} className={'text-[11px] font-semibold px-2 py-1 rounded-lg border ' + (estOf(it) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-line text-muted')}>{estOf(it) ? '~' + money(estOf(it)) + ' ea' : '$ price'}</button>
-            {link ? <a href={link} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-brand-600">open link</a> : null}
-            <button onClick={() => askLink(it)} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted">{link ? 'edit link' : '+ link'}</button>
-            <button onClick={() => suggest(it)} disabled={sugBusy} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted disabled:opacity-50">{sugFor === it.id && sugBusy ? '…' : '✨ Options'}</button>
-            {st === 'received' && it.report_url ? <a href={it.report_url} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-teal-700">install task ↗</a> : null}
-            {st !== 'installed' ? <button onClick={() => setStatus(it, 'dismissed')} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted">Dismiss</button> : null}
-            {it.note ? <span className="text-[11px] text-muted w-full">{it.note}</span> : null}
+        {open ? (
+          <div className="mt-1.5 mb-1 flex flex-wrap items-center gap-1.5 pl-5">
+            {ownerSaid(it)}
+            {it.photo_url ? <a href={it.photo_url} target="_blank" rel="noreferrer" title="Open photo"><img src={it.photo_url} alt="" className="h-7 w-7 rounded object-cover" /></a> : null}
+            <button onClick={() => askEst(it)} className={btn + 'border ' + (estOf(it) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-line text-muted')}>{estOf(it) ? '~' + money(estOf(it)) + ' ea' : '$ price'}</button>
+            {link ? <a href={link} target="_blank" rel="noreferrer" className="text-[11.5px] font-semibold text-brand-600">open link</a> : null}
+            <button onClick={() => askLink(it)} className={btn + 'border border-line text-muted'}>{link ? 'edit link' : '+ link'}</button>
+            <button onClick={() => suggest(it)} disabled={sugBusy} className={btn + 'border border-line text-muted inline-flex items-center gap-1'}>{sugFor === it.id && sugBusy ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />} Options</button>
+            {st === 'received' && it.report_url ? <a href={it.report_url} target="_blank" rel="noreferrer" className="text-[11.5px] font-semibold text-teal-700">install task ↗</a> : null}
+            {st !== 'installed' ? <button onClick={() => setStatus(it, 'dismissed')} className={btn + 'border border-line text-muted'}>Dismiss</button> : null}
+            {it.note ? <div className="w-full"><Clamp text={it.note} /></div> : null}
             {sugFor === it.id && sugList.length ? (
               <div className="w-full mt-1 rounded-lg bg-neutral-50 border border-line p-2 space-y-1">
                 {sugList.map((o: any, i: number) => (
@@ -530,106 +555,72 @@ export function OrderDesk() {
 
   return (
     <div>
-      {/* SUMMARY RAIL - the five numbers worth opening this page for */}
-      <div className="flex flex-wrap gap-2 mb-3">
-        {nUrgent > 0 ? (
-          <button onClick={() => { setTf('all'); setQ('') }} className="text-left rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 min-w-[124px]">
-            <div className="text-[10px] uppercase tracking-wider text-rose-500 font-bold">Urgent</div>
-            <div className="text-xl font-bold text-rose-700 tabular-nums leading-tight">{nUrgent}</div>
-            <div className="text-[11px] text-rose-500">guest affected</div>
-          </button>
-        ) : null}
-        {nNew > 0 ? (
-          <div className="rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-2 min-w-[124px]">
-            <div className="text-[10px] uppercase tracking-wider text-violet-500 font-bold">New</div>
-            <div className="text-xl font-bold text-violet-700 tabular-nums leading-tight">{nNew}</div>
-            <div className="text-[11px] text-violet-500">from the field, 48h</div>
-          </div>
-        ) : null}
-        <div className="rounded-xl border border-line bg-white px-3.5 py-2 min-w-[124px]">
-          <div className="text-[10px] uppercase tracking-wider text-muted font-bold">Awaiting you</div>
-          <div className="text-xl font-bold text-ink tabular-nums leading-tight">{nMine}</div>
-          <div className="text-[11px] text-muted">{money(mMine)}</div>
-        </div>
-        <div className="rounded-xl border border-line bg-white px-3.5 py-2 min-w-[124px]">
-          <div className="text-[10px] uppercase tracking-wider text-muted font-bold">With owner</div>
-          <div className="text-xl font-bold text-ink tabular-nums leading-tight">{nOwner}</div>
-          <div className="text-[11px] text-muted">{money(mOwner)}</div>
-        </div>
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 min-w-[124px]" title="Approved and not yet installed">
-          <div className="text-[10px] uppercase tracking-wider text-emerald-600 font-bold">Approved</div>
-          <div className="text-xl font-bold text-emerald-700 tabular-nums leading-tight">{money(mReady)}</div>
-          <div className="text-[11px] text-emerald-600">ready to buy</div>
-        </div>
-      </div>
-      {/* status strip */}
-      <div className="lh-actions flex flex-wrap items-center gap-2 mb-3">
-        {FILTERS.map(f => (
-          <button key={f.key} onClick={() => setTf(f.key)} className={'text-xs font-semibold px-2.5 py-1.5 rounded-lg border ' + (tf === f.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line')}>
-            {f.label}{' · '}{counts[f.key] === undefined ? 0 : counts[f.key]}
-          </button>
-        ))}
-        <span className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-app text-muted border border-line" title="Estimated cost of everything still open on this board">{money(outstanding)} open</span>
-      </div>
-      {/* controls */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      {head}
+      <LeanTabs
+        tabs={FILTERS.map(f => ({ key: f.key, label: f.label, n: counts[f.key] || 0 }))}
+        value={tf}
+        onChange={k => setTf(k)}
+        right={<Pill title="Estimated cost of everything still open on this board">{money(outstanding)} open</Pill>}
+      />
+      {/* controls — one line */}
+      <div className="flex flex-wrap items-center gap-1.5 mb-3">
         <div className="inline-flex rounded-lg border border-line overflow-hidden">
-          <button onClick={() => setView('item')} className={'text-xs font-semibold px-3 py-1.5 ' + (view === 'item' ? 'bg-ink text-white' : 'bg-white text-muted')}>By item</button>
-          <button onClick={() => setView('unit')} className={'text-xs font-semibold px-3 py-1.5 ' + (view === 'unit' ? 'bg-ink text-white' : 'bg-white text-muted')}>By unit</button>
+          <button onClick={() => setView('item')} className={'text-[12px] font-semibold px-2.5 py-1 ' + (view === 'item' ? 'bg-ink text-white' : 'bg-white text-muted')}>By item</button>
+          <button onClick={() => setView('unit')} className={'text-[12px] font-semibold px-2.5 py-1 ' + (view === 'unit' ? 'bg-ink text-white' : 'bg-white text-muted')}>By unit</button>
         </div>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit / building / item" className="text-xs border border-line rounded-lg px-2.5 py-1.5 w-full sm:w-52" />
-        <select value={ownerId} onChange={e => setOwnerId(e.target.value)} className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white max-w-[220px]" title="Filter to one owner's units and share their link">
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit / building / item" className={ctl + ' w-full sm:w-52'} />
+        <select value={ownerId} onChange={e => setOwnerId(e.target.value)} className={ctl + ' max-w-[14rem]'} title="Filter to one owner's units and share their link">
           <option value="">All owners</option>
           {owners.slice().sort((a, b) => a.name.localeCompare(b.name)).map(o => <option key={o.id} value={o.id}>{o.name} ({o.listingIds.length})</option>)}
         </select>
-        {selOwner ? <button onClick={copyOwnerLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{ownerCopied ? 'Owner link copied ✓' : 'Share owner link'}</button> : null}
-        <label className="text-xs text-muted flex items-center gap-1"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> show installed</label>
-        {autoPend > 0 ? <button onClick={autoRoute} disabled={autoBusy} title="Send every priced line with no decision through the GM spend limits" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-violet-600 text-white disabled:opacity-50">{autoBusy ? 'Routing…' : '⚡ Auto-route ' + autoPend}</button> : null}
+        {selOwner ? <button onClick={copyOwnerLink} className="text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white">{ownerCopied ? 'Owner link copied ✓' : 'Share owner link'}</button> : null}
+        <label className="text-[12px] text-muted flex items-center gap-1"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> show installed</label>
+        {autoPend > 0 ? <button onClick={autoRoute} disabled={autoBusy} title="Send every priced line with no decision through the GM spend limits" className="text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-violet-600 text-white disabled:opacity-50 inline-flex items-center gap-1">{autoBusy ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} Auto-route {autoPend}</button> : null}
         {autoMsg ? <span className="text-[11px] font-semibold text-violet-700">{autoMsg}</span> : null}
-        <button onClick={() => setToolsOpen(o => !o)} className="ml-auto text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Tools {toolsOpen ? '▴' : '▾'}</button>
+        <button onClick={() => setToolsOpen(o => !o)} className="ml-auto text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink inline-flex items-center gap-1">Tools <ChevronDown size={12} className={toolsOpen ? 'rotate-180' : ''} /></button>
       </div>
       {toolsOpen ? (
-        <div className="mb-4 rounded-xl border border-line bg-white p-3 flex flex-wrap items-center gap-2">
-          <a href="/new-order" target="_blank" rel="noreferrer" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Open request form</a>
-          <button onClick={copyRequestLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted" title="The link the field team uses to report what a unit needs">{reqCopied ? 'Request link copied ✓' : 'Copy request link'}</button>
-          <a href="/delivery" target="_blank" rel="noreferrer" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Delivery plan</a>
-          <button onClick={copyPlanLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">{planCopied ? 'Link copied ✓' : 'Copy plan link'}</button>
-          <button onClick={copySheet} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{copied ? 'Copied ✓' : 'Copy order sheet'}</button>
+        <div className="mb-3 rounded-xl border border-line bg-white p-2.5 flex flex-wrap items-center gap-1.5">
+          <a href="/new-order" target="_blank" rel="noreferrer" className={btn + 'border border-line text-muted'}>Open request form</a>
+          <button onClick={copyRequestLink} className={btn + 'border border-line text-muted'} title="The link the field team uses to report what a unit needs">{reqCopied ? 'Request link copied ✓' : 'Copy request link'}</button>
+          <a href="/delivery" target="_blank" rel="noreferrer" className={btn + 'border border-line text-muted'}>Delivery plan</a>
+          <button onClick={copyPlanLink} className={btn + 'border border-line text-muted'}>{planCopied ? 'Link copied ✓' : 'Copy plan link'}</button>
+          <button onClick={copySheet} className={btn + 'bg-ink text-white'} title="Approved and in-flight lines, grouped by unit, with totals by item">{copied ? 'Copied ✓' : 'Copy order sheet'}</button>
           <span className="w-px h-5 bg-line mx-1" />
-          <span className="text-xs font-semibold text-ink">Owner:</span>
-          <select value={xlBldg} onChange={e => { setXlBldg(e.target.value); setXlUnit('all') }} className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white">
+          <span className="text-[11.5px] font-semibold text-ink">Owner:</span>
+          <select value={xlBldg} onChange={e => { setXlBldg(e.target.value); setXlUnit('all') }} className={ctl}>
             <option value="all">All properties</option>
             {Array.from(new Set(rows.map(it => it.building || 'Other'))).sort().map(b => <option key={b} value={b}>{b}</option>)}
           </select>
-          <select value={xlUnit} onChange={e => setXlUnit(e.target.value)} className="text-xs border border-line rounded-lg px-2 py-1.5 bg-white">
+          <select value={xlUnit} onChange={e => setXlUnit(e.target.value)} className={ctl}>
             <option value="all">All units</option>
             {Array.from(new Set(rows.filter(it => xlBldg === 'all' || (it.building || 'Other') === xlBldg).map(it => it.unit))).sort().map(u => <option key={u} value={u}>{u}</option>)}
           </select>
-          <button onClick={exportExcel} disabled={xlBusy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50">{xlBusy ? 'Building…' : 'Download .xlsx'}</button>
-          <button onClick={estimateCosts} disabled={estBusy} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted disabled:opacity-50">{estBusy ? 'Estimating…' : '✨ Estimate costs'}</button>
-          <button onClick={ownerBrief} disabled={briefBusy} title="Fill why, price options and the cost of doing nothing on every line, so the owner sheet argues the case" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted disabled:opacity-50">{briefBusy ? 'Writing…' : '✨ Owner brief'}</button>
+          <button onClick={exportExcel} disabled={xlBusy} className={btn + 'bg-emerald-600 text-white'}>{xlBusy ? 'Building…' : 'Download .xlsx'}</button>
+          <button onClick={estimateCosts} disabled={estBusy} title="AI-estimate a price for every unpriced line in this scope" className={btn + 'border border-line text-muted inline-flex items-center gap-1'}><Sparkles size={11} /> {estBusy ? 'Estimating…' : 'Estimate costs'}</button>
+          <button onClick={ownerBrief} disabled={briefBusy} title="Fill why, price options and the cost of doing nothing on every line, so the owner sheet argues the case" className={btn + 'border border-line text-muted inline-flex items-center gap-1'}><Sparkles size={11} /> {briefBusy ? 'Writing…' : 'Owner brief'}</button>
           {briefMsg ? <span className="text-[11px] font-semibold text-brand-700">{briefMsg}</span> : null}
-          <button onClick={copyOwnerLink} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white">{ownerCopied ? 'Owner link copied ✓' : 'Copy owner link'}</button>
+          <button onClick={copyOwnerLink} className={btn + 'bg-ink text-white'} title="Owner links are per property or per unit — pick one first">{ownerCopied ? 'Owner link copied ✓' : 'Copy owner link'}</button>
           {estMsg ? <span className="text-[11px] font-semibold text-emerald-700">{estMsg}</span> : null}
         </div>
       ) : null}
       {/* bulk bar */}
       {selIds.length ? (
-        <div className="mb-4 rounded-xl border border-ink/20 bg-ink/[0.03] p-2.5 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-ink">{selIds.length} selected</span>
-          <button onClick={() => bulk('approve')} disabled={bulkBusy} className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-50">GM approve</button>
-          <button onClick={() => bulk('order')} disabled={bulkBusy} className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50">Mark ordered</button>
-          <button onClick={() => bulk('arriving')} disabled={bulkBusy} className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted disabled:opacity-50">Arriving</button>
-          <button onClick={() => bulk('received')} disabled={bulkBusy} className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted disabled:opacity-50">Received</button>
-          <button onClick={clearSel} className="ml-auto text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted">Clear</button>
+        <div className="mb-3 rounded-xl border border-ink/20 bg-ink/[0.03] px-2.5 py-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="text-[12px] font-bold text-ink">{selIds.length} selected</span>
+          <button onClick={() => bulk('approve')} disabled={bulkBusy} className={btn + 'bg-emerald-600 text-white'}>GM approve</button>
+          <button onClick={() => bulk('order')} disabled={bulkBusy} className={btn + 'bg-ink text-white'}>Mark ordered</button>
+          <button onClick={() => bulk('arriving')} disabled={bulkBusy} className={btn + 'border border-line text-muted'}>Arriving</button>
+          <button onClick={() => bulk('received')} disabled={bulkBusy} className={btn + 'border border-line text-muted'}>Received</button>
+          <button onClick={clearSel} className={'ml-auto ' + btn + 'border border-line text-muted'}>Clear</button>
         </div>
       ) : null}
 
-      {visible.length === 0 ? <div className="text-sm text-muted">No order items match. Replace / Add needs captured on audits land here automatically.</div> : null}
+      {visible.length === 0 ? <LeanEmpty>No order items match.</LeanEmpty> : null}
 
       {/* BY ITEM */}
       {view === 'item' && visible.length > 0 ? (
-        <div className="space-y-3">
+        <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
           {groupKeys.map(key => {
             const items = groups[key]
             const title = items[0].title || '(untitled)'
@@ -642,65 +633,63 @@ export function OrderDesk() {
             const nNeeds = items.filter(it => stageOf(it) === 'blocked').length
             const nReady = items.filter(it => stageOf(it) === 'ready').length
             return (
-              <div key={key} className="rounded-xl border border-line bg-white shadow-soft">
-                <div className="px-4 py-2.5 flex flex-wrap items-center gap-2 border-b border-line">
-                  <button onClick={() => setOpenGrp(g => ({ ...g, [key]: !g[key] }))} className="text-sm font-bold text-ink flex items-center gap-1.5">
-                    <span className="text-muted">{open ? '▾' : '▸'}</span>{title}
-                    <span className="text-muted font-semibold">×{totalQty} · {units} unit{units === 1 ? '' : 's'}</span>
+              <li key={key}>
+                <div className="px-3 sm:px-4 py-2 flex flex-wrap items-center gap-1.5">
+                  <button onClick={() => setOpenGrp(g => ({ ...g, [key]: !g[key] }))} className="flex items-center gap-1.5 min-w-0 text-left">
+                    <ChevronDown size={14} className={'text-muted shrink-0 transition ' + (open ? '' : '-rotate-90')} />
+                    <span className="text-[13.5px] font-semibold text-ink truncate max-w-[16rem]">{title}</span>
+                    <span className="text-[12px] text-muted whitespace-nowrap">×{totalQty} · {units} unit{units === 1 ? '' : 's'}</span>
                   </button>
-                  <span className="flex items-center gap-1">
-                    {(['blocked', 'owner', 'ready', 'ordered', 'arriving', 'received', 'installed'] as Stage[]).filter(s => brk[s]).map(s => (
-                      <span key={s} className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full ' + STAGE_CLS[s]}>{brk[s]} {STAGE_LABEL[s].toLowerCase()}</span>
-                    ))}
-                  </span>
+                  {(['blocked', 'owner', 'ready', 'ordered', 'arriving', 'received', 'installed'] as Stage[]).filter(s => brk[s]).map(s => (
+                    <Tag key={s} tone={STAGE_TONE[s]}>{brk[s]} {STAGE_LABEL[s].toLowerCase()}</Tag>
+                  ))}
                   <span className="ml-auto flex items-center gap-1">
-                    {est ? <span className="text-[11px] text-muted">~{money(est)} ea</span> : null}
-                    <button onClick={() => groupSetPrice(key)} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted">Price all</button>
-                    <button onClick={() => groupSetLink(key)} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-line text-muted">Link all</button>
-                    {nNeeds ? <button onClick={() => groupAct(key, 'approve')} disabled={bulkBusy} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-600 text-white disabled:opacity-50">Approve {nNeeds}</button> : null}
-                    {nReady ? <button onClick={() => groupAct(key, 'order')} disabled={bulkBusy} className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-ink text-white disabled:opacity-50">Order {nReady}</button> : null}
+                    {est ? <span className="text-[11.5px] text-muted tabular-nums mr-1">~{money(est)} ea</span> : null}
+                    <IconBtn title={'Set one price for all ' + items.length + ' lines'} onClick={() => groupSetPrice(key)}><DollarSign size={14} /></IconBtn>
+                    <IconBtn title={'Set one product link for all ' + items.length + ' lines'} onClick={() => groupSetLink(key)}><Link2 size={14} /></IconBtn>
+                    {nNeeds ? <button onClick={() => groupAct(key, 'approve')} disabled={bulkBusy} className={btn + 'bg-emerald-600 text-white'}>Approve {nNeeds}</button> : null}
+                    {nReady ? <button onClick={() => groupAct(key, 'order')} disabled={bulkBusy} className={btn + 'bg-ink text-white'}>Order {nReady}</button> : null}
                   </span>
                 </div>
-                {open ? <div className="p-2.5 space-y-1.5">{items.slice().sort(deskSort).map(it => rowCard(it, true))}</div> : null}
-              </div>
+                {open ? <div className="border-t border-line/70 divide-y divide-line/60 bg-app/30">{items.slice().sort(deskSort).map(it => rowCard(it, true))}</div> : null}
+              </li>
             )
           })}
-        </div>
+        </ul>
       ) : null}
 
       {/* BY UNIT */}
       {view === 'unit' && visible.length > 0 ? (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {bldgs.map(b => {
             const units = Object.keys(byBldg[b]).sort()
             let n = 0; for (const u of units) n += byBldg[b][u].length
             return (
-              <div key={b} className="rounded-xl border border-line bg-white shadow-soft">
-                <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
-                  <span className="text-sm font-bold text-ink">{b}</span>
-                  <span className="text-[12px] text-muted">{units.length} unit{units.length === 1 ? '' : 's'} · {n} line{n === 1 ? '' : 's'}</span>
-                  <span className="ml-auto text-sm font-bold text-ink tabular-nums">{money(sum(units.flatMap(u => byBldg[b][u])))}</span>
-                </div>
-                <div className="divide-y divide-line">
+              <section key={b}>
+                <h2 className="text-[11px] font-bold uppercase tracking-wider mb-1.5 px-1 flex items-center gap-2 text-muted">
+                  {b}<span className="tabular-nums normal-case tracking-normal font-medium">{units.length} unit{units.length === 1 ? '' : 's'} · {n} line{n === 1 ? '' : 's'}</span>
+                  <span className="ml-auto text-[12.5px] font-bold text-ink tabular-nums normal-case tracking-normal">{money(sum(units.flatMap(u => byBldg[b][u])))}</span>
+                </h2>
+                <div className="rounded-2xl border border-line bg-white divide-y divide-line overflow-hidden">
                   {units.map(u => {
                     const list = byBldg[b][u].slice().sort(deskSort)
                     const uUrg = list.filter(isUrgent).length
                     const uNew = list.filter(isNew).length
                     return (
-                    <div key={u} className="px-4 py-3">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">{u}</span>
-                        <span className="text-[11px] text-muted">{list.length} line{list.length === 1 ? '' : 's'}</span>
-                        {uUrg ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white">{uUrg} urgent</span> : null}
-                        {uNew ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-600 text-white">{uNew} new</span> : null}
-                        <span className="ml-auto text-[13px] font-bold text-ink tabular-nums">{money(sum(list))}</span>
+                    <div key={u}>
+                      <div className="flex items-center gap-1.5 px-3 pt-2 pb-0.5">
+                        <span className="text-[12.5px] font-semibold text-ink">{u}</span>
+                        <span className="text-[11.5px] text-muted">{list.length} line{list.length === 1 ? '' : 's'}</span>
+                        {uUrg ? <Tag tone="roseSolid">{uUrg} urgent</Tag> : null}
+                        {uNew ? <Tag tone="violet">{uNew} new</Tag> : null}
+                        <span className="ml-auto text-[12.5px] font-bold text-ink tabular-nums">{money(sum(list))}</span>
                       </div>
-                      <div className="space-y-1.5">{list.map(it => rowCard(it, false))}</div>
+                      <div className="divide-y divide-line/50">{list.map(it => rowCard(it, false))}</div>
                     </div>
                     )
                   })}
                 </div>
-              </div>
+              </section>
             )
           })}
         </div>

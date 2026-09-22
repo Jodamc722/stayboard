@@ -10,11 +10,12 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ClaimDesk } from '@/components/ClaimDesk'
 import {
-  ShieldAlert, Search, RefreshCw, Plus, X, CalendarClock, Loader2, ExternalLink, CheckCircle2, AlertTriangle, Trash2,
+  ShieldAlert, Search, RefreshCw, Plus, X, CalendarClock, Loader2, ExternalLink, CheckCircle2, Trash2,
 } from 'lucide-react'
 import { DeleteButton, UndoBar, TrashDrawer } from '@/components/DeleteControl'
+import { Tag, Pill, LeanHead, LeanTabs, IconBtn, Tip, LeanList, LeanEmpty, type Tone } from '@/components/lean'
 import {
-  STAGES, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
+  STAGES, STAGE_LABEL, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
   type Claim, type Stage,
 } from '@/lib/claims'
 import { ClaimPolicyPanel } from '@/components/ClaimPolicy'
@@ -28,34 +29,23 @@ type Match = {
   guestyUrl: string; existingClaimId: string | null
 }
 
-const URGENCY_CLASS: Record<string, string> = {
-  expired: 'bg-rose-100 text-rose-900 border-rose-300',
-  critical: 'bg-rose-50 text-rose-800 border-rose-200',
-  soon: 'bg-amber-50 text-amber-800 border-amber-200',
-  ok: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  none: 'bg-app text-muted border-line',
-}
+const URGENCY_TONE: Record<string, Tone> = { expired: 'roseSolid', critical: 'rose', soon: 'amber', ok: 'emerald', none: 'slate' }
 
-// The card counts down to OUR due date. The channel's hard cutoff only speaks up when it is
-// actually close — otherwise it is noise on every card for two weeks.
+// The row counts down to OUR due date. The channel's hard cutoff only speaks up when it is
+// actually close — otherwise it is noise on every row for two weeks.
 function DeadlineChip({ claim }: { claim: Claim }) {
   const u = urgencyOf(claim)
   const target = claim.due_on || claim.deadline_on
   const d = daysUntil(target)
   if (u === 'none') {
     if (!target) return null
-    return <span className="text-[10px] text-muted">filed</span>
+    return <Tag>Filed</Tag>
   }
-  const text = d === null ? 'no date'
-    : d < 0 ? 'DUE ' + Math.abs(d) + 'd ago'
-    : d === 0 ? 'DUE TODAY'
-    : 'due in ' + d + 'd'
-  return (
-    <span className={'lh-chip text-[10px] font-semibold px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ' + URGENCY_CLASS[u]}>
-      <CalendarClock size={10} />{text}
-      {claim.due_source === 'manual' && <span className="opacity-60">·set</span>}
-    </span>
-  )
+  const text = d === null ? 'No date'
+    : d < 0 ? 'Due ' + Math.abs(d) + 'd ago'
+    : d === 0 ? 'Due today'
+    : 'Due in ' + d + 'd'
+  return <Tag tone={URGENCY_TONE[u]} title={'Our due date' + (target ? ' · ' + target : '') + (claim.due_source === 'manual' ? ' · set by hand' : '')}>{text}{claim.due_source === 'manual' ? ' ·set' : ''}</Tag>
 }
 
 // The evidence clock. Only shown while it is the thing that decides the day.
@@ -64,9 +54,9 @@ function TurnoverChip({ claim }: { claim: Claim }) {
   const a = daysUntil(claim.next_check_in)
   if (a === null || a > 2) return null
   return (
-    <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + (a < 0 ? 'bg-app text-muted border-line' : 'bg-violet-50 text-violet-800 border-violet-200')}>
-      {a < 0 ? 'unit turned' : a === 0 ? 'guest arrives TODAY' : a === 1 ? 'guest arrives tomorrow' : 'guest in ' + a + 'd'}
-    </span>
+    <Tag tone={a < 0 ? 'slate' : 'violet'} title="Next guest check-in — get the evidence before the unit turns">
+      {a < 0 ? 'Unit turned' : a === 0 ? 'Guest in today' : a === 1 ? 'Guest in tomorrow' : 'Guest in ' + a + 'd'}
+    </Tag>
   )
 }
 
@@ -74,9 +64,9 @@ function HardChip({ claim }: { claim: Claim }) {
   if (!hardDeadlineBiting(claim)) return null
   const h = daysUntil(claim.deadline_on)
   return (
-    <span className="lh-chip text-[10px] font-bold px-1.5 py-0.5 rounded border bg-rose-600 text-white border-rose-600">
-      {h !== null && h < 0 ? 'WINDOW CLOSED' : 'window closes in ' + h + 'd'}
-    </span>
+    <Tag tone="roseSolid" title={'The channel’s hard filing cutoff' + (claim.deadline_on ? ' · ' + claim.deadline_on : '')}>
+      {h !== null && h < 0 ? 'Window closed' : 'Window ' + h + 'd'}
+    </Tag>
   )
 }
 
@@ -89,6 +79,9 @@ export function ClaimsBoard() {
   const [channel, setChannel] = useState('all')
   const [newOpen, setNewOpen] = useState(false)
   const [showTrash, setShowTrash] = useState(false)
+  // Stages used to be kanban lanes; now they are tabs. 'open' is every stage but Closed, most
+  // urgent first — the claims about to age out sit at the top of it.
+  const [lane, setLane] = useState<string>('open')
   // THE CLAIM OPENS IN A POP-UP, NOT A PAGE (Jon, 2026-09-16), the way the glitch board works. The
   // id also lives in the URL as ?claim=<id> so the drawer survives a refresh and can be pasted to
   // someone — the same trick the projects board uses for ?task=. /claims/<id> still renders the
@@ -182,102 +175,69 @@ export function ClaimsBoard() {
   const won = decided.filter(c => c.outcome === 'won' || c.outcome === 'partial')
   const winRate = decided.length ? Math.round((won.length / decided.length) * 100) : null
 
+  const openRows = useMemo(() => rows.filter(c => String(c.stage || 'draft') !== 'closed').sort((a, b) => {
+    const ra = RANK[urgencyOf(a)] - RANK[urgencyOf(b)]
+    if (ra !== 0) return ra
+    return String(b.created_at || '').localeCompare(String(a.created_at || ''))
+  }), [rows])
+  const laneRows = lane === 'open' ? openRows : (byStage[lane] || [])
+  const laneMoney = laneRows.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
+  const laneMeta = STAGES.find(s => s.key === lane)
+  const ctl = 'text-[12px] border border-line rounded-lg bg-white py-1'
+
   return (
     <>
-      <div className="lh-actions flex items-center gap-2 flex-wrap mb-4">
-        <button onClick={() => setNewOpen(true)} className="text-sm font-semibold px-3 py-1.5 rounded-lg bg-ink text-white hover:opacity-90 inline-flex items-center gap-1.5">
-          <Plus size={14} /> New claim
+      <LeanHead title="Claims" icon={<ShieldAlert size={20} className="text-muted" />}>
+        {atRisk.length > 0 && <Pill tone="roseSolid" title={'About to age out unfiled: ' + atRisk.map(c => claimTitle(c)).join(' · ')} onClick={() => setLane('open')}>{atRisk.length} aging out</Pill>}
+        <Pill title="Claims not yet closed">{totals.open} open</Pill>
+        <Pill tone="amber" title="Total sought across claims">{money(totals.sought)} sought</Pill>
+        <Pill tone="emerald" title="Total recovered">{money(totals.recovered)} recovered</Pill>
+        <Pill tone="brand" title={decided.length ? decided.length + ' decided (won or partial counts as a win)' : 'Nothing decided yet'}>{winRate === null ? '—' : winRate + '%'} win</Pill>
+        <button onClick={() => setNewOpen(true)} className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white hover:opacity-90 inline-flex items-center gap-1">
+          <Plus size={13} /> New claim
         </button>
-        <span className="relative">
-          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, guest, code…" className="text-sm border border-line rounded-lg pl-7 pr-2 py-1.5 bg-white w-60 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-        </span>
-        <select value={channel} onChange={e => setChannel(e.target.value)} className="text-sm border border-line rounded-lg px-2 py-1.5 bg-white">
-          <option value="all">All channels</option>
-          {channels.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <button onClick={() => setShowPolicy(!showPolicy)} className="ml-auto text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
-          <CalendarClock size={13} /> Filing policy
-        </button>
-        <button onClick={() => setShowTrash(!showTrash)} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
-          <Trash2 size={13} /> Recently deleted
-        </button>
-        <button onClick={() => { setLoading(true); load() }} className="text-sm font-medium px-3 py-1.5 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
-          <RefreshCw size={13} /> Refresh
-        </button>
-      </div>
+      </LeanHead>
 
-      {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
+      <LeanTabs
+        tabs={[{ key: 'open', label: 'Open', n: openRows.length }].concat(STAGES.map(s => ({ key: s.key as string, label: s.label, n: (byStage[s.key] || []).length })))}
+        value={lane}
+        onChange={k => setLane(k)}
+        right={<>
+          <span className="relative">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, guest, code…" className={ctl + ' pl-6 pr-2 w-44 focus:outline-none focus:ring-2 focus:ring-brand-200'} />
+          </span>
+          <select value={channel} onChange={e => setChannel(e.target.value)} className={ctl + ' px-2'}>
+            <option value="all">All channels</option>
+            {channels.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <IconBtn title="Filing policy — due dates per channel" onClick={() => setShowPolicy(!showPolicy)}><CalendarClock size={14} /></IconBtn>
+          <IconBtn title="Recently deleted claims" onClick={() => setShowTrash(!showTrash)}><Trash2 size={14} /></IconBtn>
+          <IconBtn title="Refresh" onClick={() => { setLoading(true); load() }}>{loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}</IconBtn>
+        </>}
+      />
+
+      {err && <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
       {showPolicy && <ClaimPolicyPanel onClose={() => setShowPolicy(false)} onSaved={load} />}
       {showTrash && <TrashDrawer kind="claim" onRestored={load} onClose={() => setShowTrash(false)} />}
 
-      {/* THE ONE THING THAT LOSES MONEY: a claim that ages out unfiled. */}
-      {atRisk.length > 0 && (
-        <div className="rounded-2xl border border-rose-300 bg-rose-50 p-4 mb-4">
-          <div className="flex items-center gap-2 text-rose-900 font-semibold">
-            <AlertTriangle size={16} />
-            {atRisk.length === 1 ? '1 claim is about to age out' : atRisk.length + ' claims are about to age out'}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {atRisk.slice(0, 8).map(c => (
-              <button key={c.id} type="button" onClick={() => setOpenId(c.id)} className="text-[12px] font-medium px-2 py-1 rounded-lg bg-white border border-rose-200 text-rose-900 hover:bg-rose-100">
-                {claimTitle(c)} · {daysUntil(c.deadline_on) !== null && (daysUntil(c.deadline_on) as number) < 0 ? 'expired' : (daysUntil(c.deadline_on) as number) + 'd'}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {loading && !data && <LeanEmpty>Loading claims…</LeanEmpty>}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-        <Tile label="Open claims" value={String(totals.open)} />
-        <Tile label="Sought" value={money(totals.sought)} />
-        <Tile label="Recovered" value={money(totals.recovered)} good />
-        <Tile label="Win rate" value={winRate === null ? '—' : winRate + '%'} sub={decided.length ? decided.length + ' decided' : 'nothing decided yet'} />
-      </div>
-
-      {loading && !data && <div className="text-sm text-muted py-10 text-center">Loading claims…</div>}
-
-      {data && all.length === 0 && (
-        <div className="rounded-2xl border border-line bg-white p-10 text-center">
-          <ShieldAlert size={28} className="mx-auto text-muted mb-2" />
-          <div className="font-semibold text-ink">No claims yet.</div>
-          <p className="text-sm text-muted mt-1 max-w-md mx-auto">Start one from the reservation it happened on — the guest, channel, dates, confirmation code and the filing deadline all come across automatically.</p>
-          <button onClick={() => setNewOpen(true)} className="mt-3 text-sm font-semibold px-3 py-1.5 rounded-lg bg-ink text-white inline-flex items-center gap-1.5"><Plus size={14} /> New claim</button>
-        </div>
-      )}
+      {data && all.length === 0 && <LeanEmpty>No claims yet — start one from the reservation with <b>New claim</b>.</LeanEmpty>}
 
       {data && all.length > 0 && (
-        <>
-        {/* Same treatment as the glitch board: on a phone each stage is nearly the full screen and
-            the strip snaps, so a swipe lands on one stage instead of half of two. */}
-        <div className="sm:hidden text-[11px] text-muted mb-1.5">{STAGES.length} stages &mdash; swipe sideways</div>
-        <div className="flex gap-3 overflow-x-auto pb-3 snap-x snap-mandatory sm:snap-none scroll-pl-3 sm:scroll-pl-0 -mx-3 px-3 sm:mx-0 sm:px-0">
-          {STAGES.map(s => {
-            const lane = byStage[s.key] || []
-            const laneMoney = lane.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
-            // AN EMPTY STAGE IS A LABEL, NOT A COLUMN. The pipeline has seven stages and most of
-              // the time five of them hold nothing, so the board was mostly dashed boxes reading
-              // "Empty" — the two claims that needed attention had the same visual weight as the
-              // five that did not exist. An empty stage keeps its place in the sequence (the shape
-              // of the pipeline is the point of showing it) at a fraction of the width.
-              const empty = lane.length === 0
-              return (
-              <div key={s.key} className={(empty ? 'w-[38vw] sm:w-[132px] opacity-55' : 'w-[86vw] sm:w-[290px]') + ' shrink-0 snap-start sm:snap-align-none transition-all'}>
-                <div className="flex items-baseline gap-2 px-1 mb-1.5">
-                  <span className={'font-semibold text-ink ' + (empty ? 'text-[12px]' : 'text-sm')}>{s.label}</span>
-                  <span className="text-[11px] font-semibold text-muted tabular-nums">{lane.length}</span>
-                  {laneMoney > 0 && <span className="ml-auto text-[11px] text-muted tabular-nums">{money(laneMoney)}</span>}
-                </div>
-                {empty ? null : <div className="text-[10px] text-muted px-1 mb-2 leading-tight">{s.blurb}</div>}
-                <div className="space-y-2">
-                  {lane.map(c => <Card key={c.id} claim={c} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} />)}
-                  {empty && <div className="rounded-xl border border-dashed border-line px-2 py-3 text-[10.5px] text-muted text-center">—</div>}
-                </div>
+        laneRows.length === 0 ? <LeanEmpty>Nothing in {lane === 'open' ? 'open claims' : (laneMeta ? laneMeta.label : lane)}.</LeanEmpty> : (
+          <>
+            {laneMoney > 0 && (
+              <div className="flex justify-end px-1 mb-1.5">
+                <Pill title={(laneMeta ? laneMeta.blurb + ' · ' : '') + 'total sought in this tab'}>{money(laneMoney)}</Pill>
               </div>
-            )
-          })}
-        </div>
-        </>
+            )}
+            <LeanList>
+              {laneRows.map(c => <ClaimRow key={c.id} claim={c} showStage={lane === 'open'} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} />)}
+            </LeanList>
+          </>
+        )
       )}
 
       {newOpen && <NewClaimModal onClose={() => setNewOpen(false)} onCreated={(id: string) => { setNewOpen(false); load(); setOpenId(id) }} />}
@@ -327,60 +287,42 @@ function ClaimDrawer({ id, onClose, onChanged }: { id: string; onClose: () => vo
   )
 }
 
-function Tile({ label, value, sub, good }: { label: string; value: string; sub?: string; good?: boolean }) {
-  return (
-    <div className="rounded-2xl border border-line bg-white p-3">
-      <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
-      <div className={'text-2xl font-bold ' + (good ? 'text-emerald-700' : 'text-ink')}>{value}</div>
-      {sub && <div className="text-[11px] text-muted mt-0.5">{sub}</div>}
-    </div>
-  )
-}
-
-function Card({ claim, onDelete, onOpen }: { claim: Claim; onDelete: () => Promise<string | null>; onOpen: () => void }) {
+function ClaimRow({ claim, showStage, onDelete, onOpen }: { claim: Claim; showStage: boolean; onDelete: () => Promise<string | null>; onOpen: () => void }) {
   const items = claim.items || []
   const gates = gatesFor(claim, items)
   const done = gates.filter(g => g.ok).length
   const amount = num(claim.amount_sought) || itemsTotal(items)
   const u = urgencyOf(claim)
-  const border = u === 'expired' ? 'border-rose-300' : u === 'critical' ? 'border-rose-200' : 'border-line'
+  const stage = String(claim.stage || 'draft')
   return (
-    <button type="button" onClick={onOpen} className={'group relative block w-full text-left rounded-xl border bg-white p-3 hover:shadow-sm transition ' + border}>
-      {/* The delete sits on the card but out of the way — on a mouse it appears on hover, and it
-          swallows the click so it can never open the claim by accident. A touch screen has no
-          hover, so on a phone it is simply always there; otherwise there is no delete at all. */}
-      <span className="absolute top-1.5 right-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
-        <DeleteButton variant="icon" title="Delete this claim" onDelete={onDelete} />
-      </span>
-      <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-semibold text-ink leading-snug break-words pr-5">{claimTitle(claim)}</div>
-        </div>
-        <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{amount > 0 ? money(amount) : ''}</span>
+    <li className={'group ' + (u === 'expired' ? 'bg-rose-50/60' : u === 'critical' ? 'bg-rose-50/30' : '')}>
+      <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+        <button type="button" onClick={onOpen} className="flex-1 min-w-0 text-left">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{claimTitle(claim)}</span>
+            {showStage && <Tag tone="brand">{STAGE_LABEL[stage] || stage}</Tag>}
+            <DeadlineChip claim={claim} />
+            <HardChip claim={claim} />
+            <TurnoverChip claim={claim} />
+            {claim.channel && <Tag>{claim.channel}</Tag>}
+            {claim.waiting_on && <Tag tone="sky">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</Tag>}
+            {claim.outcome && (
+              <Tag tone={claim.outcome === 'denied' ? 'rose' : claim.outcome === 'won' || claim.outcome === 'partial' ? 'emerald' : 'slate'}>
+                {claim.outcome === 'won' ? 'Paid in full' : claim.outcome === 'partial' ? 'Partial' : claim.outcome.charAt(0).toUpperCase() + claim.outcome.slice(1)}
+              </Tag>
+            )}
+            <Tag tone={done === gates.length ? 'emerald' : 'slate'} title={gates.map(g => (g.ok ? '✓ ' : '· ') + g.label).join('\n') + '\n' + items.length + ' item' + (items.length === 1 ? '' : 's')}>{done}/{gates.length} evidence</Tag>
+            {claim.payment_verified === true && claim.owner_adjusted !== true && stage === 'settle' && <Tag tone="amber" title="Paid — owner statement still to adjust">Adjust owner</Tag>}
+          </div>
+        </button>
+        {amount > 0 && <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(amount)}</span>}
+        {/* On a mouse the delete appears on hover; a touch screen has no hover, so on a phone it is
+            always there. It sits outside the open button, so it can never open the claim. */}
+        <span className="shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition">
+          <Tip label="Delete this claim"><DeleteButton variant="icon" title="Delete this claim" onDelete={onDelete} /></Tip>
+        </span>
       </div>
-      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-        <DeadlineChip claim={claim} />
-        <HardChip claim={claim} />
-        <TurnoverChip claim={claim} />
-        {claim.channel && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded border border-line text-muted">{claim.channel}</span>}
-        {claim.waiting_on && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-sky-200 bg-sky-50 text-sky-800">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</span>}
-        {claim.outcome && (
-          <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + (claim.outcome === 'denied' ? 'border-rose-200 bg-rose-50 text-rose-800' : claim.outcome === 'won' || claim.outcome === 'partial' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-line bg-app text-muted')}>
-            {claim.outcome === 'won' ? 'Paid in full' : claim.outcome === 'partial' ? 'Partial' : claim.outcome.charAt(0).toUpperCase() + claim.outcome.slice(1)}
-          </span>
-        )}
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <div className="flex-1 h-1.5 rounded bg-app overflow-hidden">
-          <div className={'h-full ' + (done === gates.length ? 'bg-emerald-500' : 'bg-brand-500')} style={{ width: Math.round((done / gates.length) * 100) + '%' }} />
-        </div>
-        <span className="text-[10px] text-muted tabular-nums shrink-0">{done}/{gates.length} evidence</span>
-        <span className="text-[10px] text-muted shrink-0">{items.length} item{items.length === 1 ? '' : 's'}</span>
-      </div>
-      {claim.payment_verified === true && claim.owner_adjusted !== true && claim.stage === 'settle' && (
-        <div className="mt-1.5 text-[10px] text-amber-800">Paid — owner statement still to adjust</div>
-      )}
-    </button>
+    </li>
   )
 }
 
@@ -426,10 +368,9 @@ function NewClaimModal({ onClose, onCreated }: { onClose: () => void; onCreated:
         <div className="flex items-center gap-2 px-5 py-3 border-b border-line">
           <ShieldAlert size={16} className="text-ink" />
           <span className="font-semibold text-ink">Start a claim</span>
-          <button onClick={onClose} className="ml-auto text-muted hover:text-ink"><X size={16} /></button>
+          <span className="ml-auto"><IconBtn title="Close" onClick={onClose}><X size={15} /></IconBtn></span>
         </div>
         <div className="p-5">
-          <p className="text-sm text-muted mb-3">Find the stay the damage happened on. Guest name or confirmation code — everything else comes off the booking.</p>
           <div className="flex gap-2">
             <input
               autoFocus value={q} onChange={e => setQ(e.target.value)}
@@ -488,10 +429,9 @@ function NewClaimModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           )}
 
           {!matches && (
-            <div className="mt-4 rounded-xl border border-line bg-app/50 p-3 text-[12px] text-muted flex items-start gap-2">
-              <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
-              <span>Every channel has its own clock &mdash; Airbnb and Vrbo close 14 days after checkout, direct bookings have no window at all because we hold the card. Whatever you pick, the claim is stamped with a due date and a hard cutoff, and the board counts down to the due date.</span>
-            </div>
+            <p className="mt-3 text-[12px] text-muted flex items-center gap-1.5" title="Airbnb and Vrbo close 14 days after checkout; direct bookings have no window because we hold the card. Every claim is stamped with a due date and a hard cutoff.">
+              <CheckCircle2 size={13} className="shrink-0" /> Guest, dates, code and filing deadline come off the booking.
+            </p>
           )}
         </div>
       </div>

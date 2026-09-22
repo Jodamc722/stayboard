@@ -3,6 +3,8 @@
 // and create + assign ONE Breezeway task per item (approval-gated; the mobile link never does this).
 import { useEffect, useState } from 'react'
 import { rollupBuilding } from '@/lib/optimize-score'
+import { ClipboardList, Check, RotateCcw, Link2, Users, ChevronDown, Plus, Loader2 } from 'lucide-react'
+import { Tag, Pill, LeanHead, IconBtn, Tip, LeanList, LeanRow, LeanEmpty } from '@/components/lean'
 
 type Counts = { total: number; open: number; tasks: number }
 type Audit = { id: string; listingId: string; shareCode: string; status: string; createdAt: string; unit: string; nextCheckout?: string | null; building: string; counts: Counts; auditType?: string | null; updatedAt?: string | null; prospect?: boolean }
@@ -58,6 +60,7 @@ export function AuditDesk() {
   const [coverBusy, setCoverBusy] = useState('')
   const [batchBusy, setBatchBusy] = useState('')
   const [batchMsg, setBatchMsg] = useState('')
+  const [moreOpen, setMoreOpen] = useState(false)
 
   async function createAllAudits() {
     if (!confirm('Create an audit link for every active listing that does not have one yet?')) return
@@ -291,54 +294,80 @@ export function AuditDesk() {
   const roomNames: string[] = []
   for (const it of items) if (roomNames.indexOf(it.room) < 0) roomNames.push(it.room)
 
+  const openAudits = audits.filter(a => a.status !== 'completed')
+  const nDue = audits.filter(a => !!dueLabel(a)).length
+  const nOpenItems = openAudits.reduce((n, a) => n + (a.counts ? a.counts.open : 0), 0)
+  const nSel = Object.keys(selected).filter(k => selected[k]).length
+  const goReview = (a: Audit) => { if (a.shareCode) { window.location.href = '/audits/review/' + a.shareCode } else { openAudit(a) } }
+  const day = (a: Audit) => String((a.status === 'completed' ? (a.updatedAt || a.createdAt) : a.createdAt) || '').slice(0, 10)
+  const sel = 'text-[12px] border border-line rounded-lg px-2 py-1 bg-white'
+
   return (
-    <div className="space-y-4">
-      {/* Two pickers and four buttons: five wrapped rows before the first audit on a phone.
-          One swipeable strip below sm, with the listing picker first so it is never off-screen. */}
-      <div className="lh-actions flex items-center gap-2 flex-wrap">
-        <select value={pick} onChange={e => setPick(e.target.value)} className="text-sm border border-line rounded-lg px-2.5 py-2 bg-white max-w-[320px]">
+    <div>
+      <LeanHead title="Property Audits" icon={<ClipboardList size={20} className="text-muted" />}>
+        <Pill title="Audits not yet marked complete">{openAudits.length} open</Pill>
+        {nDue > 0 ? <Pill tone="rose" title="Completed audits 6+ months old (due) or a year+ (overdue) — time to re-audit">{nDue} due</Pill> : null}
+        <Pill tone="amber" title="Captured items still open across open audits">{nOpenItems} items open</Pill>
+      </LeanHead>
+      {/* One line: listing picker first so it is never off-screen on a phone (lh-actions swipes). */}
+      <div className="lh-actions flex items-center gap-1.5 flex-wrap mb-3">
+        <select value={pick} onChange={e => setPick(e.target.value)} className={sel + ' max-w-[16rem]'}>
           <option value="">Pick a listing…</option>
           {listings.map(l => <option key={l.id} value={l.id}>{l.name}{l.building ? ' · ' + l.building : ''}</option>)}
         </select>
-        <select value={newType} onChange={e => setNewType(e.target.value)} className="text-sm rounded-lg border border-line px-2 py-2 bg-white"><option value="onboarding">Onboarding</option><option value="quality">Quality</option></select>
-        <button onClick={createAudit} disabled={!pick || creating} className="text-sm font-semibold px-3 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">{creating ? 'Creating…' : '+ New audit link'}</button>
-        <button onClick={createAllAudits} disabled={creating} className="text-sm font-semibold px-3 py-2 rounded-lg border border-line hover:bg-neutral-50 disabled:opacity-40">Create all</button> <button onClick={createProspect} disabled={creating} className="text-sm font-semibold px-3 py-2 rounded-lg border border-line hover:bg-neutral-50 disabled:opacity-40">+ New unit</button>
-        <span className="text-xs text-muted">Links are mobile-friendly — send to a supervisor or manager.</span>
-        <button onClick={combineOrder} disabled={combining || Object.keys(selected).filter(k => selected[k]).length === 0} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line disabled:opacity-40">{combining ? 'Building…' : ('Combine order (' + Object.keys(selected).filter(k => selected[k]).length + ')')}</button>
-        <label className="text-xs text-muted inline-flex items-center gap-1.5 ml-auto cursor-pointer"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> Show completed</label>
+        <select value={newType} onChange={e => setNewType(e.target.value)} className={sel}><option value="onboarding">Onboarding</option><option value="quality">Quality</option></select>
+        <button onClick={createAudit} disabled={!pick || creating} title="Create a mobile audit link for this listing and copy it — send it to a supervisor or manager" className="text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white disabled:opacity-40 inline-flex items-center gap-1">{creating ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} New link</button>
+        {nSel > 0 ? <button onClick={combineOrder} disabled={combining} title="Copy one combined order list (approved Replace / Add items) for the selected units" className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white disabled:opacity-40">{combining ? 'Building…' : 'Combine order (' + nSel + ')'}</button> : null}
+        <button onClick={() => setMoreOpen(o => !o)} className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink inline-flex items-center gap-1">More <ChevronDown size={12} className={moreOpen ? 'rotate-180' : ''} /></button>
+        <label className="text-[12px] text-muted inline-flex items-center gap-1.5 ml-auto cursor-pointer"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> Show completed</label>
       </div>
-      {/* desk cover upload */}
+      {moreOpen ? (
+        <div className="flex items-center gap-1.5 flex-wrap mb-3">
+          <button onClick={createAllAudits} disabled={creating} title="Create an audit link for every active listing that does not have one" className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white disabled:opacity-40">Create all</button>
+          <button onClick={createProspect} disabled={creating} title="Audit a unit that is not live in Guesty yet" className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white disabled:opacity-40">+ New unit</button>
+          <span className="text-[11px] text-muted">Tick units to combine their orders.</span>
+        </div>
+      ) : null}
       <input id="deskCoverInput" type="file" accept="image/*" onChange={onDeskCover} className="hidden" />
-      {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{err}</div> : null}
-      {loading ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading audits…</div> : null}
-      {!loading && sorted.length === 0 ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">No audits yet — pick a listing above to create the first link.</div> : null}
-      {(() => { const visible = sorted.filter(x => showDone || x.status !== 'completed'); const bldgs: string[] = []; for (const x of visible) { const b = rollupBuilding(x.building); if (bldgs.indexOf(b) < 0) bldgs.push(b) } return <div className="space-y-2">{bldgs.map(bld => (
-        <div key={bld} className="rounded-2xl border border-line bg-white overflow-hidden">
-          <button onClick={() => setExpandedBldg(sb => ({ ...sb, [bld]: !sb[bld] }))} className="w-full flex items-center justify-between gap-2 px-4 py-3 hover:bg-neutral-50"><span className="text-sm font-semibold text-ink">{bld} · {visible.filter(x => (rollupBuilding(x.building)) === bld).length}</span><span className="flex items-center gap-2 normal-case tracking-normal text-[10px]">{visible.filter(x => (rollupBuilding(x.building)) === bld && dueLabel(x)).length > 0 ? <span className="text-rose-600 font-bold">{visible.filter(x => (rollupBuilding(x.building)) === bld && dueLabel(x)).length} due</span> : null}<span className="text-neutral-400">{expandedBldg[bld] ? '▾' : '▸'}</span></span></button>
-          {expandedBldg[bld] ? (<div className="border-t border-line p-2.5 space-y-2 bg-neutral-50/40">
-            <button onClick={() => createBuildingAudit(bld)} disabled={creating} className="w-full text-left text-xs font-semibold px-3 py-2 rounded-xl border border-dashed border-line text-muted hover:bg-white disabled:opacity-40">+ Common areas audit</button>
-          {visible.filter(x => (rollupBuilding(x.building)) === bld).map(a => (
-        <div key={a.id} className="rounded-xl border border-line bg-white overflow-hidden">
-          {/* Nine unshrinkable things sit after the unit name — badges, a date and four buttons. On a
-              phone the row ran off the screen and dragged the whole page sideways with it. It wraps
-              now, and the unit name keeps a floor so the wrap lands after it rather than through it. */}
-          <div className="flex items-center gap-3 px-3.5 py-2.5 flex-wrap">
-            <input type="checkbox" checked={!!selected[a.id]} onChange={e => setSelected(sv => ({ ...sv, [a.id]: e.target.checked }))} onClick={e => e.stopPropagation()} className="mr-2 shrink-0" /><button onClick={() => { if (a.shareCode) { window.location.href = '/audits/review/' + a.shareCode } else { openAudit(a) } }} className="text-left flex-1 min-w-[12rem]">
-              <span className="text-sm font-semibold text-ink">{a.unit}</span>
-              {a.building ? <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{a.building}</span> : null}{a.nextCheckout ? <span className="ml-2 text-[10px] text-amber-700">next checkout {a.nextCheckout.slice(5)}</span> : <span className="ml-2 text-[10px] text-neutral-300">no upcoming checkout</span>}
-            </button>
-            <span className="text-xs text-muted shrink-0">{a.counts.total} items · {a.counts.open} open · {a.counts.tasks} tasks</span>
-            <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ' + (a.auditType === 'quality' ? 'bg-indigo-100 text-indigo-700' : 'bg-sky-100 text-sky-700')}>{a.auditType === 'quality' ? 'QUALITY' : 'ONBOARDING'}</span>
-            <span className="text-[10px] text-neutral-400 shrink-0">{String((a.status === 'completed' ? (a.updatedAt || a.createdAt) : a.createdAt) || '').slice(0, 10)}</span>
-            {dueLabel(a) ? <span className="lh-chip text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-rose-100 text-rose-700">{dueLabel(a)}</span> : null}
-            <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ' + (a.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{a.status === 'completed' ? 'COMPLETED' : 'OPEN'}</span>
-            <button onClick={() => markComplete(a, a.status === 'completed')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{a.status === 'completed' ? 'Reopen' : 'Mark complete'}</button>
-            <button onClick={() => copyLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{copied === a.id ? 'Copied ✓' : 'Copy link'}</button>
-            <button onClick={() => copyFieldLink(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 shrink-0">{copied === 'field-' + a.id ? 'Copied ✓' : 'Team link'}</button>
-            <button onClick={() => { if (a.shareCode) { window.location.href = '/audits/review/' + a.shareCode } else { openAudit(a) } }} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50 shrink-0">{openId === a.id ? 'Close' : 'Review'}</button>
-          </div>
-          {openId === a.id ? (
-            <div className="border-t border-line px-3.5 py-3 space-y-3 bg-neutral-50/50">
+      {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 mb-3">{err}</div> : null}
+      {loading ? <LeanEmpty>Loading audits…</LeanEmpty> : null}
+      {!loading && sorted.length === 0 ? <LeanEmpty>No audits yet — pick a listing to create the first link.</LeanEmpty> : null}
+      {(() => { const visible = sorted.filter(x => showDone || x.status !== 'completed'); const bldgs: string[] = []; for (const x of visible) { const b = rollupBuilding(x.building); if (bldgs.indexOf(b) < 0) bldgs.push(b) } return <div>{bldgs.map(bld => { const inB = visible.filter(x => rollupBuilding(x.building) === bld); const nDueB = inB.filter(x => !!dueLabel(x)).length; const isOpen = !!expandedBldg[bld]; return (
+        <section key={bld} className="mb-1.5">
+          <button onClick={() => setExpandedBldg(sb => ({ ...sb, [bld]: !sb[bld] }))} className="w-full flex items-center gap-2 px-1 py-1.5 text-left">
+            <ChevronDown size={13} className={'text-muted transition ' + (isOpen ? '' : '-rotate-90')} />
+            <span className="text-[13px] font-semibold text-ink">{bld}</span>
+            <span className="text-[11.5px] text-muted tabular-nums">{inB.length}</span>
+            {nDueB > 0 ? <Tag tone="rose" title="Re-audit due or overdue">{nDueB} due</Tag> : null}
+          </button>
+          {isOpen ? (
+            <LeanList>
+              <li className="px-3 sm:px-4 py-1.5"><button onClick={() => createBuildingAudit(bld)} disabled={creating} className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1 disabled:opacity-40"><Plus size={12} /> Common areas audit</button></li>
+              {inB.map(a => { const done = a.status === 'completed'; const due = dueLabel(a); return (
+                <LeanRow key={a.id}
+                  lead={<>
+                    <Tip label="Select for a combined order"><input type="checkbox" checked={!!selected[a.id]} onChange={e => setSelected(sv => ({ ...sv, [a.id]: e.target.checked }))} className="shrink-0" /></Tip>
+                    <button onClick={() => goReview(a)} className="shrink-0 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white hover:opacity-90">{openId === a.id ? 'Close' : 'Review'}</button>
+                  </>}
+                  name={a.unit}
+                  meta={[a.building, a.nextCheckout ? 'next out ' + a.nextCheckout.slice(5) : ''].filter(Boolean).join(' · ')}
+                  tags={<>
+                    <Tag tone={a.auditType === 'quality' ? 'violet' : 'sky'} title={'Created ' + String(a.createdAt || '').slice(0, 10)}>{a.auditType === 'quality' ? 'Quality' : 'Onboarding'}</Tag>
+                    {done ? <Tag tone="emerald" title={'Completed ' + day(a)}>Done {day(a).slice(5)}</Tag> : null}
+                    {due ? <Tag tone="rose" title="Last completed audit is 6+ months old (due) or a year+ (overdue)">{due === 'AUDIT OVERDUE' ? 'Overdue' : 'Re-audit due'}</Tag> : null}
+                    {a.counts.total > 0 ? <Tag tone={a.counts.open ? 'amber' : 'slate'} title={a.counts.total + ' items captured · ' + a.counts.open + ' open · ' + a.counts.tasks + ' Breezeway tasks'}>{a.counts.open ? a.counts.open + ' open' : a.counts.total + ' items'}</Tag> : null}
+                    {a.counts.tasks > 0 ? <Tag tone="sky" title="Breezeway tasks created from this audit">{a.counts.tasks} tasks</Tag> : null}
+                    {a.prospect ? <Tag tone="amber" title="Not live in Guesty yet — assign it to the live listing once created">Pre-launch</Tag> : null}
+                  </>}
+                  actions={<>
+                    <IconBtn title={done ? 'Reopen audit' : 'Mark audit complete'} tone={done ? undefined : 'ok'} onClick={() => markComplete(a, done)}>{done ? <RotateCcw size={14} /> : <Check size={15} />}</IconBtn>
+                    <IconBtn title={copied === a.id ? 'Copied' : 'Copy audit link (for the inspector)'} onClick={() => copyLink(a)}>{copied === a.id ? <Check size={14} /> : <Link2 size={14} />}</IconBtn>
+                    <IconBtn title={copied === 'field-' + a.id ? 'Copied' : 'Copy team worklist link'} tone="ok" onClick={() => copyFieldLink(a)}>{copied === 'field-' + a.id ? <Check size={14} /> : <Users size={14} />}</IconBtn>
+                  </>}
+                  open={openId === a.id}
+                  onToggle={() => openAudit(a)}
+                >{openId === a.id ? (
+            <div className="rounded-xl border border-line px-3 py-3 space-y-3 bg-neutral-50/50">
               {a.prospect ? (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
                   <div className="text-[11px] font-semibold text-amber-800 mb-1.5">Pre-launch unit — assign to the live listing once it is created</div>
@@ -379,7 +408,7 @@ export function AuditDesk() {
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <div className="text-[12px] font-bold text-sky-900">Order list ({order.length})</div>
                     <div className="flex items-center gap-1.5">
-                      <button onClick={() => copyApproveLink(a)} className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-50">{copied === 'approve-' + a.id ? 'Copied ✓' : ('Owner link' + (nOwner ? ' (' + nOwner + ')' : ''))}</button>
+                      <button onClick={() => copyApproveLink(a)} title="Only approved items go on the order. GM-approve routine buys; send big or upgrade items to the owner with this link." className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-50">{copied === 'approve-' + a.id ? 'Copied ✓' : ('Owner link' + (nOwner ? ' (' + nOwner + ')' : ''))}</button>
                       <button onClick={() => copyOrder(a)} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-sky-700 text-white">{copied === 'order-' + a.id ? 'Copied ✓' : 'Generate order'}</button>
                     </div>
                   </div>
@@ -388,9 +417,9 @@ export function AuditDesk() {
                       <div key={'o' + it.id} className="rounded-lg border border-sky-100 bg-white p-1.5">
                         <div className="flex items-center gap-2 text-xs text-sky-950">
                           <span className="inline-flex items-center gap-1 shrink-0">
-                            <button onClick={() => setQty(it, (it.qty || 1) - 1)} className="w-5 h-5 rounded border border-sky-200 bg-white leading-none">-</button>
+                            <button onClick={() => setQty(it, (it.qty || 1) - 1)} title="One fewer" className="w-5 h-5 rounded border border-sky-200 bg-white leading-none">-</button>
                             <span className="w-6 text-center font-semibold">{it.qty || 1}</span>
-                            <button onClick={() => setQty(it, (it.qty || 1) + 1)} className="w-5 h-5 rounded border border-sky-200 bg-white leading-none">+</button>
+                            <button onClick={() => setQty(it, (it.qty || 1) + 1)} title="One more" className="w-5 h-5 rounded border border-sky-200 bg-white leading-none">+</button>
                           </span>
                           <span className="flex-1 truncate">{it.title || it.item_type || 'Item'} <span className="text-sky-700/60">· {it.room}{it.kind === 'add' ? ' · new' : ''}</span></span>
                           <select value={it.status === 'ordered' || it.status === 'done' ? it.status : 'open'} onChange={e => setItemStatus(it, e.target.value)} disabled={!approved} className="text-[11px] border border-sky-200 rounded-lg px-1.5 py-0.5 bg-white shrink-0 disabled:opacity-50">
@@ -410,7 +439,6 @@ export function AuditDesk() {
                       </div>
                     ) })}
                   </div>
-                  <div className="text-[10px] text-sky-700/70 mt-1.5">Only approved items go on the order. GM-approve routine buys; send big or upgrade items to the owner via the Owner link.</div>
                 </div>
               ) })()}
               {itemsBusy ? <div className="text-sm text-muted">Loading items…</div> : null}
@@ -479,12 +507,12 @@ export function AuditDesk() {
                 </div>
               ))}
             </div>
+                ) : null}</LeanRow>
+              ) })}
+            </LeanList>
           ) : null}
-        </div>
-      ))}
-          </div>) : null}
-        </div>
-      ))}</div> })()}
+        </section>
+      ) })}</div> })()}
     </div>
   )
 }
