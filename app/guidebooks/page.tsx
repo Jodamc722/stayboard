@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
-import { BookOpen, ArrowRight, Sparkles } from 'lucide-react'
+import { ArrowRight, Sparkles } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanSection, LeanEmpty } from '@/components/lean'
 import { PushGuestyButton } from '@/components/PushGuestyButton'
 import { pageRows } from '@/lib/db-page'
 
@@ -48,47 +49,40 @@ export default async function GuidebooksPage() {
   const groups = Object.keys(_groups).sort((a, b) => a.localeCompare(b)).map((name) => ({ name, items: _groups[name] }))
 
 
+  const drafts = rows.filter((r: any) => r.status === 'draft').length
+
   return (
     <Shell>
-      <header className="mb-7">
-        <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold">Guests</p>
-        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Guidebooks</h1>
-        <p className="text-sm text-muted mt-1">Generated guest guidebooks. Create one from any property page → “Generate Guidebook”.</p>
-        {/* Plain block above 640px, so the buttons keep flowing inline exactly as before; one swipeable strip on a phone. */}
-        <div className="lh-actions">
-          <Link href="/guidebooks/bulk" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg bg-neutral-900 text-white px-3.5 py-2 hover:bg-neutral-700">Bulk build a building <ArrowRight size={15} /></Link>
-          <Link href="/guidebooks/fix" className="mt-3 ml-2 inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg border border-line bg-white text-ink px-3.5 py-2 hover:bg-app">Bulk fix with AI <Sparkles size={15} /></Link>
-          <span className="ml-2 align-middle inline-block"><PushGuestyButton /></span>
-        </div>
-      </header>
+      <LeanHead title="Guidebooks">
+        <Pill title="Guidebooks (newest per unit)">{rows.length} books</Pill>
+        <Pill title="Buildings with at least one guidebook">{groups.length} bldgs</Pill>
+        {drafts ? <Pill tone="amber" title="Still in draft">{drafts} draft</Pill> : null}
+        <Link href="/guidebooks/bulk" title="Generate guidebooks for every unit in a building" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg bg-neutral-900 text-white px-2.5 py-1 hover:bg-neutral-700">Bulk build <ArrowRight size={13} /></Link>
+        <Link href="/guidebooks/fix" title="Fix many guidebooks at once with AI" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line bg-white text-ink px-2.5 py-1 hover:bg-app">Bulk fix <Sparkles size={13} /></Link>
+        <PushGuestyButton />
+      </LeanHead>
       {rows.length === 0 ? (
-        <div className="rounded-2xl border border-line bg-white p-10 text-center text-sm text-muted">
-          <BookOpen className="mx-auto mb-3 opacity-40" />
-          No guidebooks yet. Open a unit under <Link href="/buildings" className="underline font-semibold">Properties</Link> and click “Generate Guidebook”.
-        </div>
+        <LeanEmpty>No guidebooks yet — generate one from a unit under <Link href="/buildings" className="underline font-semibold">Properties</Link>.</LeanEmpty>
       ) : (
-        <div className="space-y-8">
-          {groups.map((grp) => (
-            <div key={grp.name}>
-              <h3 className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold mb-2.5">{grp.name} <span className="text-line">·</span> {grp.items.length}</h3>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {grp.items.map(g => (
-            <Link key={g.id} href={`/guidebooks/${g.id}`}
-              className="group rounded-2xl border border-line bg-white p-5 hover:border-ink/30 hover:shadow-sm transition">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-ink leading-snug">{g.listing_name || g.title}</p>
-                  {nickById[g.listing_id] ? <p className="text-[11px] text-muted/80 mt-0.5">{nickById[g.listing_id]}</p> : null}
-                  <p className="text-xs text-muted mt-1">{new Date(g.updated_at).toLocaleDateString()} · {g.theme === 'dark' ? 'Dark luxe' : 'Coastal editorial'} · {g.status}</p>
-                </div>
-                <ArrowRight size={16} className="text-muted group-hover:text-ink transition" />
-              </div>
-            </Link>
-          ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        groups.map((grp) => (
+          <LeanSection key={grp.name} title={grp.name} n={grp.items.length}>
+            <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
+              {grp.items.map((g: any) => (
+                <li key={g.id}>
+                  <Link href={`/guidebooks/${g.id}`} title="Open to view, edit or print" className="group flex items-center gap-2.5 px-3 sm:px-4 py-2 hover:bg-app/60">
+                    <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{g.listing_name || g.title}</span>
+                      <span className="text-[12px] text-muted truncate max-w-[18rem]">{[nickById[g.listing_id], new Date(g.updated_at).toLocaleDateString()].filter(Boolean).join(' · ')}</span>
+                      <Tag tone={g.theme === 'dark' ? 'violet' : 'sky'} title="Theme">{g.theme === 'dark' ? 'Dark luxe' : 'Coastal'}</Tag>
+                      {g.status ? <Tag tone={g.status === 'draft' ? 'amber' : 'emerald'}>{g.status}</Tag> : null}
+                    </div>
+                    <ArrowRight size={15} className="shrink-0 text-muted group-hover:text-ink transition" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </LeanSection>
+        ))
       )}
     </Shell>
   )

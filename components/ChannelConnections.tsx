@@ -4,18 +4,18 @@
 //
 // Reads /api/channels (ten-minute cache). The page is built to be read top-down in the order a GM
 // actually asks the questions:
-//   1. the tiles — per channel, how many are live and how many are not (the tone says which matters)
-//   2. the matrix — every active listing × every channel; a pill per cell, tap it for the detail
-//      (status, Airbnb's approval text, sync category, last booking, 90-day count, the public link)
-//   3. "Not connected" — the plain list of listings off a MAJOR channel, which is the thing he asked for
-//   4. inactive listings, folded — reported, never alerted
+//   1. per-channel counts (one line; tone says which matters; tap to filter)
+//   2. tabs: the matrix — every active listing × every channel, a pill per cell, tap for the detail;
+//      "Not connected" — listings off a MAJOR channel, the thing he asked for; inactive — reported,
+//      never alerted
 //
 // Deep links: /channels?listing=<id> (from the Command Center and the audit finding) scrolls to and
 // highlights that row; /channels?problems=1 (from the Slack message) opens with the problems filter on.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Loader2, RefreshCw, Download, ExternalLink, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Loader2, RefreshCw, Download, ExternalLink, AlertTriangle } from 'lucide-react'
+import { LeanHead, Pill as LPill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn } from '@/components/lean'
 import { Sheet } from '@/components/Sheet'
 import {
   CHANNELS, MAJOR_KEYS, VERDICT_LABEL, VERDICT_ORDER, isProblem, verdictRank,
@@ -47,34 +47,7 @@ const dayOf = (iso: string | null | undefined) => {
   return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d + ' days ago'
 }
 
-function Tile({ label, live, bad, missing, unknown, stale, total, major, active, onClick }: {
-  label: string; live: number; bad: number; missing: number; unknown: number; stale: number; total: number; major: boolean; active: boolean; onClick: () => void
-}) {
-  const tone = bad > 0 ? (major ? 'hot' : 'warn') : unknown > 0 ? 'warn' : 'ok'
-  const num = tone === 'hot' ? 'text-rose-700' : tone === 'warn' ? 'text-amber-800' : 'text-emerald-700'
-  const dot = tone === 'hot' ? 'bg-rose-500' : tone === 'warn' ? 'bg-amber-400' : 'bg-emerald-500'
-  return (
-    <button onClick={onClick} aria-pressed={active}
-      className={'shrink-0 text-left rounded-xl border px-3 py-2 min-w-[132px] snap-start transition-colors ' + (active ? 'border-ink bg-white ring-1 ring-ink' : 'border-line bg-white hover:border-ink/30')}>
-      <div className="flex items-center gap-1.5">
-        <span className={'w-1.5 h-1.5 rounded-full ' + dot} aria-hidden />
-        <span className="text-[10.5px] uppercase tracking-wide text-muted font-semibold whitespace-nowrap">{label}{major ? '' : ' ·'}</span>
-      </div>
-      <div className="flex items-baseline gap-1.5 mt-0.5">
-        <span className={'text-[17px] font-bold tabular-nums leading-none ' + num}>{live}</span>
-        <span className="text-[10.5px] text-muted leading-none whitespace-nowrap">of {total} live</span>
-      </div>
-      <div className="mt-1 text-[10.5px] leading-none text-muted whitespace-nowrap">
-        {bad ? <span className="text-rose-700 font-semibold">{bad} broken</span> : <span>0 broken</span>}
-        {' · '}{missing} not connected
-        {unknown ? <span className="text-amber-800"> · {unknown} unknown</span> : null}
-        {stale ? <span className="text-sky-800"> · {stale} quiet</span> : null}
-      </div>
-    </button>
-  )
-}
-
-function Pill({ cell, onClick, ariaLabel }: { cell: Cell; onClick: () => void; ariaLabel: string }) {
+function CellPill({ cell, onClick, ariaLabel }: { cell: Cell; onClick: () => void; ariaLabel: string }) {
   return (
     <button onClick={onClick} aria-label={ariaLabel} title={VERDICT_LABEL[cell.verdict] + (cell.status ? ' · ' + cell.status : '')}
       className={'inline-flex items-center justify-center min-w-[44px] h-7 px-1.5 rounded-md border text-[10.5px] font-semibold ' + PILL[cell.verdict]}>
@@ -96,7 +69,8 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
   const [market, setMarket] = useState('all')
   const [building, setBuilding] = useState('all')
   const [q, setQ] = useState('')
-  const [showInactive, setShowInactive] = useState(false)
+  const [tab, setTab] = useState<'matrix' | 'missing' | 'inactive'>('matrix')
+  const showInactive = tab === 'inactive'   // the CSV includes inactive rows while that tab is open
   const [sel, setSel] = useState<{ l: ListingHealth; key: string } | null>(null)
   const focusRef = useRef<HTMLTableRowElement | null>(null)
 
@@ -176,8 +150,11 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
     URL.revokeObjectURL(url)
   }
 
-  if (loading && !data) return <div className="flex items-center gap-2 text-sm text-muted py-10"><Loader2 size={16} className="animate-spin" /> Reading every listing&apos;s channels…</div>
-  if (err && !data) return <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div>
+  const head = (extra?: React.ReactNode) => (
+    <LeanHead title="Channel connections">{extra}</LeanHead>
+  )
+  if (loading && !data) return <div>{head()}<LeanEmpty><Loader2 size={16} className="animate-spin inline mr-2" /> Reading every listing&apos;s channels…</LeanEmpty></div>
+  if (err && !data) return <div>{head()}<div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div></div>
   if (!data) return null
 
   const total = data.listings.length
@@ -187,124 +164,140 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
   const unknownStatuses = CHANNELS.flatMap(c => Object.keys(data.statusesSeen?.[c.key] || {}).filter(s => !/^(COMPLETED|FAILED|DISCONNECTED|\(none\))$/.test(s)).map(s => c.label + ': ' + s + ' ×' + data.statusesSeen[c.key][s]))
 
   return (
-    <div className="space-y-5">
-      {/* ── tiles ────────────────────────────────────────────────────────── */}
-      <div className="flex gap-2 overflow-x-auto snap-x pb-1 -mx-1 px-1 sm:flex-wrap">
+    <div className="space-y-3">
+      {/* Every active listing × every channel, from Guesty's own integration status. The check re-runs
+          after each listings sync; a listing that drops off a MAJOR channel is posted to Slack and
+          opens a finding on Audits until it is live again. */}
+      {head(<>
+        <LPill title="Active listings">{total} active</LPill>
+        <LPill tone={totalProblems ? 'rose' : 'emerald'} title="Missing, failed, disconnected or suspended on Airbnb, Booking.com, Vrbo or Expedia" onClick={() => setTab('missing')}>{totalProblems} off a major</LPill>
+        <LPill title={'Data as of ' + (when(data.at) || '—')}>checked {when(data.snapshotAt) || 'never'}</LPill>
+      </>)}
+
+      {/* ── per-channel counts — tap one to filter the matrix to it ───────── */}
+      <div className="flex items-center gap-1.5 flex-wrap">
         {CHANNELS.map(c => {
           const t = data.totals[c.key]
-          return <Tile key={c.key} label={c.label} major={c.major} total={total} live={t.live + t.stale} stale={t.stale} bad={t.failed + t.disconnected + t.suspended} missing={t.missing} unknown={t.unknown}
-            active={channel === c.key} onClick={() => setChannel(channel === c.key ? 'all' : c.key)} />
+          const bad = t.failed + t.disconnected + t.suspended
+          const tone = bad > 0 ? (c.major ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800') : t.unknown > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'
+          const active = channel === c.key
+          return (
+            <button key={c.key} onClick={() => setChannel(active ? 'all' : c.key)} aria-pressed={active}
+              title={(t.live + t.stale) + ' of ' + total + ' live · ' + bad + ' broken · ' + t.missing + ' not connected' + (t.unknown ? ' · ' + t.unknown + ' unknown' : '') + (t.stale ? ' · ' + t.stale + ' quiet' : '') + (c.major ? '' : ' · minor channel: shown, never alerted')}
+              className={'rounded-lg px-2 py-1 text-[12px] font-semibold tabular-nums whitespace-nowrap ' + tone + (active ? ' ring-2 ring-ink' : ' hover:opacity-80')}>
+              {c.label}{c.major ? '' : ' ·'} {t.live + t.stale}/{total}{bad ? ' · ' + bad + ' broken' : ''}
+            </button>
+          )
         })}
       </div>
-      <p className="text-[11.5px] text-muted -mt-2">
-        {total} active listings · <span className={totalProblems ? 'text-rose-700 font-semibold' : 'text-emerald-700 font-semibold'}>{totalProblems} off a major channel</span>
-        {' · '}last checked {when(data.snapshotAt) || 'never'} · data as of {when(data.at)}
-        {unknownStatuses.length ? <span className="text-amber-800"> · statuses this page does not recognise: {unknownStatuses.join(', ')}</span> : null}
-        {' · '}channels marked · are minor: shown, never alerted.
-      </p>
+      {unknownStatuses.length ? <p className="text-[11.5px] text-amber-800">Statuses this page does not recognise: {unknownStatuses.join(', ')}</p> : null}
 
-      {/* ── controls ─────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-        <label className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 cursor-pointer">
-          <input type="checkbox" checked={onlyProblems} onChange={e => setOnlyProblems(e.target.checked)} /> Only problems
-        </label>
-        <select value={channel} onChange={e => setChannel(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1.5" aria-label="Channel">
-          <option value="all">All channels</option>
-          {CHANNELS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-        </select>
-        <select value={market} onChange={e => { setMarket(e.target.value); setBuilding('all') }} className="rounded-lg border border-line bg-white px-2 py-1.5" aria-label="Market">
-          <option value="all">All markets</option>
-          {markets.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <select value={building} onChange={e => setBuilding(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1.5" aria-label="Building">
-          <option value="all">All buildings</option>
-          {buildings.map(b => <option key={b} value={b}>{b}</option>)}
-        </select>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit…" className="rounded-lg border border-line bg-white px-2.5 py-1.5 w-40" aria-label="Search unit" />
-        <span className="flex-1" />
-        <button onClick={csv} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 font-semibold hover:bg-app"><Download size={13} /> CSV</button>
-        {canRun ? (
-          <button onClick={runCheck} disabled={running} className="inline-flex items-center gap-1.5 rounded-lg border border-ink bg-ink text-white px-2.5 py-1.5 font-semibold disabled:opacity-60">
-            {running ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Refresh
-          </button>
-        ) : null}
-      </div>
+      <LeanTabs
+        tabs={[
+          { key: 'matrix' as const, label: 'Matrix', n: rows.length },
+          { key: 'missing' as const, label: 'Not connected', n: notConnected.length },
+          { key: 'inactive' as const, label: 'Inactive', n: data.inactive.length },
+        ]}
+        value={tab} onChange={setTab}
+        right={<>
+          <IconBtn title="Download as CSV" onClick={csv}><Download size={13} /></IconBtn>
+          {canRun ? (
+            <button onClick={runCheck} disabled={running} title="Re-run the channel check now" className="inline-flex items-center gap-1 rounded-lg border border-ink bg-ink text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-60">
+              {running ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Refresh
+            </button>
+          ) : null}
+        </>} />
+
+      {/* ── controls — one line ──────────────────────────────────────────── */}
+      {tab !== 'missing' ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+          <label className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1 cursor-pointer">
+            <input type="checkbox" checked={onlyProblems} onChange={e => setOnlyProblems(e.target.checked)} /> Only problems
+          </label>
+          <select value={channel} onChange={e => setChannel(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1" aria-label="Channel">
+            <option value="all">All channels</option>
+            {CHANNELS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </select>
+          <select value={market} onChange={e => { setMarket(e.target.value); setBuilding('all') }} className="rounded-lg border border-line bg-white px-2 py-1" aria-label="Market">
+            <option value="all">All markets</option>
+            {markets.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <select value={building} onChange={e => setBuilding(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1" aria-label="Building">
+            <option value="all">All buildings</option>
+            {buildings.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit…" className="rounded-lg border border-line bg-white px-2 py-1 w-36" aria-label="Search unit" />
+        </div>
+      ) : null}
       {runNote ? <div className="rounded-lg border border-line bg-white px-3 py-2 text-[12.5px] text-ink">{runNote}</div> : null}
       {err ? <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-800">{err}</div> : null}
 
       {/* ── matrix ───────────────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
-        {/* The matrix scrolls inside its own frame so the channel names stay pinned at the top
-            while you scroll the units (Jon, 2026-09-18: "freeze the header so you can see the
-            channel"); the Unit column stays pinned on the left the same way. */}
-        <div className="overflow-auto max-h-[calc(100vh-190px)]">
-          <table className="min-w-full text-[12.5px]">
-            <thead className="text-[10.5px] uppercase tracking-wide text-muted">
-              <tr>
-                <th className="text-left px-3 py-2 sticky left-0 top-0 bg-app z-30 border-b border-line">Unit</th>
-                {cols.map(c => <th key={c.key} className={'px-1.5 py-2 text-center whitespace-nowrap sticky top-0 bg-app z-20 border-b border-line ' + (c.major ? 'text-ink' : '')}>{c.label}</th>)}
-                <th className="px-2 py-2 text-right whitespace-nowrap sticky top-0 bg-app z-20 border-b border-line">Bookings 90d</th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.length === 0 ? (
-                <tr><td colSpan={cols.length + 2} className="px-3 py-6 text-center text-muted">Nothing matches — every listing in this view is live everywhere.</td></tr>
-              ) : groups.map(g => (
-                <GroupRows key={g.building} building={g.building} rows={g.rows} cols={cols} focusId={focusId} focusRef={focusRef} onCell={(l, key) => setSel({ l, key })} />
-              ))}
-            </tbody>
-          </table>
+      {tab === 'matrix' ? (
+        <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+          {/* The matrix scrolls inside its own frame so the channel names stay pinned at the top
+              while you scroll the units (Jon, 2026-09-18: "freeze the header so you can see the
+              channel"); the Unit column stays pinned on the left the same way. */}
+          <div className="overflow-auto max-h-[calc(100vh-190px)]">
+            <table className="min-w-full text-[12.5px]">
+              <thead className="text-[10.5px] uppercase tracking-wide text-muted">
+                <tr>
+                  <th className="text-left px-3 py-2 sticky left-0 top-0 bg-app z-30 border-b border-line">Unit</th>
+                  {cols.map(c => <th key={c.key} className={'px-1.5 py-2 text-center whitespace-nowrap sticky top-0 bg-app z-20 border-b border-line ' + (c.major ? 'text-ink' : '')} title={c.major ? 'Major channel — alerted' : 'Minor channel — shown, never alerted'}>{c.label}</th>)}
+                  <th className="px-2 py-2 text-right whitespace-nowrap sticky top-0 bg-app z-20 border-b border-line">Bookings 90d</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.length === 0 ? (
+                  <tr><td colSpan={cols.length + 2} className="px-3 py-6 text-center text-muted">Nothing matches — every listing in this view is live everywhere.</td></tr>
+                ) : groups.map(g => (
+                  <GroupRows key={g.building} building={g.building} rows={g.rows} cols={cols} focusId={focusId} focusRef={focusRef} onCell={(l, key) => setSel({ l, key })} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* The legend answers "what do the symbols mean" for the cell pills. */}
+          <div className="px-3 py-1.5 border-t border-line text-[11px] text-muted flex flex-wrap gap-x-3 gap-y-1">
+            {VERDICT_ORDER.slice().reverse().map(v => <span key={v} className="inline-flex items-center gap-1" title={v === 'stale' ? 'Connected, no booking in 90 days' : v === 'unknown' ? 'A status this page has not seen' : undefined}><span className={'inline-flex items-center justify-center rounded border px-1 text-[9.5px] font-semibold ' + PILL[v]}>{SHORT[v]}</span> {VERDICT_LABEL[v]}</span>)}
+          </div>
         </div>
-        <div className="px-3 py-2 border-t border-line text-[11px] text-muted flex flex-wrap gap-x-3 gap-y-1">
-          {VERDICT_ORDER.slice().reverse().map(v => <span key={v} className="inline-flex items-center gap-1"><span className={'inline-block w-3 h-3 rounded border ' + PILL[v]} /> {VERDICT_LABEL[v]}{v === 'stale' ? ' (connected, no booking in 90d)' : v === 'unknown' ? ' (a status we have not seen)' : ''}</span>)}
-        </div>
-      </div>
+      ) : null}
 
-      {/* ── not connected ────────────────────────────────────────────────── */}
-      <section className="rounded-2xl border border-line bg-white shadow-soft">
-        <div className="px-4 py-3 border-b border-line">
-          <h2 className="text-[14px] font-bold text-ink">Not connected on a major channel</h2>
-          <p className="text-[11.5px] text-muted mt-0.5">Active listings that are missing, failed, disconnected or suspended on Airbnb, Booking.com, Vrbo or Expedia. Fix: Guesty → Listings → Channels.</p>
-        </div>
-        {notConnected.length === 0 ? <div className="px-4 py-4 text-[12.5px] text-emerald-700 font-semibold">Every active listing is live on all four major channels.</div> : (
-          <ul className="divide-y divide-line">
+      {/* ── not connected — the plain list Jon asked for. Fix: Guesty → Listings → Channels ── */}
+      {tab === 'missing' ? (
+        notConnected.length === 0 ? <LeanEmpty>Every active listing is live on all four major channels.</LeanEmpty> : (
+          <LeanList>
             {notConnected.map(l => (
-              <li key={l.id} className="px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]">
-                <Link href={'/listings/' + l.id} className="font-semibold text-ink hover:underline">{l.name}</Link>
-                <span className="text-muted">{l.building} · {l.market}</span>
-                <span className="flex flex-wrap gap-1">
-                  {l.missingMajor.map(k => <button key={k} onClick={() => setSel({ l, key: k })} className={'rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold ' + PILL[l.cells[k].verdict]}>{CHANNELS.find(c => c.key === k)?.label}: {VERDICT_LABEL[l.cells[k].verdict]}</button>)}
-                </span>
-                <span className="ml-auto text-muted tabular-nums">{l.bookings90d} bookings 90d</span>
-              </li>
+              <LeanRow key={l.id}
+                name={<Link href={'/listings/' + l.id} className="hover:underline">{l.name}</Link>}
+                meta={l.building + ' · ' + l.market}
+                tags={<>
+                  {l.missingMajor.map(k => <button key={k} onClick={() => setSel({ l, key: k })} title="Details and how to fix" className={'rounded-md border px-1.5 py-[2px] text-[10.5px] font-semibold ' + PILL[l.cells[k].verdict]}>{CHANNELS.find(c => c.key === k)?.label}: {VERDICT_LABEL[l.cells[k].verdict]}</button>)}
+                  <Tag title="Bookings in the last 90 days, all channels">{l.bookings90d} bk 90d</Tag>
+                </>} />
             ))}
-          </ul>
-        )}
-      </section>
+          </LeanList>
+        )
+      ) : null}
 
-      {/* ── inactive ─────────────────────────────────────────────────────── */}
-      <section className="rounded-2xl border border-line bg-white shadow-soft">
-        <button onClick={() => setShowInactive(v => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left" aria-expanded={showInactive}>
-          {showInactive ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <span className="text-[14px] font-bold text-ink">Inactive listings</span>
-          <span className="text-[11.5px] text-muted">{data.inactive.length} · reported, never alerted</span>
-        </button>
-        {showInactive ? (
-          <div className="overflow-x-auto border-t border-line">
+      {/* ── inactive — reported, never alerted ───────────────────────────── */}
+      {tab === 'inactive' ? (
+        data.inactive.length === 0 ? <LeanEmpty>No inactive listings.</LeanEmpty> : (
+          <div className="rounded-2xl border border-line bg-white shadow-soft overflow-x-auto">
             <table className="min-w-full text-[12.5px]">
               <tbody>
                 {data.inactive.map(l => (
                   <tr key={l.id} className="border-b border-line/60">
                     <td className="px-3 py-1.5 whitespace-nowrap"><span className="font-semibold">{l.name}</span> <span className="text-muted">· {l.building} · {l.status}</span></td>
-                    {cols.map(c => <td key={c.key} className="px-1.5 py-1.5 text-center"><Pill cell={l.cells[c.key]} onClick={() => setSel({ l, key: c.key })} ariaLabel={l.name + ' on ' + c.label + ': ' + VERDICT_LABEL[l.cells[c.key].verdict]} /></td>)}
+                    {cols.map(c => <td key={c.key} className="px-1.5 py-1.5 text-center"><CellPill cell={l.cells[c.key]} onClick={() => setSel({ l, key: c.key })} ariaLabel={l.name + ' on ' + c.label + ': ' + VERDICT_LABEL[l.cells[c.key].verdict]} /></td>)}
                     <td className="px-2 py-1.5 text-right tabular-nums text-muted">{l.bookings90d}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        ) : null}
-      </section>
+        )
+      ) : null}
 
       {/* ── cell detail ──────────────────────────────────────────────────── */}
       <Sheet open={!!sel} onClose={() => setSel(null)} title={sel ? sel.l.name + ' · ' + (selDef?.label || sel.key) : ''} subtitle={sel ? sel.l.building + ' · ' + sel.l.market + (sel.l.active ? '' : ' · inactive (' + sel.l.status + ')') : undefined}>
@@ -356,7 +349,7 @@ function GroupRows({ building, rows, cols, focusId, focusRef, onCell }: {
             <td className="px-3 py-1.5 whitespace-nowrap sticky left-0 bg-white z-10">
               <Link href={'/listings/' + l.id} className="font-semibold text-ink hover:underline">{l.name}</Link>
             </td>
-            {cols.map(c => <td key={c.key} className="px-1.5 py-1.5 text-center"><Pill cell={l.cells[c.key]} onClick={() => onCell(l, c.key)} ariaLabel={l.name + ' on ' + c.label + ': ' + VERDICT_LABEL[l.cells[c.key].verdict]} /></td>)}
+            {cols.map(c => <td key={c.key} className="px-1.5 py-1.5 text-center"><CellPill cell={l.cells[c.key]} onClick={() => onCell(l, c.key)} ariaLabel={l.name + ' on ' + c.label + ': ' + VERDICT_LABEL[l.cells[c.key].verdict]} /></td>)}
             <td className="px-2 py-1.5 text-right tabular-nums text-muted">{l.bookings90d}</td>
           </tr>
         )

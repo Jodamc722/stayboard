@@ -5,7 +5,8 @@
 // before the first booking exists, because the whole point of a profile is knowing something
 // about a person Guesty doesn't.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Search, Star, Plus, Check, X, Phone, Mail, ChevronDown } from 'lucide-react'
+import { Loader2, Search, Star, Plus, Check, X, Phone, Mail } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanEmpty } from '@/components/lean'
 
 type Guest = {
   key: string; name: string; email: string | null; phone: string | null
@@ -48,90 +49,82 @@ export function GuestsDirectory() {
       (g.name + ' ' + (g.email || '') + ' ' + (g.phone || '') + ' ' + g.units.join(' ') + ' ' + (g.profile?.tags || []).join(' ')).toLowerCase().includes(n))
   }, [data, q])
 
-  if (err) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div>
-  if (!data) return <div className="rounded-2xl border border-line bg-white p-10 text-center text-sm text-muted"><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading every guest…</div>
+  const t = data?.totals || {}
+  const head = (
+    <LeanHead title="Guests">
+      <Pill title="Everyone who stayed in the last two years, plus profiles added by hand">{t.guests ?? 0} guests</Pill>
+      <Pill title="Guests with more than one stay">{t.repeat ?? 0} repeat</Pill>
+      <Pill tone="amber" title="VIP guests get an automatic pre-arrival inspection">{t.vip ?? 0} VIP</Pill>
+      <Pill tone="emerald" title="Staying with us right now">{t.inHouse ?? 0} in house</Pill>
+    </LeanHead>
+  )
+  if (err) return <div>{head}<div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div></div>
+  if (!data) return <div>{head}<LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading every guest…</LeanEmpty></div>
 
-  const t = data.totals || {}
   return (
     <div className="space-y-3">
-      {/* the numbers that describe the guest book */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {[['Guests', t.guests], ['Repeat guests', t.repeat], ['VIP', t.vip], ['In house now', t.inHouse]].map(([l, v]: any) => (
-          <div key={l} className="rounded-2xl border border-line bg-white px-4 py-3">
-            <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted">{l}</p>
-            <p className="text-xl font-bold text-ink tabular-nums">{v ?? 0}</p>
-          </div>
-        ))}
-      </div>
-
+      {head}
       <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+        <div className="relative flex-1 max-w-md">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input value={q} onChange={e => { setQ(e.target.value); setShown(50) }} placeholder="Search name, email, phone, unit, tag…"
-            className="w-full rounded-xl border border-line bg-white pl-9 pr-3 py-2.5 text-[13px]" />
+            className="w-full rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px]" />
         </div>
-        <button onClick={() => setAdding(a => !a)}
-          className="rounded-xl bg-ink text-white px-3.5 py-2.5 text-[13px] font-bold inline-flex items-center gap-1.5 shrink-0">
-          <Plus size={14} /> Add guest
+        <button onClick={() => setAdding(a => !a)} title="Create a profile before the first booking exists"
+          className="rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-bold inline-flex items-center gap-1 shrink-0">
+          <Plus size={13} /> Add guest
         </button>
       </div>
 
       {adding ? <ProfileEditor guest={null} onDone={() => { setAdding(false); load() }} onCancel={() => setAdding(false)} /> : null}
 
-      <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft divide-y divide-line">
-        {list.slice(0, shown).map(g => (
-          <div key={g.key}>
-            <button onClick={() => setOpenKey(openKey === g.key ? '' : g.key)} className="w-full px-4 py-3 text-left hover:bg-app/40">
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="text-[13.5px] font-bold text-ink">{g.name}</span>
-                {g.profile?.vip ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 inline-flex items-center gap-0.5"><Star size={9} /> VIP</span> : null}
-                {g.inHouse ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">In house</span> : null}
-                {(g.profile?.tags || []).slice(0, 3).map(tag => (
-                  <span key={tag} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-app text-muted">{tag}</span>
-                ))}
-                <div className="flex-1" />
-                <span className="text-[12.5px] text-muted tabular-nums">
-                  {g.stays} stay{g.stays === 1 ? '' : 's'} · {g.nights}n · <span className="font-bold text-ink">{usd(g.value)}</span>
-                </span>
-                <ChevronDown size={14} className={'text-muted transition-transform ' + (openKey === g.key ? 'rotate-180' : '')} />
-              </div>
-              <p className="text-[11.5px] text-muted mt-0.5">
-                {g.nextStay ? <span className="text-emerald-700 font-semibold">Returns {g.nextStay} · </span> : null}
-                {g.lastStay ? 'Last stay ' + g.lastStay + ' · ' : ''}
-                {g.units.slice(0, 4).join(', ')}{g.units.length > 4 ? ` +${g.units.length - 4}` : ''}
-              </p>
-            </button>
-            {openKey === g.key ? (
-              <div className="border-t border-line bg-app/30 px-4 py-3 grid md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5">Stays</p>
-                  <div className="space-y-1">
-                    {g.history.map((h, i) => (
-                      <p key={i} className="text-[12.5px] text-ink flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold">{h.unit}</span>
-                        <span className="text-muted tabular-nums">{h.checkIn} → {h.checkOut} · {h.nights}n</span>
-                        <span className="ml-auto tabular-nums font-semibold">{h.value ? usd(h.value) : '—'}</span>
-                      </p>
-                    ))}
-                    {!g.history.length ? <p className="text-[12.5px] text-muted">No reservations yet — profile only.</p> : null}
+      {!list.length ? <LeanEmpty>Nobody matches.</LeanEmpty> : (
+        <LeanList>
+          {list.slice(0, shown).map(g => {
+            const units = g.units.slice(0, 2).join(', ') + (g.units.length > 2 ? ` +${g.units.length - 2}` : '')
+            return (
+              <LeanRow key={g.key} open={openKey === g.key} onToggle={() => setOpenKey(openKey === g.key ? '' : g.key)}
+                name={g.name}
+                meta={[units, g.lastStay ? 'last ' + g.lastStay : ''].filter(Boolean).join(' · ')}
+                tags={<>
+                  {g.profile?.vip ? <Tag tone="amber" title="Auto-inspection before every arrival">VIP</Tag> : null}
+                  {g.inHouse ? <Tag tone="emerald">In house</Tag> : null}
+                  {g.nextStay ? <Tag tone="emerald" title="Next arrival">Returns {g.nextStay}</Tag> : null}
+                  <Tag title={`${g.stays} stay${g.stays === 1 ? '' : 's'}, ${g.nights} nights`}>{g.stays}× · {g.nights}n</Tag>
+                  <Tag tone="brand" title="Lifetime value">{usd(g.value)}</Tag>
+                  {(g.profile?.tags || []).slice(0, 3).map(tag => <Tag key={tag}>{tag}</Tag>)}
+                </>}>
+                <div className="grid md:grid-cols-2 gap-4 pt-1">
+                  <div>
+                    <div className="space-y-1">
+                      {g.history.map((h, i) => (
+                        <p key={i} className="text-[12.5px] text-ink flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold">{h.unit}</span>
+                          <span className="text-muted tabular-nums">{h.checkIn} → {h.checkOut} · {h.nights}n</span>
+                          <span className="ml-auto tabular-nums font-semibold">{h.value ? usd(h.value) : '—'}</span>
+                        </p>
+                      ))}
+                      {!g.history.length ? <p className="text-[12.5px] text-muted">No reservations yet — profile only.</p> : null}
+                    </div>
+                    <p className="text-[12px] text-muted mt-2 flex items-center gap-3 flex-wrap">
+                      {g.email ? <a href={'mailto:' + g.email} className="inline-flex items-center gap-1 hover:text-ink"><Mail size={11} /> {g.email}</a> : null}
+                      {g.phone ? <a href={'tel:' + g.phone} className="inline-flex items-center gap-1 hover:text-ink"><Phone size={11} /> {g.phone}</a> : null}
+                    </p>
                   </div>
-                  <p className="text-[12px] text-muted mt-2 flex items-center gap-3 flex-wrap">
-                    {g.email ? <span className="inline-flex items-center gap-1"><Mail size={11} /> {g.email}</span> : null}
-                    {g.phone ? <span className="inline-flex items-center gap-1"><Phone size={11} /> {g.phone}</span> : null}
-                  </p>
+                  <ProfileEditor guest={g} onDone={load} onCancel={() => setOpenKey('')} inline />
                 </div>
-                <ProfileEditor guest={g} onDone={load} onCancel={() => setOpenKey('')} inline />
-              </div>
-            ) : null}
-          </div>
-        ))}
-        {!list.length ? <p className="px-4 py-8 text-center text-[12.5px] text-muted">Nobody matches.</p> : null}
-        {list.length > shown ? (
-          <button onClick={() => setShown(s => s + 100)} className="w-full px-4 py-2.5 text-[12.5px] font-semibold text-brand-700 hover:bg-app/40">
-            Show more — {list.length - shown} left
-          </button>
-        ) : null}
-      </div>
+              </LeanRow>
+            )
+          })}
+          {list.length > shown ? (
+            <li>
+              <button onClick={() => setShown(s => s + 100)} className="w-full px-4 py-2 text-[12.5px] font-semibold text-brand-700 hover:bg-app/40">
+                Show more — {list.length - shown} left
+              </button>
+            </li>
+          ) : null}
+        </LeanList>
+      )}
     </div>
   )
 }
@@ -177,7 +170,7 @@ function ProfileEditor({ guest, onDone, onCancel, inline }: { guest: Guest | nul
       <div className="flex items-center gap-3 flex-wrap mb-2">
         <label className="flex items-center gap-1.5 cursor-pointer text-[12.5px] font-bold text-ink">
           <input type="checkbox" checked={vip} onChange={e => setVip(e.target.checked)} />
-          <Star size={12} className="text-amber-500" /> VIP — auto-inspection before every arrival
+          <Star size={12} className="text-amber-500" /> VIP <span className="font-normal text-muted">(auto-inspection)</span>
         </label>
         <input value={tags} onChange={e => setTags(e.target.value)} placeholder="Tags, comma separated — e.g. long-stay, corporate"
           className="flex-1 min-w-[200px] rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />

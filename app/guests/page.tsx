@@ -10,11 +10,6 @@ export default function GuestsPage() {
   return (
     <Shell>
       <div className="max-w-5xl">
-        <h1 className="text-xl font-bold text-ink mb-1">Guests</h1>
-        <p className="text-[12.5px] text-muted mb-4">
-          Everyone who has stayed in the last two years, aggregated across their reservations — plus
-          your own layer: VIP, tags and notes. VIP guests get an automatic pre-arrival inspection.
-        </p>
         <GuestsDirectory />
       </div>
     </Shell>

@@ -13,7 +13,8 @@
 //   • A block with no end date inside the window is called that, rather than being drawn as if it
 //     ends on the last day we happened to look at.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CalendarOff, Loader2, RefreshCw, AlertTriangle, Link2, Download } from 'lucide-react'
+import { Loader2, RefreshCw, Link2, Download } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn, Clamp } from '@/components/lean'
 
 type Run = {
   listingId: string; unit: string; building: string; market: string
@@ -33,15 +34,31 @@ type Data = {
 
 const dNice = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
-function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'bad' | 'warn' }) {
-  const c = tone === 'bad' ? 'text-rose-600' : tone === 'warn' ? 'text-amber-600' : 'text-ink'
+function RunRow({ r, auto }: { r: Run; auto?: boolean }) {
   return (
-    <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
-      <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">{label}</div>
-      <div className={'text-2xl font-bold tabular-nums mt-1 tracking-tight ' + c}>{value}</div>
-      {sub ? <div className="text-[11px] text-muted mt-0.5">{sub}</div> : null}
-    </div>
-  )
+  <LeanRow
+    tint={r.live && !auto ? 'rose' : undefined}
+    name={r.unit}
+    // The note whoever created the block typed is the headline; our label for the flag is the fallback.
+    meta={(r.note ? r.note.replace(/\s+/g, ' ') : r.reason)}
+    tags={<>
+      {r.live
+        ? <Tag tone="rose">Down now</Tag>
+        : <Tag tone="amber" title={'Starts ' + dNice(r.from)}>In {r.startsInDays}d</Tag>}
+      {r.openEnded ? <Tag title="Still blocked on the last day in this window — the end date is unknown">No end date</Tag> : null}
+      <Tag title={r.openEnded ? 'From ' + dNice(r.from) : dNice(r.from) + ' – ' + dNice(r.to)}>{r.nights}n · {r.openEnded ? dNice(r.from) + '…' : dNice(r.from) + '–' + dNice(r.to)}</Tag>
+      {r.market ? <Tag>{r.market}</Tag> : null}
+      {r.alsoBlocks.length ? <Tag tone="amber" title={'Also unsellable while this is down: ' + r.alsoBlocks.join(', ')}>+{r.alsoBlocks.length} linked</Tag> : null}
+    </>}>
+    {r.note ? <Clamp text={r.note.replace(/\s+/g, ' ')} lines={3} /> : null}
+    <p className="text-[11.5px] text-muted">{r.reason}{r.building ? ' · ' + r.building : ''}</p>
+    {r.alsoBlocks.length ? (
+      <p className="text-[11.5px] text-amber-700 flex items-start gap-1">
+        <Link2 className="w-3 h-3 mt-0.5 shrink-0" /> Also unsellable while this is down: {r.alsoBlocks.join(', ')}
+      </p>
+    ) : null}
+  </LeanRow>
+)
 }
 
 export function BlockedUnits() {
@@ -51,6 +68,7 @@ export function BlockedUnits() {
   const [days, setDays] = useState(30)
   const [market, setMarket] = useState('all')
   const [onlyLive, setOnlyLive] = useState(false)
+  const [tab, setTab] = useState<'out' | 'auto'>('out')
 
   const load = useCallback(async () => {
     setLoading(true); setErr('')
@@ -82,125 +100,63 @@ export function BlockedUnits() {
     URL.revokeObjectURL(url)
   }
 
+  const linked = data?.linkedRuns || []
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      <LeanHead title="Blocked Units">
+        {data ? <>
+          <Pill tone={data.liveNow ? 'rose' : 'slate'} title="Units off the calendar today">{data.liveNow} down now</Pill>
+          <Pill tone={data.upcoming ? 'amber' : 'slate'} title={'Blocks starting within ' + data.days + ' days'}>{data.upcoming} starting</Pill>
+          <Pill title="Inventory never offered for sale in the window">{data.nightsBlocked} nights</Pill>
+          <Pill title="Active listings read live from Guesty's multi-calendar. Reservations, booking-window and advance-notice flags are excluded — only inventory a person took off the market.">{data.listingsChecked} checked</Pill>
+        </> : null}
+      </LeanHead>
+
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center rounded-xl border border-line bg-white shadow-soft overflow-hidden">
+        <div className="inline-flex rounded-lg border border-line bg-white overflow-hidden" title="Window">
           {[7, 30, 60, 90].map(d => (
             <button key={d} onClick={() => setDays(d)}
-              className={'px-3 py-1.5 text-[12.5px] font-semibold ' + (days === d ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+              className={'px-2.5 py-1 text-[12px] font-semibold border-l border-line first:border-l-0 ' + (days === d ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
               {d}d
             </button>
           ))}
         </div>
         <select value={market} onChange={e => setMarket(e.target.value)}
-          className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft">
+          className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold">
           <option value="all">All markets</option>
           {markets.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
-        <label className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ink cursor-pointer">
-          <input type="checkbox" checked={onlyLive} onChange={e => setOnlyLive(e.target.checked)} className="accent-brand-600 w-4 h-4" />
-          Down right now only
+        <label className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink cursor-pointer">
+          <input type="checkbox" checked={onlyLive} onChange={e => setOnlyLive(e.target.checked)} className="accent-brand-600 w-3.5 h-3.5" />
+          Down now only
         </label>
         <span className="flex-1" />
-        <button onClick={csv} disabled={!runs.length}
-          className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5 disabled:opacity-40">
-          <Download className="w-3.5 h-3.5" /> CSV
-        </button>
-        <button onClick={load} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
-          <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin' : '')} /> Refresh
-        </button>
+        <IconBtn title="Download this list as CSV" onClick={csv} disabled={!runs.length}><Download size={13} /></IconBtn>
+        <IconBtn title="Re-read the Guesty calendar" onClick={load}><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></IconBtn>
       </div>
 
       {err ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div> : null}
 
+      {loading && !data ? <LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Reading the Guesty calendar…</LeanEmpty> : null}
+
       {data ? (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Stat label="Down right now" value={String(data.liveNow)} sub="units off the calendar today" tone={data.liveNow ? 'bad' : undefined} />
-          <Stat label="Starting soon" value={String(data.upcoming)} sub={'within ' + data.days + ' days'} tone={data.upcoming ? 'warn' : undefined} />
-          <Stat label="Nights blocked" value={String(data.nightsBlocked)} sub="inventory never offered for sale" />
-          <Stat label="Units checked" value={String(data.listingsChecked)} sub="active listings, Guesty multi-calendar" />
-        </div>
+        <>
+          {/* Guesty's own automatic blocks sit on their own tab so the worklist never fills up with
+              the calendar working correctly. */}
+          {linked.length ? (
+            <LeanTabs
+              tabs={[{ key: 'out' as const, label: 'Out of service', n: runs.length }, { key: 'auto' as const, label: 'Auto-closed by Guesty', n: linked.length }]}
+              value={tab} onChange={setTab} />
+          ) : null}
+          {tab === 'auto' && linked.length ? (
+            <LeanList>{linked.map(r => <RunRow key={r.listingId + r.from} r={r} auto />)}</LeanList>
+          ) : !runs.length ? (
+            loading ? null : <LeanEmpty>Nothing out of service — every unit{market === 'all' ? '' : ' in ' + market} is sellable for the next {data.days} days.</LeanEmpty>
+          ) : (
+            <LeanList>{runs.map(r => <RunRow key={r.listingId + r.from} r={r} />)}</LeanList>
+          )}
+        </>
       ) : null}
-
-      {loading && !data ? (
-        <div className="rounded-2xl border border-line bg-white p-10 text-center text-sm text-muted">
-          <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Reading the Guesty calendar…
-        </div>
-      ) : null}
-
-      {data && !runs.length && !loading ? (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-6 text-center">
-          <p className="text-sm font-semibold text-emerald-800">Nothing out of service.</p>
-          <p className="text-[12.5px] text-emerald-700 mt-0.5">Every unit{market === 'all' ? '' : ' in ' + market} is sellable for the next {data.days} days.</p>
-        </div>
-      ) : null}
-
-      {runs.length ? (
-        <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
-          <div className="px-4 py-3 border-b border-line flex items-center gap-2 flex-wrap">
-            <CalendarOff size={15} className="text-rose-500" />
-            <span className="text-sm font-bold text-ink">Out of service</span>
-            <span className="text-[11px] text-muted">{runs.length} block{runs.length === 1 ? '' : 's'} · every one is work to finish or a block to lift</span>
-          </div>
-          <div className="divide-y divide-line">
-            {runs.map(r => (
-              <div key={r.listingId + r.from} className="px-4 py-3 flex items-start gap-3 flex-wrap">
-                {/* The date range never wraps, so on a phone it took half the row and squeezed the
-                    note — the whole point of the line — into a narrow ladder. A floor on the note
-                    column makes the dates drop underneath instead. */}
-                <div className="flex-1 min-w-[12rem]">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[13.5px] font-bold text-ink">{r.unit}</span>
-                    <span className="text-[11px] text-muted">{r.market}</span>
-                    {r.live
-                      ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">down now</span>
-                      : <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">in {r.startsInDays}d</span>}
-                    {r.openEnded
-                      ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-neutral-200 text-neutral-700" title="Still blocked on the last day in this window — the end date is unknown">no end date</span>
-                      : null}
-                  </div>
-                  {/* The note is the headline. Our label for the flag is the fallback, not the story. */}
-                  <p className="text-[12.5px] text-ink/80 mt-0.5">{r.note ? r.note.replace(/\s+/g, ' ') : r.reason}</p>
-                  {r.note ? <p className="text-[11px] text-muted mt-0.5">{r.reason}</p> : null}
-                  {r.alsoBlocks.length ? (
-                    <p className="text-[11px] text-amber-700 mt-1 flex items-start gap-1">
-                      <Link2 className="w-3 h-3 mt-0.5 shrink-0" />
-                      Also unsellable while this is down: {r.alsoBlocks.join(', ')}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-[12.5px] font-semibold text-ink tabular-nums whitespace-nowrap">
-                    {r.openEnded ? dNice(r.from) + ' →' : dNice(r.from) + ' – ' + dNice(r.to)}
-                  </div>
-                  <div className="text-[11px] text-muted tabular-nums">{r.nights} night{r.nights === 1 ? '' : 's'}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {/* Guesty's own automatic blocks. Kept out of the worklist above and shown separately, so a
-          list meant for chasing never fills up with the calendar working correctly. */}
-      {data && (data.linkedRuns || []).length ? (
-        <div className="rounded-2xl border border-line bg-app px-4 py-3">
-          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1 flex items-center gap-1.5">
-            <Link2 size={12} /> Closed automatically by Guesty — nothing to chase
-          </div>
-          <div className="text-[12px] text-muted">
-            {data.linkedRuns.map(r => r.unit + ' (' + dNice(r.from) + '–' + dNice(r.to) + ')').join(' · ')}
-          </div>
-        </div>
-      ) : null}
-
-      <p className="text-[11px] text-muted flex items-start gap-1.5">
-        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-        Read live from Guesty&apos;s multi-calendar each time you open this page. Reservations are excluded —
-        this is only inventory a person took off the market. Booking-window and advance-notice flags are
-        excluded too, since those are pricing policy rather than a unit out of service.
-      </p>
     </div>
   )
 }

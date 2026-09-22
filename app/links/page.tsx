@@ -10,12 +10,6 @@ export default function LinksPage() {
   return (
     <Shell>
       <div className="max-w-4xl">
-        <h1 className="text-xl font-bold text-ink mb-1">Share Links</h1>
-        <p className="text-[12.5px] text-muted mb-4">
-          Every link anyone outside the app can open, in one place — vendor boards, scheduler links, field boards,
-          the reports, custom pages. Each has its <b>own</b> passcode (shown once when made), an optional expiry,
-          and a scope that says exactly what it shows. Describe the one you need, or fill the form.
-        </p>
         <ShareLinksHub />
       </div>
     </Shell>

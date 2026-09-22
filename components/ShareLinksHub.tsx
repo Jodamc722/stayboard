@@ -8,7 +8,8 @@
 // Generated (one-offs). A passcode is shown ONCE — at create or rotate — then only its last two
 // characters. Built for a phone first: every row wraps, every action is a tap.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, Copy, Check, Trash2, Pencil, Lock, X, AlertTriangle, ExternalLink, Sparkles, RefreshCw, CalendarClock, Search, KeyRound, Eye, EyeOff, Undo2 } from 'lucide-react'
+import { Loader2, Plus, Copy, Check, Trash2, Pencil, Lock, X, ExternalLink, Sparkles, RefreshCw, CalendarClock, Search, KeyRound, Eye, EyeOff, Undo2 } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, IconBtn, Tip, Clamp, type Tone } from '@/components/lean'
 import { AUDIENCES, AUDIENCE_LABEL, CREATABLE_KINDS, KIND_LABEL, STANDING_KINDS, FIXED_CODE_KINDS, type LinkScope } from '@/lib/share-links'
 
 type Row = {
@@ -51,9 +52,8 @@ const BOARD_SECTIONS: { key: string; label: string; sub: string }[] = [
 const SCOPE_TYPES = [
   { key: 'portfolio', label: 'Whole portfolio' }, { key: 'market', label: 'Market' }, { key: 'building', label: 'Building' }, { key: 'owner', label: 'Owner' }, { key: 'listing', label: 'Unit' },
 ]
-const STATUS_PILL: Record<string, string> = {
-  live: 'bg-emerald-50 text-emerald-700', expiring: 'bg-amber-50 text-amber-800', expired: 'bg-rose-50 text-rose-700',
-  revoked: 'bg-app text-muted line-through', unset: 'bg-amber-100 text-amber-900', 'locked-out': 'bg-rose-100 text-rose-800',
+const STATUS_TONE: Record<string, Tone> = {
+  live: 'emerald', expiring: 'amber', expired: 'rose', revoked: 'slate', unset: 'amber', 'locked-out': 'roseSolid',
 }
 const KIND_ORDER = [...STANDING_KINDS, 'custom-page', 'owner-report', 'guidebook', 'guide', 'order-form', 'count']
 const fmtDay = (iso: string | null) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
@@ -106,6 +106,8 @@ export function ShareLinksHub() {
   const [sel, setSel] = useState<Record<string, boolean>>({})
   const [extendTo, setExtendTo] = useState('')
   const [showGen, setShowGen] = useState(false)
+  const [openRow, setOpenRow] = useState<string | null>(null)
+  const [tab, setTab] = useState<'standing' | 'oneoff'>('standing')
 
   useEffect(() => {
     setOrigin(window.location.origin)
@@ -237,78 +239,92 @@ export function ShareLinksHub() {
   const sectionsFor = form.kind === 'field-board' ? BOARD_SECTIONS : form.kind === 'custom-page' ? REPORT_SECTIONS : []
   const isFixed = FIXED_CODE_KINDS.indexOf(form.kind) >= 0
 
-  if (!links) return <div className="rounded-2xl border border-line bg-white p-10 text-center text-sm text-muted"><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading…</div>
+  const liveCount = (links || []).filter(l => l.status === 'live' && locked.indexOf(l.code) < 0).length
+  const expiringCount = (links || []).filter(l => l.status === 'expiring').length
+  const lockedCount = (links || []).filter(l => l.status === 'live' && locked.indexOf(l.code) >= 0).length
+  const head = (
+    <LeanHead title="Share Links">
+      <Pill tone="emerald" title="Every link anyone outside the app can open, each with its own passcode, optional expiry and scope">{liveCount} live</Pill>
+      {expiringCount ? <Pill tone="amber" title="Expiring soon — click to filter" onClick={() => setFStatus('expiring')}>{expiringCount} expiring</Pill> : null}
+      {unsetCount ? <Pill tone="amber" onClick={() => setFStatus('unset')}
+        title="No passcode yet — these stay shut until one is set (the old shared team passwords no longer open anything). Click to filter, then Set passcode on each.">{unsetCount} no passcode</Pill> : null}
+      {lockedCount ? <Pill tone="rose" title="Locked out after too many wrong passcodes — click to filter" onClick={() => setFStatus('locked-out')}>{lockedCount} locked out</Pill> : null}
+    </LeanHead>
+  )
+
+  if (!links) return <div>{head}<LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading…</LeanEmpty></div>
 
   const RowView = ({ l }: { l: Row }) => {
     const url = origin + l.path
     const isLocked = locked.indexOf(l.code) >= 0
     const status = isLocked && l.status === 'live' ? 'locked-out' : l.status
+    const tone = STATUS_TONE[status] || 'slate'
+    const rowOpen = openRow === l.id
     return (
-      <div className={'px-3 sm:px-4 py-3 ' + (l.revoked_at ? 'opacity-60' : '')}>
-        <div className="flex items-start gap-2">
-          {!l.generated ? <input type="checkbox" checked={!!sel[l.id]} onChange={e => setSel(s => ({ ...s, [l.id]: e.target.checked }))} className="mt-1.5 shrink-0" /> : <span className="w-[13px] shrink-0" />}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[13.5px] font-bold text-ink">{l.title || 'Untitled link'}</span>
-              <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + STATUS_PILL[status]}>{status === 'unset' ? 'no passcode yet' : status}</span>
-              {l.scope.showMoney ? <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 rounded px-1.5 py-0.5">$ on</span> : null}
-            </div>
-            <p className="text-[11.5px] text-muted mt-0.5">{l.what}</p>
-            <p className="text-[11px] text-faint mt-0.5 flex flex-wrap gap-x-2">
-              {l.hasPasscode ? <span className="inline-flex items-center gap-1 font-mono"><Lock size={10} />{l.hint || '••'}</span> : l.open ? <span>open link</span> : null}
-              {l.expires_at ? <span className="inline-flex items-center gap-1"><CalendarClock size={10} /> {l.status === 'expired' ? 'expired' : 'expires'} {fmtDay(l.expires_at)}</span> : <span>never expires</span>}
-              <span>{ago(l.last_used_at)} · {l.uses} use{l.uses === 1 ? '' : 's'}</span>
-              <span className="truncate max-w-[220px]">{l.path}</span>
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1.5 pl-5 text-[12px]">
-          <button onClick={() => copyText(url, l.id + ':url')} className="font-bold text-brand-700 inline-flex items-center gap-1">
-            {copied === l.id + ':url' ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy link</>}
-          </button>
-          <a href={l.path} target="_blank" rel="noreferrer" className="font-semibold text-ink inline-flex items-center gap-1">Open <ExternalLink size={11} /></a>
+      <LeanRow
+        open={rowOpen} onToggle={() => setOpenRow(rowOpen ? null : l.id)}
+        lead={!l.generated
+          ? <input type="checkbox" aria-label="Select" title="Select for bulk revoke / extend" checked={!!sel[l.id]} onChange={e => setSel(s => ({ ...s, [l.id]: e.target.checked }))} className="shrink-0" />
+          : <span className="w-[13px] shrink-0" />}
+        name={<span className={l.revoked_at ? 'line-through opacity-60' : ''}>{l.title || 'Untitled link'}</span>}
+        meta={l.what}
+        tags={<>
+          <Tag tone={tone}>{status === 'unset' ? 'No passcode' : status}</Tag>
+          <Tag title="Kind">{KIND_LABEL[l.kind as keyof typeof KIND_LABEL] || l.kind}</Tag>
+          {l.scope.showMoney ? <Tag tone="emerald" title="Dollar figures are shown">$ on</Tag> : null}
+          {l.hasPasscode ? <Tag title="Passcode (last two characters)"><Lock size={9} className="inline -mt-px mr-0.5" />{l.hint || '••'}</Tag> : l.open ? <Tag tone="sky" title="Open link — the address is the key">Open</Tag> : null}
+          {l.expires_at ? <Tag tone={l.status === 'expired' ? 'rose' : 'slate'} title={(l.status === 'expired' ? 'Expired ' : 'Expires ') + fmtDay(l.expires_at)}>{l.status === 'expired' ? 'exp.' : 'til'} {fmtDay(l.expires_at)}</Tag> : null}
+          <Tag title={'Last used ' + ago(l.last_used_at)}>{l.uses} use{l.uses === 1 ? '' : 's'}</Tag>
+        </>}
+        actions={<>
+          <IconBtn title={copied === l.id + ':url' ? 'Copied' : 'Copy link'} tone="brand" onClick={() => copyText(url, l.id + ':url')}>{copied === l.id + ':url' ? <Check size={13} /> : <Copy size={13} />}</IconBtn>
+          <IconBtn title="Open the link" href={l.path}><ExternalLink size={13} /></IconBtn>
+          {!l.generated && !l.revoked_at ? <IconBtn title="Edit scope, expiry or notes" onClick={() => startEdit(l)}><Pencil size={13} /></IconBtn> : null}
+        </>}>
+        <p className="text-[11.5px] text-muted flex flex-wrap gap-x-3 gap-y-0.5">
+          <span className="font-mono truncate max-w-full">{l.path}</span>
+          <span>{l.expires_at ? (l.status === 'expired' ? 'expired ' : 'expires ') + fmtDay(l.expires_at) : 'never expires'}</span>
+          <span>{ago(l.last_used_at)} · {l.uses} use{l.uses === 1 ? '' : 's'}</span>
+          {l.created_by ? <span>by {l.created_by}</span> : null}
+        </p>
+        {l.notes ? <Clamp text={l.notes} /> : null}
+        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px]">
           {!l.generated && !l.revoked_at ? (
             <>
               {!l.open ? <button onClick={() => rotate(l)} className="text-muted hover:text-ink inline-flex items-center gap-1" title="New passcode (old one dies immediately)"><KeyRound size={12} /> {l.hasPasscode ? 'New passcode' : 'Set passcode'}</button> : null}
-              <button onClick={() => startEdit(l)} className="text-muted hover:text-ink inline-flex items-center gap-1"><Pencil size={12} /> Edit</button>
               <button onClick={() => revoke([l.id])} className="text-muted hover:text-rose-600 inline-flex items-center gap-1"><Trash2 size={12} /> Revoke</button>
             </>
           ) : null}
           {l.revoked_at ? <button onClick={() => restore(l.id)} className="text-muted hover:text-ink inline-flex items-center gap-1"><Undo2 size={12} /> Restore</button> : null}
         </div>
-      </div>
+      </LeanRow>
     )
   }
 
   const Groups = ({ rows, empty }: { rows: Row[]; empty: string }) => {
     const g = group(rows)
-    if (!g.length) return <p className="px-4 py-6 text-center text-[12.5px] text-muted">{empty}</p>
+    if (!g.length) return <LeanEmpty>{empty}</LeanEmpty>
     return (
       <div>
         {g.map(a => (
-          <div key={a.audience} className="border-t border-line first:border-t-0">
-            <p className="px-3 sm:px-4 pt-3 pb-1 text-[11px] uppercase tracking-wider font-bold text-muted">{AUDIENCE_LABEL[a.audience as keyof typeof AUDIENCE_LABEL] || a.audience}</p>
-            {a.kinds.map(k => (
-              <div key={k.kind}>
-                <p className="px-3 sm:px-4 pt-1 text-[11.5px] font-semibold text-ink/70">{KIND_LABEL[k.kind as keyof typeof KIND_LABEL] || k.kind} <span className="text-faint font-normal tabular-nums">{k.rows.length}</span></p>
-                <div className="divide-y divide-line">{k.rows.map(l => <RowView key={l.id} l={l} />)}</div>
-              </div>
-            ))}
-          </div>
+          <LeanSection key={a.audience} title={AUDIENCE_LABEL[a.audience as keyof typeof AUDIENCE_LABEL] || a.audience} n={a.kinds.reduce((s, k) => s + k.rows.length, 0)}>
+            <LeanList>{a.kinds.map(k => k.rows.map(l => <RowView key={l.id} l={l} />))}</LeanList>
+          </LeanSection>
         ))}
       </div>
     )
   }
 
   return (
-    <div className="space-y-4">
-      {err ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700 flex gap-2"><span className="flex-1">{err}</span><button onClick={() => setErr('')}><X size={14} /></button></div> : null}
+    <div className="space-y-3">
+      {head}
+      {err ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700 flex gap-2"><span className="flex-1">{err}</span><Tip label="Dismiss"><button onClick={() => setErr('')} aria-label="Dismiss"><X size={14} /></button></Tip></div> : null}
 
       {/* ── REVEAL ONCE ─────────────────────────────────────────────────────────────── */}
       {reveal ? (
         <div className="fixed inset-0 z-50 bg-ink/50 flex items-end sm:items-center justify-center p-3" onClick={() => setReveal(null)}>
           <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl space-y-3" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center gap-2"><KeyRound size={16} className="text-brand-700" /><p className="text-sm font-bold text-ink flex-1">{reveal.row.title}</p><button onClick={() => setReveal(null)} className="text-muted"><X size={15} /></button></div>
+            <div className="flex items-center gap-2"><KeyRound size={16} className="text-brand-700" /><p className="text-sm font-bold text-ink flex-1">{reveal.row.title}</p><Tip label="Close"><button onClick={() => setReveal(null)} aria-label="Close" className="text-muted"><X size={15} /></button></Tip></div>
             {reveal.passcode ? (
               <>
                 <p className="text-[12.5px] text-muted">This passcode is shown <b>once</b>. After you close this, the hub only shows its last two characters — write it down or send it now.</p>
@@ -330,20 +346,22 @@ export function ShareLinksHub() {
       ) : null}
 
       {/* ── DESCRIBE IT ─────────────────────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-ink/15 bg-white p-3 sm:p-4 shadow-soft">
-        <p className="text-[11px] uppercase tracking-wider font-bold text-muted mb-1.5 inline-flex items-center gap-1.5"><Sparkles size={12} /> Describe the link you need</p>
-        <div className="flex gap-2">
-          <input value={ask} onChange={e => setAsk(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') draft() }}
-            placeholder="e.g. a link for the Pompano cleaners to see today's and tomorrow's turns, no guest names, expires Sunday"
-            className="flex-1 min-w-0 rounded-xl border border-line px-3 py-2.5 text-[13px]" />
-          <button onClick={draft} disabled={asking || ask.trim().length < 4} className="rounded-xl bg-ink text-white px-3.5 py-2.5 text-[13px] font-bold disabled:opacity-40 inline-flex items-center gap-1.5 shrink-0">
-            {asking ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Draft
+      {/* Describe it → one model call fills the form for review. Nothing is created until Create. */}
+      <div>
+        <div className="flex gap-1.5 items-center">
+          <div className="relative flex-1 min-w-0">
+            <Sparkles size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+            <input value={ask} onChange={e => setAsk(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') draft() }}
+              title="Describe the link you need — it fills in the form for you to check. Nothing is created until you click Create."
+              placeholder="Describe a link — e.g. Pompano cleaners, today's and tomorrow's turns, no names, expires Sunday"
+              className="w-full rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px]" />
+          </div>
+          <button onClick={draft} disabled={asking || ask.trim().length < 4} className="rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-bold disabled:opacity-40 inline-flex items-center gap-1 shrink-0">
+            {asking ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Draft
           </button>
+          {!open ? <button onClick={() => { setEditing(null); setForm(emptyForm()); setOpen(true) }} title="Fill the form by hand" className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-bold text-ink inline-flex items-center gap-1 shrink-0"><Plus size={13} /> New</button> : null}
         </div>
-        <div className="flex items-center gap-3 mt-2">
-          <p className="text-[11.5px] text-muted flex-1">{askNote || 'It fills in the form below for you to check. Nothing is created until you click Create.'}</p>
-          {!open ? <button onClick={() => { setEditing(null); setForm(emptyForm()); setOpen(true) }} className="text-[12px] font-bold text-brand-700 inline-flex items-center gap-1 shrink-0"><Plus size={13} /> Or fill the form</button> : null}
-        </div>
+        {askNote ? <p className="text-[11.5px] text-muted mt-1 px-1">{askNote}</p> : null}
       </div>
 
       {/* ── THE FORM ────────────────────────────────────────────────────────────────── */}
@@ -351,7 +369,7 @@ export function ShareLinksHub() {
         <div className="rounded-2xl border border-ink/20 bg-white p-3 sm:p-4 shadow-soft space-y-3.5">
           <div className="flex items-center gap-2">
             <p className="text-sm font-bold text-ink flex-1">{editing ? 'Edit link' : 'New link'}</p>
-            <button onClick={closeForm} className="text-muted hover:text-ink p-1"><X size={15} /></button>
+            <Tip label="Close without saving"><button onClick={closeForm} aria-label="Close" className="text-muted hover:text-ink p-1"><X size={15} /></button></Tip>
           </div>
           {!editing ? (
             <div>
@@ -364,7 +382,7 @@ export function ShareLinksHub() {
                   </button>
                 ))}
               </div>
-              <p className="text-[11px] text-muted mt-1.5">The day sheet, delivery log, live orders, marketing, audit and Botanica reports each have one fixed link already — edit those below.</p>
+              <p className="text-[11px] text-muted mt-1.5" title="The day sheet, delivery log, live orders, marketing, audit and Botanica reports each have one fixed link already">Fixed pages already have a link — edit those in the list.</p>
             </div>
           ) : <p className="text-[12px] text-muted">{KIND_LABEL[form.kind as keyof typeof KIND_LABEL]} · <span className="font-mono">{editing.path}</span>{isFixed ? ' · fixed page' : ''}</p>}
 
@@ -423,7 +441,7 @@ export function ShareLinksHub() {
                       <div className="flex flex-wrap gap-1.5 mb-1.5">
                         {(form.scope.scopeIds || []).map(id => (
                           <span key={id} className="text-[12px] font-semibold bg-app rounded-lg px-2 py-1 inline-flex items-center gap-1.5">{nameOf(form.scope.scopeType, id)}
-                            <button onClick={() => setScope({ scopeIds: (form.scope.scopeIds || []).filter(x => x !== id) })} className="text-muted hover:text-ink"><X size={11} /></button></span>
+                            <button onClick={() => setScope({ scopeIds: (form.scope.scopeIds || []).filter(x => x !== id) })} aria-label="Remove" title="Remove" className="text-muted hover:text-ink"><X size={11} /></button></span>
                         ))}
                       </div>
                     ) : null}
@@ -492,57 +510,38 @@ export function ShareLinksHub() {
         </div>
       ) : null}
 
-      {/* ── FILTERS ─────────────────────────────────────────────────────────────────── */}
-      {unsetCount > 0 ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12px] text-amber-900 flex gap-2 items-start">
-          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-          <span><b>{unsetCount} link{unsetCount === 1 ? ' has' : 's have'} no passcode yet</b> and stay shut until one is set — the old shared team passwords no longer open anything. Tap <b>Set passcode</b> on each, then send it.</span>
+      {/* ── FILTERS — one line ──────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search links…" className="w-full rounded-lg border border-line bg-white pl-8 pr-3 py-1 text-[12.5px]" />
+        </div>
+        <select value={fAud} onChange={e => setFAud(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]"><option value="">Everyone</option>{AUDIENCES.map(a => <option key={a} value={a}>{AUDIENCE_LABEL[a]}</option>)}</select>
+        <select value={fKind} onChange={e => setFKind(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]"><option value="">Every kind</option>{KIND_ORDER.map(k => <option key={k} value={k}>{KIND_LABEL[k as keyof typeof KIND_LABEL]}</option>)}</select>
+        <select value={fBld} onChange={e => setFBld(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]"><option value="">Any building</option>{(meta?.buildings || []).map(b => <option key={b} value={b}>{b}</option>)}</select>
+        <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]"><option value="">Any status</option>{['live', 'expiring', 'expired', 'revoked', 'unset', 'locked-out'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+        <label title="Include owner reports, guidebooks, guide pages and count sheets minted by their own tabs" className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] inline-flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={showGen} onChange={e => setShowGen(e.target.checked)} /> {showGen ? <Eye size={11} /> : <EyeOff size={11} />} generated ({generated.length})</label>
+        <IconBtn title="Refresh" onClick={load}><RefreshCw size={12} /></IconBtn>
+      </div>
+      {selected.length ? (
+        <div className="flex items-center gap-2 flex-wrap text-[12px] rounded-xl border border-brand-200 bg-brand-50/50 px-3 py-1.5">
+          <span className="font-bold text-ink">{selected.length} selected</span>
+          <button onClick={() => revoke(selected)} className="rounded-lg border border-rose-200 bg-white text-rose-700 px-2 py-0.5 font-semibold inline-flex items-center gap-1"><Trash2 size={11} /> Revoke</button>
+          <span className="inline-flex items-center gap-1"><input type="date" value={extendTo} onChange={e => setExtendTo(e.target.value)} className="rounded-lg border border-line px-2 py-0.5" /><button onClick={() => extend(selected, extendTo || null)} className="rounded-lg border border-line bg-white px-2 py-0.5 font-semibold inline-flex items-center gap-1"><CalendarClock size={11} /> {extendTo ? 'Extend to' : 'Never expire'}</button></span>
+          <button onClick={() => setSel({})} className="text-muted">clear</button>
         </div>
       ) : null}
-      <div className="rounded-2xl border border-line bg-white p-3 shadow-soft space-y-2">
-        <div className="relative">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search links…" className="w-full rounded-xl border border-line pl-8 pr-3 py-2 text-[13px]" />
-        </div>
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
-          <select value={fAud} onChange={e => setFAud(e.target.value)} className="rounded-lg border border-line px-2 py-1.5 text-[12px] shrink-0"><option value="">Everyone</option>{AUDIENCES.map(a => <option key={a} value={a}>{AUDIENCE_LABEL[a]}</option>)}</select>
-          <select value={fKind} onChange={e => setFKind(e.target.value)} className="rounded-lg border border-line px-2 py-1.5 text-[12px] shrink-0"><option value="">Every kind</option>{KIND_ORDER.map(k => <option key={k} value={k}>{KIND_LABEL[k as keyof typeof KIND_LABEL]}</option>)}</select>
-          <select value={fBld} onChange={e => setFBld(e.target.value)} className="rounded-lg border border-line px-2 py-1.5 text-[12px] shrink-0"><option value="">Any building</option>{(meta?.buildings || []).map(b => <option key={b} value={b}>{b}</option>)}</select>
-          <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="rounded-lg border border-line px-2 py-1.5 text-[12px] shrink-0"><option value="">Any status</option>{['live', 'expiring', 'expired', 'revoked', 'unset', 'locked-out'].map(s => <option key={s} value={s}>{s}</option>)}</select>
-          <label className="rounded-lg border border-line px-2 py-1.5 text-[12px] shrink-0 inline-flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={showGen} onChange={e => setShowGen(e.target.checked)} /> {showGen ? <Eye size={11} /> : <EyeOff size={11} />} generated ({generated.length})</label>
-        </div>
-        {selected.length ? (
-          <div className="flex items-center gap-2 flex-wrap text-[12px] pt-1 border-t border-line">
-            <span className="font-bold text-ink">{selected.length} selected</span>
-            <button onClick={() => revoke(selected)} className="rounded-lg border border-rose-200 text-rose-700 px-2 py-1 font-semibold inline-flex items-center gap-1"><Trash2 size={11} /> Revoke</button>
-            <span className="inline-flex items-center gap-1"><input type="date" value={extendTo} onChange={e => setExtendTo(e.target.value)} className="rounded-lg border border-line px-2 py-1" /><button onClick={() => extend(selected, extendTo || null)} className="rounded-lg border border-line px-2 py-1 font-semibold inline-flex items-center gap-1"><CalendarClock size={11} /> {extendTo ? 'Extend to' : 'Never expire'}</button></span>
-            <button onClick={() => setSel({})} className="text-muted">clear</button>
-          </div>
-        ) : null}
-      </div>
 
-      {/* ── STANDING ────────────────────────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
-        <div className="px-3 sm:px-4 py-3 border-b border-line">
-          <p className="text-sm font-bold text-ink">Standing links <span className="text-[11px] text-muted font-normal tabular-nums">{standing.length}</span></p>
-          <p className="text-[11.5px] text-muted mt-0.5">The boards and reports people keep on their phone. No expiry; each one has its own passcode — rotate it and only that link's holders are asked again.</p>
-        </div>
-        <Groups rows={standing} empty="Nothing matches." />
-      </div>
-
-      {/* ── GENERATED / ONE-OFFS ────────────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-soft">
-        <div className="px-3 sm:px-4 py-3 border-b border-line">
-          <p className="text-sm font-bold text-ink">Generated &amp; one-off links <span className="text-[11px] text-muted font-normal tabular-nums">{oneOff.length}</span></p>
-          <p className="text-[11.5px] text-muted mt-0.5">Custom reports, anything with an expiry date, and — when shown — the owner reports, guidebooks, guide pages and count sheets their own tabs mint.</p>
-        </div>
-        <Groups rows={oneOff} empty={showGen ? 'Nothing matches.' : 'Nothing matches — tick “generated” above to include owner reports, guidebooks and count sheets.'} />
-      </div>
-
-      <p className="text-[11.5px] text-muted">
-        Not listed on purpose: the one-shot job links — a walk, a field request, an owner approval, an audit, a Salato verification. Those are tickets for a single task, and there are thousands of them.
-      </p>
-      <button onClick={load} className="text-[11.5px] text-muted inline-flex items-center gap-1"><RefreshCw size={11} /> Refresh</button>
+      {/* STANDING = boards and reports people keep on their phone (no expiry, own passcode each).
+          ONE-OFF = custom reports, anything with an expiry, and — when "generated" is ticked — the
+          owner reports, guidebooks, guide pages and count sheets their own tabs mint. Not listed on
+          purpose: one-shot job links (walks, field requests, approvals, audits, Salato) — thousands. */}
+      <LeanTabs
+        tabs={[{ key: 'standing' as const, label: 'Standing', n: standing.length }, { key: 'oneoff' as const, label: 'Generated & one-off', n: oneOff.length }]}
+        value={tab} onChange={setTab} />
+      {tab === 'standing'
+        ? <Groups rows={standing} empty="Nothing matches." />
+        : <Groups rows={oneOff} empty={showGen ? 'Nothing matches.' : 'Nothing matches — tick “generated” to include owner reports, guidebooks and count sheets.'} />}
     </div>
   )
 }

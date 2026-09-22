@@ -25,12 +25,12 @@ export function PushGuestyButton() {
 
   return (
     <span className="inline-flex items-center gap-2">
-      <button type="button" onClick={push} disabled={busy} title="Write each guidebook's guest link into the Guesty Guidebook custom field" className="inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg border border-neutral-200 bg-white text-ink px-3.5 py-2 hover:bg-app disabled:opacity-50">
-        {busy ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />}
-        {busy ? 'Pushing…' : 'Push links to Guesty'}
+      <button type="button" onClick={push} disabled={busy} title="Write each guidebook's guest link into the Guesty Guidebook custom field" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-neutral-200 bg-white text-ink px-2.5 py-1 hover:bg-app disabled:opacity-50">
+        {busy ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />}
+        {busy ? 'Pushing…' : 'Push to Guesty'}
       </button>
-      {msg && <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700"><Check size={13} />{msg}</span>}
-      {err && <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-600"><AlertTriangle size={13} />{err}</span>}
+      {msg && <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-green-700"><Check size={13} />{msg}</span>}
+      {err && <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-rose-600"><AlertTriangle size={13} />{err}</span>}
     </span>
   )
 }

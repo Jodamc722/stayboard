@@ -8,8 +8,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, Download, Search, RefreshCw, Mail, MailX, Star, Repeat, Send,
-  CheckCircle2, AlertTriangle, Link2, Trash2, X, Ban,
+  CheckCircle2, Link2, Trash2, X, Ban,
 } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
 type Contact = {
   key: string; first: string; last: string; name: string
@@ -52,21 +53,6 @@ const SEGS = [
   { key: 'unhappy', label: 'Left a low rating' },
 ]
 
-function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
-  return (
-    // min-w-0 is load-bearing. A grid column's default minimum is max-content, not zero, so a tile
-    // whose sub-line reads "869 channel-blocked · 344 relay · 4,725 no address" refuses to shrink
-    // below that line's natural width, widens its column past its 1fr share, and shoves the whole
-    // page off the right edge of the viewport — taking the toolbar and the banner with it. The
-    // cards looked fine; everything beside them got clipped.
-    <div className="min-w-0 rounded-2xl bg-white ring-1 ring-line px-4 py-3.5">
-      <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted">{label}</p>
-      <p className={'text-[22px] font-bold tabular-nums leading-tight mt-0.5 ' + (tone || 'text-ink')}>{value}</p>
-      {sub ? <p className="text-[11.5px] text-muted mt-0.5 break-words">{sub}</p> : null}
-    </div>
-  )
-}
-
 export function ContactList() {
   const [data, setData] = useState<{ contacts: Contact[]; summary: Summary; shown: number; truncated?: boolean; shortReads?: string[]; restrictedChannels?: string[] } | null>(null)
   const [busy, setBusy] = useState(true)
@@ -105,135 +91,72 @@ export function ContactList() {
       + (seg === 'relay' || seg === 'restricted' || seg === 'noemail' ? '&all=1' : ''),
     [seg, q, chan])
 
+  const blockedNames = (data?.restrictedChannels || []).join(', ') || 'No channels'
+  const sel = 'text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white text-ink'
   return (
-    <div className="space-y-5">
-      {/* the numbers that decide what you can do */}
-      {s ? (
-        <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4">
-          <Stat label="Contacts" value={s.contacts.toLocaleString()} sub={s.withPhone.toLocaleString() + ' with a phone number'} />
-          <Stat label="Will email" value={(s.mailableAfterUnhappy ?? s.mailable).toLocaleString()} tone="text-emerald-700"
-            sub={(s.unhappy ? s.unhappy.toLocaleString() + ' more held back for a low rating' : '')
-              || (s.contacts ? Math.round((s.mailable / s.contacts) * 100) + '% of the list' : '')} />
-          <Stat label="Cannot email" value={(s.restricted + s.relay + s.noEmail).toLocaleString()} tone="text-amber-700"
-            sub={[s.restricted ? s.restricted.toLocaleString() + ' channel-blocked' : '', s.relay ? s.relay.toLocaleString() + ' relay' : '', s.noEmail ? s.noEmail.toLocaleString() + ' no address' : ''].filter(Boolean).join(' · ')} />
-          <Stat label="Repeat guests" value={s.repeat.toLocaleString()} sub={s.everDirect.toLocaleString() + ' have booked direct'} />
+    <div className="space-y-3">
+      <LeanHead title="Contacts">
+        {s ? <>
+          <Pill title={'Every guest of the last two years as a mailing list · ' + s.withPhone.toLocaleString() + ' with a phone number'}>{s.contacts.toLocaleString()} contacts</Pill>
+          <Pill tone="emerald" title={s.contacts ? Math.round((s.mailable / s.contacts) * 100) + '% of the list can be emailed' : 'Can be emailed'}>{(s.mailableAfterUnhappy ?? s.mailable).toLocaleString()} will email</Pill>
+          <Pill tone="amber" title={[s.restricted ? s.restricted.toLocaleString() + ' channel-blocked' : '', s.relay ? s.relay.toLocaleString() + ' relay' : '', s.noEmail ? s.noEmail.toLocaleString() + ' no address' : ''].filter(Boolean).join(' · ')}>{(s.restricted + s.relay + s.noEmail).toLocaleString()} cannot</Pill>
+          <Pill title={s.everDirect.toLocaleString() + ' have booked direct'}>{s.repeat.toLocaleString()} repeat</Pill>
+          {/* WHO IS OFF LIMITS, AND WHY — the reasons live in the hover; the fix differs per reason. */}
+          {s.unhappy > 0 ? <Pill tone="rose" onClick={() => setSeg('unhappy')}
+            title={'Lowest rating 3 stars or fewer — never pushed or in the default export. The test is their LOWEST rating, not the average: winning them back is a phone call, not a campaign. Click to see who.'}>
+            {s.unhappy.toLocaleString()} low rating</Pill> : null}
+        </> : null}
+      </LeanHead>
+
+      {s && (s.restricted > 0 || s.relay > 0) ? (
+        <div className="flex items-center gap-1.5 flex-wrap text-[12px] text-muted">
+          {s.restricted > 0 ? <Tag tone="amber" title={blockedNames + ' forbid marketing to guests booked through them (the address alone cannot tell you). Never sent to Mailchimp or the default CSV. A guest who later books direct is yours again.'}>
+            {s.restricted.toLocaleString()} channel-blocked</Tag> : null}
+          {s.relay > 0 ? <Tag tone="amber" title="Only ever gave a channel forwarding address (a1b2c3@guest.airbnb.com and the like). They bounce once the booking closes. Kept for front-desk lookup, never uploaded.">
+            {s.relay.toLocaleString()} relay only</Tag> : null}
+          <span>never mailed · hover for why</span>
         </div>
       ) : null}
 
-      {/* WHO IS OFF LIMITS, AND WHY — said once, next to the number it explains. Two different
-          reasons get two different sentences, because the fix is different for each. */}
-      {s && (s.relay > 0 || s.restricted > 0 || s.unhappy > 0) ? (
-        <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-3 space-y-2">
-          {s.unhappy > 0 ? (
-            <div className="flex items-start gap-2.5">
-              <Star size={15} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="min-w-0 text-[12.5px] text-amber-900 leading-relaxed">
-                <span className="font-bold">{s.unhappy.toLocaleString()} left us three stars or fewer.</span>{' '}
-                They are never included in a push or in the default export. The test is their <b>lowest</b> rating, not
-                their average — a guest who loved three stays and gave us a 2 for the fourth is exactly the person a
-                cheerful come-back-and-stay email lands worst with. Winning them back is a phone call, not a campaign.{' '}
-                <button onClick={() => setSeg('unhappy')} className="underline font-semibold">See who</button>
-              </p>
-            </div>
-          ) : null}
-          {s.restricted > 0 ? (
-            <div className="flex items-start gap-2.5">
-              <Ban size={15} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="min-w-0 text-[12.5px] text-amber-900 leading-relaxed">
-                <span className="font-bold">{s.restricted.toLocaleString()} are blocked by their booking channel.</span>{' '}
-                {(data?.restrictedChannels || []).join(', ') || 'No channels'} forbid marketing to guests booked through
-                them, and they hand over a real address, so the address alone cannot tell you. These never reach
-                Mailchimp or the default CSV. A guest who later books direct is yours again and comes off this list.
-              </p>
-            </div>
-          ) : null}
-          {s.relay > 0 ? (
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle size={15} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="min-w-0 text-[12.5px] text-amber-900 leading-relaxed">
-                <span className="font-bold">{s.relay.toLocaleString()} only ever gave a channel forwarding address</span>
-                {' '}— <span className="font-mono text-[11.5px]">a1b2c3@guest.airbnb.com</span> and the like. They stop
-                working when the booking closes and they bounce. Kept here for front-desk lookup, never uploaded.
-              </p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* controls */}
+      {/* controls — one line */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[220px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           {/* Chrome guesses from the placeholder, sees "email", and drops a saved address into the
-              search box. autoComplete="off" is advisory and Chrome often ignores it; a name it does
-              not recognise plus the password-manager opt-outs is what actually stops it. */}
+              search box. autoComplete="off" is advisory; a name it does not recognise plus the
+              password-manager opt-outs is what actually stops it. */}
           <input
             value={typed} onChange={e => setTyped(e.target.value)}
             placeholder="Name, email, phone, unit or tag"
             name="contact-lookup" autoComplete="off" data-1p-ignore data-lpignore="true"
             spellCheck={false} autoCapitalize="none" autoCorrect="off"
-            className="w-full h-9 pl-9 pr-3 rounded-xl border border-line bg-white text-base sm:text-[13px] focus:outline-none focus:ring-2 focus:ring-brand-200"
+            className="w-full py-1.5 pl-8 pr-3 rounded-lg border border-line bg-white text-base sm:text-[12.5px] focus:outline-none focus:ring-2 focus:ring-brand-200"
           />
         </div>
-        <a href={exportHref} download
-          className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white text-[12.5px] font-bold">
-          <Download size={13} /> Export CSV
-        </a>
-        <button onClick={() => setShowRules(v => !v)}
-          className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl text-[12.5px] font-bold border border-line bg-white text-muted hover:text-ink">
-          <Ban size={13} /> Blocked channels
-        </button>
-        <button onClick={() => setShowMc(v => !v)}
-          className={'h-9 px-3.5 inline-flex items-center gap-1.5 rounded-xl text-[12.5px] font-bold border ' +
-            (mc?.connected ? 'border-line bg-white text-ink' : 'border-line bg-white text-muted hover:text-ink')}>
-          <Send size={13} /> Mailchimp
-          {mc?.connected ? <CheckCircle2 size={12} className="text-emerald-600" /> : null}
-        </button>
-        <button onClick={() => load(true)} disabled={busy} aria-label="Refresh"
-          className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink disabled:opacity-40">
-          <RefreshCw size={13} className={busy ? 'animate-spin' : ''} />
-        </button>
-      </div>
-
-      {/* WHERE THEY CAME FROM */}
-      <div>
-        <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted mb-1.5">Channel</p>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <button onClick={() => setChan('')}
-            className={'text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
-              (!chan ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/25')}>
-            All channels
-          </button>
+        {/* TWO AXES: channel (who they are) and segment (whether we may email them) are separate
+            filters, so "which Airbnb guests can I email?" is one pick in each. */}
+        <select value={chan} onChange={e => setChan(e.target.value)} className={sel} title="Booking channel">
+          <option value="">All channels</option>
           {(s?.channels || []).map(c => {
             const blocked = (data?.restrictedChannels || []).some(r => r.toLowerCase() === c.label.toLowerCase())
-            return (
-              <button key={c.label} onClick={() => setChan(c.label === chan ? '' : c.label)}
-                title={blocked ? 'Blocked for marketing' : c.mailable.toLocaleString() + ' of these can be emailed'}
-                className={'text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition inline-flex items-center gap-1.5 ' +
-                  (chan === c.label ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/25')}>
-                {blocked ? <Ban size={11} className={chan === c.label ? 'text-white/70' : 'text-amber-600'} /> : null}
-                {c.label}
-                <span className={'tabular-nums font-bold ' + (chan === c.label ? 'text-white/70' : 'text-faint')}>
-                  {c.count.toLocaleString()}
-                </span>
-              </button>
-            )
+            return <option key={c.label} value={c.label}>{c.label} · {c.count.toLocaleString()}{blocked ? ' (blocked)' : ' · ' + c.mailable.toLocaleString() + ' mailable'}</option>
           })}
-        </div>
-      </div>
-
-      {/* WHETHER WE MAY WRITE TO THEM */}
-      <div>
-        <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted mb-1.5">Show</p>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {SEGS.map(x => (
-            <button key={x.key} onClick={() => setSeg(x.key)}
-              className={'text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
-                (seg === x.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/25')}>
-              {x.label}
-            </button>
-          ))}
-        </div>
+          {chan && !(s?.channels || []).some(c => c.label === chan) ? <option value={chan}>{chan}</option> : null}
+        </select>
+        <select value={seg} onChange={e => setSeg(e.target.value)} className={sel} title="Show">
+          {SEGS.map(x => <option key={x.key} value={x.key}>{x.label}</option>)}
+        </select>
+        <a href={exportHref} download title="Download the current filter as CSV (every match, not just those shown)"
+          className="py-1 px-2.5 inline-flex items-center gap-1 rounded-lg bg-ink text-white text-[12px] font-bold">
+          <Download size={12} /> CSV
+        </a>
+        <button onClick={() => setShowMc(v => !v)} title={mc?.connected ? 'Mailchimp connected — push or check the audience' : 'Connect Mailchimp'}
+          className="py-1 px-2.5 inline-flex items-center gap-1 rounded-lg text-[12px] font-bold border border-line bg-white text-ink">
+          <Send size={12} /> Mailchimp
+          {mc?.connected ? <CheckCircle2 size={11} className="text-emerald-600" /> : null}
+        </button>
+        <IconBtn title="Channels we do not market to" onClick={() => setShowRules(v => !v)}><Ban size={13} /></IconBtn>
+        <IconBtn title="Refresh the list" onClick={() => load(true)} disabled={busy}><RefreshCw size={13} className={busy ? 'animate-spin' : ''} /></IconBtn>
       </div>
 
       {showRules ? (
@@ -250,34 +173,24 @@ export function ContactList() {
 
       {data?.truncated ? (
         <p className="text-[12px] text-amber-800 font-semibold">
-          The {(data.shortReads || ['data']).join(' and ')} read came back short, so this list may be incomplete —
-          treat the counts as a floor. Worth telling Claude, with this line.
+          The {(data.shortReads || ['data']).join(' and ')} read came back short — counts are a floor. Worth telling Claude.
         </p>
       ) : null}
 
       {err ? <div className="rounded-xl bg-rose-50 ring-1 ring-rose-200 px-4 py-3 text-[13px] text-rose-700">{err}</div> : null}
 
-      {/* the list */}
       {busy && !data ? (
-        <div className="rounded-2xl bg-white ring-1 ring-line p-12 text-center text-sm text-muted">
-          <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Building the contact list…
-        </div>
+        <LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Building the contact list…</LeanEmpty>
       ) : !data?.contacts.length ? (
-        <div className="rounded-2xl bg-white ring-1 ring-line p-12 text-center text-[13px] text-muted">
-          Nobody matches that.
-        </div>
+        <LeanEmpty>Nobody matches that.</LeanEmpty>
       ) : (
         <>
-          <p className="text-[12px] text-muted">
-            Showing {data.contacts.length.toLocaleString()}
-            {data.shown > data.contacts.length ? ' of ' + data.shown.toLocaleString() + ' matches' : ''}
-            {' '}— the CSV contains every match.
-          </p>
-          <div className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
-            <div className="divide-y divide-line">
-              {data.contacts.map(c => <Row key={c.key} c={c} />)}
-            </div>
-          </div>
+          <LeanList>
+            {data.contacts.map(c => <Row key={c.key} c={c} />)}
+          </LeanList>
+          {data.shown > data.contacts.length ? (
+            <p className="text-[12px] text-muted px-1">Showing {data.contacts.length.toLocaleString()} of {data.shown.toLocaleString()} — the CSV has every match.</p>
+          ) : null}
         </>
       )}
     </div>
@@ -285,59 +198,41 @@ export function ContactList() {
 }
 
 function Row({ c }: { c: Contact }) {
+  const mailTag = c.mail === 'mailable'
+    ? <Tag tone="emerald" title="Can be emailed">Mailable</Tag>
+    // The address may be fine — the channel is the problem, so the tag names the channel.
+    : c.mail === 'restricted' ? <Tag tone="amber" title={c.mailReason}>{c.channel} · no marketing</Tag>
+      : c.email ? <Tag tone="amber" title={c.mailReason}>Not mailable</Tag>
+        : <Tag title="No email address on file">No email</Tag>
   return (
-    <div className="px-4 py-3 flex items-start gap-3 flex-wrap sm:flex-nowrap hover:bg-app/40">
-      <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] font-semibold text-ink leading-tight flex items-center gap-1.5 flex-wrap">
-          <span className="truncate">{c.first} {c.last}</span>
-          {c.vip ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-100 text-violet-800">VIP</span> : null}
-          {c.inHouse ? <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">In house</span> : null}
-          {c.tags.map(t => <span key={t} className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-app text-muted ring-1 ring-line">{t}</span>)}
+    <LeanRow
+      name={`${c.first} ${c.last}`}
+      meta={c.email || c.phone || undefined}
+      tags={<>
+        {c.vip ? <Tag tone="violet">VIP</Tag> : null}
+        {c.inHouse ? <Tag tone="emerald">In house</Tag> : null}
+        {mailTag}
+        {c.channel ? <Tag title="Booking channel">{c.channel}</Tag> : null}
+        <Tag title={`${c.stays} stay${c.stays === 1 ? '' : 's'} · ${c.nights} night${c.nights === 1 ? '' : 's'}`}>{c.stays}× · {usd(c.value)}</Tag>
+        {c.reviews ? <Tag tone={c.unhappy ? 'rose' : 'slate'} title={c.reviews + ' review' + (c.reviews === 1 ? '' : 's') + (c.reviewLow != null ? ' · lowest ' + c.reviewLow : '')}>{c.reviewAvg ? c.reviewAvg + '★' : c.reviews + ' rev'}</Tag> : null}
+        {c.tags.map(t => <Tag key={t}>{t}</Tag>)}
+      </>}>
+      <div className="text-[12.5px] text-ink space-y-1">
+        <p className="flex items-center gap-3 flex-wrap text-muted">
+          {c.email ? <span className={'inline-flex items-center gap-1 ' + (c.mail === 'mailable' ? 'text-ink' : c.mail === 'restricted' ? '' : 'line-through decoration-amber-400/60')}>
+            {c.mail === 'mailable' ? <Mail size={11} className="text-emerald-600" /> : <MailX size={11} className="text-amber-600" />}{c.email}</span>
+            : <span className="inline-flex items-center gap-1"><MailX size={11} /> no email</span>}
+          {c.phone ? <span>{c.phone}</span> : null}
         </p>
-        <p className="text-[12px] mt-0.5 flex items-center gap-1.5 flex-wrap">
-          {c.mail === 'mailable' ? (
-            <span className="inline-flex items-center gap-1 text-ink"><Mail size={11} className="text-emerald-600" />{c.email}</span>
-          ) : c.mail === 'restricted' ? (
-            // The address is fine — the channel is the problem. Saying "not mailable" next to a
-            // perfectly good Gmail address just reads as a bug, so this one says why itself.
-            <span title={c.mailReason} className="inline-flex items-center gap-1 text-muted">
-              <Ban size={11} className="text-amber-600" />
-              <span>{c.email}</span>
-              <span className="text-[10.5px] text-amber-700 font-semibold">{c.channel} — do not market</span>
-            </span>
-          ) : c.email ? (
-            <span title={c.mailReason} className="inline-flex items-center gap-1 text-muted">
-              <MailX size={11} className="text-amber-600" />
-              <span className="line-through decoration-amber-400/60">{c.email}</span>
-              <span className="text-[10.5px] text-amber-700 font-semibold">not mailable</span>
-            </span>
-          ) : (
-            <span className="text-muted inline-flex items-center gap-1"><MailX size={11} /> no email</span>
-          )}
-          {c.phone ? <span className="text-muted">· {c.phone}</span> : null}
+        {c.mail !== 'mailable' && c.email ? <p className="text-[11.5px] text-amber-700">{c.mailReason}</p> : null}
+        <p className="text-muted">
+          <Repeat size={11} className="inline mr-1" />{c.stays} stay{c.stays === 1 ? '' : 's'} · {c.nights} night{c.nights === 1 ? '' : 's'} · {usd(c.value)}
+          {' · '}<Star size={10} className={'inline ' + (c.reviews ? 'text-amber-500' : 'text-line')} />{' '}
+          {c.reviews ? c.reviews + ' review' + (c.reviews === 1 ? '' : 's') + (c.reviewAvg ? ' · avg ' + c.reviewAvg : '') : 'no reviews'}
         </p>
-        {c.mail !== 'mailable' && c.email ? (
-          <p className="text-[11px] text-amber-700 mt-0.5">{c.mailReason}</p>
-        ) : null}
+        <p className="text-muted">Last unit {c.lastUnit || '—'}{c.units.length > 1 ? ' · all: ' + c.units.join(', ') : ''}</p>
       </div>
-
-      <div className="text-[11.5px] text-muted shrink-0 sm:w-[210px] leading-relaxed">
-        <p className="text-ink font-semibold text-[12px]">{c.channel || '—'}</p>
-        <p className="truncate" title={c.units.join(', ')}>{c.lastUnit || '—'}</p>
-        {c.units.length > 1 ? <p className="text-faint">+{c.units.length - 1} more unit{c.units.length > 2 ? 's' : ''}</p> : null}
-      </div>
-
-      <div className="text-[11.5px] text-muted shrink-0 sm:w-[150px] leading-relaxed">
-        <p className="inline-flex items-center gap-1 text-ink font-semibold text-[12px]">
-          <Repeat size={11} /> {c.stays} stay{c.stays === 1 ? '' : 's'}
-        </p>
-        <p>{c.nights} night{c.nights === 1 ? '' : 's'} · {usd(c.value)}</p>
-        <p className="inline-flex items-center gap-1">
-          <Star size={10} className={c.reviews ? 'text-amber-500' : 'text-line'} />
-          {c.reviews ? c.reviews + ' review' + (c.reviews === 1 ? '' : 's') + (c.reviewAvg ? ' · ' + c.reviewAvg : '') : 'no reviews'}
-        </p>
-      </div>
-    </div>
+    </LeanRow>
   )
 }
 
@@ -375,14 +270,11 @@ function BlockedChannels({ current, all, summary, onSaved, onClose }: {
     <div className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
       <div className="px-4 py-3 border-b border-line flex items-center gap-2">
         <Ban size={14} className="text-muted" />
-        <p className="text-[13.5px] font-bold text-ink">Channels we do not market to</p>
-        <button onClick={onClose} className="ml-auto text-muted hover:text-ink p-1 -m-1 rounded-lg hover:bg-app"><X size={15} /></button>
+        <p className="text-[13.5px] font-bold text-ink flex-1">Channels we do not market to</p>
+        <Tip label="Close"><button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink p-1 -m-1 rounded-lg hover:bg-app"><X size={15} /></button></Tip>
       </div>
       <div className="px-4 py-4 space-y-3">
-        <p className="text-[12.5px] text-muted leading-relaxed">
-          Tick a channel and every guest whose bookings came only through it stops being mailable — whatever their
-          address looks like. Anyone who has since booked direct is unaffected: that is a relationship you own.
-        </p>
+        <p className="text-[12px] text-muted">Ticked = guests who booked only through it are never mailed. Anyone who has booked direct is unaffected.</p>
         <div className="grid gap-1.5 sm:grid-cols-2">
           {options.map(label => {
             const on = picked.some(x => x.toLowerCase() === label.toLowerCase())
@@ -450,17 +342,14 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
     <div className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
       <div className="px-4 py-3 border-b border-line flex items-center gap-2">
         <Send size={14} className="text-muted" />
-        <p className="text-[13.5px] font-bold text-ink">Mailchimp</p>
-        <button onClick={onClose} className="ml-auto text-muted hover:text-ink p-1 -m-1 rounded-lg hover:bg-app"><X size={15} /></button>
+        <p className="text-[13.5px] font-bold text-ink flex-1">Mailchimp</p>
+        <Tip label="Close"><button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink p-1 -m-1 rounded-lg hover:bg-app"><X size={15} /></button></Tip>
       </div>
 
       <div className="px-4 py-4 space-y-4">
         {!mc?.connected ? (
           <>
-            <p className="text-[12.5px] text-muted leading-relaxed">
-              Paste an API key from Mailchimp (Account → Extras → API keys). It is stored on the server, never
-              shown back to the browser, and is only ever used to talk to Mailchimp.
-            </p>
+            <p className="text-[12px] text-muted">API key from Mailchimp → Account → Extras → API keys. Stored server-side, never shown again.</p>
             <div className="flex gap-2 flex-wrap">
               {/* Chrome autofills ANY type="password" input from the saved-password store, and
                   autoComplete="off" does not stop it — so clicking near this field dropped a Google
@@ -494,10 +383,8 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
                   </select>
                   <label className="flex items-start gap-2 text-[12px] text-muted leading-relaxed">
                     <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} className="mt-0.5" />
-                    <span>
-                      These guests agreed to hear from us, so add new contacts as <b>subscribed</b>. Leave this off and
-                      they go in as <b>transactional</b> — they land in the audience but are not counted as marketing
-                      opt-ins, which is the safe default. Anyone who already unsubscribed is never re-subscribed either way.
+                    <span title="Off = transactional: they land in the audience but are not marketing opt-ins (the safe default). Anyone who unsubscribed is never re-subscribed either way.">
+                      Add new contacts as <b>subscribed</b> (guests consented). Off = <b>transactional</b>.
                     </span>
                   </label>
                   <button disabled={!pick || !!busy}
@@ -539,35 +426,30 @@ function MailchimpPanel({ mc, setMc, seg, onClose }: { mc: Mc | null; setMc: (m:
             </label>
 
             <div className="rounded-xl bg-app ring-1 ring-line px-3.5 py-3">
-              <p className="text-[12px] text-muted leading-relaxed">
-                Pushing sends only the addresses marked <b>can email</b>. Relays and channel-blocked guests are filtered
-                out here, again in the API and again in the Mailchimp client — three gates, because one that gets
-                refactored away is how a blocked address ends up in a campaign. Each contact goes up with first name,
-                last name and phone, tagged with their booking channel, stay count, building, market, VIP and your own tags.
-                Guests who left us three stars or fewer are never included.
-                {seg ? <> The current filter <b>{SEGS.find(x => x.key === seg)?.label}</b> is applied.</> : null}
-              </p>
-              <p className="text-[12px] text-muted leading-relaxed mt-1.5">
-                <b>Nobody can be added twice.</b> Mailchimp keys a contact by their email address, so a second push
-                updates the person rather than duplicating them. <b>Check first</b> reads the audience and tells you
-                how many are genuinely new before anything is sent — and anyone who unsubscribed, hard-bounced, or was
-                archived out of the audience on purpose is left exactly where they are.
-              </p>
+              {/* Relays and channel-blocked guests are filtered here, again in the API and again in the
+                  Mailchimp client — three gates, because one that gets refactored away is how a blocked
+                  address ends up in a campaign. Mailchimp keys by email, so a re-push updates, never duplicates. */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Tag tone="emerald" title="Only addresses marked can-email are sent; relays, channel-blocked and 3-star-or-lower guests never are">Can-email only</Tag>
+                <Tag title="Mailchimp keys a contact by email, so a second push updates rather than duplicates">No duplicates</Tag>
+                <Tag title="Unsubscribed, hard-bounced and archived contacts are left exactly where they are">Opt-outs untouched</Tag>
+                <Tag title="Each contact goes up with name and phone, tagged with channel, stay count, building, market, VIP and your tags">Tagged</Tag>
+                {seg ? <Tag tone="brand" title="The current filter is applied to the push">{SEGS.find(x => x.key === seg)?.label}</Tag> : null}
+              </div>
               {/* NAME THE DESTINATION NEXT TO THE BUTTON THAT WRITES TO IT (Jon, 2026-09-15).
                   The audience was picked days ago and printed at the top of the panel, twelve lines
                   away from Push. That is not where a person looks when they are about to press it.
                   Stay Hospitality's connected audience was "Homeowners" — one press from putting
                   seven thousand GUESTS into the owners' list, which has no undo worth the name.
                   So the destination is stated on the button itself, and the button arms first. */}
-              <p className="text-[12px] text-ink leading-relaxed mt-2.5">
+              <p className="text-[12px] text-ink leading-relaxed mt-2.5" title="Wrong list? Disconnect above and reconnect to pick another.">
                 Destination: <b>{mc.audienceName}</b>
-                <span className="text-muted"> — wrong list? Disconnect above and reconnect to pick another.</span>
               </p>
               <div className="flex gap-2 flex-wrap mt-2">
                 <button disabled={!!busy}
                   onClick={async () => { setArmed(false); const j = await call({ op: 'sync', seg, dryRun: true }, 'dry'); if (j) { setResult(j.result); setDry(true); setMsg('Checked the audience — nothing was sent.') } }}
                   className="h-9 px-3.5 rounded-xl border border-line bg-white text-[12.5px] font-bold text-ink inline-flex items-center gap-1.5">
-                  {busy === 'dry' ? <Loader2 size={13} className="animate-spin" /> : null} Check first
+                  {busy === 'dry' ? <Loader2 size={13} className="animate-spin" /> : null} <span title="Reads the audience and says how many are new — nothing is sent">Check first</span>
                 </button>
                 {!armed ? (
                   <button disabled={!!busy} onClick={() => setArmed(true)}

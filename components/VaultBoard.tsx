@@ -12,6 +12,7 @@ import {
   Upload, Users, Clock, KeyRound, FileText, StickyNote, ShieldCheck, History, RefreshCw, Lock,
   Database, Unlock, ChevronRight, ChevronDown, MoreHorizontal, FolderLock, ArrowRightLeft,
 } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanTabs, IconBtn, Tip } from '@/components/lean'
 
 // Keep in sync with CATEGORIES in lib/vault.ts — this order is the order the shelves render in.
 const CATEGORIES = [
@@ -128,7 +129,7 @@ function RecordsView({ askCode }: { askCode: AskCode }) {
         <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2">
           <ShieldCheck size={14} className="text-emerald-600" />
           <span className="text-[13px] font-bold text-ink">Salato verifications</span>
-          <span className="text-[11.5px] text-muted">{salato.length} completed · ID, selfie and signature open as 10-minute links, each open is on the record</span>
+          <Tag tone="emerald" title="ID, selfie and signature open as 10-minute links; each open is on the record">{salato.length} completed</Tag>
         </div>
         {salato.length ? salato.slice(0, 100).map((v: any) => (
           <div key={v.id} className="px-4 py-2 border-b border-line/40 flex items-center gap-3 flex-wrap text-[12.5px]">
@@ -150,7 +151,7 @@ function RecordsView({ askCode }: { askCode: AskCode }) {
         <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2">
           <FileText size={14} className="text-brand-600" />
           <span className="text-[13px] font-bold text-ink">Elser registration forms</span>
-          <span className="text-[11.5px] text-muted">{forms.length} filed · the exact PDF the building was sent</span>
+          <Tag title="The exact PDF the building was sent">{forms.length} filed</Tag>
         </div>
         {forms.length ? forms.slice(0, 100).map((f: any) => (
           <div key={f.id} className="px-4 py-2 border-b border-line/40 flex items-center gap-3 flex-wrap text-[12.5px]">
@@ -166,8 +167,8 @@ function RecordsView({ askCode }: { askCode: AskCode }) {
           </div>
         )) : <div className="px-4 py-6 text-center text-[12.5px] text-muted">No filed forms yet.</div>}
       </div>
-      <div className="rounded-2xl border border-dashed border-line bg-white/60 px-4 py-4 text-[12.5px] text-muted">
-        <b className="text-ink">Incident reports</b> — the shelf is ready; the incident-report flow lands here the day we build it.
+      <div className="rounded-2xl border border-dashed border-line bg-white/60 px-4 py-2 text-[12.5px] text-muted" title="The incident-report flow lands here the day we build it">
+        <b className="text-ink">Incident reports</b> · coming
       </div>
     </div>
   )
@@ -231,7 +232,7 @@ function ActivityView() {
             </div>
           )) : <div className="px-4 py-8 text-center text-[12.5px] text-muted">Nothing recorded in this window yet — activity starts collecting from the moment the migration runs.</div>}
       </div>
-      <p className="text-[11px] text-muted">Metadata only: who, which screen or feature, when, and with how much power. What was typed or shown is never stored. Vault reveals keep their own separate log on each item.</p>
+      <p className="text-[11px] text-muted" title="Who, which screen or feature, when, and with how much power. What was typed or shown is never stored. Vault reveals keep their own separate log on each item.">Metadata only — nothing typed or shown is stored.</p>
     </div>
   )
 }
@@ -251,6 +252,7 @@ export function VaultBoard() {
   const [openShelves, setOpenShelves] = useState<Record<string, boolean>>({})
   const [picked, setPicked] = useState<Record<string, boolean>>({})
   const [menuFor, setMenuFor] = useState<string | null>(null)
+  const [openRow, setOpenRow] = useState<string | null>(null)   // whose notes are open (display only)
 
   // THE UNLOCK WINDOW. `until` is a timestamp the server gave us; the countdown here is only a
   // display — the server re-checks its own signed cookie on every single reveal.
@@ -559,17 +561,23 @@ export function VaultBoard() {
   const KindIcon = ({ k }: { k: Item['kind'] }) =>
     k === 'file' ? <FileText size={13} /> : k === 'note' ? <StickyNote size={13} /> : <KeyRound size={13} />
 
+  const nRevealed = Object.keys(revealed).length
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      <LeanHead title="Vault" icon={<Lock size={20} className="text-muted" />}>
+        <Pill title="Items you can open. Nothing is visible to the rest of the team unless shared, and every open is recorded.">{items.length} items</Pill>
+        {expiring.length > 0 ? <Pill tone="amber" title="Expired or expiring within 30 days">{expiring.length} expiring</Pill> : null}
+        {codeSet ? (openFor > 0
+          ? <Pill tone="emerald" title="Unlock window — every reveal is still a click, and still recorded">Unlocked {openFor}s</Pill>
+          : <Pill title="Enter the code once for a minute of access. Every reveal is still a click, and still recorded.">Locked</Pill>)
+          : <Pill tone="amber" title="An admin must set the vault code before anything can be revealed">No code set</Pill>}
+      </LeanHead>
       {/* Vault = the locked shelf · Records = the verification paper trail · Activity = who did what */}
-      <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden w-fit">
-        {([['vault', 'Vault'], ['records', 'Records'], ['activity', 'Activity'], ['log', 'Code log & backups']] as const).filter(([k]) => k !== 'log' || isAdmin).map(([k, label]) => (
-          <button key={k} onClick={() => setView(k)}
-            className={'px-3.5 py-1.5 text-[12.5px] font-semibold ' + (view === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
-            {label}
-          </button>
-        ))}
-      </div>
+      <LeanTabs
+        tabs={([['vault', 'Vault'], ['records', 'Records'], ['activity', 'Activity'], ['log', 'Code log & backups']] as const)
+          .filter(([k]) => k !== 'log' || isAdmin)
+          .map(([k, label]) => ({ key: k as 'vault' | 'records' | 'activity' | 'log', label, n: k === 'vault' ? items.length : null }))}
+        value={view} onChange={setView} />
       {codeReq && <CodePrompt purpose={codeReq.purpose} askReason={codeReq.askReason} onAnswer={answerCode} />}
       {view === 'records' && <RecordsView askCode={askCode} />}
       {view === 'activity' && <ActivityView />}
@@ -607,32 +615,32 @@ export function VaultBoard() {
       {/* THE LOCK BAR — one code entry buys a minute of clicking. Revealing stays a per-item click,
           and every click is still its own line in the log. */}
       {codeSet && (
-        <div className={'rounded-2xl border px-4 py-2.5 flex items-center gap-3 flex-wrap ' +
+        <div className={'rounded-2xl border px-3 sm:px-4 py-1.5 flex items-center gap-2.5 flex-wrap ' +
           (openFor > 0 ? 'border-emerald-300 bg-emerald-50' : 'border-line bg-white')}>
           {openFor > 0 ? (
             <>
-              <Unlock size={15} className="text-emerald-700 shrink-0" />
+              <Unlock size={14} className="text-emerald-700 shrink-0" />
               <span className="text-[13px] font-semibold text-emerald-900">Unlocked</span>
-              <span className="text-[12.5px] text-emerald-800 tabular-nums">
-                {openFor}s left — click Reveal on anything you need
+              <span className="text-[12px] text-emerald-800 tabular-nums" title="Click Reveal on anything you need">
+                {openFor}s left
               </span>
               <div className="h-1.5 w-24 rounded-full bg-emerald-200 overflow-hidden" aria-hidden>
                 <div className="h-full bg-emerald-600 transition-all duration-500" style={{ width: Math.round((openFor / 60) * 100) + '%' }} />
               </div>
               <span className="grow" />
               <button onClick={lockNow}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 text-[12.5px] font-semibold text-emerald-900">
-                <Lock size={13} /> Lock now
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-emerald-900">
+                <Lock size={12} /> Lock now
               </button>
             </>
           ) : (
             <>
-              <Lock size={15} className="text-muted shrink-0" />
+              <Lock size={14} className="text-muted shrink-0" />
               <span className="text-[13px] font-semibold text-ink">Locked</span>
-              <span className="text-[12.5px] text-muted">Enter the code once for a minute of access. Every reveal is still a click, and still recorded.</span>
+              <span className="text-[12px] text-muted">code once = 1 minute · each reveal logged</span>
               <span className="grow" />
-              <button onClick={unlock}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-semibold hover:bg-brand-700">
+              <button onClick={unlock} title="Enter the vault code for a minute of access"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-2.5 py-1 text-[12px] font-semibold hover:bg-brand-700">
                 <Unlock size={13} /> Unlock
               </button>
             </>
@@ -643,17 +651,18 @@ export function VaultBoard() {
       {/* WHICH VAULT. Private = filed nowhere: you and whoever you named on the item itself. */}
       {(collections.length > 0 || isAdmin) && (
         <div className="flex items-center gap-1.5 flex-wrap">
-          <FolderLock size={14} className="text-muted shrink-0" />
+          <Tip label="Which vault"><FolderLock size={14} className="text-muted shrink-0" /></Tip>
           {([['', 'Everything'], [PRIVATE, 'Private']] as const).map(([id, label]) => (
             <button key={id || 'all'} onClick={() => setVault(id)}
-              className={'rounded-full px-3 py-1 text-[12.5px] font-semibold border ' +
+              title={id === PRIVATE ? 'Filed in no vault: you and whoever you named on the item' : undefined}
+              className={'rounded-full px-2.5 py-0.5 text-[12px] font-semibold border ' +
                 (vault === id ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>
               {label}{id === PRIVATE ? ' · ' + items.filter(x => !x.collection_id).length : ''}
             </button>
           ))}
           {collections.map(c => (
             <button key={c.id} onClick={() => setVault(c.id)}
-              className={'rounded-full px-3 py-1 text-[12.5px] font-semibold border ' +
+              className={'rounded-full px-2.5 py-0.5 text-[12px] font-semibold border ' +
                 (vault === c.id ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}
               title={(c.roles || []).length ? 'Open to roles: ' + c.roles.join(', ') : 'Named members only'}>
               {c.name} · {items.filter(x => x.collection_id === c.id).length}
@@ -667,33 +676,33 @@ export function VaultBoard() {
 
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => { setForm({ ...EMPTY, category: cat || 'building' }); setEditing(null) }}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[13px] font-semibold hover:bg-brand-700">
-          <Plus size={14} /> New item
+          className="inline-flex items-center gap-1 rounded-lg bg-brand-600 text-white px-2.5 py-1 text-[12px] font-semibold hover:bg-brand-700">
+          <Plus size={13} /> New item
         </button>
         {/* A 256px box wrapped onto its own line on a phone and then used two thirds of it. */}
         <div className="relative w-full sm:w-auto">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search the vault…"
-            className="rounded-lg border border-line bg-white pl-8 pr-3 py-1.5 text-[13px] w-full sm:w-64 outline-none focus:border-brand-400" />
+            className="rounded-lg border border-line bg-white pl-8 pr-3 py-1 text-[12.5px] w-full sm:w-60 outline-none focus:border-brand-400" />
         </div>
         <select value={cat} onChange={e => setCat(e.target.value)}
-          className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink">
+          className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink">
           <option value="">All categories</option>
           {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
         </select>
-        <button onClick={load} className="inline-flex items-center gap-1.5 text-[13px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-          <RefreshCw size={13} /> Refresh
-        </button>
+        <IconBtn title="Refresh the list" onClick={load}><RefreshCw size={13} /></IconBtn>
         {isAdmin && (
-          <label className="inline-flex items-center gap-1.5 text-[13px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink cursor-pointer" title="Import logins from a CSV (title, username, password, url, category, building, notes)">
-            <Upload size={13} /> Import CSV
-            <input type="file" accept=".csv,text/csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) pickImport(f) }} />
-          </label>
+          <Tip label="Import logins from a CSV (title, username, password, url, category, building, notes)">
+            <label aria-label="Import CSV" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-line bg-white text-muted hover:text-ink cursor-pointer">
+              <Upload size={13} />
+              <input type="file" accept=".csv,text/csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) pickImport(f) }} />
+            </label>
+          </Tip>
         )}
-        {Object.keys(revealed).length > 0 && (
+        {nRevealed > 0 && (
           <button onClick={hideAll}
-            className="inline-flex items-center gap-1.5 text-[13px] font-semibold px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-900">
-            <EyeOff size={13} /> Hide {Object.keys(revealed).length} revealed
+            className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-900">
+            <EyeOff size={12} /> Hide {nRevealed} revealed
           </button>
         )}
       </div>
@@ -702,18 +711,17 @@ export function VaultBoard() {
       {msg && <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800">{msg}</div>}
 
       {expiring.length > 0 && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
-          <div className="font-semibold flex items-center gap-1.5"><Clock size={14} /> Expiring soon</div>
-          <ul className="mt-1 space-y-0.5">
-            {expiring.map(i => {
-              const d = daysUntil(i.expires_on)!
-              return (
-                <li key={i.id}>
-                  <strong>{i.title}</strong> — {d < 0 ? 'expired ' + Math.abs(d) + ' days ago' : d === 0 ? 'expires today' : 'expires in ' + d + ' days'} ({fmtDate(i.expires_on)})
-                </li>
-              )
-            })}
-          </ul>
+        <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
+          <span className="inline-flex items-center gap-1 font-semibold text-amber-800"><Clock size={12} /> Expiring</span>
+          {expiring.map(i => {
+            const d = daysUntil(i.expires_on)!
+            return (
+              <Tag key={i.id} tone={d < 0 ? 'rose' : 'amber'}
+                title={(d < 0 ? 'Expired ' + Math.abs(d) + ' days ago' : d === 0 ? 'Expires today' : 'Expires in ' + d + ' days') + ' (' + fmtDate(i.expires_on) + ')'}>
+                {i.title} · {d < 0 ? 'expired' : d + 'd'}
+              </Tag>
+            )
+          })}
         </div>
       )}
 
@@ -831,7 +839,7 @@ export function VaultBoard() {
         <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
           {shelves.map(sh => (
             <button key={sh.id} onClick={() => setOpenShelves(o => ({ ...o, [sh.id]: true }))}
-              className="rounded-lg border border-line bg-white px-2 py-1 font-semibold text-muted hover:text-ink hover:border-brand-300">
+              className="rounded-lg border border-line bg-white px-2 py-0.5 font-semibold text-muted hover:text-ink hover:border-brand-300">
               {sh.label} <span className="text-ink">{sh.items.length}</span>
             </button>
           ))}
@@ -861,9 +869,9 @@ export function VaultBoard() {
 
       <div className="rounded-2xl border border-line bg-white overflow-hidden">
         {loading && items.length === 0 ? (
-          <div className="px-4 py-10 text-center text-[13px] text-muted"><Loader2 size={16} className="animate-spin inline mr-2" /> Loading…</div>
+          <div className="px-4 py-6 text-center text-[13px] text-muted"><Loader2 size={16} className="animate-spin inline mr-2" /> Loading…</div>
         ) : shown.length === 0 ? (
-          <div className="px-4 py-10 text-center text-[13px] text-muted">
+          <div className="px-4 py-6 text-center text-[13px] text-muted">
             {items.length === 0 ? 'Nothing in the vault yet. Start with the codes people keep asking you for.' : 'Nothing matches that.'}
           </div>
         ) : shelves.map(sh => (
@@ -887,81 +895,76 @@ export function VaultBoard() {
               const canMove = i.level === 'manage'
               return (
                 <div key={i.id} className="border-b border-line/60 last:border-b-0">
-                  <div className="flex items-start gap-2.5 px-4 py-2.5 flex-wrap">
+                  <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 flex-wrap sm:flex-nowrap">
                     {canMove && (
-                      <input type="checkbox" checked={!!picked[i.id]} aria-label={'Select ' + i.title}
+                      <input type="checkbox" checked={!!picked[i.id]} aria-label={'Select ' + i.title} title="Select to move"
                         onChange={e => setPicked(pk => ({ ...pk, [i.id]: e.target.checked }))}
-                        className="mt-1 shrink-0 accent-brand-600 w-3.5 h-3.5" />
+                        className="shrink-0 accent-brand-600 w-3.5 h-3.5" />
                     )}
-                    <span className="mt-0.5 text-muted shrink-0"><KindIcon k={i.kind} /></span>
+                    <Tip label={i.kind === 'file' ? 'Document' : i.kind === 'note' ? 'Note' : 'Secret'}><span className="text-muted shrink-0"><KindIcon k={i.kind} /></span></Tip>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[13px] font-semibold text-ink">{i.title}</span>
-                        {i.property_id && (
-                          <button onClick={() => setQ(i.property_id || '')}
-                            className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100">
-                            {i.property_id}{i.unit_no ? ' ' + i.unit_no : ''}
-                          </button>
-                        )}
-                        {i.collection_id
-                          ? <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">{vaultName(i.collection_id)}</span>
-                          : <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded bg-neutral-100 text-muted border border-line">Private</span>}
-                        {mine.length > 0 && (
-                          <span className="text-[10.5px] text-muted inline-flex items-center gap-1"><Users size={11} /> {mine.length}</span>
-                        )}
-                        {i.level === 'view' && <span className="text-[10px] uppercase tracking-wider font-semibold text-muted">read-only</span>}
-                        {d !== null && d <= 30 && (
-                          <span className={'text-[10px] uppercase tracking-wider font-semibold ' + (d < 0 ? 'text-rose-600' : 'text-amber-700')}>
-                            {d < 0 ? 'expired' : 'expires ' + fmtDate(i.expires_on)}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Username and the masked hint on one quiet line. The shelf name is gone —
-                          the header three rows up already said it. */}
-                      <div className="text-[12px] text-muted mt-0.5 flex items-center gap-2 flex-wrap">
-                        {i.username && <span className="font-mono text-[11.5px]">{i.username}</span>}
-                        {i.hasSecret && (
-                          <code className={'text-[12px] px-1.5 py-0.5 rounded border ' + (revealed[i.id]
-                            ? 'border-emerald-300 bg-emerald-50 text-emerald-900 font-semibold'
-                            : 'border-line bg-app text-muted')}>
-                            {revealed[i.id] || i.secret_hint || '••••••••'}
-                          </code>
-                        )}
-                        {revealed[i.id] && <span className="text-[10.5px] text-emerald-700">hides itself shortly</span>}
-                        {i.hasFile && i.doc_name && <span>{i.doc_name}{i.doc_bytes ? ' (' + fmtBytes(i.doc_bytes) + ')' : ''}</span>}
-                      </div>
-
-                      {i.description && <div className="text-[12px] text-ink/70 mt-1 whitespace-pre-wrap">{i.description}</div>}
+                    {/* One line: name, username, masked hint (or the revealed value), tags. Notes open below. */}
+                    <div onClick={i.description ? () => setOpenRow(openRow === i.id ? null : i.id) : undefined}
+                      className={'min-w-0 flex-1 flex items-center gap-1.5 flex-wrap ' + (i.description ? 'cursor-pointer' : '')}>
+                      <span className="text-[13px] font-semibold text-ink truncate max-w-[16rem]">{i.title}</span>
+                      {i.username && <span className="font-mono text-[11.5px] text-muted truncate max-w-[12rem]">{i.username}</span>}
+                      {i.hasSecret && (
+                        <code className={'text-[12px] px-1.5 py-0.5 rounded border ' + (revealed[i.id]
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-900 font-semibold'
+                          : 'border-line bg-app text-muted')}
+                          title={revealed[i.id] ? 'Hides itself shortly' : undefined}>
+                          {revealed[i.id] || i.secret_hint || '••••••••'}
+                        </code>
+                      )}
+                      {i.hasFile && i.doc_name && <span className="text-[11.5px] text-muted truncate max-w-[12rem]" title={i.doc_name}>{i.doc_name}{i.doc_bytes ? ' · ' + fmtBytes(i.doc_bytes) : ''}</span>}
+                      {i.property_id && (
+                        <button onClick={e => { e.stopPropagation(); setQ(i.property_id || '') }} title="Show everything for this building"
+                          className="text-[10.5px] font-semibold px-1.5 py-[3px] leading-none rounded-md bg-sky-100 text-sky-700 hover:bg-sky-200">
+                          {i.property_id}{i.unit_no ? ' ' + i.unit_no : ''}
+                        </button>
+                      )}
+                      {i.collection_id
+                        ? <Tag tone="amber" title="Vault this item is filed in">{vaultName(i.collection_id)}</Tag>
+                        : <Tag title="Filed in no vault: owner and named people only">Private</Tag>}
+                      {mine.length > 0 && <Tag title={'Shared with ' + mine.map(g => g.email).join(', ')}>Shared {mine.length}</Tag>}
+                      {i.level === 'view' && <Tag title="You can open this but not change it">Read-only</Tag>}
+                      {d !== null && d <= 30 && (
+                        <Tag tone={d < 0 ? 'rose' : 'amber'} title={'Expires ' + fmtDate(i.expires_on)}>{d < 0 ? 'Expired' : 'Expires ' + fmtDate(i.expires_on)}</Tag>
+                      )}
                     </div>
 
                     {/* Reveal and Copy stay on the row. Everything else lives behind the ⋯ */}
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0 ml-auto">
                       {i.hasSecret && (
                         <>
                           <button onClick={() => reveal(i)}
-                            className={'inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border ' +
+                            className={'inline-flex items-center gap-1 text-[12px] font-semibold px-2 h-8 rounded-lg border ' +
                               (revealed[i.id] ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-line text-muted hover:text-ink')}>
                             {revealed[i.id] ? <><EyeOff size={13} /> Hide</> : <><Eye size={13} /> Reveal</>}
                           </button>
-                          <button onClick={() => copySecret(i)} title="Copy"
-                            className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-                            <Copy size={13} />
-                          </button>
+                          <IconBtn title="Copy to clipboard (logged)" onClick={() => copySecret(i)}><Copy size={13} /></IconBtn>
                         </>
                       )}
                       {i.hasFile && (
                         <button onClick={() => openFile(i)}
-                          className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+                          className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 h-8 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
                           <Download size={13} /> Open
                         </button>
                       )}
+                      {i.description && (
+                        <Tip label={openRow === i.id ? 'Hide notes' : 'Show notes'}>
+                          <button onClick={() => setOpenRow(openRow === i.id ? null : i.id)} aria-label="Notes" className="shrink-0 text-muted hover:text-ink p-1">
+                            <ChevronDown size={15} className={openRow === i.id ? 'rotate-180 transition' : 'transition'} />
+                          </button>
+                        </Tip>
+                      )}
                       <div className="relative">
-                        <button onClick={() => setMenuFor(menuFor === i.id ? null : i.id)} title="More"
-                          className="inline-flex items-center px-2 py-1.5 rounded-lg border border-line text-muted hover:text-ink">
-                          <MoreHorizontal size={14} />
-                        </button>
+                        <Tip label="Share, edit, move, delete">
+                          <button onClick={() => setMenuFor(menuFor === i.id ? null : i.id)} aria-label="More"
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-line text-muted hover:text-ink">
+                            <MoreHorizontal size={14} />
+                          </button>
+                        </Tip>
                         {menuFor === i.id && (
                           <div className="absolute right-0 top-full mt-1 z-20 w-52 rounded-xl border border-line bg-white shadow-lg py-1 text-[12.5px]">
                             {i.url && (
@@ -990,6 +993,7 @@ export function VaultBoard() {
                       </div>
                     </div>
                   </div>
+                  {openRow === i.id && i.description && <div className="px-4 pb-2.5 text-[12px] text-ink/75 whitespace-pre-wrap">{i.description}</div>}
                   {openShare === i.id && <SharePanel itemId={i.id} onClose={() => setOpenShare(null)} onChanged={load} />}
                 </div>
               )
@@ -998,10 +1002,9 @@ export function VaultBoard() {
         ))}
       </div>
 
-      <p className="text-[11px] text-muted flex items-center gap-1.5">
-        <ShieldCheck size={12} /> Secrets are encrypted before they are stored and are never included when this list loads.
-        The code opens a one-minute window; revealing is still a click per item, and every click is recorded against your name.
-        A sealed backup is written after every change.
+      <p className="text-[11px] text-muted flex items-center gap-1.5"
+        title="Secrets are encrypted before they are stored and never included when this list loads. The code opens a one-minute window; revealing is still a click per item, recorded against your name. A sealed backup is written after every change.">
+        <ShieldCheck size={12} /> Encrypted · every reveal logged · backed up on change
       </p>
       </>}
     </div>
@@ -1052,7 +1055,7 @@ function SharePanel({ itemId, onClose, onChanged }: { itemId: string; onClose: (
       <div className="rounded-xl border border-line bg-app/60 p-3 space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-[12px] font-bold text-ink">Who can open this</span>
-          <button onClick={onClose} className="p-1 rounded text-muted hover:text-ink"><X size={14} /></button>
+          <Tip label="Close sharing"><button onClick={onClose} aria-label="Close" className="p-1 rounded text-muted hover:text-ink"><X size={14} /></button></Tip>
         </div>
         {err && <div className="text-[12px] text-rose-700">{err}</div>}
         {!data ? <div className="text-[12px] text-muted">Loading…</div> : (
@@ -1237,7 +1240,7 @@ function CodeLogView({ askCode, canExport }: { askCode: AskCode; canExport: bool
           <select value={days} onChange={e => setDays(Number(e.target.value))} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12.5px] shadow-soft">
             <option value={1}>24h</option><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
           </select>
-          <button onClick={() => load(days)} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft inline-flex items-center gap-1.5"><RefreshCw size={12} /></button>
+          <IconBtn title="Refresh the log" onClick={() => load(days)}><RefreshCw size={12} /></IconBtn>
         </div>
         {err ? <div className="mx-4 my-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-[13px] text-rose-700">{err}</div> : null}
         {state === 'loading' ? <div className="px-4 py-8 text-center text-[12.5px] text-muted">Loading…</div>
@@ -1380,7 +1383,7 @@ function VaultsPanel({ collections, onChanged }: { collections: Collection[]; on
                     className="text-[12px] font-semibold text-brand-700 hover:underline">
                     {openId === c.id ? 'Close' : 'Who can open it'}
                   </button>
-                  <button onClick={() => removeVault(c)} className="text-muted hover:text-rose-600" title="Delete vault"><Trash2 size={13} /></button>
+                  <Tip label="Delete vault (items become owner-only)"><button onClick={() => removeVault(c)} aria-label="Delete vault" className="text-muted hover:text-rose-600"><Trash2 size={13} /></button></Tip>
                 </>
               )}
             </div>

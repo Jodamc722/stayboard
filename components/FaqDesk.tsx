@@ -1,5 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { Check, X, Trash2, Plus } from 'lucide-react'
+import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn, Clamp } from '@/components/lean'
 
 type Fact = { label: string; value: string }
 type Entry = { id: string; category?: string | null; question?: string | null; answer?: string | null; photo_url?: string | null; source?: string }
@@ -7,7 +9,7 @@ type Howto = { id: string; room?: string; title: string; howTo: string; photo_ur
 type Highlight = { id: string; room?: string; title: string; brand?: string; tier?: string; features?: string[] }
 type Opt = { id: string; name: string; building: string }
 
-export function FaqDesk({ listingId }: { listingId?: string } = {}) {
+export function FaqDesk({ listingId, showHead }: { listingId?: string; showHead?: boolean } = {}) {
   const [listings, setListings] = useState<Opt[]>([])
   const [pick, setPick] = useState('')
   const [loading, setLoading] = useState(false)
@@ -18,7 +20,8 @@ export function FaqDesk({ listingId }: { listingId?: string } = {}) {
   const [busy, setBusy] = useState(false)
   const [search, setSearch] = useState('')
   const [showList, setShowList] = useState(false)
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [tab, setTab] = useState<'facts' | 'faq' | 'drafts' | 'howtos' | 'details' | 'highlights'>('facts')
+  const [adding, setAdding] = useState(false)
   const [err, setErr] = useState('')
 
   useEffect(() => { (async () => { try { const r = await fetch('/api/faq'); const j = await r.json(); setListings((j && j.listings) || []) } catch {} })() }, [])
@@ -66,136 +69,138 @@ export function FaqDesk({ listingId }: { listingId?: string } = {}) {
   const otaLinks: any[] = (data && data.otaLinks) || []
   const keyDetails: any[] = (data && data.keyDetails) || []
 
-function Section({ id, title, note, children }: { id: string; title: string; note?: string; children: any }) {
-    const open = !!collapsed[id]
-    return (
-      <section className="rounded-2xl border border-line bg-white overflow-hidden">
-        <button onClick={() => setCollapsed(c => ({ ...c, [id]: !c[id] }))} className="w-full px-4 py-3 border-b border-line flex items-center justify-between">
-          <h2 className="text-[11px] uppercase tracking-wider text-muted font-semibold">{title}</h2>
-          <span className="flex items-center gap-2">{note ? <span className="text-[11px] text-muted">{note}</span> : null}<span className="text-muted">{open ? '▾' : '▸'}</span></span>
-        </button>
-        {open ? <div className="px-4">{children}</div> : null}
-      </section>
-    )
-  }
+  type TabKey = 'facts' | 'faq' | 'drafts' | 'howtos' | 'details' | 'highlights'
+  const tabs: { key: TabKey; label: string; n?: number | null }[] = [
+    { key: 'facts', label: 'Facts', n: facts.length },
+    { key: 'faq', label: 'FAQ', n: entries.length },
+    ...(drafts.length ? [{ key: 'drafts' as TabKey, label: 'Drafts', n: drafts.length }] : []),
+    ...(howtos.length ? [{ key: 'howtos' as TabKey, label: 'How-tos', n: howtos.length }] : []),
+    ...(keyDetails.length ? [{ key: 'details' as TabKey, label: 'Key details', n: keyDetails.length }] : []),
+    ...(highlights.length ? [{ key: 'highlights' as TabKey, label: 'Highlights', n: highlights.length }] : []),
+  ]
+  const cur: TabKey = tabs.some(t => t.key === tab) ? tab : 'facts'
+  const pickedName = ((listings.find(l => l.id === pick) || {}) as any).name as string | undefined
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {showHead ? (
+        <LeanHead title="Property FAQ">
+          <Pill title="Listings you can open">{listings.length} units</Pill>
+          {pick && data ? <Pill title="Published FAQ entries for this unit">{entries.length} FAQ</Pill> : null}
+          {pick && data && drafts.length + howtos.length > 0 ? <Pill tone="amber" title="Captured in audits, waiting for approval">{drafts.length + howtos.length} to approve</Pill> : null}
+        </LeanHead>
+      ) : null}
       {err && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700">{err}</div>}
-      {!listingId ? (
-        <div className="relative max-w-md">
-          <input value={search} onChange={e => { setSearch(e.target.value); setShowList(true) }} onFocus={() => setShowList(true)} onBlur={() => setTimeout(() => setShowList(false), 150)} placeholder={pick ? (((listings.find(l => l.id === pick) || {}) as any).name || 'Search a listing…') : 'Search a listing…'} className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
-          {showList ? (
-            <div className="absolute z-20 mt-1 w-full max-h-72 overflow-auto rounded-lg border border-line bg-white shadow-soft">
-              {listings.filter(l => (l.name + ' ' + l.building).toLowerCase().includes(search.toLowerCase())).slice(0, 60).map(l => (
-                <button key={l.id} onMouseDown={() => { setPick(l.id); setSearch(''); setShowList(false) }} className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-50">{l.name}{l.building ? <span className="text-muted"> · {l.building}</span> : null}</button>
-              ))}
+      {(!listingId || (pick && data && otaLinks.length > 0)) ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          {!listingId ? (
+            <div className="relative w-full max-w-xs">
+              <input value={search} onChange={e => { setSearch(e.target.value); setShowList(true) }} onFocus={() => setShowList(true)} onBlur={() => setTimeout(() => setShowList(false), 150)} placeholder={pick ? (pickedName || 'Search a listing…') : 'Search a listing…'} className="w-full text-[12.5px] rounded-lg border border-line bg-white px-2.5 py-1.5 focus:outline-none focus:border-brand-500" />
+              {showList ? (
+                <div className="absolute z-20 mt-1 w-full max-h-72 overflow-auto rounded-lg border border-line bg-white shadow-soft">
+                  {listings.filter(l => (l.name + ' ' + l.building).toLowerCase().includes(search.toLowerCase())).slice(0, 60).map(l => (
+                    <button key={l.id} onMouseDown={() => { setPick(l.id); setSearch(''); setShowList(false) }} className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-50">{l.name}{l.building ? <span className="text-muted"> · {l.building}</span> : null}</button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
+          {pick && data && !listingId ? <a href={'/listings/' + pick} title="Open this unit's page in the app" className="text-[12px] font-semibold px-2 py-1 rounded-lg border border-line hover:bg-neutral-50">Unit ↗</a> : null}
+          {pick && data ? otaLinks.map((o: any) => <a key={o.name} href={o.url} target="_blank" rel="noreferrer" title={'Open the ' + o.name + ' listing'} className="text-[12px] font-semibold px-2 py-1 rounded-lg border border-line hover:bg-neutral-50">{o.name} ↗</a>) : null}
         </div>
       ) : null}
 
-      {loading ? <div className="rounded-2xl border border-line bg-white px-4 py-12 text-center text-sm text-muted">Loading…</div> : null}
-      {!pick && !loading && !listingId ? <div className="rounded-2xl border border-line bg-white px-6 py-20 text-center text-sm text-muted">Pick a listing to see its facts, how-tos, and FAQ.</div> : null}
+      {loading ? <LeanEmpty>Loading…</LeanEmpty> : null}
+      {!pick && !loading && !listingId ? <LeanEmpty>Pick a listing to see its facts, how-tos and FAQ.</LeanEmpty> : null}
 
       {pick && data ? (
-        <div className="space-y-4">
-          {(otaLinks.length > 0 || !listingId) ? (
-            <div className="lh-actions flex flex-wrap items-center gap-2">
-              {!listingId ? <a href={'/listings/' + pick} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50">Open unit in app →</a> : null}
-              {otaLinks.map((o: any) => <a key={o.name} href={o.url} target="_blank" rel="noreferrer" className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-line hover:bg-neutral-50">{o.name} ↗</a>)}
-            </div>
+        <div>
+          <LeanTabs tabs={tabs} value={cur} onChange={setTab}
+            right={cur === 'faq' ? <button onClick={() => setAdding(v => !v)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-neutral-900 text-white"><Plus size={13} /> {adding ? 'Close' : 'Add entry'}</button> : null} />
+
+          {cur === 'facts' ? (
+            facts.length === 0 ? <LeanEmpty>No facts found for this unit.</LeanEmpty> : (
+              <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70" title="Auto from Guesty">
+                {facts.map((f, i) => (
+                  <li key={i} className="px-3 sm:px-4 py-2 flex items-start gap-x-3 gap-y-0.5 flex-wrap sm:flex-nowrap">
+                    <span className="text-[12px] text-muted w-full sm:w-36 shrink-0">{f.label}</span>
+                    <span className="text-[13px] text-ink whitespace-pre-wrap min-w-0 flex-1">{f.value}</span>
+                  </li>
+                ))}
+              </ul>
+            )
           ) : null}
 
-          <Section id="facts" title="Unit facts" note="auto from Guesty">
-            {facts.length === 0 ? <div className="py-6 text-sm text-muted text-center">No facts found for this unit.</div> : facts.map((f, i) => (
-              <div key={i} className="py-2.5 border-b border-line last:border-0">
-                <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">{f.label}</div>
-                <div className="text-sm text-ink mt-0.5 whitespace-pre-wrap">{f.value}</div>
-              </div>
-            ))}
-          </Section>
-
-          {keyDetails.length > 0 ? (
-            <Section id="keydetails" title="Key details" note="from audit inventory">
+          {cur === 'details' ? (
+            <LeanList>
               {keyDetails.map((k: any, i: number) => (
-                <div key={i} className="py-2 border-b border-line last:border-0 flex items-center justify-between gap-2">
-                  <span className="text-sm text-ink">{k.item}{k.room ? <span className="text-[11px] text-muted ml-1.5">{k.room}</span> : null}</span>
-                  <span className="text-sm font-semibold text-ink shrink-0">{k.size}</span>
-                </div>
+                <LeanRow key={i} name={k.item} meta={k.room || undefined} tags={k.size ? <Tag tone="brand" title="From audit inventory">{k.size}</Tag> : null} />
               ))}
-            </Section>
+            </LeanList>
           ) : null}
 
-          {highlights.length > 0 ? (
-            <Section id="highlights" title="Highlights" note="from onboarding">
-              <div className="py-3 flex flex-wrap gap-1.5">
-                {highlights.map(h => <span key={h.id} className="text-[12px] px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">{h.title}{h.brand ? ' · ' + h.brand : ''}</span>)}
-              </div>
-            </Section>
-          ) : null}
-
-          {drafts.length > 0 ? (
-            <Section id="drafts" title="Drafts to approve" note="captured in audits - approve to publish">
-              <div className="py-2 space-y-2">
-                {drafts.map(d => (
-                  <div key={d.id} className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-2.5">
-                    {d.photo_url ? <img src={d.photo_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" /> : null}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-ink">{d.question}{d.category ? <span className="text-[11px] text-muted ml-1.5">{d.category}</span> : null}</div>
-                      <div className="text-[13px] text-muted mt-0.5">{d.answer}</div>
-                    </div>
-                    <div className="flex flex-col gap-1 shrink-0">
-                      <button onClick={() => approveDraft(d.id)} disabled={busy} className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-neutral-900 text-white">Approve</button>
-                      <button onClick={() => dismissDraft(d.id)} disabled={busy} className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-line text-muted">Dismiss</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          ) : null}
-
-          {howtos.length > 0 ? (
-            <Section id="howtos" title="How-Tos to review" note="captured in audits">
-              <div className="py-2 space-y-2">
-                {howtos.map(h => (
-                  <div key={h.id} className="flex gap-3 rounded-xl border border-line p-2.5">
-                    {h.photo_url ? <img src={h.photo_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" /> : null}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-ink">{h.title}{h.room ? <span className="text-[11px] text-muted ml-1.5">{h.room}</span> : null}</div>
-                      <div className="text-[13px] text-muted mt-0.5">{h.howTo}</div>
-                    </div>
-                    <button onClick={() => approve(h)} disabled={busy} className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-neutral-900 text-white shrink-0 h-fit disabled:opacity-40">Approve</button>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          ) : null}
-
-          <Section id="faq" title="FAQ and How-To">
-            {entries.length === 0 ? <div className="py-3 text-sm text-muted">No entries yet.</div> : (
-              <div className="py-3 space-y-2">
-                {entries.map(e => (
-                  <div key={e.id} className="rounded-xl border border-line p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        {e.category ? <div className="text-[11px] uppercase tracking-wider text-muted font-semibold">{e.category}</div> : null}
-                        <div className="text-sm font-semibold text-ink mt-0.5">{e.question}</div>
-                        <div className="text-[13px] text-muted mt-0.5 whitespace-pre-wrap">{e.answer}</div>
-                      </div>
-                      <button onClick={() => del(e.id)} disabled={busy} className="text-[11px] text-rose-600 shrink-0">Delete</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="space-y-2 border-t border-line pt-3 pb-3">
-              <input value={cat} onChange={e => setCat(e.target.value)} placeholder="Category (optional) e.g. Parking" className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Question / title" className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
-              <textarea value={a} onChange={e => setA(e.target.value)} placeholder="Answer" rows={3} className="w-full text-sm rounded-lg border border-line bg-white px-3 py-2 focus:outline-none focus:border-brand-500" />
-              <button onClick={addEntry} disabled={busy || !q.trim()} className="text-sm font-semibold px-3.5 py-2 rounded-lg bg-neutral-900 text-white disabled:opacity-40">Add FAQ entry</button>
+          {cur === 'highlights' ? (
+            <div className="rounded-2xl border border-line bg-white px-3 py-2.5 flex flex-wrap gap-1.5" title="From onboarding">
+              {highlights.map(h => <Tag key={h.id} tone="amber">{h.title}{h.brand ? ' · ' + h.brand : ''}</Tag>)}
             </div>
-          </Section>
+          ) : null}
+
+          {cur === 'drafts' ? (
+            <LeanList>
+              {drafts.map(d => (
+                <LeanRow key={d.id} tint="amber" name={d.question} tags={d.category ? <Tag>{d.category}</Tag> : null}
+                  actions={<>
+                    <IconBtn title="Approve — publish to the FAQ" tone="ok" disabled={busy} onClick={() => approveDraft(d.id)}><Check size={15} /></IconBtn>
+                    <IconBtn title="Dismiss this draft" disabled={busy} onClick={() => dismissDraft(d.id)}><X size={15} /></IconBtn>
+                  </>}>
+                  <div className="flex gap-3">
+                    {d.photo_url ? <img src={d.photo_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" /> : null}
+                    <div className="min-w-0 flex-1"><Clamp text={d.answer || ''} lines={3} /></div>
+                  </div>
+                </LeanRow>
+              ))}
+            </LeanList>
+          ) : null}
+
+          {cur === 'howtos' ? (
+            <LeanList>
+              {howtos.map(h => (
+                <LeanRow key={h.id} name={h.title} meta={h.room || undefined} tags={<Tag tone="sky" title="Captured in an audit">Audit</Tag>}
+                  actions={<IconBtn title="Approve — add to the FAQ as a How-To" tone="ok" disabled={busy} onClick={() => approve(h)}><Check size={15} /></IconBtn>}>
+                  <div className="flex gap-3">
+                    {h.photo_url ? <img src={h.photo_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" /> : null}
+                    <div className="min-w-0 flex-1"><Clamp text={h.howTo || ''} lines={3} /></div>
+                  </div>
+                </LeanRow>
+              ))}
+            </LeanList>
+          ) : null}
+
+          {cur === 'faq' ? (
+            <div className="space-y-2">
+              {adding ? (
+                <div className="rounded-2xl border border-line bg-white p-3 space-y-2">
+                  <div className="flex gap-2 flex-wrap">
+                    <input value={cat} onChange={e => setCat(e.target.value)} placeholder="Category (optional)" className="w-full sm:w-44 text-[12.5px] rounded-lg border border-line bg-white px-2.5 py-1.5 focus:outline-none focus:border-brand-500" />
+                    <input value={q} onChange={e => setQ(e.target.value)} placeholder="Question / title" className="flex-1 min-w-[12rem] text-[12.5px] rounded-lg border border-line bg-white px-2.5 py-1.5 focus:outline-none focus:border-brand-500" />
+                  </div>
+                  <textarea value={a} onChange={e => setA(e.target.value)} placeholder="Answer" rows={3} className="w-full text-[12.5px] rounded-lg border border-line bg-white px-2.5 py-1.5 focus:outline-none focus:border-brand-500" />
+                  <button onClick={addEntry} disabled={busy || !q.trim()} className="text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-40">Add FAQ entry</button>
+                </div>
+              ) : null}
+              {entries.length === 0 ? <LeanEmpty>No FAQ entries yet.</LeanEmpty> : (
+                <LeanList>
+                  {entries.map(e => (
+                    <LeanRow key={e.id} name={e.question} tags={e.category ? <Tag>{e.category}</Tag> : null}
+                      actions={<IconBtn title="Delete this entry" tone="bad" disabled={busy} onClick={() => del(e.id)}><Trash2 size={14} /></IconBtn>}>
+                      {e.photo_url ? <img src={e.photo_url} alt="" className="w-16 h-16 rounded-lg object-cover" /> : null}
+                      <Clamp text={e.answer || ''} lines={3} />
+                    </LeanRow>
+                  ))}
+                </LeanList>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
