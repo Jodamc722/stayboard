@@ -200,7 +200,10 @@ function actionLine(c: Any): VerdictLine | null {
   if (items > 0) {
     return {
       key: 'action', tone: 'flat',
-      text: `${items} piece${items === 1 ? '' : 's'} of work were completed on the property this period — the detail is below.`,
+      // "below" is the language of a scrolling page. In a deck the detail is a later slide, and a
+      // line that points the reader somewhere that does not exist is the kind of seam that makes a
+      // document feel assembled rather than written.
+      text: `${items} piece${items === 1 ? '' : 's'} of work were completed on the property this period.`,
     }
   }
   return null

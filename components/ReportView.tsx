@@ -909,18 +909,27 @@ const SLIDE_H = CANVAS.h
 // and the spill warning still measures against the box the content actually has.
 const TextScale = createContext(1)
 
-function Slide({ nav, children, pad, bleed, warn, ground }: {
+function Slide({ nav, children, pad, bleed, warn, ground, h }: {
   nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean; warn?: boolean
   /** Resolved background for this slide's tone. Set by the deck, never guessed here. */
   ground?: string
+  /**
+   * A taller design height than the 630 canvas, for the one kind of slide that genuinely cannot be
+   * a 16:9 rectangle: a table of every unit. Splitting that across three frames to respect the
+   * aspect ratio made the reader hold a running total in their head across two page-turns. The
+   * frame keeps scaling by width, so a tall slide is simply a taller card in the deck, and in
+   * Present mode it scrolls inside its own frame rather than running off the glass.
+   */
+  h?: number
 }) {
   const box = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(0)
   const [spill, setSpill] = useState(0)
   const tz = useContext(TextScale)
+  const DESIGN_H = h && h > SLIDE_H ? h : SLIDE_H
   const LW = Math.round(SLIDE_W / tz)
-  const LH = Math.round(SLIDE_H / tz)
+  const LH = Math.round(DESIGN_H / tz)
   useEffect(() => {
     const el = box.current
     if (!el) return
@@ -949,7 +958,8 @@ function Slide({ nav, children, pad, bleed, warn, ground }: {
     return () => { clearTimeout(id); if (mo) mo.disconnect() }
   })
   return (
-    <div ref={box} className="sb-slide" data-nav={nav || undefined} style={ground ? { background: ground } : undefined}>
+    <div ref={box} className="sb-slide" data-nav={nav || undefined} data-tall={h && h > SLIDE_H ? '1' : undefined}
+      style={{ ...(ground ? { background: ground } : {}), ...(h && h > SLIDE_H ? { aspectRatio: String(SLIDE_W) + ' / ' + String(DESIGN_H) } : {}) }}>
       {/* Until the first measurement lands, scale 0 would flash a collapsed slide; hold it
           invisible for that one frame instead. */}
       <div
@@ -1842,7 +1852,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     ? (1
         + ((verdict && !isHidden('verdict')) ? 1 : 0)
         + (!isHidden('snapshot') ? 1 : 0)
-        + ((listingTable && listingTable.rows.length && !isHidden('listings')) ? Math.max(1, Math.ceil(listingTable.rows.length / 9)) : 0)
+        + ((listingTable && listingTable.rows.length && !isHidden('listings')) ? 1 : 0)
         + ((c.pacing && (c.pacing.rows || []).length && !isHidden('pacing')) ? 1 : 0)
         + ((plan && (plan.months || []).length && !isHidden('plan')) ? 1 : 0)
         + ((c.statement && (((c.statement.kpis || []).length) || ((c.statement.months || []).length)) && !isHidden('statement')) ? 1 : 0)
@@ -2090,6 +2100,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         .sb-slide .onb-live { font-size: 15px; }
         /* Only a deck gets the inset treatment; a scrolling report keeps its own background. */
         .sb-present-deck { background: ${blend(t.bg, t.ink, darkGround ? 0.10 : 0.14)} !important; }
+        .sb-present-deck .sb-slide[data-tall] { overflow-y: auto; overscroll-behavior: contain; }
         .sb-present-deck .sb-slide, .sb-present-deck .onb-cover {
           border-radius: 12px; border: 0;
           box-shadow: 0 30px 70px -34px rgba(0,0,0,0.5);
@@ -4699,23 +4710,57 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // ── 3 · SNAPSHOT — the four cards, at slide scale ──
           if (!hid('snapshot')) slides.push({ key: 'snapshot', ai: true, node: (
             <Slide nav="Snapshot" warn={edit} ground={GROUND.light}>
-              <RTitle k="snapshot" />
-              <div className="flex" style={{ gap: 40, marginTop: 40, flexWrap: 'wrap' }}>
-                {((snap.cards || []) as Any[]).slice(0, 4).map((card: Any) => (
-                  <div key={card.key} style={{ minWidth: 190 }}>
-                    <Stat label={String(card.label || '')} value={String(card.override || card.value || '')} sub={card.gross ? 'Gross ' + card.gross : ''} />
+              {/* HIERARCHY, AND NO ECHO. The old slide set four numbers at identical size with a
+                  headline that recited two of them — "held a $254 gross ADR and $166 gross RevPAR"
+                  directly above cards reading Gross $254 and Gross $166. Nothing led, and the
+                  reader was told the same fact twice in eight seconds. Revenue now carries the
+                  slide at display size and the other three step down beside it; the headline is
+                  free to say what the numbers mean instead of repeating them. */}
+              <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
+              <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>
+                <Ed v={String(c.snapshotEyebrow || 'The period')} set={v => patch('snapshotEyebrow', v)} edit={edit} />
+              </p>
+              <h2 style={{ fontSize: 34, lineHeight: 1.15, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: '11px 0 0', maxWidth: '24ch' }}>
+                <Ed v={snap.headline || ''} set={v => patch('snapshot.headline', v)} edit={edit} multiline />
+              </h2>
+              <p style={{ fontSize: 14, lineHeight: 1.5, color: t.muted, margin: '10px 0 0', maxWidth: '62ch' }}>
+                <Ed v={snap.subtitle || ''} set={v => patch('snapshot.subtitle', v)} edit={edit} multiline />
+              </p>
+
+              {(() => {
+                const cards: Any[] = Array.isArray(snap.cards) ? snap.cards : []
+                const lead = cards.find((x: Any) => String(x.key).toLowerCase() === 'revenue') || cards[0]
+                const rest = cards.filter((x: Any) => x !== lead).slice(0, 3)
+                if (!lead) return null
+                return (
+                  <div className="flex items-end" style={{ gap: 54, marginTop: 34 }}>
+                    <div>
+                      <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>{String(lead.label || '')}</p>
+                      <p style={{ fontSize: 76, lineHeight: 0.92, letterSpacing: '-0.035em', fontWeight: 600, color: t.ink, margin: '10px 0 0' }}>{String(lead.override || lead.value || '')}</p>
+                      {lead.gross ? <p style={{ fontSize: 13, color: t.muted, margin: '10px 0 0' }}>{'Gross ' + String(lead.gross)}</p> : null}
+                    </div>
+                    <div className="flex" style={{ gap: 40, paddingBottom: 6 }}>
+                      {rest.map((card: Any) => (
+                        <div key={card.key}>
+                          <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>{String(card.label || '')}</p>
+                          <p style={{ fontSize: 34, lineHeight: 1, letterSpacing: '-0.025em', fontWeight: 600, color: t.ink, margin: '8px 0 0' }}>{String(card.override || card.value || '')}</p>
+                          {card.gross ? <p style={{ fontSize: 11.5, color: t.muted, margin: '6px 0 0' }}>{'Gross ' + String(card.gross)}</p> : null}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ))}
-              </div>
+                )
+              })()}
+
               {snap.ytd && (snap.ytd.stats || []).length ? (
-                <div style={{ marginTop: 'auto', paddingTop: 30 }}>
-                  <div style={{ borderRadius: 14, background: t.band, padding: '22px 26px' }} className="flex items-center" >
-                    <p style={{ fontSize: 14.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.86)', margin: 0, maxWidth: '46ch', flex: 1 }}>{String(snap.ytd.text || '')}</p>
-                    <div className="flex" style={{ gap: 36 }}>
+                <div style={{ marginTop: 'auto', paddingTop: 26 }}>
+                  <div style={{ borderRadius: 14, background: t.band, padding: '20px 24px' }} className="flex items-center">
+                    <p style={{ fontSize: 14, lineHeight: 1.5, color: 'rgba(255,255,255,0.86)', margin: 0, maxWidth: '48ch', flex: 1 }}>{String(snap.ytd.text || '')}</p>
+                    <div className="flex" style={{ gap: 34 }}>
                       {(snap.ytd.stats as Any[]).slice(0, 3).map((x: Any, i: number) => (
                         <div key={i} style={{ textAlign: 'right' }}>
-                          <p style={{ fontSize: 26, fontWeight: 600, color: '#fff', margin: 0, letterSpacing: '-0.02em' }}>{String(x.value || '')}</p>
-                          <p style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: '4px 0 0' }}>{String(x.label || '')}</p>
+                          <p style={{ fontSize: 25, fontWeight: 600, color: '#fff', margin: 0, letterSpacing: '-0.02em' }}>{String(x.value || '')}</p>
+                          <p style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: '4px 0 0' }}>{String(x.label || '')}</p>
                         </div>
                       ))}
                     </div>
@@ -4731,28 +4776,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // Ten rows a slide: eleven starts clipping the footer at this type size, and a table that
           // runs off the bottom of a slide is the failure mode the canvas exists to prevent.
           if (listingTable && listingTable.rows.length && !hid('listings')) {
-            const PER = 9
-            const pages = Math.max(1, Math.ceil(listingTable.rows.length / PER))
-            // THE BASIS IS THE REPORT'S, NOT THIS SLIDE'S (Jon, 2026-09-22: "the gross or net
-            // option are just from edit mode only... and it should apply where data is being
-            // pulled like it did previously"). The first cut invented a local three-way toggle,
-            // which meant the choice did not persist, did not travel to the PPTX, and disagreed
-            // with every other section's basis picker. It now drives content.basis.byListing
-            // through the same setBasis the snaps and month sections use, so choosing here is the
-            // same act as choosing anywhere else and it is saved with the report.
+            // ONE SLIDE, HOWEVER MANY UNITS (Jon, 2026-09-22: "the lsiitng should be on scrollable
+            // page not 3 sperate pages"). It used to paginate at nine rows to respect the 16:9
+            // frame, which made a reader carry a running total across two page-turns to find out
+            // what the building did. The frame now takes a design height instead: header, every
+            // unit, one total.
             const netBasis: Basis = (isBasis(bSection('byListing')) ? bSection('byListing') : 'netota') as Basis
             const tri = (r: Any, b: Basis) => basisTriple(r as Any, b)
-            // Gross rides alongside whenever the chosen basis is not gross, so the owner sees both
-            // the top line and the number the statement is built on without switching anything.
             const withGross = netBasis !== 'gross'
+            const revLabel = BASIS_SHORT[netBasis] === 'Net + fees' ? 'Net' : BASIS_SHORT[netBasis]
             const cols: { key: string; label: string; w: number }[] = [
               { key: 'unit', label: 'Unit', w: 0 },
-              ...(withGross ? [{ key: 'gross', label: 'Gross', w: 96 }] : []),
-              { key: 'rev', label: BASIS_SHORT[netBasis] === 'Net + fees' ? 'Net' : BASIS_SHORT[netBasis], w: 96 },
-              { key: 'occ', label: 'Occ', w: 70 },
-              { key: 'adr', label: 'ADR', w: 84 },
-              { key: 'revpar', label: 'RevPAR', w: 84 },
-              { key: 'nights', label: 'Nights', w: 68 },
+              ...(withGross ? [{ key: 'gross', label: 'Gross', w: 104 }] : []),
+              { key: 'rev', label: revLabel, w: 104 },
+              { key: 'occ', label: 'Occ', w: 76 },
+              { key: 'adr', label: 'ADR', w: 90 },
+              { key: 'revpar', label: 'RevPAR', w: 90 },
+              { key: 'nights', label: 'Nights', w: 74 },
             ]
             const grid = cols.map(x => (x.w ? x.w + 'px' : 'minmax(0,1fr)')).join(' ')
             const cell = (r: Any, key: string): string => {
@@ -4764,72 +4804,72 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               if (key === 'nights') return String(r.occNights ?? '')
               return ''
             }
-            // Size beside the unit, and the internal Guesty name under it (Jon, 2026-09-22) — the
-            // name the team searches by, which is not what the owner calls the apartment.
             const size = (r: Any) => (r.bedrooms == null ? '' : Number(r.bedrooms) === 0 ? 'Studio' : Number(r.bedrooms) + 'BR')
             const pretty = (iso: string) => {
               const d = new Date(String(iso) + 'T12:00:00')
               return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
             }
-            for (let p = 0; p < pages; p++) {
-              const rows = listingTable.rows.slice(p * PER, p * PER + PER)
-              const last = p === pages - 1
-              slides.push({ key: 'listings', node: (
-                <Slide nav={'By listing' + (pages > 1 ? ' ' + (p + 1) : '')} warn={edit} ground={GROUND.tint}>
-                  <div className="flex items-start justify-between" style={{ gap: 24 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
-                      <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: 0, maxWidth: '19ch' }}>
-                        <Ed v={String(c.listingsTitle || 'Performance by listing')} set={v => patch('listingsTitle', v)} edit={edit} />
-                        {pages > 1 ? <span style={{ color: t.muted }}>{' \u00b7 ' + (p + 1) + ' of ' + pages}</span> : null}
-                      </h2>
-                      <p style={{ fontSize: 15.5, lineHeight: 1.5, color: t.muted, margin: '13px 0 0', maxWidth: '60ch' }}>
-                        <Ed v={String(c.listingsNote || (listingTable.totals.units + ' units, ' + pretty(listingTable.from) + ' to ' + pretty(listingTable.to) + '. Gross is accommodation plus cleaning; ' + (BASIS_SHORT[netBasis] === 'Net + fees' ? 'net' : BASIS_SHORT[netBasis].toLowerCase()) + ' is ' + BASIS_NOTE[netBasis].toLowerCase() + '.'))}
-                          set={v => patch('listingsNote', v)} edit={edit} multiline />
-                      </p>
-                    </div>
-                    {edit && (
-                      <span className="sb-noprint" style={{ flexShrink: 0 }}>
-                        <BasisPicker label="Basis" value={bSection('byListing')} onPick={(v: string) => setBasis('byListing', v)} t={t} />
-                      </span>
-                    )}
+            // Header block, one row per unit, total, note — measured, so the frame is exactly as
+            // tall as its contents instead of leaving a field of empty cream under the last row.
+            const tall = Math.max(630, 232 + listingTable.rows.length * 34 + 96)
+            // The best and worst earners get a quiet mark. On 26 rows the eye needs somewhere to
+            // land, and "which of mine is doing well" is the question this slide exists to answer.
+            const best = listingTable.rows[0]
+            const worst = listingTable.rows[listingTable.rows.length - 1]
+            slides.push({ key: 'listings', node: (
+              <Slide nav="By listing" warn={edit} ground={GROUND.tint} h={tall}>
+                <div className="flex items-start justify-between" style={{ gap: 24 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 18 }} />
+                    <h2 style={{ fontSize: TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink, margin: 0, maxWidth: '19ch' }}>
+                      <Ed v={String(c.listingsTitle || 'Performance by listing')} set={v => patch('listingsTitle', v)} edit={edit} />
+                    </h2>
+                    <p style={{ fontSize: 15.5, lineHeight: 1.5, color: t.muted, margin: '13px 0 0', maxWidth: '62ch' }}>
+                      <Ed v={String(c.listingsNote || (listingTable.totals.units + ' units, ' + pretty(listingTable.from) + ' to ' + pretty(listingTable.to) + '. Gross is accommodation plus cleaning; ' + revLabel.toLowerCase() + ' is ' + BASIS_NOTE[netBasis].toLowerCase() + '.'))}
+                        set={v => patch('listingsNote', v)} edit={edit} multiline />
+                    </p>
                   </div>
+                  {edit && (
+                    <span className="sb-noprint" style={{ flexShrink: 0 }}>
+                      <BasisPicker label="Basis" value={bSection('byListing')} onPick={(v: string) => setBasis('byListing', v)} t={t} />
+                    </span>
+                  )}
+                </div>
 
-                  <div style={{ marginTop: 24 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.cardBorder }}>
-                      {cols.map(x => (
-                        <p key={x.key} style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right' }}>{x.label}</p>
-                      ))}
-                    </div>
-                    {rows.map((r: Any) => (
-                      <div key={r.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '8px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.5), alignItems: 'baseline' }}>
-                        <div style={{ minWidth: 0 }}>
-                          <p style={{ fontSize: 14, color: t.ink, margin: 0, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div style={{ marginTop: 26 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, paddingBottom: 9, borderBottom: '1px solid ' + t.cardBorder }}>
+                    {cols.map(x => (
+                      <p key={x.key} style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: x.key === 'unit' ? 'left' : 'right' }}>{x.label}</p>
+                    ))}
+                  </div>
+                  {listingTable.rows.map((r: Any) => {
+                    const mark = r.id === best.id ? t.good : (listingTable.rows.length > 4 && r.id === worst.id ? t.accent : '')
+                    return (
+                      <div key={r.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '7px 0', borderBottom: '1px solid ' + blend(t.cardBorder, t.bg, 0.55), alignItems: 'baseline' }}>
+                        <div style={{ minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                          {mark ? <span style={{ width: 5, height: 5, borderRadius: 999, background: mark, flexShrink: 0 }} /> : <span style={{ width: 5, flexShrink: 0 }} />}
+                          <p style={{ fontSize: 13.5, color: t.ink, margin: 0, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {String(r.unit || r.name || '')}
                             {size(r) ? <span style={{ color: t.muted, fontWeight: 400 }}>{'  ' + size(r)}</span> : null}
+                            {r.name && r.name !== r.unit ? <span style={{ color: t.muted, fontWeight: 400, fontSize: 11.5 }}>{'   ' + String(r.name)}</span> : null}
                           </p>
-                          {r.name && r.name !== r.unit ? (
-                            <p style={{ fontSize: 10.5, color: t.muted, margin: '1px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(r.name)}</p>
-                          ) : null}
                         </div>
                         {cols.slice(1).map(x => (
-                          <p key={x.key} style={{ fontSize: 14, color: t.body, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cell(r, x.key)}</p>
+                          <p key={x.key} style={{ fontSize: 13.5, color: t.body, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cell(r, x.key)}</p>
                         ))}
                       </div>
+                    )
+                  })}
+                  <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '12px 0 0', borderTop: '2px solid ' + t.ink, marginTop: 5 }}>
+                    <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, margin: 0, paddingLeft: 13 }}>{'All ' + listingTable.totals.units + ' units'}</p>
+                    {cols.slice(1).map(x => (
+                      <p key={x.key} style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cell(listingTable.totals, x.key)}</p>
                     ))}
-                    {last ? (
-                      <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '11px 0 0', borderTop: '2px solid ' + t.ink, marginTop: 4 }}>
-                        <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, margin: 0 }}>{'All ' + listingTable.totals.units + ' units'}</p>
-                        {cols.slice(1).map(x => (
-                          <p key={x.key} style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cell(listingTable.totals, x.key)}</p>
-                        ))}
-                      </div>
-                    ) : null}
                   </div>
-                  <SlideNote k={'listings' + p} />
-                </Slide>
-              ) })
-            }
+                </div>
+                <SlideNote k="listings" />
+              </Slide>
+            ) })
           }
 
           // ── 5 · PACING vs THE MARKET ──────────────────────────────────────
