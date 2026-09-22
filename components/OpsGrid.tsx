@@ -45,6 +45,8 @@ import { type AddTaskSeed } from '@/components/AddTaskSheet'
 import { DayPlanPanel } from '@/components/DayPlanPanel'
 import { ReviewTab, ReviewCount } from '@/components/ReviewTab'
 import { DueCalendar, DueCount } from '@/components/DueCalendar'
+import { VacantTab } from '@/components/VacantTab'
+import { Tag as LTag, Tip as LTip } from '@/components/lean'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -244,31 +246,6 @@ const zero = (): Counts => ({ total: 0, done: 0, running: 0, open: 0 })
 //
 // The bar keeps the completion palette exactly as the task chips use it — green done, amber
 // running, grey untouched — so the top of the screen and the rows below it are one language.
-function Tile({ cat, c, active, onClick }: { cat: CatMeta | null; c: Counts; active: boolean; onClick: () => void }) {
-  const pct = (n: number) => c.total > 0 ? (n / c.total) * 100 : 0
-  const G = cat ? cat.Icon : null
-  const left = c.total - c.done
-  return (
-    <button onClick={onClick} title={cat ? cat.label + ' — ' + c.done + ' done · ' + c.running + ' in progress · ' + c.open + ' to go' : 'Everything open'}
-      aria-pressed={active}
-      className={'inline-flex items-center gap-1.5 rounded-xl border px-2 py-1.5 transition-colors min-h-[34px] ' +
-        (active ? 'bg-ink border-ink text-white' : 'bg-white border-line hover:border-ink/25')}>
-      {G && <G size={12} strokeWidth={2.5} className={(active ? 'text-white/80' : 'text-slate-500') + ' shrink-0'} />}
-      <span className={'text-[12px] font-bold whitespace-nowrap ' + (active ? 'text-white' : 'text-ink')}>{cat ? cat.label : 'Everything'}</span>
-      <span className={'text-[12px] font-bold tabular-nums ' + (active ? 'text-white' : 'text-ink')}>{c.total}</span>
-      {c.total > 0 && (
-        <>
-          {/* The 4px bar keeps the completion palette the task chips use — green done, amber running, grey untouched. */}
-          <span className={'w-8 h-1 rounded-full overflow-hidden flex shrink-0 ' + (active ? 'bg-white/25' : 'bg-slate-200')} aria-hidden>
-            {c.done > 0 && <span className="bg-emerald-500 h-full" style={{ width: pct(c.done) + '%' }} />}
-            {c.running > 0 && <span className="bg-amber-400 h-full" style={{ width: pct(c.running) + '%' }} />}
-          </span>
-          {left === 0 && <span className={'text-[11px] font-semibold whitespace-nowrap ' + (active ? 'text-white/80' : 'text-emerald-700')}>done</span>}
-        </>
-      )}
-    </button>
-  )
-}
 
 // ── STATUS — the unit-level word ────────────────────────────────────────────────────────────────
 //
@@ -503,22 +480,22 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           primary interaction on the most-used screen in the app, unreachable by keyboard. */}
       <div role="button" tabIndex={0} aria-expanded={open}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}
-        className={'relative flex flex-wrap items-center gap-x-2 gap-y-0.5 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(150px,auto)_minmax(0,4fr)_minmax(0,2.4fr)_minmax(60px,auto)] lg:gap-3 px-3 py-2 lg:py-2.5 hover:bg-app/60 cursor-pointer focus:outline-none focus-visible:bg-app '
+        className={'relative flex flex-wrap items-center gap-x-2 gap-y-1 lg:flex-nowrap lg:gap-3 px-3 sm:px-4 py-2.5 hover:bg-app/60 cursor-pointer focus:outline-none focus-visible:bg-app '
           + (row.late ? 'before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-rose-500'
             : row.atRisk ? 'before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-amber-400' : '')}
         onClick={() => setOpen(o => !o)}>
         {/* who / what */}
-        <div className="order-1 flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:gap-2">
+        <div className="order-1 flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:flex-none lg:w-[16rem] lg:gap-2">
           <ChevronRight size={14} className={'text-muted shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
           <div className="min-w-0">
-            <div className="text-[13.5px] font-bold text-ink truncate">{row.title}</div>
+            <div className="text-[14px] font-bold text-ink truncate">{row.title}</div>
             {/* On a phone this rides on the meta line below instead, next to the reservation. */}
-            {row.sub && <div className="hidden lg:block text-[11px] text-muted truncate">{row.sub}</div>}
+            {metaSub && <div className="hidden lg:block text-[11.5px] text-muted truncate">{metaSub}</div>}
           </div>
         </div>
         {/* status — beside the name on a phone, its own column on desktop */}
-        <div className="order-2 flex items-center gap-1.5 flex-wrap min-w-0 shrink-0 lg:shrink lg:order-none lg:gap-2">
-          <span className={'text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + row.status.cls}>{row.status.label}</span>
+        <div className="order-2 flex items-center gap-1.5 flex-wrap min-w-0 shrink-0 lg:order-none lg:flex-none lg:w-[14rem] lg:gap-2">
+          <span className={'text-[11.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + row.status.cls}>{row.status.label}</span>
           {total > 0 && (
             <span className="text-[11px] font-semibold text-muted tabular-nums" title={done + ' of ' + total + ' finished'}>
               {done}/{total}
@@ -550,10 +527,11 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           )}
         </div>
         {/* reservation / shift context — full width on a phone, carrying the city with it */}
-        <div className="order-3 w-full min-w-0 lg:order-none lg:w-auto">
-          <span className="block truncate text-[11.5px] text-muted lg:whitespace-nowrap">
-            <span className="lg:hidden">{[metaSub, row.reservation].filter(Boolean).join(' \u00b7 ')}</span>
-            <span className="hidden lg:inline">{row.reservation}</span>
+        <div className="order-3 w-full min-w-0 lg:order-none lg:w-auto lg:flex-1">
+          <span className="block truncate text-[12.5px] text-ink/70 lg:whitespace-nowrap">
+            {/TURN/.test(row.reservation) && <span className="mr-1.5 inline-block align-middle text-[10.5px] font-bold px-1.5 py-[3px] leading-none rounded-md bg-rose-100 text-rose-700" title="Guest out and a new guest in the same day">Turn</span>}
+            <span className="lg:hidden">{[metaSub, row.reservation.replace(/^TURN · /, '')].filter(Boolean).join(' \u00b7 ')}</span>
+            <span className="hidden lg:inline">{row.reservation.replace(/^TURN · /, '')}</span>
           </span>
           {/* What the day actually costs this person — the sentence the Staffing tab used to own. */}
           {row.priced && row.priced.verdict !== 'implausible' && row.priced.capacityMinutes > 0 && (
@@ -570,7 +548,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           )}
         </div>
         {/* the day's work */}
-        <div className="order-4 w-full flex items-center gap-1 flex-wrap lg:order-none lg:w-auto">
+        <div className="order-4 w-full flex items-center gap-1 flex-wrap lg:order-none lg:w-auto lg:flex-none lg:max-w-[15rem]">
           {row.tasks.length === 0
             ? <span className="text-[11px] text-muted">No tasks today</span>
             : row.tasks.slice(0, 14).map(t => <TaskChip key={t.id} t={t} />)}
@@ -578,7 +556,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
         </div>
         {/* issues + gap + the ＋ — desktop keeps its own right-hand column; the ＋ rides along on
             a phone too, because filing the task is the reason you opened the row. */}
-        <div className="order-5 ml-auto flex items-center gap-2 lg:order-none lg:ml-0 lg:justify-end">
+        <div className="order-5 ml-auto flex items-center gap-2 lg:order-none lg:ml-0 lg:flex-none lg:justify-end">
           {row.issues.length > 0 && (
             <span className="hidden lg:inline-flex text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 items-center gap-1"
               title={row.issues.map(i => i.text).join(' · ')}>
@@ -856,7 +834,7 @@ function fmtAgo(iso: string): string {
   return `${h}h ${m % 60}m ago`
 }
 
-export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, openSheet, onSheet, boardDate, cap, wantPeople, staffErr, aside }: {
+export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefresh, onAddTask, openSheet, onSheet, boardDate, cap, wantPeople, staffErr, aside, unitsFooter, peopleFooter }: {
   data: GData | undefined
   glitches: GGlitch[]
   roster: GRoster[]
@@ -878,11 +856,14 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   boardDate?: string
   /** The crew line (the capacity model, compact) — rides on the day line so the clock and the crew are one strip, not two banners. */
   aside?: React.ReactNode
+  /** Rendered under the Units list (audit follow-ups) and under the People list (the team/labor strip). */
+  unitsFooter?: React.ReactNode
+  peopleFooter?: React.ReactNode
 }) {
   // A THIRD TAB (Jon, 2026-08-31: "create a review / recommended tab"). Units and People both
   // answer "what is happening today". Review answers "what is hanging over us, and when could we
   // clear it" — a different question, so it earns its own tab rather than another filter.
-  const [mode, setMode] = useState<'units' | 'people' | 'review' | 'due'>('units')
+  const [mode, setMode] = useState<'units' | 'vacant' | 'people' | 'review' | 'due'>('units')
   const [cat, setCat] = useState<Cat | null>(null)
   const [q, setQ] = useState('')
   // The search box is a whole line of a phone screen for something you use once a day. On a phone
@@ -908,14 +889,14 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const [prefsReady, setPrefsReady] = useState(false)
   useEffect(() => {
     try {
-      const m = localStorage.getItem('opsgrid_mode'); if (m === 'people' || m === 'review' || m === 'due') setMode(m as any)
+      const m = localStorage.getItem('opsgrid_mode'); if (m === 'people' || m === 'review' || m === 'due' || m === 'vacant') setMode(m as any)
       const k = localStorage.getItem('opsgrid_market'); if (k) setMkt(k)
     } catch {}
     setPrefsReady(true)
   }, [])
   // A deep link wins over the remembered choice, once.
   useEffect(() => { if (wantPeople) setMode('people') }, [wantPeople])
-  const pickMode = (m: 'units' | 'people' | 'review' | 'due') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
+  const pickMode = (m: 'units' | 'vacant' | 'people' | 'review' | 'due') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
   const pickMkt = (m: string) => { setMkt(m); try { localStorage.setItem('opsgrid_market', m) } catch {} }
 
   const allUnits: GUnit[] = Array.isArray(data?.units) ? data!.units : []
@@ -1319,196 +1300,141 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         </div>
       )}
 
-      {/* ── THE DEADLINE STRIP ─────────────────────────────────────────────────────────────── */}
-      {/* ONE DAY LINE (Jon, 2026-09-09: "this does not feel clean"): the clock, the cleans and the
-          crew on one strip. The capacity sentence used to be its own coloured banner above this one —
-          two bands saying "the day" before a single unit was visible. */}
-      {(!dl || dl.cleans === 0) && aside && <div className="mb-3 flex items-center">{aside}</div>}
+      {/* ── THE DAY, ONE LINE (Jon, 2026-09-22: "still just very visually difficult to see or read").
+          The clock stays the biggest thing — the whole board is a 4pm deadline — and everything else
+          on the strip is a plain pill: cleans left, under way, late, at risk, the crew, how fresh. */}
+      {(!dl || dl.cleans === 0) && aside && <div className="mb-3 flex items-center gap-2 flex-wrap">{aside}</div>}
       {dl && dl.cleans > 0 && (
-        <div className={'mb-3 rounded-xl border ' + (dl.late > 0 ? 'border-rose-300' : dl.atRisk > 0 ? 'border-amber-300' : 'border-line')}>
-          <div className={'rounded-xl px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap ' + (dl.late > 0 ? 'bg-rose-50' : dl.atRisk > 0 ? 'bg-amber-50' : 'bg-app')}>
-            {/* THE BIGGEST THING ON THE PAGE (2026-09-09 audit). The whole job of this board is a
-                deadline, and the deadline was 13px — smaller than a unit name, under a 30px page
-                title. The countdown is what a coordinator checks first, so it reads first. */}
-            <span className="inline-flex items-baseline gap-2 shrink-0">
-              <Clock size={16} className={dl.late > 0 ? 'text-rose-600' : dl.atRisk > 0 ? 'text-amber-600' : 'text-muted'} />
-              <span className="text-[22px] font-black text-ink tabular-nums leading-none">{dl.dueBy}</span>
-              <span className={'text-[14px] font-bold tabular-nums ' + (dl.passed ? 'text-rose-700' : dl.late > 0 ? 'text-rose-700' : dl.atRisk > 0 ? 'text-amber-700' : 'text-muted')}>{clock}</span>
-            </span>
-            <span className="text-line hidden sm:inline">|</span>
-            <span className="text-[13px] text-muted">
-              <b className="text-ink tabular-nums">{dl.remaining}</b> of {dl.cleans} cleans still open
-              {dl.running > 0 && <> &middot; <b className="text-amber-700 tabular-nums">{dl.running}</b> under way</>}
-            </span>
-            {dl.late > 0 && (
-              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 tabular-nums">{dl.late} late</span>
-            )}
-            {dl.atRisk > 0 && (
-              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 tabular-nums">{dl.atRisk} at risk</span>
-            )}
-            {dl.untracked > 0 && (
-              <span className="text-[11px] text-muted" title="Vendor-cleaned units never close their tasks in Breezeway, so they carry no deadline.">
-                {dl.untracked} vendor &mdash; no clock
-              </span>
-            )}
-            <span className="flex-1" />
-            {aside}
-            {/* HOW OLD IS THIS. The route computes lastSync precisely so a coordinator can tell —
-                its own comment says "a stale list is how walk-ins happen" — and nothing showed it. */}
-            <span className="text-[11px] text-muted shrink-0 inline-flex items-center gap-1.5">
-              {loading && <Loader2 size={10} className="animate-spin" />}
-              {data?.lastSync ? `synced ${fmtAgo(data.lastSync)}` : today}
-              <button onClick={onRefresh} className="hover:text-ink" title="Refresh now"><RefreshCw size={11} /></button>
-            </span>
-          </div>
+        <div className={'mb-3 rounded-2xl border px-3.5 py-2.5 flex items-center gap-x-3 gap-y-1.5 flex-wrap ' + (dl.late > 0 ? 'border-rose-300 bg-rose-50/60' : dl.atRisk > 0 ? 'border-amber-300 bg-amber-50/60' : 'border-line bg-white')}>
+          <span className="inline-flex items-baseline gap-2 shrink-0">
+            <Clock size={16} className={dl.late > 0 ? 'text-rose-600' : dl.atRisk > 0 ? 'text-amber-600' : 'text-muted'} />
+            <span className="text-[22px] font-black text-ink tabular-nums leading-none">{dl.dueBy}</span>
+            <span className={'text-[14px] font-bold tabular-nums ' + (dl.passed || dl.late > 0 ? 'text-rose-700' : dl.atRisk > 0 ? 'text-amber-700' : 'text-muted')}>{clock}</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 flex-wrap">
+            <LTag tone={dl.remaining ? 'slate' : 'emerald'} title={dl.done + ' of ' + dl.cleans + ' departure cleans finished'}>{dl.done}/{dl.cleans} cleans done</LTag>
+            {dl.running > 0 && <LTag tone="amber">{dl.running} under way</LTag>}
+            {dl.late > 0 && <LTag tone="roseSolid">{dl.late} late</LTag>}
+            {dl.atRisk > 0 && <LTag tone="amber" title="Projected to land after the deadline">{dl.atRisk} at risk</LTag>}
+            {dl.untracked > 0 && <LTag tone="slate" title="Vendor-cleaned units never close their tasks in Breezeway, so they carry no deadline.">{dl.untracked} vendor</LTag>}
+          </span>
+          <span className="flex-1" />
+          {aside}
+          <span className="text-[11.5px] text-muted shrink-0 inline-flex items-center gap-1.5">
+            {loading && <Loader2 size={11} className="animate-spin" />}
+            {data?.lastSync ? `synced ${fmtAgo(data.lastSync)}` : today}
+            <LTip label="Refresh now"><button onClick={onRefresh} className="hover:text-ink p-0.5"><RefreshCw size={12} /></button></LTip>
+          </span>
         </div>
       )}
-      {/* ── COUNTERS. Every tile is a filter — the number you are worried about is one tap from
-          the list of rows behind it, which is the whole reason to put counters on a screen. ── */}
-      {/* A GRID, NOT A SCROLLER. Eight categories on one screen at every width — four across on a
-          phone, all eight on a laptop — so no counter is hidden behind a sideways swipe and no
-          label has to truncate. */}
-      {/* ONE ROW OF CHIPS (2026-09-09). The five tiles were ~70px tall with a three-line legend
-          each; a chip says the same two things — how many, how far along — in one line. */}
-      <div className="flex items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-1 px-1">
-        {tiles.map(t => (
-          <Tile key={t.key} cat={t.cat} c={counts[t.key] || zero()}
-            active={t.key === 'all' ? cat === null : cat === t.key}
-            onClick={() => setCat(t.key === 'all' ? null : (cat === t.key ? null : (t.key as Cat)))} />
-        ))}
-      </div>
 
-      {/* ── SUGGESTIONS MOVED (Jon, 2026-09-01: "can review and suggestion be the same thing") ──
-          They were a band above the board AND a section inside the Review tab — two places showing
-          the same proposals, which is how two surfaces drift and a coordinator learns to trust
-          neither. One home now: the Review tab, where they sit beside the waiting work under the
-          same assign-and-schedule row. The count is on the tab, so nothing is hidden by the move. ── */}
-
-      {/* ── ONE ROW OF CONTROLS (Jon, 2026-09-09: "make the filter system easier and less clunky").
-          What it was: a chip row for areas, a mode switch, a search box, Active/All, Plan day, Key,
-          a clear-filter button and a second Add — across two or three lines. What it is: the view
-          (Units · People · Focus), two plain selects (area, active/all), the search, and the two
-          buttons that are only there when they have a job. The category chips above are the third
-          filter; tapping the highlighted one again clears it. ── */}
-      <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
-        <div className="inline-flex rounded-xl border border-line bg-white p-0.5">
-          {([['units', 'Units', LayoutGrid], ['people', 'People', Users], ['review', 'Focus', Sparkles], ['due', 'Due', CalendarClock]] as const).map(([k, label, Icon]) => (
+      {/* ── VIEWS + FILTERS, ONE ROW. The five views are tabs with counts; the category counters that
+          used to be a second row of chips are one select (still counted, still a filter). ── */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="inline-flex rounded-xl border border-line bg-white overflow-hidden max-w-full overflow-x-auto">
+          {([['units', 'Units', LayoutGrid], ['vacant', 'Vacant', DoorOpen], ['people', 'People', Users], ['review', 'Focus', Sparkles], ['due', 'Due', CalendarClock]] as const).map(([k, label, Icon]) => (
             <button key={k} onClick={() => pickMode(k as any)}
-              className={'px-2.5 py-1.5 rounded-[10px] text-[12.5px] font-bold inline-flex items-center gap-1.5 ' + (mode === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
-              <Icon size={13} /> {label}
+              className={'px-3 py-2 text-[13px] font-bold inline-flex items-center gap-1.5 border-l border-line first:border-l-0 whitespace-nowrap ' + (mode === k ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink')}>
+              <Icon size={14} /> {label}
+              {k === 'vacant' && (data?.vacants || []).length > 0 && <span className="text-[11px] opacity-75 tabular-nums">{(data?.vacants || []).filter(v => mkt === 'all' || v.market === mkt || (v as any).market2 === mkt).length}</span>}
               {k === 'review' && <ReviewCount market={prefsReady ? mkt : null} date={boardDate} />}
               {k === 'due' && <DueCount market={prefsReady ? mkt : null} date={boardDate} />}
             </button>
           ))}
         </div>
+        {(mode === 'units' || mode === 'people') && (
+          <LTip label="Which kind of work">
+            <select value={cat || 'all'} onChange={e => setCat(e.target.value === 'all' ? null : (e.target.value as Cat))} aria-label="Kind of work"
+              className="rounded-xl border border-line bg-white px-2 py-1.5 text-[13px] font-semibold text-ink min-h-[36px]">
+              {tiles.map(t => { const c = counts[t.key] || zero(); return (
+                <option key={t.key} value={t.key}>{t.cat ? t.cat.label : 'All work'} · {c.total}{c.total && c.total === c.done ? ' ✓' : c.total ? ' (' + (c.total - c.done) + ' open)' : ''}</option>
+              ) })}
+            </select>
+          </LTip>
+        )}
         {markets.length > 1 && (
-          <label className="inline-flex items-center gap-1 rounded-xl border border-line bg-white pl-2 pr-1 min-h-[34px]" title="Area">
-            <MapPin size={12} className="text-muted" />
-            <select value={mkt} onChange={e => pickMkt(e.target.value)} aria-label="Area" className="bg-transparent text-[12.5px] font-semibold text-ink py-1 pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/40 rounded">
+          <label className="inline-flex items-center gap-1 rounded-xl border border-line bg-white pl-2 pr-1 min-h-[36px]" title="Area">
+            <MapPin size={13} className="text-muted" />
+            <select value={mkt} onChange={e => pickMkt(e.target.value)} aria-label="Area" className="bg-transparent text-[13px] font-semibold text-ink py-1 pr-1 focus:outline-none">
               <option value="all">All areas</option>
               {markets.map(m => <option key={m.key} value={m.key}>{m.key}{m.open ? ' · ' + m.open : ''}</option>)}
             </select>
           </label>
         )}
-        {mode !== 'review' && mode !== 'due' && (
-          <select value={activeOnly ? 'active' : 'all'} onChange={e => setActiveOnly(e.target.value === 'active')} aria-label="Which rows" title="Active = still has work on it; All = the whole portfolio, finished units included"
-            className="rounded-xl border border-line bg-white px-2 py-1.5 text-[12.5px] font-semibold text-ink min-h-[34px] focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/40">
+        {(mode === 'units' || mode === 'people') && (
+          <select value={activeOnly ? 'active' : 'all'} onChange={e => setActiveOnly(e.target.value === 'active')} aria-label="Which rows" title="Still open = has work left; Everything = finished units included"
+            className="rounded-xl border border-line bg-white px-2 py-1.5 text-[13px] font-semibold text-ink min-h-[36px]">
             <option value="active">Still open</option>
             <option value="all">Everything</option>
           </select>
         )}
-        {mode !== 'review' && mode !== 'due' && !(searchOpen || q) && (
-          <button onClick={() => setSearchOpen(true)} aria-label="Search" className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink min-h-[34px]"><Search size={14} /></button>
+        {(mode === 'units' || mode === 'people') && !(searchOpen || q) && (
+          <button onClick={() => setSearchOpen(true)} aria-label="Search" className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink min-h-[36px]"><Search size={14} /></button>
         )}
-        {mode !== 'review' && mode !== 'due' && (
+        {(mode === 'units' || mode === 'people') && (
           <div className={'relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[140px] sm:max-w-[240px] ' + ((searchOpen || q) ? '' : 'hidden sm:block')}>
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
             <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} onBlur={() => { if (!q) setSearchOpen(false) }}
               placeholder={mode === 'units' ? 'Unit, task, name…' : 'Person…'}
-              className="w-full rounded-xl border border-line bg-white pl-7 pr-7 py-1.5 text-[12.5px] min-h-[34px] focus:outline-none focus:border-ink" />
+              className="w-full rounded-xl border border-line bg-white pl-7 pr-7 py-1.5 text-[13px] min-h-[36px] focus:outline-none focus:border-ink" />
             {q && <button onClick={() => { setQ(''); setSearchOpen(false) }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
           </div>
         )}
         <span className="ml-auto inline-flex items-center gap-1.5">
-          {/* PLAN THE DAY — counts the unowned work in its own label; not rendered when there is none. */}
-          {unownedNow > 0 && mode !== 'review' && mode !== 'due' && (
-            <button onClick={() => setPlanOpen(true)} className="px-2.5 py-1.5 rounded-xl border border-brand-500/40 bg-brand-50 text-brand-700 text-[12px] font-bold inline-flex items-center gap-1.5 hover:bg-brand-100 min-h-[34px]">
-              <Wand2 size={13} /> Plan day <span className="text-[11px] font-bold text-brand-700 tabular-nums">{unownedNow}</span>
-            </button>
+          {unownedNow > 0 && (mode === 'units' || mode === 'people') && (
+            <LTip label="Let the planner suggest who takes the unassigned work">
+              <button onClick={() => setPlanOpen(true)} className="px-2.5 py-1.5 rounded-xl border border-brand-500/40 bg-brand-50 text-brand-700 text-[12.5px] font-bold inline-flex items-center gap-1.5 hover:bg-brand-100 min-h-[36px]">
+                <Wand2 size={13} /> Plan day <span className="tabular-nums">{unownedNow}</span>
+              </button>
+            </LTip>
           )}
         </span>
       </div>
 
-      {/* ── REVIEW ── The third tab replaces the grid entirely rather than sitting under it: it
-          answers a different question, and stacking it below eighty rows is how a panel becomes
-          something nobody scrolls to. ── */}
-      {mode === 'due' ? (
-        <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
+      {mode === 'vacant' ? (
+        <div className="mt-3">
+          <VacantTab vacants={(data?.vacants || []) as any} today={today || boardDate || ''} market={mkt} onAdd={onAddTask}
+            readOnlyDate={boardDate && (data as any)?.isToday === false ? boardDate : undefined} />
+        </div>
+      ) : mode === 'due' ? (
+        <div className="mt-3 rounded-2xl border border-line bg-white overflow-hidden">
           <DueCalendar market={mkt} date={boardDate} onRefresh={onRefresh} />
         </div>
       ) : mode === 'review' ? (
-        <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
+        <div className="mt-3 rounded-2xl border border-line bg-white overflow-hidden">
           <ReviewTab market={mkt} date={boardDate} onRefresh={onRefresh} />
         </div>
       ) : (
       <>
-      {/* A ROSTER WE COULD NOT READ IS NOT AN EMPTY ROSTER. */}
       {mode === 'people' && staffErr && (
-        <div className="mt-2.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 flex items-start gap-2">
+        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 flex items-start gap-2">
           <AlertTriangle size={13} className="text-rose-600 mt-0.5 shrink-0" />
           <p className="text-[12px] text-rose-900">Could not read the Homebase roster — {staffErr}. Anyone not shown here may still be working.</p>
         </div>
       )}
 
-      {/* ── HEADER + ROWS ── */}
-      <div className="mt-2.5 rounded-2xl border border-line bg-white overflow-hidden">
-        {/* THE KEY lived here — thirteen swatches behind a "?" that a coordinator opened once and
-            never again. The colour scale is three states and reads itself; the two rules that are
-            not obvious (a corner dot means nobody has taken it, a faded chip means the guest is
-            still inside) ride on the chips' own tooltips, where the eye already is. */}
-        {/* COLUMN WIDTHS THAT MATCH THE CONTENT (2026-09-09 audit). The 3/2/3/3/1 grid gave the
-            reservation sentence ~235px, so "TURN · out 11:00 AM → in 4:00 PM · ma…" dropped the
-            guest's name, while the tasks column held ~235px for one or two 24px chips and Issues
-            sat empty on most rows. */}
-        <div className="hidden lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(150px,auto)_minmax(0,4fr)_minmax(0,2.4fr)_minmax(60px,auto)] gap-3 px-3 py-2 bg-app border-b border-line text-[11px] font-bold uppercase tracking-wider text-muted">
-          {/* THE HEADER NOW MATCHES THE ROW. The cells render in DOM order on desktop — property,
-              STATUS, reservation, tasks, issues — but this header claimed property, RESERVATION,
-              STATUS, tasks, issues. Two of five labels sat over the wrong data, and nobody caught
-              it because the header is hidden below lg. */}
-          <div className="pl-5">{mode === 'units' ? 'Property' : 'Person'}</div>
-          <div>Status</div>
-          <div>{mode === 'units' ? 'Reservation' : 'Load today'}</div>
-          <div>Tasks today</div>
-          <div className="text-right">{mode === 'units' ? 'Issues' : ''}</div>
-        </div>
+      {/* ── THE LIST. One line per unit (or person): name, what is happening, the work as chips. The
+          five-column table header is gone — every cell now says what it is on its own. ── */}
+      <div className="mt-3 rounded-2xl border border-line bg-white">
         {shown.length === 0 ? (
           <div className="px-4 py-8 text-center text-[13px] text-muted">
-            {/* THREE DIFFERENT SITUATIONS THAT USED TO PRINT THE SAME SENTENCE. Still loading, the
-                fetch failed, and a genuinely clear day are not the same news, and telling a
-                coordinator "nothing on the board" when the request 500'd is how a board earns the
-                reputation of being wrong. */}
             {loading && rows.length === 0 ? (
-              <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading today&rsquo;s board&hellip;</span>
+              <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading the board&hellip;</span>
             ) : error ? (
               <span className="text-rose-700">The board could not load, so this is not &ldquo;nothing to do&rdquo; &mdash; it is &ldquo;we do not know&rdquo;.</span>
             ) : rows.length === 0 ? (
-              <>Nothing scheduled on {today || 'today'}.{' '}<button onClick={onRefresh} className="font-semibold text-brand-600 hover:underline">Check again</button></>
+              <>Nothing scheduled on {today || 'this day'}.{' '}<button onClick={onRefresh} className="font-semibold text-brand-600 hover:underline">Check again</button></>
             ) : (
               'Nothing matches. Clear the filters to see the rest.'
             )}
           </div>
         ) : shown.map(r => (
-          <GridRow key={r.key} row={r} roster={roster} mode={mode} onRefresh={onRefresh} onAdd={onAddTask}
+          <GridRow key={r.key} row={r} roster={roster} mode={mode as 'units' | 'people'} onRefresh={onRefresh} onAdd={onAddTask}
             units={allUnits} staff={staff} />
         ))}
       </div>
-
-      <p className="mt-2 text-[11px] text-muted">
-        {shown.length} {mode === 'units' ? 'unit' : 'person'}{shown.length === 1 ? '' : 's'} shown.
-        {/* Only true when a Glitches counter actually exists — the shipped taxonomy folded it into
-            Maintenance on 2026-08-31 and this line kept pointing at a tile that was not there. */}
-        {cats.list.some(c => c.key === 'glitch') ? ' Glitches count everything still open, not only what is scheduled today.' : ' Open guest issues with no work today appear as their own rows.'}
-      </p>
+      {mode === 'units' && unitsFooter ? <div className="mt-4">{unitsFooter}</div> : null}
+      {mode === 'people' && peopleFooter ? <div className="mt-4">{peopleFooter}</div> : null}
       </>
       )}
 

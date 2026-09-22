@@ -20,13 +20,9 @@ import { AuditFollowUps } from '@/components/AuditFollowUps'
 export default function OpsPlanPage() {
   return (
     <Shell>
-      <OpsV2 />
-
-      {/* Cleanliness follow-ups from audits — renders nothing when none are outstanding. */}
-      <div className="mt-5"><AuditFollowUps /></div>
-
-      {/* Labor cost vs plan — reference material, below the fold on purpose. */}
-      <div className="mt-4"><LaborStrip /></div>
+      {/* CONSOLIDATED (2026-09-22): audit follow-ups sit under the Units list and the team/labor strip
+          under the People list — each on the view it belongs to, instead of stacked below the board. */}
+      <OpsV2 unitsFooter={<AuditFollowUps />} peopleFooter={<LaborStrip />} />
     </Shell>
   )
 }

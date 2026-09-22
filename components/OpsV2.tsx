@@ -71,7 +71,7 @@ function shiftYmd(ymd: string, n: number) {
   return ymdET(new Date(Date.parse(ymd + 'T12:00:00Z') + n * 86400000))
 }
 
-export function OpsV2() {
+export function OpsV2({ unitsFooter, peopleFooter }: { unitsFooter?: ReactNode; peopleFooter?: ReactNode } = {}) {
   // The three fetches the summary needs. Cached (30s) so tab flips are instant, and so the full
   // board opening underneath does not mean the page paid for the data twice in a row.
   // ── WHICH DAY ────────────────────────────────────────────────────────────────────────────────
@@ -164,14 +164,14 @@ export function OpsV2() {
             <button onClick={() => setDate(d => shiftYmd(d, -1))} aria-label="Previous day"
               className="px-1.5 h-8 text-muted hover:text-ink hover:bg-app rounded-l-lg"><ChevronLeft size={14} /></button>
           </Tip>
-          {!isToday && (
-            <Tip label="Back to today">
-              <button onClick={() => setDate(todayYmd)}
-                className="px-2 h-8 text-[12px] font-bold text-brand-700 hover:bg-brand-50 whitespace-nowrap border-x border-line">
-                {new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}
-              </button>
-            </Tip>
-          )}
+          {/* A REAL DATE PICKER (Jon, 2026-09-22: "It also should have a date selector so we can choose
+              different dates and see all of the activities from there"). The chevrons step a day;
+              the calendar jumps anywhere. */}
+          <Tip label="Pick a day">
+            <input type="date" value={date} onChange={e => { if (/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) setDate(e.target.value) }}
+              aria-label="Board date"
+              className={'h-8 border-x border-line bg-transparent px-1.5 text-[12.5px] font-semibold tabular-nums focus:outline-none ' + (isToday ? 'text-ink' : 'text-brand-700')} />
+          </Tip>
           <Tip label="Next day">
             <button onClick={() => setDate(d => shiftYmd(d, 1))} aria-label="Next day"
               className="px-1.5 h-8 text-muted hover:text-ink hover:bg-app rounded-r-lg"><ChevronRight size={14} /></button>
@@ -198,7 +198,8 @@ export function OpsV2() {
           loading={loading} error={error ? String(error) : null}
           onRefresh={refresh} onAddTask={seed => setAddFor(seed)} openSheet={sheet} onSheet={onSheet} boardDate={date} cap={cap || null}
           wantPeople={wantPeople} staffErr={staffErr ? String(staffErr) : null}
-          aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={pick} compact />} />
+          aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={pick} compact />}
+          unitsFooter={unitsFooter} peopleFooter={peopleFooter} />
 
       {sheet === 'add' && addFor !== null && (
         // Keyed on the seed so a ＋ on a different row remounts the sheet for THAT row rather than

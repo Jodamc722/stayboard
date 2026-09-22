@@ -47,7 +47,9 @@ type BzTpl = { id: number; name: string; department: string; description: string
 //
 // listingId beats unit text: the text goes through the search box and can miss or match two, while
 // the id is the answer. The text is kept as the label so the picker reads right before it resolves.
-export type AddTaskSeed = { unit?: string; listingId?: string; assigneeName?: string; date?: string }
+export type AddTaskSeed = { unit?: string; listingId?: string; assigneeName?: string; date?: string
+  /** Pre-filled by a recommendation (the Vacant units tab) — the person can still change all three. */
+  title?: string; dept?: string; desc?: string }
 
 /** Open the sheet from anywhere, optionally pre-filled. A bare string still means the unit search. */
 export function openAddTask(seed?: AddTaskSeed | string) {
@@ -157,18 +159,18 @@ export function AddTaskSheet({
   const [tpl, setTpl] = useState('custom')
   const [bzTpls, setBzTpls] = useState<BzTpl[]>([])
   const [tplId, setTplId] = useState<number | null>(null)
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(seed?.title || '')
   // INSPECTION FIRST. Unit Check alone is 897 of the tasks the team files; the three inspection
   // types together outnumber every maintenance type combined. The picker opens on the answer most
   // people want.
-  const [dept, setDept] = useState('inspection')
+  const [dept, setDept] = useState(seed?.dept || 'inspection')
   const [prio, setPrio] = useState('normal')
   const [date, setDate] = useState(seed?.date || boardDate || todayYmd())
-  const [desc, setDesc] = useState('')
+  const [desc, setDesc] = useState(seed?.desc || '')
   // TRUE until the person edits the box by hand. Switching template swaps the standing instruction
   // underneath them — which is right until they have written something, at which point the box is
   // theirs and overwriting it would delete their words.
-  const [descAuto, setDescAuto] = useState(true)
+  const [descAuto, setDescAuto] = useState(!seed?.desc)
   const [picked, setPicked] = useState<number[]>([])
   const [intel, setIntel] = useState<BriefIntel | null>(null)
   const [intelBusy, setIntelBusy] = useState(false)
