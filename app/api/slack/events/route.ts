@@ -44,6 +44,7 @@ import { accessForEmail } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
 import { tierFor, tierNote } from '@/lib/eve/slack-tier'
 import { tagIsFront, detectLang, translate, worthTranslating } from '@/lib/eve/slack-triage'
+import { getEveAskers, canAskEve } from '@/lib/eve/slack-askers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -305,6 +306,25 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
     await say(channel, threadTs,
       `Quick note: I couldn't match you to a Lighthouse account — ${identityHint(who, user)}. I'll answer at the general level. An admin can fix it by setting your name or email on your Lighthouse user.`)
   }
+
+  // ---- WHO MAY ASK HER A QUESTION (Jon, 2026-09-22) -------------------------------------------
+  // "can we have it where only select user can ask eve questions? in slack". An editable list of
+  // named people in /users -> App settings, and one short line back to anyone not on it.
+  //
+  // ANSWERING ONLY. The translate path returned above this point, so a tag at the END still works
+  // for everyone -- that is the crews making their own messages readable and it reveals nothing.
+  //
+  // An EMPTY list means everyone, which is the safe default rather than a clever one: the other way
+  // round, shipping this would switch Eve off for the whole company and look exactly like an
+  // outage. The gate only bites once somebody has been named.
+  try {
+    const askers = await getEveAskers()
+    const verdict = canAskEve(askers, user, email)
+    if (!verdict.allowed) {
+      await say(channel, threadTs, verdict.line)
+      return ok()
+    }
+  } catch { /* a gate that cannot load must not silence her */ }
 
   const where = await channelName(channel)
 

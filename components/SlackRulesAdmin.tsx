@@ -140,6 +140,37 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
   const [busy, setBusy] = useState<'load' | 'save' | 'refresh' | null>('load')
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [openArea, setOpenArea] = useState<string | null>(null)
+  // WHO MAY ASK EVE (2026-09-22). Its own setting and its own endpoint — deliberately not folded
+  // into the alert rules, because who may interrogate the records is a different question from
+  // where an alert lands, and mixing them would let one save overwrite the other.
+  const [askers, setAskers] = useState<{ slackIds: string[]; emails: string[]; askInstead: string } | null>(null)
+  const [busyAskers, setBusyAskers] = useState(false)
+
+  useEffect(() => {
+    let dead = false
+    fetch('/api/settings/eve-askers')
+      .then(r => r.json())
+      .then(j => { if (!dead && j && j.ok) setAskers(j.askers) })
+      .catch(() => {})
+    return () => { dead = true }
+  }, [])
+
+  async function saveAskers() {
+    if (!askers) return
+    setBusyAskers(true)
+    try {
+      const r = await fetch('/api/settings/eve-askers', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ askers }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not save')
+      setAskers(j.askers)
+      setMsg({ kind: 'ok', text: j.openToEveryone ? 'Saved — nobody named, so everyone can ask Eve.' : 'Saved — only the people you ticked can ask Eve.' })
+    } catch (e: any) {
+      setMsg({ kind: 'err', text: e?.message || String(e) })
+    } finally { setBusyAskers(false) }
+  }
   const [showAdvanced, setShowAdvanced] = useState(false)
 
   const load = useCallback(async (refresh?: boolean) => {
@@ -285,6 +316,81 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
           </button>
         </div>
       )}
+
+      {/* ── WHO MAY ASK EVE A QUESTION ───────────────────────────────────────
+          Jon, 2026-09-22: "can we have it where only select user can ask eve questions? in slack".
+          Tick the people who may. EMPTY = everyone, and the card says so, because a list that
+          reads as a restriction while behaving as an open door is how a permission is
+          misunderstood. Tagging Eve at the END of a message to translate it is NOT gated here —
+          that stays open to the whole team on purpose. */}
+      <div className="rounded-xl border border-line bg-white overflow-hidden">
+        <div className="px-3.5 py-2.5 bg-app/60 border-b border-line">
+          <h4 className="text-[13px] font-bold text-ink">Who may ask Eve a question in Slack</h4>
+          <p className="mt-0.5 text-[12px] text-muted">
+            Tagging <b>@Eve at the start</b> of a message asks her something. Tick who is allowed to.
+            Anyone else gets one short line back. Tagging her at the <b>end</b> to translate a
+            message stays open to everyone.
+          </p>
+        </div>
+        <div className="px-3.5 py-3">
+          {askers && askers.slackIds.length === 0 && askers.emails.length === 0 ? (
+            <div className="mb-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900">
+              <b>Nobody is named, so everyone can ask.</b> Tick at least one person to turn the
+              restriction on — an empty list deliberately means open, so this never switches Eve off
+              for the whole company by accident.
+            </div>
+          ) : (
+            <div className="mb-2.5 text-[12.5px] text-muted">
+              <b className="text-ink">{askers ? askers.slackIds.length : 0} people</b> can ask Eve questions. Everyone else gets one line back.
+            </div>
+          )}
+          <div className="max-h-64 overflow-auto rounded-lg border border-line divide-y divide-line/70">
+            {users.map(u => {
+              const on = !!askers && askers.slackIds.indexOf(u.id) >= 0
+              return (
+                <label key={u.id} className="flex items-center gap-2.5 px-2.5 py-1.5 text-[12.5px] hover:bg-app cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    disabled={!isOwner}
+                    onChange={() => setAskers(a => {
+                      const base = a || { slackIds: [], emails: [], askInstead: '' }
+                      const has = base.slackIds.indexOf(u.id) >= 0
+                      return { ...base, slackIds: has ? base.slackIds.filter(x => x !== u.id) : base.slackIds.concat([u.id]) }
+                    })}
+                  />
+                  <span className="font-medium text-ink">{u.name || u.id}</span>
+                  {u.title ? <span className="text-muted">· {u.title}</span> : null}
+                </label>
+              )
+            })}
+            {users.length === 0 ? <div className="px-2.5 py-3 text-[12.5px] text-muted">No Slack directory yet.</div> : null}
+          </div>
+          <label className="mt-2.5 block text-[12.5px]">
+            <span className="text-muted">Who should everyone else be told to ask?</span>
+            <input
+              type="text"
+              value={askers ? askers.askInstead : ''}
+              disabled={!isOwner}
+              placeholder="Roberto or Karla"
+              onChange={e => setAskers(a => ({ ...(a || { slackIds: [], emails: [], askInstead: '' }), askInstead: e.target.value }))}
+              className="mt-1 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]"
+            />
+          </label>
+          {isOwner ? (
+            <button
+              type="button"
+              onClick={saveAskers}
+              disabled={busyAskers}
+              className="mt-2.5 rounded-lg border border-line bg-white px-3 py-1.5 text-[12px] font-semibold hover:bg-app disabled:opacity-50"
+            >
+              {busyAskers ? 'Saving…' : 'Save who can ask'}
+            </button>
+          ) : (
+            <p className="mt-2.5 text-[12px] text-muted">Only the owner can change this list.</p>
+          )}
+        </div>
+      </div>
 
       {/* ── 1. WHERE EACH ALERT GOES — the main event ───────────────────────── */}
       <div className="rounded-xl border border-line bg-white overflow-hidden">
