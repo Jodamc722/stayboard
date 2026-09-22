@@ -924,21 +924,30 @@ function LiveText({ v, set, live, single, t, cls, ro }: { v: string; set: (s: st
 // A slide has room for one number per mark and no more, so the rest of the story — rate, RevPAR,
 // revenue, what the plan said — lives here and costs the composition nothing. It is hover only:
 // nothing in this card is load-bearing, because a printed deck and a PDF never get to see it.
-function ChartTip({ title, rows, dark, children, style, className }: {
+function ChartTip({ title, rows, dark, children, style, className, empty }: {
   title: string
   rows: [string, string][]
   dark?: boolean
   children: React.ReactNode
   style?: Any
   className?: string
+  /** Shown instead of the rows when a mark has nothing beyond the number it already prints. */
+  empty?: string
 }) {
   const [on, setOn] = useState(false)
   // A slide clips its own overflow, so a card opening upward from a mark near the top of the
   // frame would be cut in half. Measure against the slide on the way in and flip it downward.
   const [below, setBelow] = useState(false)
   const wrap = useRef<HTMLDivElement>(null)
-  // A row with nothing in it is dropped rather than printed as an em dash, and a card left with
-  // only one line is not shown at all — the mark already prints that number.
+  // A row with nothing in it is dropped rather than printed as an em dash.
+  //
+  // IT USED TO REFUSE TO OPEN ON ONE ROW, which looked like a broken hover rather than a quiet
+  // one (Jon, 2026-09-22: "Why is the hover over november not working, need sto be able to hover
+  // over all"). November is far enough out that it has occupancy on the books and no rate yet, so
+  // its card was down to a single line and never appeared — while October's, two columns over,
+  // opened fine. A chart where only some marks answer is worse than one where none do: you stop
+  // trusting the ones that do. Every mark opens now; a card with nothing but the number already
+  // printed on the mark says so in words instead of staying shut.
   const live = rows.filter(r => r[1] && String(r[1]).trim() && r[1] !== '—')
   return (
     <div ref={wrap} className={className} style={{ position: 'relative', ...(style || {}) }}
@@ -952,7 +961,7 @@ function ChartTip({ title, rows, dark, children, style, className }: {
       }}
       onMouseLeave={() => setOn(false)}>
       {children}
-      {on && live.length > 1 ? (
+      {on && (live.length || empty) ? (
         <div className="sb-noprint" style={{
           position: 'absolute', left: '50%', transform: 'translateX(-50%)',
           ...(below ? { top: 'calc(100% + 9px)' } : { bottom: 'calc(100% + 9px)' }),
@@ -966,6 +975,9 @@ function ChartTip({ title, rows, dark, children, style, className }: {
               <span style={{ opacity: 0.65 }}>{k}</span><span style={{ fontWeight: 600 }}>{v}</span>
             </p>
           ))}
+          {live.length < 2 && empty ? (
+            <p style={{ fontSize: 12.5, margin: '6px 0 0', opacity: 0.75, maxWidth: 220, whiteSpace: 'normal' }}>{empty}</p>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -5598,8 +5610,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {strip.map((x: Any, i: number) => {
                     const pct = Math.max(0, Math.min(100, Number(x.occPct) || 0))
                     return (
-                      <ChartTip key={i} title={x.full || x.month} rows={[
-                        ['Occupancy', Math.round(pct) + '%'],
+                      <ChartTip key={i} title={x.full || x.month}
+                        empty="On the books, but too far out to have a rate set yet."
+                        rows={[
+                        ['Occupancy on the books', Math.round(pct) + '%'],
                         ['Gross revenue', String(x.revenue || '')],
                         ['Gross ADR', String(x.adr || '')],
                         ['Gross RevPAR', String(x.revpar || '')],
