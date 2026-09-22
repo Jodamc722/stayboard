@@ -23,7 +23,13 @@
 // answer carries `confidence` and `questions`, and the UI shows a recommendation as provisional
 // until the questions are answered.
 //
-// Nothing is written. It recommends; a person logs the refund.
+// It writes only its own recommendation (refund_recommended / refund_reasoning), never a decision.
+// A person logs the refund.
+//
+// 2026-09-22 — IT READS THE WHOLE RECORD (lib/glitch-evidence): booking, card history, team
+// comments, every Guesty message, Talkroute calls/texts/voicemails, and the Breezeway clock from
+// task created to finished. It always gives a best-judgment number (provisional when it had to
+// assume), and it is trained by the team (lib/refund-training) — house guidance plus saved cases.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -34,9 +40,11 @@ import { exposureActions } from '@/lib/review-exposure'
 import { getSetting } from '@/lib/app-settings'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
+import { gatherEvidence } from '@/lib/glitch-evidence'
+import { loadTraining, trainingPrompt, nearestCases, canTrain } from '@/lib/refund-training'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 90
 
 // MODEL is resolved per request via modelFor('glitch-advise') — see lib/ai-models (editable on Users & admin).
 
@@ -59,13 +67,28 @@ const CLASSIFY_TOOL = {
             speed: { type: 'string', enum: ['same_day', 'next_day', 'two_days', 'three_plus', 'unresolved', 'unknown'] },
             mitigation: { type: 'string', enum: ['effective', 'partial', 'gesture', 'none', 'unknown'] },
             dial: { type: 'number', description: '0 = the mild end of the severity band, 1 = the severe end.' },
+            bestGuessSpeed: { type: 'string', enum: ['same_day', 'next_day', 'two_days', 'three_plus', 'unresolved'], description: 'Your best judgment of speed from everything on the record. Equal to speed when speed is known.' },
+            bestGuessMitigation: { type: 'string', enum: ['effective', 'partial', 'gesture', 'none'], description: 'Your best judgment of what was offered. Equal to mitigation when known.' },
           },
-          required: ['label', 'severity', 'severityWhy', 'affectedNights', 'speed', 'mitigation', 'dial'],
+          required: ['label', 'severity', 'severityWhy', 'affectedNights', 'speed', 'mitigation', 'dial', 'bestGuessSpeed', 'bestGuessMitigation'],
         },
       },
       unusedNights: { type: 'number', description: 'Nights paid for but not stayed because they left over this. 0 if they did not.' },
       reportedAfterCheckout: { type: 'boolean' },
       guestCaused: { type: 'boolean' },
+      toneRead: { type: 'string', enum: ['understanding', 'frustrated', 'angry', 'fishing', 'unclear'], description: 'How the guest comes across in the messages, calls and voicemails. A reading for the team to confirm, never a substitute for the tone a person selected.' },
+      evidence: {
+        type: 'array',
+        description: 'The 3-8 facts that decided your classification, each tied to where you read it.',
+        items: {
+          type: 'object',
+          properties: {
+            source: { type: 'string', enum: ['report', 'booking', 'messages', 'call', 'text', 'voicemail', 'breezeway', 'card history', 'comments', 'house guidance', 'past case'] },
+            fact: { type: 'string', description: 'One short sentence, with the time if it matters.' },
+          },
+          required: ['source', 'fact'],
+        },
+      },
       questions: {
         type: 'array',
         description: 'What you genuinely cannot tell from the record. Empty if you can tell everything. Never guess to avoid asking.',
@@ -74,7 +97,7 @@ const CLASSIFY_TOOL = {
       confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
       summary: { type: 'string', description: 'Two sentences a supervisor can read: what happened and what drives the number.' },
     },
-    required: ['issues', 'unusedNights', 'reportedAfterCheckout', 'guestCaused', 'questions', 'confidence', 'summary'],
+    required: ['issues', 'unusedNights', 'reportedAfterCheckout', 'guestCaused', 'toneRead', 'evidence', 'questions', 'confidence', 'summary'],
   },
 }
 
@@ -90,14 +113,26 @@ SEVERITY, by what the guest actually lost:
 - critical: a core system is down or the unit is unfit — no AC in heat, no hot water at all,
   plumbing backup, pests, anything unsanitary or unsafe, a lockout of hours.
 
+YOU ARE GIVEN THE WHOLE RECORD. Read all of it before you classify: the report and work notes, the
+booking, the card's history and the team's comments, every guest message, every phone call summary,
+text and voicemail from Talkroute, and the Breezeway clock (task created → started → finished,
+measured from when the guest reported it). The answer is usually in there.
+
 RULES YOU MUST FOLLOW:
-- If the record does not say how fast it was fixed, answer speed "unknown" and ASK. Do not infer it
-  from the fact that the glitch is closed.
-- If it does not say what was offered, answer mitigation "unknown" and ASK.
-- TONE IS NOT YOURS TO JUDGE. It is chosen by whoever actually dealt with the guest and is handed to
-  you as a fact. Many complaints arrive by phone or in person, where no words were ever written down
-  and the only person who knows how the guest sounded is the one who spoke to them. Never infer it,
-  never contradict it, and if it is missing say so in your questions rather than guessing.
+- SPEED COMES FROM THE CLOCK FIRST. When the Breezeway task for this issue has a finished time, set
+  speed from it (the record gives you the band it implies). Messages or calls that say when it was
+  actually fixed for the guest outrank the task time. Only answer speed "unknown" when neither says.
+  Do not infer it from the fact that the glitch is closed.
+- MITIGATION comes from what messages, calls and notes say we offered: a portable unit, a move, a
+  late checkout, a credit. If nothing says, answer "unknown".
+- ALWAYS GIVE YOUR BEST JUDGMENT. For every issue fill bestGuessSpeed and bestGuessMitigation with
+  what the evidence most likely means, even when the strict field is "unknown" — the team needs a
+  working number. Then ASK the question that would confirm it. A best guess is labelled provisional;
+  it is never a reason to stay silent.
+- TONE: a tone chosen by the person who dealt with the guest is a fact; never contradict it. Separately
+  give toneRead — how the guest comes across in the messages, calls and voicemails — so the team can
+  confirm or correct it. If there is nothing to read, say "unclear".
+- Cite what decided it in evidence, one fact per line with its source.
 - Only set guestCaused when the record actually says so. It means no refund, so never infer it.
 - Count affectedNights from the dates you were given. If you cannot, ask.
 - Separate issues get separate entries. Dirty on arrival AND a broken AC is two, not one.
@@ -136,6 +171,8 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin()
   const { data: g } = await db.from('glitches').select('*').eq('id', id).maybeSingle()
   if (!g) return NextResponse.json({ error: 'That glitch no longer exists.' }, { status: 404 })
+  // Everything else on the record: booking, card history, comments, messages, Talkroute, Breezeway.
+  const [ev, training] = await Promise.all([gatherEvidence(db, g), loadTraining().catch(() => ({ guidance: '', cases: [] as any[] }))])
 
   // The stay, for the nightly rate the whole framework hangs off.
   let nights = 0, nightly = 0, channel = String((g as any).channel || '')
@@ -158,20 +195,17 @@ export async function POST(req: NextRequest) {
     nightly = Math.round((Number((g as any).reservation_total) / nights) * 100) / 100
   }
 
-  // The live guest thread — the only place tone and the guest's own account of the fix exist.
-  let thread = ''
-  const convId = String((g as any).conversation_id || '')
-  if (convId) {
-    const { data: msgs } = await db.from('guesty_messages')
-      .select('sender,sender_name,body,sent_at,module')
-      .eq('conversation_id', convId).order('sent_at', { ascending: true }).limit(60)
-    thread = ((msgs as any[]) || [])
-      .filter(m => m.sender === 'guest' || m.sender === 'host')
-      .map(m => `${m.sender === 'guest' ? 'GUEST' : 'US'} ${String(m.sent_at).slice(0, 16)}: ${String(m.body || '').slice(0, 400)}`)
-      .join('\n').slice(0, 6000)
-  }
+  const hasThread = ev.sources.guestMessages + ev.sources.ourMessages > 0
+  // The clock, turned into the band the policy speaks. Given to the model as a fact it can overrule
+  // only with something the guest or our team actually said about when it was fixed.
+  const own = ev.tasks.find(t => t.linked) || null
+  const co = String((g as any).check_out || '').slice(0, 10)
+  const stayOver = !!co && co < new Date().toISOString().slice(0, 10)
+  const clockBand: string | null = ev.fixHours != null
+    ? (ev.fixHours <= 12 ? 'same_day' : ev.fixHours <= 36 ? 'next_day' : ev.fixHours <= 60 ? 'two_days' : 'three_plus')
+    : own && !own.finishedAt && stayOver ? 'unresolved' : null
 
-  const tone: string | null = TONES.includes(toneIn) ? toneIn
+  let tone: string | null = TONES.includes(toneIn) ? toneIn
     : TONES.includes(String((g as any).guest_tone || '').toLowerCase()) ? String((g as any).guest_tone).toLowerCase()
     : null
   const reportedVia = String((g as any).reported_via || '')
@@ -189,23 +223,26 @@ export async function POST(req: NextRequest) {
     `HOW THE GUEST RAISED IT: ${reportedVia || 'not recorded'}`,
     `GUEST TONE (chosen by the person who dealt with them): ${tone || 'NOT SET — ask for it, do not guess'}`,
     `NIGHTLY RATE: ${nightly ? '$' + nightly : 'unknown'}`,
+    clockBand ? `BREEZEWAY CLOCK SAYS: ${clockBand.replace('_', ' ')}${ev.fixHours != null ? ' (task finished ' + ev.fixHours + ' h after the report)' : ' (task still open after checkout)'}` : 'BREEZEWAY CLOCK SAYS: no finished task linked to this issue',
     '',
     'WHAT WAS REPORTED:',
     String((g as any).overview || '(nothing written)'),
-    (g as any).details ? '\nWORK NOTES:\n' + String((g as any).details).slice(0, 2000) : '',
-    thread ? '\nGUEST CONVERSATION:\n' + thread
-      : (reportedVia && reportedVia !== 'message'
-          ? `\nNo message thread, and none is expected — the guest raised this by ${reportedVia.replace(/_/g, ' ')}.`
-          : '\nNo guest conversation is linked to this report.'),
-    extra ? '\nANSWERS THE TEAM JUST GAVE:\n' + extra : '',
+    (g as any).details ? '\nWORK NOTES:\n' + String((g as any).details).slice(0, 3000) : '',
+    (g as any).resolution ? '\nRESOLUTION:\n' + String((g as any).resolution).slice(0, 1500) : '',
+    '',
+    ev.text,
+    !hasThread && reportedVia && reportedVia !== 'message'
+      ? `\n(No message thread is expected — the guest raised this by ${reportedVia.replace(/_/g, ' ')}.)` : '',
+    extra ? '\nANSWERS THE TEAM JUST GAVE (these outrank anything above):\n' + extra : '',
   ].join('\n')
+  const taught = trainingPrompt(training, cats[0] || String((g as any).category || ''))
 
   try {
     const r = await aiFetch('glitch-advise', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: await modelFor('glitch-advise'), max_tokens: 2000, system: SYSTEM,
+        model: await modelFor('glitch-advise'), max_tokens: 3000, system: taught ? SYSTEM + '\n\n' + taught : SYSTEM,
         tools: [CLASSIFY_TOOL], tool_choice: { type: 'tool', name: 'classify_case' },
         messages: [{ role: 'user', content: record }],
       }),
@@ -223,10 +260,21 @@ export async function POST(req: NextRequest) {
     const questions: string[] = [...(c.questions || [])]
     const needRate = !nightly
     if (needRate) questions.unshift(REQUIRED_FIELDS[0].ask)
-    if (!tone) questions.push('How did the guest sound — understanding, frustrated, angry, or angling for a discount? Pick one; whoever spoke to them knows.')
+    // No tone picked by a person: use the model's reading of the messages and calls, provisionally.
+    const toneRead = TONES.includes(String(c.toneRead)) ? String(c.toneRead) : null
+    let toneSource: string | null = tone ? (toneIn ? 'just selected' : 'on the record') : null
+    if (!tone && toneRead) { tone = toneRead; toneSource = 'read from messages and calls — confirm it' }
+    if (!toneSource || toneSource.startsWith('read')) {
+      questions.push(toneRead
+        ? `The guest reads as ${toneRead} from the messages and calls. Is that right? Pick the tone; whoever spoke to them knows.`
+        : 'How did the guest sound — understanding, frustrated, angry, or angling for a discount? Pick one; whoever spoke to them knows.')
+    }
 
-    const usable = (c.issues || []).filter((i: any) => i.speed !== 'unknown' && i.mitigation !== 'unknown')
-    const blocked = needRate || usable.length === 0
+    // BEST JUDGMENT ALWAYS PRODUCES A NUMBER (Jon, 2026-09-22). Where the strict field is unknown,
+    // the model's best guess is priced and the answer is marked provisional until confirmed. Only a
+    // missing nightly rate stops it — without that there is nothing to take a percentage of.
+    const guessed = (c.issues || []).some((i: any) => i.speed === 'unknown' || i.mitigation === 'unknown') || !!(toneSource && toneSource.startsWith('read'))
+    const blocked = needRate || !(c.issues || []).length
 
     const inputs: RefundInput[] = (c.issues || []).map((i: any) => ({
       nightlyRate: nightly,
@@ -235,8 +283,8 @@ export async function POST(req: NextRequest) {
       unusedNights: Number(c.unusedNights) || 0,
       channel,
       severity: i.severity,
-      speed: i.speed === 'unknown' ? 'next_day' : i.speed,
-      mitigation: i.mitigation === 'unknown' ? 'none' : i.mitigation,
+      speed: i.speed === 'unknown' ? (i.bestGuessSpeed || clockBand || 'next_day') : i.speed,
+      mitigation: i.mitigation === 'unknown' ? (i.bestGuessMitigation || 'none') : i.mitigation,
       tone: (tone as any) || null,
       reportedAfterCheckout: !!c.reportedAfterCheckout,
       guestCaused: !!c.guestCaused,
@@ -264,6 +312,25 @@ export async function POST(req: NextRequest) {
     const stayValue = nightly * nights
     const tier = result ? tierFor(result.refund, stayValue, cfg) : null
 
+    // KEEP WHAT IT SAID beside what a person later decides (migration 085). This is also what lets
+    // a trainer see "the advisor said $X, we paid $Y" when saving a case as precedent.
+    if (result && !blocked) {
+      try {
+        await db.from('glitches').update({
+          refund_recommended: result.refund,
+          refund_reasoning: {
+            at: new Date().toISOString(), by: access.email, confidence: c.confidence, provisional: guessed || c.confidence === 'low',
+            summary: c.summary, issues: c.issues, tone, toneSource, evidence: c.evidence || [],
+            clock: { band: clockBand, fixHours: ev.fixHours }, sources: ev.sources, reasoning: result.reasoning,
+          },
+        }).eq('id', id)
+      } catch { /* advice still returns */ }
+    }
+    const precedents = nearestCases(training, cats[0] || String((g as any).category || ''), 3).map(p => ({
+      unit: p.unit, category: p.category, what: p.what, paid: p.paid, recommended: p.recommended, lesson: p.lesson,
+      pct: p.nightly && p.nights ? Math.round((p.paid / (p.nightly * p.nights)) * 100) : null,
+    }))
+
     return NextResponse.json({
       ok: true,
       exposure: exposure ? {
@@ -278,19 +345,30 @@ export async function POST(req: NextRequest) {
       },
       authority: tier ? { tier: tier.key, who: tier.who, why: tierReason(result!.refund, stayValue, cfg), then: tier.then } : null,
       doctrine: RULES.filter(r => r.key === 'fix-first' || r.key === 'ceiling-not-debt' || r.key === 'never-buy-review'),
-      provisional: blocked || c.confidence === 'low' || questions.length > 0,
+      provisional: blocked || guessed || c.confidence === 'low',
+      guessed,
+      evidence: c.evidence || [],
+      read: {
+        sources: ev.sources,
+        clock: { band: clockBand, fixHours: ev.fixHours, reportedAt: ev.reportedAt },
+        tasks: ev.tasks,
+      },
+      training: { guidance: !!training.guidance.trim(), cases: training.cases.length, canTrain: canTrain(access) },
+      precedents,
       confidence: c.confidence,
       summary: c.summary,
       questions,
       classification: {
-        issues: c.issues, tone, toneSource: tone ? (toneIn ? 'just selected' : 'on the record') : null,
+        issues: c.issues, tone, toneSource, toneRead,
         unusedNights: c.unusedNights, reportedAfterCheckout: c.reportedAfterCheckout, guestCaused: c.guestCaused,
       },
-      stay: { nights, nightlyRate: nightly, channel, hasThread: !!thread },
+      stay: { nights, nightlyRate: nightly, channel, hasThread },
       recommendation: blocked ? null : result,
       note: blocked
-        ? 'Not enough on the record to put a number on this yet. Answer the questions and ask again.'
-        : 'A recommendation, not a decision. The amount is computed from the policy — the classification above is what to argue with.',
+        ? 'No nightly rate on this booking, so there is nothing to take a percentage of. Answer the question and ask again.'
+        : guessed
+          ? 'Best judgment from the record — some of it is assumed. Answer the questions to firm it up.'
+          : 'A recommendation, not a decision. The amount is computed from the policy — the classification above is what to argue with.',
     })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 500 })
