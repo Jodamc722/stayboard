@@ -5,7 +5,8 @@
 // payroll accrued vs scheduled, and per-person hour warnings (over schedule,
 // OT risk this workweek). Auto-refreshes every 5 minutes. Never blocks the page.
 import { useEffect, useState } from 'react'
-import { Zap, ChevronRight, AlertTriangle } from 'lucide-react'
+import { Zap, ChevronRight } from 'lucide-react'
+import { Tag } from '@/components/lean'
 
 const KEY = 'sb_team_open'
 const fmt$ = (n: number | null | undefined) =>
@@ -55,22 +56,22 @@ export function LaborStrip() {
   const over = people.filter((p: any) => p.scheduledHours > 0 && p.actualHours > p.scheduledHours + 0.5)
 
   return (
-    <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/50 overflow-hidden">
-      <button onClick={toggle} className="w-full px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12.5px] text-left">
-        <span className="font-bold text-indigo-700 uppercase tracking-wide text-[10px] flex items-center gap-1">
-          <ChevronRight size={12} className={'transition-transform ' + (open ? 'rotate-90' : '')} />
-          <Zap size={11} /> Team today
+    <div className="mb-4 rounded-xl border border-line bg-white overflow-hidden">
+      {/* ONE LINE (lean pass, 2026-09-22): label, four numbers, warning tags; the table opens under it. */}
+      <button onClick={toggle} aria-expanded={open} className="w-full px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-left">
+        <span className="font-semibold text-ink text-[12.5px] flex items-center gap-1">
+          <ChevronRight size={12} className={'text-muted transition-transform ' + (open ? 'rotate-90' : '')} />
+          <Zap size={11} className="text-indigo-600" /> Team today
         </span>
         {!d ? <span className="text-muted">loading…</span> : (
           <>
-            <span><b className="text-ink">{clocked.length}</b> <span className="text-muted">clocked in</span></span>
-            <span><b className="text-ink">{people.length}</b> <span className="text-muted">on schedule</span></span>
-            <span><b className="text-ink">{t?.hoursSoFar ?? 0}h</b> <span className="text-muted">worked</span></span>
-            <span><b className="text-ink">{fmt$(t?.payrollSoFar)}</b> <span className="text-muted">of {fmt$(t?.scheduledPayroll)} sched payroll</span></span>
-            {(otRisk.length > 0 || over.length > 0) && (
-              <span className="text-rose-700 font-semibold flex items-center gap-1"><AlertTriangle size={12} />{otRisk.length > 0 ? `${otRisk.length} OT risk` : ''}{otRisk.length > 0 && over.length > 0 ? ' · ' : ''}{over.length > 0 ? `${over.length} over schedule` : ''}</span>
-            )}
-            <span className="ml-auto text-indigo-700 font-semibold">{open ? 'hide' : 'details'}</span>
+            <span title="Clocked in right now (Homebase)"><b className="text-ink">{clocked.length}</b> <span className="text-muted">in</span></span>
+            <span title="People on today's Homebase schedule"><b className="text-ink">{people.length}</b> <span className="text-muted">sched</span></span>
+            <span title="Hours worked so far today"><b className="text-ink">{t?.hoursSoFar ?? 0}h</b> <span className="text-muted">worked</span></span>
+            <span title="Payroll accrued so far vs scheduled payroll for today"><b className="text-ink">{fmt$(t?.payrollSoFar)}</b> <span className="text-muted">/ {fmt$(t?.scheduledPayroll)}</span></span>
+            {otRisk.length > 0 && <Tag tone="rose" title="Projected past 40 hours this workweek">{otRisk.length} OT risk</Tag>}
+            {over.length > 0 && <Tag tone="rose" title="Worked more than 30 minutes past their scheduled hours">{over.length} over sched</Tag>}
+            <span className="ml-auto text-muted font-semibold">{open ? 'hide' : 'details'}</span>
           </>
         )}
       </button>
@@ -112,11 +113,13 @@ export function LaborStrip() {
                     <td className={'px-2 py-1.5 text-right tabular-nums ' + (isOver ? 'text-rose-700 font-bold' : 'font-semibold text-ink')}>{p.actualHours}h</td>
                     <td className={'px-2 py-1.5 text-right tabular-nums ' + (p.overtimeRisk ? 'text-rose-700 font-bold' : 'text-muted')}>{p.projectedWeekHours}h</td>
                     <td className="px-3 py-1.5 text-right">
-                      {isIn && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 ml-1">clocked in</span>}
-                      {isOver && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 ml-1">over sched</span>}
-                      {p.overtimeRisk && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 ml-1">OT risk</span>}
-                      {isNoShow && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 ml-1">no show</span>}
-                      {!isIn && !isOver && !p.overtimeRisk && !isNoShow && <span className="text-[11px] text-muted">—</span>}
+                      <span className="inline-flex gap-1 justify-end flex-wrap">
+                        {isIn && <Tag tone="emerald">clocked in</Tag>}
+                        {isOver && <Tag tone="rose">over sched</Tag>}
+                        {p.overtimeRisk && <Tag tone="amber">OT risk</Tag>}
+                        {isNoShow && <Tag>no show</Tag>}
+                        {!isIn && !isOver && !p.overtimeRisk && !isNoShow && <span className="text-[11px] text-muted">—</span>}
+                      </span>
                     </td>
                   </tr>
                 )

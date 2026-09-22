@@ -35,13 +35,14 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import {
   RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, AlertTriangle, ChevronDown, ChevronRight,
-  Send, Copy, Circle, Plus, Lock, MapPin, CalendarDays, ClipboardCheck, Star,
+  Send, Copy, Circle, Plus, MapPin, CalendarDays, ClipboardCheck, Star, Sparkles,
 } from 'lucide-react'
+import { LeanHead, Pill, Tag, IconBtn, Tip, type Tone as LeanTone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, NextAction, GuestDeskRow } from '@/lib/command-day'
 import {
-  Stat, TilePanel, InlineAssign, CompletedCard,
-  BTN, ICON_BTN, CARD, DAY_URL, MINE_URL, MINE_ICON, MINE_CLS, niceDay,
+  TilePanel, InlineAssign, CompletedCard,
+  BTN, CARD, DAY_URL, MINE_URL, MINE_ICON, MINE_CLS, niceDay,
   type Roster, type TileKey, type Tone, type Mine, type MineItem,
 } from '@/components/CommandCockpit'
 import { useSlackQueue, EVENT_LABEL, expiresIn, type Pending as SlackPending } from '@/components/SlackQueueCard'
@@ -62,7 +63,8 @@ const fmtLeft = (m: number) => { const a = Math.abs(m); const h = Math.floor(a /
 const ago = (iso: string, tick: number) => { void tick; const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago' }
 const plural = (n: number, one: string, many?: string) => n + ' ' + (n === 1 ? one : (many || one + 's'))
 const PRIMARY = BTN + ' bg-ink text-white whitespace-nowrap'
-const SECONDARY = ICON_BTN + ' text-muted hover:text-ink'
+/** A band's list. No overflow-hidden (unlike CARD): it would clip the hover labels on the top row. */
+const LIST = 'rounded-2xl border border-line bg-white divide-y divide-line'
 
 async function post(url: string, body: any, method = 'POST') {
   const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -176,8 +178,6 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
   useEffect(() => { try { setHow(localStorage.getItem(HOW_KEY) === '1') } catch { /* private mode */ } }, [])
   const toggleHow = () => { setHow(o => { try { localStorage.setItem(HOW_KEY, o ? '0' : '1') } catch { /* ignore */ } return !o }) }
   const occ = p.active ? Math.round((p.occupiedTonight / p.active) * 100) : null
-  const dot = v.state === 'behind' ? 'bg-rose-600' : v.state === 'at_risk' ? 'bg-amber-500' : v.state === 'closing' ? 'bg-slate-500' : 'bg-emerald-600'
-  const text = v.state === 'behind' ? 'text-rose-800' : v.state === 'at_risk' ? 'text-amber-800' : v.state === 'closing' ? 'text-slate-800' : 'text-emerald-800'
   const stats: { key: TileKey; label: string; value: string; sub: string; tone: Tone }[] = [
     { key: 'cleans', label: 'Cleans', value: t.cleans.done + '/' + t.cleans.total, sub: t.cleans.late ? t.cleans.late + ' late' : t.cleans.atRisk ? t.cleans.atRisk + ' at risk' : t.cleans.running ? t.cleans.running + ' running' : '', tone: t.cleans.late ? 'hot' : t.cleans.atRisk ? 'warn' : t.cleans.total && t.cleans.done === t.cleans.total ? 'ok' : 'quiet' },
     { key: 'arrivals', label: 'Arrivals', value: String(t.arrivals.today), sub: t.arrivals.bigToday ? t.arrivals.bigToday + ' big' + (t.arrivals.missingInspection ? ' · ' + t.arrivals.missingInspection + ' uninspected' : '') : '', tone: t.arrivals.missingInspection ? 'warn' : 'quiet' },
@@ -188,48 +188,54 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
     { key: 'overdue', label: 'Overdue', value: String(t.overdue.total), sub: '', tone: t.overdue.total > 40 ? 'hot' : t.overdue.total ? 'warn' : 'ok' },
     { key: 'guestDesk', label: 'Guest desk', value: String(t.guestDesk.total), sub: [t.guestDesk.messages ? t.guestDesk.messages + ' msgs' : '', t.guestDesk.welcome ? t.guestDesk.welcome + ' calls' : '', t.guestDesk.reviews ? t.guestDesk.reviews + ' reviews' : ''].filter(Boolean).slice(0, 2).join(' · '), tone: t.guestDesk.messages || t.guestDesk.approvals ? 'warn' : 'quiet' },
   ]
+  const vTone: LeanTone = v.state === 'behind' ? 'rose' : v.state === 'at_risk' ? 'amber' : v.state === 'closing' ? 'slate' : 'emerald'
+  const sTone = (x: Tone): LeanTone => x === 'hot' ? 'rose' : x === 'warn' ? 'amber' : x === 'ok' ? 'emerald' : 'slate'
+  const left = p.cleansTotal > p.cleansDone ? (p.minsLeft < 0 ? fmtLeft(p.minsLeft) + ' past 4pm' : fmtLeft(p.minsLeft) + ' to 4pm') : ''
+  // ONE LINE (lean pass, 2026-09-22): the verdict is a pill, its sentence is the pill's hover and the
+  // first line of "How's the day". The eyebrow the page used to print is this title now.
   return (
     <section aria-live="polite">
-      <div className="flex items-start gap-2.5">
-        <span className={'w-2.5 h-2.5 rounded-full shrink-0 mt-[7px] ' + dot} aria-hidden />
-        <div className="flex-1 min-w-0">
-          <div className="text-[17px] leading-snug">
-            <span className={'font-bold ' + text}>{v.headline}</span>
-            <span className="text-[14px] text-ink/80"> — {v.detail}{vendorsOnSite > 0 ? ' · ' + plural(vendorsOnSite, 'vendor') + ' on site' : ''}</span>
-          </div>
-          <div className="mt-1 flex items-center gap-x-3 flex-wrap text-[11.5px] text-muted">
-            <button onClick={toggleHow} aria-expanded={how} className="inline-flex items-center gap-0.5 font-semibold text-ink/70 hover:text-ink min-h-[28px]">
-              How&rsquo;s the day {how ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-            </button>
-            <button onClick={reload} aria-label="Refresh the day" title="Refresh" className="inline-flex items-center gap-1 text-muted hover:text-ink min-h-[28px]">
-              <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> {ago(d.generatedAt, tick)}
-            </button>
-          </div>
-        </div>
-      </div>
+      <LeanHead title="Command Center" icon={<Sparkles size={18} className="text-brand-600" />}>
+        <Pill tone={vTone} title={v.detail}>{v.headline}</Pill>
+        {p.cleansTotal > 0 && <Pill tone={t.cleans.late ? 'rose' : t.cleans.atRisk ? 'amber' : 'slate'} title={'Cleans done today' + (left ? ' · ' + left : '')}>{p.cleansDone}/{p.cleansTotal} cleans</Pill>}
+        {vendorsOnSite > 0 && <Pill title="Vendor visits booked for today">{plural(vendorsOnSite, 'vendor')} on site</Pill>}
+        <Pill tone={how ? 'brand' : 'slate'} onClick={toggleHow} title="The day's numbers and drill-downs">
+          <span className="inline-flex items-center gap-0.5">How&rsquo;s the day <ChevronDown size={12} className={how ? 'rotate-180' : ''} /></span>
+        </Pill>
+        <Tip label={'Refresh the day · read ' + ago(d.generatedAt, tick)}>
+          <button onClick={reload} aria-label="Refresh the day" className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-ink min-h-[28px] px-1">
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> {ago(d.generatedAt, tick)}
+          </button>
+        </Tip>
+      </LeanHead>
       {d.degraded.length > 0 && (
-        <div className="mt-2 text-[11.5px] font-semibold text-rose-800 flex items-center gap-1.5"><AlertTriangle size={12} /> Some numbers are incomplete — could not read: {d.degraded.join(', ')}.</div>
+        <div className="-mt-1 mb-2 text-[11.5px] font-semibold text-rose-800 flex items-center gap-1.5"><AlertTriangle size={12} /> Incomplete — could not read: {d.degraded.join(', ')}.</div>
       )}
       {how && (
-        <div className="mt-3 space-y-2">
+        <div className="space-y-2">
           <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[12.5px] text-muted px-1">
+            <span className="font-semibold text-ink/80">{v.detail}</span>
             {occ != null && <span><b className="text-ink">{occ}%</b> tonight</span>}
             <span><b className="text-ink">{p.arrivals}</b> in</span>
             <span><b className="text-ink">{p.departures}</b> out</span>
             <span className={p.sameDayTurns > 0 ? 'font-bold text-ink' : ''}>{p.sameDayTurns} same-day</span>
-            <span><b className="text-ink">{p.cleansDone}/{p.cleansTotal}</b> cleans{p.cleansTotal > p.cleansDone ? ' · ' + (p.minsLeft < 0 ? fmtLeft(p.minsLeft) + ' past 4pm' : fmtLeft(p.minsLeft) + ' to 4pm') : ''}</span>
+            <span><b className="text-ink">{p.cleansDone}/{p.cleansTotal}</b> cleans{left ? ' · ' + left : ''}</span>
             <span>{p.vacant} vacant</span>
             <span>· {v.tomorrow}</span>
           </div>
           <div className="flex gap-1.5 flex-wrap">
-            {stats.map(({ key, ...s }) => <Stat key={key} {...s} active={tile === key} onClick={() => setTile(tile === key ? null : key)} />)}
+            {stats.map(s => (
+              <Pill key={s.key} tone={tile === s.key ? 'brand' : sTone(s.tone)} onClick={() => setTile(tile === s.key ? null : s.key)} title={'Open ' + s.label.toLowerCase()}>
+                {s.label} {s.value}{s.sub ? <span className="font-medium opacity-75"> · {s.sub}</span> : null}
+              </Pill>
+            ))}
           </div>
           {tile && (
             <div className={CARD}>
               <div className="px-4 py-2 border-b border-line bg-app/60 flex items-center gap-2">
                 <span className="text-[12.5px] font-bold text-ink">{stats.find(x => x.key === tile)?.label}</span>
                 <span className="text-[11.5px] text-muted">{stats.find(x => x.key === tile)?.sub}</span>
-                <button onClick={() => setTile(null)} className={ICON_BTN + ' ml-auto text-muted hover:text-ink'} aria-label="Close"><X size={15} /></button>
+                <span className="ml-auto"><IconBtn title="Close" onClick={() => setTile(null)}><X size={15} /></IconBtn></span>
               </div>
               <TilePanel key={tile} k={tile} d={d} roster={roster} onChanged={reload} />
             </div>
@@ -241,36 +247,42 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
 }
 
 // ── BAND + ROW primitives ───────────────────────────────────────────────────────────────────────
+/** Band label on one line; an empty band is that line and nothing else. */
 function Band({ name, count, empty, children }: { name: string; count: number; empty: string; children?: ReactNode }) {
   return (
     <section>
-      <h2 className="px-1 mb-1.5 text-[15px] font-bold text-ink tracking-tight">{name} <span className="text-muted font-semibold tabular-nums">{count || ''}</span></h2>
-      {count === 0 ? <p className="px-1 text-[12.5px] text-muted">{empty}</p> : <div className={CARD + ' divide-y divide-line'}>{children}</div>}
+      <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted flex items-center gap-2">
+        {name} {count ? <span className="tabular-nums">{count}</span> : <span className="normal-case tracking-normal font-medium">— {empty.replace(/\.$/, '').toLowerCase()}</span>}
+      </h2>
+      {count > 0 && <div className={LIST}>{children}</div>}
     </section>
   )
 }
 function SevDot({ sev }: { sev: Sev | null }) {
-  return <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (sev === 'now' ? 'bg-rose-500' : sev === 'today' ? 'bg-amber-400' : 'bg-transparent')} aria-hidden />
+  const label = sev === 'now' ? 'Needs a person now' : sev === 'today' ? 'Today' : ''
+  return <span title={label || undefined} className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (sev === 'now' ? 'bg-rose-500' : sev === 'today' ? 'bg-amber-400' : 'bg-transparent')} aria-hidden />
 }
-/** One row: dot · title (one line) · meta (one line) · ONE primary button · at most one icon. */
-function Row({ sev, title, meta, primary, secondary, onTap, expanded, children, note, err }: {
-  sev: Sev | null; title: ReactNode; meta?: ReactNode; primary?: ReactNode; secondary?: ReactNode
+/** One row (lean pass): dot · the verb · title, muted meta and tags on ONE line (meta wraps under
+ *  it only on a phone) · at most one icon. Detail lives in the expand. */
+function Row({ sev, title, meta, tags, primary, secondary, onTap, expanded, children, note, err }: {
+  sev: Sev | null; title: ReactNode; meta?: ReactNode; tags?: ReactNode; primary?: ReactNode; secondary?: ReactNode
   onTap?: () => void; expanded?: boolean; children?: ReactNode; note?: string; err?: string
 }) {
   const body = (
-    <>
-      <span className="block text-[13px] font-semibold text-ink truncate leading-snug">{title}</span>
-      {meta ? <span className="block text-[11.5px] text-muted truncate leading-snug">{meta}</span> : null}
-    </>
+    <span className="flex items-center gap-x-1.5 gap-y-0 flex-wrap min-w-0">
+      <span className="text-[13px] font-semibold text-ink truncate leading-snug max-w-full">{title}</span>
+      {tags}
+      {meta ? <span title={typeof meta === 'string' ? meta : undefined} className="text-[11.5px] text-muted truncate leading-snug max-w-full">{meta}</span> : null}
+    </span>
   )
   return (
-    <div className="px-3 py-2 min-h-[44px]">
+    <div className="px-3 py-1.5 min-h-[44px] flex flex-col justify-center">
       <div className="flex items-center gap-2 min-w-0">
         <SevDot sev={sev} />
+        {primary}
         {onTap
           ? <button onClick={onTap} aria-expanded={!!expanded} className="flex-1 min-w-0 text-left">{body}</button>
           : <div className="flex-1 min-w-0">{body}</div>}
-        {primary}
         {secondary}
       </div>
       {(note || err) && <p className={'text-[11.5px] font-semibold mt-1 pl-3.5 ' + (err ? 'text-rose-600' : 'text-emerald-700')}>{err || note}</p>}
@@ -300,7 +312,7 @@ function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: Command
   for (const it of slackLive) rows.push({ key: 'slack:' + it.id, sev: 'now', rank: 0, node: <SlackRow item={it} q={slack} /> })
   for (const c of claims) rows.push({ key: c.key, sev: c.severity, rank: c.rank, node: <ClaimRow item={c} onCleared={onCleared} /> })
   for (const a of approvals) rows.push({ key: a.key, sev: 'today', rank: 3, node: <ApprovalRow row={a} onCleared={onCleared} onChanged={onChanged} /> })
-  if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} meta="Only the first few are listed here" primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
+  if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
   for (const dr of drafts.rows) rows.push({ key: 'draft:' + dr.id, sev: 'today', rank: 2.5, node: <EveDraftRow d={dr} act={drafts.act} busy={drafts.busy === dr.id} /> })
   for (const p of plans.rows) rows.push({ key: 'plan:' + p.id, sev: 'today', rank: 8, node: <EvePlanRow p={p} act={plans.decide} busy={plans.busy === p.id} /> })
   for (const g of eveShown) rows.push({ key: 'eve:' + g.key, sev: 'today', rank: 9, node: g.qs.length > 1 ? <EveGroupRow g={g} act={eve.act} busy={eve.busy} /> : <EveRow q={g.qs[0]} act={eve.act} busy={eve.busy === g.qs[0].id} /> })
@@ -347,11 +359,11 @@ function EvePlanRow({ p, act, busy }: { p: EvePlan; act: (id: string, s: 'accept
   const go = async (s: 'accepted' | 'rejected') => { setErr(''); const ok = await act(p.id, s); if (!ok) setErr('Could not save that decision.') }
   // The first step is what Jon needs at a glance; the rest opens on tap.
   const first = (String(p.detail || '').match(/FIRST STEP:\s*([^\n]+)/) || [])[1] || ''
-  const meta = [p.area ? 'Eve plan · ' + p.area : 'Eve plan', first ? 'first step: ' + first : 'graded on ' + p.metric].filter(Boolean).join(' · ')
+  const meta = [p.area || '', first ? 'first step: ' + first : 'graded on ' + p.metric].filter(Boolean).join(' · ')
   return (
-    <Row sev={null} title={'Eve plan: ' + p.title} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
+    <Row sev={null} title={p.title} tags={<Tag tone="violet">Eve plan</Tag>} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
       primary={<button onClick={() => go('accepted')} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Accept</button>}
-      secondary={<button onClick={() => go('rejected')} disabled={busy} className={SECONDARY} aria-label="Reject" title="Reject — not this one"><X size={14} /></button>}>
+      secondary={<IconBtn title="Reject this plan" onClick={() => go('rejected')} disabled={busy}><X size={14} /></IconBtn>}>
       {open && p.detail && <pre className="mt-2 ml-3.5 rounded-xl border border-line bg-app/40 p-3 text-[12px] text-ink whitespace-pre-wrap font-sans leading-relaxed">{p.detail}</pre>}
     </Row>
   )
@@ -393,13 +405,13 @@ function EveDraftRow({ d, act, busy }: { d: EveDraft; act: (id: string, op: 'sen
     setErr(''); const e = await act(d.id, op, text); if (e) setErr(e)
   }
   const who = (d.guest || 'Guest') + (d.unit ? ' · ' + d.unit : '')
-  const meta = [isReview ? 'Eve drafted a public review reply' : 'Eve drafted a reply', d.channel || '', d.why].filter(Boolean).join(' · ')
+  const meta = [d.channel || '', d.why].filter(Boolean).join(' · ')
   return (
-    <Row sev="today" title={(isReview ? 'Reply to review from ' : 'Reply to ') + who} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
+    <Row sev="today" title={(isReview ? 'Reply to review from ' : 'Reply to ') + who} tags={<Tag tone="violet" title={isReview ? 'Eve drafted a public review reply' : 'Eve drafted a reply'}>{isReview ? 'Eve · review' : 'Eve draft'}</Tag>} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
       primary={isReview
         ? <Link href="/reviews" className={PRIMARY}>Open reviews</Link>
         : <button onClick={() => go('send')} disabled={busy || !text.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>}
-      secondary={<button onClick={() => go('discard')} disabled={busy} className={SECONDARY} aria-label="Discard" title="Discard — do not send"><X size={14} /></button>}>
+      secondary={<IconBtn title="Discard — do not send" onClick={() => go('discard')} disabled={busy}><X size={14} /></IconBtn>}>
       {open && (
         <div className="mt-2 ml-3.5">
           <textarea value={text} onChange={e => setText(e.target.value)} rows={4} aria-label="Eve's draft" className="w-full rounded-xl border border-line bg-white px-3 py-2 text-[13px] text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-200" />
@@ -472,10 +484,10 @@ function groupEve(rows: EveQ[]): EveGroup[] {
 function EveGroupRow({ g, act, busy }: { g: EveGroup; act: (id: string, op: 'answer' | 'dismiss', answer: string) => Promise<boolean>; busy: string }) {
   const [open, setOpen] = useState(false)
   const scopes = g.qs.map(q => q.scope).filter(Boolean)
-  const meta = (scopes.length ? scopes.slice(0, 4).join(', ') + (scopes.length > 4 ? ' +' + (scopes.length - 4) : '') : plural(g.qs.length, 'question')) + ' · tap to answer each'
+  const meta = scopes.length ? scopes.slice(0, 4).join(', ') + (scopes.length > 4 ? ' +' + (scopes.length - 4) : '') : plural(g.qs.length, 'question')
   return (
     <Row sev={null} title={g.title} meta={meta} onTap={() => setOpen(o => !o)} expanded={open}
-      secondary={<button onClick={() => setOpen(o => !o)} className={SECONDARY} aria-label={open ? 'Collapse' : 'Expand'} title={open ? 'Collapse' : 'Show each question'}>{open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button>}>
+      secondary={<IconBtn title={open ? 'Hide the questions' : 'Show each question to answer'} onClick={() => setOpen(o => !o)}>{open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</IconBtn>}>
       {open && (
         <div className="mt-1.5 ml-3.5 border-l-2 border-line divide-y divide-line/70">
           {g.qs.map(q => <EveRow key={q.id} q={q} act={act} busy={busy === q.id} nested />)}
@@ -493,7 +505,7 @@ function EveRow({ q, act, busy, nested }: { q: EveQ; act: (id: string, op: 'answ
   const meta = [q.kind === 'plan' ? 'from the weekly review' : q.scope, Number(q.asked_count) > 1 ? 'asked ' + q.asked_count + ' times' : '', q.source === 'eve' ? 'came up in conversation' : ''].filter(Boolean).join(' · ')
   return (
     <Row sev={null} title={nested ? (q.scope || 'Question') : q.question} meta={nested && !open ? q.question : open && q.why ? 'Why: ' + q.why : meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
-      secondary={<button onClick={() => act(q.id, 'dismiss', '')} disabled={busy} className={SECONDARY} aria-label="Later" title="Later — not worth answering now"><X size={14} /></button>}>
+      secondary={<IconBtn title="Later — not worth answering now" onClick={() => act(q.id, 'dismiss', '')} disabled={busy}><X size={14} /></IconBtn>}>
       {open && (
         <>
           <p className="text-[12.5px] text-ink/80 mt-1 pl-3.5 leading-snug">{q.question}</p>
@@ -514,9 +526,9 @@ function SlackRow({ item, q }: { item: SlackPending; q: ReturnType<typeof useSla
   const busy = !!q.busy[item.id]
   const meta = [EVENT_LABEL[item.eventKey] || item.eventKey, expiresIn(item.expiresAt), item.itemCount > 1 ? item.itemCount + ' grouped' : '', item.audience?.length ? item.audience.length + ' tagged' : ''].filter(Boolean).join(' · ')
   return (
-    <Row sev="now" title={item.summary || item.building || 'Slack message'} meta={meta} onTap={() => setOpen(o => !o)} expanded={open}
+    <Row sev="now" title={item.summary || item.building || 'Slack message'} tags={<Tag tone="sky" title="A Slack message waiting for your OK">Slack</Tag>} meta={meta} onTap={() => setOpen(o => !o)} expanded={open}
       primary={<button onClick={() => q.decide(item, true)} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>}
-      secondary={<button onClick={() => q.decide(item, false)} disabled={busy} className={SECONDARY} aria-label="Skip" title="Skip — do not send"><X size={14} /></button>}>
+      secondary={<IconBtn title="Skip — do not send" onClick={() => q.decide(item, false)} disabled={busy}><X size={14} /></IconBtn>}>
       {open && <pre className="mt-2 ml-3.5 rounded-xl border border-line bg-app/40 p-3 text-[12px] text-ink whitespace-pre-wrap font-sans leading-relaxed">{q.preview(item)}</pre>}
     </Row>
   )
@@ -528,7 +540,7 @@ function ClaimRow({ item: i, onCleared }: { item: NextItem; onCleared: (k: strin
   return (
     <Row sev={i.severity} title={i.unit + ' — ' + i.title} meta={i.why + ' · ' + i.due}
       primary={<Link href="/claims" className={PRIMARY}>Review</Link>}
-      secondary={<button onClick={done} disabled={busy} className={SECONDARY + ' hover:text-emerald-600'} aria-label="Done" title="Done — it happened"><Check size={15} /></button>} />
+      secondary={<IconBtn title="Mark done — it happened" tone="ok" onClick={done} disabled={busy}><Check size={15} /></IconBtn>} />
   )
 }
 
@@ -544,9 +556,9 @@ function ApprovalRow({ row, onCleared, onChanged }: { row: GuestDeskRow; onClear
     setBusy(false)
   }
   return (
-    <Row sev="today" title={row.who + (row.unit ? ' · ' + row.unit : '') + ' — ' + row.text} meta={row.meta + ' · spend approval'} err={err}
+    <Row sev="today" title={row.who + (row.unit ? ' · ' + row.unit : '') + ' — ' + row.text} tags={<Tag tone="amber" title="Spend approval">Spend</Tag>} meta={row.meta} err={err}
       primary={<button onClick={() => decide(true)} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <ClipboardCheck size={11} />} Approve</button>}
-      secondary={<button onClick={() => decide(false)} disabled={busy} className={SECONDARY + ' hover:text-rose-600'} aria-label="Reject" title="Reject"><X size={14} /></button>} />
+      secondary={<IconBtn title="Reject the spend" tone="bad" onClick={() => decide(false)} disabled={busy}><X size={14} /></IconBtn>} />
   )
 }
 
@@ -587,7 +599,7 @@ function FixRow({ item: i, roster, onCleared, onChanged }: { item: NextItem; ros
     <Row sev={i.severity} title={i.unit + ' — ' + i.title} meta={meta} note={note} err={err}
       onTap={i.evidence ? () => setQuote(q => !q) : undefined} expanded={quote}
       primary={primary}
-      secondary={<button onClick={markDone} disabled={busy} className={SECONDARY + ' hover:text-emerald-600'} aria-label="Done" title="Done — it happened (counts as cleared here)"><Check size={15} /></button>}>
+      secondary={<IconBtn title="Mark done — counts as cleared here" tone="ok" onClick={markDone} disabled={busy}><Check size={15} /></IconBtn>}>
       {quote && i.evidence && (
         <p className="text-[12px] text-ink/70 italic mt-1 ml-3.5 leading-snug border-l-2 border-line pl-2">
           <Star size={10} className="inline -mt-0.5 mr-0.5 not-italic" />&ldquo;{i.evidence.quote}&rdquo; <span className="not-italic text-muted">— {i.evidence.channel}{i.evidence.date ? ' · ' + i.evidence.date : ''}</span>
@@ -620,7 +632,7 @@ function BatchItems({ rows, receipts }: { rows: NextItem[]; receipts?: Record<st
           {receipts && receipts[i.key] && (receipts[i.key] === 'ok' ? <Check size={12} className="text-emerald-600 shrink-0" /> : <X size={12} className="text-rose-600 shrink-0" />)}
           <span className="min-w-0 flex-1 truncate"><b className="text-ink">{i.unit}</b> <span className="text-ink/80">— {i.title}</span></span>
           {receipts && receipts[i.key] && receipts[i.key] !== 'ok' && <span className="text-[11px] text-rose-600 truncate max-w-[40%]">{receipts[i.key]}</span>}
-          {i.bzTaskId && <a href={bz(i.bzTaskId)} target="_blank" rel="noreferrer" aria-label="Open in Breezeway" className="text-muted hover:text-ink shrink-0"><ExternalLink size={12} /></a>}
+          {i.bzTaskId && <Tip label="Open in Breezeway"><a href={bz(i.bzTaskId)} target="_blank" rel="noreferrer" aria-label="Open in Breezeway" className="text-muted hover:text-ink shrink-0"><ExternalLink size={12} /></a></Tip>}
         </li>
       ))}
     </ul>
@@ -657,7 +669,7 @@ function DupBatch({ rows, onCleared, onChanged }: { rows: NextItem[]; onCleared:
     if (ok) { onChanged(); if (ok === rows.length) setTimeout(() => rows.forEach(i => onCleared(i.key)), 1200) }
   }
   return (
-    <Row sev="today" title={plural(rows.length, 'duplicate task') + ' open twice'} meta="Keep the one with a name on it, cancel the extra · admin password once" onTap={() => setOpen(o => !o)} expanded={open}
+    <Row sev="today" title={plural(rows.length, 'duplicate task') + ' open twice'} meta="keep the named one · admin password once" onTap={() => setOpen(o => !o)} expanded={open}
       note={summary}
       primary={<button onClick={() => setOpen(true)} className={open ? BTN + ' bg-white border border-ink text-ink whitespace-nowrap' : PRIMARY}>Cancel all</button>}>
       {open && (
@@ -699,7 +711,7 @@ function VendorNoteBatch({ today, rows, onCleared, onChanged }: { today: string;
     setTimeout(() => rows.forEach(i => onCleared(i.key)), 1200)
   }
   return (
-    <Row sev="today" title={plural(rows.length, 'vendor-run arrival') + ' with low past reviews'} meta="No Breezeway in these buildings — one note to the vendor covers all of them" onTap={() => setOpen(o => !o)} expanded={open} note={note} err={err}
+    <Row sev="today" title={plural(rows.length, 'vendor-run arrival') + ' with low past reviews'} meta="no Breezeway here · one vendor note covers all" onTap={() => setOpen(o => !o)} expanded={open} note={note} err={err}
       primary={<button onClick={copy} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Copy size={11} />} Copy vendor note</button>}>
       {open && (
         <>
@@ -716,7 +728,7 @@ function BacklogBatch({ rows }: { rows: NextItem[] }) {
   const [open, setOpen] = useState(false)
   const allToday = rows.every(i => i.severity !== 'soon')
   return (
-    <Row sev={rows.some(i => i.severity === 'today') ? 'today' : 'soon'} title={plural(rows.length, 'unit') + ' with overdue tasks and an arrival ' + (allToday ? 'today' : 'today or tomorrow')} meta="Backlog scheduled before the arrival day, still open" onTap={() => setOpen(o => !o)} expanded={open}
+    <Row sev={rows.some(i => i.severity === 'today') ? 'today' : 'soon'} title={plural(rows.length, 'unit') + ' with overdue tasks and an arrival ' + (allToday ? 'today' : 'today or tomorrow')} meta="backlog still open before the arrival" onTap={() => setOpen(o => !o)} expanded={open}
       primary={<Link href="/plan" className={PRIMARY}>Today in Ops</Link>}>
       {open && <BatchItems rows={rows} />}
     </Row>
@@ -762,29 +774,33 @@ function YoursBand() {
 
   return (
     <section>
-      <h2 className="px-1 mb-1.5 text-[15px] font-bold text-ink tracking-tight flex items-center gap-2">
-        <span>Yours <span className="text-muted font-semibold tabular-nums">{total || ''}</span></span>
-        <Link href="/projects/mine" className="ml-auto text-[11.5px] font-semibold text-brand-700">All boards</Link>
+      <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted flex items-center gap-2">
+        <span>Yours {total ? <span className="tabular-nums">{total}</span> : null}</span>
+        {loading && !data && <Loader2 size={11} className="animate-spin" />}
+        {data && shown.length === 0 && <span className="normal-case tracking-normal font-medium">— {total === 0 ? 'nothing has your name on it' : 'nothing due this week' + (later.length ? ', ' + later.length + ' later' : '')}</span>}
+        <Link href="/projects/mine" className="ml-auto normal-case tracking-normal text-[11.5px] font-semibold text-brand-700">All boards</Link>
       </h2>
-      {loading && !data && <p className="px-1 text-[12.5px] text-muted inline-flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Reading your boards…</p>}
       {error && !data && <p className="px-1 text-[12px] text-rose-700">{error}</p>}
-      {data && shown.length === 0 && <p className="px-1 text-[12.5px] text-muted">{total === 0 ? 'Nothing has your name on it.' : 'Nothing due this week' + (later.length ? ' — ' + later.length + ' later.' : '.')}</p>}
-      <div className={CARD + ' divide-y divide-line' + (data && shown.length === 0 ? ' mt-1.5' : '')}>
+      <div className={LIST}>
         {shown.map(it => {
           const I = MINE_ICON[it.status] || Circle
           const late = !!(it as any).late
           return (
-            <div key={it.id} className="flex items-center gap-2.5 px-3 py-1.5 min-h-[44px] hover:bg-app/50">
-              <button onClick={() => toggle(it)} disabled={busy === it.id} title="Mark done" aria-label={'Mark done: ' + it.title}
-                className={'w-6 h-6 rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + MINE_CLS[it.status]}>
-                {busy === it.id ? <Loader2 size={10} className="animate-spin" /> : <I size={11} strokeWidth={3} />}
-              </button>
-              <Link href={'/projects/' + it.projectId} className="min-w-0 flex-1">
-                <span className="block text-[13px] font-semibold text-ink truncate">{it.title}</span>
-                <span className="block text-[11.5px] text-muted truncate">
-                  {it.oneOnOne && <Lock size={9} className="inline -mt-0.5 mr-0.5" />}{it.mine ? 'My board' : it.project}
+            <div key={it.id} className="flex items-center gap-2.5 px-3 py-1.5 min-h-[44px] hover:bg-app/50 first:rounded-t-2xl">
+              <Tip label={it.status === 'done' ? 'Reopen' : 'Mark done'}>
+                <button onClick={() => toggle(it)} disabled={busy === it.id} aria-label={'Mark done: ' + it.title}
+                  className={'w-6 h-6 rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + MINE_CLS[it.status]}>
+                  {busy === it.id ? <Loader2 size={10} className="animate-spin" /> : <I size={11} strokeWidth={3} />}
+                </button>
+              </Tip>
+              <Link href={'/projects/' + it.projectId} className="min-w-0 flex-1 flex items-center gap-x-1.5 flex-wrap">
+                <span className="text-[13px] font-semibold text-ink truncate max-w-full">{it.title}</span>
+                {it.priority === 'urgent' && <Tag tone="rose">urgent</Tag>}
+                {it.priority === 'high' && <Tag tone="amber">high</Tag>}
+                {it.oneOnOne && <Tag title="Private 1:1 task">1:1</Tag>}
+                <span className="text-[11.5px] text-muted truncate max-w-full">
+                  {it.mine ? 'My board' : it.project}
                   {it.where && <> · <MapPin size={9} className="inline -mt-0.5" /> {it.where}</>}
-                  {(it.priority === 'urgent' || it.priority === 'high') && <> · <span className={it.priority === 'urgent' ? 'text-rose-700 font-bold' : 'text-amber-800 font-bold'}>{it.priority}</span></>}
                 </span>
               </Link>
               <span className={'text-[11px] tabular-nums shrink-0 inline-flex items-center gap-1 ' + (late ? 'text-rose-600 font-bold' : 'text-muted')}><CalendarDays size={10} />{it.due ? niceDay(it.due) : '—'}</span>

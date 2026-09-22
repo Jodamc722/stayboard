@@ -24,11 +24,11 @@
 //
 // Assignment uses /api/breezeway/assign, creation /api/ops-today/add-task (which already takes
 // assigneeIds). This file is a front door on machinery that already works.
-import { useEffect, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  Plus, ChevronDown, Users, Send, X, Loader2, Check, FileText, ChevronLeft, ChevronRight, CalendarDays,
+  Plus, ChevronDown, Users, Send, Loader2, Check, FileText, ChevronLeft, ChevronRight, CalendarDays, ClipboardList,
 } from 'lucide-react'
+import { Pill, Tag, IconBtn, Tip } from '@/components/lean'
 import { OpsGrid } from '@/components/OpsGrid'
 import { useModal } from '@/components/Modal'
 import { useCachedFetch } from '@/lib/swr'
@@ -145,59 +145,50 @@ export function OpsV2() {
 
   return (
     <div>
-      {/* ── ONE row of chrome: the tabs and Add task. Everything else belongs to the board
-          itself — Jon, 2026-08-17, on the stacked v2+v1 screen: "the Board tab is a mess. The
-          Today in Ops board that we had was much better." So the board IS the board again; this
-          layer only adds the tabs, the triage and the Add button. ── */}
-      {/* Four tabs plus the Add-task button is ~400px of chrome, and this is the screen the app now
-          opens on, so it has to be right. Wrapping stranded Add task in an empty band; putting the
-          WHOLE row in one scroller pushed Add task half off the right edge, which is worse — it is
-          the primary action here. So: the tabs scroll, the button does not. It stays pinned to the
-          right at every width, and from sm: up this is the same one-line row it always was. */}
-      {/* ── ONE ROW OF CHROME (2026-09-09 audit) ─────────────────────────────────────────────
-          The Staffing tab is gone: it and the Grid's People axis were the same crew twice, and
-          under a market filter they contradicted each other about who was free. `?tab=people` and
-          the old stored choice now deep-link the Grid onto its People axis, so nothing breaks. */}
-      <div className="flex items-end gap-2 mb-2 sm:mb-3">
-        <div className="flex-1" />
-        {/* The day sheet lives in the page header on a desktop. On a phone that header is hidden
-            (the app bar already says "Today in Ops"), so the link rides here instead of costing a
-            whole row of screen to itself. */}
-        <Link href="/plan/print" prefetch={false} aria-label="Day sheet"
-          title="Printable day sheet"
-          className="sm:hidden shrink-0 mb-1.5 w-9 h-9 rounded-xl border border-line bg-white grid place-items-center text-muted active:bg-app">
-          <FileText size={15} />
-        </Link>
-        {/* ── THE DAY ──────────────────────────────────────────────────────────────────────
-            Only shows itself once you have moved off today: on the normal morning it is a single
-            chevron, and the moment you are looking at another day the board says so loudly, because
-            a board silently showing tomorrow is worse than one that cannot show tomorrow at all. */}
-        <div className="shrink-0 mb-1.5 inline-flex items-center rounded-xl border border-line bg-white overflow-hidden">
-          <button onClick={() => setDate(d => shiftYmd(d, -1))} title="Previous day"
-            className="px-1.5 py-2 text-muted hover:text-ink hover:bg-app"><ChevronLeft size={14} /></button>
+      {/* ── ONE ROW OF CHROME. The board IS the board (Jon, 2026-08-17: "the Board tab is a mess");
+          this layer only adds the header and Add task, which must never wrap off the right edge.
+          The Staffing tab is gone (2026-09-09): `?tab=people` and the old stored choice deep-link
+          the Grid onto its People axis, so nothing breaks. */}
+      {/* LEAN PASS (2026-09-22): the page title joins this row, so title · day sheet · day pager ·
+          Add task are ONE line. The title hides on a phone (the app bar already says "Today in
+          Ops"); Add task stays pinned right at every width — it is the primary action here. */}
+      <div className="flex items-center gap-2 mb-2 sm:mb-3">
+        <h1 className="hidden sm:inline-flex text-2xl font-bold text-ink tracking-tight items-center gap-2 mr-auto"><ClipboardList size={18} className="text-brand-600" /> Today in Ops</h1>
+        <div className="flex-1 sm:hidden" />
+        <IconBtn title="Printable day sheet" href="/plan/print"><FileText size={15} /></IconBtn>
+        {/* ── THE DAY ── on a normal morning it is two chevrons; off today the date shows in the
+            pager AND as a pill below, because a board silently showing tomorrow is worse than one
+            that cannot show tomorrow at all. */}
+        <div className="shrink-0 inline-flex items-center rounded-lg border border-line bg-white h-8">
+          <Tip label="Previous day">
+            <button onClick={() => setDate(d => shiftYmd(d, -1))} aria-label="Previous day"
+              className="px-1.5 h-8 text-muted hover:text-ink hover:bg-app rounded-l-lg"><ChevronLeft size={14} /></button>
+          </Tip>
           {!isToday && (
-            <button onClick={() => setDate(todayYmd)} title="Back to today"
-              className="px-2 py-2 text-[12px] font-bold text-brand-700 hover:bg-brand-50 whitespace-nowrap border-x border-line">
-              {new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}
-            </button>
+            <Tip label="Back to today">
+              <button onClick={() => setDate(todayYmd)}
+                className="px-2 h-8 text-[12px] font-bold text-brand-700 hover:bg-brand-50 whitespace-nowrap border-x border-line">
+                {new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}
+              </button>
+            </Tip>
           )}
-          <button onClick={() => setDate(d => shiftYmd(d, 1))} title="Next day"
-            className="px-1.5 py-2 text-muted hover:text-ink hover:bg-app"><ChevronRight size={14} /></button>
+          <Tip label="Next day">
+            <button onClick={() => setDate(d => shiftYmd(d, 1))} aria-label="Next day"
+              className="px-1.5 h-8 text-muted hover:text-ink hover:bg-app rounded-r-lg"><ChevronRight size={14} /></button>
+          </Tip>
         </div>
         <button onClick={() => setAddFor({})}
-          className="shrink-0 mb-1.5 inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 sm:px-3.5 py-2 text-[13px] font-bold hover:opacity-90">
+          className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 h-8 text-[13px] font-bold hover:opacity-90">
           <Plus size={14} /> Add task
         </button>
       </div>
 
       {!isToday && (
-        <div className="mb-3 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 flex items-center gap-2 flex-wrap">
-          <CalendarDays size={13} className="text-brand-700 shrink-0" />
-          <span className="text-[12.5px] font-bold text-brand-800">
-            You are looking at {new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })}
-          </span>
-          <span className="text-[11.5px] text-brand-700/80">not today</span>
-          <button onClick={() => setDate(todayYmd)} className="ml-auto text-[12px] font-bold text-brand-700 hover:underline shrink-0">Back to today</button>
+        <div className="mb-3 flex items-center gap-2 flex-wrap">
+          <Pill tone="brand" title="The board is showing another day">
+            <span className="inline-flex items-center gap-1"><CalendarDays size={12} /> {new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })} · not today</span>
+          </Pill>
+          <button onClick={() => setDate(todayYmd)} className="text-[12px] font-bold text-brand-700 hover:underline">Back to today</button>
         </div>
       )}
 
@@ -238,33 +229,29 @@ export function CapacityPanel({ pager }: { pager?: boolean }) {
   // Ten minutes, through the shared cache, so the second mount is free.
   const { data: rosterRes } = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
   const roster = useMemo<Roster[]>(() => (Array.isArray(rosterRes?.people) ? rosterRes!.people : []), [rosterRes])
-  const strip = <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => { window.location.href = '/plan' }} />
-  if (!pager) return strip
-  return (
-    <div>
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-[11px] uppercase tracking-wide font-semibold text-muted">
-          Can {isToday ? 'today' : new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' })} hold its plan?
-        </span>
-        <span className="ml-auto inline-flex items-center rounded-lg border border-line bg-white overflow-hidden">
-          <button onClick={() => setDate(d => shiftYmd(d, -1))} className="px-1.5 py-1 text-muted hover:text-ink hover:bg-app" title="Previous day"><ChevronLeft size={12} /></button>
-          {!isToday && <button onClick={() => setDate(todayYmd)} className="px-2 py-1 text-[11px] font-bold text-brand-700 hover:bg-brand-50 border-x border-line">Today</button>}
-          <button onClick={() => setDate(d => shiftYmd(d, 1))} className="px-1.5 py-1 text-muted hover:text-ink hover:bg-app" title="Next day"><ChevronRight size={12} /></button>
-        </span>
-      </div>
-      {strip}
-    </div>
+  // LEAN PASS (2026-09-22): the "Can today hold its plan?" eyebrow became the strip's own day tag,
+  // and the pager rides at the right end of the same line.
+  const dayLabel = isToday ? 'Today' : new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const pagerEl = !pager ? null : (
+    <span className="inline-flex items-center rounded-lg border border-line bg-white" onClick={e => e.stopPropagation()}>
+      <Tip label="Previous day"><button onClick={() => setDate(d => shiftYmd(d, -1))} aria-label="Previous day" className="px-1.5 py-1 text-muted hover:text-ink hover:bg-app rounded-l-lg"><ChevronLeft size={12} /></button></Tip>
+      {!isToday && <Tip label="Back to today"><button onClick={() => setDate(todayYmd)} className="px-2 py-1 text-[11px] font-bold text-brand-700 hover:bg-brand-50 border-x border-line">Today</button></Tip>}
+      <Tip label="Next day"><button onClick={() => setDate(d => shiftYmd(d, 1))} aria-label="Next day" className="px-1.5 py-1 text-muted hover:text-ink hover:bg-app rounded-r-lg"><ChevronRight size={12} /></button></Tip>
+    </span>
   )
+  const strip = <CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={() => { window.location.href = '/plan' }} dayLabel={pager ? dayLabel : undefined} pager={pagerEl} />
+  return strip
 }
 
-function CapacityStrip({ cap, roster, onRefresh, onPeople, compact }: { cap: CapData | null; roster: Roster[]; onRefresh: () => void; onPeople: () => void; compact?: boolean }) {
+function CapacityStrip({ cap, roster, onRefresh, onPeople, compact, dayLabel, pager }: { cap: CapData | null; roster: Roster[]; onRefresh: () => void; onPeople: () => void; compact?: boolean; dayLabel?: string; pager?: ReactNode }) {
   const [open, setOpen] = useState(false)
   const [alignRight, setAlignRight] = useState(true)
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, boolean>>({})
   const [err, setErr] = useState('')
   const k = cap?.kpi
-  if (!cap || !k || !cap.ok) return null
+  // No model for this day: keep the pager so a planner can step back off a day that failed to price.
+  if (!cap || !k || !cap.ok) return pager ? <div className="mb-3 flex items-center gap-2 text-[12px] text-muted">{dayLabel && <Tag>{dayLabel}</Tag>} no capacity read yet <span className="ml-auto">{pager}</span></div> : null
   const load = k.workMinutes + k.travelMinutes
   const over = k.utilisationPct > 100
   const warm = !over && k.utilisationPct >= 85
@@ -292,13 +279,13 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact }: { cap: Cap
   const moves = (
     <div className={compact ? 'px-3 py-2 space-y-1.5' : 'border-t border-line/60 bg-white/60 rounded-b-xl px-3 py-2 space-y-1.5'}>
       {compact && <p className={'text-[12px] font-bold ' + toneText}>{fmtH(load)} of work on {k.peopleOnShift} {k.peopleOnShift === 1 ? 'person' : 'people'} ≈ {fmtH(k.capacityMinutes)} capacity</p>}
-      {sugs.length === 0 && <p className="text-[12px] text-muted py-1">Nothing worth moving — the day is spread as well as the model can see.</p>}
+      {sugs.length === 0 && <p className="text-[12px] text-muted py-1">Nothing worth moving.</p>}
       {sugs.map(s => (
-        <div key={s.stopId + s.toPerson} className="flex items-center gap-2 flex-wrap text-[12px]">
+        <div key={s.stopId + s.toPerson} className="flex items-center gap-1.5 flex-wrap text-[12px]">
           <span className="font-bold text-ink">{s.unit}</span>
           <span className="text-muted">→ {s.toPerson}</span>
-          <span className="text-muted tabular-nums">{s.toBeforePct}%→{s.toAfterPct}%</span>
-          <span className="text-muted flex-1 min-w-[140px]">{s.why}</span>
+          <Tag title={s.toPerson + "'s load before and after this move"}>{s.toBeforePct}%→{s.toAfterPct}%</Tag>
+          <span title={s.why} className="text-muted flex-1 min-w-[120px] truncate">{s.why}</span>
           {s.kind === 'assign' ? (
             filed[s.stopId] ? (
               <span className="inline-flex items-center gap-1 text-[11.5px] font-bold text-emerald-700"><Check size={12} /> assigned</span>
@@ -350,23 +337,26 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact }: { cap: Cap
     )
   }
 
+  // ONE LINE (lean pass): "Crew 88%" + tags; the sentence is the hover; moves open underneath.
+  const sentence = fmtH(load) + ' of work on ' + k.peopleOnShift + ' ' + (k.peopleOnShift === 1 ? 'person' : 'people') + ' ≈ ' + fmtH(k.capacityMinutes) + ' capacity — ' + k.utilisationPct + '% loaded'
   return (
     <div className={'mb-3 rounded-xl border ' + tone}>
-      <button onClick={() => setOpen(o => !o)} className="w-full px-3 py-2 flex items-center gap-2 flex-wrap text-left">
-        <span className={'text-[12.5px] font-bold ' + toneText}>
-          {fmtH(load)} of work on {k.peopleOnShift} {k.peopleOnShift === 1 ? 'person' : 'people'} ≈ {fmtH(k.capacityMinutes)} capacity — {k.utilisationPct}% loaded
-        </span>
-        <span className={'text-[11.5px] ' + toneText + ' opacity-80'}>
-          {k.overloaded > 0 && <>· <b>{k.overloaded} over</b> </>}
-          {k.underloaded > 0 && <>· {k.underloaded} light </>}
-          {k.unassignedCount > 0 && <>· <b>{k.unassignedCount} unowned</b> </>}
-          {k.closedOutToday > 0 && <>· {k.closedOutToday} closed-out </>}
-        </span>
-        <span className={'ml-auto inline-flex items-center gap-1 text-[11.5px] font-semibold ' + toneText}>
-          {sugs.length > 0 ? sugs.length + (sugs.length === 1 ? ' move' : ' moves') : 'balanced'}
-          <ChevronDown size={13} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
-        </span>
-      </button>
+      <div className="px-3 py-1.5 flex items-center gap-2">
+        <button onClick={() => setOpen(o => !o)} title={sentence} aria-expanded={open} className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap text-left">
+          {dayLabel && <Tag>{dayLabel}</Tag>}
+          <span className={'text-[12.5px] font-bold inline-flex items-center gap-1 ' + toneText}><Users size={12} /> Crew {k.utilisationPct}%</span>
+          <span className={'text-[11.5px] ' + toneText + ' opacity-80'}>{fmtH(load)} / {fmtH(k.capacityMinutes)}</span>
+          {k.overloaded > 0 && <Tag tone="rose" title="People loaded past their capacity">{k.overloaded} over</Tag>}
+          {k.underloaded > 0 && <Tag title="People with room for more">{k.underloaded} light</Tag>}
+          {k.unassignedCount > 0 && <Tag tone="amber" title="Cleans and tasks nobody is on">{k.unassignedCount} unowned</Tag>}
+          {k.closedOutToday > 0 && <Tag title="Tasks closed out today">{k.closedOutToday} closed-out</Tag>}
+          <span className={'ml-auto inline-flex items-center gap-1 text-[11.5px] font-semibold ' + toneText}>
+            {sugs.length > 0 ? sugs.length + (sugs.length === 1 ? ' move' : ' moves') : 'balanced'}
+            <ChevronDown size={13} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+          </span>
+        </button>
+        {pager}
+      </div>
       {open && moves}
     </div>
   )

@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom'
 import { useOpsPresets } from '@/lib/useOpsPresets'
 import { benchmarkMinutes, DEFAULT_TIMING, type Timing } from '@/lib/ops-presets'
 import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download, MessageSquare } from 'lucide-react'
+import { Tip } from '@/components/lean'
 import CommentThread from './CommentThread'
 import RowMenu, { type RowAction } from './RowMenu'
 import ListingOpsPanel from './ListingOpsPanel'
@@ -607,9 +608,9 @@ async function pushBlocks() {
           ))}
         </div>
         <div className="inline-flex items-center gap-1">
-          <button onClick={() => data && load(view, data.prev)} className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronLeft size={15} /></button>
+          <Tip label={view === 'day' ? 'Previous day' : 'Previous week'}><button onClick={() => data && load(view, data.prev)} aria-label={view === 'day' ? 'Previous day' : 'Previous week'} className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronLeft size={15} /></button></Tip>
           <button onClick={() => load(view, data?.today || '')} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app">Today</button>
-          <button onClick={() => data && load(view, data.next)} className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronRight size={15} /></button>
+          <Tip label={view === 'day' ? 'Next day' : 'Next week'}><button onClick={() => data && load(view, data.next)} aria-label={view === 'day' ? 'Next day' : 'Next week'} className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronRight size={15} /></button></Tip>
 <input type="date" value={data?.weekStart || date || ''} onChange={e => e.target.value && load(view, e.target.value)} className="text-[12px] font-semibold border border-line rounded-lg px-2.5 py-1.5 bg-white text-ink outline-none cursor-pointer" title="Jump to any date" />
         </div>
         <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5">{loading ? <RefreshCw size={15} className="text-brand-600 animate-spin" /> : <CalendarRange size={15} className="text-brand-600" />} {rangeLabel || 'Loading…'}</span>
@@ -628,14 +629,16 @@ async function pushBlocks() {
       {view === 'day' && data && stripDays.length > 0 && (
 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-1.5">
 {stripDays.map(d => { const sel = d.date === ((data && data.weekStart) || date); const bk = market === 'vendor' ? vendorOn(d) : bookedOn(d); const pj = projOn(d); const nd = needOn(d); const wk = workingOn(d.date); const short = nd > 0 && wk < nd; const past = !!d.isPast && !d.isToday; return (
-<button key={d.date} onClick={() => load('day', d.date)} className={'rounded-xl px-2.5 py-2 text-left bg-white transition ' + (sel ? 'border-2 border-neutral-900' : 'border border-line hover:border-neutral-400') + (past && !sel ? ' opacity-50' : '')}>
+<button key={d.date} onClick={() => load('day', d.date)} title={market === 'vendor' ? undefined : bk + ' booked · ' + pj + ' projected'} className={'rounded-xl px-2.5 py-1.5 text-left bg-white transition ' + (sel ? 'border-2 border-neutral-900' : 'border border-line hover:border-neutral-400') + (past && !sel ? ' opacity-50' : '')}>
 <div className="flex items-baseline justify-between gap-1">
 <span className={'text-[10px] uppercase tracking-wide ' + (d.isToday ? 'font-bold text-neutral-900' : 'font-semibold text-muted')}>{d.day} {Number(d.date.slice(8, 10))}</span>
 {d.isToday && <span className="text-[9px] font-bold text-emerald-700">TODAY</span>}
 </div>
-<div className="text-xl font-bold leading-tight">{market === 'vendor' ? bk : pj}<span className="ml-1 text-[10px] font-medium text-muted">{market === 'vendor' ? 'vendor' : 'cleans'}</span></div>
-{market !== 'vendor' && !past && pj !== bk && <div className="text-[10px] text-muted">{bk} booked · {pj} projected</div>}
-{market !== 'vendor' && (past ? <div className="text-[10px] text-muted">{wk} worked</div> : <span title="Cleaners working vs needed" className={'inline-block mt-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ' + (short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{wk}/{nd} working</span>)}
+{/* Lean pass: count and crew on ONE line; "N booked · N projected" moved to the tile's hover. */}
+<div className="flex items-baseline gap-1.5 flex-wrap">
+<span className="text-lg font-bold leading-tight">{market === 'vendor' ? bk : pj}{market !== 'vendor' && !past && pj !== bk ? <span className="text-[10px] font-medium text-muted">*</span> : null}<span className="ml-1 text-[10px] font-medium text-muted">{market === 'vendor' ? 'vendor' : 'cleans'}</span></span>
+{market !== 'vendor' && (past ? <span className="text-[10px] text-muted">{wk} worked</span> : <span title="Cleaners working vs needed" className={'px-1.5 py-0.5 rounded-full text-[10px] font-semibold ' + (short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{wk}/{nd}</span>)}
+</div>
 </button>
 ) })}
 </div>
@@ -643,8 +646,8 @@ async function pushBlocks() {
 
 {view === 'day' && sug !== null && (
 <div className="rounded-xl border border-violet-200 bg-violet-50/50 px-3.5 py-2.5">
-<div className="flex items-center justify-between gap-2 mb-1.5"><span className="text-[12px] font-bold text-violet-800">Suggested audits from guest reviews - fit for this day</span><button onClick={() => setSug(null)} className="text-[11px] text-muted hover:text-ink">Close</button></div>
-{sug.length === 0 ? <div className="text-[12px] text-muted">No low-review units with a checkout or vacancy this day. (Also skips units that already have an open audit.)</div> : (
+<div className="flex items-center justify-between gap-2 mb-1.5"><span className="text-[12px] font-bold text-violet-800" title="Low-review units with a checkout or vacancy this day; units with an open audit are skipped">Audit ideas from reviews</span><button onClick={() => setSug(null)} className="text-[11px] text-muted hover:text-ink">Close</button></div>
+{sug.length === 0 ? <div className="text-[12px] text-muted">No low-review units free this day.</div> : (
 <div className="space-y-1">
 {sug.map((s: any) => (
 <div key={s.listingId} className="flex items-center gap-2 text-[12px] bg-white rounded-lg border border-line px-2.5 py-1.5">
@@ -683,7 +686,7 @@ async function pushBlocks() {
       </div>
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
-      {data && !data.breezeway && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-800">Breezeway isn&apos;t connected, so cleaner assignment is disabled. The schedule still reflects every confirmed checkout.</div>}
+      {data && !data.breezeway && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-800">Breezeway not connected — assignment is off; checkouts still show.</div>}
 
       {loading && !data ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Loading the schedule&hellip;</div>
@@ -698,24 +701,27 @@ async function pushBlocks() {
 
             {/* A 280px column, so the controls stack rather than fighting for one line. Download
                 first: the safe one is the one your hand lands on, and Post goes to the whole crew. */}
-            <div className="rounded-2xl border border-line bg-white p-3">
-              <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">Day sheet</p>
-              <p className="text-[11.5px] text-muted mt-1 leading-snug">
-                One picture: each cleaner, their units, the guest checkout, the size, and what is different about it.
-              </p>
-              <select value={sheetMkt} onChange={e => setSheetMkt(e.target.value)} aria-label="Area for the day sheet"
-                className="w-full mt-2.5 rounded-xl border border-line bg-white px-2.5 py-2 text-[12.5px] font-semibold text-ink">
-                <option value="all">All areas</option>
-                {MARKETS.map(m => <option key={m} value={m.toLowerCase()}>{m}</option>)}
-              </select>
-              <button onClick={downloadSheet} disabled={!!sheetBusy}
-                className="w-full mt-2 inline-flex items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12.5px] font-semibold text-ink hover:border-ink/30 disabled:opacity-50">
-                {sheetBusy === 'download' ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />} Download day sheet
-              </button>
-              <button onClick={postSheetToSlack} disabled={!!sheetBusy}
-                className="w-full mt-2 inline-flex items-center justify-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[12.5px] font-semibold hover:opacity-90 disabled:opacity-50">
-                {sheetBusy === 'slack' ? <RefreshCw size={13} className="animate-spin" /> : <MessageSquare size={13} />} Post to Slack
-              </button>
+            {/* Lean pass: label + area picker on one line, the two buttons side by side; the
+                explainer is the Download button's hover. */}
+            <div className="rounded-2xl border border-line bg-white p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[12.5px] font-bold text-ink">Day sheet</span>
+                <select value={sheetMkt} onChange={e => setSheetMkt(e.target.value)} aria-label="Area for the day sheet"
+                  className="ml-auto rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink">
+                  <option value="all">All areas</option>
+                  {MARKETS.map(m => <option key={m} value={m.toLowerCase()}>{m}</option>)}
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={downloadSheet} disabled={!!sheetBusy} title="One picture: each cleaner, their units, the guest checkout, the size, and what is different about it"
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:border-ink/30 disabled:opacity-50">
+                  {sheetBusy === 'download' ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />} Download
+                </button>
+                <button onClick={postSheetToSlack} disabled={!!sheetBusy} title="Post the day sheet to the housekeeping Slack channel"
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-semibold hover:opacity-90 disabled:opacity-50">
+                  {sheetBusy === 'slack' ? <RefreshCw size={12} className="animate-spin" /> : <MessageSquare size={12} />} Post to Slack
+                </button>
+              </div>
             </div>
           </div>
           {/* On a phone the roster rail is a 480px-tall scroller sitting between you and the cleans.
@@ -726,7 +732,7 @@ async function pushBlocks() {
               <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({rows.length})
             </label>
           )}
-{rows.length > 0 && <span className="ml-3 text-[10px] text-muted"><span className="text-emerald-500 mr-1">●</span>in progress <span className="text-emerald-600 ml-2 mr-1">✓</span>finished <span className="text-neutral-300 ml-2 mr-1">○</span>not started</span>}
+{/* The ring legend that sat here is gone (lean pass): every ring says what it means on hover. */}
           {guestyOnlyCount > 0 && (
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"><AlertTriangle size={12} /> {guestyOnlyCount} clean{guestyOnlyCount === 1 ? '' : 's'} in Guesty not yet in Breezeway</div>
           )}
@@ -764,15 +770,17 @@ async function pushBlocks() {
                           const LS = (data as any).longStayNights || 10
                           const n = Number(c.nights)
                           if (!Number.isFinite(n) || n <= 0) return null
-                          const long = n >= LS
-                          return <span title={long ? n + '-night stay — LONG STAY. Expect a heavier clean: laundry volume, kitchen, fridge, bins. Give it extra time.' : n + '-night stay'} className={'ml-1 inline-block text-[9px] font-bold px-1 py-0.5 rounded border align-middle ' + (long ? 'bg-amber-500 text-white border-amber-500' : 'bg-app text-muted border-line')}>{n} nt{long ? ' · LONG STAY' : ''}</span>
+                          // Short stays: the nights already sit in the muted line under the unit, so
+                          // only a LONG stay earns a tag (lean pass — it was a badge on every row).
+                          if (n < LS) return null
+                          return <span title={n + '-night stay — LONG STAY. Expect a heavier clean: laundry volume, kitchen, fridge, bins. Give it extra time.'} className="ml-1 inline-block text-[9px] font-bold px-1 py-0.5 rounded border align-middle bg-amber-500 text-white border-amber-500">{n} nt · long stay</span>
                         })()}
                         {(() => {
                           // A big booking arriving: make sure the unit is properly ready, not just turned.
                           const LS = (data as any).longStayNights || 10
                           const nn = Number(c.nextNights)
                           if (!Number.isFinite(nn) || nn < LS) return null
-                          return <span title={'Next guest stays ' + nn + ' nights' + (c.nextGuest ? ' (' + c.nextGuest + ')' : '') + (c.nextArrival ? ', arriving ' + c.nextArrival : '') + ' — a long booking. Make sure the unit is fully ready: supplies stocked, everything working.'} className="ml-1 inline-block text-[9px] font-bold px-1 py-0.5 rounded border align-middle bg-violet-600 text-white border-violet-600">{nn}-NT ARRIVAL {'\u2192'} CHECK READY</span>
+                          return <span title={'Next guest stays ' + nn + ' nights' + (c.nextGuest ? ' (' + c.nextGuest + ')' : '') + (c.nextArrival ? ', arriving ' + c.nextArrival : '') + ' — a long booking. Make sure the unit is fully ready: supplies stocked, everything working.'} className="ml-1 inline-block text-[9px] font-bold px-1 py-0.5 rounded border align-middle bg-violet-600 text-white border-violet-600">{nn}-nt arrival</span>
                         })()}{c.movedTo && <span title={'Moved - Breezeway now has this clean scheduled on ' + c.movedTo} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.movedTo.slice(5)}{(() => { const dd = Math.round((+new Date(c.movedTo + 'T12:00:00') - +new Date(c.date + 'T12:00:00')) / 86400000); return dd > 0 ? ' (+' + dd + 'd)' : '' })()}</span>}
                         {(c.movedFrom || c.blocked) && <span title={'Moved clean - lands on this day' + ((c.movedFrom || c.blockedFrom) ? ' (checkout was ' + (c.movedFrom || c.blockedFrom) + ')' : '')} className="inline-block ml-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-300 rounded px-1 align-middle">Moved to today{(c.movedFrom || c.blockedFrom) ? ' · was ' + String(c.movedFrom || c.blockedFrom).slice(5) : ''}</span>}
                         {c.extended && <span title={'EXTENDED - guest stay was extended; the clean auto-moved to the new checkout' + (c.extendedFrom ? ' (was ' + c.extendedFrom + ')' : '')} className="inline-block ml-0.5 text-[9px] font-bold text-violet-700 bg-violet-50 border border-violet-300 rounded px-1 align-middle">Extended{c.extendedFrom ? (c.extendedFrom > c.date ? ' \u2192 ' + c.extendedFrom.slice(5) : ' \u00b7 was ' + c.extendedFrom.slice(5)) : ''}</span>}
@@ -781,7 +789,7 @@ async function pushBlocks() {
                         {!c.movedTo && !c.movedFrom && c.taskDate && c.taskDate !== c.date && (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate + '. Click to open the task in Breezeway and check it.'} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle hover:bg-amber-100 underline decoration-dotted">Moved &rarr; {c.taskDate.slice(5)}</a> : <span title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.taskDate.slice(5)}</span>)}{(c.bedrooms != null || c.nights != null || c.checkOutTime) && <div className="text-[11px] text-muted mt-0.5 font-normal">{[c.bedrooms != null ? (c.bedrooms === 0 ? 'Studio' : c.bedrooms + 'BR') : '', c.nights != null ? c.nights + ' nt' : '', c.checkOutTime ? 'out ' + c.checkOutTime : '', c.doorCode ? 'code ' + c.doorCode : ''].filter(Boolean).join(' \u00b7 ')}</div>}{c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed' && <span title={'Time on this clean (Breezeway timer). Benchmark for ' + (c.bedrooms == null ? 'this unit' : c.bedrooms === 0 ? 'a studio' : c.bedrooms + 'BR') + '. Duration only \u2014 not labor cost.'} className={'ml-1 inline-flex items-center gap-0.5 text-[9px] font-semibold px-1 py-0.5 rounded border align-middle font-normal ' + cleanTimeCls(c.bedrooms, c.cleanMinutes, presets.timing)}>{'\u23f1'} {fmtMins(c.cleanMinutes)}</span>}{c.cleaningFee != null && c.cleaningFee > 0 && <span title="Guest-charged cleaning fee for this checkout" className="ml-1 inline-flex items-center text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 align-middle">{'$' + Math.round(c.cleaningFee).toLocaleString()}</span>}</td>
                         <td className="order-3 basis-full min-w-0 whitespace-normal sm:table-cell sm:whitespace-nowrap px-2.5 py-1.5 align-middle text-ink/90">{c.walkInRisk && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600 rounded px-1.5 py-0.5 mr-1" title="A confirmed guest is still in-house this day - do NOT clean / walk-in risk">⚠ Guest in-house</span>}{c.missing && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 mr-1" title="No Breezeway clean scheduled for this checkout within 14 days">⚠ No clean scheduled</span>}{c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : (c.guestOut ? <span className="inline-block max-w-[150px] truncate align-bottom" title={c.guestOut}>{c.guestOut}</span> : <span className="text-muted italic">—</span>)}</td>
                         
-                        <td className="order-5 ml-auto shrink-0 sm:table-cell sm:ml-0 px-2.5 py-1.5 align-middle text-right"><span className="inline-flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">{c.guestyOnly && <span title="This building is not in Breezeway - the checkout comes from Guesty and the vendor cleans it. No task to push or track." className="align-middle text-[10px] font-semibold uppercase px-1.5 py-1 rounded-md border border-slate-300 bg-slate-100 text-slate-600">Guesty only</span>}{blockStaged[keyOf(c)] && <span title="Staged to move to tomorrow - push or save to apply" className="align-middle text-[10px] font-semibold uppercase px-1.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-600">Moving</span>}{data.breezeway && c.breezewayTaskId && <button onClick={() => setCmtFor(cmtFor === c.breezewayTaskId ? '' : String(c.breezewayTaskId))} className={'align-middle text-[11px] font-semibold px-1.5 py-1 rounded-md border inline-flex items-center gap-1 ' + (cmtFor === c.breezewayTaskId ? 'bg-ink text-white border-ink' : cmtCounts[String(c.breezewayTaskId)] ? 'border-sky-300 bg-sky-50 text-sky-700' : 'border-line bg-white text-muted hover:text-ink hover:bg-app')} title="Comment on this clean - teammates you tag get a notification, and everyone on the thread hears about replies"><MessageSquare size={11} />{cmtCounts[String(c.breezewayTaskId)] || ''}</button>}<RowMenu title={'Actions for ' + c.unit} actions={rowActions(c)} /></span></td>
+                        <td className="order-5 ml-auto shrink-0 sm:table-cell sm:ml-0 px-2.5 py-1.5 align-middle text-right"><span className="inline-flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">{c.guestyOnly && <span title="This building is not in Breezeway - the checkout comes from Guesty and the vendor cleans it. No task to push or track." className="align-middle text-[10px] font-semibold uppercase px-1.5 py-1 rounded-md border border-slate-300 bg-slate-100 text-slate-600">Guesty only</span>}{blockStaged[keyOf(c)] && <span title="Staged to move to tomorrow - push or save to apply" className="align-middle text-[10px] font-semibold uppercase px-1.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-600">Moving</span>}{data.breezeway && c.breezewayTaskId && <button onClick={() => setCmtFor(cmtFor === c.breezewayTaskId ? '' : String(c.breezewayTaskId))} aria-label="Comment on this clean" title={(cmtFor === c.breezewayTaskId ? 'Close comments' : 'Comment on this clean') + ' — tagged teammates get notified'} className={'align-middle text-[11px] font-semibold px-1.5 py-1 rounded-md border inline-flex items-center gap-1 ' + (cmtFor === c.breezewayTaskId ? 'bg-ink text-white border-ink' : cmtCounts[String(c.breezewayTaskId)] ? 'border-sky-300 bg-sky-50 text-sky-700' : 'border-line bg-white text-muted hover:text-ink hover:bg-app')}><MessageSquare size={11} />{cmtCounts[String(c.breezewayTaskId)] || ''}</button>}{/* native title, not <Tip>: the table scrolls sideways and would clip a floating label on the top row */}<RowMenu title={'Actions for ' + c.unit} actions={rowActions(c)} /></span></td>
                       </tr>
                       {c.breezewayTaskId && cmtFor === String(c.breezewayTaskId) && (
                         <tr className="block sm:table-row border-t border-line bg-app/40">
