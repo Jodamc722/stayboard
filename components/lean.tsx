@@ -12,6 +12,7 @@
 //      expand (<LeanRow>), never stacked on the card.
 //   4. SECTIONS BECOME TABS. Stacked sections that each fill a screen become <LeanTabs> with counts.
 //   5. EMPTY IS ONE LINE. <LeanEmpty>.
+//   6. EVERY ICON-ONLY CONTROL HAS A HOVER LABEL. Use <IconBtn title=…> or wrap it in <Tip label=…>.
 import { useState, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 
@@ -76,8 +77,26 @@ export function IconBtn({ title, onClick, href, disabled, tone, children }: {
       : tone === 'bad' ? 'border-rose-200 text-rose-700 hover:bg-rose-50'
         : tone === 'brand' ? 'border-brand-200 text-brand-700 hover:bg-brand-50'
           : 'border-line text-muted hover:text-ink hover:bg-app'}`
-  if (href) return <a href={href} title={title} aria-label={title} className={cls} target={href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer">{children}</a>
-  return <button onClick={onClick} disabled={disabled} title={title} aria-label={title} className={cls}>{children}</button>
+  const el = href
+    ? <a href={href} aria-label={title} className={cls} target={href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer">{children}</a>
+    : <button onClick={onClick} disabled={disabled} aria-label={title} className={cls}>{children}</button>
+  return <Tip label={title}>{el}</Tip>
+}
+
+/**
+ * Instant hover label (Jon, 2026-09-22: "what do the symbols mean, should say when you hover over
+ * it"). The browser's own title tooltip waits a second and is easy to miss; this shows at once.
+ * Every icon-only control gets one.
+ */
+export function Tip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="relative inline-flex group/tip">
+      {children}
+      <span role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-50 whitespace-nowrap rounded-md bg-ink text-white text-[11px] font-medium px-2 py-1 opacity-0 group-hover/tip:opacity-100 transition-opacity duration-75 shadow">
+        {label}
+      </span>
+    </span>
+  )
 }
 
 /** A list container for LeanRows. */
