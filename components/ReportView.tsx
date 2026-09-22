@@ -897,6 +897,44 @@ function LiveText({ v, set, live, single, t, cls, ro }: { v: string; set: (s: st
 //
 // This is deliberately the same primitive the owner reports will move onto next, which is why
 // it takes only children and a nav label and knows nothing about onboarding.
+// ── HOVER ON A CHART MARK ────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-22: "if i hover over the charts on this slide it can show adr, rev gorss values".
+// A slide has room for one number per mark and no more, so the rest of the story — rate, RevPAR,
+// revenue, what the plan said — lives here and costs the composition nothing. It is hover only:
+// nothing in this card is load-bearing, because a printed deck and a PDF never get to see it.
+function ChartTip({ title, rows, dark, children, style, className }: {
+  title: string
+  rows: [string, string][]
+  dark?: boolean
+  children: React.ReactNode
+  style?: Any
+  className?: string
+}) {
+  const [on, setOn] = useState(false)
+  const live = rows.filter(r => r[1] && r[1] !== '—')
+  return (
+    <div className={className} style={{ position: 'relative', ...(style || {}) }}
+      onMouseEnter={() => setOn(true)} onMouseLeave={() => setOn(false)}>
+      {children}
+      {on && live.length ? (
+        <div className="sb-noprint" style={{
+          position: 'absolute', bottom: 'calc(100% + 9px)', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 8, whiteSpace: 'nowrap', pointerEvents: 'none', borderRadius: 9, padding: '10px 13px',
+          background: dark ? '#ffffff' : '#0E2436', color: dark ? '#0E2436' : '#ffffff',
+          boxShadow: '0 10px 30px -12px rgba(0,0,0,0.55)',
+        }}>
+          <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', opacity: 0.55, margin: 0 }}>{title}</p>
+          {live.map(([k, v]) => (
+            <p key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: 12.5, margin: '6px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ opacity: 0.65 }}>{k}</span><span style={{ fontWeight: 600 }}>{v}</span>
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 const SLIDE_W = CANVAS.w
 const SLIDE_H = CANVAS.h
 
@@ -4580,6 +4618,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           }
           const hid = (k: string) => isHidden(k)
           const num = (v: Any) => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? n : 0 }
+          /** Same, but keeping the sign — a delta of "−$102" has to come back negative. */
+          const snum = (v: Any) => { const raw = String(v == null ? '' : v).trim(); const n = num(raw); return /^[-−]/.test(raw) ? -n : n }
+          /** Format n the way `sample` is formatted, so a derived figure sits beside a real one. */
+          const like = (sample: Any, n: number): string => {
+            const x = String(sample || '')
+            const body = /M\b/.test(x) ? n.toFixed(2) + 'M' : /K\b/i.test(x) ? String(Math.round(n)) + 'K' : Math.round(n).toLocaleString()
+            return (x.indexOf('$') >= 0 ? '$' : '') + body + (x.indexOf('%') >= 0 ? '%' : '')
+          }
           const pad2 = (n: number) => (n < 10 ? '0' : '') + n
 
           // EVERY MONEY FIGURE ON THIS DECK IS COMPUTED, PER SLIDE (Jon, 2026-09-22: "should be
@@ -4589,6 +4635,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // same basisStrings() the scroll view uses, against that slide's own chosen basis, and a
           // typed override still wins over both.
           const SM = snap.metrics
+          /** The second line under a figure: the same metric on another basis, or nothing.
+           *  Jon, 2026-09-22: "on the original owner reporting, you could do net and fees, and then
+           *  a gross number below it. You could do gross only." Both controls are the report's own
+           *  (basis.snapshotPrimary / basis.snapshotSecondary), so the deck and the scroll report
+           *  can never disagree about which basis an owner is looking at. */
+          const cardSecond = (card: Any): string => {
+            if (snapSecondary === 'none' || snapSecondary === snapPrimary) return ''
+            const k = String(card.key || '')
+            if (!hasBasisRaw(SM) || (k !== 'revenue' && k !== 'adr' && k !== 'revpar')) return ''
+            const st = basisStrings(SM, snapSecondary as Basis)
+            const v = k === 'revenue' ? st.rev : k === 'adr' ? st.adr : st.revpar
+            return v ? BASIS_SHORT[snapSecondary as Basis] + ' ' + v : ''
+          }
           const cardValue = (card: Any, b: Basis): string => {
             const ov = typeof card.override === 'string' && card.override.trim() !== '' ? card.override : null
             if (ov) return ov
@@ -4831,9 +4890,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             slides.push({ key: 'snapshot', ai: true, node: (
               <Frame nav="Snapshot" sec="Performance" subj={BASIS_NOTE[snapPrimary]} tone="tint" n={n}>
                 {edit && (
-                  <div className="sb-noprint flex items-center" style={{ gap: 12, marginBottom: 18 }}>
-                    <BasisPicker label="This slide" value={snapPrimary} onPick={(v: string) => setBasis('snapshotPrimary', v)} t={t} />
-                    <span style={{ fontSize: 12, color: tint(0.45) }}>Every figure on the cover and this slide follows it.</span>
+                  <div className="sb-noprint flex items-center flex-wrap" style={{ gap: 12, marginBottom: 18 }}>
+                    <BasisPicker label="Big number" value={snapPrimary} onPick={(v: string) => setBasis('snapshotPrimary', v)} t={t} />
+                    <BasisPicker label="Below it" value={snapSecondary} withNone onPick={(v: string) => setBasis('snapshotSecondary', v)} t={t} />
+                    <span style={{ fontSize: 12, color: tint(0.45) }}>Every figure here and on the cover follows the big number.</span>
                   </div>
                 )}
                 {lead ? (
@@ -4841,9 +4901,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <div style={{ width: 352, flexShrink: 0 }}>
                       <Lbl>{String(lead.label || 'Revenue')}</Lbl>
                       <div style={{ marginTop: 16 }}><Fig size={88}>{cardValue(lead, snapPrimary)}</Fig></div>
-                      <p style={{ fontSize: 14.5, lineHeight: 1.6, color: tint(0.62), margin: '18px 0 0', maxWidth: '32ch' }}>
-                        <Ed v={snap.subtitle || (lead.gross ? 'Gross of ' + String(lead.gross) + ' before channel commission.' : '')} set={v => patch('snapshot.subtitle', v)} edit={edit} multiline />
-                      </p>
+                      {cardSecond(lead) ? (
+                        <p style={{ fontSize: 15, fontWeight: 600, color: t.accent, margin: '12px 0 0', fontVariantNumeric: 'tabular-nums' }}>{cardSecond(lead)}</p>
+                      ) : null}
+                      {(snap.subtitle || edit) ? (
+                        <p style={{ fontSize: 14.5, lineHeight: 1.6, color: tint(0.62), margin: '16px 0 0', maxWidth: '32ch' }}>
+                          <Ed v={snap.subtitle || ''} set={v => patch('snapshot.subtitle', v)} edit={edit} multiline placeholder="One line about the month\u2026" />
+                        </p>
+                      ) : null}
                       {/* SINCE THE LAST ONE. Only ever present when an earlier live report for
                           this scope and this month exists to be measured against — delete that
                           report and these quietly stop appearing (lib/report-delta). */}
@@ -4880,6 +4945,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           }}>
                             <Lbl>{String(card.label || '')}</Lbl>
                             <div style={{ marginTop: 8 }}><Fig size={33}>{cardValue(card, snapPrimary)}</Fig></div>
+                            {cardSecond(card) ? (
+                              <p style={{ fontSize: 11.5, fontWeight: 600, color: t.accent, margin: '7px 0 0', fontVariantNumeric: 'tabular-nums' }}>{cardSecond(card)}</p>
+                            ) : null}
                           </div>
                         )
                       })}
@@ -4992,45 +5060,69 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // ── 5 · AGAINST THE MARKET ────────────────────────────────────────
           // A real chart: one scale, gridlines behind the marks, a direct label on every bar, and
           // a legend that says what the comp set actually is. Ours is the accent; the comp set is
-          // ink at 22% — a lightness difference, which is the one encoding that survives every
-          // form of colour blindness.
+          // ink at 22% — a lightness difference, the one encoding that survives every form of
+          // colour blindness.
+          //
+          // AND THE NUMBERS ARE THE CONTROLS (Jon, 2026-09-22: "need to be able to edit our data on
+          // comp set and it affect the charts"). In edit mode both figures on every row are typed
+          // in place; the bars are measured from those strings at render, so a correction to the
+          // comp set moves the chart as you type. Nothing is stored twice, so nothing can disagree.
           if (c.pacing && (c.pacing.rows || []).length && !hid('pacing')) {
             const n = next()
             const rows = (c.pacing.rows as Any[])
             slides.push({ key: 'pacing', ai: true, node: (
               <Frame nav="Pacing" sec="Performance" subj="Against the market" tone="light" n={n}>
                 <RTitle k="pacing" />
-                <div style={{ marginTop: 22 }}>
+                <div style={{ marginTop: 20 }}>
                   {rows.map((r: Any, i: number) => {
                     const a = num(r.ours), b = num(r.comps), top = Math.max(a, b, 1) * 1.15
-                    const behind = /^[-−]/.test(String(r.delta || ''))
+                    const gap = a - b
+                    const behind = gap < 0
+                    const pct = b ? (gap / Math.abs(b)) * 100 : null
                     return (
-                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '120px minmax(0,1fr)', gap: 20, alignItems: 'center', padding: '14px 0', borderTop: i ? '1px solid ' + tint(0.12) : 'none' }}>
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '128px minmax(0,1fr)', gap: 20, alignItems: 'center', padding: '13px 0', borderTop: i ? '1px solid ' + tint(0.12) : 'none' }}>
                         <div>
                           <p style={{ fontSize: 13, fontWeight: 500, color: t.ink, margin: 0 }}>{String(r.metric || '')}</p>
-                          <p style={{ fontSize: 11.5, fontWeight: 600, color: behind ? t.accent : t.good, margin: '4px 0 0', fontVariantNumeric: 'tabular-nums' }}>{String(r.delta || '')}</p>
+                          <p style={{ fontSize: 11.5, fontWeight: 600, color: behind ? t.accent : t.good, margin: '4px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+                            {String(r.delta || '')}
+                          </p>
                         </div>
-                        <div style={{ position: 'relative', height: 42 }}>
-                          {[0, 25, 50, 75, 100].map(g => (
-                            <span key={g} style={{ position: 'absolute', left: g + '%', top: -6, bottom: -6, width: 1, background: tint(0.07) }} />
-                          ))}
-                          <span style={{ position: 'absolute', left: 0, top: 2, height: 14, borderRadius: '0 4px 4px 0', background: t.accent, width: Math.max(1, (a / top) * 100) + '%' }} />
-                          <span style={{ position: 'absolute', left: Math.max(1, (a / top) * 100) + '%', top: 4, transform: 'translateX(10px)', fontSize: 12.5, fontWeight: 600, color: t.accent, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{String(r.ours || '')}</span>
-                          <span style={{ position: 'absolute', left: 0, top: 24, height: 14, borderRadius: '0 4px 4px 0', background: tint(0.22), width: Math.max(1, (b / top) * 100) + '%' }} />
-                          <span style={{ position: 'absolute', left: Math.max(1, (b / top) * 100) + '%', top: 26, transform: 'translateX(10px)', fontSize: 12.5, color: tint(0.45), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{String(r.comps || '')}</span>
-                        </div>
+                        <ChartTip title={String(r.metric || '')} rows={[
+                          ['17 West', String(r.ours || '—')],
+                          [String(c.pacingLegend || 'Comp set'), String(r.comps || '—')],
+                          ['Difference', String(r.delta || '—')],
+                          ['vs. market', pct == null ? '—' : (pct >= 0 ? '+' : '−') + Math.abs(pct).toFixed(1) + '%'],
+                        ]}>
+                          <div style={{ position: 'relative', height: 40 }}>
+                            {[0, 25, 50, 75, 100].map(g => (
+                              <span key={g} style={{ position: 'absolute', left: g + '%', top: -5, bottom: -5, width: 1, background: tint(0.07) }} />
+                            ))}
+                            <span style={{ position: 'absolute', left: 0, top: 1, height: 14, borderRadius: '0 4px 4px 0', background: t.accent, width: Math.max(1, (a / top) * 100) + '%' }} />
+                            <span style={{ position: 'absolute', left: 0, top: 23, height: 14, borderRadius: '0 4px 4px 0', background: tint(0.22), width: Math.max(1, (b / top) * 100) + '%' }} />
+                            {/* The two labels ARE the inputs in edit mode — type, and the bar above moves. */}
+                            <span style={{ position: 'absolute', left: edit ? 'auto' : Math.max(1, (a / top) * 100) + '%', right: edit ? 0 : 'auto', top: 2, transform: edit ? 'none' : 'translateX(10px)', fontSize: 12.5, fontWeight: 600, color: t.accent, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              <Ed v={String(r.ours || '')} set={v => patch('pacing.rows.' + i + '.ours', v)} edit={edit} />
+                            </span>
+                            <span style={{ position: 'absolute', left: edit ? 'auto' : Math.max(1, (b / top) * 100) + '%', right: edit ? 0 : 'auto', top: 24, transform: edit ? 'none' : 'translateX(10px)', fontSize: 12.5, color: tint(0.45), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              <Ed v={String(r.comps || '')} set={v => patch('pacing.rows.' + i + '.comps', v)} edit={edit} />
+                            </span>
+                          </div>
+                        </ChartTip>
                       </div>
                     )
                   })}
                 </div>
-                <div className="flex items-center" style={{ gap: 22, marginTop: 18 }}>
-                  <span className="flex items-center" style={{ gap: 8, fontSize: 12, color: tint(0.62) }}>
-                    <i style={{ width: 16, height: 8, borderRadius: '0 2px 2px 0', background: t.accent, display: 'inline-block' }} />Us
-                  </span>
-                  <span className="flex items-center" style={{ gap: 8, fontSize: 12, color: tint(0.62) }}>
-                    <i style={{ width: 16, height: 8, borderRadius: '0 2px 2px 0', background: tint(0.22), display: 'inline-block' }} />
-                    <Ed v={String(c.pacingLegend || 'Comp set')} set={v => patch('pacingLegend', v)} edit={edit} />
-                  </span>
+                <div className="flex items-center justify-between" style={{ gap: 22, marginTop: 16 }}>
+                  <div className="flex items-center" style={{ gap: 22 }}>
+                    <span className="flex items-center" style={{ gap: 8, fontSize: 12, color: tint(0.62) }}>
+                      <i style={{ width: 16, height: 8, borderRadius: '0 2px 2px 0', background: t.accent, display: 'inline-block' }} />17 West
+                    </span>
+                    <span className="flex items-center" style={{ gap: 8, fontSize: 12, color: tint(0.62) }}>
+                      <i style={{ width: 16, height: 8, borderRadius: '0 2px 2px 0', background: tint(0.22), display: 'inline-block' }} />
+                      <Ed v={String(c.pacingLegend || 'Comp set')} set={v => patch('pacingLegend', v)} edit={edit} />
+                    </span>
+                  </div>
+                  {edit ? <span className="sb-noprint" style={{ fontSize: 11.5, color: tint(0.35) }}>Type over either figure — the bars follow.</span> : null}
                 </div>
                 <SlideNote k="pacing" />
               </Frame>
@@ -5039,100 +5131,159 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
           // ── 6 · AGAINST BUDGET — the deck's dark slide ─────────────────────
           // Jon, 2026-09-22: "Budget should show how we are trending for the next month and be
-          // able to add previous months and as many future months as we want."
+          // able to add previous months and as many future months as we want", then "can we make
+          // it a bit cleaner".
           //
-          // So the slide is a RAIL plus a DETAIL. The rail carries every month loaded on the
-          // report — closed months behind us and the ones still on the books ahead — each showing
-          // its own headline variance, so the shape of the year is visible before anyone reads a
-          // number. Clicking one breaks its lines out underneath, diverging from a true zero line:
-          // direction plus a direct label, which is the secondary encoding that keeps the two
-          // colours legible for a colour-blind reader. Months are added in edit mode, either end.
+          // WHAT THE CLEAN-UP CHANGED, and why each one was actually wrong:
+          //  · The rail summarised September with "−$48" — a RevPAR delta, picked because the
+          //    old regex matched RevPAR before revenue. A month's headline is its REVENUE.
+          //  · The rows printed the actual with a delta beside it and no plan, so an owner could
+          //    see we were $102 light on rate without ever learning the rate we had promised.
+          //    Where plan is not stored we derive it: plan = actual − delta, formatted like the
+          //    actual, which is exact arithmetic rather than an estimate.
+          //  · The rail carried a label, a figure, a bar AND a status line per month — four
+          //    elements competing with the four real bars below. The bar is gone; the selected
+          //    month is marked by a rule, which is quieter and says the same thing.
           if (plan && (plan.months || []).length && !hid('plan')) {
             const n = next()
             const months = (plan.months as Any[])
             const ix = Math.max(0, Math.min(months.length - 1, planIx))
             const m0 = months[ix] || {}
             const rows = ((m0.rows || []) as Any[]).slice(0, 5)
-            // One scale for every bar on the slide: the largest variance any row shows, as a share
-            // of its own actual. Without it a -$37K bar and a -$140 bar draw the same length.
-            const ratio = (r: Any) => (num(r.actual) > 0 ? num(r.delta) / num(r.actual) : 0)
-            const span = rows.reduce((m: number, r: Any) => Math.max(m, ratio(r)), 0) || 1
-            // The rail's own bar: each month's biggest line, signed, on one shared scale.
+            // THE PLAN SIDE. Stored when the generator had it, otherwise exact arithmetic off
+            // the frozen pair: plan = actual − delta, formatted like the actual.
+            const planOf = (r: Any): string => {
+              if (r.plan) return String(r.plan)
+              const a = snum(r.actual), d = snum(r.delta)
+              if (!a || !r.delta) return ''
+              return like(r.actual, a - d)
+            }
+            // THE LIVE SIDE (Jon, 2026-09-22: "on the budget, we want to be able to see our current
+            // live gross numbers versus the actual budget numbers. It's not showing that.").
+            //
+            // plan.months was frozen when the report was generated, so an owner opening the link a
+            // week later was reading last week's actuals against this year's budget. For the month
+            // the report actually covers, the actual column now comes from the SAME live metrics
+            // the snapshot renders, at the budget's own basis — gross by default, because that is
+            // the basis a budget is set on — and the variance is recomputed against the stored
+            // plan rather than carried over. Months either side of the report's own period keep
+            // their stored figures; there is nothing live to put there.
+            const planBasis: Basis = isBasis(bcfg.plan) ? (bcfg.plan as Basis) : 'gross'
+            const liveOf = (metric: string): string => {
+              if (!hasBasisRaw(SM)) return ''
+              const m = String(metric || '')
+              if (/occupancy|occ\b/i.test(m)) return SM.occPct == null ? '' : Math.round(Number(SM.occPct)) + '%'
+              const st = basisStrings(SM, planBasis)
+              if (/adr/i.test(m)) return st.adr
+              if (/revpar/i.test(m)) return st.revpar
+              if (/revenue|gross/i.test(m)) return st.rev
+              return ''
+            }
+            const isLiveMonth = /in month|current|month to date|mtd/i.test(String(m0.status || ''))
+            /** actual / plan / delta for one row, live where we have it. */
+            const figures = (r: Any) => {
+              const pl = planOf(r)
+              const live = isLiveMonth ? liveOf(r.metric) : ''
+              if (!live || !pl) return { actual: String(r.actual || ''), plan: pl, delta: String(r.delta || ''), live: false }
+              const d = snum(live) - snum(pl)
+              const unit = /occupancy|occ\b/i.test(String(r.metric || '')) ? ' pts' : ''
+              const body = unit ? Math.abs(d).toFixed(0) + unit : like(pl, Math.abs(d)).replace('%', '')
+              return { actual: live, plan: pl, delta: (d < 0 ? '−' : '+') + body, live: true }
+            }
+            const isNeg = (r: Any) => /^[-−]/.test(String(figures(r).delta || '')) || (r.good === false && !figures(r).live)
+            const share = (r: Any) => { const f = figures(r); return num(f.actual) > 0 ? Math.abs(snum(f.delta)) / num(f.actual) : 0 }
+            const span = rows.reduce((m: number, r: Any) => Math.max(m, share(r)), 0) || 1
+            // A month's headline is its revenue line — never RevPAR, which reads as a tiny number
+            // beside a five-figure miss and tells an owner nothing about the month.
             const headline = (m: Any) => {
               const rs = (m.rows || []) as Any[]
-              const lead = rs.find((r: Any) => /revenue|revpar/i.test(String(r.metric || ''))) || rs[0]
-              return lead || {}
+              return rs.find((r: Any) => /revenue|gross/i.test(String(r.metric || '')))
+                || rs.find((r: Any) => /revpar/i.test(String(r.metric || '')))
+                || rs[0] || {}
             }
             const addMonth = (where: 'before' | 'after') => mutate((d: Any) => {
               const list: Any[] = d.plan.months
               const src = list[Math.max(0, Math.min(list.length - 1, ix))] || {}
-              const blank = {
+              list.splice(where === 'before' ? ix : ix + 1, 0, {
                 label: 'New month', status: where === 'after' ? 'On the books' : 'Closed', note: '',
                 rows: ((src.rows || []) as Any[]).map((r: Any) => ({ metric: r.metric, actual: '', plan: '', delta: '', good: true })),
-              }
-              list.splice(where === 'before' ? ix : ix + 1, 0, blank)
+              })
             })
             slides.push({ key: 'plan', ai: true, node: (
               <Frame nav="Budget" sec="Performance" subj="Against budget" tone="dark" n={n}>
                 <RTitle k="plan" dark />
 
-                {/* THE RAIL — every month on the report, the selected one lit. */}
-                <div className="flex items-stretch" style={{ gap: 0, marginTop: 22, borderTop: '1px solid ' + D.rule, borderBottom: '1px solid ' + D.rule }}>
+                {/* THE RAIL — every month on the report, the selected one lit and ruled. */}
+                <div className="flex items-stretch" style={{ marginTop: 20, borderBottom: '1px solid ' + D.rule }}>
                   {months.map((m: Any, j: number) => {
                     const h = headline(m)
-                    const neg = /^[-−]/.test(String(h.delta || '')) || h.good === false
+                    const hd = j === ix ? figures(h).delta : String(h.delta || '')
+                    const neg = /^[-−]/.test(String(hd || '')) || (h.good === false && j !== ix)
                     const on = j === ix
-                    const mag = Math.min(1, Math.abs(ratio(h)) / span)
                     return (
                       <button key={j} onClick={() => setPlanIx(j)} title={String(m.label || '')}
                         style={{
-                          flex: 1, minWidth: 0, textAlign: 'left', padding: '13px 14px 13px 0', background: 'transparent',
-                          borderRight: j === months.length - 1 ? 'none' : '1px solid ' + D.rule, opacity: on ? 1 : 0.55, cursor: 'pointer',
+                          flex: 1, minWidth: 0, textAlign: 'left', padding: '0 18px 13px 0', background: 'transparent',
+                          cursor: months.length > 1 ? 'pointer' : 'default',
+                          borderBottom: '2px solid ' + (on ? t.accent : 'transparent'), marginBottom: -1,
                         }}>
                         <span style={{ display: 'block', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: on ? D.ink : D.muted }}>
                           {String(m.label || '').replace(/\s+\d{4}$/, '')}
+                          <span style={{ opacity: 0.6, letterSpacing: '0.1em', marginLeft: 8 }}>{String(m.status || '')}</span>
                         </span>
-                        <span style={{ display: 'block', fontFamily: SERIF, fontSize: 19, letterSpacing: '-0.02em', marginTop: 7, fontVariantNumeric: 'tabular-nums', color: h.delta ? (neg ? t.accent : t.good) : D.muted }}>
-                          {String(h.delta || '—')}
+                        <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', marginTop: 8, fontVariantNumeric: 'tabular-nums', opacity: on ? 1 : 0.6, color: hd ? (neg ? t.accent : t.good) : D.muted }}>
+                          {hd || '—'}
                         </span>
-                        <span style={{ display: 'block', height: 4, borderRadius: 4, marginTop: 9, background: h.delta ? (neg ? t.accent : t.good) : D.rule, width: Math.max(8, mag * 100) + '%' }} />
-                        <span style={{ display: 'block', fontSize: 10, color: D.muted, marginTop: 7 }}>{String(m.status || '')}</span>
                       </button>
                     )
                   })}
                 </div>
 
                 {/* THE DETAIL — the selected month, line by line, from a true zero. */}
-                <div style={{ marginTop: 16 }}>
+                <div style={{ marginTop: 10 }}>
                   {rows.map((r: Any, j: number) => {
-                    const neg = /^[-−]/.test(String(r.delta || '')) || r.good === false
-                    const mag = Math.min(0.46, (Math.abs(ratio(r)) / span) * 0.44)
+                    const f = figures(r)
+                    const neg = isNeg(r)
+                    const mag = Math.min(0.46, (share(r) / span) * 0.44)
+                    const pl = f.plan
                     return (
-                      <div key={j} style={{ display: 'grid', gridTemplateColumns: '172px minmax(0,1fr) 118px', gap: 22, alignItems: 'center', padding: '11px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
-                        <div>
-                          <p style={{ fontSize: 13.5, fontWeight: 500, color: D.ink, margin: 0 }}>{String(r.metric || '')}</p>
-                          <p style={{ fontSize: 11.5, color: D.muted, margin: '3px 0 0', fontVariantNumeric: 'tabular-nums' }}>
-                            {String(r.actual || '—')}{r.plan ? ' vs. ' + String(r.plan) + ' planned' : ''}
-                          </p>
+                      <div key={j} style={{ display: 'grid', gridTemplateColumns: '236px minmax(0,1fr) 112px', gap: 24, alignItems: 'center', padding: '12px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
+                        <div className="flex items-baseline" style={{ gap: 10 }}>
+                          <span style={{ fontSize: 13, color: D.muted, width: 84, flexShrink: 0 }}>{String(r.metric || '')}</span>
+                          <span style={{ fontFamily: SERIF, fontSize: 21, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{f.actual || '—'}</span>
+                          {pl ? <span style={{ fontSize: 11.5, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{'vs ' + pl}</span> : null}
                         </div>
-                        <div style={{ position: 'relative', height: 26 }}>
-                          <span style={{ position: 'absolute', left: '50%', top: -4, bottom: -4, width: 1, background: 'rgba(255,255,255,0.3)' }} />
-                          <span style={{
-                            position: 'absolute', top: 6, height: 14, background: neg ? t.accent : t.good,
-                            ...(neg
-                              ? { right: '50%', marginRight: 2, borderRadius: '4px 0 0 4px' }
-                              : { left: '50%', marginLeft: 2, borderRadius: '0 4px 4px 0' }),
-                            width: Math.max(0.015, mag) * 100 + '%',
-                          }} />
-                        </div>
-                        <p style={{ fontFamily: SERIF, fontSize: 23, letterSpacing: '-0.02em', textAlign: 'right', margin: 0, fontVariantNumeric: 'tabular-nums', color: r.delta ? (neg ? t.accent : t.good) : D.muted }}>{String(r.delta || '—')}</p>
+                        <ChartTip dark title={String(r.metric || '')} rows={[
+                          [f.live ? 'Live now' : 'Actual', f.actual || '—'],
+                          ['Budget', pl || '—'],
+                          ['Variance', f.delta || '—'],
+                          ['vs. budget', (() => { const b = snum(pl); return b ? ((snum(f.delta) >= 0 ? '+' : '−') + Math.abs((snum(f.delta) / Math.abs(b)) * 100).toFixed(1) + '%') : '—' })()],
+                        ]}>
+                          <div style={{ position: 'relative', height: 24 }}>
+                            <span style={{ position: 'absolute', left: '50%', top: -3, bottom: -3, width: 1, background: 'rgba(255,255,255,0.28)' }} />
+                            <span style={{
+                              position: 'absolute', top: 5, height: 14, background: neg ? t.accent : t.good,
+                              ...(neg
+                                ? { right: '50%', marginRight: 2, borderRadius: '4px 0 0 4px' }
+                                : { left: '50%', marginLeft: 2, borderRadius: '0 4px 4px 0' }),
+                              width: Math.max(0.015, mag) * 100 + '%',
+                            }} />
+                          </div>
+                        </ChartTip>
+                        <p style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', textAlign: 'right', margin: 0, fontVariantNumeric: 'tabular-nums', color: f.delta ? (neg ? t.accent : t.good) : D.muted }}>{f.delta || '—'}</p>
                       </div>
                     )
                   })}
                 </div>
-                {m0.note ? <p style={{ fontSize: 14, lineHeight: 1.6, color: D.body, margin: '18px 0 0', maxWidth: '78ch' }}>{String(m0.note)}</p> : null}
+                {m0.note ? <p style={{ fontSize: 13.5, lineHeight: 1.6, color: D.body, margin: '16px 0 0', maxWidth: '80ch' }}>{String(m0.note)}</p> : null}
+                {isLiveMonth && hasBasisRaw(SM) ? (
+                  <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: D.muted, margin: '14px 0 0' }}>
+                    {String(m0.label || '').replace(/\s+\d{4}$/, '') + ' is live — ' + BASIS_NOTE[planBasis].toLowerCase() + ', against the budget'}
+                  </p>
+                ) : null}
                 {edit && (
-                  <div className="sb-noprint flex items-center" style={{ gap: 9, marginTop: 16 }}>
+                  <div className="sb-noprint flex items-center flex-wrap" style={{ gap: 9, marginTop: 14 }}>
+                    <BasisPicker label="Budget basis" value={planBasis} onPick={(v: string) => setBasis('plan', v)} t={t} />
                     <button onClick={() => addMonth('before')} style={{ fontSize: 11.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.12)', color: D.ink }}>+ Month before</button>
                     <button onClick={() => addMonth('after')} style={{ fontSize: 11.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.12)', color: D.ink }}>+ Month after</button>
                     {months.length > 1 ? (
@@ -5190,24 +5341,47 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           }
 
           // ── 7 · ON THE BOOKS ──────────────────────────────────────────────
+          // The column carries one number, because a slide has room for one. Rate, RevPAR, revenue
+          // and what the month held last year all live in the hover card (Jon, 2026-09-22: "if i
+          // hover over the charts on this slide it can show adr, rev gorss values").
           if ((ahead.months || []).length && !hid('ahead')) {
             const n = next()
-            const strip: Any[] = Array.isArray(ahead.strip) && ahead.strip.length
-              ? (ahead.strip as Any[]).slice(0, 6)
-              : ((ahead.months as Any[]) || []).slice(0, 6).map((m: Any) => ({ month: String(m.label || '').replace(/\s+\d{4}$/, '').slice(0, 3), occPct: m.occPct, adr: m.adr }))
+            // Build the strip from the months themselves so every column keeps its own figures —
+            // ahead.strip carries only a label and an occupancy, which is what the hover was
+            // missing.
+            const ms = (ahead.months as Any[]) || []
+            const strip: Any[] = (Array.isArray(ahead.strip) && ahead.strip.length ? (ahead.strip as Any[]) : ms)
+              .slice(0, 6)
+              .map((x: Any, i: number) => {
+                const m = ms.find((y: Any) => String(y.label || '').slice(0, 3) === String(x.month || x.label || '').slice(0, 3)) || ms[i] || {}
+                return {
+                  month: String(x.month || x.label || '').replace(/\s+\d{4}$/, '').slice(0, 3),
+                  full: String(m.label || x.label || ''),
+                  occPct: x.occPct != null ? x.occPct : m.occPct,
+                  adr: m.adr, revpar: m.revpar, revenue: m.revenue, gross: m.gross, nights: m.nights,
+                }
+              })
             slides.push({ key: 'ahead', ai: true, node: (
               <Frame nav="Looking ahead" sec="Ahead" subj="On the books" tone="light" n={n}>
                 <RTitle k="ahead" />
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, strip.length) + ', minmax(0,1fr))', gap: 22, alignItems: 'end', height: 230, marginTop: 26 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, strip.length) + ', minmax(0,1fr))', gap: 22, alignItems: 'end', height: 218, marginTop: 24 }}>
                   {strip.map((x: Any, i: number) => {
                     const pct = Math.max(0, Math.min(100, Number(x.occPct) || 0))
                     return (
-                      <div key={i} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
+                      <ChartTip key={i} title={x.full || x.month} rows={[
+                        ['Occupancy', Math.round(pct) + '%'],
+                        ['ADR', x.adr ? String(x.adr) : '—'],
+                        ['RevPAR', x.revpar ? String(x.revpar) : '—'],
+                        ['Revenue', x.revenue != null ? usd(x.revenue) : '—'],
+                        ['Gross', x.gross != null ? usd(x.gross) : '—'],
+                        ['Nights sold', x.nights != null ? String(x.nights) : '—'],
+                      ]} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
                         <Fig size={26}>{Math.round(pct) + '%'}</Fig>
-                        <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === 0 ? t.accent : tint(0.22), height: Math.max(4, (pct / 100) * 150) }} />
+                        <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === 0 ? t.accent : tint(0.22), height: Math.max(4, (pct / 100) * 142) }} />
                         <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: tint(0.45), marginTop: 12 }}>{String(x.month || '')}</span>
-                        {x.adr ? <span style={{ fontSize: 10, color: tint(0.35), marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{'ADR ' + String(x.adr)}</span> : null}
-                      </div>
+                        {/* The rate used to print here AND in the hover card. One of them had to go,
+                            and the hover is the one that can hold the whole row. */}
+                      </ChartTip>
                     )
                   })}
                 </div>
@@ -5270,12 +5444,24 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // WHAT PRINTS WITHOUT ASKING. Jon, 2026-09-22: "you can mention real issue related to
           // building, pests are building issues, thats fine, lets not highlight any issue casued
           // by us, without my approval." Building problems and the owner's own worn furniture
-          // print. Anything we caused is withheld: Jon sees it here with an Include switch, the
-          // owner does not see it at all until he flips one.
+          // print. Anything we caused is withheld: Jon sees it in the tray with an Include switch,
+          // the owner does not see it at all until he flips one.
+          //
+          // THE BUG JON HIT, 2026-09-22: "When i click add clenaliness it removes itseld." The
+          // slide showed the first three items that pass the filter — so on a report that already
+          // had three building items, including a fourth pushed it past the slice and it vanished
+          // from BOTH the tray and the slide. An item Jon has explicitly approved is now sorted to
+          // the front, so clicking Include always puts it on the slide; what falls off the end is
+          // an automatic item, which he can see and reorder.
           if (recs && (recs.items || []).length && !hid('recs')) {
             const approved: string[] = Array.isArray(c.recsApproved) ? c.recsApproved : []
             const shows = (r: Any) => r.cause !== 'ours' || approved.indexOf(r.key) >= 0
-            const shown = (recs.items as Any[]).filter(shows).slice(0, 3)
+            const passing = (recs.items as Any[]).filter(shows)
+            const shown = passing
+              .slice()
+              .sort((a: Any, b: Any) => (approved.indexOf(b.key) >= 0 ? 1 : 0) - (approved.indexOf(a.key) >= 0 ? 1 : 0))
+              .slice(0, 3)
+            const spare = passing.filter((r: Any) => shown.indexOf(r) < 0)
             const held = (recs.items as Any[]).filter((r: Any) => !shows(r))
             const toggle = (k: string) => mutate((d: Any) => {
               const list: string[] = Array.isArray(d.recsApproved) ? d.recsApproved.slice() : []
@@ -5283,52 +5469,63 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               if (at >= 0) list.splice(at, 1); else list.push(k)
               d.recsApproved = list
             })
-            const CAUSE_TAG: Record<string, string> = { building: 'Building', asset: 'Asset · needs your call', ours: 'Ours to own' }
+            const CAUSE_TAG: Record<string, string> = { building: 'Building', asset: 'Asset · your call', ours: 'Ours to own' }
             if (shown.length || edit) {
               const n = next()
               slides.push({ key: 'recs', node: (
-                <Frame nav="What we are improving" sec="Guests" subj="What we're acting on" tone="tint" n={n}>
+                <Frame nav="What we are improving" sec="Guests"
+                  subj={recs.reviews ? recs.reviews + ' reviews · 90 days' : 'What we\u2019re acting on'} tone="tint" n={n}>
                   <Tick />
                   <H2 w="26ch">
                     <Ed v={String(c.recsTitle || 'What guests raised, and what we are doing')} set={v => patch('recsTitle', v)} edit={edit} multiline />
                   </H2>
-                  <p style={{ fontSize: 14.5, lineHeight: 1.6, color: tint(0.5), margin: '12px 0 0', maxWidth: '62ch' }}>
-                    <Ed v={String(c.recsNote || ('From ' + recs.reviews + ' review' + (recs.reviews === 1 ? '' : 's') + ' in the last 90 days' + (recs.avgRating != null ? ', averaging ' + recs.avgRating.toFixed(2) : '') + '.'))}
-                      set={v => patch('recsNote', v)} edit={edit} multiline />
-                  </p>
                   {shown.length ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + shown.length + ', minmax(0,1fr))', gap: 34, marginTop: 26 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + shown.length + ', minmax(0,1fr))', gap: 38, marginTop: 30 }}>
                       {shown.map((r: Any, i: number) => (
-                        <div key={r.key} style={{ paddingTop: 18, borderTop: '2px solid ' + t.ink }}>
-                          <span style={{ display: 'block', fontFamily: SERIF, fontSize: 15, color: t.accent, marginBottom: 11 }}>{pad2(i + 1)}</span>
-                          <p style={{ fontSize: 16, fontWeight: 500, color: t.ink, margin: 0, textTransform: 'capitalize' }}>{String(r.label || '')}</p>
+                        <div key={r.key} style={{ paddingTop: 16, borderTop: '2px solid ' + t.ink }}>
+                          <div className="flex items-baseline justify-between" style={{ gap: 10 }}>
+                            <span style={{ fontFamily: SERIF, fontSize: 15, color: t.accent }}>{pad2(i + 1)}</span>
+                            <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: tint(0.38) }}>
+                              {CAUSE_TAG[String(r.cause)] || 'Noted'}{r.mentions > 1 ? ' · ' + r.mentions : ''}
+                            </span>
+                          </div>
+                          <p style={{ fontSize: 17, fontWeight: 500, color: t.ink, margin: '12px 0 0', textTransform: 'capitalize' }}>{String(r.label || '')}</p>
                           <p style={{ fontSize: 14, lineHeight: 1.6, color: tint(0.62), margin: '9px 0 0' }}>
                             <Ed v={String((c.recsText || {})[r.key] || r.action || '')} set={v => patch('recsText.' + r.key, v)} edit={edit} multiline />
                           </p>
-                          <span style={{ display: 'inline-block', marginTop: 13, fontSize: 9, fontWeight: 600, letterSpacing: '0.15em', textTransform: 'uppercase', padding: '5px 9px', borderRadius: 3, background: tint(0.07), color: tint(0.62) }}>
-                            {CAUSE_TAG[String(r.cause)] || 'Noted'}{r.mentions > 1 ? ' · ' + r.mentions + ' guests' : ''}
-                          </span>
                           {edit && r.cause === 'ours' ? (
-                            <button onClick={() => toggle(r.key)} className="sb-noprint" style={{ display: 'block', marginTop: 9, fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 999, background: t.accent, color: '#fff' }}>Included — remove</button>
+                            <button onClick={() => toggle(r.key)} className="sb-noprint"
+                              style={{ marginTop: 11, fontSize: 10, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: t.accent, color: '#fff' }}>
+                              Included — take it off
+                            </button>
                           ) : null}
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p style={{ fontSize: 15, color: tint(0.45), margin: '26px 0 0' }}>
+                    <p style={{ fontSize: 15, color: tint(0.45), margin: '26px 0 0', maxWidth: '58ch' }}>
                       Nothing on this report that is not ours to own. Anything guests raised about our own service is held below for you.
                     </p>
                   )}
-                  {/* WITHHELD — team only. Never rendered for an owner, at any width. */}
-                  {edit && held.length ? (
-                    <div style={{ marginTop: 20, borderTop: '1px dashed ' + tint(0.22), paddingTop: 12 }} className="sb-noprint">
-                      <Lbl>{'Held back — ours to own (' + held.length + ')'}</Lbl>
-                      <div className="flex flex-wrap" style={{ gap: 8, marginTop: 9 }}>
+
+                  {/* TEAM ONLY — never rendered for an owner, at any width. */}
+                  {edit && (held.length || spare.length) ? (
+                    <div className="sb-noprint" style={{ marginTop: 'auto', paddingTop: 16, borderTop: '1px dashed ' + tint(0.2) }}>
+                      <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+                        <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: tint(0.45), marginRight: 4 }}>
+                          {held.length ? 'Ours to own — off the owner\u2019s copy' : 'Not on this slide'}
+                        </span>
                         {held.map((r: Any) => (
                           <button key={r.key} onClick={() => toggle(r.key)} title={String(r.quote || '')}
                             style={{ fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 999, background: t.card, border: '1px solid ' + tint(0.15), color: tint(0.62), textTransform: 'capitalize' }}>
                             + {String(r.label)} <span style={{ color: tint(0.35) }}>{r.mentions}</span>
                           </button>
+                        ))}
+                        {spare.map((r: Any) => (
+                          <span key={r.key} title="Passes the filter, but only three fit the slide"
+                            style={{ fontSize: 12, padding: '5px 11px', borderRadius: 999, background: 'transparent', border: '1px dashed ' + tint(0.15), color: tint(0.35), textTransform: 'capitalize' }}>
+                            {String(r.label)}
+                          </span>
                         ))}
                       </div>
                     </div>
