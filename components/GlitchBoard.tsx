@@ -646,8 +646,27 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
   const isProvisional = !!(rec && rec.provisional)
   const why: string[] = Array.isArray(rec?.recommendation?.reasoning) ? rec.recommendation.reasoning : []
 
+  const exp = rec?.exposure || null
+  const ladder = rec?.ladder || null
+  const auth = rec?.authority || null
+
   return (
     <div className="space-y-4">
+      {/* THE LADDER, BEFORE THE MONEY. A money tab that opens with a number teaches the team that
+          money is the first move; Jon's rule (2026-09-22) is that it is the last one. */}
+      <section className="rounded-xl ring-1 ring-brand-200 bg-brand-50/60 px-3.5 py-2.5">
+        <p className="text-[12.5px] font-bold text-brand-900">Fix it first. The refund is what is left when that was not enough.</p>
+        {ladder ? (
+          <p className="text-[12px] text-brand-900/80 mt-0.5">
+            {ladder.label}: a human within {ladder.firstResponseMins < 60 ? ladder.firstResponseMins + ' min' : Math.round(ladder.firstResponseMins / 60) + ' hr'},
+            fixed within {ladder.fixTargetHours} hours. <a href="/refunds" className="underline font-semibold">The playbook</a>
+          </p>
+        ) : (
+          <p className="text-[12px] text-brand-900/80 mt-0.5">Work out a recommendation below and it will show the clock for this category. <a href="/refunds" className="underline font-semibold">The playbook</a></p>
+        )}
+        {ladder?.escalate ? <p className="text-[12px] font-bold text-rose-800 mt-1">{ladder.escalate}</p> : null}
+      </section>
+
       <section className="rounded-xl ring-1 ring-line bg-white px-3.5 py-3">
         <p className="text-[11px] uppercase tracking-wider font-bold text-muted">What we actually gave</p>
         {refund > 0 ? (
@@ -722,6 +741,14 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
               rec.confidence ? rec.confidence + ' confidence' : ''].filter(Boolean).join(' · ')}
           </p>
         ) : null}
+        {auth ? (
+          <div className="mt-2 rounded-lg ring-1 ring-line bg-white px-2.5 py-2">
+            <p className="text-[11px] uppercase tracking-wider font-bold text-muted">Who signs this</p>
+            <p className="text-[12.5px] font-bold text-ink">{auth.who}</p>
+            <p className="text-[12px] text-muted">{auth.why}</p>
+            <p className="text-[12px] text-muted mt-0.5">{auth.then}</p>
+          </div>
+        ) : null}
         <button onClick={ask} disabled={busy}
           className="mt-2 text-[12.5px] font-bold px-3 h-9 rounded-xl bg-ink text-white disabled:bg-line disabled:text-faint inline-flex items-center gap-1.5">
           {busy ? <Loader2 size={13} className="animate-spin" /> : null}
@@ -729,6 +756,33 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
         </button>
         {err ? <p className="text-[12px] font-semibold text-rose-700 mt-1.5">{err}</p> : null}
       </section>
+
+      {/* WHAT A BAD REVIEW WOULD COST ON THIS UNIT — arithmetic from its real reviews on this
+          channel. It moves urgency and where in the band we land, never the band itself, and it is
+          never said to the guest. */}
+      {exp ? (
+        <section className={'rounded-xl ring-1 px-3.5 py-3 ' + (
+          exp.level === 'critical' ? 'ring-rose-200 bg-rose-50' :
+          exp.level === 'high' ? 'ring-amber-200 bg-amber-50' :
+          exp.level === 'raised' ? 'ring-sky-200 bg-sky-50' : 'ring-emerald-200 bg-emerald-50')}>
+          <p className="text-[11px] uppercase tracking-wider font-bold opacity-70">If this stay ends in a bad review</p>
+          <p className="text-[13px] font-bold text-ink">{exp.headline}</p>
+          {(exp.lines || []).map((l: string, i: number) => (
+            <p key={i} className="text-[12px] text-ink/85 leading-snug mt-1">{l}</p>
+          ))}
+          {(exp.actions || []).length ? (
+            <ul className="mt-2 space-y-0.5">
+              {exp.actions.map((a: string, i: number) => <li key={i} className="text-[12px] font-semibold text-ink/90">· {a}</li>)}
+            </ul>
+          ) : null}
+          {exp.movedTheDial ? (
+            <p className="text-[11.5px] text-ink/70 mt-2 pt-2 border-t border-black/10">
+              This pushed the recommendation to the top of the band its severity earns — never above it.
+              Do not mention the review to the guest.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   )
 }

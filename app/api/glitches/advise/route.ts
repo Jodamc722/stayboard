@@ -28,6 +28,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeMultiple, REQUIRED_FIELDS, type RefundInput } from '@/lib/refund-policy'
+import { ladderFor, tierFor, tierReason, normAuthority, RULES } from '@/lib/refund-doctrine'
+import { exposureForListing } from '@/lib/review-exposure-server'
+import { exposureActions } from '@/lib/review-exposure'
+import { getSetting } from '@/lib/app-settings'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 
@@ -97,7 +101,19 @@ RULES YOU MUST FOLLOW:
 - Only set guestCaused when the record actually says so. It means no refund, so never infer it.
 - Count affectedNights from the dates you were given. If you cannot, ask.
 - Separate issues get separate entries. Dirty on arrival AND a broken AC is two, not one.
-- Never invent a fact to fill a field. An honest question beats a confident guess.`
+- Never invent a fact to fill a field. An honest question beats a confident guess.
+
+THE ORDER OF OPERATIONS, WHICH IS NOT YOURS TO REORDER. At Stay Hospitality the goal is never a
+refund; it is to remediate the problem quickly. A refund is what is left when the fix was too slow,
+impossible, or came after the stay was already spoiled. Your classification is what decides whether
+we got there, so "speed" and "mitigation" are the two most consequential fields you fill in — they
+are the record of whether the ladder worked, and they routinely move the number more than severity
+does. Be exact about them and ask when you cannot be.
+
+YOU DO NOT CONSIDER REVIEWS. Not the unit's rating, not its review count, not the risk of a bad one.
+That is computed separately from real review data and applied after you. A severity inflated because
+a listing looks fragile would be double-counting it, and it would also be the thing the team must
+never do: we do not price a guest's loss by what their review might cost us.`
 
 export async function POST(req: NextRequest) {
   const access = await getAccess()
@@ -123,12 +139,14 @@ export async function POST(req: NextRequest) {
 
   // The stay, for the nightly rate the whole framework hangs off.
   let nights = 0, nightly = 0, channel = String((g as any).channel || '')
+  let listingId = String((g as any).listing_id || '')
   const resId = String((g as any).reservation_id || '')
   if (resId) {
     const { data: r } = await db.from('guesty_reservations')
-      .select('nights,check_in,check_out,source,money_total,raw')
+      .select('nights,check_in,check_out,source,money_total,listing_id,raw')
       .eq('id', resId).maybeSingle()
     if (r) {
+      listingId = listingId || String((r as any).listing_id || '')
       nights = Number((r as any).nights) || 0
       channel = channel || String((r as any).source || '')
       const total = Number((r as any).money_total) || Number((g as any).reservation_total) || 0
@@ -227,10 +245,39 @@ export async function POST(req: NextRequest) {
     // Unused nights belong to the stay, not to each issue — only the first entry carries them.
     inputs.forEach((x, idx) => { if (idx > 0) x.unusedNights = 0 })
 
+    // ── REVIEW EXPOSURE (Jon, 2026-09-22) ──────────────────────────────────────────────────────
+    // Computed from this unit's real reviews ON THIS CHANNEL, never from the model's impression.
+    // It moves the DIAL — where inside the band this lands — and never the band itself, so it can
+    // raise a defensible number to the top of its range and can never invent one. On a resilient
+    // listing it does nothing at all, which is the point: most cases should not be moved by it.
+    const exp = listingId ? await exposureForListing(listingId, channel).catch(() => null) : null
+    const exposure = exp?.exposure || null
+    if (exposure && exposure.level !== 'low') {
+      for (const x of inputs) x.dial = Math.max(Number(x.dial) || 0.5, exposure.dial)
+    }
+
     const result = inputs.length ? computeMultiple(inputs) : null
+
+    // Who signs it, and what should have happened before it ever got here.
+    const cfg = normAuthority(await getSetting<any>('refund_authority', null))
+    const ladder = ladderFor(cats[0] || (g as any).category)
+    const stayValue = nightly * nights
+    const tier = result ? tierFor(result.refund, stayValue, cfg) : null
 
     return NextResponse.json({
       ok: true,
+      exposure: exposure ? {
+        level: exposure.level, headline: exposure.headline, lines: exposure.lines,
+        actions: exposureActions(exposure), count: exposure.count, average: exposure.average,
+        ifThree: exposure.ifThree, ifOne: exposure.ifOne, channel: exposure.channel,
+        movedTheDial: exposure.level !== 'low',
+      } : null,
+      ladder: {
+        label: ladder.label, firstResponseMins: ladder.firstResponseMins, fixTargetHours: ladder.fixTargetHours,
+        fix: ladder.fix, hold: ladder.hold, escalate: ladder.escalate || null, criticalWhen: ladder.criticalWhen,
+      },
+      authority: tier ? { tier: tier.key, who: tier.who, why: tierReason(result!.refund, stayValue, cfg), then: tier.then } : null,
+      doctrine: RULES.filter(r => r.key === 'fix-first' || r.key === 'ceiling-not-debt' || r.key === 'never-buy-review'),
       provisional: blocked || c.confidence === 'low' || questions.length > 0,
       confidence: c.confidence,
       summary: c.summary,

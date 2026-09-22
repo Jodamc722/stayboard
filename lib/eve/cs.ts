@@ -22,10 +22,72 @@ import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
 import { fmtDuration, median } from '@/lib/response-times'
 import { otaPlaybookView } from '@/lib/ota-playbook-server'
 import { otaChannelOf, otaTopicOf } from '@/lib/ota-playbook'
+import { ladderFor, buildMatrix, authorityTiers, normAuthority, tierFor, RULES, SEVERITY_TEST, REMEDIES } from '@/lib/refund-doctrine'
+import { exposureForListing } from '@/lib/review-exposure-server'
+import { exposureActions } from '@/lib/review-exposure'
+import { getSetting } from '@/lib/app-settings'
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : 0)
 
 export const CS_TOOLS: EveTool[] = [
+  {
+    // THE REFUND DOCTRINE (Jon, 2026-09-22: "The goal is never a refund"). Eve is the fastest route
+    // to an answer at 10pm, which makes her the fastest route to the WRONG answer if she reaches
+    // for a number first. This hands her the ladder before the money, every time.
+    name: 'refund_doctrine',
+    description: 'How Stay Hospitality decides what a guest issue is worth. ALWAYS use this before saying anything about a refund, compensation, goodwill or "making it right" for a guest issue. It returns, in order: the remediation ladder for that category with its clock (first response and fix target), what to hand the guest before money, the defensible refund band for the severity and how fast it was fixed, who can sign that amount, and — if you name the unit — what a bad review would actually cost on it. The goal is never a refund: a problem fixed inside the clock with something useful in the guest\u2019s hands usually ends in little or no money, and that is the right outcome. Never lead with a number.',
+    input_schema: obj({ category: S.str, severity: S.str, speed: S.str, nightlyRate: S.num, affectedNights: S.num, listingId: S.str, channel: S.str }),
+    run: async (input) => {
+      const ladder = ladderFor(input?.category)
+      const nightly = num(input?.nightlyRate) || 300
+      const nights = Math.max(1, Math.round(num(input?.affectedNights) || 1))
+      const cfg = normAuthority(await getSetting<any>('refund_authority', null))
+      const sev = ['minor', 'moderate', 'critical'].includes(lc(input?.severity)) ? lc(input?.severity) : null
+      const spd = ['same_day', 'next_day', 'two_days', 'three_plus', 'unresolved'].includes(lc(input?.speed)) ? lc(input?.speed) : null
+
+      const matrix = buildMatrix(nightly, String(input?.channel || 'airbnb'))
+      const cell = sev && spd ? matrix.find(c => c.severity === sev && c.speed === (spd === 'unresolved' ? 'three_plus' : spd)) : null
+
+      let exposure: any = null
+      if (input?.listingId) {
+        const e = await exposureForListing(String(input.listingId), String(input?.channel || 'airbnb')).catch(() => null)
+        if (e) exposure = {
+          level: e.exposure.level, headline: e.exposure.headline, why: e.exposure.lines,
+          what_to_do: exposureActions(e.exposure),
+          note: 'This changes how fast we move and where inside the band we land. It NEVER raises the band, and it is never mentioned to the guest.',
+        }
+      }
+
+      return {
+        first_the_ladder: {
+          category: ladder.label,
+          hear_a_human_within_minutes: ladder.firstResponseMins,
+          fixed_within_hours: ladder.fixTargetHours,
+          why_this_clock: ladder.clockWhy,
+          how_to_fix_it: ladder.fix,
+          what_to_hand_them_meanwhile: ladder.hold,
+          it_is_critical_when: ladder.criticalWhen,
+          escalate: ladder.escalate || null,
+        },
+        remedies_before_money: REMEDIES.map(r => ({ remedy: r.label, what: r.what, worth: r.worth })),
+        severity_tests: SEVERITY_TEST,
+        band: cell ? {
+          severity: sev, speed: spd,
+          defensible_range_pct_of_one_night: `${cell.pctLow}% to ${cell.pctHigh}% per affected night`,
+          middle_of_band_usd_per_night: cell.usdMid,
+          with_an_effective_workaround_pct: cell.pctWithRemedy,
+          estimate_usd: round2(cell.usdMid * nights),
+          what_to_do: cell.action,
+          who_signs: tierFor(cell.usdMid * nights, nightly * Math.max(nights, 1), cfg).who,
+        } : { note: 'Give me severity (minor/moderate/critical) and speed (same_day/next_day/two_days/three_plus/unresolved) and I will give you the band. Do not guess them — ask whoever dealt with the guest.' },
+        review_exposure: exposure,
+        authority: authorityTiers(cfg).map(t => ({ who: t.who, rule: t.rule })),
+        rules: RULES.map(r => ({ rule: r.rule, why: r.why })),
+        how_to_use_this: 'Answer with the fix and the clock first. Only reach the money if the clock was blown, the fix was impossible, or the stay was already spoiled. The band is a CEILING on what is defensible, not a debt — zero is a real answer on a case we fixed properly. Never offer money to head off a review.',
+      }
+    },
+    money: true,
+  },
   {
     // THE OTA PLAYBOOK (Jon, 2026-09-21: "have her learn everything about our OTA ... refund process,
     // claims process, our process for OTA collecting deposits, charging"). Deterministic: no search,

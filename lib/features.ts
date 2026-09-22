@@ -56,6 +56,10 @@ export const FEATURES: Feature[] = [
   { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule', group: 'Operations' },
   { key: 'forecast',      label: 'Weekly Schedule',   path: '/schedule/forecast', group: 'Operations' },
   { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Operations' },
+  // The refund playbook (2026-09-22, Jon): the ladder, the matrix, the clocks and the training
+  // scenarios. Read-only for anyone who handles a guest issue; the money columns still obey the
+  // money permission inside the page, so a role without it sees the doctrine and not the dollars.
+  { key: 'refunds',       label: 'Making it right',   path: '/refunds', group: 'Operations' },
   { key: 'audits',        label: 'Audits',            path: '/audits', group: 'Operations' },
   // Gated 2026-08-06 (Jon): was reachable by any logged-in member with no permission setting.
   { key: 'inspections',   label: 'Inspections',       path: '/inspections', group: 'Operations' },
