@@ -20,6 +20,7 @@
 //   • Money is returned raw; the route strips it for people without money access.
 import 'server-only'
 import { loadContactHistory, type ContactHistory } from './reservation-contact'
+import { channelOf, channelPolicy } from './welcome-call-guide'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const num = (v: any): number | null => { const n = Number(v); return v == null || v === '' || !Number.isFinite(n) ? null : n }
@@ -228,7 +229,10 @@ export function flagsOf(s: Stay360): Stay360['flags'] {
   if (wc && /reached|voicemail/.test(wc.outcome)) f.push({ key: 'called', label: wc.outcome === 'voicemail' ? 'Voicemail left' : 'Called', tone: 'emerald', why: (wc.by ? 'by ' + wc.by : '') + (wc.attempts > 1 ? ' · ' + wc.attempts + ' attempts' : '') })
   else if (wc && wc.attempts) f.push({ key: 'called', label: 'No answer ×' + wc.attempts, tone: 'slate' })
   else if (s.dates.phase === 'upcoming') f.push({ key: 'called', label: 'Not called', tone: 'slate' })
-  if (s.money && s.money.balance != null && s.money.balance > 0) f.push({ key: 'balance', label: 'Owes $' + Math.round(s.money.balance), tone: 'amber' })
+  // Airbnb, Booking.com and Expedia collect the money themselves — Guesty still shows a "balance"
+  // until the channel pays out, which is not something anyone should chase the guest for.
+  const mor = channelPolicy(channelOf(s.channel)).merchantOfRecord
+  if (!mor && s.money && s.money.balance != null && s.money.balance > 0) f.push({ key: 'balance', label: 'Owes $' + Math.round(s.money.balance), tone: 'amber' })
   if (s.money && s.money.refunded) f.push({ key: 'refund', label: 'Refunded $' + Math.round(s.money.refunded), tone: 'rose' })
   if (s.reviews.thisStay && s.reviews.thisStay.rating != null) f.push({ key: 'review', label: 'Reviewed ' + s.reviews.thisStay.rating + '★', tone: s.reviews.thisStay.rating >= 4.5 ? 'emerald' : s.reviews.thisStay.rating >= 4 ? 'slate' : 'rose' })
   if (s.reviews.listingLast && s.reviews.listingLast.rating != null && s.reviews.listingLast.rating <= 3) f.push({ key: 'unit-review', label: 'Unit last review ' + s.reviews.listingLast.rating + '★', tone: 'amber', why: s.reviews.listingLast.content })
