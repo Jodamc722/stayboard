@@ -98,6 +98,12 @@ export const AI_TASKS: AiTask[] = [
     what: 'Reads her tool-less answer to a probe next to the expected answer and says pass or fail, with one line why.',
     matters: 'Decides the retention number on the Learning tab. Up to fifteen calls a night, each a few hundred tokens.' },
   // ── Guests ──
+  // Translating a Spanish Slack post into English when Eve is tagged on it (2026-09-22). It is a
+  // translation and nothing else -- no reasoning, no tools, no judgement -- so it is the cheapest
+  // tier there is, and it runs instead of a full Eve turn rather than on top of one.
+  { key: 'translate', title: 'Spanish → English in Slack', group: 'Eve', def: 'haiku', background: true,
+    what: 'Translates a Spanish message into English when Eve is tagged on it in Slack. Translation only, never an answer.',
+    matters: 'The field team writes in Spanish and the office reads English. A wrong unit number or time here is a missed job.' },
   { key: 'sentiment', title: 'Guest sentiment scan', group: 'Background', def: 'sonnet', background: true,
     what: 'Rates each guest thread 1-5 and flags dissatisfaction. Every 30 minutes, guest messages only.',
     matters: 'A frustrated guest nobody flagged becomes a review. Keep this on a full-size model.' },

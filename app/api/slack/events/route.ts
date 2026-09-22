@@ -43,6 +43,7 @@ import { resolveLighthouseEmail, identityHint } from '@/lib/slack-identity'
 import { accessForEmail } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
 import { tierFor, tierNote } from '@/lib/eve/slack-tier'
+import { tagIsFront, detectLang, translate } from '@/lib/eve/slack-triage'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -250,6 +251,26 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   const question = cleanText(ev.text, me)
   if (!question) {
     await say(channel, threadTs, 'I am here — what do you need?')
+    return ok()
+  }
+
+  // ---- THE TAG'S POSITION IS THE INSTRUCTION (Jon, 2026-09-22) -------------------------------
+  // Tagged at the FRONT, she was asked something and answers it. Tagged at the END, the message
+  // was not addressed to her at all -- it was posted for the room, and the tag is a request to
+  // make it readable by the other half of the team. Spanish becomes English, English becomes
+  // Spanish, translation only.
+  //
+  // This sits AHEAD of runEve deliberately. A tag at the end used to spend a whole Eve turn (~100k
+  // tokens of tool schemas, atlas and memories) answering a question nobody asked. Now it is one
+  // Haiku call, and a message with nothing to translate costs nothing at all.
+  //
+  // Silence is a real answer here. If the language cannot be told apart with confidence, she says
+  // nothing rather than posting a guessed translation in front of the whole company.
+  if (!tagIsFront(String(ev.text || ''), me)) {
+    const lang = detectLang(question)
+    if (!lang) return ok()
+    const out = await translate(question, lang)
+    if (out) await say(channel, threadTs, out)
     return ok()
   }
 
