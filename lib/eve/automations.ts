@@ -106,9 +106,13 @@ export const AUTOMATIONS: AutomationDef[] = [
     receipt: 'automation_runs', settingsPath: '/users → Settings → Eve → Review',
     notes: 'One Fable-tier call a week (task eve-review). The first run also retires the old per-building template questions. ?focus= steers a run. Needs migration 099.' },
   { key: 'slack-watch', label: 'Keeping tabs on Slack', area: 'eve', path: '/api/cron/slack-watch',
-    what: 'Reads the team channels twice a day. Pulls out commitments, open problems, unanswered questions and decisions; closes them from thread replies, finished Breezeway tasks or closed glitches; nudges the owner once in the thread; posts a morning roll-up in #vr-eve; and files what it learned into memory.', receipt: 'automation_runs',
+    what: 'Reads the team channels at 5am ET and then hourly from 11am to 7pm ET. Pulls out commitments, open problems, unanswered questions and decisions; closes them from thread replies, finished Breezeway tasks or closed glitches; nudges the owner once in the thread; posts a morning roll-up in #vr-eve; and files what it learned into memory.', receipt: 'automation_runs',
     settingsPath: '/vr-eve in Slack',
     notes: 'Hard caps per run: 12 channels, 60 candidates per model call, 8 model calls, 80 thread reads. A quiet day costs a Slack read and nothing else. Needs migration 084.' },
+  { key: 'on-watch', label: 'Eve on watch (command rooms)', area: 'eve', path: '/api/cron/slack-watch',
+    what: 'Hourly 11am–7pm ET, right after the Slack read: finds what is slipping between Slack, the glitch board and Breezeway (a field report nobody picked up in 45 min, a glitch 2h old with no Breezeway task, a task still open 6h with the guest in the unit, a fix the guest has not been told about) and says it in one short message per room: #vr-eve for ops, #vr-ccs-messageboard for guest follow-ups, #leadership for a glitch gap nobody touched in 3h. Each item is said once; a ✅ goes in the thread when it resolves. Late cleans are left to the late-clean reminders. Never posts in the field channels.',
+    configKey: 'eve_on_watch', receipt: 'automation_runs',
+    notes: 'Rides the slack-watch cron line (vercel.json is at its cron cap). Rooms, hours and on/off live in app_settings eve_on_watch; state in eve_on_watch_state. Posts go through the slack_post Agent mode rung. No model call.' },
 
   // ---- Guests ---------------------------------------------------------------------------------
   { key: 'sentiment', label: 'Guest sentiment scan', area: 'guests', path: '/api/sentiment/scan',
