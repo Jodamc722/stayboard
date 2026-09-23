@@ -247,6 +247,17 @@ export async function GET(req: NextRequest) {
         const mm: any = r.money || {}
         return num(mm.totalPaid) > 0.009
       }
+      // OWNER REVENUE AT BOTANICA (Jon, 2026-09-23: "for Botanica cleaning rev is owner rev").
+      // Guesty's ownerRevenue = netIncome − PM commission, and netIncome = fare − channel_commission
+      // − host_channel_fee: no cleaning, and on Airbnb those two fields are the SAME fee, so it is
+      // taken twice. Ours: fare + cleaning − channel fee once − 10% management on (fare − channel fee).
+      const ownerCols = (r: any): (number | string)[] => {
+        if (CONFIRMED.indexOf(str(r.status)) < 0) return ['', '', '']
+        const mm: any = r.money || {}
+        const fare = num(mm.fareAccommodationAdjusted ?? mm.fareAccommodation), clean = num(mm.fareCleaning), fee = num(mm.hostServiceFee)
+        const mgmt = r2(0.1 * (fare - fee))
+        return [r2(fee), mgmt, r2(fare + clean - fee - mgmt)]
+      }
       const rawRows = resv.filter((r: any) => str(r.check_in).slice(0, 10) <= to && keepRaw(r)).map((r: any) => {
         const m: any = r.money && typeof r.money === 'object' ? r.money : {}
         const flat: Record<string, any> = {}
@@ -255,7 +266,7 @@ export async function GET(req: NextRequest) {
           if (v == null || typeof v === 'object') continue
           // No payment-state fields (Jon, 2026-09-23): Guesty's balance due / total paid only reflect
           // payments recorded in Guesty, not channel payouts, so they read as money owed when it is not.
-          if (/^(balanceDue|paymentsDue|totalPaid|isFullyPaid|isPrePaid|isTouchedPayments)$/.test(k)) continue
+          if (/^(balanceDue|paymentsDue|totalPaid|isFullyPaid|isPrePaid|isTouchedPayments|netIncome|netIncomeFormula|ownerRevenue|ownerRevenueFormula)$/.test(k)) continue
           flat[k] = v; moneyKeys[k] = true
         }
         const rm = byId[String(r.listing_id)]
@@ -271,13 +282,13 @@ export async function GET(req: NextRequest) {
           first = str(r.gfirst).trim(); last = str(r.glast).trim()
           if (!first && !last) { const parts = str(r.guest_name).trim().split(/\s+/); first = parts.shift() || ''; last = parts.join(' ') }
         }
-        return { base: [str(r.id), str(r.confirmation_code), first, last, rm ? rm.room : '', rm ? rm.name : '', channelOf(str(r.source) || str(r.integration)), str(r.source), str(r.integration), str(r.status), ci, co, num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), str(r.created_at).slice(0, 10), str(r.canceledAt).slice(0, 10), guests === 0 ? '' : guests, dup ? 'Yes' : ''], money: flat }
+        return { base: [str(r.id), str(r.confirmation_code), first, last, rm ? rm.room : '', rm ? rm.name : '', channelOf(str(r.source) || str(r.integration)), str(r.source), str(r.integration), str(r.status), ci, co, num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), str(r.created_at).slice(0, 10), str(r.canceledAt).slice(0, 10), guests === 0 ? '' : guests, dup ? 'Yes' : ''], money: flat, owner: ownerCols(r) }
       })
       const PREFERRED = ['currency', 'fareAccommodation', 'fareAccommodationAdjusted', 'fareAccommodationDiscount', 'fareCleaning', 'totalFees', 'subTotalPrice', 'totalTaxes', 'hostServiceFee', 'hostServiceFeeTax', 'hostServiceFeeIncTax', 'hostPayout', 'netIncome', 'commission', 'totalPrice']
       const keys = PREFERRED.filter(k => moneyKeys[k]).concat(Object.keys(moneyKeys).filter(k => PREFERRED.indexOf(k) < 0).sort())
-      const header = ['Reservation id', 'Confirmation', 'Guest first name', 'Guest last name', 'Room', 'Guesty listing', 'Channel', 'Source (Guesty)', 'Platform (Guesty)', 'Status', 'Check-in', 'Check-out', 'Nights', 'Booked on', 'Cancelled on', 'Guests', 'Duplicate mirror row'].concat(keys.map(k => 'money.' + k))
+      const header = ['Reservation id', 'Confirmation', 'Guest first name', 'Guest last name', 'Room', 'Guesty listing', 'Channel', 'Source (Guesty)', 'Platform (Guesty)', 'Status', 'Check-in', 'Check-out', 'Nights', 'Booked on', 'Cancelled on', 'Guests', 'Duplicate mirror row'].concat(keys.map(k => 'money.' + k)).concat(['Channel fee (counted once)', 'Management fee (10% of fare less channel fee)', 'OWNER REVENUE (fare + cleaning - channel fee - mgmt fee)'])
       rawRows.sort((a, b) => String(a.base[10]).localeCompare(String(b.base[10])) || String(a.base[4]).localeCompare(String(b.base[4]), 'en', { numeric: true }))
-      const rows = rawRows.map(x => x.base.concat(keys.map(k => x.money[k] == null ? '' : x.money[k])))
+      const rows = rawRows.map(x => x.base.concat(keys.map(k => x.money[k] == null ? '' : x.money[k])).concat(x.owner))
       if (format === 'csv') {
         const fname = 'botanica-raw-reservations-' + from + '-to-' + to + '.csv'
         return new NextResponse(toCsv(header, rows), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="' + fname + '"', 'Cache-Control': 'no-store' } })
