@@ -68,6 +68,21 @@ export async function PUT(req: NextRequest) {
     const res = await setStock(itemId, scope, Number(r?.onHand) || 0, r?.lowAt === undefined || r?.lowAt === null || r?.lowAt === '' ? null : Number(r.lowAt), actor)
     if (res.ok) saved++; else errors.push(res.error || 'failed')
   }
+
+  // TAKING AN ITEM OFF A SHELF (Jon, 2026-09-23). A shelf holds what somebody put on it, so it has
+  // to be possible to take something off again. Removing the stock row is the whole operation —
+  // the item stays in the catalog, on every other shelf, untouched. Refused while stock is
+  // reserved against a paid order, because that is a delivery somebody is waiting for.
+  const offShelf = Array.isArray(body?.offShelf) ? body.offShelf.slice(0, 200) : []
+  let removed = 0
+  for (const r of offShelf) {
+    const itemId = String(r?.itemId || ''); const scope = String(r?.scope || '')
+    if (!/^[0-9a-f-]{36}$/i.test(itemId) || !/^(global|hub:[a-z0-9\-]{1,40})$/.test(scope)) { errors.push('bad row'); continue }
+    const { data: cur } = await supabaseAdmin().from('guest_order_stock').select('reserved').eq('item_id', itemId).eq('scope', scope).limit(1)
+    if (Number((((cur || [])[0]) || {}).reserved) > 0) { errors.push('still held for a paid order'); continue }
+    const del = await supabaseAdmin().from('guest_order_stock').delete().eq('item_id', itemId).eq('scope', scope)
+    if (del.error) errors.push(del.error.message); else removed++
+  }
   // THE ITEM ITSELF, saved in the same trip as the count (Jon, 2026-08-25: "we need to be able to
   // update, we need to be able to add descriptions… why can't I add items, or edit items or delete
   // items"). Everything about an item is editable from Inventory — name, the description the guest
@@ -259,5 +274,5 @@ export async function PUT(req: NextRequest) {
     if (error) errors.push('could not remove an item: ' + error.message); else deleted.push(id)
   }
 
-  return NextResponse.json({ ok: errors.length === 0, saved, itemsSaved, created: created.length, deleted: deleted.length, coverageSaved, hubsChanged, errors })
+  return NextResponse.json({ ok: errors.length === 0, saved, removed, itemsSaved, created: created.length, deleted: deleted.length, coverageSaved, hubsChanged, errors })
 }

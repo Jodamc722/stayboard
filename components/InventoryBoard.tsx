@@ -73,6 +73,9 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
   const [coverOpen, setCoverOpen] = useState(false)
   const [unitQ, setUnitQ] = useState('')
   const [hubMenu, setHubMenu] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)     // "Add from catalog" picker
+  const [addQ, setAddQ] = useState('')
+  const [offShelf, setOffShelf] = useState<string[]>([])   // scope|itemId queued for removal
   const [editPhoto, setEditPhoto] = useState<Item | null>(null)
   // TWO JOBS, TWO VIEWS. Counting is per shelf and happens in a storeroom; pricing is per item and
   // happens at a desk. Mixing them is what made one dense board that did neither well.
@@ -86,7 +89,7 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
     try {
       const j = await fetch('/api/guest-orders/stock', { cache: 'no-store' }).then(r => r.json())
       if (!j?.ok) { setErr(j?.error || 'Could not load inventory'); return }
-      setData(j); setErr(''); setStockEdits({}); setItemEdits({}); setAdds([]); setCatAdds([]); setRemoving(null)
+      setData(j); setErr(''); setStockEdits({}); setItemEdits({}); setAdds([]); setCatAdds([]); setRemoving(null); setOffShelf([])
       // Open on a real shelf. The global one is the fallback for anything outside a hub and is
       // usually empty, which is a misleading first impression.
       setScope(s => s || (j.scopes.find((x: Scope) => x.id !== 'global')?.id ?? 'global'))
@@ -94,7 +97,7 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
   }, [])
   useEffect(() => { load() }, [load])
 
-  const dirty = Object.keys(stockEdits).length > 0 || Object.keys(itemEdits).length > 0 || adds.some(a => a.name.trim()) || catAdds.some(a => a.name.trim())
+  const dirty = offShelf.length > 0 || Object.keys(stockEdits).length > 0 || Object.keys(itemEdits).length > 0 || adds.some(a => a.name.trim()) || catAdds.some(a => a.name.trim())
 
   async function save() {
     if (!data || !dirty) return
@@ -119,7 +122,8 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
       })),
     ]
     try {
-      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows, items, newItems }) }).then(r => r.json())
+      const off = offShelf.map(k => ({ scope: k.slice(0, k.lastIndexOf('|')), itemId: k.slice(k.lastIndexOf('|') + 1) }))
+      const j = await fetch('/api/guest-orders/stock', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows, items, newItems, offShelf: off }) }).then(r => r.json())
       const bits = [rows.length ? rows.length + ' count' + (rows.length === 1 ? '' : 's') : '', items.length ? items.length + ' edited' : '', j?.created ? j.created + ' added' : ''].filter(Boolean)
       if (j?.ok) setMsg({ tone: 'ok', text: 'Saved · ' + (bits.join(', ') || 'nothing to do') })
       else setMsg({ tone: 'bad', text: (j?.errors || []).join(' · ') || j?.error || 'Could not save' })
@@ -180,15 +184,29 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
     } catch { setMsg({ tone: 'bad', text: 'Network error' }) } finally { setBusy(null) }
   }
 
+  /**
+   * A SHELF HOLDS WHAT SOMEBODY PUT ON IT (Jon, 2026-09-23: "When you add a new shelf, from there
+   * you should be able to add items form the catalog. The shelf should nto just show all
+   * inventory").
+   *
+   * Every shelf used to list the entire catalog, each unplaced item sitting at 'unset'. So a new
+   * shelf for a five-unit building opened showing forty things nobody stocks there, and the person
+   * restocking had to know from memory which of them belonged — which is the opposite of what a
+   * shelf is for. A stock row IS the placement: an item is on this shelf when it has one, whatever
+   * the count. 'unset' now means "not on this shelf" and is filtered out; Add from catalog creates
+   * the row, and Take off removes it.
+   */
   const rows = useMemo(() => {
     if (!data) return []
-    const withPer = data.items.map(i => ({ i, p: i.per.find(x => x.scope === scope) })).filter(x => !!x.p) as { i: Item; p: Per }[]
+    const withPer = data.items
+      .map(i => ({ i, p: i.per.find(x => x.scope === scope) }))
+      .filter(x => !!x.p && (x.p!.state !== 'unset' || stockEdits[scope + '|' + x.i.id] !== undefined)) as { i: Item; p: Per }[]
     const rank = (i: Item, p: Per) => !i.tracked ? 4 : p.state === 'out' ? 0 : p.state === 'low' ? 1 : p.state === 'unset' ? 2 : 3
     return withPer
       .filter(x => !q || (x.i.name + ' ' + (x.i.category || '') + ' ' + (x.i.description || '') + ' ' + (x.i.supplier || '')).toLowerCase().includes(q.toLowerCase()))
       .filter(x => !onlyLow || (x.i.tracked && (x.p.state === 'out' || x.p.state === 'low')))
       .sort((a, b) => rank(a.i, a.p) - rank(b.i, b.p) || a.i.name.localeCompare(b.i.name))
-  }, [data, scope, q, onlyLow])
+  }, [data, scope, q, onlyLow, stockEdits])
 
   const needs = useMemo(() => data ? data.items.filter(i => i.tracked).map(i => i.per.find(p => p.scope === scope)).filter(p => p && (p.state === 'out' || p.state === 'low')).length : 0, [data, scope])
 
@@ -340,7 +358,59 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
           <div className="text-[11.5px] text-muted">Counts only. Prices, photos, descriptions and where an item is sold live on the <button onClick={() => { if (onSwitchView) onSwitchView('catalog'); else setOwnView('catalog') }} className="font-semibold text-brand-700 hover:underline">Catalog</button>.</div>
         </div>
 
-        {rows.length === 0 ? <div className="px-4 py-8 text-center text-[13px] text-muted">Nothing here{onlyLow ? ' needs restocking right now.' : ' yet — use Add item.'}</div> : (
+        {/* ADD FROM THE CATALOG — the shelf's own contents, chosen. */}
+        {canEdit ? (() => {
+          const onShelf = new Set((data.items || []).filter(i => {
+            const p = i.per.find(x => x.scope === scope)
+            return (p && p.state !== 'unset') || stockEdits[scope + '|' + i.id] !== undefined
+          }).map(i => i.id))
+          const candidates = (data.items || [])
+            .filter(i => !onShelf.has(i.id))
+            .filter(i => !addQ || (i.name + ' ' + (i.category || '')).toLowerCase().includes(addQ.toLowerCase()))
+            .sort((a, b) => (a.category || 'zz').localeCompare(b.category || 'zz') || a.name.localeCompare(b.name))
+          return (
+            <div className="px-4 py-2.5 border-b border-line bg-app/40">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => setAddOpen(v => !v)} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:border-brand-300">
+                  <Plus size={13} /> Add from catalog
+                </button>
+                <span className="text-[11.5px] text-muted">
+                  {rows.length} item{rows.length === 1 ? '' : 's'} on {here?.label || 'this shelf'}
+                  {candidates.length ? ' · ' + candidates.length + ' more in the catalog' : ' · the whole catalog is on it'}
+                </span>
+              </div>
+              {addOpen ? (
+                <div className="mt-2 rounded-xl border border-line bg-white p-2.5">
+                  <input value={addQ} onChange={e => setAddQ(e.target.value)} placeholder="Find an item in the catalog…" className={box + ' w-full mb-2'} />
+                  {candidates.length === 0 ? (
+                    <div className="text-[12.5px] text-muted px-1 py-2">Everything in the catalog is already on this shelf.</div>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
+                      {candidates.map(i => (
+                        <button key={i.id}
+                          onClick={() => setStockEdits(x => ({ ...x, [scope + '|' + i.id]: { onHand: 0, lowAt: 3, ...x[scope + '|' + i.id] } }))}
+                          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-line bg-white text-[12px] text-ink hover:border-brand-300">
+                          {i.image ? <img src={i.image} alt="" className="w-4 h-4 rounded object-contain bg-app" /> : null}
+                          {i.name}<Plus size={11} className="text-muted" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted mt-2">Added at zero — count it when you next stand in the storeroom. Nothing is saved until you press Save changes.</p>
+                </div>
+              ) : null}
+            </div>
+          )
+        })() : null}
+
+        {offShelf.filter(k => k.startsWith(scope + '|')).length ? (
+          <div className="px-4 py-2 text-[12px] text-amber-800 bg-amber-50 border-b border-amber-200">
+            {offShelf.filter(k => k.startsWith(scope + '|')).length} item(s) will come off this shelf when you save.
+            <button onClick={() => setOffShelf(x => x.filter(k => !k.startsWith(scope + '|')))} className="ml-2 underline font-semibold">Undo</button>
+          </div>
+        ) : null}
+
+        {rows.length === 0 ? <div className="px-4 py-8 text-center text-[13px] text-muted">{onlyLow ? 'Nothing here needs restocking right now.' : 'This shelf is empty — use Add from catalog to put items on it.'}</div> : (
           <div className="divide-y divide-line/60">
             {rows.map(({ i, p }) => {
               const onHand = stockEdits[scope + '|' + i.id]?.onHand ?? p.onHand
@@ -399,6 +469,20 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
                       <button onClick={() => goCatalog(i.id)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 h-9 rounded-lg border border-line bg-white text-ink hover:border-brand-300 self-end" title="Price, photo, description, where it is sold">
                         <Pencil size={12} /> Edit item
                       </button>
+                      {/* Off this shelf only — the item stays in the catalog and on every other
+                          shelf. Refused server-side while stock is held for a paid order. */}
+                      {canEdit ? (
+                        <button
+                          onClick={() => {
+                            const k = scope + '|' + i.id
+                            setStockEdits(x => { const n = { ...x }; delete n[k]; return n })
+                            if (p.state !== 'unset') setOffShelf(x => x.indexOf(k) >= 0 ? x : x.concat(k))
+                          }}
+                          className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-line bg-white text-muted hover:text-rose-700 hover:border-rose-300 self-end"
+                          title={'Take off ' + (here?.label || 'this shelf') + ' — the item stays in the catalog'}>
+                          <X size={13} />
+                        </button>
+                      ) : null}
                     </div>
                   </div>
 
