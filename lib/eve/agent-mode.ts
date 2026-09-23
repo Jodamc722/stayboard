@@ -95,7 +95,9 @@ export const ACTIONS: ActionDef[] = [
   { key: 'door_code_release', label: 'Release a door code', what: 'Hand a code to a person. Permanently propose-only; a person set to Direct is their own approver.', def: 2, cap: 2,
     wiredAt: ['lib/eve/core.ts door_code_check'] },
   { key: 'guesty_write', label: 'Write to Guesty', what: 'Reservation notes, custom fields. Permanently propose-only.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts guesty_write'] },
-  { key: 'calendar_block', label: 'Block a calendar', what: 'Soft-block a turnover day (the schedule board + the Breezeway clean move). Permanently propose-only.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts calendar_block'] },
+  // SWITCHED OFF FOR GOOD (Jon, 2026-09-23: "make sure calendar blocks are not possible"). Cap 0: no
+  // setting can raise it, propose_action refuses it, and the executor refuses it even with a yes.
+  { key: 'calendar_block', label: 'Block a calendar', what: 'Switched off: Eve never blocks or unblocks a calendar. A person does it on the Schedule page.', def: 0, cap: 0, wiredAt: ['lib/eve/executors.ts calendar_block (refuses)'] },
   { key: 'recommendation', label: 'Log a recommendation', what: 'Her ledger — graded later, changes nothing until accepted.', def: 1, cap: 1,
     wiredAt: ['lib/eve/core.ts recommend', 'lib/eve/review.ts plans'] },
   { key: 'memory_rule', label: 'Write a memory', what: 'Her own notebook. At 0 she stops learning on her own; Jon can still teach her.', def: 1, cap: 1,
