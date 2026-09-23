@@ -171,7 +171,10 @@ export function houseLine(stored: unknown, pair: CopyPair): string {
 // the team. Half-replacing a list that changed length would read worse than either version.
 // Two marks: the original agenda promised to "score" the listing; the next one counted the team
 // as four, which stopped being true the day the editor grew an "Add someone" button.
-export const AGENDA_RETIRED_MARKS = ['score it, and fix the weak parts', 'The four people who run your unit, what each', 'what each of them owns, and the direct lines', 'Who runs your unit, and their direct lines']
+export const AGENDA_RETIRED_MARKS = ['score it, and fix the weak parts', 'The four people who run your unit, what each', 'what each of them owns, and the direct lines', 'Who runs your unit, and their direct lines',
+  // Retired 2026-09-23: the six-row agenda described a shorter meeting than the deck now runs.
+  // An agenda that does not match the deck behind it is the first thing an owner notices.
+  'Photos, description and amenities, reviewed together.']
 
 /** True when a stored agenda is the retired one and should be replaced wholesale. */
 export function agendaStale(rows: unknown): boolean {
@@ -180,12 +183,19 @@ export function agendaStale(rows: unknown): boolean {
 }
 
 /** The meeting, in order. Lives here so the staleness check and the default share one list. */
+// REWRITTEN 2026-09-23 to match the roadmap the deck now walks: who we are, what we have already
+// run, what we do to the listing, how a stay is run, how the rate is set, what it runs on, then
+// their unit, their year, and the admin. Nine rows for eighteen slides — the agenda groups, it
+// does not index.
 export const AGENDA_ROWS: { k: string; v: string }[] = [
-    { k: 'Your team', v: 'Who runs your unit and how to reach them.' },
-    { k: 'Your listing', v: 'Photos, description and amenities, reviewed together.' },
-    { k: 'Your owner portal', v: 'Your Guesty login: calendar, statements and approvals.' },
-    { k: 'Revenue & strategy', v: 'Pricing approach and your season.' },
-    { k: 'What to expect from us', v: 'What we handle, what we send you, how billing works.' },
+    { k: 'Who we are', v: 'Stay Hospitality, what we run today, and who on our team runs your unit.' },
+    { k: 'What we do to the listing', v: 'The listing, amenities, descriptions, distribution and marketing.' },
+    { k: 'The guest experience', v: 'How a stay is run, booking to review, and the record behind it.' },
+    { k: 'Revenue management', v: 'How your rate gets set, and every lever besides the nightly price.' },
+    { k: 'The technology', v: 'The four platforms your unit runs on, and what each one is for.' },
+    { k: 'Your listing', v: 'Your unit specifically — what is strong, and what we are changing.' },
+    { k: 'Your year', v: 'South Florida seasonality, and the first 90 days of a new listing.' },
+    { k: 'Money & the portal', v: 'Your owner portal, your monthly statement, owner stays and billing.' },
     { k: 'What happens next', v: 'Open items, owners and dates.' },
 ]
 
@@ -293,6 +303,7 @@ export const CHANNEL_BODY_RETIRED_MARKS = [
   'Being on thirty is what turns a slow Tuesday',        // the long template body
   'Your calendar is one calendar',                       // the 2026-09-18 body, trimmed same day
   'which is why a unit can be priced for occupancy',     // trimmed again, same day
+  'reconciled in one place: priced for occupancy',       // the 40+ body, retired 2026-09-23
 ]
 
 export const STATEMENT_ALSO_RETIRED_MARKS = [
@@ -333,12 +344,20 @@ export function statementAlsoRowsStale(rows: unknown): boolean {
 // Matched on a phrase rather than the whole paragraph: the stored text is the evaluated string,
 // newlines and all, and pinning a repair to 300 characters of prose means it stops working the
 // first time someone fixes a comma.
-export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'not a marketplace of contractors we hope shows up', 'our own people, on our own payroll', 'guest care are in-house']
+export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'not a marketplace of contractors we hope shows up', 'our own people, on our own payroll',
+  // The 2026-09-18 body, retired 2026-09-23 when the slide stopped describing functions and
+  // started making the argument. Matched on its opening clause: 'guest care are in-house' also
+  // appears in the NEW body, so the old mark would have retired the replacement on sight.
+  'manages short-term rentals in Miami, Broward and West Palm Beach',
+  'One team, one system, one monthly statement.']
 export const OVERVIEW_BODY =
   'Stay Hospitality manages short-term rentals in Miami, Broward and West Palm Beach: listing, pricing, guest communication, turnovers and maintenance.\n\n' +
   'One team, one system, one monthly statement.'
 
-export const COMPANY_STATS_RETIRED_MARK = 'Miami & Broward'
+// '400+' retired 2026-09-23: stay-hospitality.com says 140+ properties and two hotels, and a deck
+// that disagrees with the website an owner is about to open costs more trust than the bigger
+// number buys.
+export const COMPANY_STATS_RETIRED_MARK = ['Miami & Broward', '400+']
 export const COMPANY_STATS: { k: string; v: string }[] = [
   { k: 'Markets', v: 'Miami, Broward & West Palm Beach' },
   { k: 'Units managed', v: '400+' },
@@ -452,3 +471,202 @@ export const AI_NOTE: CopyPair = {
   retired: [],
   current: 'What it buys you is speed and consistency: faster answers, problems caught earlier, and a report you can check. Judgement calls — pricing your unit, spending your money, what to tell you — stay with the people you met on slide three.',
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE PITCH (Jon, 2026-09-23: "I want to improve the onboarding deck. This needs to make us sound
+// like we are the best company ever … a world-class, robust pitch about Stay Hospitality and what
+// we're going to do to help make their listing pop.")
+//
+// EVERY CLAIM BELOW IS ONE AN OWNER CAN CHECK. That is the whole discipline of this block. An
+// owner who reads this deck will open stay-hospitality.com in the next tab, and any number that
+// disagrees with the one on the website costs more trust than the bigger number buys. So the
+// counts here are the site's own — 140+ properties, two hotels, the named buildings — and where we
+// do not have a figure we can stand behind, the slide makes an argument instead of quoting one.
+//
+// Nothing here says how long we have been in business, because the website does not say either and
+// a founding year is exactly the sentence an owner repeats back. Give me the year and it goes in.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── ABOUT US ────────────────────────────────────────────────────────────────
+// The old body was accurate and flat: a list of functions. An owner deciding who to hand a
+// $700,000 asset to is not buying a list of functions, they are buying the answer to "who actually
+// shows up". So the paragraph leads with the thing almost no competitor in this market can say —
+// we run whole hotels, not just scattered condos — and closes on the operational claim that
+// matters most, which is that the people doing the work are ours.
+export const OVERVIEW_BODY_2 =
+  'Stay Hospitality is a lifestyle hospitality brand managing 140+ properties and two hotels across Miami, Fort Lauderdale, Pompano and Palm Beach.\n\n' +
+  'We run entire buildings — The Elser, Arya, The Garden, Salato, 17West, Capri, Amrit — which means front desks, HOA boards, city compliance and linen at hotel scale are ordinary days here, not special projects. Your unit gets that same operation, and the same people: housekeeping, maintenance and guest care are in-house, on our payroll, not a marketplace of contractors we hope shows up.'
+
+export const COMPANY_STATS_2: { k: string; v: string }[] = [
+  { k: 'Properties managed', v: '140+' },
+  { k: 'Hotels operated', v: 'Two' },
+  { k: 'Markets', v: 'Miami · Fort Lauderdale · Pompano · Palm Beach' },
+  { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
+]
+
+// ── EXPERIENCE ──────────────────────────────────────────────────────────────
+// The slide that answers "have you done this before". It is a wall of names on purpose: an owner
+// recognises two or three of these buildings from driving past them, and recognition does more
+// than a paragraph. Scrollable, because the list is the argument and trimming it to fit would be
+// trimming the argument.
+export const EXPERIENCE_HEADLINE = 'What we already run'
+export const EXPERIENCE_SUBTITLE = 'Not a portfolio of units. A portfolio of buildings.'
+export const EXPERIENCE_BODY =
+  'Most managers in this market started with one condo and added more. We run hotels and full residence buildings alongside individual homes, which changes what we are able to do for a single unit.\n\n' +
+  'It means we already hold the vendor relationships, the linen contracts, the after-hours coverage and the city and HOA relationships that a one-unit operator has to build from nothing. Your unit inherits all of it on day one.'
+
+export const EXPERIENCE_ITEMS: { k: string; v: string }[] = [
+  { k: 'The Elser Hotel & Residences', v: 'Downtown Miami · hotel & residences' },
+  { k: 'Arya Hotel & Suites', v: 'Miami · hotel' },
+  { k: 'The Garden Hotel & Resort', v: 'Fort Lauderdale · resort' },
+  { k: 'The Monroe Hotel Miami', v: 'Miami · coming soon' },
+  { k: '17West', v: 'Fort Lauderdale · residences' },
+  { k: 'Salato Residences', v: 'Pompano Beach · residences' },
+  { k: 'Capri', v: 'Palm Beach County · residences' },
+  { k: 'Amrit Luxury Condo Rentals', v: 'Palm Beach · luxury' },
+  { k: 'Eden Escapes', v: 'Broward · homes & villas' },
+]
+
+export const EXPERIENCE_PROOF: { k: string; v: string }[] = [
+  { k: 'One operator, end to end', v: 'Listing, pricing, guest communication, turnovers and maintenance are one team and one system — so nothing falls in the gap between two vendors blaming each other.' },
+  { k: 'Hotel-grade standards on a single unit', v: 'The checklist that cleans a hotel floor is the checklist that cleans your unit. Same standard, same inspection, same photographic record.' },
+  { k: 'Coverage that does not sleep', v: 'A guest locked out at 2am reaches a person, not a voicemail. That is the difference between a five-star review and a one-star one, and it is decided in about four minutes.' },
+]
+
+// ── THE GUEST EXPERIENCE ────────────────────────────────────────────────────
+// Jon, 2026-09-23: "a slide about the guest experience and what we do to make sure that every
+// guest is satisfied with their stay, from welcome calls to pre-arrival inspections to departure
+// cleans, at a high level. My standard checklist using Breezeway technology."
+//
+// Written as a sequence rather than a list of services, because the owner's real question is
+// "what happens to my unit between one guest leaving and the next one arriving", and a sequence
+// answers it. Every stage is something we actually do and can show them the record of.
+export const GUEST_HEADLINE = 'How a stay is run'
+export const GUEST_SUBTITLE = 'Six touch points between the booking and the review.'
+export const GUEST_BODY =
+  'A five-star review is not luck and it is not charm. It is a sequence that happens the same way every time, logged as it happens, so that when something does go wrong we already know it before the guest has to tell us twice.'
+
+export const GUEST_STAGES: { k: string; v: string }[] = [
+  { k: 'The booking', v: 'Confirmed within minutes, with the house rules, the parking and the building’s quirks sent before the guest has a chance to wonder about any of them.' },
+  { k: 'The welcome call', v: 'We call every arriving guest before they travel. It verifies who is coming, catches the special occasion worth acknowledging, and surfaces the problem that would otherwise turn up in a review.' },
+  { k: 'The pre-arrival inspection', v: 'Somebody stands in the unit before the guest does. Lights, water, AC, wifi, supplies, the smell of the place — checked against a standard list and photographed, not remembered.' },
+  { k: 'Arrival', v: 'Door codes and directions land ahead of check-in, and the first hour is watched. A guest who cannot get in at 11pm is our emergency, not theirs.' },
+  { k: 'During the stay', v: 'Messages are answered around the clock. Anything the guest reports becomes a tracked job with a name on it and a clock running, and we chase it rather than the guest chasing us.' },
+  { k: 'The departure clean', v: 'A full turnover against the standard checklist, inspected and photographed before the unit is released back to the calendar. Nothing goes live on a promise.' },
+]
+
+export const GUEST_BREEZEWAY =
+  'All of it runs on Breezeway, the operations platform hotels use. Every clean, inspection and repair is a task with a checklist, an assignee, a timestamp and photographs — so "the unit was ready" is a record we can show you, not a claim we make.'
+
+// ── REVENUE MANAGEMENT ──────────────────────────────────────────────────────
+// Jon, 2026-09-23: "Talk about our revenue management, partnering with Pacer."
+//
+// Pacer (pacerrev.com) is a MANAGED revenue-management service, not a pricing tool — their own
+// line is that they are "the operator that runs your pricing tool". That distinction is the whole
+// slide, because every competitor this owner talks to will say "we use dynamic pricing", meaning
+// they switched a tool on and walked away.
+//
+// DELIBERATELY NOT QUOTED: Pacer publishes pooled client results (+21% first-year RevPAR and so
+// on). Those are their numbers across their whole book, not ours on this owner's unit, and a
+// borrowed statistic on an owner slide is a promise we did not make and cannot keep. The slide
+// argues the method instead. Put our OWN figures in the editor when we have them.
+export const REVENUE_HEADLINE = 'How your rate gets set'
+export const REVENUE_SUBTITLE = 'A dedicated revenue manager, not a switch somebody flipped once.'
+export const REVENUE_BODY =
+  'Almost every manager you speak to will tell you they use dynamic pricing. What they mean is that they turned a tool on. A tool with nobody operating it prices your unit like the average of its neighbours, forever.\n\n' +
+  'We partner with Pacer, a revenue-management firm that does this and only this for vacation rentals and boutique hotels. Your unit has a named revenue manager who works the full picture every week — not just the nightly rate.'
+
+export const REVENUE_LEVERS: { k: string; v: string }[] = [
+  { k: 'Nightly rate', v: 'Moved against live demand, comp-set pricing and what is actually booking in your building — not a fixed percentage off a guess.' },
+  { k: 'Minimum stay', v: 'The lever most owners never touch, and often the one that costs them the most. A three-night minimum on a Tuesday in August is an empty Tuesday in August.' },
+  { k: 'Length-of-stay pricing', v: 'Weekly and monthly rates set so a long booking is worth taking, and a gap night nobody will book is priced to be filled.' },
+  { k: 'Fees and promotions', v: 'Cleaning fee, extra-guest fee and channel promotions tuned together, because a guest compares the total, not the headline.' },
+  { k: 'Distribution', v: 'Which channels carry which dates, and where a slow window gets pushed harder.' },
+  { k: 'The calendar ahead', v: 'Season, events and pickup pace watched months out, so a soft March is found in December while there is still time to fix it.' },
+]
+
+export const REVENUE_NOTE =
+  'You see the result on the owner portal and in the monthly statement, and we talk through the reasoning on your owner report. If a rate decision does not make sense to you, ask — there is a person to ask.'
+
+// ── WE UNDERSTAND EVERY PART OF THE PROPERTY ────────────────────────────────
+// Jon, 2026-09-23: "We need to let them know that we understand each aspect of the property: the
+// listing, the amenities, the descriptions, the distribution, the marketing, improving ramp."
+//
+// This is the slide that separates us from a manager who takes the owner's existing listing,
+// changes the payout account and calls it onboarding. Each row names a thing we DO to the
+// listing, in the order we do it, so the owner can picture the work rather than trust a promise.
+export const CRAFT_HEADLINE = 'What we do to the listing itself'
+export const CRAFT_SUBTITLE = 'Before we talk about rate, we fix what the rate is being charged for.'
+export const CRAFT_BODY =
+  'A listing is a product. Most underperforming units are not priced wrong — they are presented wrong, and then priced down to compensate. We work the product first, because every dollar of rate you can hold afterwards depends on it.'
+
+export const CRAFT_ROWS: { k: string; v: string }[] = [
+  { k: 'The listing', v: 'Rebuilt rather than inherited: title, photo order, hero shot and the first three images a guest actually sees before they decide. Ranking rewards the listings guests stop scrolling on, so that is what we build.' },
+  { k: 'The amenities', v: 'Audited line by line against what the channel lets you filter on. An amenity you have but never listed is a search you silently lost — and the cheap ones to add are usually the ones guests filter by.' },
+  { k: 'The descriptions', v: 'Written for the guest who is deciding between you and three others in the same building. Specific about the space, honest about the trade-offs, and answering the questions that otherwise arrive as messages at 9pm.' },
+  { k: 'The distribution', v: 'Published across 40+ channels from one calendar, so visibility is not limited to the one site you would have listed on yourself.' },
+  { k: 'The marketing', v: 'Channel promotions, new-listing placement, seasonal pushes and the guest-facing guidebook that turns a good stay into a five-star review.' },
+  { k: 'The ramp', v: 'A deliberate 90-day plan to build the review count and search position a new listing does not start with — the next slide is exactly how.' },
+]
+
+// ── HOW WE SHORTEN THE RAMP ─────────────────────────────────────────────────
+// Jon, 2026-09-23: "What steps we take to improve ramp, not just talk about ramp, but how we
+// improve ramp to drive occupancy and revenue."
+//
+// The ramp slide has always been expectation-setting: here is the curve, do not read month one as
+// a failure. Fair, and completely passive. This is the other half — the work that bends the curve
+// — and it has to sit next to the curve or the curve reads as an excuse.
+export const RAMP_ACTIONS_HEADLINE = 'How we shorten it'
+export const RAMP_ACTIONS_SUBTITLE = 'The curve is normal. Sitting still through it is not.'
+export const RAMP_ACTIONS: { k: string; v: string }[] = [
+  { k: 'Launch into the promotion window', v: 'Channels give a new listing a visibility boost and a promotional slot exactly once. We launch into it deliberately, with the listing already finished, rather than burning it on a half-built page.' },
+  { k: 'Widen the net first', v: 'Minimum stays opened up and the booking window extended at launch, because the fastest route to a review is a booking, and a three-night minimum on a new listing turns away the one-night guest who would have left the first one.' },
+  { k: 'Every channel from day one', v: 'A new listing on one site ramps at the speed of one site’s audience. On 40+, the first bookings arrive from wherever they happen to arrive.' },
+  { k: 'Chase the first reviews', v: 'The first five reviews move placement more than the next fifty. Welcome call, mid-stay check, and a review request that actually gets sent — every stay, without exception.' },
+  { k: 'Protect the score while it is fragile', v: 'One bad review out of four is a quarter of your reputation. Early stays get the closest operational attention we give, because that is when a single miss costs the most.' },
+  { k: 'Raise rate as standing is earned', v: 'Rate follows position up. As reviews and ranking build, the price moves with them rather than staying where it launched — reviewed weekly, not left alone.' },
+]
+export const RAMP_ACTIONS_NOTE =
+  'None of this trades revenue for reviews. Every night is still priced to the best rate the market will pay that day; the reviews come from filling the nights that would otherwise have gone empty.'
+
+// ── THE TECHNOLOGY STACK ────────────────────────────────────────────────────
+// Jon, 2026-09-23: "create and mention the different tech stacks we use from Guesty to PriceLabs
+// to Breezeway to Lighthouse … this app, the web app, Slack, and email communication to improve
+// the guest experience and to help manage your property and drive more revenue" — "a highlight of
+// the tech that we use, and use the tech logos, in the deck."
+//
+// NOTE THIS IS NOT THE `tech` SECTION. That one is the hardware IN the unit — smart lock, wifi,
+// thermostat, noise monitor. This is the software behind the operation. Two different slides, and
+// conflating them would have buried the in-unit list an owner also wants.
+//
+// ON THE LOGOS: the channels wall uses Simple Icons glyphs, which exist for Airbnb, Expedia and
+// the rest. No such glyph exists for Guesty, PriceLabs or Breezeway, and Lighthouse is ours. Five
+// marks pulled from five different vendor press kits at five different weights would read as a
+// sticker sheet, not a stack — so each tool carries a monogram tile drawn in one ink at one size,
+// which is the same design answer the channels wall reached. Swap in real artwork any time we hold
+// the files; the layout takes them without changing.
+export const STACK_HEADLINE = 'The system behind your unit'
+export const STACK_SUBTITLE = 'Four platforms, one operation.'
+export const STACK_BODY =
+  'Most of what goes wrong in this business goes wrong in the gaps — between the booking system and the cleaner, between the cleaner and the owner, between a guest reporting something and anyone hearing about it. We closed those gaps by running one connected stack instead of four disconnected tools.'
+
+export type StackTool = { mono: string; name: string; role: string; v: string }
+
+export const STACK_TOOLS: StackTool[] = [
+  { mono: 'G', name: 'Guesty', role: 'The booking engine',
+    v: 'Every channel, every reservation and every calendar in one place, and the system your owner portal and monthly statement are generated from. One source of truth for what is booked and what you are owed.' },
+  { mono: 'PL', name: 'PriceLabs', role: 'The pricing engine',
+    v: 'Live market data, comp-set rates and demand signals feeding a nightly price for every date on your calendar — the tool our revenue managers operate rather than leave running on defaults.' },
+  { mono: 'B', name: 'Breezeway', role: 'The operations platform',
+    v: 'The platform hotels use to run housekeeping and maintenance. Every clean, inspection and repair is a task with a checklist, an assignee, a timestamp and photographs — so readiness is a record, not a claim.' },
+  { mono: 'L', name: 'Lighthouse', role: 'Our own software',
+    v: 'Built in-house, on top of the others. It watches the day for the things a person would miss: an unassigned clean, a guest whose message went unanswered, a rate that drifted, a statement that does not reconcile. Nobody else in this market has it, because nobody else built it.' },
+]
+
+export const STACK_CHANNELS: { k: string; v: string }[] = [
+  { k: 'Slack', v: 'The whole team — housekeeping, maintenance, guest care, management — in one room, in real time, in two languages. A problem raised at your unit reaches whoever can fix it in seconds, not through a chain of phone calls.' },
+  { k: 'Email & messaging', v: 'Guest messages across every channel land in one inbox and are answered around the clock. Your monthly statement, owner report and anything needing your approval come to you the same way — written, timestamped, and yours to keep.' },
+]
+
+export const STACK_NOTE =
+  'You do not have to learn any of it. It exists so that the answer to "what is happening at my unit right now" is always a screen somebody can open, rather than a question somebody has to go and ask.'

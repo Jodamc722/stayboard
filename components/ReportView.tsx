@@ -20,6 +20,13 @@ import {
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
   houseBody, OVERVIEW_BODY, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS, COMPANY_STATS_RETIRED_MARK,
+  OVERVIEW_BODY_2, COMPANY_STATS_2,
+  EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE,
+  CRAFT_BODY, CRAFT_ROWS, CRAFT_HEADLINE, CRAFT_SUBTITLE,
+  GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY, GUEST_HEADLINE, GUEST_SUBTITLE,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE,
+  RAMP_ACTIONS, RAMP_ACTIONS_NOTE, RAMP_ACTIONS_HEADLINE, RAMP_ACTIONS_SUBTITLE,
+  STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
@@ -1078,6 +1085,24 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 // ---------- main ----------
+// ── THE PITCH SECTIONS, AS A DECK THAT PREDATES THEM WOULD NEED THEM ────────
+// Jon, 2026-09-23: the onboarding deck became a roadmap — who we are, what we have run, what we
+// do to the listing, how a stay is run, how the rate is set, what it all runs on, and how we
+// shorten the ramp. Six new sections.
+//
+// A deck generated before today has none of these keys, so the slides would render as a headline
+// over nothing. These defaults seed a MISSING section only; a section somebody has edited is
+// never touched, here or anywhere else in the repair pass.
+const PITCH_DEFAULTS: Record<string, Any> = {
+  experience: { headline: EXPERIENCE_HEADLINE, subtitle: EXPERIENCE_SUBTITLE, body: EXPERIENCE_BODY, items: EXPERIENCE_ITEMS, proof: EXPERIENCE_PROOF, photo: null },
+  craft: { headline: CRAFT_HEADLINE, subtitle: CRAFT_SUBTITLE, body: CRAFT_BODY, rows: CRAFT_ROWS },
+  guestcare: { headline: GUEST_HEADLINE, subtitle: GUEST_SUBTITLE, body: GUEST_BODY, stages: GUEST_STAGES, note: GUEST_BREEZEWAY },
+  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE },
+  rampsteps: { headline: RAMP_ACTIONS_HEADLINE, subtitle: RAMP_ACTIONS_SUBTITLE, rows: RAMP_ACTIONS, note: RAMP_ACTIONS_NOTE },
+  stack: { headline: STACK_HEADLINE, subtitle: STACK_SUBTITLE, body: STACK_BODY, tools: STACK_TOOLS, rows: STACK_CHANNELS, note: STACK_NOTE },
+}
+const PITCH_SEEDS: string[] = Object.keys(PITCH_DEFAULTS)
+
 export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, recs, delta }: { initial: Any; canEdit: boolean; isTeam?: boolean; gallery?: string[]; listingTable?: Any; recs?: Any; delta?: Any }) {
   const [c, setC] = useState<Any>(initial.content || {})
   const [edit, setEdit] = useState(false)
@@ -1396,8 +1421,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       houseRows<Any>(g('money').rules, MONEY_RULES_RETIRED_MARK, MONEY_RULES as Any[]) !== g('money').rules ||
       houseRows<Any>(g('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]) !== g('guesty').items ||
       housePortalUrl(g('guesty').portalUrl) !== (g('guesty').portalUrl || '') ||
-      houseBody(g('overview').body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY) !== (g('overview').body || '') ||
-      houseRows<Any>(g('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS as Any[]) !== g('overview').stats
+      houseBody(g('overview').body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY_2) !== (g('overview').body || '') ||
+      houseRows<Any>(g('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS_2 as Any[]) !== g('overview').stats ||
+      // THE PITCH SLIDES (2026-09-23). A deck generated before today has no `experience`,
+      // `craft`, `guestcare`, `revenue`, `rampsteps` or `stack` key at all, so those slides would
+      // render as a headline over nothing. Seeded here rather than only in the generator, so an
+      // owner meeting scheduled off an existing draft gets the same deck as one built this
+      // afternoon. Only ever fills a MISSING section — an edited one is never touched.
+      PITCH_SEEDS.some(k => !((c as Any)[k] && Object.keys((c as Any)[k]).length))
     if (!stale) return
     mutate(d => {
       const hero = d.hero || (d.hero = {})
@@ -1412,6 +1443,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       if (statementHighlightsStale(st.highlights)) st.highlights = JSON.parse(JSON.stringify(STATEMENT_HIGHLIGHTS))
       const tm = d.team || (d.team = {})
       tm.subtitle = houseTeamSubtitle(tm.subtitle, ((tm.people || []) as Any[]).length)
+      for (const k of PITCH_SEEDS) {
+        if (!d[k] || !Object.keys(d[k]).length) d[k] = JSON.parse(JSON.stringify(PITCH_DEFAULTS[k]))
+      }
       const rp = d.ramp || (d.ramp = {})
       rp.headline = houseLine(rp.headline, RAMP_HEADLINE)
       rp.subtitle = houseLine(rp.subtitle, RAMP_SUBTITLE)
@@ -1437,8 +1471,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       gy.items = houseRows<Any>(gy.items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[])
       gy.portalUrl = housePortalUrl(gy.portalUrl)
       const ov = d.overview || (d.overview = {})
-      ov.body = houseBody(ov.body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY)
-      ov.stats = houseRows<Any>(ov.stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS as Any[])
+      ov.body = houseBody(ov.body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY_2)
+      ov.stats = houseRows<Any>(ov.stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS_2 as Any[])
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit])
@@ -1962,8 +1996,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim() || String(cs.kind || '') === 'photos' || String(cs.kind || '') === 'notes'))
   // JON'S EIGHT, PLUS ANY EXTRA SWITCHED BACK ON (see the onboarding block below). Present mode
   // counts slides off this, so a deck with the extras off says "6 of 8" and not "6 of 17".
-  const onboardingSectionKeys = ['welcome', 'agenda', 'team', 'overview', 'listings', 'guesty', 'statement', 'notes',
-    'unit', 'strategy', 'ramp', 'season', 'ai', 'tech', 'money', 'comms', 'checklist', 'nextup']
+  const onboardingSectionKeys = ['welcome', 'agenda', 'team', 'overview', 'experience', 'craft', 'guestcare',
+    'revenue', 'stack', 'listings', 'guesty', 'statement', 'notes',
+    'unit', 'strategy', 'ramp', 'rampsteps', 'season', 'ai', 'tech', 'money', 'comms', 'checklist', 'nextup']
   const onboardingListingSlides = isOnboarding && !isHidden('listings')
     ? (Array.isArray((c.listings || {}).items) ? (c.listings as Any).items.length : 0)
     : 0
@@ -2908,10 +2943,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             { k: 'agenda', label: 'Agenda' },
             { k: 'team', label: 'Your team' },
             { k: 'overview', label: 'About Stay Hospitality' },
+            { k: 'experience', label: 'What we already run' },
+            { k: 'craft', label: 'The listing' },
             { k: 'channels', label: 'Where it sells' },
+            { k: 'guestcare', label: 'The guest experience' },
+            { k: 'revenue', label: 'Revenue management' },
+            { k: 'stack', label: 'The tech stack' },
             { k: 'listings', label: 'Your listing' },
             { k: 'season', label: 'The season' },
             { k: 'ramp', label: 'The first 90 days' },
+            { k: 'rampsteps', label: 'How we shorten it' },
             { k: 'guesty', label: 'Owner portal' },
             { k: 'statement', label: 'Owner statements' },
             { k: 'notes', label: 'Other notes' },
@@ -3317,7 +3358,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <div className="flex-1 min-h-0 onb-scroll">
                     <Title k="overview" dark sub={false} narrow />
                     {(() => {
-                      const full = houseBody(sec('overview').body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY)
+                      const full = houseBody(sec('overview').body, OVERVIEW_BODY_RETIRED_MARK, OVERVIEW_BODY_2)
                       const cut = full.indexOf('\n\n')
                       const lead = cut > 0 ? full.slice(0, cut) : full
                       if (edit) {
@@ -3336,7 +3377,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       return <p style={{ marginTop: 22, fontSize: 19, lineHeight: 1.6, color: D.body, maxWidth: '42ch' }}>{lead}</p>
                     })()}
                     <div style={{ marginTop: 34, paddingTop: 22, borderTop: '1px solid ' + D.rule, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '20px 34px' }}>
-                      {houseRows<Any>(sec('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS as Any[]).slice(0, 4).map((f: Any, i: number) => (
+                      {houseRows<Any>(sec('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS_2 as Any[]).slice(0, 4).map((f: Any, i: number) => (
                         <div key={i}>
                           <p style={{ fontSize: 21, fontWeight: 600, color: D.ink, letterSpacing: '-0.015em', lineHeight: 1.25 }}>
                             <Ed v={f.v || ''} set={v => patch('overview.stats.' + i + '.v', v)} edit={edit} multiline />
@@ -3350,6 +3391,83 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                   <Foot label="About Stay Hospitality" dark />
                 </div>
+              </div>
+            </Slide>
+          ) })
+
+          // ── 4b · WHAT WE ALREADY RUN — the proof slide ─────────────────────
+          // Jon, 2026-09-23: "Talk about our experience and make it sound amazing. If it needs to
+          // be scrollable, that's fine."
+          //
+          // A wall of buildings, because recognition argues better than a paragraph: an owner in
+          // this market has driven past three of these. The list is the evidence, so it scrolls
+          // rather than getting trimmed to fit — trimming it would be trimming the argument.
+          if (!hid('experience')) slides.push({ key: 'experience', ai: true, node: (
+            <Slide nav="What we run" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Title k="experience" />
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 24 }}>
+                  <p style={{ fontSize: 16, lineHeight: 1.65, color: t.body, maxWidth: '64ch', whiteSpace: 'pre-line' }}>
+                    <Ed v={sec('experience').body || ''} set={v => patch('experience.body', v)} edit={edit} multiline />
+                  </p>
+                  <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '14px 20px' }}>
+                    {(sec('experience').items || []).map((f: Any, i: number) => (
+                      <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 10 }}>
+                        <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.012em', lineHeight: 1.3 }}>
+                          <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ fontSize: 12, color: t.muted, marginTop: 3 }}>
+                          <Ed v={f.v || ''} set={v => patch('experience.items.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid ' + t.cardBorder, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {(sec('experience').proof || []).map((f: Any, i: number) => (
+                      <div key={i} className="flex" style={{ gap: 20 }}>
+                        <p style={{ flex: '0 0 210px', fontSize: 13.5, fontWeight: 600, color: t.ink, lineHeight: 1.35 }}>
+                          <Ed v={f.k || ''} set={v => patch('experience.proof.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ flex: 1, fontSize: 14, lineHeight: 1.6, color: t.body }}>
+                          <Ed v={f.v || ''} set={v => patch('experience.proof.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <Foot label="What we already run" />
+              </div>
+            </Slide>
+          ) })
+
+          // ── 4c · WHAT WE DO TO THE LISTING ─────────────────────────────────
+          // Jon, 2026-09-23: "let them know that we understand each aspect of the property: the
+          // listing, the amenities, the descriptions, the distribution, the marketing, improving
+          // ramp." Six numbered rows, in the order the work actually happens, so the owner can
+          // picture it rather than take it on trust.
+          if (!hid('craft')) slides.push({ key: 'craft', ai: true, node: (
+            <Slide nav="The listing" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Title k="craft" />
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 22 }}>
+                  <p style={{ fontSize: 16, lineHeight: 1.65, color: t.body, maxWidth: '64ch' }}>
+                    <Ed v={sec('craft').body || ''} set={v => patch('craft.body', v)} edit={edit} multiline />
+                  </p>
+                  <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    {(sec('craft').rows || []).map((f: Any, i: number) => (
+                      <div key={i} className="flex" style={{ gap: 18, borderTop: '1px solid ' + t.cardBorder, paddingTop: 12 }}>
+                        <span style={{ flex: '0 0 26px', fontSize: 12, fontWeight: 700, color: t.accent, paddingTop: 2 }}>{String(i + 1).padStart(2, '0')}</span>
+                        <p style={{ flex: '0 0 176px', fontSize: 14.5, fontWeight: 600, color: t.ink, lineHeight: 1.35 }}>
+                          <Ed v={f.k || ''} set={v => patch('craft.rows.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ flex: 1, fontSize: 14, lineHeight: 1.6, color: t.body }}>
+                          <Ed v={f.v || ''} set={v => patch('craft.rows.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <Foot label="The listing" />
               </div>
             </Slide>
           ) })
@@ -3410,6 +3528,141 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 </div>
                 <Foot label="Where it sells" dark />
+              </div>
+            </Slide>
+          ) })
+
+          // ── 5b · HOW A STAY IS RUN — the guest journey ─────────────────────
+          // Jon, 2026-09-23: "a slide about the guest experience and what we do to make sure that
+          // every guest is satisfied with their stay, from welcome calls to pre-arrival
+          // inspections to departure cleans, at a high level. My standard checklist using
+          // Breezeway technology."
+          //
+          // A sequence, not a service list, because the owner's real question is what happens to
+          // their unit between one guest leaving and the next arriving. The Breezeway line is the
+          // footer of the slide rather than a row in it: it is the evidence under all six stages.
+          if (!hid('guestcare')) slides.push({ key: 'guestcare', ai: true, node: (
+            <Slide nav="The guest experience" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Title k="guestcare" />
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 22 }}>
+                  <p style={{ fontSize: 16, lineHeight: 1.65, color: t.body, maxWidth: '64ch' }}>
+                    <Ed v={sec('guestcare').body || ''} set={v => patch('guestcare.body', v)} edit={edit} multiline />
+                  </p>
+                  <div style={{ marginTop: 24, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '18px 30px' }}>
+                    {(sec('guestcare').stages || []).map((f: Any, i: number) => (
+                      <div key={i} style={{ borderLeft: '2px solid ' + t.accent, paddingLeft: 14 }}>
+                        <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', color: t.accent, textTransform: 'uppercase' }}>Step {i + 1}</p>
+                        <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, marginTop: 4, lineHeight: 1.3 }}>
+                          <Ed v={f.k || ''} set={v => patch('guestcare.stages.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body, marginTop: 5 }}>
+                          <Ed v={f.v || ''} set={v => patch('guestcare.stages.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ marginTop: 26, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder, fontSize: 14, lineHeight: 1.6, color: t.body, maxWidth: '76ch' }}>
+                    <Ed v={sec('guestcare').note || ''} set={v => patch('guestcare.note', v)} edit={edit} multiline />
+                  </p>
+                </div>
+                <Foot label="The guest experience" />
+              </div>
+            </Slide>
+          ) })
+
+          // ── 5c · HOW YOUR RATE GETS SET — revenue management ───────────────
+          // Jon, 2026-09-23: "Talk about our revenue management, partnering with Pacer."
+          //
+          // The levers are the slide. Every competitor says "dynamic pricing" and means they
+          // switched a tool on; six named levers is the difference, and minimum stay in
+          // particular is the one owners have never had explained to them.
+          if (!hid('revenue')) slides.push({ key: 'revenue', ai: true, node: (
+            <Slide nav="Revenue management" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Title k="revenue" />
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 22 }}>
+                  <p style={{ fontSize: 16, lineHeight: 1.65, color: t.body, maxWidth: '66ch', whiteSpace: 'pre-line' }}>
+                    <Ed v={sec('revenue').body || ''} set={v => patch('revenue.body', v)} edit={edit} multiline />
+                  </p>
+                  <div style={{ marginTop: 24, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '16px 30px' }}>
+                    {(sec('revenue').rows || []).map((f: Any, i: number) => (
+                      <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 11 }}>
+                        <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                          <Ed v={f.k || ''} set={v => patch('revenue.rows.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body, marginTop: 4 }}>
+                          <Ed v={f.v || ''} set={v => patch('revenue.rows.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder, fontSize: 14, lineHeight: 1.6, color: t.body, maxWidth: '76ch' }}>
+                    <Ed v={sec('revenue').note || ''} set={v => patch('revenue.note', v)} edit={edit} multiline />
+                  </p>
+                </div>
+                <Foot label="Revenue management" />
+              </div>
+            </Slide>
+          ) })
+
+          // ── 5d · THE STACK — the software behind the operation ─────────────
+          // Jon, 2026-09-23: "create and mention the different tech stacks we use from Guesty to
+          // PriceLabs to Breezeway to Lighthouse … a highlight of the tech that we use, and use
+          // the tech logos, in the deck."
+          //
+          // ON THE MARKS: the channels wall uses Simple Icons glyphs, which exist for Airbnb and
+          // Expedia. None exists for Guesty, PriceLabs or Breezeway, and Lighthouse is ours. Five
+          // logos lifted from five vendor press kits at five different weights is a sticker sheet,
+          // not a stack — so each tool carries a monogram tile in one ink at one size, the same
+          // answer the channels wall reached. Real artwork drops into this layout unchanged.
+          if (!hid('stack')) slides.push({ key: 'stack', ai: true, node: (
+            <Slide nav="The tech stack" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Title k="stack" />
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 22 }}>
+                  <p style={{ fontSize: 16, lineHeight: 1.65, color: t.body, maxWidth: '66ch' }}>
+                    <Ed v={sec('stack').body || ''} set={v => patch('stack.body', v)} edit={edit} multiline />
+                  </p>
+                  <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {(sec('stack').tools || []).map((f: Any, i: number) => (
+                      <div key={i} className="flex" style={{ gap: 16, alignItems: 'flex-start' }}>
+                        <span style={{
+                          flex: '0 0 46px', height: 46, borderRadius: 11, background: t.accent, color: t.card,
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: f.mono && String(f.mono).length > 1 ? 15 : 19, fontWeight: 700, letterSpacing: '-0.02em',
+                        }}>{f.mono || '\u00b7'}</span>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontSize: 15.5, fontWeight: 600, color: t.ink, lineHeight: 1.25 }}>
+                            <Ed v={f.name || ''} set={v => patch('stack.tools.' + i + '.name', v)} edit={edit} />
+                            <span style={{ fontSize: 12, fontWeight: 500, color: t.muted, marginLeft: 9 }}>
+                              <Ed v={f.role || ''} set={v => patch('stack.tools.' + i + '.role', v)} edit={edit} />
+                            </span>
+                          </p>
+                          <p style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body, marginTop: 4 }}>
+                            <Ed v={f.v || ''} set={v => patch('stack.tools.' + i + '.v', v)} edit={edit} multiline />
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 24, paddingTop: 18, borderTop: '1px solid ' + t.cardBorder, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '14px 30px' }}>
+                    {(sec('stack').rows || []).map((f: Any, i: number) => (
+                      <div key={i}>
+                        <p style={{ fontSize: 14, fontWeight: 600, color: t.ink }}>
+                          <Ed v={f.k || ''} set={v => patch('stack.rows.' + i + '.k', v)} edit={edit} />
+                        </p>
+                        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body, marginTop: 3 }}>
+                          <Ed v={f.v || ''} set={v => patch('stack.rows.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ marginTop: 20, fontSize: 13.5, lineHeight: 1.6, color: t.muted, maxWidth: '76ch' }}>
+                    <Ed v={sec('stack').note || ''} set={v => patch('stack.note', v)} edit={edit} multiline />
+                  </p>
+                </div>
+                <Foot label="The tech stack" />
               </div>
             </Slide>
           ) })
@@ -4022,6 +4275,40 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </p>
                 </div>
                 <Foot label="The first 90 days" />
+              </div>
+            </Slide>
+          ) })
+
+          // ── HOW WE SHORTEN IT — the active half of the ramp ────────────────
+          // Jon, 2026-09-23: "What steps we take to improve ramp, not just talk about ramp, but
+          // how we improve ramp to drive occupancy and revenue."
+          //
+          // The curve slide is expectation-setting: this is normal, do not read month one as a
+          // failure. Fair, and entirely passive — on its own it reads as an excuse prepared in
+          // advance. This slide is the work that bends the curve, and it has to sit immediately
+          // after it or the honesty of the first slide costs us the room.
+          if (!hid('rampsteps')) slides.push({ key: 'rampsteps', ai: true, node: (
+            <Slide nav="How we shorten it" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Title k="rampsteps" />
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 22 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '16px 30px' }}>
+                    {(sec('rampsteps').rows || []).map((f: Any, i: number) => (
+                      <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 11 }}>
+                        <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                          <Ed v={f.k || ''} set={v => patch('rampsteps.rows.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body, marginTop: 4 }}>
+                          <Ed v={f.v || ''} set={v => patch('rampsteps.rows.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ marginTop: 24, paddingLeft: 16, borderLeft: '2px solid ' + t.accent, fontSize: 14, lineHeight: 1.6, color: t.body, maxWidth: '76ch' }}>
+                    <Ed v={sec('rampsteps').note || ''} set={v => patch('rampsteps.note', v)} edit={edit} multiline />
+                  </p>
+                </div>
+                <Foot label="How we shorten it" />
               </div>
             </Slide>
           ) })

@@ -29,6 +29,13 @@ import {
   AI_HEADLINE, AI_SUBTITLE, AI_PILLARS, AI_NOTE,
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL, teamSubtitle, WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_NOTE,
   CHANNELS_HEADLINE, SEASON_SUBTITLE, GUESTY_SUBTITLE, STATEMENT_HEADLINE, STATEMENT_SUBTITLE, NOTES_SUBTITLE,
+  OVERVIEW_BODY_2, COMPANY_STATS_2,
+  EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF,
+  CRAFT_BODY, CRAFT_ROWS,
+  GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE,
+  RAMP_ACTIONS, RAMP_ACTIONS_NOTE,
+  STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, type StackTool,
 } from './onboarding-copy'
 import 'server-only'
 import { getSetting } from './app-settings'
@@ -98,6 +105,19 @@ export type OnboardingContent = {
   agenda: Sec<{ headline: string; subtitle: string; items: KV[] }>
   /** 4 — who Stay Hospitality is. The stats live here now, not on the greeting. */
   overview: Sec<{ headline: string; subtitle: string; body: string; stats: KV[] }>
+  // ── THE PITCH (2026-09-23) ────────────────────────────────────────────────
+  /** What we have already run — the wall of buildings, and what running them buys this owner. */
+  experience: Sec<{ headline: string; subtitle: string; body: string; items: KV[]; proof: KV[]; photo: string | null }>
+  /** What we do to the listing itself: listing, amenities, descriptions, distribution, marketing, ramp. */
+  craft: Sec<{ headline: string; subtitle: string; body: string; rows: KV[] }>
+  /** The guest journey, booking to review, and the Breezeway record behind it. */
+  guestcare: Sec<{ headline: string; subtitle: string; body: string; stages: KV[]; note: string }>
+  /** Revenue management and the Pacer partnership — the levers, not just the nightly rate. */
+  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string }>
+  /** The active half of the ramp story: what we DO to shorten it. Sits right after the curve. */
+  rampsteps: Sec<{ headline: string; subtitle: string; rows: KV[]; note: string }>
+  /** The software stack — Guesty, PriceLabs, Breezeway, Lighthouse, plus Slack and email. */
+  stack: Sec<{ headline: string; subtitle: string; body: string; tools: StackTool[]; rows: KV[]; note: string }>
   /**
    * 5 — WHERE THE UNIT ACTUALLY SELLS (Jon, 2026-09-16: "OTAs were on: 30+ OTAs, Airbnb, Vrbo,
    * Booking.com, Expedia, Marriott, Blueground, Expedia and Expedia's partners"). This is the
@@ -239,6 +259,24 @@ export type OnboardingTemplate = {
   portalItems: KV[]
   guestyBody: string
   techRows: KV[]
+  // ── THE PITCH (2026-09-23). Six slides that argue for the company rather than explain it.
+  experienceBody: string
+  experienceItems: KV[]
+  experienceProof: KV[]
+  craftBody: string
+  craftRows: KV[]
+  guestBody: string
+  guestStages: KV[]
+  guestBreezeway: string
+  revenueBody: string
+  revenueLevers: KV[]
+  revenueNote: string
+  rampActions: KV[]
+  rampActionsNote: string
+  stackBody: string
+  stackTools: StackTool[]
+  stackChannels: KV[]
+  stackNote: string
   moneyBody: string
   moneyRules: KV[]
   statementAlso: KV[]
@@ -253,14 +291,14 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   logoUrl: '',
   wordmark: 'STAY HOSPITALITY',
-  companyStats: COMPANY_STATS,
+  companyStats: COMPANY_STATS_2,
 
   // THE GREETING IS NOT A BRIEF. It is two sentences over a large photograph of their own unit,
   // read aloud in about fifteen seconds while everyone finishes joining the call. Everything that
   // used to be crammed in here is now section 4, where it belongs.
   welcomeBody: WELCOME_BODY.current,
 
-  overviewBody: OVERVIEW_BODY,
+  overviewBody: OVERVIEW_BODY_2,
 
   portalUrl: PORTAL_URL,
   portalShots: [],
@@ -376,6 +414,24 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
     { k: 'Guidebook', v: 'A digital guide for the unit \u2014 check-in, Wi-Fi, appliances, local picks. Cuts the "how does this work" messages by more than half.' },
   ],
 
+  experienceBody: EXPERIENCE_BODY,
+  experienceItems: EXPERIENCE_ITEMS,
+  experienceProof: EXPERIENCE_PROOF,
+  craftBody: CRAFT_BODY,
+  craftRows: CRAFT_ROWS,
+  guestBody: GUEST_BODY,
+  guestStages: GUEST_STAGES,
+  guestBreezeway: GUEST_BREEZEWAY,
+  revenueBody: REVENUE_BODY,
+  revenueLevers: REVENUE_LEVERS,
+  revenueNote: REVENUE_NOTE,
+  rampActions: RAMP_ACTIONS,
+  rampActionsNote: RAMP_ACTIONS_NOTE,
+  stackBody: STACK_BODY,
+  stackTools: STACK_TOOLS,
+  stackChannels: STACK_CHANNELS,
+  stackNote: STACK_NOTE,
+
   portalItems: PORTAL_ITEMS,
 
   moneyBody:
@@ -458,6 +514,23 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     // An empty shot list is a real state (no screenshots uploaded yet), so it is kept as saved.
     portalShots: Array.isArray(stored.portalShots) ? stored.portalShots : D.portalShots,
     techRows: arr(stored.techRows, D.techRows),
+    experienceBody: str(stored.experienceBody, D.experienceBody),
+    experienceItems: arr(stored.experienceItems, D.experienceItems),
+    experienceProof: arr(stored.experienceProof, D.experienceProof),
+    craftBody: str(stored.craftBody, D.craftBody),
+    craftRows: arr(stored.craftRows, D.craftRows),
+    guestBody: str(stored.guestBody, D.guestBody),
+    guestStages: arr(stored.guestStages, D.guestStages),
+    guestBreezeway: str(stored.guestBreezeway, D.guestBreezeway),
+    revenueBody: str(stored.revenueBody, D.revenueBody),
+    revenueLevers: arr(stored.revenueLevers, D.revenueLevers),
+    revenueNote: str(stored.revenueNote, D.revenueNote),
+    rampActions: arr(stored.rampActions, D.rampActions),
+    rampActionsNote: str(stored.rampActionsNote, D.rampActionsNote),
+    stackBody: str(stored.stackBody, D.stackBody),
+    stackTools: arr(stored.stackTools, D.stackTools),
+    stackChannels: arr(stored.stackChannels, D.stackChannels),
+    stackNote: str(stored.stackNote, D.stackNote),
     welcomeBody: str(stored.welcomeBody, D.welcomeBody),
     agenda: arr(stored.agenda, D.agenda),
     strategyBody: str(stored.strategyBody, D.strategyBody),
@@ -682,6 +755,51 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       stats: t.companyStats,
       photo: pic(4),
     },
+    // ── THE PITCH (Jon, 2026-09-23). Six slides that argue rather than explain. They sit where
+    // the meeting naturally goes: who we are, what we have already run, what we do to the listing,
+    // how a stay is run, how the rate is set, and what the whole thing runs on.
+    experience: {
+      headline: 'What we already run',
+      subtitle: 'Not a portfolio of units. A portfolio of buildings.',
+      body: t.experienceBody,
+      items: t.experienceItems,
+      proof: t.experienceProof,
+      photo: pic(5),
+    },
+    craft: {
+      headline: 'What we do to the listing itself',
+      subtitle: 'Before we talk about rate, we fix what the rate is being charged for.',
+      body: t.craftBody,
+      rows: t.craftRows,
+    },
+    guestcare: {
+      headline: 'How a stay is run',
+      subtitle: 'Six touch points between the booking and the review.',
+      body: t.guestBody,
+      stages: t.guestStages,
+      note: t.guestBreezeway,
+    },
+    revenue: {
+      headline: 'How your rate gets set',
+      subtitle: 'A dedicated revenue manager, not a switch somebody flipped once.',
+      body: t.revenueBody,
+      rows: t.revenueLevers,
+      note: t.revenueNote,
+    },
+    rampsteps: {
+      headline: 'How we shorten it',
+      subtitle: 'The curve is normal. Sitting still through it is not.',
+      rows: t.rampActions,
+      note: t.rampActionsNote,
+    },
+    stack: {
+      headline: 'The system behind your unit',
+      subtitle: 'Four platforms, one operation.',
+      body: t.stackBody,
+      tools: t.stackTools,
+      rows: t.stackChannels,
+      note: t.stackNote,
+    },
     unit: {
       photo: pic(3),
       headline: 'What we found when we walked it',
@@ -873,12 +991,18 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
 
 /** The eight sections a generated onboarding shows, in render order. */
 export const ONBOARDING_CORE = [
-  'welcome', 'agenda', 'team', 'overview', 'channels', 'listings',
+  // THE ROADMAP (Jon, 2026-09-23: "a full-fledged roadmap from who we are, what we do, the guest
+  // experience, the listing, seasonality, ramp, etc."). The order is the argument: establish who
+  // we are and what we have already run, show the work we do to the product, show how a stay is
+  // actually run, then rate, then their unit, then the calendar year and the ramp, and only then
+  // the admin. A deck that opens on statements is a deck about paperwork.
+  'welcome', 'agenda', 'team', 'overview', 'experience',
+  'craft', 'channels', 'guestcare', 'revenue', 'stack', 'listings',
   // THE REVENUE STORY IS NOT OPTIONAL (Jon, 2026-09-16: "we should also have a revenue slide,
   // not actual numbers but show season pickup… ramp takes time for listing to move up on
   // algorithms, new listing promotion, push for good reviews"). These two carry the only
   // expectation-setting in the deck that stops month one reading as a failure in February.
-  'season', 'ramp',
+  'season', 'ramp', 'rampsteps',
   'guesty', 'statement',
   // CHECKLIST MOVED OUT OF THE HIDDEN SET (Jon, 2026-09-18: "mention ACH and W9 needs to be
   // filled out, log in to Guesty owner portal"). Those three were added to the checklist and the
@@ -896,6 +1020,7 @@ export const ONBOARDING_EXTRA = [
 
 /** Every section key an onboarding report can hide, in render order. */
 export const ONBOARDING_SECTIONS = [
-  'welcome', 'agenda', 'team', 'overview', 'channels', 'listings', 'unit', 'strategy', 'ramp',
+  'welcome', 'agenda', 'team', 'overview', 'experience', 'craft', 'channels', 'guestcare',
+  'revenue', 'stack', 'listings', 'unit', 'strategy', 'ramp', 'rampsteps',
   'season', 'guesty', 'tech', 'money', 'statement', 'comms', 'checklist', 'nextup', 'notes',
 ] as const

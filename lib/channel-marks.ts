@@ -44,7 +44,11 @@ export const CHANNEL_COUNT = '40+'
 // two numbers arguing with each other in front of an owner. The count carries the breadth; the
 // paragraph carries the reason breadth is worth anything, which is that the biggest names on the
 // list are networks rather than single websites.
+// REWRITTEN 2026-09-23 to Jon's framing: "we help distribute your listing across the best sales
+// channels to increase visibility, help with occupancy and put more guests and more profits in
+// your pocket." The old line was mechanically true and sold nothing — it described a calendar. The
+// owner's question is what the breadth BUYS them, so the paragraph now ends on their money.
 export const CHANNEL_BODY =
-  'One calendar, published on 40+ channels and reconciled in one place: priced for occupancy, never double-booked. The largest are networks. Expedia includes Hotels.com, Orbitz, Travelocity and Hotwire; Booking.com includes Priceline, Agoda and Kayak.'
+  'We distribute your listing across the best sales channels in the market — one calendar, published to 40+ of them and reconciled in one place, priced for occupancy and never double-booked. More visibility is more nights booked, and more nights booked is more profit in your pocket. The largest channels are networks in their own right: Expedia carries Hotels.com, Orbitz, Travelocity and Hotwire; Booking.com carries Priceline, Agoda and Kayak.'
 /** Retired defaults. A deck still carrying one of these was never edited on this slide. */
 export const CHANNEL_COUNT_RETIRED = ['30+', '200+']
