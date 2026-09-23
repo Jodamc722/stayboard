@@ -253,6 +253,9 @@ export async function GET(req: NextRequest) {
         for (const k of Object.keys(m)) {
           const v = m[k]
           if (v == null || typeof v === 'object') continue
+          // No payment-state fields (Jon, 2026-09-23): Guesty's balance due / total paid only reflect
+          // payments recorded in Guesty, not channel payouts, so they read as money owed when it is not.
+          if (/^(balanceDue|paymentsDue|totalPaid|isFullyPaid|isPrePaid|isTouchedPayments)$/.test(k)) continue
           flat[k] = v; moneyKeys[k] = true
         }
         const rm = byId[String(r.listing_id)]
@@ -268,15 +271,11 @@ export async function GET(req: NextRequest) {
           first = str(r.gfirst).trim(); last = str(r.glast).trim()
           if (!first && !last) { const parts = str(r.guest_name).trim().split(/\s+/); first = parts.shift() || ''; last = parts.join(' ') }
         }
-        const bal = num(m.balanceDue), stt = str(r.status)
-        const balNote = Math.abs(bal) < 0.01 ? '' : /inquir/i.test(stt) ? 'Inquiry quote, never booked (nothing owed)'
-          : /cancel|declin/i.test(stt) ? 'Cancelled, leftover quote (nothing owed)'
-          : bal < 0 ? 'Overpaid / refund pending' : (m.isNightlyRateInExternalCollection ? 'Channel collects; payment not recorded in Guesty' : 'Open balance on a confirmed stay')
-        return { base: [str(r.id), str(r.confirmation_code), first, last, rm ? rm.room : '', rm ? rm.name : '', channelOf(str(r.source) || str(r.integration)), str(r.source), str(r.integration), str(r.status), ci, co, num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), str(r.created_at).slice(0, 10), str(r.canceledAt).slice(0, 10), guests === 0 ? '' : guests, dup ? 'Yes' : '', balNote], money: flat }
+        return { base: [str(r.id), str(r.confirmation_code), first, last, rm ? rm.room : '', rm ? rm.name : '', channelOf(str(r.source) || str(r.integration)), str(r.source), str(r.integration), str(r.status), ci, co, num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), str(r.created_at).slice(0, 10), str(r.canceledAt).slice(0, 10), guests === 0 ? '' : guests, dup ? 'Yes' : ''], money: flat }
       })
-      const PREFERRED = ['currency', 'fareAccommodation', 'fareAccommodationAdjusted', 'fareAccommodationDiscount', 'fareCleaning', 'totalFees', 'subTotalPrice', 'totalTaxes', 'hostServiceFee', 'hostServiceFeeTax', 'hostServiceFeeIncTax', 'hostPayout', 'netIncome', 'commission', 'totalPrice', 'totalPaid', 'balanceDue']
+      const PREFERRED = ['currency', 'fareAccommodation', 'fareAccommodationAdjusted', 'fareAccommodationDiscount', 'fareCleaning', 'totalFees', 'subTotalPrice', 'totalTaxes', 'hostServiceFee', 'hostServiceFeeTax', 'hostServiceFeeIncTax', 'hostPayout', 'netIncome', 'commission', 'totalPrice']
       const keys = PREFERRED.filter(k => moneyKeys[k]).concat(Object.keys(moneyKeys).filter(k => PREFERRED.indexOf(k) < 0).sort())
-      const header = ['Reservation id', 'Confirmation', 'Guest first name', 'Guest last name', 'Room', 'Guesty listing', 'Channel', 'Source (Guesty)', 'Platform (Guesty)', 'Status', 'Check-in', 'Check-out', 'Nights', 'Booked on', 'Cancelled on', 'Guests', 'Duplicate mirror row', 'Balance due note'].concat(keys.map(k => 'money.' + k))
+      const header = ['Reservation id', 'Confirmation', 'Guest first name', 'Guest last name', 'Room', 'Guesty listing', 'Channel', 'Source (Guesty)', 'Platform (Guesty)', 'Status', 'Check-in', 'Check-out', 'Nights', 'Booked on', 'Cancelled on', 'Guests', 'Duplicate mirror row'].concat(keys.map(k => 'money.' + k))
       rawRows.sort((a, b) => String(a.base[10]).localeCompare(String(b.base[10])) || String(a.base[4]).localeCompare(String(b.base[4]), 'en', { numeric: true }))
       const rows = rawRows.map(x => x.base.concat(keys.map(k => x.money[k] == null ? '' : x.money[k])))
       if (format === 'csv') {
