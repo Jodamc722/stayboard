@@ -395,14 +395,39 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       const cap = Number.isFinite(input.memoryWeightCap) ? Number(input.memoryWeightCap) : 10
       const directive = /\b(always|never|from now on|going forward|do not ever|don'?t ever|stop (?:doing|sending|creating|drafting)|make sure (?:to|you|we|it))\b/i
       const memGate = await agentAllowed('memory_rule')
-      if (!isProbe && memGate.mode !== 'observe' && source !== 'slack' && cap >= 6 && directive.test(lastUser) && lastUser.length >= 25 && lastUser.length <= 600) {
-        const kind = /\b(always|never)\b/i.test(lastUser) ? 'rule' : 'preference'
+      //
+      // A QUESTION IS NOT AN INSTRUCTION, AND A CAPTURE IS NOT SETTLED (Jon, 2026-09-23 review).
+      // "Should we always charge a pet fee?" was being filed as a standing rule. Anything with a
+      // question mark, or opening with who/what/why/how/when/where/can/should/do/does/is/are, is
+      // not captured. What is captured is scoped to the building, unit or channel it names (the
+      // same scopesForText() the prompt uses) instead of always portfolio, stored at weight 5 — a
+      // lead, not a rule — and raised to Jon as a confirmation question. His answer supersedes the
+      // capture (evidence.memory_ids, see answerQuestion in questions.ts).
+      const said = lastUser.trim()
+      const asking = said.includes('?') || /^(who|what|why|how|when|where|can|should|do|does|is|are)\b/i.test(said)
+      if (!isProbe && memGate.mode !== 'observe' && source !== 'slack' && cap >= 6 && !asking && directive.test(said) && said.length >= 25 && said.length <= 600) {
+        const kind = /\b(always|never)\b/i.test(said) ? 'rule' : 'preference'
+        // The most specific single place the sentence names: one unit, else one building, else one
+        // channel. Two buildings (or none) is a portfolio-wide statement.
+        const named = scopesForText(said, ctx.listingMeta).filter(x => x !== 'portfolio')
+        const only = (prefix: string) => { const l = named.filter(x => x.startsWith(prefix)); return l.length === 1 ? l[0] : null }
+        const capScope = only('unit:') || only('building:') || only('channel:') || 'portfolio'
         saveMemory({
-          text: lastUser.trim(), kind, scope: 'portfolio', weight: 6, maxWeight: cap,
+          text: said, kind, scope: capScope, weight: 5, maxWeight: cap,
           // Only Jon's own words are filed as Jon's; a colleague's directive is Eve's inference.
           source: isSuperadmin(ctx.email) ? 'jon' : source === 'telegram' ? 'telegram' : 'eve',
-          why: source === 'telegram' ? 'said on Telegram — auto-captured' : `said in chat by ${ctx.email || 'someone'} — auto-captured`,
-          evidence: chatId ? { chatId } : null, created_by: ctx.email || null,
+          why: source === 'telegram' ? 'said on Telegram — auto-captured, awaiting confirmation' : `said in chat by ${ctx.email || 'someone'} — auto-captured, awaiting confirmation`,
+          evidence: chatId ? { chatId, autoCaptured: true } : { autoCaptured: true }, created_by: ctx.email || null,
+        }).then(async saved => {
+          if (!saved.ok || !saved.id || saved.deduped) return
+          const { askQuestion } = await import('./questions')
+          const where = capScope === 'portfolio' ? 'everywhere' : capScope.replace(/^building:/, 'at ').replace(/^unit:/, 'for unit ').replace(/^channel:/, 'on ')
+          return askQuestion({
+            question: `${ctx.email || 'Someone'} told me in chat: "${said.slice(0, 300)}". Should I treat that as a standing ${kind} ${where}?`,
+            why: `I have noted it at low weight. If you confirm it I will follow it as a rule; if not, I will drop it instead of acting on a passing remark.`,
+            scope: capScope, kind: 'verify', source: 'eve',
+            evidence: { memory_ids: [saved.id], chatId, autoCaptured: true },
+          })
         }).catch(() => {})
       }
     } catch { /* learning is never worth breaking an answer */ }
