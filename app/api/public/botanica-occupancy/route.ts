@@ -44,6 +44,7 @@ function num(v: any): number { const n = Number(v); return Number.isFinite(n) ? 
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
 function dow(iso: string) { return new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }) }
+function r2(n: number) { return Math.round(n * 100) / 100 }
 function isoOk(s: string) { return /^\d{4}-\d{2}-\d{2}$/.test(s) }
 function daysBetween(a: string, b: string) { return Math.round((new Date(b + 'T12:00:00Z').getTime() - new Date(a + 'T12:00:00Z').getTime()) / 86400000) }
 
@@ -119,7 +120,7 @@ export async function GET(req: NextRequest) {
     for (let i = 0; i < 20; i++) {
       const { data, error } = await db
         .from('guesty_reservations')
-        .select('id,listing_id,check_in,check_out,nights,status,source,confirmation_code,created_at,guests:raw->>guestsCount,integration:raw->integration->>platform')
+        .select('id,listing_id,check_in,check_out,nights,status,source,confirmation_code,created_at,guests:raw->>guestsCount,integration:raw->integration->>platform,money:raw->money')
         .in('listing_id', ids)
         .gt('check_out', from)
         .lte('check_in', horizon)
@@ -132,7 +133,7 @@ export async function GET(req: NextRequest) {
     }
 
     const statusCounts: Record<string, number> = {}
-    type Stay = { confirmation: string; reservationId: string; listingId: string; room: string; roomName: string; combo: boolean; channel: string; status: string; checkIn: string; checkOut: string; nights: number; nightsInRange: number; guests: number | null; bookedOn: string }
+    type Stay = { confirmation: string; reservationId: string; listingId: string; room: string; roomName: string; combo: boolean; channel: string; status: string; checkIn: string; checkOut: string; nights: number; nightsInRange: number; guests: number | null; bookedOn: string; accommodation: number; cleaning: number; revenue: number; perNight: number; revenueInRange: number }
     const stays: Stay[] = []
     // The mirror can hold the SAME booking twice under two reservation ids (seen 2026-09-23:
     // 1104 · HMJDFM5BHP · Jul 9-11 twice). One booking, one room, one set of nights — key on
@@ -154,7 +155,16 @@ export async function GET(req: NextRequest) {
       const b = co <= addDays(to, 1) ? co : addDays(to, 1)
       const inRange = b > a ? daysBetween(a, b) : 0
       const src = str(r.source) || str(r.integration)
+      // REVENUE — the SAME money as /api/public/botanica-report (the Margaux report): net
+      // accommodation (fareAccommodationAdjusted, else fareAccommodation) + cleaning fee, spread
+      // evenly across the stay's nights. Botanica's cleaning fee is room revenue by contract.
+      const nightsTotal = Math.max(1, num(r.nights) || daysBetween(ci, co))
+      const m: any = r.money || {}
+      const accommodation = num(m.fareAccommodationAdjusted ?? m.fareAccommodation)
+      const cleaning = num(m.fareCleaning)
+      const revenue = accommodation + cleaning
       stays.push({
+        accommodation: r2(accommodation), cleaning: r2(cleaning), revenue: r2(revenue), perNight: r2(revenue / nightsTotal), revenueInRange: r2((revenue / nightsTotal) * inRange),
         confirmation: str(r.confirmation_code), reservationId: String(r.id), listingId: rm.listingId, room: rm.room, roomName: rm.name, combo: rm.combo,
         channel: channelOf(src), status: st, checkIn: ci, checkOut: co, nights: num(r.nights) || daysBetween(ci, co), nightsInRange: inRange,
         guests: r.guests == null || r.guests === '' ? null : num(r.guests), bookedOn: str(r.created_at).slice(0, 10),
@@ -165,11 +175,12 @@ export async function GET(req: NextRequest) {
     // Night ledger + daily roll-up + grid, all from the same walk.
     const dates: string[] = []
     for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d)
-    type Night = { date: string; dow: string; room: string; roomName: string; channel: string; confirmation: string; checkIn: string; checkOut: string; night: number; of: number; combo: boolean }
+    type Night = { date: string; dow: string; room: string; roomName: string; channel: string; confirmation: string; checkIn: string; checkOut: string; night: number; of: number; combo: boolean; revenue: number; accommodation: number; cleaning: number; stayRevenue: number }
     const nights: Night[] = []
     const grid: Record<string, Record<string, string>> = {}
     const occ: Record<string, number> = {}, arr: Record<string, number> = {}, dep: Record<string, number> = {}
     const chanNights: Record<string, number> = {}
+    const rev: Record<string, number> = {}
     for (const s of stays) {
       if (s.checkIn >= from && s.checkIn <= to) arr[s.checkIn] = (arr[s.checkIn] || 0) + 1
       if (s.checkOut >= from && s.checkOut <= to) dep[s.checkOut] = (dep[s.checkOut] || 0) + 1
@@ -177,7 +188,8 @@ export async function GET(req: NextRequest) {
       for (let d = s.checkIn; d < s.checkOut; d = addDays(d, 1)) {
         k++
         if (d < from || d > to) continue
-        nights.push({ date: d, dow: dow(d), room: s.room, roomName: s.roomName, channel: s.channel, confirmation: s.confirmation, checkIn: s.checkIn, checkOut: s.checkOut, night: k, of: s.nights, combo: s.combo })
+        nights.push({ date: d, dow: dow(d), room: s.room, roomName: s.roomName, channel: s.channel, confirmation: s.confirmation, checkIn: s.checkIn, checkOut: s.checkOut, night: k, of: s.nights, combo: s.combo, revenue: s.perNight, accommodation: r2(s.accommodation / Math.max(1, s.nights)), cleaning: r2(s.cleaning / Math.max(1, s.nights)), stayRevenue: s.revenue })
+        rev[d] = (rev[d] || 0) + s.revenue / Math.max(1, s.nights)
         occ[d] = (occ[d] || 0) + 1
         chanNights[s.channel] = (chanNights[s.channel] || 0) + 1
         const g = grid[s.listingId] || (grid[s.listingId] = {})
@@ -187,7 +199,7 @@ export async function GET(req: NextRequest) {
     nights.sort((a, b) => a.date.localeCompare(b.date) || a.room.localeCompare(b.room, 'en', { numeric: true }))
     const daily = dates.map(d => {
       const live = unitsOn(d), o = occ[d] || 0, a = arr[d] || 0, dp = dep[d] || 0
-      return { date: d, dow: dow(d), roomsLive: live, occupied: o, vacant: Math.max(0, live - o), arrivals: a, departures: dp, stayovers: Math.max(0, o - a), occPct: live > 0 ? Math.round((o / live) * 1000) / 10 : null }
+      return { date: d, dow: dow(d), roomsLive: live, occupied: o, vacant: Math.max(0, live - o), arrivals: a, departures: dp, stayovers: Math.max(0, o - a), occPct: live > 0 ? Math.round((o / live) * 1000) / 10 : null, revenue: r2(rev[d] || 0), adr: o > 0 ? r2((rev[d] || 0) / o) : null }
     })
 
     // Per-room roll-up, plus who is in the room right now and who is next.
@@ -200,7 +212,7 @@ export async function GET(req: NextRequest) {
       const everNights = mine.map(s => s.checkIn).sort()
       return {
         room: r.room, roomName: r.name, roomType: r.type, listingId: r.listingId, listedInGuesty: r.listed, comboListing: r.combo,
-        stays: inRange.length, nightsOccupied: nightsIn, nightsInRange: dates.length, occPct: dates.length ? Math.round((nightsIn / dates.length) * 1000) / 10 : 0,
+        stays: inRange.length, nightsOccupied: nightsIn, revenueInRange: r2(inRange.reduce((t, s) => t + s.revenueInRange, 0)), nightsInRange: dates.length, occPct: dates.length ? Math.round((nightsIn / dates.length) * 1000) / 10 : 0,
         firstArrivalOnRecord: everNights[0] || '', inHouseToday: inHouse ? 'Yes' : 'No', inHouseCheckOut: inHouse ? inHouse.checkOut : '',
         nextArrival: next ? next.checkIn : '',
       }
@@ -210,7 +222,7 @@ export async function GET(req: NextRequest) {
     const meta = {
       ok: true, property: 'Botanica (The Garden Hotel & Resort)', from, to, days: dates.length, today, generatedAt: new Date().toISOString(),
       roomsInGuesty: rooms.filter(r => r.listed && !r.combo).length,
-      occupiedRoomNights: totalNights, availableRoomNights: daily.reduce((t, d) => t + d.roomsLive, 0),
+      occupiedRoomNights: totalNights, revenue: r2(daily.reduce((t, d) => t + d.revenue, 0)), availableRoomNights: daily.reduce((t, d) => t + d.roomsLive, 0),
       staysTouchingRange: staysInRange.length, nightsByChannel: chanNights,
       statusesSeen: statusCounts, countedStatuses: CONFIRMED, duplicatesDropped,
       inventoryPhases: PHASES,
@@ -219,14 +231,14 @@ export async function GET(req: NextRequest) {
 
     if (format === 'csv' && view !== 'summary') {
       let csv = ''
-      if (view === 'rooms') csv = toCsv(['Room', 'Guesty listing', 'Room type', 'Listed in Guesty', 'Combo listing', 'Stays in range', 'Nights occupied', 'Nights in range', 'Occ %', 'First arrival on record', 'In house today', 'In-house check-out', 'Next arrival'],
-        roomRows.map(r => [r.room, r.roomName, r.roomType, r.listedInGuesty ? 'Yes' : 'No', r.comboListing ? 'Yes' : 'No', r.stays, r.nightsOccupied, r.nightsInRange, r.occPct, r.firstArrivalOnRecord, r.inHouseToday, r.inHouseCheckOut, r.nextArrival]))
-      else if (view === 'stays') csv = toCsv(['Room', 'Guesty listing', 'Channel', 'Confirmation', 'Status', 'Check-in', 'Check-out', 'Total nights', 'Nights in range', 'Booked on'],
-        staysInRange.map(s => [s.room, s.roomName, s.channel, s.confirmation, s.status, s.checkIn, s.checkOut, s.nights, s.nightsInRange, s.bookedOn]))
-      else if (view === 'nights') csv = toCsv(['Night of', 'Day', 'Room', 'Guesty listing', 'Channel', 'Confirmation', 'Check-in', 'Check-out', 'Night #', 'Of'],
-        nights.map(n => [n.date, n.dow, n.room, n.roomName, n.channel, n.confirmation, n.checkIn, n.checkOut, n.night, n.of]))
-      else if (view === 'daily') csv = toCsv(['Date', 'Day', 'Rooms live', 'Occupied', 'Vacant', 'Arrivals', 'Departures', 'Stayovers', 'Occ %'],
-        daily.map(d => [d.date, d.dow, d.roomsLive, d.occupied, d.vacant, d.arrivals, d.departures, d.stayovers, d.occPct == null ? '' : d.occPct]))
+      if (view === 'rooms') csv = toCsv(['Room', 'Guesty listing', 'Room type', 'Listed in Guesty', 'Combo listing', 'Stays in range', 'Nights occupied', 'Nights in range', 'Occ %', 'Revenue in range', 'First arrival on record', 'In house today', 'In-house check-out', 'Next arrival'],
+        roomRows.map(r => [r.room, r.roomName, r.roomType, r.listedInGuesty ? 'Yes' : 'No', r.comboListing ? 'Yes' : 'No', r.stays, r.nightsOccupied, r.nightsInRange, r.occPct, r.revenueInRange, r.firstArrivalOnRecord, r.inHouseToday, r.inHouseCheckOut, r.nextArrival]))
+      else if (view === 'stays') csv = toCsv(['Room', 'Guesty listing', 'Channel', 'Confirmation', 'Status', 'Check-in', 'Check-out', 'Total nights', 'Nights in range', 'Booked on', 'Accommodation', 'Cleaning fee', 'Stay revenue (accom + cleaning)', 'Revenue per night', 'Revenue in range'],
+        staysInRange.map(s => [s.room, s.roomName, s.channel, s.confirmation, s.status, s.checkIn, s.checkOut, s.nights, s.nightsInRange, s.bookedOn, s.accommodation, s.cleaning, s.revenue, s.perNight, s.revenueInRange]))
+      else if (view === 'nights') csv = toCsv(['Night of', 'Day', 'Room', 'Guesty listing', 'Channel', 'Confirmation', 'Check-in', 'Check-out', 'Night #', 'Of', 'Night revenue', 'Night accommodation', 'Night cleaning', 'Stay revenue'],
+        nights.map(n => [n.date, n.dow, n.room, n.roomName, n.channel, n.confirmation, n.checkIn, n.checkOut, n.night, n.of, n.revenue, n.accommodation, n.cleaning, n.stayRevenue]))
+      else if (view === 'daily') csv = toCsv(['Date', 'Day', 'Rooms live', 'Occupied', 'Vacant', 'Arrivals', 'Departures', 'Stayovers', 'Occ %', 'Revenue', 'ADR'],
+        daily.map(d => [d.date, d.dow, d.roomsLive, d.occupied, d.vacant, d.arrivals, d.departures, d.stayovers, d.occPct == null ? '' : d.occPct, d.revenue, d.adr == null ? '' : d.adr]))
       else if (view === 'grid') csv = toCsv(['Room', 'Guesty listing', 'Nights'].concat(dates),
         roomRows.map(r => [r.room, r.roomName, r.nightsOccupied].concat(dates.map(d => (grid[r.listingId] || {})[d] || ''))))
       else return NextResponse.json({ ok: false, error: 'Unknown view' }, { status: 400 })
