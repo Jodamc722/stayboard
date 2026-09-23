@@ -12,6 +12,7 @@ import { todayET, shiftDay } from '@/lib/eve/ctx'
 import { eveGate } from '../../agent/route'
 import { recordRun } from '@/lib/automation-runs'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { isSuperadmin } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -28,7 +29,14 @@ async function run(req: NextRequest) {
   const viaCron = !!secret && auth === `Bearer ${secret}`
   const allowed = cronAllowed(req)
   let human = false
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // With CRON_SECRET set, a request without the bearer used to stop here, which meant an admin could
+  // no longer run this by hand ("Run now") at all. A signed-in admin passes; anyone else still does not.
+  if (!allowed.ok) {
+    const g = await eveGate()
+    const admin = g.ok && (isSuperadmin(g.access.email) || g.access.role === 'admin')
+    if (!admin) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    human = true
+  }
   const sp = new URL(req.url).searchParams
 
   // THREE JOBS ON ONE CRON LINE (2026-09-23). vercel.json is at its cron cap, so this line fires at
@@ -39,7 +47,7 @@ async function run(req: NextRequest) {
   const asked = String(sp.get('phase') || '')
   const phase = ['metrics', 'brain', 'dossiers'].includes(asked) ? asked : hourUtc === 8 ? 'brain' : hourUtc === 9 ? 'dossiers' : 'metrics'
   const job = phase === 'metrics' ? 'eve-metrics' : phase === 'brain' ? 'eve-brain' : 'eve-dossiers'
-  if (!allowed.viaSecret) {
+  if (!allowed.viaSecret && !human) {
     // No secret configured: a signed-in admin runs it on demand, anyone else gets the scheduled
     // cadence and no more.
     const gate = await eveGate()
