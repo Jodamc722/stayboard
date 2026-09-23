@@ -23,6 +23,7 @@ const EXPORTS: { view: string; label: string; hint: string }[] = [
   { view: 'stays', label: 'Stays', hint: 'One row per reservation: room, channel, confirmation, check-in, check-out, nights' },
   { view: 'grid', label: 'Room grid', hint: 'Rooms down, dates across, channel letter where occupied' },
   { view: 'daily', label: 'Daily totals', hint: 'Per date: rooms live, occupied, arrivals, departures, stayovers' },
+  { view: 'raw', label: 'Raw reservations', hint: 'One row per Guesty reservation, every status (incl. cancelled), every money field' },
   { view: 'rooms', label: 'Room list', hint: 'Every Botanica room: nights occupied, in house today, next arrival' },
 ]
 

@@ -23,6 +23,7 @@
 //   nights  one row per occupied room-night (the literal night-by-night record)
 //   daily   one row per date: rooms live, occupied, arrivals, departures, stayovers, occ %
 //   grid    rooms down, dates across, channel code in each occupied cell (the wall-chart view)
+//   raw     one row per Guesty reservation, every status, every money field (the raw report)
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
@@ -120,7 +121,7 @@ export async function GET(req: NextRequest) {
     for (let i = 0; i < 20; i++) {
       const { data, error } = await db
         .from('guesty_reservations')
-        .select('id,listing_id,check_in,check_out,nights,status,source,confirmation_code,created_at,guests:raw->>guestsCount,integration:raw->integration->>platform,money:raw->money')
+        .select('id,listing_id,check_in,check_out,nights,status,source,confirmation_code,created_at,guests:raw->>guestsCount,integration:raw->integration->>platform,money:raw->money,gc:raw->guestsCount,nog:raw->numberOfGuests,canceledAt:raw->>canceledAt')
         .in('listing_id', ids)
         .gt('check_out', from)
         .lte('check_in', horizon)
@@ -227,6 +228,42 @@ export async function GET(req: NextRequest) {
       statusesSeen: statusCounts, countedStatuses: CONFIRMED, duplicatesDropped,
       inventoryPhases: PHASES,
       method: 'A room is occupied on a night when a confirmed, checked-in or checked-out Guesty reservation includes that night (check-in night counts, check-out morning does not). Cancelled, declined, expired and inquiry reservations are excluded. Source: Guesty, the system of record for every channel (Airbnb, Booking.com, Vrbo, Expedia, direct).',
+    }
+
+    // RAW RESERVATIONS (Jon, 2026-09-23: "just need a raw reservations report as well").
+    // One row per Guesty reservation touching the range, EVERY status (confirmed, cancelled,
+    // inquiry, declined...), no occupancy logic, and every scalar money field Guesty sends as its
+    // own column (union across rows, so nothing is hidden). A duplicate mirror row is kept and
+    // flagged, not dropped — raw means raw. Still no guest names or contact details.
+    if (view === 'raw') {
+      const moneyKeys: Record<string, boolean> = {}
+      const seenRaw: Record<string, boolean> = {}
+      const rawRows = resv.filter((r: any) => str(r.check_in).slice(0, 10) <= to).map((r: any) => {
+        const m: any = r.money && typeof r.money === 'object' ? r.money : {}
+        const flat: Record<string, any> = {}
+        for (const k of Object.keys(m)) {
+          const v = m[k]
+          if (v == null || typeof v === 'object') continue
+          flat[k] = v; moneyKeys[k] = true
+        }
+        const rm = byId[String(r.listing_id)]
+        const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
+        const dk = String(r.listing_id) + '|' + (str(r.confirmation_code) || String(r.id)) + '|' + ci + '|' + co
+        const dup = !!seenRaw[dk]; seenRaw[dk] = true
+        const nog: any = r.nog && typeof r.nog === 'object' ? r.nog : null
+        const guests = r.gc != null && r.gc !== '' ? num(r.gc) : (nog ? num(nog.numberOfAdults) + num(nog.numberOfChildren) : '')
+        return { base: [str(r.id), str(r.confirmation_code), rm ? rm.room : '', rm ? rm.name : '', channelOf(str(r.source) || str(r.integration)), str(r.source), str(r.integration), str(r.status), ci, co, num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), str(r.created_at).slice(0, 10), str(r.canceledAt).slice(0, 10), guests === 0 ? '' : guests, dup ? 'Yes' : ''], money: flat }
+      })
+      const PREFERRED = ['currency', 'fareAccommodation', 'fareAccommodationAdjusted', 'fareAccommodationDiscount', 'fareCleaning', 'totalFees', 'subTotalPrice', 'totalTaxes', 'hostServiceFee', 'hostServiceFeeTax', 'hostServiceFeeIncTax', 'hostPayout', 'netIncome', 'commission', 'totalPrice', 'totalPaid', 'balanceDue']
+      const keys = PREFERRED.filter(k => moneyKeys[k]).concat(Object.keys(moneyKeys).filter(k => PREFERRED.indexOf(k) < 0).sort())
+      const header = ['Reservation id', 'Confirmation', 'Room', 'Guesty listing', 'Channel', 'Source (Guesty)', 'Platform (Guesty)', 'Status', 'Check-in', 'Check-out', 'Nights', 'Booked on', 'Cancelled on', 'Guests', 'Duplicate mirror row'].concat(keys.map(k => 'money.' + k))
+      rawRows.sort((a, b) => String(a.base[8]).localeCompare(String(b.base[8])) || String(a.base[2]).localeCompare(String(b.base[2]), 'en', { numeric: true }))
+      const rows = rawRows.map(x => x.base.concat(keys.map(k => x.money[k] == null ? '' : x.money[k])))
+      if (format === 'csv') {
+        const fname = 'botanica-raw-reservations-' + from + '-to-' + to + '.csv'
+        return new NextResponse(toCsv(header, rows), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="' + fname + '"', 'Cache-Control': 'no-store' } })
+      }
+      return NextResponse.json({ ...meta, header, rows })
     }
 
     if (format === 'csv' && view !== 'summary') {
