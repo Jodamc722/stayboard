@@ -41,7 +41,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { billingRange, type BillingTask } from '@/lib/billing'
-import { todayET, shiftDay, lc, num, round2, normStar, DEAD_LISTING } from './ctx'
+import { todayET, shiftDay, lc, num, round2, normStar, DEAD_LISTING, pageRows } from './ctx'
+import { personKey, nameMatches } from '@/lib/person-name'
 
 export type Role = 'clean' | 'inspect'
 
@@ -51,13 +52,33 @@ const MAINT_RE = /maintenance|repair|handyman|technician|fix/i
 const isDone = (t: any) => !!t.finished_at || /complete|finish|close|approv/.test(lc(t.status))
 const dayOf = (v: any) => String(v || '').slice(0, 10)
 
+// A CLEAN IS A DEPARTURE CLEAN, AND NOTHING ELSE (Jon, 2026-09-23 review). This used to add
+// `/clean|turnover|housekeep/` on the DEPARTMENT, which swept every common-area clean, trash route,
+// pool, linen refresh and oven clean into a cleaner's scorecard — each one then "prepared" the next
+// arrival and collected that stay's revenue. The labor report settled this rule on 2026-09-09
+// (lib/labor-econ.ts isDepartureCleanTask): a clean is what lib/breezeway's isDepartureCleanName
+// says it is, tested BEFORE the inspection regex so "Departure clean / unit check" stays a clean
+// (the name test requires "clean" after the turnover word, so "Departure inspection" does not).
 function roleOf(t: any): Role | 'maintenance' | null {
   const dept = lc(t.type_department)
   const name = String(t.name || '')
   if (MAINT_RE.test(dept) || MAINT_RE.test(name)) return 'maintenance'
+  if (isDepartureCleanName(name)) return 'clean'
   if (INSPECT_RE.test(dept) || INSPECT_RE.test(name)) return 'inspect'
-  if (isDepartureCleanName(name) || /clean|turnover|housekeep/i.test(dept)) return 'clean'
   return null
+}
+
+// The next arrival a visit is credited with has to be CLOSE (Jon, 2026-09-23 review). With no
+// bound, a clean on a unit that then sat empty for three weeks was credited with — and judged on —
+// whatever guest finally arrived, after other people had been in and out. Three days covers a
+// Friday clean for a Monday arrival; past that the visit prepared nothing we can measure.
+const ARRIVAL_GAP_DAYS = 3
+
+/** Does a task's assignee name the person asked about? Normalized, never a raw substring. */
+function personHit(name: string, wanted: string): boolean {
+  const a = personKey(name), b = personKey(wanted)
+  if (!a || !b) return false
+  return a === b || a.includes(b) || nameMatches(name, wanted)
 }
 
 function peopleOn(t: any): string[] {
@@ -76,8 +97,11 @@ export type Visit = {
   building: string
   date: string
   minutes: number | null
+  /** This person's SHARE of the task's rate_paid (split evenly across assignees). */
   cost: number | null
-  /** The arrival this visit was preparing for. */
+  /** How many assignees the task's cost and the stay's revenue were split across. */
+  splitWays: number
+  /** The arrival this visit was preparing for. `revenue` is this person's share, like `cost`. */
   nextArrival: { id: string; guest: string; checkIn: string; checkOut: string; revenue: number | null } | null
   reportedSameDay: number          // maintenance tasks at this unit dated the day of the visit
   caughtNotFixed: number           // …of those, still unfinished when the guest checked in
@@ -156,14 +180,20 @@ export async function crewScorecard(input: {
     }
   }
 
-  // ---- every task in the window, ONE query, no raw ----
-  const TASK_CAP = 8000
-  const { data: taskRows } = await db.from('breezeway_tasks_sync')
+  // ---- every task in the window, PAGED, no raw ----
+  // THE SILENT 1,000-ROW CUT (Jon, 2026-09-23 review). This asked for .limit(8000) ordered OLDEST
+  // first — but PostgREST returns 1,000 rows whatever .limit() says. A 60-day window holds several
+  // thousand tasks, so the scorecard was built from the first few weeks and the most recent work,
+  // the part anyone was asking about, simply was not there. And `truncated` compared the row count
+  // to 8,000, so it could never fire. Every read below now pages (lib/db-page.ts) up to the SAME
+  // intended cap, ordered with an id tiebreak so pages cannot repeat or skip, and `truncated` is
+  // true only when a cap was genuinely hit or a page failed.
+  const TASK_PAGES = 8   // 8,000 rows — the cap this always meant to have
+  const taskRead = await pageRows((a, b) => db.from('breezeway_tasks_sync')
     .select('id,reference_property_id,name,status,type_department,scheduled_date,started_at,finished_at,total_minutes,rate_paid,assignees,finished_by_name')
     .gte('scheduled_date', from).lte('scheduled_date', today)
-    .order('scheduled_date').limit(TASK_CAP)
-  const tasks = (taskRows || []).filter((t: any) => !/delete|cancel/.test(lc(t.status)))
-  const truncated = (taskRows || []).length >= TASK_CAP
+    .order('scheduled_date').order('id').range(a, b), TASK_PAGES)
+  const tasks = taskRead.rows.filter((t: any) => !/delete|cancel/.test(lc(t.status)))
 
   // Maintenance tasks indexed by unit+day, so "did anyone report anything that day" is a lookup
   // rather than a query per visit.
@@ -178,21 +208,21 @@ export async function crewScorecard(input: {
   }
 
   // ---- reservations in and after the window ----
-  const { data: resRows } = await db.from('guesty_reservations')
+  const resRead = await pageRows((a, b) => db.from('guesty_reservations')
     .select('id,listing_id,guest_name,check_in,check_out,status,money_total')
-    .gte('check_out', from).order('check_in').limit(6000)
-  const liveRes = (resRows || []).filter((r: any) => !/cancel|declin|inquir|expire/i.test(lc(r.status)))
+    .gte('check_out', from).order('check_in').order('id').range(a, b), 6)
+  const liveRes = resRead.rows.filter((r: any) => !/cancel|declin|inquir|expire/i.test(lc(r.status)))
   const resByUnit: Record<string, any[]> = {}
   for (const r of liveRes) (resByUnit[String((r as any).listing_id)] ||= []).push(r)
   for (const k of Object.keys(resByUnit)) resByUnit[k].sort((a: any, b: any) => dayOf(a.check_in).localeCompare(dayOf(b.check_in)))
 
   // ---- reviews, matched to a stay by the checkout that precedes them ----
-  const { data: revRows } = await db.from('guesty_reviews')
+  const revRead = await pageRows((a, b) => db.from('guesty_reviews')
     .select('id,listing_id,rating,content,guest_name,created_at,excluded_from_score')
     .gte('created_at', from + 'T00:00:00Z').eq('excluded_from_score', false)
-    .order('created_at').limit(4000)
+    .order('created_at').order('id').range(a, b), 4)
   const revByUnit: Record<string, any[]> = {}
-  for (const r of (revRows || [])) (revByUnit[String((r as any).listing_id)] ||= []).push(r)
+  for (const r of revRead.rows) (revByUnit[String((r as any).listing_id)] ||= []).push(r)
 
   function reviewFor(listingId: string, checkOut: string): { stars: number | null; text: string | null; guest: string | null } {
     const list = revByUnit[listingId] || []
@@ -213,11 +243,11 @@ export async function crewScorecard(input: {
   // OUR OWN inspection of that clean, when somebody logged one. A named human rating with notes
   // beats every inference in this file, so where it exists it leads.
   const inspByUnitDay: Record<string, any> = {}
+  const inspRead = await pageRows((a, b) => db.from('unit_inspections')
+    .select('id,listing_id,inspected_on,inspector,cleaner,rating,notes,follow_up')
+    .gte('inspected_on', from).order('inspected_on').order('id').range(a, b), 4)
   {
-    const { data } = await db.from('unit_inspections')
-      .select('id,listing_id,inspected_on,inspector,cleaner,rating,notes,follow_up')
-      .gte('inspected_on', from).order('inspected_on').limit(4000)
-    for (const r of (data || [])) {
+    for (const r of inspRead.rows) {
       const row: any = r
       inspByUnitDay[String(row.listing_id) + '|' + dayOf(row.inspected_on)] = row
     }
@@ -235,8 +265,10 @@ export async function crewScorecard(input: {
     if (input?.building && lc(m.building) !== lc(input.building)) continue
     const date = dayOf((t as any).scheduled_date)
 
-    // The arrival this visit was preparing for: the first check-in on or after the visit day.
-    const arrivals = (resByUnit[listingId] || []).filter((x: any) => dayOf(x.check_in) >= date)
+    // The arrival this visit was preparing for: the first check-in on or after the visit day, and
+    // no more than ARRIVAL_GAP_DAYS after it (see the constant for why).
+    const latest = shiftDay(date, ARRIVAL_GAP_DAYS)
+    const arrivals = (resByUnit[listingId] || []).filter((x: any) => dayOf(x.check_in) >= date && dayOf(x.check_in) <= latest)
     const a: any = arrivals[0] || null
 
     const reported = (maintByUnitDay[listingId + '|' + date] || [])
@@ -259,16 +291,25 @@ export async function crewScorecard(input: {
 
     const mins = Number((t as any).total_minutes)
     const cost = Number((t as any).rate_paid)
-    for (const person of peopleOn(t)) {
-      if (input?.person && !lc(person).includes(lc(input.person))) continue
+    // ONE TASK, ONE PAYMENT, ONE STAY — SPLIT, NOT COPIED (Jon, 2026-09-23 review). A clean with two
+    // assignees used to hand EACH of them the task's full rate_paid and the full revenue of the
+    // stay it prepared, so a pair looked twice as expensive and twice as productive as either one
+    // was, and the crew totals counted that money twice. Each person now carries an equal share;
+    // `splitWays` on the visit says how many ways it was divided so the receipt explains itself.
+    const who = peopleOn(t)
+    const ways = Math.max(1, who.length)
+    const revenue = a && Number.isFinite(Number(a.money_total)) ? Number(a.money_total) : null
+    for (const person of who) {
+      if (input?.person && !personHit(person, input.person)) continue
       visits.push({
         taskId: String((t as any).id), person, role,
         listingId, unit: m.unit, building: m.building, date,
         minutes: Number.isFinite(mins) && mins > 0 ? mins : null,
-        cost: Number.isFinite(cost) && cost > 0 ? cost : null,
+        cost: Number.isFinite(cost) && cost > 0 ? round2(cost / ways) : null,
+        splitWays: ways,
         nextArrival: a ? {
           id: String(a.id), guest: a.guest_name, checkIn: dayOf(a.check_in), checkOut: dayOf(a.check_out),
-          revenue: Number.isFinite(Number(a.money_total)) ? Number(a.money_total) : null,
+          revenue: revenue != null ? round2(revenue / ways) : null,
         } : null,
         reportedSameDay: reported.length,
         caughtNotFixed,
@@ -346,9 +387,10 @@ export async function crewScorecard(input: {
       'Times are partial — people forget to start and stop tasks. Every time figure names the sample it rests on; quote that sample, never the average alone.',
       '"Reported" is a proxy: a maintenance task at that unit dated the same day as the visit. Good evidence, not proof of who raised it.',
       'Reviews carry no reservation id, so each is matched to the stay whose checkout it follows within 14 days.',
-      'Cost is rate_paid on the task. Revenue is the money_total of the NEXT arrival, so it is the stay that visit prepared, not a share of the month.',
+      'Cost is rate_paid on the task. Revenue is the money_total of the NEXT arrival (checking in within 3 days of the visit), so it is the stay that visit prepared, not a share of the month. When a task had several assignees, both are split evenly between them (splitWays on each visit).',
+      'Only departure cleans count as cleans — common-area, trash, linen and other housekeeping tasks are excluded, as in the labor report.',
     ],
-    truncated,
+    truncated: taskRead.truncated || resRead.truncated || revRead.truncated || inspRead.truncated,
     // The receipts, when somebody is about to be judged on a number. Nobody should have to take an
     // aggregate on faith about their own work.
     visits: input?.includeVisits ? visits.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 200) : undefined,
@@ -419,6 +461,8 @@ export type MaintResult = {
     missingDetail: number; turnoverJobs: number; turnoverMissed: number
   }
   caveats: string[]
+  /** True only when a paged read hit its cap or a page failed — the figures may be short. */
+  truncated?: boolean
 }
 
 function median(xs: number[]): number | null {
@@ -451,19 +495,22 @@ export async function maintenanceScorecard(input: {
       meta[String(r.id)] = { unit, building: rollupBuilding(r.building, unit) }
     }
   }
-  const { data: resRows } = await db.from('guesty_reservations')
-    .select('id,listing_id,check_in,status').gte('check_in', from).order('check_in').limit(6000)
+  // Paged, not .limit() — PostgREST stops at 1,000 rows and these were ordered oldest-first, so the
+  // most recent arrivals and turnover days silently vanished (Jon, 2026-09-23 review; see the
+  // longer note in crewScorecard).
+  const resRead = await pageRows((a, b) => db.from('guesty_reservations')
+    .select('id,listing_id,check_in,status').gte('check_in', from).order('check_in').order('id').range(a, b), 6)
   const arrivalsByUnit: Record<string, string[]> = {}
-  for (const r of (resRows || [])) {
+  for (const r of resRead.rows) {
     const row: any = r
     if (/cancel|declin|inquir|expire/i.test(lc(row.status))) continue
     ;(arrivalsByUnit[String(row.listing_id)] ||= []).push(dayOf(row.check_in))
   }
-  const { data: cleanRows } = await db.from('breezeway_tasks_sync')
-    .select('reference_property_id,name,type_department,scheduled_date,status')
-    .gte('scheduled_date', from).lte('scheduled_date', today).order('scheduled_date').limit(8000)
+  const cleanRead = await pageRows((a, b) => db.from('breezeway_tasks_sync')
+    .select('id,reference_property_id,name,type_department,scheduled_date,status')
+    .gte('scheduled_date', from).lte('scheduled_date', today).order('scheduled_date').order('id').range(a, b), 8)
   const turnoverDays = new Set<string>()
-  for (const t of (cleanRows || [])) {
+  for (const t of cleanRead.rows) {
     const row: any = t
     if (roleOf(row) !== 'clean') continue
     turnoverDays.add(String(row.reference_property_id) + '|' + dayOf(row.scheduled_date))
@@ -553,7 +600,10 @@ export async function maintenanceScorecard(input: {
     }
   }).sort((a, b) => b.tasks - a.tasks)
 
-  const allTs = rows.map(r => r.t)
+  // Totals count each task ONCE (Jon, 2026-09-23 review). `rows` has one entry per assignee, so a
+  // two-person job used to put its billed and labour amounts into the portfolio totals twice —
+  // the caveat below already promised per-person counts would not sum to the total.
+  const allTs = Array.from(new Set(rows.map(r => r.t)))
   const allDone = allTs.filter(t => !!t.finishedAt || /complete|finish|close|approv/.test(lc(t.status)))
   const allTimed = allTs.filter(t => Number(t.actualMinutes) > 0)
   const bt = round2(allTs.reduce((a, t) => a + num(t.billedAmount), 0))
@@ -579,6 +629,7 @@ export async function maintenanceScorecard(input: {
       'Repeat visits mean the same unit needed maintenance again within a fortnight. Units do break twice — treat it as a question, not a verdict.',
       'A task with several assignees counts once for each of them, so per-person task counts do not sum to the portfolio total.',
     ],
+    truncated: resRead.truncated || cleanRead.truncated,
   }
 }
 
@@ -619,12 +670,46 @@ export type Coaching = {
   }[]
   score: PersonScore | null
   caveats: string[]
+  /** Set when the name matched more than one person and nothing was built. */
+  ambiguous?: string[]
 }
+
+// ONE PERSON, NOT THE BUSIEST SUBSTRING (Jon, 2026-09-23 review). Coaching used to take whoever had
+// the most visits among names CONTAINING the words typed — so "Maria" coached Marianne Cruz with
+// Maria Lopez's name on the headline, and the visits list was a blend of both. Feedback delivered
+// to somebody's face has to be about that somebody. Rule, as in lib/roster-match.ts: an exact
+// normalized name wins; otherwise ONE person the fuzzy matcher (nameMatches) accepts; otherwise
+// refuse and name the candidates so the asker can say which.
+function resolvePerson(wanted: string, people: PersonScore[]): { score: PersonScore } | { ambiguous: string[] } | null {
+  const key = personKey(wanted)
+  const exact = people.filter(p => personKey(p.person) === key)
+  // Several raw spellings with the same key are one human spelled twice — take the busiest.
+  if (exact.length) return { score: exact[0] }
+  const fuzzy = people.filter(p => nameMatches(p.person, wanted))
+  if (fuzzy.length === 1) return { score: fuzzy[0] }
+  if (fuzzy.length > 1) return { ambiguous: fuzzy.map(p => p.person) }
+  if (people.length > 1) return { ambiguous: people.map(p => p.person) }
+  if (people.length === 1) return { score: people[0] }   // one partial-name hit, nobody else
+  return null
+}
+
+const ambiguityLine = (wanted: string, names: string[]) =>
+  `"${wanted}" matches more than one person: ${names.slice(0, 6).join(', ')}${names.length > 6 ? ` and ${names.length - 6} more` : ''}. Ask which one — use their full name.`
 
 export async function crewCoaching(person: string, role: Role = 'clean', days = 90, recentN = 6): Promise<Coaching> {
   const s = await crewScorecard({ role, days, person, includeVisits: true })
-  const score = s.people[0] || null
-  const all = (s.visits || []).filter(v => lc(v.person).includes(lc(person)))
+  const hit = resolvePerson(person, s.people)
+  if (hit && 'ambiguous' in hit) {
+    return {
+      person, role, windowDays: days,
+      headline: ambiguityLine(person, hit.ambiguous),
+      goingWell: [], toWorkOn: [], notYourFault: [], recent: [], score: null, caveats: s.caveats,
+      ambiguous: hit.ambiguous,
+    }
+  }
+  const score = hit ? hit.score : null
+  const key = score ? personKey(score.person) : ''
+  const all = (s.visits || []).filter(v => !!key && personKey(v.person) === key)
   const recent = all.slice(0, Math.min(Math.max(recentN, 3), 12))
 
   const goingWell: string[] = []
@@ -707,5 +792,12 @@ export async function crewPerson(person: string, role: Role, days = 60): Promise
   person: string; role: Role; score: PersonScore | null; visits: Visit[]; caveats: string[]
 }> {
   const s = await crewScorecard({ role, days, person, includeVisits: true })
-  return { person, role, score: s.people[0] || null, visits: s.visits || [], caveats: s.caveats }
+  // Same rule as crewCoaching: one person or a refusal, never the busiest substring match. The tool
+  // wrapper turns a thrown error into { error } for Eve, which is the clearest way to say "which?".
+  const hit = resolvePerson(person, s.people)
+  if (hit && 'ambiguous' in hit) throw new Error(ambiguityLine(person, hit.ambiguous).slice(0, 200))
+  const score = hit ? hit.score : null
+  const key = score ? personKey(score.person) : ''
+  const visits = (s.visits || []).filter(v => !!key && personKey(v.person) === key)
+  return { person: score ? score.person : person, role, score, visits, caveats: s.caveats }
 }
