@@ -42,7 +42,8 @@ import { botToken, getDirectory, slackApi, slackGet } from '@/lib/slack'
 import { resolveLighthouseEmail, identityHint } from '@/lib/slack-identity'
 import { accessForEmail } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
-import { tierFor, tierNote } from '@/lib/eve/slack-tier'
+import { tierFor, tierNote, isEveRoom } from '@/lib/eve/slack-tier'
+import { postProvenance } from '@/lib/eve/provenance'
 import { tagIsFront, detectLang, translate, worthTranslating } from '@/lib/eve/slack-triage'
 import { getEveAskers, canAskEve } from '@/lib/eve/slack-askers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -157,8 +158,33 @@ export async function POST(req: NextRequest) {
   if (req.headers.get('x-slack-retry-num')) return ok()
 
   const ev = body?.event
-  if (!ev || ev.type !== 'app_mention') return ok()
+  if (!ev || (ev.type !== 'app_mention' && ev.type !== 'message')) return ok()
   if (ev.bot_id || ev.subtype === 'bot_message') return ok()
+
+  // ANSWERING HER WITHOUT TAGGING HER, IN HER OWN ROOM (Jon, 2026-09-23: "the team that's in the Eve
+  // channel can respond to Eve"). In #vr-eve she posts what is slipping; the natural reply is in the
+  // thread under her post — "who reported this?", "done", "make the task" — and nobody tags a message
+  // they are already replying to. So a plain reply counts as talking to her when ALL of these hold:
+  // it is in her room, in a thread whose top post is hers, from a person, not a tag (a tag already
+  // arrives as app_mention), and either the message just before it is hers or it names her. Two
+  // colleagues talking to each other under her post are left alone.
+  // Needs the Slack app subscribed to message.groups / message.channels; without that nothing arrives
+  // here and tagging still works exactly as before.
+  let viaReply = false
+  if (ev.type === 'message') {
+    if (ev.subtype || !ev.thread_ts || String(ev.thread_ts) === String(ev.ts) || !ev.user) return ok()
+    const me0 = await selfId()
+    if (!me0 || String(ev.user) === me0 || String(ev.text || '').includes(`<@${me0}>`)) return ok()
+    if (!(await isEveRoom(String(ev.channel || '')))) return ok()
+    const t = await slackGet('conversations.replies', { channel: String(ev.channel), ts: String(ev.thread_ts), limit: '50' }).catch(() => null as any)
+    const msgs: any[] = (t && t.ok && t.messages) || []
+    if (!msgs.length || String(msgs[0].user) !== me0) return ok()
+    const idx = msgs.findIndex(m => String(m.ts) === String(ev.ts))
+    const prev = idx > 0 ? msgs[idx - 1] : msgs[msgs.length - 1]
+    const addressed = (prev && String(prev.user) === me0) || /\beve\b/i.test(String(ev.text || ''))
+    if (!addressed) return ok()
+    viaReply = true
+  }
 
 /**
  * WHAT WAS ALREADY BEING SAID.
@@ -272,7 +298,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   // tell that from Eve being broken. The heuristic is only a hint to the translator now; the model
   // decides the language. The one case still skipped is a message with nothing to translate — a
   // bare link, a unit number, an emoji — because there is no translation of "401".
-  if (!tagIsFront(String(ev.text || ''), me)) {
+  if (!viaReply && !tagIsFront(String(ev.text || ''), me)) {
     if (!worthTranslating(question)) return ok()
     const out = await translate(question, detectLang(question))
     if (out) await say(channel, threadTs, out)
@@ -343,6 +369,22 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
 
     const history = await conversationSoFar(channel, ev, me)
 
+    // A THREAD ON HER OWN POST: she knows why she posted it (lib/eve/provenance.ts). Looked up from
+    // her decision log by the post's timestamp, and stated as fact, so "who reported this?" gets the
+    // true answer instead of a guess.
+    let provenance = ''
+    if (ev.thread_ts && String(ev.thread_ts) !== String(ev.ts)) {
+      try {
+        const top = await slackGet('conversations.replies', { channel, ts: String(ev.thread_ts), limit: '1' })
+        const parent: any = top?.ok ? (top.messages || [])[0] : null
+        if (parent && me && String(parent.user) === me) {
+          const pv = await postProvenance(String(ev.thread_ts))
+          provenance = pv.found ? pv.line
+            : 'This thread is on one of YOUR posts, but it is not in your decision log. Do NOT guess where it came from and never invent a reporter or a source. Say you cannot trace it, check my_actions_today, and ask whoever knows.'
+        }
+      } catch { /* the answer goes ahead without it */ }
+    }
+
     const out = await runEve({
       access: asAccess,
       messages: [{ role: 'user', content: question }],
@@ -353,6 +395,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       surfaceNote: [
         `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.`,
         history,
+        provenance,
         tierNote(grant),
       ].filter(Boolean).join('\n\n'),
     })
