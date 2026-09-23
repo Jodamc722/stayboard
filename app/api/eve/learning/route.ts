@@ -5,11 +5,12 @@
 // counts by source and weight. POST { op: 'study' } runs the existing learning pass (sweep, study
 // pending documents, generate questions) and returns the receipt; POST { op: 'teach', text, … }
 // files free text as a memory at weight 8, source 'jon' — the fastest way to load a house rule.
+// (From anyone but Jon it files as source 'staff' at weight 6 — Jon, 2026-09-23 review.)
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { lastRuns } from '@/lib/automation-runs'
 import { eveGate } from '../../agent/route'
-import { saveMemory } from '@/lib/eve/memory'
+import { saveMemory, personSource, STAFF_MAX_WEIGHT } from '@/lib/eve/memory'
 import { runSweep } from '@/lib/eve/sweep'
 import { studyPending } from '@/lib/eve/study'
 import { generateQuestions } from '@/lib/eve/questions'
@@ -149,7 +150,10 @@ export async function POST(req: NextRequest) {
   if (body?.op === 'teach') {
     const text = String(body?.text || '').trim()
     if (text.length < 8) return NextResponse.json({ error: 'Say a little more — a rule she can follow.' }, { status: 400 })
-    const res = await saveMemory({ text: text.slice(0, 1000), kind: body?.kind || 'rule', why: `Taught by ${by} in Settings → Eve → Learning on ${new Date().toISOString().slice(0, 10)}`, scope: body?.scope || 'portfolio', weight: 8, source: 'jon', confidence: 1, created_by: by })
+    // Weight 8 and source 'jon' only when Jon is the one teaching; anyone else is 'staff' at the
+    // staff ceiling of 6 (Jon, 2026-09-23 review).
+    const who = personSource(by, 8)
+    const res = await saveMemory({ text: text.slice(0, 1000), kind: body?.kind || 'rule', why: `Taught by ${by} in Settings → Eve → Learning on ${new Date().toISOString().slice(0, 10)}`, scope: body?.scope || 'portfolio', weight: who.weight, maxWeight: who.source === 'staff' ? STAFF_MAX_WEIGHT : undefined, source: who.source, confidence: 1, created_by: by })
     if (!res.ok) return NextResponse.json({ error: res.error || 'could not save' }, { status: 500 })
     // Taught → tested. A probe is written for it now (one Haiku call) and asked tomorrow, with no
     // tools, so "she was told" becomes "she still knows". A reinforced duplicate re-arms its probe.
@@ -168,7 +172,7 @@ export async function POST(req: NextRequest) {
   }
   if (body?.op === 'prune') {
     const r = await pruneMemory(String(body?.memoryId || ''), by)
-    return NextResponse.json(r.ok ? { ok: true } : { error: r.error }, { status: r.ok ? 200 : 400 })
+    return NextResponse.json(r.ok ? { ok: true } : { error: r.error }, { status: r.ok ? 200 : r.forbidden ? 403 : 400 })
   }
 
   // 'study' — the same pass /api/eve/learn runs nightly, minus the model-heavy FAQ and vision
