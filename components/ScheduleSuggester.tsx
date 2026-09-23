@@ -81,13 +81,20 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
   const [overtime, setOvertime] = useState(60)
   const [tab, setTab] = useState<MarketTab>('All')
   const presets = useOpsPresets()
-  // Roles by first name, the way the Ops presets roster keeps them ("Yoslenis": "supervisor").
+  const [bzRoles, setBzRoles] = useState<Record<string, string>>({})
+  useEffect(() => {
+    fetch('/api/breezeway/people?department=housekeeping', { cache: 'no-store' }).then(r => r.json())
+      .then(j => { const m: Record<string, string> = {}; for (const p of (j?.people || [])) m[personKey(p.name)] = String(p.role || ''); setBzRoles(m) }).catch(() => {})
+  }, [])
+  // Roles: the Ops presets roster first, by first name ("Yoslenis": "supervisor"); otherwise an
+  // administrator or manager in Breezeway counts as a supervisor, who cleans only as a last resort.
   const roleOf = useCallback((name: string): 'cleaner' | 'supervisor' | 'other' => {
     const nc = presets?.roster?.nonCleaners || {}
     const f = personKey(first(name))
     for (const [k, v] of Object.entries(nc)) if (personKey(k) === f) return /supervis/i.test(String(v)) ? 'supervisor' : 'other'
+    if (/admin|manager|supervis/i.test(bzRoles[personKey(name)] || '')) return 'supervisor'
     return 'cleaner'
-  }, [presets])
+  }, [presets, bzRoles])
   const { panelProps } = useModal(onClose, { closeOnEscape: !busy })
 
   const people: SugPerson[] = useMemo(() => working.map(id => {
@@ -155,6 +162,10 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
   }, [date])
 
   const resuggest = (ps = people, keep = keepCurrent, t = target, ot = overtime) => runSuggest(rows, ps, keep, t, ot)
+  // Breezeway roles arrive after the first suggestion; once they do, suggest again so an
+  // administrator is not handed cleans before we knew who they were.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (rows.length && Object.keys(bzRoles).length) resuggest() }, [bzRoles])
   const toggleWorking = (id: number) => {
     const next = working.includes(id) ? working.filter(x => x !== id) : working.concat(id)
     setWorking(next)
@@ -199,13 +210,13 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
     }
   }
 
-  // THE MARKET VIEW (Jon: "divvy it up by market"). A person belongs to their Breezeway region, else
-  // to the market most of their cleans are in. A person with nothing yet shows under every market
+  // THE MARKET VIEW (Jon: "divvy it up by market"). A person belongs to the market most of their
+  // cleans are in, else their Breezeway region. A person with nothing yet shows under every market
   // they could serve, so they can be dragged work in any of them.
+  // Their cleans decide first: Breezeway has nearly everyone's region as "Broward".
   const personMarket = (p: SugPerson): string | null => {
-    if (p.market) return p.market
     const theirs = (cols[p.id] || []).map(r => r.market)
-    if (!theirs.length) return null
+    if (!theirs.length) return p.market || null
     const n: Record<string, number> = {}
     for (const m of theirs) n[m] = (n[m] || 0) + 1
     return Object.keys(n).sort((a, b) => n[b] - n[a])[0]
