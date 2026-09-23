@@ -357,7 +357,11 @@ export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'o
   'manages short-term rentals in Miami, Broward and West Palm Beach',
   'One team, one system, one monthly statement.',
   // The first 2026-09-23 body, retired the same day for the unit count.
-  'managing 140+ properties and two hotels']
+  'managing 140+ properties and two hotels',
+  // The 450+ version, retired the same day in the copy audit: it argued with competitors
+  // ("not a marketplace of contractors we hope shows up") where the website's own voice — unique
+  // experiences, genuine personal relationships — is both truer and more confident.
+  'not a marketplace of contractors we hope shows up']
 // THE OLD ABOUT-US COPY IS GONE, NOT KEPT FOR REFERENCE (2026-09-23). OVERVIEW_BODY and
 // COMPANY_STATS lived on here after OVERVIEW_BODY_2 and COMPANY_STATS_2 replaced them — read by
 // nothing, still carrying '400+' units, a number the deck no longer makes and the website never
@@ -502,8 +506,8 @@ export const AI_NOTE: CopyPair = {
 // we run whole hotels, not just scattered condos — and closes on the operational claim that
 // matters most, which is that the people doing the work are ours.
 export const OVERVIEW_BODY_2 =
-  'Stay Hospitality is a lifestyle hospitality brand managing 450+ units across Miami, Fort Lauderdale, Pompano and Palm Beach — 140+ properties, including two hotels.\n\n' +
-  'We run entire buildings — The Elser, Arya, The Garden, Salato, 17West, Capri, Amrit — which means front desks, HOA boards, city compliance and linen at hotel scale are ordinary days here, not special projects. Your unit gets that same operation, and the same people: housekeeping, maintenance and guest care are in-house, on our payroll, not a marketplace of contractors we hope shows up.'
+  'Stay Hospitality is a lifestyle hospitality brand built on unique experiences and genuine personal relationships. We manage 450+ units across Miami, Fort Lauderdale, Pompano and Palm Beach: 140+ properties, including two hotels.\n\n' +
+  'We operate entire buildings, so hotel standards are simply how we work. Housekeeping, maintenance and guest care are in-house, on our own payroll.'
 
 // UNITS AND PROPERTIES ARE TWO DIFFERENT COUNTS, AND BOTH ARE TRUE (Jon, 2026-09-23: "Should say
 // 450+ Units"). A hotel is one property and a hundred-odd units; stay-hospitality.com counts
@@ -523,10 +527,9 @@ export const COMPANY_STATS_2: { k: string; v: string }[] = [
 // than a paragraph. Scrollable, because the list is the argument and trimming it to fit would be
 // trimming the argument.
 export const EXPERIENCE_HEADLINE = 'What we already run'
-export const EXPERIENCE_SUBTITLE = 'Not a portfolio of units. A portfolio of buildings.'
+export const EXPERIENCE_SUBTITLE = 'A portfolio of buildings, not just units.'
 export const EXPERIENCE_BODY =
-  'Most managers in this market started with one condo and added more. We run hotels and full residence buildings alongside individual homes, which changes what we are able to do for a single unit.\n\n' +
-  'It means we already hold the vendor relationships, the linen contracts, the after-hours coverage and the city and HOA relationships that a one-unit operator has to build from nothing. Your unit inherits all of it on day one.'
+  'We operate hotels and full residence buildings alongside individual homes. Your unit inherits what that scale has already built: established vendor relationships, linen contracts at volume, 24-hour coverage, and standing relationships with the cities and boards we work in.'
 
 export const EXPERIENCE_ITEMS: { k: string; v: string }[] = [
   { k: 'The Elser Hotel & Residences', v: 'Downtown Miami · hotel & residences' },
@@ -541,9 +544,9 @@ export const EXPERIENCE_ITEMS: { k: string; v: string }[] = [
 ]
 
 export const EXPERIENCE_PROOF: { k: string; v: string }[] = [
-  { k: 'One operator, end to end', v: 'Listing, pricing, guest communication, turnovers and maintenance are one team and one system — so nothing falls in the gap between two vendors blaming each other.' },
-  { k: 'Hotel-grade standards on a single unit', v: 'The checklist that cleans a hotel floor is the checklist that cleans your unit. Same standard, same inspection, same photographic record.' },
-  { k: 'Coverage that does not sleep', v: 'A guest locked out at 2am reaches a person, not a voicemail. That is the difference between a five-star review and a one-star one, and it is decided in about four minutes.' },
+  { k: 'One operator, end to end', v: 'Listing, pricing, guest communication, turnovers and maintenance run as one team on one system.' },
+  { k: 'Hotel standards on a single unit', v: 'The checklist that cleans a hotel floor cleans your unit: same standard, same inspection, same photographic record.' },
+  { k: 'Coverage around the clock', v: 'A guest locked out at 2am reaches a person. That call is answered in minutes, and it decides the review.' },
 ]
 
 // ── THE GUEST EXPERIENCE ────────────────────────────────────────────────────
@@ -557,19 +560,19 @@ export const EXPERIENCE_PROOF: { k: string; v: string }[] = [
 export const GUEST_HEADLINE = 'How a stay is run'
 export const GUEST_SUBTITLE = 'Six touch points between the booking and the review.'
 export const GUEST_BODY =
-  'A five-star review is not luck and it is not charm. It is a sequence that happens the same way every time, logged as it happens, so that when something does go wrong we already know it before the guest has to tell us twice.'
+  'Five-star reviews come from a sequence that runs the same way every time and is recorded as it runs. We find problems before a guest has to raise them twice.'
 
 export const GUEST_STAGES: { k: string; v: string }[] = [
-  { k: 'The booking', v: 'Confirmed within minutes, with the house rules, the parking and the building’s quirks sent before the guest has a chance to wonder about any of them.' },
-  { k: 'The welcome call', v: 'We call every arriving guest before they travel. It verifies who is coming, catches the special occasion worth acknowledging, and surfaces the problem that would otherwise turn up in a review.' },
-  { k: 'The pre-arrival inspection', v: 'Somebody stands in the unit before the guest does. Lights, water, AC, wifi, supplies, the smell of the place — checked against a standard list and photographed, not remembered.' },
-  { k: 'Arrival', v: 'Door codes and directions land ahead of check-in, and the first hour is watched. A guest who cannot get in at 11pm is our emergency, not theirs.' },
-  { k: 'During the stay', v: 'Messages are answered around the clock. Anything the guest reports becomes a tracked job with a name on it and a clock running, and we chase it rather than the guest chasing us.' },
-  { k: 'The departure clean', v: 'A full turnover against the standard checklist, inspected and photographed before the unit is released back to the calendar. Nothing goes live on a promise.' },
+  { k: 'The booking', v: 'Confirmed within minutes, with house rules, parking and building details sent before the guest thinks to ask.' },
+  { k: 'The welcome call', v: 'We call every arriving guest before they travel: confirming who is coming, noting the occasion worth acknowledging, and surfacing anything that would otherwise appear in a review.' },
+  { k: 'The pre-arrival inspection', v: 'Someone stands in the unit before the guest does. Lights, water, AC, wifi and supplies are checked against a standard list and photographed.' },
+  { k: 'Arrival', v: 'Door codes and directions arrive ahead of check-in, and the first hour is monitored. A guest who cannot get in is our emergency, not theirs.' },
+  { k: 'During the stay', v: 'Messages answered around the clock. Anything reported becomes a tracked job with an owner and a deadline, and we chase it.' },
+  { k: 'The departure clean', v: 'A full turnover against the standard checklist, inspected and photographed before the unit returns to the calendar.' },
 ]
 
 export const GUEST_BREEZEWAY =
-  'All of it runs on Breezeway, the operations platform hotels use. Every clean, inspection and repair is a task with a checklist, an assignee, a timestamp and photographs — so "the unit was ready" is a record we can show you, not a claim we make.'
+  'All of it runs on Breezeway, the operations platform used by hotels. Every clean, inspection and repair carries a checklist, an assignee, a timestamp and photographs, so readiness is documented rather than assumed.'
 
 // ── REVENUE MANAGEMENT ──────────────────────────────────────────────────────
 // Jon, 2026-09-23: "Talk about our revenue management, partnering with Pacer."
@@ -584,10 +587,9 @@ export const GUEST_BREEZEWAY =
 // borrowed statistic on an owner slide is a promise we did not make and cannot keep. The slide
 // argues the method instead. Put our OWN figures in the editor when we have them.
 export const REVENUE_HEADLINE = 'How your rate gets set'
-export const REVENUE_SUBTITLE = 'A dedicated revenue manager, not a switch somebody flipped once.'
+export const REVENUE_SUBTITLE = 'A dedicated revenue manager, reviewing your calendar every week.'
 export const REVENUE_BODY =
-  'Almost every manager you speak to will tell you they use dynamic pricing. What they mean is that they turned a tool on. A tool with nobody operating it prices your unit like the average of its neighbours, forever.\n\n' +
-  'We partner with Pacer, a revenue-management firm that does this and only this for vacation rentals and boutique hotels. Your unit has a named revenue manager who works the full picture every week — not just the nightly rate.'
+  'Pricing software sets a rate. An operator sets a strategy. We partner with Pacer, a revenue-management firm dedicated to vacation rentals and boutique hotels, and your unit is assigned a named revenue manager who reviews the full picture every week.'
 
 export const REVENUE_LEVERS: { k: string; v: string }[] = [
   { k: 'Nightly rate', v: 'Moved against live demand, comp-set pricing and what is actually booking in your building — not a fixed percentage off a guess.' },
@@ -599,7 +601,7 @@ export const REVENUE_LEVERS: { k: string; v: string }[] = [
 ]
 
 export const REVENUE_NOTE =
-  'You see the result on the owner portal and in the monthly statement, and we talk through the reasoning on your owner report. If a rate decision does not make sense to you, ask — there is a person to ask.'
+  'You see the results in your owner portal and monthly statement, and the reasoning in your owner report. Any rate decision can be explained on request.'
 
 // ── WE UNDERSTAND EVERY PART OF THE PROPERTY ────────────────────────────────
 // Jon, 2026-09-23: "We need to let them know that we understand each aspect of the property: the
@@ -609,17 +611,17 @@ export const REVENUE_NOTE =
 // changes the payout account and calls it onboarding. Each row names a thing we DO to the
 // listing, in the order we do it, so the owner can picture the work rather than trust a promise.
 export const CRAFT_HEADLINE = 'What we do to the listing itself'
-export const CRAFT_SUBTITLE = 'Before we talk about rate, we fix what the rate is being charged for.'
+export const CRAFT_SUBTITLE = 'We fix what the rate is charged for before we set the rate.'
 export const CRAFT_BODY =
-  'A listing is a product. Most underperforming units are not priced wrong — they are presented wrong, and then priced down to compensate. We work the product first, because every dollar of rate you can hold afterwards depends on it.'
+  'A listing is a product, and presentation sets the ceiling on the rate it can hold. We rebuild the product first, then price it.'
 
 export const CRAFT_ROWS: { k: string; v: string }[] = [
-  { k: 'The listing', v: 'Rebuilt rather than inherited: title, photo order, hero shot and the first three images a guest actually sees before they decide. Ranking rewards the listings guests stop scrolling on, so that is what we build.' },
-  { k: 'The amenities', v: 'Audited line by line against what the channel lets you filter on. An amenity you have but never listed is a search you silently lost — and the cheap ones to add are usually the ones guests filter by.' },
-  { k: 'The descriptions', v: 'Written for the guest who is deciding between you and three others in the same building. Specific about the space, honest about the trade-offs, and answering the questions that otherwise arrive as messages at 9pm.' },
-  { k: 'The distribution', v: 'Published across 40+ channels from one calendar, so visibility is not limited to the one site you would have listed on yourself.' },
-  { k: 'The marketing', v: 'Channel promotions, new-listing placement, seasonal pushes and the guest-facing guidebook that turns a good stay into a five-star review.' },
-  { k: 'The ramp', v: 'A deliberate 90-day plan to build the review count and search position a new listing does not start with — the next slide is exactly how.' },
+  { k: 'The listing', v: 'Rebuilt, not inherited. Title, photo order and the first three images a guest sees before deciding. Ranking rewards the listings guests stop scrolling on.' },
+  { k: 'The amenities', v: 'Audited against the filters each channel offers. An amenity you have but never listed is a search you lose silently, and the cheapest to add are the ones guests filter by.' },
+  { k: 'The descriptions', v: 'Written for the guest choosing between you and three others in the same building: specific about the space, honest about the trade-offs.' },
+  { k: 'The distribution', v: 'Published across 40+ channels from one calendar, so your visibility is not limited to a single site.' },
+  { k: 'The marketing', v: 'Channel promotions, new-listing placement, seasonal pushes, and a guest guidebook built to earn the review.' },
+  { k: 'The ramp', v: 'A deliberate 90-day plan to build the review count and search position a new listing starts without.' },
 ]
 
 // ── HOW WE SHORTEN THE RAMP ─────────────────────────────────────────────────
@@ -632,15 +634,15 @@ export const CRAFT_ROWS: { k: string; v: string }[] = [
 export const RAMP_ACTIONS_HEADLINE = 'How we shorten it'
 export const RAMP_ACTIONS_SUBTITLE = 'The curve is normal. Sitting still through it is not.'
 export const RAMP_ACTIONS: { k: string; v: string }[] = [
-  { k: 'Launch into the promotion window', v: 'Channels give a new listing a visibility boost and a promotional slot exactly once. We launch into it deliberately, with the listing already finished, rather than burning it on a half-built page.' },
-  { k: 'Widen the net first', v: 'Minimum stays opened up and the booking window extended at launch, because the fastest route to a review is a booking, and a three-night minimum on a new listing turns away the one-night guest who would have left the first one.' },
-  { k: 'Every channel from day one', v: 'A new listing on one site ramps at the speed of one site’s audience. On 40+, the first bookings arrive from wherever they happen to arrive.' },
-  { k: 'Chase the first reviews', v: 'The first five reviews move placement more than the next fifty. Welcome call, mid-stay check, and a review request that actually gets sent — every stay, without exception.' },
-  { k: 'Protect the score while it is fragile', v: 'One bad review out of four is a quarter of your reputation. Early stays get the closest operational attention we give, because that is when a single miss costs the most.' },
-  { k: 'Raise rate as standing is earned', v: 'Rate follows position up. As reviews and ranking build, the price moves with them rather than staying where it launched — reviewed weekly, not left alone.' },
+  { k: 'Launch into the promotion window', v: 'Channels grant a new listing a visibility boost and a promotional slot once. We launch into it with the listing already finished.' },
+  { k: 'Widen the net first', v: 'Minimum stays opened and the booking window extended at launch. The fastest route to a review is a booking, and a three-night minimum turns away the guest who would have left the first one.' },
+  { k: 'Every channel from day one', v: 'A listing on one site ramps at the speed of one audience. On 40+, the first bookings arrive from wherever they arrive.' },
+  { k: 'Chase the first reviews', v: 'The first five reviews move placement more than the next fifty. Welcome call, mid-stay check and a review request on every stay.' },
+  { k: 'Protect the score while it is fragile', v: 'One poor review out of four is a quarter of your reputation. Early stays receive our closest operational attention.' },
+  { k: 'Raise rate as standing is earned', v: 'As reviews and ranking build, the price moves with them. Reviewed weekly, never left where it launched.' },
 ]
 export const RAMP_ACTIONS_NOTE =
-  'None of this trades revenue for reviews. Every night is still priced to the best rate the market will pay that day; the reviews come from filling the nights that would otherwise have gone empty.'
+  'We never trade revenue for reviews. Every night is priced to the best rate the market will pay; the reviews come from filling nights that would otherwise sit empty.'
 
 // ── THE TECHNOLOGY STACK ────────────────────────────────────────────────────
 // Jon, 2026-09-23: "create and mention the different tech stacks we use from Guesty to PriceLabs
@@ -661,25 +663,82 @@ export const RAMP_ACTIONS_NOTE =
 export const STACK_HEADLINE = 'The system behind your unit'
 export const STACK_SUBTITLE = 'Four platforms, one operation.'
 export const STACK_BODY =
-  'Most of what goes wrong in this business goes wrong in the gaps — between the booking system and the cleaner, between the cleaner and the owner, between a guest reporting something and anyone hearing about it. We closed those gaps by running one connected stack instead of four disconnected tools.'
+  'Most problems in this business happen in the gaps between systems: booking to housekeeping, housekeeping to owner, guest report to resolution. One connected stack closes them.'
 
-export type StackTool = { mono: string; name: string; role: string; v: string }
+// `logo` is a URL to the vendor's own mark, shown at 46px instead of the monogram tile when it is
+// set. It is empty by default and settable per tool from the deck's editor, because this session
+// cannot fetch vendor artwork and a hotlinked logo that 404s on an owner's screen is worse than a
+// clean letter. Paste a URL, or upload the file, and the layout takes it without changing.
+export type StackTool = { mono: string; name: string; role: string; v: string; logo?: string }
 
 export const STACK_TOOLS: StackTool[] = [
-  { mono: 'G', name: 'Guesty', role: 'The booking engine',
-    v: 'Every channel, every reservation and every calendar in one place, and the system your owner portal and monthly statement are generated from. One source of truth for what is booked and what you are owed.' },
-  { mono: 'PL', name: 'PriceLabs', role: 'The pricing engine',
-    v: 'Live market data, comp-set rates and demand signals feeding a nightly price for every date on your calendar — the tool our revenue managers operate rather than leave running on defaults.' },
-  { mono: 'B', name: 'Breezeway', role: 'The operations platform',
-    v: 'The platform hotels use to run housekeeping and maintenance. Every clean, inspection and repair is a task with a checklist, an assignee, a timestamp and photographs — so readiness is a record, not a claim.' },
-  { mono: 'L', name: 'Lighthouse', role: 'Our own software',
-    v: 'Built in-house, on top of the others. It watches the day for the things a person would miss: an unassigned clean, a guest whose message went unanswered, a rate that drifted, a statement that does not reconcile. Nobody else in this market has it, because nobody else built it.' },
+  { mono: 'G', name: 'Guesty', role: 'Bookings', logo: '',
+    v: 'Every channel, reservation and calendar in one place, and the source of your owner portal and monthly statement.' },
+  { mono: 'PL', name: 'PriceLabs', role: 'Pricing', logo: '',
+    v: 'Live market data, comp-set rates and demand signals setting a price for every date on your calendar.' },
+  { mono: 'B', name: 'Breezeway', role: 'Operations', logo: '',
+    v: 'The platform hotels use for housekeeping and maintenance. Every job carries a checklist, an assignee and photographs.' },
+  { mono: 'L', name: 'Lighthouse', role: 'Built in-house', logo: '',
+    v: 'Our own software, built on top of the rest. It watches the day for what a person would miss: an unassigned clean, an unanswered message, a rate that drifted, a statement that does not reconcile.' },
 ]
 
 export const STACK_CHANNELS: { k: string; v: string }[] = [
-  { k: 'Slack', v: 'The whole team — housekeeping, maintenance, guest care, management — in one room, in real time, in two languages. A problem raised at your unit reaches whoever can fix it in seconds, not through a chain of phone calls.' },
-  { k: 'Email & messaging', v: 'Guest messages across every channel land in one inbox and are answered around the clock. Your monthly statement, owner report and anything needing your approval come to you the same way — written, timestamped, and yours to keep.' },
+  { k: 'Slack', v: 'Housekeeping, maintenance, guest care and management in one room, in real time, in two languages. A problem at your unit reaches whoever can fix it in seconds.' },
+  { k: 'Email & messaging', v: 'Guest messages from every channel land in one inbox, answered around the clock. Your statement, owner report and anything needing approval arrive the same way: written and timestamped.' },
 ]
 
 export const STACK_NOTE =
-  'You do not have to learn any of it. It exists so that the answer to "what is happening at my unit right now" is always a screen somebody can open, rather than a question somebody has to go and ask.'
+  'You never have to touch any of it. It exists so the answer to "what is happening at my unit right now" is always a screen away.'
+
+
+// ── WHO PACER ARE ───────────────────────────────────────────────────────────
+// Jon, 2026-09-23: "talk about Pacer, the revenue management company we partner with to manage rate
+// and their experience," and he sent pacerrev.com as the source.
+//
+// Every figure below is PACER'S OWN, about PACER'S OWN BOOK, and the slide says so in those words.
+// That distinction is not pedantry: +23% is what their portfolio did, not a number we are promising
+// on this owner's unit, and an owner who later reads it as a promise is an owner we have lost. The
+// attribution is what makes it usable at all — it is evidence that the firm setting your rate has
+// done this at scale, which is exactly the question an owner is asking.
+export const REVENUE_PARTNER_HEAD = 'Who Pacer are'
+export const REVENUE_PARTNER: { k: string; v: string }[] = [
+  { k: 'Built at enterprise scale', v: 'Founded by Jon Latorre, who joined Vacasa at 600 properties and helped scale it to 44,000 across 16 countries, leading a 55-person team of analysts and data scientists over $2B+ in revenue.' },
+  { k: 'Revenue management only', v: 'Not a side service attached to a management company. It is the whole business, across 50+ markets in seven countries.' },
+  { k: 'Their own results', v: 'Pacer reports a 95% client retention rate and a +23% median same-store RevPAR lift after twelve months across 43 of their portfolios. Their book, not a forecast for yours.' },
+  { k: 'Recognised in the industry', v: 'Exclusive revenue-management partner of Key Data, preferred partner of Casago and iTrip, and a VRMA member.' },
+  { k: 'How it runs', v: 'A named revenue manager on your portfolio with director-level oversight, biweekly strategy calls and monthly performance reporting against market context.' },
+]
+
+// ── THE COPY AUDIT (2026-09-23) ─────────────────────────────────────────────
+// Jon: "Make sure that the wording is professional, not clunky, not noisy … It's a little bit wordy
+// or just clunky and noisy."
+//
+// The six pitch slides shipped this morning and were rewritten the same afternoon. A deck generated
+// in between carries the first draft, and PITCH_SEEDS only fills a section that is MISSING — so
+// without this, those decks would keep copy we have already decided was wrong.
+//
+// One distinctive phrase per retired section, each chosen to be absent from its replacement, so the
+// repair is a fixed point (the mistake found in 06d0f9f and fixed in a14fa3a). A section a person
+// has edited contains none of these and is never touched.
+//
+// What the audit was actually fixing, in case the next rewrite reintroduces it:
+//   · the em-dash aside had become a tic — nearly every paragraph carried one
+//   · competitor sniping ("almost every manager you speak to", "contractors we hope shows up")
+//     reads defensive; a company with 450 units does not need to punch sideways
+//   · 70-100 word paragraphs on slides that already carry six rows of their own
+export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
+  experience: ['Most managers in this market started with one condo', 'decided in about four minutes'],
+  craft: ['they are presented wrong, and then priced down to compensate', 'the next slide is exactly how'],
+  guestcare: ['not luck and it is not charm', 'not a claim we make'],
+  revenue: ['Almost every manager you speak to', 'there is a person to ask'],
+  stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it'],
+  rampsteps: ['would otherwise have gone empty', 'burning it on a half-built page'],
+}
+
+/** True when a stored pitch section still carries this morning's first draft. */
+export function pitchSectionStale(section: unknown, key: string): boolean {
+  const marks = PITCH_RETIRED_MARKS[key]
+  if (!marks || !section || typeof section !== 'object') return false
+  const hay = JSON.stringify(section)
+  return marks.some(m => hay.includes(m))
+}

@@ -33,7 +33,7 @@ import {
   EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF,
   CRAFT_BODY, CRAFT_ROWS,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY,
-  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD,
   RAMP_ACTIONS, RAMP_ACTIONS_NOTE,
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, type StackTool,
 } from './onboarding-copy'
@@ -113,7 +113,7 @@ export type OnboardingContent = {
   /** The guest journey, booking to review, and the Breezeway record behind it. */
   guestcare: Sec<{ headline: string; subtitle: string; body: string; stages: KV[]; note: string }>
   /** Revenue management and the Pacer partnership — the levers, not just the nightly rate. */
-  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string }>
+  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string; partnerHead: string; partner: KV[] }>
   /** The active half of the ramp story: what we DO to shorten it. Sits right after the curve. */
   rampsteps: Sec<{ headline: string; subtitle: string; rows: KV[]; note: string }>
   /** The software stack — Guesty, PriceLabs, Breezeway, Lighthouse, plus Slack and email. */
@@ -271,6 +271,8 @@ export type OnboardingTemplate = {
   revenueBody: string
   revenueLevers: KV[]
   revenueNote: string
+  revenuePartnerHead: string
+  revenuePartner: KV[]
   rampActions: KV[]
   rampActionsNote: string
   stackBody: string
@@ -367,7 +369,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   seasonLowNote: 'September is the floor \u2014 the quietest month of the year, and the one we use for deep cleans, touch-ups and anything that needs the unit empty.',
 
   seasonNote:
-    'Shape from our own book across 450+ units, cross-checked against Miami market data — the year’s shape, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
+    'The shape of the year, drawn from our own book across 450+ units and cross-checked against market data. It is not a forecast for your unit: we do not put a figure on a unit until it has a season of its own history.',
 
   // CONTACTS LIVE IN THE DEFAULTS TOO (Jon, 2026-09-18: "share email and phone number for about
   // team, numbers for Roberto and I"). The saved template in app_settings is what a generated
@@ -403,7 +405,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   ],
 
   guestyBody:
-    'We run on Guesty — the same platform the largest operators in this market use. It holds every reservation, every channel connection, every message and every statement in one place, which is why the numbers you see from us reconcile rather than being retyped from a spreadsheet.\n\n' +
+    'We run on Guesty, the platform behind the largest operators in this market. Every reservation, channel connection, message and statement lives in one place, so the numbers you receive reconcile rather than being retyped.\n\n' +
     'For you, the part that matters is the owner portal: your own login, your live calendar, and your statements the moment they are issued.',
 
   techRows: [
@@ -425,6 +427,8 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   revenueBody: REVENUE_BODY,
   revenueLevers: REVENUE_LEVERS,
   revenueNote: REVENUE_NOTE,
+  revenuePartnerHead: REVENUE_PARTNER_HEAD,
+  revenuePartner: REVENUE_PARTNER,
   rampActions: RAMP_ACTIONS,
   rampActionsNote: RAMP_ACTIONS_NOTE,
   stackBody: STACK_BODY,
@@ -525,6 +529,8 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     revenueBody: str(stored.revenueBody, D.revenueBody),
     revenueLevers: arr(stored.revenueLevers, D.revenueLevers),
     revenueNote: str(stored.revenueNote, D.revenueNote),
+    revenuePartnerHead: str(stored.revenuePartnerHead, D.revenuePartnerHead),
+    revenuePartner: arr(stored.revenuePartner, D.revenuePartner),
     rampActions: arr(stored.rampActions, D.rampActions),
     rampActionsNote: str(stored.rampActionsNote, D.rampActionsNote),
     stackBody: str(stored.stackBody, D.stackBody),
@@ -785,6 +791,8 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       body: t.revenueBody,
       rows: t.revenueLevers,
       note: t.revenueNote,
+      partnerHead: t.revenuePartnerHead,
+      partner: t.revenuePartner,
     },
     rampsteps: {
       headline: 'How we shorten it',
@@ -942,7 +950,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       // constant rather than being assembled here, so that changing the example changes it in
       // every deck, including the ones already generated. See that file for why.
       ...SAMPLE_STATEMENT,
-      note: `Your rental line is what is left after the channel takes its cut — there is no separate OTA fee to find, because it has already come out. You will not see the cleaning fee either: we keep it and it pays for the turnover, which is why the channel\u2019s fee on that cleaning fee comes back to you as its own line. Everything else traces to a booking or to a job with a date on it. Labor is ${money0(rate)} an hour on the technician\u2019s actual clock, materials are at cost, and the ${t.mgmtPct}% management fee is the only fee we take.`,
+      note: `Your rental line is what remains after the channel takes its cut, so there is no separate OTA fee to find. The cleaning fee is ours and pays for the turnover, which is why the channel\u2019s fee on it returns to you as its own line.\n\nLabor is ${money0(rate)} an hour on the technician\u2019s actual clock, materials are at cost, and the ${t.mgmtPct}% management fee is the only fee we take.`,
       rules,
       highlights: [
         { k: 'Departure cleans', v: 'Never billed to you after a guest stay \u2014 the guest\u2019s cleaning fee pays for the turnover. The clean after your own stay is the one exception, at cost.' },

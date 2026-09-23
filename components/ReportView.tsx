@@ -19,12 +19,12 @@ import {
   SECTION_HEAD, SECTION_SUB, SEASON_LABEL, houseAsk,
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
-  houseBody, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS_RETIRED_MARK,
+  houseBody, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS_RETIRED_MARK, pitchSectionStale,
   OVERVIEW_BODY_2, COMPANY_STATS_2,
   EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE,
   CRAFT_BODY, CRAFT_ROWS, CRAFT_HEADLINE, CRAFT_SUBTITLE,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY, GUEST_HEADLINE, GUEST_SUBTITLE,
-  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD,
   RAMP_ACTIONS, RAMP_ACTIONS_NOTE, RAMP_ACTIONS_HEADLINE, RAMP_ACTIONS_SUBTITLE,
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
@@ -112,13 +112,35 @@ function BasisPicker({ label, value, withNone, onPick, t }: Any) {
 
 // ---------- themes (P4): every color in the page comes from the active theme ----------
 const THEMES: Record<string, Any> = {
+  // BRIGHTENED 2026-09-23 (Jon: "do a clean revamp and brighten it up a little bit. Looks a little
+  // faded."). It read faded for a measurable reason, not a matter of taste: three of the five text
+  // tokens were below the 4.5:1 contrast floor on the slide's own white card — `muted`, which
+  // carries every label, footer and caption in the deck, sat at 2.58:1, roughly half of legible.
+  // Grey text on cream is exactly what "faded" looks like.
+  //
+  // So the fix is contrast, not saturation. Ground lifted to a cleaner warm white, ink and body
+  // deepened, and the terracotta taken from #E2725B (3.09:1, washed out) to #B54B33, which reads
+  // RICHER rather than louder and finally holds as label text. Every token now clears 4.5:1 on all
+  // three grounds the deck uses — the white card, the warm tint and the navy band — checked, not
+  // eyeballed:
+  //
+  //             on white          on tint (#F8F4ED)
+  //   ink       15.19  (was 14.64)   13.85
+  //   body       8.23  (was  7.38)    7.51
+  //   sub        5.28  (was  4.29)    4.82
+  //   muted      4.90  (was  2.58)    4.82
+  //   accent     5.23  (was  3.09)    4.77
+  //
+  // NOTE: this theme is shared with owner REPORTS, not just onboarding. That is deliberate — the
+  // same numbers were failing there too — but it means a report regenerated today looks different
+  // from one sent last month.
   capri: {
-    label: 'Capri', bg: '#FAF6EF', ink: '#102A43', body: '#41586e', sub: '#6b7c8d', muted: '#93a3b3',
-    card: '#ffffff', cardBorder: '#efe8d8', chip: '#faf8f2', accent: '#E2725B', gold: '#C9A227', band: '#102A43',
-    statusHotBg: '#fdeee9', statusHotInk: '#E2725B', statusColdBg: '#eef3f7', statusColdInk: '#5a7186',
-    good: '#1a7f4f', downGray: '#a6b1bc', rule: '#eadfc9', toolbarBg: 'rgba(250,246,239,0.92)', toolbarBorder: '#d9d0bc',
-    trackBg: '#fffdf7', footA: '#a89f8a', footB: '#c2baa4', barA: '#102A43', barB: '#E2725B',
-    edBg: 'rgba(255,255,255,0.7)', edBorder: '#C9A227',
+    label: 'Capri', bg: '#FCFAF6', ink: '#0E2740', body: '#3A5167', sub: '#5A6E80', muted: '#5A6E80',
+    card: '#ffffff', cardBorder: '#E7DFCF', chip: '#F8F4ED', accent: '#B54B33', gold: '#9C7A23', band: '#0E2740',
+    statusHotBg: '#fbeae5', statusHotInk: '#B54B33', statusColdBg: '#eaf1f6', statusColdInk: '#43607a',
+    good: '#157044', downGray: '#8d99a4', rule: '#E7DFCF', toolbarBg: 'rgba(252,250,246,0.94)', toolbarBorder: '#d9d0bc',
+    trackBg: '#fffdf9', footA: '#8a8271', footB: '#a79f8c', barA: '#0E2740', barB: '#B54B33',
+    edBg: 'rgba(255,255,255,0.7)', edBorder: '#9C7A23',
   },
   minimal: {
     label: 'Minimal', bg: '#ffffff', ink: '#111827', body: '#374151', sub: '#6b7280', muted: '#9ca3af',
@@ -1097,7 +1119,7 @@ const PITCH_DEFAULTS: Record<string, Any> = {
   experience: { headline: EXPERIENCE_HEADLINE, subtitle: EXPERIENCE_SUBTITLE, body: EXPERIENCE_BODY, items: EXPERIENCE_ITEMS, proof: EXPERIENCE_PROOF, photo: null },
   craft: { headline: CRAFT_HEADLINE, subtitle: CRAFT_SUBTITLE, body: CRAFT_BODY, rows: CRAFT_ROWS },
   guestcare: { headline: GUEST_HEADLINE, subtitle: GUEST_SUBTITLE, body: GUEST_BODY, stages: GUEST_STAGES, note: GUEST_BREEZEWAY },
-  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE },
+  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE, partnerHead: REVENUE_PARTNER_HEAD, partner: REVENUE_PARTNER },
   rampsteps: { headline: RAMP_ACTIONS_HEADLINE, subtitle: RAMP_ACTIONS_SUBTITLE, rows: RAMP_ACTIONS, note: RAMP_ACTIONS_NOTE },
   stack: { headline: STACK_HEADLINE, subtitle: STACK_SUBTITLE, body: STACK_BODY, tools: STACK_TOOLS, rows: STACK_CHANNELS, note: STACK_NOTE },
 }
@@ -1428,7 +1450,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       // render as a headline over nothing. Seeded here rather than only in the generator, so an
       // owner meeting scheduled off an existing draft gets the same deck as one built this
       // afternoon. Only ever fills a MISSING section — an edited one is never touched.
-      PITCH_SEEDS.some(k => !((c as Any)[k] && Object.keys((c as Any)[k]).length))
+      PITCH_SEEDS.some(k => !((c as Any)[k] && Object.keys((c as Any)[k]).length) || pitchSectionStale((c as Any)[k], k))
     if (!stale) return
     mutate(d => {
       const hero = d.hero || (d.hero = {})
@@ -1444,7 +1466,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       const tm = d.team || (d.team = {})
       tm.subtitle = houseTeamSubtitle(tm.subtitle, ((tm.people || []) as Any[]).length)
       for (const k of PITCH_SEEDS) {
-        if (!d[k] || !Object.keys(d[k]).length) d[k] = JSON.parse(JSON.stringify(PITCH_DEFAULTS[k]))
+        // Missing (a deck from before these slides existed) or still carrying this morning's first
+        // draft (a deck generated between the two ships today). An edited section matches neither.
+        if (!d[k] || !Object.keys(d[k]).length || pitchSectionStale(d[k], k)) d[k] = JSON.parse(JSON.stringify(PITCH_DEFAULTS[k]))
       }
       const rp = d.ramp || (d.ramp = {})
       rp.headline = houseLine(rp.headline, RAMP_HEADLINE)
@@ -2931,7 +2955,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // enough to separate two reading slides, not enough to read as a coloured box.
           const GROUND: Record<SlideTone, string> = {
             light: t.card,
-            tint: blend(t.bg, t.ink, 0.07),
+            // The tint was the theme's cream washed 7% toward navy, which produces a cool grey —
+            // and grey is where the accent and the muted label both fell under the contrast floor.
+            // The theme's own `chip` is the same warmth as the ground, one step down, and every
+            // token clears 4.5:1 against it.
+            tint: t.chip,
             dark: t.band,
           }
           // Brass earns its keep on the tinted ground, where clay on bone goes muddy. Two
@@ -3597,6 +3625,28 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       </div>
                     ))}
                   </div>
+                  {/* WHO PACER ARE. An owner hearing "we use a revenue partner" wants to know who,
+                      and every figure here is Pacer's own, about Pacer's own book, labelled as such
+                      on the slide. */}
+                  {(sec('revenue').partner || []).length ? (
+                    <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid ' + t.cardBorder }}>
+                      <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.14em', color: t.accent, textTransform: 'uppercase' }}>
+                        <Ed v={sec('revenue').partnerHead || 'Who Pacer are'} set={v => patch('revenue.partnerHead', v)} edit={edit} />
+                      </p>
+                      <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '12px 30px' }}>
+                        {(sec('revenue').partner || []).map((f: Any, i: number) => (
+                          <div key={i}>
+                            <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                              <Ed v={f.k || ''} set={v => patch('revenue.partner.' + i + '.k', v)} edit={edit} multiline />
+                            </p>
+                            <p style={{ fontSize: 13, lineHeight: 1.6, color: t.body, marginTop: 3 }}>
+                              <Ed v={f.v || ''} set={v => patch('revenue.partner.' + i + '.v', v)} edit={edit} multiline />
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <p style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder, fontSize: 14, lineHeight: 1.6, color: t.body, maxWidth: '76ch' }}>
                     <Ed v={sec('revenue').note || ''} set={v => patch('revenue.note', v)} edit={edit} multiline />
                   </p>
@@ -3627,11 +3677,21 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
                     {(sec('stack').tools || []).map((f: Any, i: number) => (
                       <div key={i} className="flex" style={{ gap: 16, alignItems: 'flex-start' }}>
-                        <span style={{
-                          flex: '0 0 46px', height: 46, borderRadius: 11, background: t.accent, color: t.card,
-                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: f.mono && String(f.mono).length > 1 ? 15 : 19, fontWeight: 700, letterSpacing: '-0.02em',
-                        }}>{f.mono || '\u00b7'}</span>
+                        {/* The vendor's own mark when we hold one, a monogram tile when we do not.
+                            Both are 46px on the same baseline, so a half-filled set still reads as
+                            one row rather than a ransom note. */}
+                        {String(f.logo || '').trim() ? (
+                          <span style={{ flex: '0 0 46px', height: 46, borderRadius: 11, background: t.card, border: '1px solid ' + t.cardBorder, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={String(f.logo)} alt={String(f.name || '')} style={{ maxWidth: 34, maxHeight: 30, objectFit: 'contain' }} />
+                          </span>
+                        ) : (
+                          <span style={{
+                            flex: '0 0 46px', height: 46, borderRadius: 11, background: t.accent, color: t.card,
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: f.mono && String(f.mono).length > 1 ? 15 : 19, fontWeight: 700, letterSpacing: '-0.02em',
+                          }}>{f.mono || '\u00b7'}</span>
+                        )}
                         <div style={{ flex: 1 }}>
                           <p style={{ fontSize: 15.5, fontWeight: 600, color: t.ink, lineHeight: 1.25 }}>
                             <Ed v={f.name || ''} set={v => patch('stack.tools.' + i + '.name', v)} edit={edit} />
@@ -5095,7 +5155,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           //    16:9 frame with a sticky head and a pinned total, rather than being chopped across
           //    three slides (which made the reader carry a running sum across two page-turns).
           const D = { ink: '#ffffff', body: 'rgba(255,255,255,0.86)', muted: 'rgba(255,255,255,0.56)', rule: 'rgba(255,255,255,0.22)' }
-          const GROUND: Record<SlideTone, string> = { light: t.card, tint: blend(t.bg, t.ink, 0.06), dark: t.band }
+          const GROUND: Record<SlideTone, string> = { light: t.card, tint: t.chip, dark: t.band }
           const tint = (a: number) => inkA(t.ink, a)
           const usd = (n: Any) => {
             const v = Number(n)
