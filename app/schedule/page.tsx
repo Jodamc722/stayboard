@@ -8,13 +8,17 @@ import { LaborStrip } from '@/components/LaborStrip'
 import { CapacityPanel } from '@/components/OpsV2'
 import { LeanHead } from '@/components/lean'
 import { CalendarRange } from 'lucide-react'
+import { ScheduleSuggesterButton } from '@/components/ScheduleSuggester'
 
 export const dynamic = 'force-dynamic'
 
 export default function SchedulePage() {
   return (
     <Shell>
-      <LeanHead title="Turnover Schedule" icon={<CalendarRange size={18} className="text-brand-600" />} />
+      <LeanHead title="Turnover Schedule" icon={<CalendarRange size={18} className="text-brand-600" />}>
+        {/* The sandbox (Jon, 2026-09-23): a proposed day in a popup, moved around, then approved. */}
+        <ScheduleSuggesterButton />
+      </LeanHead>
 
       <LaborStrip />
       {/* IS THE DAY DOABLE — the measured capacity model (lib/capacity), pointed at whichever day
