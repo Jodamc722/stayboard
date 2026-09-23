@@ -29,18 +29,41 @@ async function run(req: NextRequest) {
   const allowed = cronAllowed(req)
   let human = false
   if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const sp = new URL(req.url).searchParams
+
+  // THREE JOBS ON ONE CRON LINE (2026-09-23). vercel.json is at its cron cap, so this line fires at
+  // 07:43, 08:43 and 09:43 UTC and the hour picks the job: baselines first, then the living mind
+  // (lib/eve/brain.ts: grade yesterday's calls, tidy beliefs, reflect, make today's calls), then the
+  // dossiers (lib/eve/dossiers.ts). An admin can run any of them by hand with ?phase=.
+  const hourUtc = new Date().getUTCHours()
+  const asked = String(sp.get('phase') || '')
+  const phase = ['metrics', 'brain', 'dossiers'].includes(asked) ? asked : hourUtc === 8 ? 'brain' : hourUtc === 9 ? 'dossiers' : 'metrics'
+  const job = phase === 'metrics' ? 'eve-metrics' : phase === 'brain' ? 'eve-brain' : 'eve-dossiers'
   if (!allowed.viaSecret) {
     // No secret configured: a signed-in admin runs it on demand, anyone else gets the scheduled
     // cadence and no more.
     const gate = await eveGate()
     human = gate.ok
     if (!human) {
-      const skip = await tooSoon('eve-metrics', 720)
-      if (skip) return NextResponse.json({ ok: true, ...skip })
+      const skip = await tooSoon(job, 720)
+      if (skip) return NextResponse.json({ ok: true, phase, ...skip })
+    }
+  }
+  if (phase !== 'metrics') {
+    const t0 = Date.now()
+    try {
+      const out: any = phase === 'brain'
+        ? await (await import('@/lib/eve/brain')).runBrain({ force: human && sp.get('force') === '1' })
+        : await (await import('@/lib/eve/dossiers')).buildDossiers()
+      const ms = Date.now() - t0
+      recordRun({ name: job, ok: out?.ok !== false, itemCount: phase === 'brain' ? (out?.calls?.made ?? undefined) : (out?.written ?? undefined), detail: out, ms })
+      return NextResponse.json({ ok: true, phase, ...out, ms })
+    } catch (e: any) {
+      recordRun({ name: job, ok: false, detail: { error: String(e?.message || e).slice(0, 300) }, ms: Date.now() - t0 })
+      return NextResponse.json({ ok: false, phase, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
     }
   }
 
-  const sp = new URL(req.url).searchParams
   const backfill = Math.min(Math.max(Number(sp.get('backfill')) || 0, 0), 365)
   const started = Date.now()
   const today = todayET()
