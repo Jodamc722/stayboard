@@ -13,6 +13,7 @@ import { photoForPlace } from '@/lib/place-photo'
 import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
+import { buildEmergency } from '@/lib/emergency'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -139,7 +140,7 @@ export async function POST(req: NextRequest) {
   }
   const [{ data: rows }, { data: revRows }] = await Promise.all([
     db.from('guesty_listings')
-      .select("id, title, nickname, building, unit, bedrooms, bathrooms, max_occupancy, address_full, address_city, pictures, amenities, pub:raw->publicDescription, wifiName:raw->>wifiName, wifiPassword:raw->>wifiPassword, ci:raw->>defaultCheckInTime, co:raw->>defaultCheckOutTime")
+      .select("id, title, nickname, building, unit, bedrooms, bathrooms, max_occupancy, address_full, address_city, pictures, amenities, pub:raw->publicDescription, wifiName:raw->>wifiName, wifiPassword:raw->>wifiPassword, ci:raw->>defaultCheckInTime, co:raw->>defaultCheckOutTime, lat:raw->address->>lat, lng:raw->address->>lng")
       .eq('id', listingId).limit(1),
     db.from('guesty_reviews').select('rating, content, created_at').eq('listing_id', listingId).not('content', 'is', null).order('created_at', { ascending: false }).limit(60),
   ])
@@ -326,6 +327,17 @@ ${JSON.stringify(fallback)}`
   sections._photoMeta = photoMeta
   sections._photoAssign = photoAssign
   if (!Array.isArray(sections.omit)) sections.omit = []
+
+  // EMERGENCY INFO IS COMPUTED, NOT WRITTEN (Jon, 2026-09-23: hospitals in every guidebook, "It's
+  // important, and it's mandatory" — plus "non emergency number, emergency number and hospital").
+  //
+  // It is set HERE, after the AI pass, and overwrites whatever the model produced, because these
+  // are the only four facts in the book a guest may act on in an emergency and they must come from
+  // the verified table in lib/emergency.ts, from this listing's own coordinates. It is also removed
+  // from `omit` unconditionally: every other page in this book can be switched off, and this one
+  // cannot.
+  sections.emergency = buildEmergency({ lat: l.lat, lng: l.lng, city, address: l.address_full })
+  sections.omit = sections.omit.filter((k: string) => k !== 'emergency')
 
     const { data: ins, error } = await db.from('guidebooks').insert({
     listing_id: listingId,

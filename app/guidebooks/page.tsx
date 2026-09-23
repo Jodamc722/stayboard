@@ -8,6 +8,7 @@ import { Shell } from '@/components/Shell'
 import { ArrowRight, Sparkles } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanSection, LeanEmpty } from '@/components/lean'
 import { PushGuestyButton } from '@/components/PushGuestyButton'
+import { EmergencyBackfillButton } from '@/components/EmergencyBackfillButton'
 import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
@@ -59,6 +60,7 @@ export default async function GuidebooksPage() {
         {drafts ? <Pill tone="amber" title="Still in draft">{drafts} draft</Pill> : null}
         <Link href="/guidebooks/bulk" title="Generate guidebooks for every unit in a building" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg bg-neutral-900 text-white px-2.5 py-1 hover:bg-neutral-700">Bulk build <ArrowRight size={13} /></Link>
         <Link href="/guidebooks/fix" title="Fix many guidebooks at once with AI" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line bg-white text-ink px-2.5 py-1 hover:bg-app">Bulk fix <Sparkles size={13} /></Link>
+        <EmergencyBackfillButton />
         <PushGuestyButton />
       </LeanHead>
       {rows.length === 0 ? (

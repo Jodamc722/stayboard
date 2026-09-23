@@ -920,6 +920,52 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><T path={['contact', 'gmLabel']} value={s.contact?.gmLabel || 'GENERAL MANAGER'} rows={1} /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <Tel v={s.contact?.gmPhone}><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></Tel></p></div>
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="contact.addressLabel" def="ADDRESS" /></p><p className="mt-1.5 text-[11px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
           </div>
+
+          {/* ── IN AN EMERGENCY ──────────────────────────────────────────────────────────────────
+              Jon, 2026-09-23: hospitals in every guidebook — "It's important, and it's mandatory" —
+              with the emergency and non-emergency numbers beside them.
+
+              It sits at the foot of the contact page rather than on a page of its own, and that is
+              deliberate. This is the page a guest already turns to for a phone number, so the ER is
+              where they are looking instead of eleven pages away; and a book that opens onto
+              hospitals reads like a warning, not a welcome. 911 comes first and is the largest
+              thing in the block, because it is the right answer to almost every emergency; the
+              hospital is for the guest who has decided to drive themselves.
+
+              Every value here is computed in lib/emergency.ts from this listing's own coordinates
+              and is NOT model-written. The block renders even when there is no `emergency` section
+              yet, so an old book still shows 911 rather than nothing. */}
+          {(() => {
+            const em = s.emergency || {}
+            const hosp = em.hospital
+            return (
+              <div className="mt-6 border-t pt-4" style={{ borderColor: accentColor + '33' }}>
+                <p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="em.heading" def="IN AN EMERGENCY" /></p>
+                <div className="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
+                  <div>
+                    <p className="text-[18px] leading-none" style={{ fontFamily: SERIF }}><Tel v="911">911</Tel></p>
+                    <p className="mt-1 text-[9.5px] font-light leading-snug opacity-70"><L k="em.note" def="Fire, police or an ambulance — call 911 first, then call us." rows={2} /></p>
+                  </div>
+                  {em.police ? (
+                    <div>
+                      <p className="text-[8.5px] tracking-[0.24em] uppercase opacity-70">{em.policeLabel || 'Police · non-emergency'}</p>
+                      <p className="mt-1 text-[13px]" style={{ fontFamily: SERIF }}><Tel v={em.police}><T path={['emergency', 'police']} value={em.police} rows={1} /></Tel></p>
+                      <p className="mt-1 text-[9.5px] font-light leading-snug opacity-70"><L k="em.policeNote" def="Noise, parking, a lost item — anything that is not an emergency." rows={2} /></p>
+                    </div>
+                  ) : null}
+                  {hosp ? (
+                    <div>
+                      <p className="text-[8.5px] tracking-[0.24em] uppercase opacity-70"><L k="em.hospitalLabel" def="NEAREST EMERGENCY ROOM" /></p>
+                      <p className="mt-1 text-[13px] leading-snug" style={{ fontFamily: SERIF }}><T path={['emergency', 'hospital', 'name'] as any} value={hosp.name} rows={1} /></p>
+                      <p className="mt-0.5 text-[10.5px] font-light leading-snug"><MapLink v={hosp.address}><T path={['emergency', 'hospital', 'address'] as any} value={hosp.address} rows={2} /></MapLink></p>
+                      <p className="mt-0.5 text-[10.5px] font-light"><Tel v={hosp.phone}><T path={['emergency', 'hospital', 'phone'] as any} value={hosp.phone} rows={1} /></Tel></p>
+                      <p className="mt-1 text-[9.5px] font-light leading-snug opacity-70">{hosp.distance}{hosp.trauma ? ' · ' + hosp.trauma : ''} · open 24 hours</p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            )
+          })()}
         </Page>
 
         {/* LOCAL — places / eats. Photo cards when imagery exists; big editorial cards when few items. */}
