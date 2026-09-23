@@ -30,6 +30,8 @@ const ymdET = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: '
 const hourET = (d = new Date()) => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(d)) % 24
 const shift = (ymd: string, n: number) => ymdET(new Date(Date.parse(ymd + 'T12:00:00Z') + n * 86400_000))
 const MAX_PER_WATCH = 5
+/** Guesty activity logs and internal notes (the `module` on guesty_messages) — never sent to a guest. */
+const INTERNAL_MODULES = new Set(['log', 'note', 'notes', 'internal', 'internal_note', 'activity', 'system'])
 
 export type WatchKey =
   | 'guest_unanswered_1h' | 'clean_late' | 'big_arrival_uninspected' | 'bad_review_in'
@@ -143,8 +145,15 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
       ask: `draft a reply to ${guest}${unit ? ` (${unit})` : ''} — waiting ${waitedH}h on ${str(r.channel) || 'their thread'}${arrivesToday ? ', arriving TODAY' : ''}? (it waits on the thread for Send; nothing reaches the guest yet)`,
       why: `The guest spoke last ${waitedH}h ago and nobody has answered.`,
       exec: async () => {
-        const { data: msgs } = await db.from('guesty_messages').select('sender,sender_name,body,sent_at,module').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(12)
-        const all = ((msgs as any[]) || [])
+        // INTERNAL ENTRIES ARE NOT THE CONVERSATION (Jon, 2026-09-23 review). Guesty files activity
+        // logs and internal team notes into the same thread. They were fed to the model as "US:"
+        // lines — so a note like "owner says no refund" could be paraphrased to the guest — and a
+        // note typed AFTER the guest's message counted as our reply and suppressed the draft
+        // altogether. Rows whose module is a log / note / internal entry are dropped before either
+        // test (older rows can carry a log module under 'host' or 'guest', so the module decides,
+        // not the sender). Read deeper than we show so a run of notes cannot empty the window.
+        const { data: msgs } = await db.from('guesty_messages').select('sender,sender_name,body,sent_at,module').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(40)
+        const all = ((msgs as any[]) || []).filter(m => !INTERNAL_MODULES.has(str(m.module).toLowerCase())).slice(0, 12)
         // conversation_response is refreshed by the guest-comms cron; the mirror is fresher. If we
         // (or Eve, via Send) have answered since, there is nothing to draft.
         const lastReal = all.find(m => m.sender === 'guest' || m.sender === 'host')
@@ -242,9 +251,19 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
     const has = new Set(((open as any[]) || []).map(t => str(t.reference_property_id)))
     low = low.map(r => (has.has(str(r.listing_id)) ? { ...r, _inspected: true } : r))
   } catch { /* fine */ }
-  const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').in('id', lids)
+  const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').in('id', lids)
   const nameOf: Record<string, string> = {}
-  for (const l of ((ls as any[]) || [])) nameOf[str(l.id)] = str(l.nickname || l.title)
+  // THE INSPECTION GOES TO THAT MARKET'S SUPERVISOR (Jon, 2026-09-23 review). This handed every
+  // low-review inspection to the MIAMI supervisor, so a Broward review landed on someone who does
+  // not run Broward and the person who does never saw it. The market comes from the same
+  // marketOf(building, city, name) that lib/auto-inspections uses for its own low-review tasks;
+  // Miami stays only as the fallback for a market with no supervisor configured.
+  const { marketOf } = await import('@/lib/segments')
+  const marketOfLid: Record<string, string> = {}
+  for (const l of ((ls as any[]) || [])) {
+    nameOf[str(l.id)] = str(l.nickname || l.title)
+    marketOfLid[str(l.id)] = str(marketOf(l.building, l.address_city, l.nickname || l.title))
+  }
   const { data: nx } = await db.from('guesty_reservations').select('listing_id,check_out,status').in('listing_id', lids).gte('check_out', env.today).in('status', ['confirmed', 'checked_in']).order('check_out').limit(1000)
   const nextOut: Record<string, string> = {}
   for (const r of ((nx as any[]) || [])) { const lid = str(r.listing_id); if (!nextOut[lid]) nextOut[lid] = str(r.check_out).slice(0, 10) }
@@ -254,7 +273,8 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
     const lid = str(r.listing_id), unit = nameOf[lid] || 'the unit', rating = Math.round(norm(r.rating) * 10) / 10
     const quote = str(r.content).replace(/\s+/g, ' ').trim().slice(0, 300)
     const date = nextOut[lid] || env.today
-    const assignees = Array.from(new Set([cfg?.assignAlways, cfg?.supervisors?.Miami].filter(Boolean)))
+    const sup = cfg ? (cfg.supervisors?.[marketOfLid[lid]] || cfg.supervisors?.Miami) : ''
+    const assignees = Array.from(new Set([cfg?.assignAlways, sup].filter(Boolean)))
     if (!r._inspected) out.push({
       subject: `rev:${r.id}:inspect`, action: 'task_create', metric: 'low_reviews',
       ask: `create a quality inspection on ${unit} for ${date} after ${str(r.guest_name) || 'a guest'}'s ${rating}★ ${str(r.channel)} review?`,
