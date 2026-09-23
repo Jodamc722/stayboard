@@ -26,7 +26,7 @@ const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/N
 export type VendorAssignRun = {
   ok: boolean
   skipped?: string
-  vendors: { label: string; assignTo: string; personId: number | null; units: number; open: number; assigned: number; alreadyStaffed: number; failed: number; error?: string }[]
+  vendors: { label: string; assignTo: string; personId: number | null; units: number; open: number; assigned: number; alreadyStaffed: number; failed: number; staffedBy: Record<string, number>; error?: string }[]
 }
 
 /** dryRun: find and count, write nothing. */
@@ -50,7 +50,7 @@ export async function assignVendorTasks(opts: { dryRun?: boolean } = {}): Promis
     const person = people.find(p => norm(p.name) === want) || people.find(p => norm(p.name).includes(want)) || null
     const re = vendorRegex([v])
     const ids = listings.filter(l => re.test([l.building, l.nickname, l.title].filter(Boolean).join(' '))).map(l => String(l.id))
-    const row = { label: v.label, assignTo: String(v.assignTo), personId: person ? person.id : null, units: ids.length, open: 0, assigned: 0, alreadyStaffed: 0, failed: 0 } as VendorAssignRun['vendors'][number]
+    const row = { label: v.label, assignTo: String(v.assignTo), personId: person ? person.id : null, units: ids.length, open: 0, assigned: 0, alreadyStaffed: 0, failed: 0, staffedBy: {} } as VendorAssignRun['vendors'][number]
     if (!person) { row.error = `No Breezeway person matches "${v.assignTo}".`; out.vendors.push(row); continue }
     if (!ids.length) { out.vendors.push(row); continue }
 
@@ -65,7 +65,13 @@ export async function assignVendorTasks(opts: { dryRun?: boolean } = {}): Promis
       if (/delete|cancel|complete|finish|close|approv/i.test(String(t.status || ''))) continue
       row.open++
       const staffed = (Array.isArray(t.assignees) && t.assignees.length > 0) || !!String(t.assignee_name || '').trim()
-      if (staffed) { row.alreadyStaffed++; continue }
+      if (staffed) {
+        row.alreadyStaffed++
+        // Who is on them, so a task sitting with one of OUR people in an Opal building is visible.
+        const names = Array.isArray(t.assignees) && t.assignees.length ? t.assignees.map((a: any) => String(a?.name || a || '')) : [String(t.assignee_name || '')]
+        for (const n of names.filter(Boolean)) row.staffedBy[n] = (row.staffedBy[n] || 0) + 1
+        continue
+      }
       if (opts.dryRun) { row.assigned++; continue }
       if (budget <= 0) break
       budget--
