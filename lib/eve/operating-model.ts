@@ -97,6 +97,18 @@ const STATED: Partial<Record<string, Partial<BuildingOps>>> = {
     notes: 'Vendor-operated hotel. We manage distribution and guest communication only. (Jon, 2026-09-11)',
     source: 'jon', updatedAt: '2026-09-11', updatedBy: 'jon@stay-hospitality.com',
   },
+  // Opal's three (Jon, 2026-09-23): "Lucerne and Capri are managed by Opal staff, and Opal is in
+  // Breezeway … they have different cleaners that they use, but that's up to them to assign." and
+  // "Same for Amrit, that's Opal's team as well." Access and supplies were not said either way, so
+  // they stay unknown and she asks.
+  ...Object.fromEntries(['Capri', 'Lucerne', 'Amrit'].map(b => [b, {
+    operator: 'vendor' as const,
+    we: ['distribution', 'guest_comms'] as Duty[],
+    they: ['cleaning', 'maintenance', 'inspections', 'onsite'] as Duty[],
+    partner: 'Opal Works',
+    notes: 'Managed by Opal staff. Opal is in Breezeway: every task here is assigned to the Opal Works account and Opal picks its own cleaner. Never assign our crew or chase their cleans as ours. (Jon, 2026-09-23)',
+    source: 'jon' as const, updatedAt: '2026-09-23', updatedBy: 'jon@stay-hospitality.com',
+  }])),
 }
 
 const cleanDuties = (v: any): Duty[] => Array.isArray(v) ? v.map(String).filter((d): d is Duty => (DUTIES as readonly string[]).includes(d)) : []
