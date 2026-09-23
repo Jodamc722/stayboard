@@ -12,7 +12,7 @@
 //
 //   ops         things slipping between Slack, the glitch board and Breezeway      → #vr-eve
 //   guest       a fix is done and the guest has not heard                           → #vr-ccs-messageboard
-//   leadership  a glitch gap (B or C) she flagged that nobody touched for 3 hours    → #leadership
+//   leadership  a glitch or guest-reported gap (B, C, E) nobody touched for 3 hours  → #leadership
 //
 // Every room is a setting (app_settings `eve_on_watch`), so moving one is not a deploy.
 //
@@ -21,6 +21,11 @@
 //   B  a glitch open 2 hours with no Breezeway task behind it
 //   C  a glitch's Breezeway task still open 6 hours on, with the guest still in the unit
 //   D  a glitch's Breezeway task finished, the glitch still open — tell the guest it is fixed
+//   E  a "Guest Reported" Breezeway task, guest in the unit, carried over from an earlier day or
+//      still with nobody on it 45 minutes after she first saw it
+//   F  a "Guest Reported" Breezeway task finished while the guest is still there — tell them
+// E and F exist because most guest issues never reach the glitch board: the team files them
+// straight into Breezeway. A task already tied to a glitch is left to C and D.
 // Cleans running behind are NOT here on purpose: the late-clean reminders already cover them and
 // Jon wants those left exactly as they are.
 //
@@ -56,11 +61,11 @@ const ESCALATE_AFTER_H = 3
 const OPEN = (s: any) => !/^(closed|done|resolved)$/i.test(String(s || ''))
 
 type Flag = {
-  kind: 'A' | 'B' | 'C' | 'D'; room: Room; line: string; label: string
+  kind: 'A' | 'B' | 'C' | 'D' | 'E' | 'F'; room: Room; line: string; label: string
   channel: string | null; ts: string | null; at: string
   escalated?: boolean; resolved?: string | null; resolvedAt?: string | null
 }
-type State = { flags: Record<string, Flag> }
+type State = { flags: Record<string, Flag>; seen?: Record<string, string> }
 
 export async function getOnWatchConfig(): Promise<OnWatchConfig> {
   const v = await getSetting<any>(ON_WATCH_KEY, null)
@@ -114,7 +119,7 @@ export type OnWatchRun = { ok: boolean; skipped?: string; found: Record<string, 
 
 /** preview: find and word everything, post nothing, save nothing — what the next pass would say. */
 export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = {}): Promise<OnWatchRun> {
-  const out: OnWatchRun = { ok: true, found: { A: 0, B: 0, C: 0, D: 0 }, posted: {}, resolved: 0, escalated: 0, notes: [] }
+  const out: OnWatchRun = { ok: true, found: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 }, posted: {}, resolved: 0, escalated: 0, notes: [] }
   const cfg = await getOnWatchConfig()
   if (!cfg.enabled && !opts.force && !opts.preview) return { ...out, skipped: 'switched off (app_settings eve_on_watch)' }
   const hour = etHourNow()
@@ -123,6 +128,8 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const db = supabaseAdmin()
   const st: State = { flags: {}, ...((await getSetting<any>(STATE_KEY, null)) || {}) }
   const flags = st.flags || {}
+  const seen: Record<string, string> = st.seen || {}
+  const seenNow: Record<string, string> = {}
   const today = etToday()
   const now = new Date().toISOString()
 
@@ -142,6 +149,28 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const taskDone = (t: any) => !!t && (!!t.finished_at || /complete|finish|close|approv/i.test(String(t.status || '')))
   const who = (t: any) => first(t?.finished_by_name) || first(Array.isArray(t?.assignees) ? t.assignees[0]?.name : '')
   const unitOf = (g: any) => String(g.unit || 'a unit')
+  // Breezeway tasks the guest reported, open or finished in the last day, not tied to a glitch.
+  const GUEST_TASK = /guest\s*report|glitch/i
+  const glitchTaskIds = new Set(taskIds)
+  const { data: gtRows } = await db.from('breezeway_tasks_sync').select('id,name,status,scheduled_date,started_at,finished_at,finished_by_name,assignees,reference_property_id,linked_reservation_id')
+    .gte('scheduled_date', new Date(Date.now() - 10 * 86400_000).toISOString().slice(0, 10)).lte('scheduled_date', today)
+    .or('name.ilike.%guest report%,name.ilike.%glitch%').limit(600)
+  const guestTasks = ((gtRows as any[]) || []).filter(t => GUEST_TASK.test(String(t.name || '')) && !/delete|cancel/i.test(String(t.status || '')) && !glitchTaskIds.has(String(t.id)))
+  const lids = Array.from(new Set(guestTasks.map(t => String(t.reference_property_id || '')).filter(Boolean)))
+  const unitName: Record<string, string> = {}
+  const stayNow: Record<string, { guest: string; out: string }> = {}
+  for (let i = 0; i < lids.length; i += 200) {
+    const part = lids.slice(i, i + 200)
+    const [{ data: ls }, { data: rs }] = await Promise.all([
+      db.from('guesty_listings').select('id,nickname,title').in('id', part),
+      db.from('guesty_reservations').select('listing_id,guest_name,check_in,check_out,status').in('listing_id', part).lte('check_in', today).gte('check_out', today).limit(600),
+    ])
+    for (const l of (ls as any[]) || []) unitName[String(l.id)] = String(l.nickname || l.title || '')
+    for (const r of (rs as any[]) || []) {
+      if (/cancel|declin|inquir|expire/i.test(String(r.status || ''))) continue
+      stayNow[String(r.listing_id)] = { guest: String(r.guest_name || ''), out: String(r.check_out || '').slice(0, 10) }
+    }
+  }
   const inHouse = (g: any) => { const ci = String(g.check_in || '').slice(0, 10), co = String(g.check_out || '').slice(0, 10); return !!ci && ci <= today && !!co && co > today }
 
   // ── Resolve what she already said
@@ -150,7 +179,15 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     if (f.resolved) continue
     const [, id] = key.split(':')
     let done: string | null = null
-    if (f.kind === 'A') {
+    if (f.kind === 'E' || f.kind === 'F') {
+      if (f.kind === 'E') {
+        const t = guestTasks.find(x => String(x.id) === id)
+        if (!t) done = 'no longer open'
+        else if (taskDone(t)) done = `done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}`
+        else if (/nobody assigned/.test(f.line) && Array.isArray(t.assignees) && t.assignees.length) done = 'assigned to ' + first(t.assignees[0]?.name)
+      }
+      // F is a nudge to write to the guest; nothing records that it was done, so it simply ages out.
+    } else if (f.kind === 'A') {
       const it = items.find(i => String(i.id) === id)
       if (it && it.status !== 'open') done = 'closed' + (it.closed_reason ? ` (${String(it.closed_reason).slice(0, 60)})` : '')
       else if (it && it.tracked_in) done = 'now tracked in ' + String(it.tracked_in).split(':')[0]
@@ -196,11 +233,11 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     const h = hoursSince(g.created_at)
     // B — a glitch with nothing behind it in Breezeway. Refund and manager-review lanes are money
     // decisions, not field work, so an empty Breezeway link there is normal.
-    if (!g.breezeway_task_id && h >= NO_TASK_AFTER_H && h <= 24 && !/refund|manager_review/.test(String(g.status))) {
+    if (!g.breezeway_task_id && h >= NO_TASK_AFTER_H && h <= 7 * 24 && !/refund|manager_review/.test(String(g.status))) {
       add('B:' + g.id, { kind: 'B', room: 'ops', label, line: `${label} — glitch open ${age(g.created_at)}, no Breezeway task${g.assignee ? `, with ${first(g.assignee)}` : ''}.` })
     }
     // C — the task exists but is dragging, and the guest is living with it.
-    if (t && !taskDone(t) && h >= SLOW_TASK_AFTER_H && h <= 72 && inHouse(g)) {
+    if (t && !taskDone(t) && h >= SLOW_TASK_AFTER_H && h <= 7 * 24 && inHouse(g)) {
       add('C:' + g.id, { kind: 'C', room: 'ops', label, line: `${label} — Breezeway task still open after ${age(g.created_at)}, guest in the unit until ${weekday(String(g.check_out).slice(0, 10))}.` })
     }
     // D — fixed, and the guest has not been told. Only while they are still there or leaving today.
@@ -211,12 +248,35 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     }
   }
 
+  // E / F — guest-reported work that lives only in Breezeway.
+  for (const t of guestTasks) {
+    const lid = String(t.reference_property_id || '')
+    const stay = stayNow[lid]
+    const label = `${unitName[lid] || 'a unit'} · ${String(t.name || '').replace(/\s+/g, ' ').trim().slice(0, 60)}`
+    const sd = String(t.scheduled_date || '').slice(0, 10)
+    const nobody = !(Array.isArray(t.assignees) && t.assignees.length)
+    if (!taskDone(t)) {
+      if (!stay || stay.out <= today) continue
+      if (sd && sd < today) {
+        add('E:' + t.id, { kind: 'E', room: 'ops', label, line: `${label} — open since ${weekday(sd)}${nobody ? ', nobody assigned' : ''}; guest in the unit until ${weekday(stay.out)}.` })
+      } else if (nobody) {
+        // Seen unassigned on an earlier pass and still unassigned 45 minutes on: then it is a gap.
+        const k = 'E:' + t.id
+        seenNow[k] = seen[k] || now
+        if (hoursSince(seenNow[k]) * 60 >= SLACK_ITEM_AFTER_MIN) add(k, { kind: 'E', room: 'ops', label, line: `${label} — nobody assigned since ${clock(seenNow[k])}; guest in the unit until ${weekday(stay.out)}.` })
+      }
+    } else if (t.finished_at && hoursSince(t.finished_at) <= 24 && stay && stay.out >= today) {
+      const guest = first(stay.guest)
+      add('F:' + t.id, { kind: 'F', room: 'guest', label, line: `${label} — done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${stay.out === today ? 'checking out today' : 'in until ' + weekday(stay.out)}; worth a quick note that it's sorted. I can draft it.` })
+    }
+  }
+
   // ── Escalate what nobody touched
   const escalate: [string, Flag][] = []
   for (const [key, f] of Object.entries(flags)) {
     // Only glitch-backed gaps go up to leadership. A Slack problem often closes without anyone
     // saying so in the thread, and paging leadership about one of those is noise.
-    if (f.resolved || f.escalated || (f.kind !== 'B' && f.kind !== 'C') || !f.ts) continue
+    if (f.resolved || f.escalated || (f.kind !== 'B' && f.kind !== 'C' && f.kind !== 'E') || !f.ts) continue
     if (hoursSince(f.at) >= ESCALATE_AFTER_H) escalate.push([key, f])
   }
 
@@ -264,6 +324,6 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     const old = hoursSince(f.resolvedAt || f.at)
     if ((f.resolved && old > 48) || old > 5 * 24) delete flags[key]
   }
-  await setSetting(STATE_KEY, { flags }, 'on-watch')
+  await setSetting(STATE_KEY, { flags, seen: seenNow }, 'on-watch')
   return out
 }
