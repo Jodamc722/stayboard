@@ -1,7 +1,7 @@
 // Guest Orders board data — every basket plus the links that exist for upcoming arrivals.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { listOrders, listLinks, getGuestOrdersCfg, linkUrl, todayET, addDays } from '@/lib/guest-orders'
+import { listOrders, listLinks, orderTasks, getGuestOrdersCfg, linkUrl, todayET, addDays } from '@/lib/guest-orders'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,11 +15,13 @@ export async function GET(req: NextRequest) {
     listOrders({ days }),
     listLinks({ from: addDays(today, -2), to: addDays(today, cfg.createDaysBefore + 14) }),
   ])
+  // What Breezeway did with each order's task, read off the mirror the 15-minute cron keeps.
+  const tasks = await orderTasks(orders)
   const ordersByLink: Record<string, number> = {}
   for (const o of orders) ordersByLink[o.link_code] = (ordersByLink[o.link_code] || 0) + 1
   return NextResponse.json({
     ok: true, today, config: { enabled: cfg.enabled, chargeMode: cfg.chargeMode, customFieldName: cfg.customFieldName, createDaysBefore: cfg.createDaysBefore },
-    orders,
+    orders: orders.map(o => ({ ...o, task: o.breezeway_task_id ? (tasks[String(o.breezeway_task_id)] || null) : null })),
     links: links.map(l => ({ ...l, url: linkUrl(l.code, cfg, req.nextUrl.origin), orders: ordersByLink[l.code] || 0 })),
   })
 }

@@ -1143,6 +1143,7 @@ export async function approveOrder(id: string, actor: string): Promise<{ ok: boo
       delivery_date: dd.date, delivery_note: dd.note, folio_note: null,
     })
     try { const paid = await getOrder(id); if (paid) await reserveStockFor(paid, cfg, actor) } catch (e) { console.error('guest-orders: reserve failed', e) }
+    await announcePaidOrder(id, cfg)
     return { ok: true, order: await getOrder(id) || undefined }
   } catch (e: any) {
     // Never leave a row sitting in 'approved' with no reason.
@@ -1244,6 +1245,7 @@ export async function markPaid(id: string, actor: string, note: string, settle: 
     folio_note: folioLeft ? folioLeft + ' folio line' + (folioLeft === 1 ? '' : 's') + ' on the Guesty reservation are still unpaid there — record the payment or remove them so Guesty does not collect twice' : null,
   })
   try { const paid = await getOrder(id); if (paid) await reserveStockFor(paid, cfg, actor) } catch (e) { console.error('guest-orders: reserve failed', e) }
+  await announcePaidOrder(id, cfg)
   return { ok: true, order: await getOrder(id) || undefined }
 }
 
@@ -1327,6 +1329,37 @@ async function pickAssignee(order: OrderRow, date: string): Promise<Assignee> {
   const ids: number[] = []
   for (const n of names) { try { const id = await matchBreezewayPerson(n); if (id && ids.indexOf(id) < 0) ids.push(id) } catch { /* unmatched name stays a name */ } }
   return { names, ids, note: note || 'no one found — unassigned' }
+}
+
+/**
+ * TELL THE TEAM WHEN THE MONEY LANDS (Jon, 2026-09-23: "once the item is paid and apprived by our
+ * team, a slack message must be sent to the correct channels, tag the channel, also create a
+ * breezeway task and assgin the task").
+ *
+ * All of that already existed in pushOrder — the task, the assignment, the channel post, the
+ * supervisor DMs. What was wrong was WHEN. pushDue only looks at orders whose delivery date has
+ * arrived, so an order paid on Monday for a Thursday arrival sat silent until Thursday morning:
+ * nothing in Breezeway, nothing in the channel, and nobody able to plan around it or notice the
+ * item was not in the closet. The gap was invisible precisely because the order looked fine.
+ *
+ * So payment pushes, and the task is scheduled for the DELIVERY date rather than today — a
+ * forward-dated task is how every clean already works, and it puts the order on the day sheet for
+ * the right day while telling the crew now.
+ *
+ * CREW HOURS STILL HOLD. pushDue refuses to fire before 6am or after 9pm ET, and that rule was
+ * written for the person whose phone buzzes, not for the order. A card approved at 11pm does not
+ * get to wake the housekeeping channel; that one waits for the 6:08 sweep, which is exactly what
+ * pushDue is for. Nothing here is load-bearing: if the push fails the order stays paid and the
+ * sweep retries it.
+ */
+async function announcePaidOrder(id: string, cfg: GuestOrdersCfg): Promise<void> {
+  try {
+    const hour = etParts(new Date()).hour
+    if (hour < 6 || hour >= 21) return  // the 6:08 sweep picks it up
+    const o = await getOrder(id)
+    if (!o || o.status !== 'paid' || o.breezeway_task_id) return
+    await pushOrder(o, cfg, { date: o.delivery_date || todayET() })
+  } catch (e) { console.error('guest-orders: announce failed', e) }
 }
 
 export async function pushOrder(order: OrderRow, cfg: GuestOrdersCfg, opts?: { date?: string; origin?: string | null }): Promise<{ ok: boolean; taskId?: string; error?: string }> {
@@ -1458,6 +1491,46 @@ export async function listOrders(opts?: { status?: string[]; days?: number; limi
   if (opts?.days) q = q.gte('submitted_at', new Date(Date.now() - opts.days * 86_400_000).toISOString())
   const { data } = await q.limit(opts?.limit || 300)
   return (data || []).map(normOrder)
+}
+
+/**
+ * WHAT HAPPENED TO THE TASK (Jon, 2026-09-23: "This also must be monitored and in the paid/
+ * approveal it should show when the task is complted").
+ *
+ * The order stores breezeway_task_id and then never looks at it again, so the board could say a
+ * task had been created and never that it was done — the team's own question ("did this actually
+ * get delivered?") had to be answered in another app. breezeway_tasks_sync already mirrors every
+ * task's status on a 15-minute cron, so this is a read, not a new integration: no extra API calls
+ * and nothing new to keep in step.
+ */
+export type OrderTask = {
+  id: string; status: string; done: boolean; finishedAt: string | null
+  scheduledDate: string | null; assignees: string[]; reportUrl: string | null
+}
+const TASK_DONE_RE = /complete|finish|done/i
+export async function orderTasks(orders: OrderRow[]): Promise<Record<string, OrderTask>> {
+  const ids = Array.from(new Set(orders.map(o => String(o.breezeway_task_id || '')).filter(Boolean)))
+  if (!ids.length) return {}
+  const out: Record<string, OrderTask> = {}
+  try {
+    const { data } = await supabaseAdmin().from('breezeway_tasks_sync')
+      .select('id, status, finished_at, scheduled_date, assignees, report_url').in('id', ids)
+    for (const r of (data || []) as any[]) {
+      const status = String(r.status || '')
+      out[String(r.id)] = {
+        id: String(r.id), status,
+        // finished_at is the fact; the status string is the label. Either one alone has been
+        // wrong before — a task can carry a finished timestamp while its status still reads the
+        // stage it was in, and vice versa on a hand-closed task.
+        done: !!r.finished_at || TASK_DONE_RE.test(status),
+        finishedAt: r.finished_at ? String(r.finished_at) : null,
+        scheduledDate: r.scheduled_date ? String(r.scheduled_date) : null,
+        assignees: Array.isArray(r.assignees) ? r.assignees.map((x: any) => String(x)) : [],
+        reportUrl: r.report_url ? String(r.report_url) : null,
+      }
+    }
+  } catch { /* the board still renders; the row just has no task line */ }
+  return out
 }
 
 export async function listLinks(opts?: { from?: string; to?: string; limit?: number }): Promise<LinkRow[]> {

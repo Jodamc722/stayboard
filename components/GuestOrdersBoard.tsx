@@ -17,6 +17,8 @@ type Order = {
   discount_usd?: number; discount_note?: string | null; coupon_code?: string | null
   submitted_at: string; approved_at: string | null; approved_by: string | null; paid_at: string | null; payment_note: string | null; charge_error: string | null; folio_note: string | null
   delivery_date: string | null; delivery_note: string | null; requested_delivery?: string; requested_date?: string | null; pushed_at: string | null; breezeway_task_id: string | null; assignee_names: string[]; assign_note: string | null
+  /** What Breezeway did with the task — read off the sync mirror, never fetched per row. */
+  task?: { id: string; status: string; done: boolean; finishedAt: string | null; scheduledDate: string | null; assignees: string[]; reportUrl: string | null } | null
   stock_note?: string | null; push_error: string | null; delivered_at: string | null; delivered_by: string | null; decline_reason: string | null; approve_token: string | null
   collect_method?: 'card_on_file' | 'payment_link' | 'airbnb_resolution' | null; collect_card?: string | null
 }
@@ -224,8 +226,19 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
                   {o.push_error ? <div className="text-[12.5px] text-rose-700 bg-rose-50 rounded-lg px-3 py-2">Push failed: {o.push_error}</div> : null}
                   {o.folio_note ? <div className="text-[12.5px] text-amber-800 bg-amber-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {o.folio_note}</div> : null}
                   {o.stock_note ? <div className={'text-[12px] ' + (/SHORT/.test(o.stock_note) ? 'text-rose-700 font-semibold' : 'text-muted')}><Package size={12} className="inline mr-1 -mt-0.5" />{o.stock_note}</div> : null}
-                  {o.status === 'pushed' || o.status === 'delivered' ? (
-                    <div className="text-[12px] text-muted"><Truck size={12} className="inline mr-1 -mt-0.5" />{o.assignee_names.length ? o.assignee_names.join(' + ') : 'unassigned'}{o.assign_note ? ' — ' + o.assign_note : ''}{o.breezeway_task_id ? ' · Breezeway #' + o.breezeway_task_id : ''}{o.delivered_at ? ' · delivered ' + when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : ''}</div>
+                  {/* THE TASK'S OWN PROGRESS (Jon, 2026-09-23: "it should show when the task is
+                      complted"). The row used to say a Breezeway task existed and stop there, so
+                      "was this actually delivered?" was a question for another app. The tick is
+                      the mirror's finished_at, not our own delivered flag — the crew closes the
+                      task in Breezeway long before anyone comes back here to press Delivered. */}
+                  {o.status === 'pushed' || o.status === 'delivered' || o.task ? (
+                    <div className="text-[12px] text-muted"><Truck size={12} className="inline mr-1 -mt-0.5" />{(o.task?.assignees?.length ? o.task.assignees : o.assignee_names).length ? (o.task?.assignees?.length ? o.task.assignees : o.assignee_names).join(' + ') : 'unassigned'}{o.assign_note ? ' — ' + o.assign_note : ''}{o.breezeway_task_id ? ' · Breezeway #' + o.breezeway_task_id : ''}
+                      {o.task ? (
+                        o.task.done
+                          ? <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700" title={'Breezeway task closed' + (o.task.finishedAt ? ' ' + when(o.task.finishedAt) : '')}>task done{o.task.finishedAt ? ' · ' + when(o.task.finishedAt) : ''}</span>
+                          : <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800" title={'Breezeway status: ' + (o.task.status || 'created') + (o.task.scheduledDate ? ' · scheduled ' + o.task.scheduledDate : '')}>task {o.task.status || 'open'}</span>
+                      ) : null}
+                      {o.delivered_at ? ' · delivered ' + when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : ''}</div>
                   ) : null}
                   {o.decline_reason ? <div className="text-[12px] text-muted">Declined: {o.decline_reason}</div> : null}
 
