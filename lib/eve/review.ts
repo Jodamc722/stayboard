@@ -127,7 +127,7 @@ export async function buildReviewPack(focus?: string): Promise<Pack> {
   const [board, anomalies, knowledge, audits, slackOpen, slackClosed, glitches, reviews, sentiment, checklist, activity, score, rejected, beliefs, meta] = await Promise.all([
     safe(() => buildScoreboard(), null as any),
     safe(() => anomalyScan({ days: 14, sigma: 2 }), { scanned: 0, anomalies: [], note: 'anomaly scan failed' } as any),
-    safe(async () => (await db.from('eve_knowledge').select('type,scope,title,content,evidence_count,updated_at').gte('updated_at', iso7).order('evidence_count', { ascending: false }).limit(200)).data || [], [] as any[]),
+    safe(async () => (await db.from('eve_knowledge').select('type,scope,title,content,evidence_count,updated_at').gte('updated_at', iso7).not('type', 'in', '(dossier,journal,prediction)').order('evidence_count', { ascending: false }).limit(200)).data || [], [] as any[]),
     safe(() => listAudits({ status: 'open', limit: 100 }), [] as any[]),
     safe(async () => (await db.from('eve_slack_items').select('kind,unit,building,summary,owner_name,first_seen,urgent,channel_name').eq('status', 'open').order('first_seen').limit(200)).data || [], [] as any[]),
     safe(async () => (await db.from('eve_slack_items').select('kind,unit,summary,closed_reason,closed_at').eq('status', 'closed').gte('closed_at', iso7).order('closed_at', { ascending: false }).limit(100)).data || [], [] as any[]),
