@@ -3,7 +3,8 @@
 // without a written correction a thumbs-down is just a feeling that evaporates.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { saveMemory } from '@/lib/eve/memory'
+import { saveMemory, personSource, STAFF_MAX_WEIGHT } from '@/lib/eve/memory'
+import { isSuperadmin } from '@/lib/access'
 import { eveGate } from '../../agent/route'
 
 export const dynamic = 'force-dynamic'
@@ -18,6 +19,17 @@ export async function POST(req: NextRequest) {
   const rating = body?.rating === 1 ? 1 : body?.rating === -1 ? -1 : null
   const correction = String(body?.correction || '').trim().slice(0, 1000)
   const db = supabaseAdmin()
+  const email = String(gate.access.email || '').toLowerCase()
+
+  // YOUR OWN CHAT ONLY (Jon, 2026-09-23 review). Any Eve user could rate — and overwrite the
+  // correction on — anyone's chat by passing its id. The chat must belong to the caller unless the
+  // caller is an admin.
+  const { data: chat } = await db.from('eve_chats').select('id,user_email').eq('id', id).maybeSingle()
+  if (!chat) return NextResponse.json({ error: 'chat not found' }, { status: 404 })
+  const isAdmin = isSuperadmin(email) || gate.access.role === 'admin'
+  if (!isAdmin && String((chat as any).user_email || '').toLowerCase() !== email) {
+    return NextResponse.json({ error: 'You can only give feedback on your own chats.' }, { status: 403 })
+  }
 
   const { error } = await db.from('eve_chats').update({ rating, correction: correction || null }).eq('id', id)
   if (error) return NextResponse.json({ error: 'Could not save feedback — migration 045 may not have run.' }, { status: 500 })
@@ -25,13 +37,17 @@ export async function POST(req: NextRequest) {
   let memoryId: string | null = null
   if (correction) {
     // `voice` corrections are preferences (how she sounds); everything else is a correction
-    // (what she got wrong). Both carry weight 9 — Jon typed them on purpose.
+    // (what she got wrong). Both carry weight 9 when Jon typed them; a colleague's correction is
+    // filed as 'staff' at weight 6 and says who made it (Jon, 2026-09-23 review).
     const isVoice = body?.kind === 'voice'
+    const who = personSource(email, 9)
+    const name = who.source === 'jon' ? 'Jon' : email || 'a colleague'
     const saved = await saveMemory({
       kind: isVoice ? 'preference' : 'correction',
       text: correction,
-      why: isVoice ? 'Jon said an answer did not sound like him' : 'Jon corrected an answer',
-      scope: 'portfolio', weight: 9, source: 'jon',
+      why: isVoice ? `${name} said an answer did not sound like Jon` : `${name} corrected an answer`,
+      scope: 'portfolio', weight: who.weight, source: who.source,
+      maxWeight: who.source === 'staff' ? STAFF_MAX_WEIGHT : undefined,
       created_by: String(gate.access.email || ''),
       evidence: { chatId: id },
     })
