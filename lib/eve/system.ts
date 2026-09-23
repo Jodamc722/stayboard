@@ -20,6 +20,8 @@ import { pendingItems, recentItems } from '@/lib/slack-queue'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { describeLink, linkStatus, pathFor } from '@/lib/share-links'
 import { myLearning } from './learning-audit'
+import { getSetting } from '@/lib/app-settings'
+import { pageRows } from './ctx'
 
 const minsToClock = (m: any): string => {
   const n = Number(m)
@@ -38,7 +40,186 @@ async function channelNames(): Promise<Record<string, { name: string; isPrivate:
   return out
 }
 
+// ---- WHAT DID I DO TODAY ------------------------------------------------------------------------
+//
+// Jon, 2026-09-23 review. In a live test Eve was asked "what did you do today?" and answered
+// "nothing sent" — after roughly ten posts that day. She was not lying; she had no way to look. Every
+// decision she makes is already written down (eve_agent_log, one row per act / propose / draft /
+// observe / deferred), every ask and draft is a row in eve_actions with its status, On Watch keeps
+// its flags in app_settings, and Slack Watch stamps its nudges on eve_slack_items. Nothing read them
+// back to HER. This does: one day, ET, grouped and counted, so "what did you do" and "what's waiting
+// on me" are answered from the receipts rather than from what she happens to remember.
+
+const ET = 'America/New_York'
+
+/** UTC instants bounding an ET calendar day (DST-safe: offset measured at local noon). */
+function etDayBounds(ymd: string): { start: string; end: string } {
+  const noon = new Date(ymd + 'T12:00:00Z')
+  let offMin = -300
+  try {
+    const tz = new Intl.DateTimeFormat('en-US', { timeZone: ET, timeZoneName: 'shortOffset' }).formatToParts(noon)
+      .find(p => p.type === 'timeZoneName')?.value || ''
+    const m = /GMT([+-]\d{1,2})(?::(\d{2}))?/.exec(tz)
+    if (m) offMin = Number(m[1]) * 60 + (m[1].startsWith('-') ? -1 : 1) * Number(m[2] || 0)
+  } catch { /* EST fallback */ }
+  const start = Date.parse(ymd + 'T00:00:00Z') - offMin * 60_000
+  return { start: new Date(start).toISOString(), end: new Date(start + 24 * 3600_000).toISOString() }
+}
+
+const etClock = (iso: any): string => {
+  const t = Date.parse(String(iso || ''))
+  if (!Number.isFinite(t)) return '—'
+  return new Intl.DateTimeFormat('en-US', { timeZone: ET, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(t)) + ' ET'
+}
+
+const tally = (xs: string[]): Record<string, number> => {
+  const out: Record<string, number> = {}
+  for (const x of xs) out[x] = (out[x] || 0) + 1
+  return out
+}
+
+/** eve_actions.status is proposed|approved|rejected|executed|failed|expired; say what it MEANS now. */
+function actionStatus(r: any, now: number): string {
+  const st = lc(r.status)
+  const delivery = lc(r?.result?.delivery)
+  if (st === 'proposed') {
+    if (r.expires_at && Date.parse(r.expires_at) < now) return 'expired'
+    if (delivery === 'undeliverable') return 'undeliverable'
+    if (r?.payload?.type === 'deferred') return 'deferred'
+    return 'waiting'
+  }
+  return st || 'unknown'
+}
+
+export async function myActionsOn(day: string): Promise<any> {
+  const db = supabaseAdmin()
+  const { start, end } = etDayBounds(day)
+  const now = Date.now()
+  const gaps: string[] = []
+
+  // 1. The decision log. Every act / propose / draft / observe / deferred is one row here.
+  let logRows: any[] = []
+  let logTruncated = false
+  {
+    const read = (cols: string) => pageRows((a, b) => db.from('eve_agent_log').select(cols)
+      .gte('at', start).lt('at', end).order('at').order('id').range(a, b), 3)
+    let r = await read('id,at,action,rung,allowed,mode,reason,summary,ref,by,actor,undo,undone_at')
+    // Migration 102 not run: no undo columns. Read the log without them rather than read nothing.
+    if (r.truncated && !r.rows.length) r = await read('id,at,action,rung,allowed,mode,reason,summary,ref,by,actor')
+    logRows = r.rows
+    logTruncated = r.truncated
+    if (r.truncated && !r.rows.length) gaps.push('eve_agent_log could not be read (migration 100 not run, or a blip) — the decision log below is empty because it was unreadable, not because nothing happened.')
+  }
+  const log = logRows.map(r => ({
+    time: etClock(r.at), action: r.action, mode: r.mode || (r.allowed ? 'act' : 'observe'),
+    summary: r.summary || null, by: r.by, actor: r.actor || undefined,
+    why: r.reason ? String(r.reason).slice(0, 160) : undefined, ref: r.ref || undefined,
+    undo_available: !!r.undo && !r.undone_at && now - Date.parse(r.at) < 24 * 3600_000,
+    undone_at: r.undone_at || undefined,
+  }))
+
+  // 2. What she filed for a person: asks, proposals, drafts — and where each one stands now.
+  let filed: any[] = []
+  try {
+    const { data, error } = await db.from('eve_actions')
+      .select('id,kind,status,payload,why,created_by,created_at,decided_by,decided_at,expires_at,result')
+      .gte('created_at', start).lt('created_at', end).order('created_at').limit(500)
+    if (error) throw error
+    filed = ((data as any[]) || []).map(r => ({
+      time: etClock(r.created_at), id: r.id, kind: r.kind, type: r?.payload?.type || undefined,
+      action: r?.payload?.action || undefined,
+      summary: String(r?.payload?.summary || r?.payload?.question || r.why || '').slice(0, 240) || null,
+      status: actionStatus(r, now), decided_by: r.decided_by || undefined, decided_at: r.decided_at ? etClock(r.decided_at) : undefined,
+      delivered_via: r?.result?.delivery || undefined,
+    }))
+  } catch (e: any) { gaps.push('eve_actions could not be read: ' + String(e?.message || e).slice(0, 120)) }
+
+  // 3. Everything still waiting on a person, whatever day it was filed — "what's waiting on me".
+  let waiting: any[] = []
+  try {
+    const { data } = await db.from('eve_actions')
+      .select('id,kind,status,payload,why,created_at,expires_at,result')
+      .eq('status', 'proposed').order('created_at', { ascending: false }).limit(200)
+    waiting = ((data as any[]) || [])
+      .map(r => ({ r, st: actionStatus(r, now) }))
+      .filter(x => x.st === 'waiting' || x.st === 'undeliverable' || x.st === 'deferred')
+      .map(({ r, st }) => ({
+        filed: String(r.created_at || '').slice(0, 10) + ' ' + etClock(r.created_at), id: r.id, kind: r.kind,
+        action: r?.payload?.action || r?.payload?.type || undefined,
+        summary: String(r?.payload?.summary || r?.payload?.question || r.why || '').slice(0, 200) || null, status: st,
+      }))
+  } catch { /* the day's list above still stands */ }
+
+  // 4. On Watch — the hourly field check. Its flags live in app_settings, not a table.
+  let onWatch: any[] = []
+  try {
+    const st = await getSetting<any>('eve_on_watch_state', null)
+    const flags = (st && st.flags) || {}
+    onWatch = Object.entries(flags)
+      .filter(([, f]: [string, any]) => (f?.at && f.at >= start && f.at < end) || (f?.resolvedAt && f.resolvedAt >= start && f.resolvedAt < end))
+      .map(([key, f]: [string, any]) => ({
+        key, kind: f.kind, room: f.room, what: f.label, line: f.line,
+        raised: f.at >= start && f.at < end ? etClock(f.at) : undefined,
+        posted: !!f.ts, channel: f.channel || undefined,
+        escalated: !!f.escalated, resolved: f.resolved || undefined,
+        resolved_at: f.resolvedAt ? etClock(f.resolvedAt) : undefined,
+      }))
+  } catch { gaps.push('On Watch state could not be read.') }
+
+  // 5. Slack Watch — nudges she posted in threads, and whether the digest went out.
+  let nudges: any[] = []
+  let digest: string | null = null
+  try {
+    const { data } = await db.from('eve_slack_items')
+      .select('id,channel_name,kind,summary,unit,status,nudged_at,nudge_count')
+      .gte('nudged_at', start).lt('nudged_at', end).order('nudged_at').limit(200)
+    nudges = ((data as any[]) || []).map(r => ({
+      time: etClock(r.nudged_at), channel: r.channel_name ? '#' + r.channel_name : undefined,
+      kind: r.kind, about: String(r.summary || '').slice(0, 160), unit: r.unit || undefined, item_now: r.status,
+    }))
+    const sw = await getSetting<any>('eve_slack_watch', null)
+    digest = sw?.lastDigest === day ? 'posted (or held for quiet hours) today' : 'not recorded for this day'
+  } catch { gaps.push('Slack Watch items could not be read.') }
+
+  const byMode = tally(log.map(l => String(l.mode)))
+  const byStatus = tally(filed.map(f => String(f.status)))
+  const acted = byMode.act || 0
+  const posts = log.filter(l => l.mode === 'act' && /slack_post/.test(String(l.action))).length
+  const headline = `${day}: ${log.length} logged decision(s) — ${acted} done, ${byMode.propose || 0} proposed, ${byMode.draft || 0} drafted, ${byMode.deferred || 0} deferred, ${byMode.observe || 0} only observed`
+    + `; ${posts} Slack post(s) made; ${filed.length} item(s) filed for a person (${Object.entries(byStatus).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'})`
+    + `; On Watch raised ${onWatch.filter(o => o.raised).length} flag(s), ${onWatch.filter(o => o.posted).length} posted; ${nudges.length} Slack nudge(s).`
+    + ` ${waiting.length} thing(s) are waiting on a person right now.`
+
+  return {
+    day, headline,
+    counts: {
+      decisions: log.length, by_mode: byMode, by_action: tally(log.map(l => String(l.action))), by_source: tally(log.map(l => String(l.by))),
+      filed: filed.length, filed_by_status: byStatus,
+      on_watch_flags: onWatch.length, slack_nudges: nudges.length, waiting_now: waiting.length,
+      undo_available: log.filter(l => l.undo_available).length,
+    },
+    decisions: log.slice(-250),
+    filed_for_a_person: filed,
+    waiting_on_a_person_now: waiting.slice(0, 40),
+    on_watch: onWatch,
+    slack_watch: { nudges, digest },
+    truncated: logTruncated && logRows.length > 0 ? true : undefined,
+    gaps: gaps.length ? gaps : undefined,
+    how_to_read: 'decisions is the full log: mode "act" happened, "propose" is waiting for a yes (see filed_for_a_person), "draft" was written down for a person, "deferred" runs after quiet hours, "observe" means you noticed and did nothing. Never say you did nothing if decisions or on_watch is non-empty. On Watch keeps resolved flags about 48 hours, so older days show fewer.',
+  }
+}
+
 export const SYSTEM_TOOLS: EveTool[] = [
+  {
+    name: 'my_actions_today',
+    description: 'YOUR OWN RECEIPTS — the answer to "what did you do today?", "what have you posted?", "what did you raise?" and "what\'s waiting on me / for approval?". For one day (default today, ET): every entry in your decision log (acted, proposed, drafted, deferred, only observed — with time, summary, who/what triggered it, and whether undo is still available), every ask / proposal / draft you filed and its status now (waiting, approved, rejected, executed, expired, undeliverable), what On Watch flagged and posted (room, channel, resolved or not), and the Slack Watch nudges and digest — grouped and counted, plus everything still waiting on a person from any day. ALWAYS call this before answering a question about what you did or what is pending; never answer from memory and never say you did nothing without checking. Param: date (YYYY-MM-DD).',
+    input_schema: obj({ date: S.str }),
+    run: async (input, ctx) => {
+      const d = String(input?.date || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.date) : ctx.today
+      return myActionsOn(d)
+    },
+  },
+
   {
     name: 'my_learning',
     description: 'Your own learning audit — the honest answer to "are you actually learning?". The latest run of the self-test: a 0–100 learning score and its four parts (retention of things Jon taught you, asked back with NO tools; how often your memories actually shape an answer; how often you re-propose something Jon already declined; your recommendation hit rate), the probes you failed with the expected answer next to yours, the honesty check, and the memories that never earn their place. Use it whenever someone asks whether you learn, remember, improve, or repeat mistakes. Quote the misses.',
@@ -279,5 +460,6 @@ export const SYSTEM_DOMAIN: EveDomain = {
   key: 'system',
   label: 'Automations & Slack wiring',
   blurb: 'every automated job and whether it is on, what email actually went out and to whom, how Slack alerts are routed, what is waiting for approval, and every share link handed out (who it is for, live or not)',
-  tools: SYSTEM_TOOLS,
+  // my_actions_today lives in core (registry.coreTools) so "what did you do?" never costs a turn.
+  tools: SYSTEM_TOOLS.filter(t => t.name !== 'my_actions_today'),
 }
