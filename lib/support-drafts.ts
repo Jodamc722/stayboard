@@ -226,3 +226,102 @@ export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: nu
   } catch (e: any) { out.errors.push(String(e?.message || e).slice(0, 150)) }
   return out
 }
+
+
+/**
+ * GUESTY ALREADY KNOWS (Jon, 2026-09-22: "check guesty data to see if sent").
+ *
+ * The building-notified boolean on a reservation — field 68dd868bcc0af00010bd8ebe, proved against
+ * production on 2026-07-31 — is set by whoever tells the building, whether that was us, the desk,
+ * or somebody working directly in Guesty. It is the same flag our own Mark sent writes, so a
+ * reservation carrying `true` that our board still shows as unsent is simply a record we missed.
+ *
+ * This reads it and closes those out. Same one-way safety as the Sent sweep: it can only mark an
+ * unsent notice sent, an unreadable reservation changes nothing, and it never writes back — the
+ * flag is already true, which is the whole reason we are here.
+ */
+export async function sweepGuestyFlag(opts: { backDays?: number; aheadDays?: number; limit?: number } = {}): Promise<{
+  scanned: number; markedSent: number; unreadable: number; notFlagged: number; errors: string[]
+}> {
+  const out = { scanned: 0, markedSent: 0, unreadable: 0, notFlagged: 0, errors: [] as string[] }
+  const back = opts.backDays == null ? 21 : opts.backDays
+  const ahead = opts.aheadDays == null ? 14 : opts.aheadDays
+  const day = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10)
+  try {
+    const db = supabaseAdmin()
+    const { data: rows, error } = await db.from(TABLE).select('id,reservation_id,property_id,arrival_date')
+      .is('sent_at', null).is('deleted_at', null).not('reservation_id', 'is', null)
+      .gte('arrival_date', day(-back)).lte('arrival_date', day(ahead))
+      .order('arrival_date', { ascending: true })
+      .limit(opts.limit == null ? 60 : opts.limit)
+    if (error) { out.errors.push('read: ' + String(error.message || '').slice(0, 120)); return out }
+    if (!(rows || []).length) return out
+    const token = await getToken().catch(() => '')
+    if (!token) { out.errors.push('no Guesty token'); return out }
+
+    for (const n of (rows || []) as any[]) {
+      out.scanned++
+      try {
+        const live = await readCustomFields(String(n.reservation_id), token)
+        if (live === null) { out.unreadable++; continue }
+        const flagged = (live as any[]).some(c => String(fieldIdOf(c) || '') === EMAIL_SENT_FIELD && c?.value === true)
+        if (!flagged) { out.notFlagged++; continue }
+        const now = new Date().toISOString()
+        const { error: uErr } = await db.from(TABLE).update({ sent_at: now, sent_by: 'GUESTY', updated_at: now }).eq('id', n.id)
+        if (uErr) { out.errors.push('update ' + String(n.id) + ': ' + String(uErr.message || '').slice(0, 90)); continue }
+        out.markedSent++
+      } catch (e: any) { out.errors.push(String(e?.message || e).slice(0, 120)) }
+    }
+  } catch (e: any) { out.errors.push(String(e?.message || e).slice(0, 150)) }
+  return out
+}
+
+/**
+ * ARRIVALS THAT HAVE ALREADY HAPPENED (Jon, 2026-09-22: "If there is reservations past the checkin
+ * date please mark as sent").
+ *
+ * ⚠️ THIS ONE IS NOT EVIDENCE, AND IT IS DELIBERATELY MARKED DIFFERENTLY.
+ *
+ * A stay whose check-in has come and gone is finished business: the guest either got in or did
+ * not, and no notice sent today changes either. Leaving those rows open forever buries the two
+ * arrivals that genuinely still need telling under thirty that cannot be actioned, which is how a
+ * desk stops reading the board at all. So they are closed out.
+ *
+ * But closing a row is not proof the building was told, and the record has to keep saying so:
+ *   · they are stamped sent_by 'PAST' — never 'SUPPORT@', 'GMAIL' or 'GUESTY', each of which
+ *     means somebody actually saw the mail;
+ *   · NOTHING is written to Guesty. Setting the notified flag true here would assert to every
+ *     other system, and to next month's audit, that a building was told when nobody knows that.
+ * Run the Guesty and Sent sweeps FIRST so anything with real evidence is closed on that evidence
+ * and never reaches this one.
+ */
+export async function closePastArrivals(opts: { graceDays?: number; backDays?: number; limit?: number } = {}): Promise<{
+  scanned: number; closed: number; errors: string[]
+}> {
+  const out = { scanned: 0, closed: 0, errors: [] as string[] }
+  // A day of grace: an arrival earlier today is still worth telling the building about.
+  const grace = opts.graceDays == null ? 1 : opts.graceDays
+  const back = opts.backDays == null ? 120 : opts.backDays
+  const day = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10)
+  try {
+    const db = supabaseAdmin()
+    const { data: rows, error } = await db.from(TABLE).select('id,arrival_date')
+      .is('sent_at', null).is('deleted_at', null)
+      .gte('arrival_date', day(-back)).lt('arrival_date', day(-grace))
+      .limit(opts.limit == null ? 200 : opts.limit)
+    if (error) { out.errors.push('read: ' + String(error.message || '').slice(0, 120)); return out }
+    out.scanned = (rows || []).length
+    if (!out.scanned) return out
+    const now = new Date().toISOString()
+    const ids = (rows || []).map((r: any) => r.id)
+    for (let i = 0; i < ids.length; i += 50) {
+      const chunk = ids.slice(i, i + 50)
+      const { error: uErr } = await db.from(TABLE)
+        .update({ sent_at: now, sent_by: 'PAST', updated_at: now })
+        .in('id', chunk)
+      if (uErr) out.errors.push('close: ' + String(uErr.message || '').slice(0, 90))
+      else out.closed += chunk.length
+    }
+  } catch (e: any) { out.errors.push(String(e?.message || e).slice(0, 150)) }
+  return out
+}

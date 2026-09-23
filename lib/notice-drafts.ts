@@ -27,7 +27,7 @@ import { elserPdfBase64 } from './elser-pdf'
 // marks those notices sent — locally AND in Guesty. This engine therefore only DRAFTS (with the
 // generated form + the Slack note) and REGISTERS each draft on that watch; it never marks sent
 // itself, so Guesty is written by exactly one code path.
-import { watchSupportDraft, checkSupportDrafts, sweepSentInGmail } from './support-drafts'
+import { watchSupportDraft, checkSupportDrafts, sweepSentInGmail, sweepGuestyFlag, closePastArrivals } from './support-drafts'
 import { getSetting as getAppSetting, setSetting as setAppSetting } from './app-settings'
 
 const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
@@ -332,6 +332,10 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
     // And the direct question: is it in Sent? This runs BEFORE the drafting pass below, so a
     // notice somebody already sent by hand this morning is closed out rather than drafted again.
     try { const ss = await sweepSentInGmail(); base.sentDetected = (base.sentDetected || 0) + ss.markedSent } catch { /* drafting still runs */ }
+    // Guesty's own notified flag, then the arrivals already behind us. Both run BEFORE drafting so
+    // this morning's pass never files a letter for a stay that is finished or already told.
+    try { const gs = await sweepGuestyFlag(); base.sentDetected = (base.sentDetected || 0) + gs.markedSent } catch { /* drafting still runs */ }
+    try { await closePastArrivals() } catch { /* drafting still runs */ }
     try { await repairDefectiveDrafts(db, cfg, props, base) } catch { /* drafting still runs */ }
     try { await auditSentAndOrphans(db, cfg, props, today, base, safety) } catch { /* drafting still runs */ }
   }

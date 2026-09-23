@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { createGmailDraft, type GmailAttachment } from '@/lib/gmail-send'
-import { watchSupportDraft, checkSupportDrafts, sweepSentInGmail } from '@/lib/support-drafts'
+import { watchSupportDraft, checkSupportDrafts, sweepSentInGmail, sweepGuestyFlag, closePastArrivals } from '@/lib/support-drafts'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -84,7 +84,13 @@ export async function GET(req: NextRequest) {
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
   const u = new URL(req.url)
   const back = Number(u.searchParams.get('backDays') || '') || undefined
+  const o = back ? { backDays: back } : {}
+  // EVIDENCE FIRST, THEN HOUSEKEEPING. The order matters: anything Guesty or Gmail can prove is
+  // closed on that proof and stamped with it, so only rows nobody can account for fall through to
+  // the past-arrival pass, which closes them WITHOUT claiming they were sent.
   const res = await checkSupportDrafts()
-  const sent = await sweepSentInGmail(back ? { backDays: back } : {}).catch(() => null)
-  return NextResponse.json({ ok: true, ...res, sentSweep: sent })
+  const guesty = await sweepGuestyFlag(o).catch(() => null)
+  const sent = await sweepSentInGmail(o).catch(() => null)
+  const past = u.searchParams.get('past') === '0' ? null : await closePastArrivals().catch(() => null)
+  return NextResponse.json({ ok: true, ...res, guestySweep: guesty, sentSweep: sent, pastArrivals: past })
 }

@@ -564,7 +564,12 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           {r.propertyMissing && <Tag tone="rose" title="This building is not in Settings">Not configured</Tag>}
           {!r.hasRecipient && !r.propertyMissing && <Tag tone="amber" title="Add a recipient for this building in Settings">No recipient</Tag>}
           {drafted[r.id] && !r.sent_at && <Tag tone="brand" title="Draft is waiting in support@'s Gmail">In drafts</Tag>}
-          {r.sent_at && <Tag tone="emerald" title={'Sent ' + when(r.sent_at)}>Sent {fmt(String(r.sent_at).slice(0, 10))}{r.sent_by ? ' · ' + r.sent_by : ''}</Tag>}
+          {/* 'PAST' is not a send — it is a stay that has already happened, closed so the board
+              stays readable. It must never wear the same green tick as a notice somebody watched
+              go out (see closePastArrivals in lib/support-drafts). */}
+          {r.sent_at && (String(r.sent_by || '') === 'PAST'
+            ? <Tag tone="slate" title={'Arrival date passed — closed on ' + when(r.sent_at) + '. No record of the notice being sent.'}>Closed · arrival passed</Tag>
+            : <Tag tone="emerald" title={'Sent ' + when(r.sent_at)}>Sent {fmt(String(r.sent_at).slice(0, 10))}{r.sent_by ? ' · ' + r.sent_by : ''}</Tag>)}
         </>}
         actions={<>
           {r.reservation_id && (
