@@ -38,6 +38,7 @@ import { saveMemory } from './memory'
 import { askQuestion } from './questions'
 import { aiFetch } from '@/lib/ai-usage'
 import { agentAllowed, stepDown } from './agent-mode'
+import { winsFor } from './wins'
 
 export const WATCH_KEY = 'eve_slack_watch'
 
@@ -277,7 +278,37 @@ async function readChannel(ch: { id: string; label: string; vendor: boolean }, m
   } catch (e: any) { return { error: String(e?.message || e).slice(0, 200) } }
 }
 
-// ── The run ────────────────────────────────────────────────────────────────────────────────────
+// ── The nudge ──────────────────────────────────────────────────────────────────────────────────
+//
+// SUPPORTIVE, NOT A CHASER (Jon, 2026-09-23). A nudge reads as either "you forgot" or "want a hand?"
+// and the words decide which. It offers help with whatever is in the way, it never says anyone
+// missed anything, and it answers in the language the thread was written in, so a housekeeper who
+// wrote in Spanish gets asked in Spanish, quoting her own message rather than an English summary.
+// "listo" and "done" both close it (ACK above).
+
+const ES_WORDS = /\b(que|el|la|los|las|por|para|está|esta|hoy|mañana|manana|voy|ya|necesito|tengo|unidad|limpieza|falta|no hay|ahorita|después|despues|terminé|termine|pero|también|tambien|en|del|con|hay|agua|baño|bano|cuarto|llave|huésped|huesped|tarea)\b/gi
+export function looksSpanish(t: any): boolean {
+  const s = String(t || '')
+  const hits = (s.match(ES_WORDS) || []).length
+  return hits >= 2 || (hits >= 1 && /[ñ¿¡áéíóú]/i.test(s))
+}
+
+export function nudgeText(it: Pick<Item, 'kind' | 'summary' | 'unit' | 'evidence'>, who: string | null): string {
+  const lead = who ? who + ' — ' : ''
+  const orig = String(it.evidence?.text || '').replace(/\s+/g, ' ').trim()
+  if (looksSpanish(orig)) {
+    const quote = orig ? `"${orig.slice(0, 140)}${orig.length > 140 ? '…' : ''}"` : ''
+    if (it.kind === 'question') return `${lead}esta pregunta se quedó sin respuesta. ¿Todavía hace falta? ${quote}`.trim()
+    if (it.kind === 'commitment') return `${lead}reviso este pendiente: ${quote}. ¿Sigue en tu lista o ya quedó? Responde "listo" y lo cierro. Si algo lo está frenando, dime y te ayudo a moverlo.`
+    return `${lead}¿esto sigue abierto? ${quote}. Responde "listo" y lo cierro, o dime dónde se está manejando. Si hace falta algo, avísame.`
+  }
+  const what = `${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''}`
+  if (it.kind === 'question') return `${lead}this one never got an answer. Still needed? If you're not sure who'd know, say so and I'll help find them.`
+  if (it.kind === 'commitment') return `${lead}checking in on this one: ${what}. Still on your list, or already handled? Reply "done" and I'll close it. If something's in the way, tell me and I'll help move it.`
+  return `${lead}is this still open? ${what}. Reply "done" here and I'll close it, or tell me where it's being handled. If it's stuck, tell me what it needs.`
+}
+
+// ── The run ──────────────────────────────────────────────────────────────────────────────────
 
 type State = { cursors: Record<string, string>; lastRun: string | null; lastDigest: string | null }
 
@@ -443,9 +474,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       const due = it.due_at ? Date.parse(it.due_at) : Date.parse(it.first_seen) + NUDGE_AFTER_HOURS * 3600_000
       if (now < due) continue
       const who = it.owner_slack ? `<@${it.owner_slack}>` : (it.owner_name || null)
-      const text = it.kind === 'question'
-        ? `${who ? who + ' — ' : ''}this one never got an answer. Still needed?`
-        : `${who ? who + ' — ' : ''}is this still open? ${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''}. Reply "done" here and I'll close it, or tell me where it's being handled.`
+      const text = nudgeText(it, who)
       // AGENT MODE GATE (slack_post). Below "act" the nudge is proposed or drafted instead.
       const gate = await agentAllowed('slack_post')
       const r = await stepDown(gate, { action: 'slack_post', summary: `nudge in #${it.channel_name}: ${text.slice(0, 160)}`, exec: { channel: it.channel, channel_name: it.channel_name, thread_ts: it.thread_ts || it.msg_ts, text }, why: it.summary.slice(0, 200), by: 'cron:slack-watch' },
@@ -481,6 +510,11 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     const grp = (k: string) => openNow.filter(i => i.kind === k)
     const line = (i: Item) => `• ${i.summary.slice(0, 120)}${i.unit ? ` (${i.unit})` : ''}${i.owner_name ? ` — ${i.owner_name}` : ''}${i.tracked_in ? ' · tracked in ' + i.tracked_in.split(':')[0] : ''}`
     const parts: string[] = [`*Keeping tabs — ${today}*`]
+    // Yesterday's wins go first (Jon, 2026-09-23). A roll-up that only ever lists what is open
+    // teaches the room that Eve only speaks when something is wrong. Specific or silent — an
+    // empty list adds nothing. See lib/eve/wins.
+    const wins = await winsFor().catch(() => null)
+    if (wins && wins.lines.length) parts.push(`*Yesterday went well*\n${wins.lines.slice(0, 7).map(l => `• ${l}`).join('\n')}`)
     const sec = (title: string, rows: Item[]) => { if (rows.length) parts.push(`*${title} (${rows.length})*\n${rows.slice(0, 8).map(line).join('\n')}${rows.length > 8 ? `\n…and ${rows.length - 8} more` : ''}`) }
     sec('Promised, not yet done', grp('commitment'))
     sec('Problems still open', grp('problem'))
