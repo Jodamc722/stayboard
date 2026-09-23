@@ -671,16 +671,35 @@ export const STACK_BODY =
 // clean letter. Paste a URL, or upload the file, and the layout takes it without changing.
 export type StackTool = { mono: string; name: string; role: string; v: string; logo?: string }
 
+// THE MARKS ARE REFERENCED BY DOMAIN, NOT COPIED (Jon, 2026-09-23: "add logos for the tech stack",
+// "make sure the logos of the companies are there").
+//
+// Each vendor's own icon is loaded from Google's favicon service by domain. That fetches the mark
+// the company itself publishes, at 128px, with no API key and nothing for us to keep in sync — and
+// it means we are pointing at their artwork rather than holding a copy of it.
+//
+// It is also allowed to fail. If the service is blocked, slow, or returns nothing, the tile falls
+// back to the monogram, so the row still reads as a row instead of showing four broken images on an
+// owner's screen. For a crisp wordmark rather than a favicon, upload the official SVG over it in
+// the editor — the layout takes either without changing.
+//
+// Lighthouse keeps its letter on purpose: it is ours, it has no public domain to fetch from, and a
+// letter we drew is more honest than a logo we do not have.
+const FAVICON = (domain: string) => 'https://www.google.com/s2/favicons?domain=' + domain + '&sz=128'
+
 export const STACK_TOOLS: StackTool[] = [
-  { mono: 'G', name: 'Guesty', role: 'Bookings', logo: '',
+  { mono: 'G', name: 'Guesty', role: 'Bookings', logo: FAVICON('guesty.com'),
     v: 'Every channel, reservation and calendar in one place, and the source of your owner portal and monthly statement.' },
-  { mono: 'PL', name: 'PriceLabs', role: 'Pricing', logo: '',
+  { mono: 'PL', name: 'PriceLabs', role: 'Pricing', logo: FAVICON('pricelabs.co'),
     v: 'Live market data, comp-set rates and demand signals setting a price for every date on your calendar.' },
-  { mono: 'B', name: 'Breezeway', role: 'Operations', logo: '',
+  { mono: 'B', name: 'Breezeway', role: 'Operations', logo: FAVICON('breezeway.io'),
     v: 'The platform hotels use for housekeeping and maintenance. Every job carries a checklist, an assignee and photographs.' },
   { mono: 'L', name: 'Lighthouse', role: 'Built in-house', logo: '',
     v: 'Our own software, built on top of the rest. It watches the day for what a person would miss: an unassigned clean, an unanswered message, a rate that drifted, a statement that does not reconcile.' },
 ]
+
+/** Pacer's mark, for the revenue slide. Same service, same fallback. */
+export const PACER_LOGO = FAVICON('pacerrev.com')
 
 export const STACK_CHANNELS: { k: string; v: string }[] = [
   { k: 'Slack', v: 'Housekeeping, maintenance, guest care and management in one room, in real time, in two languages. A problem at your unit reaches whoever can fix it in seconds.' },

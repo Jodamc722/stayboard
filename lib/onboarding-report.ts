@@ -33,7 +33,7 @@ import {
   EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF,
   CRAFT_BODY, CRAFT_ROWS,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY,
-  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, PACER_LOGO,
   RAMP_ACTIONS, RAMP_ACTIONS_NOTE,
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, type StackTool,
 } from './onboarding-copy'
@@ -113,7 +113,7 @@ export type OnboardingContent = {
   /** The guest journey, booking to review, and the Breezeway record behind it. */
   guestcare: Sec<{ headline: string; subtitle: string; body: string; stages: KV[]; note: string }>
   /** Revenue management and the Pacer partnership — the levers, not just the nightly rate. */
-  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string; partnerHead: string; partner: KV[] }>
+  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string; partnerHead: string; partner: KV[]; partnerLogo: string }>
   /** The active half of the ramp story: what we DO to shorten it. Sits right after the curve. */
   rampsteps: Sec<{ headline: string; subtitle: string; rows: KV[]; note: string }>
   /** The software stack — Guesty, PriceLabs, Breezeway, Lighthouse, plus Slack and email. */
@@ -273,6 +273,7 @@ export type OnboardingTemplate = {
   revenueNote: string
   revenuePartnerHead: string
   revenuePartner: KV[]
+  revenuePartnerLogo: string
   rampActions: KV[]
   rampActionsNote: string
   stackBody: string
@@ -429,6 +430,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   revenueNote: REVENUE_NOTE,
   revenuePartnerHead: REVENUE_PARTNER_HEAD,
   revenuePartner: REVENUE_PARTNER,
+  revenuePartnerLogo: PACER_LOGO,
   rampActions: RAMP_ACTIONS,
   rampActionsNote: RAMP_ACTIONS_NOTE,
   stackBody: STACK_BODY,
@@ -531,6 +533,7 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     revenueNote: str(stored.revenueNote, D.revenueNote),
     revenuePartnerHead: str(stored.revenuePartnerHead, D.revenuePartnerHead),
     revenuePartner: arr(stored.revenuePartner, D.revenuePartner),
+    revenuePartnerLogo: str(stored.revenuePartnerLogo, D.revenuePartnerLogo),
     rampActions: arr(stored.rampActions, D.rampActions),
     rampActionsNote: str(stored.rampActionsNote, D.rampActionsNote),
     stackBody: str(stored.stackBody, D.stackBody),
@@ -793,6 +796,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       note: t.revenueNote,
       partnerHead: t.revenuePartnerHead,
       partner: t.revenuePartner,
+      partnerLogo: t.revenuePartnerLogo,
     },
     rampsteps: {
       headline: 'How we shorten it',

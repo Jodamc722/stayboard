@@ -24,7 +24,7 @@ import {
   EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE,
   CRAFT_BODY, CRAFT_ROWS, CRAFT_HEADLINE, CRAFT_SUBTITLE,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY, GUEST_HEADLINE, GUEST_SUBTITLE,
-  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, PACER_LOGO,
   RAMP_ACTIONS, RAMP_ACTIONS_NOTE, RAMP_ACTIONS_HEADLINE, RAMP_ACTIONS_SUBTITLE,
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
@@ -1115,11 +1115,42 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 // A deck generated before today has none of these keys, so the slides would render as a headline
 // over nothing. These defaults seed a MISSING section only; a section somebody has edited is
 // never touched, here or anywhere else in the repair pass.
+/**
+ * ONE TILE IN THE TECH-STACK ROW: the vendor's own mark when we have a URL for it, the monogram
+ * when we do not — and the monogram again if the image fails to load.
+ *
+ * That last part is the whole reason this is a component. A logo referenced from somebody else's
+ * service can be blocked, slow, or simply gone, and four broken-image glyphs on an owner's screen
+ * is worse than four clean letters. `onError` swaps back silently, so the row always reads as a row.
+ */
+function StackMark({ logo, mono, name, accent, card, border }: {
+  logo?: string; mono?: string; name?: string; accent: string; card: string; border: string
+}) {
+  const [failed, setFailed] = useState(false)
+  const src = String(logo || '').trim()
+  if (src && !failed) {
+    return (
+      <span style={{ flex: '0 0 46px', height: 46, borderRadius: 11, background: card, border: '1px solid ' + border, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt={String(name || '')} onError={() => setFailed(true)}
+          style={{ maxWidth: 30, maxHeight: 30, objectFit: 'contain' }} />
+      </span>
+    )
+  }
+  return (
+    <span style={{
+      flex: '0 0 46px', height: 46, borderRadius: 11, background: accent, color: card,
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: mono && String(mono).length > 1 ? 15 : 19, fontWeight: 700, letterSpacing: '-0.02em',
+    }}>{mono || '\u00b7'}</span>
+  )
+}
+
 const PITCH_DEFAULTS: Record<string, Any> = {
   experience: { headline: EXPERIENCE_HEADLINE, subtitle: EXPERIENCE_SUBTITLE, body: EXPERIENCE_BODY, items: EXPERIENCE_ITEMS, proof: EXPERIENCE_PROOF, photo: null },
   craft: { headline: CRAFT_HEADLINE, subtitle: CRAFT_SUBTITLE, body: CRAFT_BODY, rows: CRAFT_ROWS },
   guestcare: { headline: GUEST_HEADLINE, subtitle: GUEST_SUBTITLE, body: GUEST_BODY, stages: GUEST_STAGES, note: GUEST_BREEZEWAY },
-  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE, partnerHead: REVENUE_PARTNER_HEAD, partner: REVENUE_PARTNER },
+  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE, partnerHead: REVENUE_PARTNER_HEAD, partner: REVENUE_PARTNER, partnerLogo: PACER_LOGO },
   rampsteps: { headline: RAMP_ACTIONS_HEADLINE, subtitle: RAMP_ACTIONS_SUBTITLE, rows: RAMP_ACTIONS, note: RAMP_ACTIONS_NOTE },
   stack: { headline: STACK_HEADLINE, subtitle: STACK_SUBTITLE, body: STACK_BODY, tools: STACK_TOOLS, rows: STACK_CHANNELS, note: STACK_NOTE },
 }
@@ -3630,9 +3661,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       on the slide. */}
                   {(sec('revenue').partner || []).length ? (
                     <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid ' + t.cardBorder }}>
-                      <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.14em', color: t.accent, textTransform: 'uppercase' }}>
-                        <Ed v={sec('revenue').partnerHead || 'Who Pacer are'} set={v => patch('revenue.partnerHead', v)} edit={edit} />
-                      </p>
+                      <div className="flex items-center" style={{ gap: 10 }}>
+                        <span style={{ position: 'relative' }}>
+                          <StackMark logo={sec('revenue').partnerLogo} mono="P" name="Pacer" accent={t.accent} card={t.card} border={t.cardBorder} />
+                          {edit ? (
+                            <button onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Pacer logo', cur: String(sec('revenue').partnerLogo || ''), set: (u: string) => patch('revenue.partnerLogo', u) }) }}
+                              className="sb-noprint" title="Change the Pacer logo"
+                              style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer', borderRadius: 11 }} />
+                          ) : null}
+                        </span>
+                        <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.14em', color: t.accent, textTransform: 'uppercase' }}>
+                          <Ed v={sec('revenue').partnerHead || 'Who Pacer are'} set={v => patch('revenue.partnerHead', v)} edit={edit} />
+                        </p>
+                      </div>
                       <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '12px 30px' }}>
                         {(sec('revenue').partner || []).map((f: Any, i: number) => (
                           <div key={i}>
@@ -3677,21 +3718,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
                     {(sec('stack').tools || []).map((f: Any, i: number) => (
                       <div key={i} className="flex" style={{ gap: 16, alignItems: 'flex-start' }}>
-                        {/* The vendor's own mark when we hold one, a monogram tile when we do not.
-                            Both are 46px on the same baseline, so a half-filled set still reads as
-                            one row rather than a ransom note. */}
-                        {String(f.logo || '').trim() ? (
-                          <span style={{ flex: '0 0 46px', height: 46, borderRadius: 11, background: t.card, border: '1px solid ' + t.cardBorder, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={String(f.logo)} alt={String(f.name || '')} style={{ maxWidth: 34, maxHeight: 30, objectFit: 'contain' }} />
-                          </span>
-                        ) : (
-                          <span style={{
-                            flex: '0 0 46px', height: 46, borderRadius: 11, background: t.accent, color: t.card,
-                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: f.mono && String(f.mono).length > 1 ? 15 : 19, fontWeight: 700, letterSpacing: '-0.02em',
-                          }}>{f.mono || '\u00b7'}</span>
-                        )}
+                        {/* In edit mode the tile is also the uploader: click it to drop in the
+                            official SVG over the fetched favicon. */}
+                        <span style={{ position: 'relative', flex: '0 0 46px' }}>
+                          <StackMark logo={f.logo} mono={f.mono} name={f.name} accent={t.accent} card={t.card} border={t.cardBorder} />
+                          {edit ? (
+                            <button onClick={() => { setPhotoUrl(''); setPhotoPick({ title: String(f.name || 'Logo') + ' logo', cur: String(f.logo || ''), set: (u: string) => patch('stack.tools.' + i + '.logo', u) }) }}
+                              className="sb-noprint" title={'Change the ' + String(f.name || '') + ' logo'}
+                              style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer', borderRadius: 11 }} />
+                          ) : null}
+                        </span>
                         <div style={{ flex: 1 }}>
                           <p style={{ fontSize: 15.5, fontWeight: 600, color: t.ink, lineHeight: 1.25 }}>
                             <Ed v={f.name || ''} set={v => patch('stack.tools.' + i + '.name', v)} edit={edit} />
