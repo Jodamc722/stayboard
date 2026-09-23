@@ -5,6 +5,7 @@ import { runBehindAlert } from '@/lib/ops-behind'
 import { revalidateTag } from 'next/cache'
 import { bustOpsDay } from '@/lib/ops-day'
 import { withRouteReceipt } from '@/lib/automation-runs'
+import { assignVendorTasks } from '@/lib/vendor-assign'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -34,7 +35,11 @@ async function run(req: NextRequest) {
   // Best effort - an alert failure must never fail the task mirror.
   let alert: any = null
   try { alert = await runBehindAlert() } catch (e) { alert = { error: String((e as any)?.message || e).slice(0, 120) } }
-  return NextResponse.json({ ranAt: new Date().toISOString(), ...result, comments, alert })
+  // Vendor buildings go to the vendor (Jon, 2026-09-23: Capri, Lucerne and Amrit are Opal's). Any
+  // unassigned open task there is handed to the Opal Works account; see lib/vendor-assign.
+  let vendors: any = null
+  try { vendors = await assignVendorTasks() } catch (e) { vendors = { error: String((e as any)?.message || e).slice(0, 120) } }
+  return NextResponse.json({ ranAt: new Date().toISOString(), ...result, comments, alert, vendors })
 }
 
 const withReceipt = withRouteReceipt<NextRequest>('breezeway-tasks', run)
