@@ -198,9 +198,22 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   ctx.question = lastUser.slice(0, 400)
   const wholeThread = messages.map(m => String(m.content || '')).join(' \n ')
   const scopes = scopesForText(wholeThread, ctx.listingMeta)
+  ctx.sharedRoom = source === 'slack' || !!input.forceNoMoney
+  // A building in play brings its units' memories in too, ranked just below what was named
+  // (lib/eve/memory.ts loadMemories, "recall by neighbourhood").
+  const nearScopes: string[] = []
+  for (const sc of scopes) {
+    if (!sc.startsWith('building:')) continue
+    const b = sc.slice(9)
+    for (const id of Object.keys(ctx.listingMeta)) if (ctx.listingMeta[id].rollup === b) nearScopes.push('unit:' + id)
+  }
   // The question rides along so retrieval can rank by RELEVANCE, not just weight — the memories
   // about the thing being asked beat equally-weighted trivia about everything else.
-  const memories = await loadMemories(scopes, ctx.email, 60, lastUser || wholeThread)
+  const memories = await loadMemories(scopes, ctx.email, 60, lastUser || wholeThread, { nearScopes })
+  // THE LIVING MIND (lib/eve/brain.ts): the dossiers of whatever is in play, last night's reflection
+  // and her track record, in her head before she reaches for a tool. Not for a probe: the learning
+  // audit tests what she REMEMBERS, and handing her the file would pass it for her.
+  const mind = isProbe ? '' : await safe(import('./brain').then(m => m.mindForPrompt({ text: wholeThread.slice(-4000), scopes, sharedRoom: ctx.sharedRoom })), '')
   const voice = await safe(getVoiceProfile(), '')
 
   // WHAT LANGUAGE TO ANSWER IN, decided here rather than left to the model. Read off the LAST user
@@ -264,7 +277,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // derived from the feature and tool registries — byte-identical for the life of the process —
       // and it was being glued onto `memories`, which lands in the UNCACHED block. Every turn paid
       // list price to re-send a string that had not changed since the deploy.
-      const blocks = buildSystemBlocks({ headline, atlas: appAtlas(), memories: renderMemories(memories), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel, agentMode })
+      const blocks = buildSystemBlocks({ headline, atlas: appAtlas(), memories: renderMemories(memories), mind, openDomains: open, voice: voicePlus, userName, canMoney, operatingModel, agentMode })
       // TWO BREAKPOINTS, NOT ONE. `stable` survives between conversations while the five-minute
       // window holds; `dynamic` (memories, headline, who is asking) is constant within ONE
       // conversation and different in the next, so it earns its own entry rather than riding free
@@ -382,6 +395,33 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       touchMemories(memories.map(m => m.id)).catch(() => {})
       recordMemoryHits(usedIds).catch(() => {})
     }
+
+    // "NO, THAT'S WRONG" IS A LESSON (Jon, 2026-09-23: "constantly updating, learning, improving").
+    // A thumbs-down with a note was already kept (app/api/eve/feedback). Most corrections are not
+    // typed there, though; they are the next message: "no, Eden's crew starts at 11". When the reply
+    // pushes back on her previous answer, lib/eve/brain.ts captureCorrection works out what was wrong
+    // and what is right, keeps the right thing in that person's name and at their authority, and
+    // weakens the beliefs the wrong answer leaned on. Awaited (with a ceiling) because Vercel freezes
+    // a function once it has answered; a slow correction costs a few seconds, a lost one costs the lesson.
+    try {
+      const prevIdx = messages.length - 2
+      const prev = prevIdx >= 0 && messages[prevIdx].role === 'assistant' ? String(messages[prevIdx].content || '') : ''
+      const prevQ = prevIdx >= 1 ? String(messages[prevIdx - 1].content || '') : ''
+      if (!isProbe && source !== 'slack' && prev) {
+        const { looksLikeCorrection, captureCorrection } = await import('./brain')
+        if (looksLikeCorrection(lastUser, !!prev)) {
+          const scopeFor = (text: string) => {
+            const named = scopesForText(text, ctx.listingMeta).filter(x => x !== 'portfolio')
+            const only = (prefix: string) => { const l = named.filter(x => x.startsWith(prefix)); return l.length === 1 ? l[0] : null }
+            return only('unit:') || only('building:') || only('channel:') || 'portfolio'
+          }
+          await Promise.race([
+            captureCorrection({ email: ctx.email, question: prevQ, answer: prev, correction: lastUser, chatId, memories, scopeFor }),
+            new Promise(res => setTimeout(res, 9000)),
+          ])
+        }
+      }
+    } catch { /* a missed lesson never breaks an answer */ }
 
     // CONSTANT LEARNING, ZERO CEREMONY (Jon, 2026-08-19: "read and learn and update constantly").
     // When the user speaks in standing-instruction form — always / never / from now on / stop
