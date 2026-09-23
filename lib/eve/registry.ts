@@ -23,6 +23,7 @@ import { GUESTS_DOMAIN } from './guests'
 import { SLACK_DOMAIN } from './slack'
 import { PROPERTY_DOMAIN } from './property'
 import { SYSTEM_DOMAIN, SYSTEM_TOOLS } from './system'
+import { BRAIN_TOOLS } from './brain'
 import { CS_TOOLS } from './cs'
 import { DOC_TOOLS } from './docs'
 
@@ -59,7 +60,7 @@ export function coreTools(): EveTool[] {
   // to answer one is the wrong trade — two small schemas beat a wasted round trip.
   // What she did today is core too (2026-09-23 review): she was answering "what did you do?" with
   // "nothing" after ten posts, and a question about herself must never cost a domain-opening turn.
-  return CORE_TOOLS.concat(DOC_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat([OPEN_DOMAIN])
+  return CORE_TOOLS.concat(DOC_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat(BRAIN_TOOLS).concat([OPEN_DOMAIN])
 }
 
 export function domainByKey(key: string): EveDomain | null {
