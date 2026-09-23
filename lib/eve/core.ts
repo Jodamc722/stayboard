@@ -20,7 +20,7 @@ import { createRecommendation, scorecard } from './recommendations'
 import { runReview } from './review'
 import { upcomingEvents, stormRisk } from './signals'
 import { runCheck as doorCodeCheck, requestDoorCode, attachSlackPost } from './door-code'
-import { doorCodePolicy } from '@/lib/access'
+import { doorCodePolicy, isSuperadmin } from '@/lib/access'
 import { postDoorCodeApproval } from './approvals'
 import { runAudit, listAudits } from './audit'
 import { askQuestion } from './questions'
@@ -44,6 +44,47 @@ const PAYLOAD_NEEDS: Record<string, string[][]> = {
   guesty_write: [['reservationId', 'reservation_id'], ['note', 'fieldId']],
   calendar_block: [['listingId', 'listing_id'], ['date']],
   slack_post: [['channel'], ['text']],
+}
+
+// DID THE PERSON ASK FOR THIS? (Jon, 2026-09-23 review). In a live test an analytical question in
+// the web chat ("what is the biggest operational weakness right now?") ended with Eve calling propose_action slack_post on her
+// own and posting into #vr-eve. The rung said slack_post may ACT, and the rung was built for her
+// watches and crons — Eve noticing something at 6am and doing the obvious thing. It was never meant
+// to let a conversation turn into an action nobody in it requested.
+//
+// The rule: an action that starts in a CONVERSATION may only execute if the person's latest message
+// asked for it, with a verb that fits the action. Otherwise it is filed as a proposal (the approval
+// queue) instead of done. Watches and crons call attemptAction directly and never come through
+// here, so they are untouched. English and the Spanish the crews write in.
+const SAY_VERBS = String.raw`post|send|tell(?! me\b| us\b)|let (?!me\b|us\b)[\w@#.'-]+(?: [\w@#.'-]+)? know|flag|ping|share (?:it|this|that|with)|notify|remind|publ[ií]ca(?:lo)?|manda(?:lo)?|m[aá]ndalo|env[ií]a(?:lo)?|av[ií]sa(?:le|les)?|dile|recu[eé]rda(?:le|les)?`
+const ASK_VERBS: Record<string, string> = {
+  slack_post: SAY_VERBS,
+  task_create: String.raw`create|add (?:a |the |an )?(?:task|clean|inspection|work order)|(?:make|open|log|raise|put in|schedule) (?:a |an )?(?:task|clean|inspection|work order)|crea|agrega (?:una )?tarea|remind`,
+  task_assign: String.raw`assign|reassign|give (?:it|this|that) to|asigna|reasigna`,
+  task_note: String.raw`note|add (?:a )?note|comment|write|escribe|anota`,
+  task_cancel: String.raw`cancel|call off|cancela`,
+  guest_reply_draft: String.raw`draft|write|reply|respond|answer|escribe|redacta|responde|contesta`,
+  guest_reply_send: String.raw`send|reply|respond|manda|env[ií]a|responde|contesta`,
+  email_draft: String.raw`e-?mail|draft|write|send|escribe|redacta|manda|env[ií]a|correo`,
+  guesty_write: String.raw`write|note|add|update|record|escribe|anota|actualiza`,
+  calendar_block: String.raw`block|unblock|bloquea|desbloquea`,
+}
+// A plain go-ahead after she offered ("yes, do it", "go ahead", "dale") is an explicit request too.
+const GO_AHEAD = String.raw`do it|go ahead|please do|hazlo|adelante|dale|h[aá]gale`
+const NEGATED = /\b(?:don'?t|do not|never|no|not yet|ni)\s+(?:\w+\s+){0,2}?(?:post|send|tell|ping|notify|share|flag|create|assign|cancel|block|email|draft|write|publi|mand|env|avis|crea|asign|cancel|bloque|escrib)/i
+const VERB_PAST: Record<string, [string, string]> = {
+  slack_post: ['post', 'posted'], guest_reply_send: ['send', 'sent'], email_draft: ['draft', 'drafted'],
+  guest_reply_draft: ['draft', 'drafted'], task_create: ['create', 'created'], task_assign: ['assign', 'assigned'],
+  task_note: ['note', 'noted'], task_cancel: ['cancel', 'cancelled'], guesty_write: ['write', 'written'],
+  calendar_block: ['block', 'blocked'],
+}
+function askedFor(action: string, said: string | undefined): boolean {
+  const text = String(said || '')
+  if (!text.trim()) return false
+  if (NEGATED.test(text)) return false
+  const verbs = ASK_VERBS[action]
+  if (!verbs) return false
+  return new RegExp(String.raw`\b(?:${verbs}|${GO_AHEAD})\b`, 'i').test(text)
 }
 
 export const CORE_TOOLS: EveTool[] = [
@@ -123,6 +164,28 @@ export const CORE_TOOLS: EveTool[] = [
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 30, 100)
       let q = ctx.db.from('guesty_reservations').select('guest_name,listing_id,listing_name,nights,money_total,status,source,check_in,check_out')
+      // FILTER, THEN LIMIT (Jon, 2026-09-23 review). The building / unit filter used to run in JS
+      // on the first `lim` rows of the WHOLE portfolio, ordered by listing name — so "check-ins at
+      // Botanica today" returned whatever Botanica rows happened to sort into the first 30, and
+      // said truncated:false. The scope now goes into the query as listing ids, the limit applies
+      // to what is left, and truncation is measured with one extra row.
+      if (input?.id) q = q.eq('listing_id', String(input.id))
+      else if (input?.name || input?.building) {
+        let ids: Set<string> | null = null
+        if (input?.building) {
+          ids = new Set<string>()
+          ctx.idsForBuilding(String(input.building)).forEach(x => ids!.add(x))
+          // The old filter also matched the building text inside the unit's name; keep that reach.
+          ctx.idsForName(String(input.building)).forEach(x => ids!.add(x))
+        }
+        if (input?.name) {
+          // A building AND a unit name narrow further, as before: the intersection.
+          const byName = ctx.idsForName(String(input.name))
+          ids = new Set(ids ? byName.filter(x => ids!.has(x)) : byName)
+        }
+        if (!ids || !ids.size) return { count: 0, truncated: false, scopedToListing: input?.name || null, reservations: [], note: `No listing matches "${input?.name || input?.building}". That is not the same as no reservations — check the unit or building name.` }
+        q = q.in('listing_id', Array.from(ids))
+      }
       const t = lc(input?.type)
       if (t === 'checkin') q = q.eq('check_in', input?.date || ctx.today).order('listing_name')
       else if (t === 'checkout') q = q.eq('check_out', input?.date || ctx.today).order('listing_name')
@@ -133,13 +196,14 @@ export const CORE_TOOLS: EveTool[] = [
         q = q.order('check_in')
       }
       if (input?.status) q = q.ilike('status', `%${input.status}%`)
-      const { data } = await q.limit(lim)
+      // A cancelled, declined or inquiry-only booking is not an arrival and not a guest in the unit
+      // (Jon, 2026-09-23 review) — same exclusion unit_status uses. Only when no status was asked for.
+      else if (t === 'checkin' || t === 'inhouse') q = q.or('status.is.null,and(status.not.ilike.*cancel*,status.not.ilike.*declin*,status.not.ilike.*inquir*)')
+      const { data } = await q.limit(lim + 1)
       let rows = (data || [])
-      if (input?.building) rows = rows.filter((r: any) => has(r.listing_name, input.building) || has(ctx.buildingOf(r.listing_id), input.building))
-      if (input?.id) rows = rows.filter((r: any) => String(r.listing_id) === String(input.id))
-      else if (input?.name) rows = rows.filter((r: any) => has(r.listing_name, input.name) || has(ctx.nameOf(r.listing_id), input.name))
-      const c = cap(rows, lim)
-      return { count: rows.length, truncated: c.truncated, scopedToListing: input?.id || input?.name || null, reservations: rows }
+      const truncated = rows.length > lim
+      rows = rows.slice(0, lim)
+      return { count: rows.length, truncated, scopedToListing: input?.id || input?.name || null, reservations: rows }
     },
   },
 
@@ -241,11 +305,19 @@ export const CORE_TOOLS: EveTool[] = [
         await recordAgentAction('memory_rule', { rung: gate.rung, allowed: false, mode: 'observe', reason: gate.reason, summary: String(input?.text || '').slice(0, 200), by: 'chat', actor: ctx.email, countAs: 'none' })
         return { saved: false, note: 'Not stored — memory writes are switched off in Agent mode (Settings → Eve → Agent mode). Say it to Jon; he can teach you directly.' }
       }
+      // WHO TAUGHT HER (Jon, 2026-09-23 review). Every `remember` used to be filed as source 'eve' —
+      // "learned by Eve, not from Jon" — even when Jon had just told her, so his own rules ranked
+      // like her guesses; and a colleague's teaching looked like her inference. The source is now
+      // the ASKER, read from the signed-in identity on ctx, never from anything the model passes:
+      // the owner is 'jon', any other signed-in person 'staff', nobody identifiable stays 'eve'.
+      // (`staff` is being added to lib/eve/memory.ts SOURCES; until it lands, normSource files it
+      // as 'eve', which is the old behaviour.) Jon is 'jon' on every surface, Slack included.
+      const who = isSuperadmin(ctx.email) ? 'jon' : input?._source === 'slack' ? 'slack' : ctx.email ? 'staff' : 'eve'
       const res = await saveMemory({
         text: input?.text, kind: input?.kind, why: input?.why, scope: input?.scope,
         // `_source` / `_maxWeight` are stamped by run.ts for a Slack turn (never by the model in a
         // way that widens anything: they only lower trust and cap weight).
-        weight: input?.weight, source: input?._source === 'slack' ? 'slack' : 'eve', created_by: ctx.email,
+        weight: input?.weight, source: who, created_by: ctx.email,
         maxWeight: Number.isFinite(Number(input?._maxWeight)) ? Number(input._maxWeight) : undefined,
         supersedes: input?.supersedes || null,
       })
@@ -259,7 +331,13 @@ export const CORE_TOOLS: EveTool[] = [
     description: 'DO SOMETHING IN THE BUSINESS — this is your hands, and the ONLY way you act. Pass the action, its full payload, a one-line summary in plain words (this is what Jon reads on Telegram after "Eve wants to:") and why. Agent mode then decides, per the rungs Jon set: it ACTS now (and you say what you did and that it can be undone), PROPOSES and waits for a yes (you say it is waiting on Jon), DRAFTS for a person to pick up, or only OBSERVES (you say you noted it). Read `outcome` and report exactly that — never say you did a thing that was only proposed. Actions and payloads: task_create {listingId or unit, title, department (housekeeping|inspection|maintenance|safety), priority (urgent|high|normal|low), date YYYY-MM-DD, description, assignees:[names]} · task_assign {taskId, person} · task_note {taskId, text} · task_cancel {taskId, reason} (never a departure clean) · guest_reply_draft {conversationId, draft, guest, unit} (saved on the thread with a Send button; nothing reaches the guest) · guest_reply_send {conversationId, body} (ALWAYS needs a yes) · email_draft {to:[emails], subject, text} (a Gmail draft, nobody receives it) · guesty_write {reservationId, note} (ALWAYS needs a yes) · calendar_block {listingId, date, action:block|unblock} (ALWAYS needs a yes) · slack_post {channel, text}. Read the thread / task / unit FIRST with the other tools so the payload is right; one call per action.',
     input_schema: obj({ action: { type: 'string', enum: ['task_create', 'task_assign', 'task_note', 'task_cancel', 'guest_reply_draft', 'guest_reply_send', 'email_draft', 'guesty_write', 'calendar_block', 'slack_post'] }, payload: { type: 'object' }, summary: S.str, why: S.str, usd: S.num }, ['action', 'payload', 'summary']),
     run: async (input, ctx) => {
-      const { attemptAction, ACTION_KEYS } = await import('./agent-mode')
+      const { stepDown, ACTION_KEYS } = await import('./agent-mode')
+      // NOBODY BEHIND IT, NO ACTION (Jon, 2026-09-23 review). An unmapped Slack asker runs with an
+      // empty Access; the Slack tier now removes this tool for them, and this is the second lock:
+      // an action with no identity has no actor to log, nobody to undo it and nobody to ask.
+      if (!String(ctx.email || '').trim()) {
+        return { ok: false, error: 'I can only act for someone I can identify, and I could not match this person to a Lighthouse account. Tell them what you would do and that a Stay Hospitality admin has to ask for it.' }
+      }
       const action = String(input?.action || '').trim() as any
       if (ACTION_KEYS.indexOf(action) < 0) return { ok: false, error: `Unknown action "${action}". One of: ${ACTION_KEYS.join(', ')}.` }
       if (action === 'door_code_release') return { ok: false, error: 'Door codes go through door_code_check, never through propose_action.' }
@@ -273,9 +351,19 @@ export const CORE_TOOLS: EveTool[] = [
       const need = PAYLOAD_NEEDS[action as string]
       const missing = need ? need.filter(keys => !keys.some(k => String(payload[k] ?? '').trim())) : []
       if (missing.length) return { ok: false, error: `${action} needs ${missing.map(keys => keys.join(' or ')).join(', ')} in the payload — read the thread / task / unit first.` }
-      const r = await attemptAction({ action, summary, exec: payload, why: String(input?.why || '').slice(0, 300), by: 'chat', actor: ctx.email, usd: Number.isFinite(Number(input?.usd)) ? Number(input.usd) : null, snippet: ctx.question || null, subject: String(payload.unit || payload.conversationId || payload.conversation_id || payload.taskId || payload.task_id || payload.listingId || payload.listing_id || payload.reservationId || payload.reservation_id || '') || null, thoughtCooldownHours: 0 })
+      const proposal = { action, summary, exec: payload, why: String(input?.why || '').slice(0, 300), by: 'chat', actor: ctx.email, usd: Number.isFinite(Number(input?.usd)) ? Number(input.usd) : null, snippet: ctx.question || null, subject: String(payload.unit || payload.conversationId || payload.conversation_id || payload.taskId || payload.task_id || payload.listingId || payload.listing_id || payload.reservationId || payload.reservation_id || '') || null, thoughtCooldownHours: 0 }
+      // Same decision attemptAction makes — then, if the rung would let it run (now, or after quiet
+      // hours) but the latest message did not ask for it, step down to a proposal instead.
+      const verdict = await agentAllowed(action, { usd: proposal.usd || undefined })
+      const unasked = (verdict.mode === 'act' || verdict.mode === 'deferred') && !askedFor(action, ctx.question)
+      const used = unasked
+        ? { ...verdict, ok: false, mode: 'propose' as const, needsApproval: true, reason: `${verdict.reason}; not asked for in the conversation, so proposed instead` }
+        : verdict
+      const r = { ...(await stepDown(used, proposal)), verdict: used }
+      const [verb, done] = VERB_PAST[action as string] || ['do', 'done']
       const outcome =
-        r.mode === 'act' ? (r.ok ? `DONE: ${r.done || summary}.${r.undo ? ' It can be undone for 24h (say "undo" or use the Agent panel).' : ''}` : `TRIED AND FAILED: ${r.error || 'unknown error'}. Say so plainly and suggest the person does it by hand.`)
+        unasked ? (r.ok ? `PROPOSED, NOT ${done.toUpperCase()} — the person did not ask you to ${verb} anything, so it was filed for approval instead. Say it in these words: "Proposed, not ${done} — you didn't ask me to ${verb}; say '${verb} it' to ${action === 'slack_post' ? 'send' : 'go ahead'}." Do not claim it happened.` : `Could not file the proposal: ${r.error}. Nothing was ${done}.`)
+        : r.mode === 'act' ? (r.ok ? `DONE: ${r.done || summary}.${r.undo ? ' It can be undone for 24h (say "undo" or use the Agent panel).' : ''}` : `TRIED AND FAILED: ${r.error || 'unknown error'}. Say so plainly and suggest the person does it by hand.`)
         : r.mode === 'propose' ? (r.ok ? `PROPOSED, NOT DONE. It is waiting for a yes (Telegram / Settings → Eve → Agent mode). Say it is waiting on Jon.` : `Could not file the proposal: ${r.error}`)
         : r.mode === 'deferred' ? `HELD for quiet hours — it goes out on its own at ${r.verdict.settings.quietHours.end} ET. Say so.`
         : r.mode === 'draft' ? `DRAFTED ONLY (${r.verdict.reason}). A person picks it up in the Agent panel queue. Nothing happened in Breezeway, Guesty, Slack or a mailbox.`
