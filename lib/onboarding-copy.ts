@@ -344,12 +344,19 @@ export function statementAlsoRowsStale(rows: unknown): boolean {
 // Matched on a phrase rather than the whole paragraph: the stored text is the evaluated string,
 // newlines and all, and pinning a repair to 300 characters of prose means it stops working the
 // first time someone fixes a comma.
-export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'not a marketplace of contractors we hope shows up', 'our own people, on our own payroll',
+// 'not a marketplace of contractors we hope shows up' WAS A MARK AND IS NO LONGER, because the
+// 2026-09-23 rewrite kept the sentence — it is the best line on the slide. A mark that appears in
+// the replacement makes the repair replace itself forever: the document is dirty on every open,
+// and an owner's edit to this paragraph is overwritten on the next render. The remaining marks
+// each catch a real old version on their own, so nothing stops being repaired.
+export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'our own people, on our own payroll',
   // The 2026-09-18 body, retired 2026-09-23 when the slide stopped describing functions and
   // started making the argument. Matched on its opening clause: 'guest care are in-house' also
   // appears in the NEW body, so the old mark would have retired the replacement on sight.
   'manages short-term rentals in Miami, Broward and West Palm Beach',
-  'One team, one system, one monthly statement.']
+  'One team, one system, one monthly statement.',
+  // The first 2026-09-23 body, retired the same day for the unit count.
+  'managing 140+ properties and two hotels']
 export const OVERVIEW_BODY =
   'Stay Hospitality manages short-term rentals in Miami, Broward and West Palm Beach: listing, pricing, guest communication, turnovers and maintenance.\n\n' +
   'One team, one system, one monthly statement.'
@@ -357,7 +364,11 @@ export const OVERVIEW_BODY =
 // '400+' retired 2026-09-23: stay-hospitality.com says 140+ properties and two hotels, and a deck
 // that disagrees with the website an owner is about to open costs more trust than the bigger
 // number buys.
-export const COMPANY_STATS_RETIRED_MARK = ['Miami & Broward', '400+']
+export const COMPANY_STATS_RETIRED_MARK = ['Miami & Broward', '400+',
+  // The first 2026-09-23 version led on properties and gave hotels their own tile. Retired the
+  // same day for the unit count. Matched on the LABELS, which the corrected list does not reuse —
+  // matching on '140+' would have retired the replacement on sight, since it carries 140+ too.
+  'Properties managed', 'Hotels operated']
 export const COMPANY_STATS: { k: string; v: string }[] = [
   { k: 'Markets', v: 'Miami, Broward & West Palm Beach' },
   { k: 'Units managed', v: '400+' },
@@ -494,12 +505,17 @@ export const AI_NOTE: CopyPair = {
 // we run whole hotels, not just scattered condos — and closes on the operational claim that
 // matters most, which is that the people doing the work are ours.
 export const OVERVIEW_BODY_2 =
-  'Stay Hospitality is a lifestyle hospitality brand managing 140+ properties and two hotels across Miami, Fort Lauderdale, Pompano and Palm Beach.\n\n' +
+  'Stay Hospitality is a lifestyle hospitality brand managing 450+ units across Miami, Fort Lauderdale, Pompano and Palm Beach — 140+ properties, including two hotels.\n\n' +
   'We run entire buildings — The Elser, Arya, The Garden, Salato, 17West, Capri, Amrit — which means front desks, HOA boards, city compliance and linen at hotel scale are ordinary days here, not special projects. Your unit gets that same operation, and the same people: housekeeping, maintenance and guest care are in-house, on our payroll, not a marketplace of contractors we hope shows up.'
 
+// UNITS AND PROPERTIES ARE TWO DIFFERENT COUNTS, AND BOTH ARE TRUE (Jon, 2026-09-23: "Should say
+// 450+ Units"). A hotel is one property and a hundred-odd units; stay-hospitality.com counts
+// properties, Jon counts doors. Printing only the larger number is what would have looked like a
+// contradiction to an owner checking the website, so the slide prints both and says which is
+// which — 450+ is also the more impressive figure, so there is nothing to lose by reconciling it.
 export const COMPANY_STATS_2: { k: string; v: string }[] = [
-  { k: 'Properties managed', v: '140+' },
-  { k: 'Hotels operated', v: 'Two' },
+  { k: 'Units managed', v: '450+' },
+  { k: 'Properties & hotels', v: '140+ properties, two hotels' },
   { k: 'Markets', v: 'Miami · Fort Lauderdale · Pompano · Palm Beach' },
   { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
 ]
