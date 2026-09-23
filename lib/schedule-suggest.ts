@@ -137,12 +137,13 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
   for (const p of people) mine[p.id] = []
   const byId = new Map(people.map(p => [p.id, p]))
 
-  // A person's market: stated, else wherever their existing work is.
+  // A person's market: where their work already is, else what Breezeway says. The work wins: the
+  // first live run found nearly everyone's Breezeway region set to "Broward", including people who
+  // clean in Arya every day. And it is a preference, not a wall (see the score below).
   const marketOf: Record<number, string | null> = {}
   for (const p of people) {
-    if (p.market) { marketOf[p.id] = p.market; continue }
     const theirs = cleans.filter(c => c.currentIds.includes(p.id))
-    marketOf[p.id] = theirs.length ? theirs[0].market : null
+    marketOf[p.id] = theirs.length ? theirs[0].market : (p.market || null)
   }
 
   // 1. Keep.
@@ -166,9 +167,7 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
   for (const group of order) {
     group.sort((a, b) => Number(b.sameDayTurn) - Number(a.sameDayTurn) || String(a.unit).localeCompare(String(b.unit)))
     for (const c of group) {
-      const auto = people.filter(p => (p.role || 'cleaner') !== 'other')
-      const inMarket = auto.filter(p => !marketOf[p.id] || marketOf[p.id] === c.market)
-      const pool = inMarket.length ? inMarket : auto
+      const pool = people.filter(p => (p.role || 'cleaner') !== 'other')
       let best: SugPerson | null = null, bestScore = -Infinity, bestWhy = ''
       for (const p of pool) {
         const add = addedIf(p.id, c)
@@ -180,7 +179,8 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
         const sup = p.role === 'supervisor'
         // 3: same building dominates. 6: someone already out beats starting someone new.
         // 7: a supervisor only when nobody else can. Then the least extra driving, then room.
-        const score = (inHub ? 1000 : 0) + (n > 0 ? 600 : 0) - (sup ? 3000 : 0) - add + Math.max(left, 0) / 10
+        const away = !!marketOf[p.id] && marketOf[p.id] !== c.market
+        const score = (inHub ? 1000 : 0) + (n > 0 ? 600 : 0) - (sup ? 3000 : 0) - (away ? 900 : 0) - add + Math.max(left, 0) / 10
         if (score > bestScore) {
           best = p; bestScore = score
           bestWhy = sup ? 'supervisor, nobody else had room' : inHub ? `already in ${c.hub}` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : n ? 'fills a day already started' : 'has the most room'
