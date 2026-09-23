@@ -341,7 +341,9 @@ export async function askCalibrationQuestions(): Promise<{ asked: number; repeat
     const r = await askQuestion({
       question: `At ${p.building} the data disagrees with itself: ${p.contradiction}. Is that building ours, a vendor's, or genuinely shared — and which should I count as our labour?`,
       why: `Every cleaning, maintenance and labour number I quote for ${p.building} depends on whose work it is. Until I know, I will count only roster names as ours and say the rest is outside labour.`,
-      scope: p.building, kind: 'conflict', source: 'system',
+      // 'building:' + name, not the bare name (Jon, 2026-09-23 review): normScope() reads a bare
+      // "Botanica" as portfolio, so the answer's memory lost its building and loaded everywhere.
+      scope, kind: 'conflict', source: 'system',
       evidence: { calibration: true, building: p.building, assumed: stated ? { operator: stated.operator, we: stated.we, they: stated.they } : null, seen: { cleaning: p.cleaning, maintenance: p.maintenance, presetVendor: p.presetVendor } },
     })
     if (r.ok) { if (r.repeated) repeated++; else asked++ }
