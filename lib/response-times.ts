@@ -56,6 +56,10 @@ const NOT_A_MESSAGE = new Set(['log', 'note'])
 export function analyseThread(sorted: Msg[]): Omit<ConversationResponse, 'conversation_id' | 'reservation_id' | 'listing_id' | 'building' | 'channel'> {
   let firstMs: number | null = null
   let humanMs: number | null = null
+  let firstPairDone = false
+  // The human clock starts at the thread's first guest message and stops once (see below).
+  let humanOpenAt: number | null = null
+  let humanDone = false
   let replies = 0
   let guestMsgs = 0
   let lastGuestAt: string | null = null
@@ -76,19 +80,28 @@ export function analyseThread(sorted: Msg[]): Omit<ConversationResponse, 'conver
       // Only the FIRST unanswered question starts the clock. A guest who follows up twice while
       // waiting has not reset our stopwatch.
       if (openGuestAt === null) { openGuestAt = t; openGuestIso = m.sent_at }
+      if (humanOpenAt === null) humanOpenAt = t
     } else if (m.sender === 'host') {
+      // human_first_ms: the SAME first guest message, to the first reply a person typed. Known
+      // template replies (is_automated true) are skipped — the clock keeps running past them, which
+      // is the whole point of the second number. The first reply we cannot classify (null) ends it
+      // with no number: it may have been the human answer, and we will not guess which.
+      if (humanOpenAt !== null && !humanDone && m.is_automated !== true) {
+        const hg = t - humanOpenAt
+        if (hg >= 0 && m.is_automated === false) humanMs = hg
+        humanDone = true
+      }
       replies++
       lastHostAt = m.sent_at
       lastResponder = m.sender_name || 'Team'
       if (openGuestAt !== null) {
         const gap = t - openGuestAt
-        if (gap >= 0) {
-          if (firstMs === null || gap < firstMs) firstMs = gap
-          if (m.is_automated !== true) {
-            // Only claim a human number when this reply is not known-automated.
-            if (m.is_automated === false && (humanMs === null || gap < humanMs)) humanMs = gap
-          }
-        }
+        // THE FIRST RESPONSE IS THE FIRST ONE, NOT THE FASTEST (Jon, 2026-09-23 review). This kept
+        // `gap < firstMs` — the quickest of every guest→host exchange in the thread — so a guest who
+        // waited nine hours for a first answer and later got a two-minute reply was filed as a
+        // two-minute thread. first_ms is now the first guest message → the first host reply after
+        // it, set once and never lowered.
+        if (gap >= 0 && !firstPairDone) { firstMs = gap; firstPairDone = true }
         openGuestAt = null
         openGuestIso = null
       }
