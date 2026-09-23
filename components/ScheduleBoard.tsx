@@ -45,6 +45,14 @@ type Data = { longStayNights?: number; ok: boolean; view: string; today: string;
 const MARKETS = ['Miami', 'Broward', 'North'] as const
 // ---- One-pager helpers: weekly roster + forecast strip (mirrors ForecastBoard) ----
 type TeamDoc = { members: string[]; cells: Record<string, string>; rate?: number; locked?: boolean }
+/** The week as Homebase has it, with the doc's overrides applied — see lib/team-roster. */
+type RosterCell = { status: string; source: 'override' | 'homebase' | 'empty'; shift: string | null; role: string | null }
+type Roster = {
+  weekStart: string; dates: string[]
+  people: { name: string; area: string; dept: string; manual: boolean; days: Record<string, RosterCell> }[]
+  unplaced: { name: string; dates: string[] }[]
+  homebaseOk: boolean; homebaseError: string | null
+}
 type FcDay = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type Fc = { ok: boolean; today: string; weekStart: string; week: FcDay[]; avgByMarketDow?: Record<string, number[]> }
 const TEAM_STATUSES = ['Working', 'On Call', 'OFF', 'REQ OFF']
@@ -113,6 +121,7 @@ export function ScheduleBoard() {
   const [tab, setTab] = useState<'board' | 'planner'>('board')
   const [fc, setFc] = useState<Fc | null>(null)
   const [teamDocs, setTeamDocs] = useState<Record<string, TeamDoc>>({})
+  const [rosters, setRosters] = useState<Record<string, Roster>>({})
   const [teamSave, setTeamSave] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const teamDirty = useRef<Record<string, boolean>>({})
   const [moreOpen, setMoreOpen] = useState(false)
@@ -126,15 +135,17 @@ export function ScheduleBoard() {
     fetch('/api/schedule/forecast?weekStart=' + ws).then(r => r.json()).then(j => { if (!dead && j && j.ok) setFc(j) }).catch(() => {})
     ;(async () => {
       const next: Record<string, TeamDoc> = {}
+      const rost: Record<string, Roster> = {}
       await Promise.all(MARKETS.map(async mk => {
         try {
           const r = await fetch('/api/schedule/team?weekStart=' + ws + '&market=' + mk)
           const j = await r.json()
           const dd = j && j.doc ? j.doc : {}
           next[mk] = { members: Array.isArray(dd.members) ? dd.members : [], cells: dd.cells && typeof dd.cells === 'object' ? dd.cells : {}, rate: typeof dd.rate === 'number' ? dd.rate : undefined, locked: !!dd.locked }
+          if (j && j.roster) rost[mk] = j.roster as Roster
         } catch { next[mk] = { members: [], cells: {} } }
       }))
-      if (!dead) { teamDirty.current = {}; setTeamDocs(next) }
+      if (!dead) { teamDirty.current = {}; setTeamDocs(next); setRosters(rost) }
     })()
     return () => { dead = true }
   }, [weekKey])
@@ -697,7 +708,7 @@ async function pushBlocks() {
               you send the crew the picture straight after you have settled who is on today, and at
               the bottom it sat below a hundred rows of cleans where nobody scrolled to it. */}
           <div className="space-y-3 order-2 lg:order-1">
-            <WorkingRail date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
+            <WorkingRail rosters={rosters} date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
 
             {/* A 280px column, so the controls stack rather than fighting for one line. Download
                 first: the safe one is the one your hand lands on, and Post goes to the whole crew. */}
@@ -872,7 +883,7 @@ async function pushBlocks() {
   )
 }
 
-function WorkingRail({ date, dayLabel, docs, need, working, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; need: number; working: number; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
+function WorkingRail({ date, dayLabel, docs, rosters, need, working, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; need: number; working: number; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
   const NON_CLEANERS = useOpsPresets().roster.nonCleaners
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(false)
@@ -888,21 +899,37 @@ function WorkingRail({ date, dayLabel, docs, need, working, markets, saveState, 
       <div className="space-y-3 max-h-[480px] overflow-auto pr-1">
         {markets.map(mk => {
           const doc = docs[mk] || { members: [], cells: {} }
-          const rows = doc.members.map(mem => ({ mem, val: doc.cells[mem + '__' + date] || '' }))
-          const active = rows.filter(r => ACTIVE.test(r.val))
-          const rest = rows.filter(r => !ACTIVE.test(r.val))
+          const ros = rosters[mk]
+          // HOMEBASE SAYS WHO IS ON; A PERSON SAYS WHAT THE DAY IS (Jon, 2026-09-23).
+          // The rail lists everyone Homebase has scheduled today plus anyone on the stored roster,
+          // and each row shows the shift it came from. The dropdown writes an override, which is
+          // the only thing saved — leave it blank and the day follows Homebase.
+          const rows = ros
+            ? ros.people.map(p => {
+              const c = p.days[date]
+              return { mem: p.name, val: doc.cells[p.name + '__' + date] || '', auto: c && c.source === 'homebase' ? c.status : '', shift: c ? c.shift : null }
+            })
+            : doc.members.map(mem => ({ mem, val: doc.cells[mem + '__' + date] || '', auto: '', shift: null as string | null }))
+          const eff = (r: { val: string; auto: string }) => r.val || r.auto
+          const active = rows.filter(r => ACTIVE.test(eff(r)))
+          const rest = rows.filter(r => !ACTIVE.test(eff(r)))
           const shown = showAll ? active.concat(rest) : active
           if (!showAll && active.length === 0 && markets.length > 1) return null
           return (
             <div key={mk}>
               {markets.length > 1 && <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1">{mk}</div>}
-              {shown.length === 0 && <div className="text-[11px] text-muted">{doc.members.length === 0 ? 'No roster yet — Edit full roster to add names.' : 'No one marked working.'}</div>}
+              {shown.length === 0 && <div className="text-[11px] text-muted">{(ros ? ros.people.length : doc.members.length) === 0 ? (ros && ros.homebaseOk ? 'Nobody on the Homebase schedule this week.' : 'No roster yet — Edit full roster to add names.') : 'No one working.'}</div>}
               {shown.map(r => (
                 <div key={r.mem} className="group flex items-center gap-1.5 py-0.5">
                   {showAll && <button onClick={() => onRemove(mk, r.mem)} title="Remove from roster" className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-rose-600 text-xs leading-none">×</button>}
-                  <span className="text-xs text-ink flex-1 truncate">{shortTeamName(r.mem)}{NON_CLEANERS[r.mem] ? <span className="text-muted"> · {NON_CLEANERS[r.mem]}</span> : null}</span>
-                  <select value={r.val} onChange={e => onSet(mk, r.mem, date, e.target.value)} className={'text-[11px] rounded-full px-1.5 py-0.5 border border-line ' + statusChip(r.val)}>
-                    <option value="">—</option>
+                  <span className="text-xs text-ink flex-1 truncate">{shortTeamName(r.mem)}{NON_CLEANERS[r.mem] ? <span className="text-muted"> · {NON_CLEANERS[r.mem]}</span> : null}
+                    {r.shift ? <span className="text-muted"> · {r.shift}</span> : null}</span>
+                  {/* Blank means "whatever Homebase says" — the placeholder shows what that is, so
+                      an untouched cell still reads as a real answer rather than a dash. */}
+                  <select value={r.val} onChange={e => onSet(mk, r.mem, date, e.target.value)}
+                    title={r.val ? 'Set by hand — pick “—” to hand the day back to Homebase' : r.shift ? 'From Homebase: ' + r.shift : 'Not on the Homebase schedule today'}
+                    className={'text-[11px] rounded-full px-1.5 py-0.5 border ' + (r.val ? 'border-line ' + statusChip(r.val) : 'border-dashed border-line ' + statusChip(r.auto) + ' opacity-80')}>
+                    <option value="">{r.auto ? r.auto + ' (Homebase)' : '—'}</option>
                     {TEAM_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
@@ -920,6 +947,14 @@ function WorkingRail({ date, dayLabel, docs, need, working, markets, saveState, 
       <div className="mt-2 flex items-center justify-between">
         <button onClick={() => setShowAll(s => !s)} className="text-[11px] font-semibold text-brand-700 hover:underline">{showAll ? 'Show working only' : 'Edit full roster'}</button>
         <span className="text-[10px] text-muted">{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Save failed' : ''}</span>
+      </div>
+      {/* A rota that silently stops following payroll is worse than one that says it has. */}
+      {markets.some(mk => rosters[mk] && !rosters[mk].homebaseOk) ? (
+        <div className="mt-1.5 text-[10.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+          Homebase is not answering — showing only what was set by hand.
+        </div>
+      ) : null}
+      <div className="hidden">
       </div>
     </div>
   )

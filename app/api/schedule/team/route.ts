@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
+import { weekRoster } from '@/lib/team-roster'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,9 +27,14 @@ export async function GET(req: NextRequest) {
     .eq('market', market)
     .maybeSingle()
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  // THE WEEK AS HOMEBASE SEES IT, with the stored doc's cells laid over the top (lib/team-roster).
+  // Never fatal: if Homebase is unreachable the roster comes back flagged and the board falls
+  // straight back to what a human typed, which is exactly how it worked before.
+  const roster = await weekRoster(weekStart, market, (data?.doc as any) ?? null).catch(() => null)
   return NextResponse.json({
     ok: true,
     doc: data?.doc ?? null,
+    roster,
     updatedAt: data?.updated_at ?? null,
     shareToken: data?.share_token ?? null,
   })
