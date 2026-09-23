@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'cleaning_fee'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'owner_stay_cleaning' | 'cleaning_fee'
 type Severity = 'high' | 'review' | 'info'
 // 'clear' = the engine found nothing and no human decision is needed. It is computed, never saved,
 // and never counted as completed work — see the ladder in lib/owner-audit.ts.
@@ -112,12 +112,13 @@ const FLAG_LABEL: Record<FlagType, string> = {
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through', no_reservation: 'No res match',
   commission_off: 'Commission off', off_booking: 'No booking behind it',
   empty_statement: 'Empty statement', owner_stay: 'Owner / F&F stay',
+  owner_stay_cleaning: 'Owner stay cleaning',
   cleaning_fee: 'No cleaning fee',
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
   low_rate: 'Revenue far below what this stay’s night mix (midweek vs weekend) normally earns in its building/size cohort, with slack for last-minute bookings — or under the hard floor.',
-  orphan_reimb: 'Rental income is zero but other revenue NETS to something real — channel-fee reimbursements, parking, cleaning. Fully reversed postings (net $0) do not count. The amount is on the flag.',
+  orphan_reimb: 'A REIMBURSEMENT with no stay behind it — an RM or channel-fee reimbursement, or a cleaning fee, standing on a booking with zero rental income. Netted, so a posting that was fully reversed does not count, and never fired on an owner stay: a bare owner charge there is the turnover, and it has its own category. Parking and other non-reimbursement revenue on a $0 booking is picked up by $0 revenue instead.',
   refund: 'Any refund-looking line, captured with its amount.',
   zero_rev: '$0 reservations that are not obviously owner stays.',
   passthru: 'Commission fully offsets rental — a wash by design (informational).',
@@ -125,7 +126,8 @@ const FLAG_HELP: Record<FlagType, string> = {
   commission_off: 'Commission % on this reservation strays from the owner’s usual rate — most often a canceled booking whose whole cancellation fee was taken as commission.',
   off_booking: 'Money on the statement with no booking behind it — management fees, owner charges, one-off adjustments.',
   empty_statement: 'A statement was generated with no line items at all — usually a listing that is not mapped to the owner.',
-  owner_stay: 'Owner stays and friends & family stays. Discounted by design, never a pricing error — flagged so each one is confirmed as authorised and its costs land correctly.',
+  owner_stay: 'Owner stays and friends & family stays. Discounted by design, never a pricing error — noted so each one is confirmed as authorised and its costs land correctly.',
+  owner_stay_cleaning: 'Every owner and owner-guest stay still costs a turnover, so the owner must be charged for it. Green when the cleaning fee is on the guest folio; amber when it is on the statement only, or posted as a bare "Owner charge" that needs labelling as cleaning; red when nothing was charged at all.',
   cleaning_fee: 'Every reservation should collect a cleaning fee, and the fee is judged by what it NETS to — one that was charged and refunded counts as none. A channel that bills a single lump instead of itemising (Expedia\u2019s "Service" line) HAS collected the fee, so it is noted but never flagged; splitting it out is the Expedia prep list\u2019s job. Where a unit has charged nobody all month the listing is the finding, flagged once on its earliest stay instead of once per booking.',
 }
 const FLAG_CLS: Record<Severity, string> = {
@@ -809,7 +811,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.leadDays != null && it.leadDays <= (data?.rules.lastMinDays ?? 3) && <Tag tone="sky" title={'Booked ' + it.leadDays + ' days before check-in — last-minute stays get rate slack'}>last-minute</Tag>}
               {it.flags.filter(f => f.severity !== 'info').map((f, i) => (
                 <span key={i} title={f.detail} className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ring-1 ring-inset ' + FLAG_CLS[f.severity]}>
-                  {FLAG_LABEL[f.type]}{f.type === 'orphan_reimb' && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
+                  {FLAG_LABEL[f.type]}{(f.type === 'orphan_reimb' || f.type === 'owner_stay_cleaning') && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
                 </span>
               ))}
               {it.flags.filter(f => f.severity === 'info').map((f, i) => (

@@ -33,6 +33,7 @@ import { MONTH_LABEL, money } from './owner-statements'
 export type AuditFlagType =
   | 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev'
   | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay'
+  | 'owner_stay_cleaning'
   | 'cleaning_fee'
 export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
@@ -268,6 +269,19 @@ const OWNER_GUEST_RE = /owner[-_ ]?guest/i
 // that is nearly always the cleaning fee; anywhere else it is money the owner is paying for
 // something, and either way somebody should be able to say what.
 const OWNER_CHARGE_RE = /owner\s*charge/i
+// WHAT "ORPHANED" IS ACTUALLY ABOUT (Jon, 2026-09-23): "Orphan revenue is specific to
+// reimbursements: RM reimbursements for revenue and cleaning fees."
+//
+// The v11 rule widened it to any non-rental revenue that nets ≥ $1, which swept in things that
+// are not reimbursements at all and do not raise the same question. Parking on a stay with no
+// room revenue is a booking to look at; it is not money a channel handed back. Lumping the two
+// together is how a flag stops meaning one thing, and a flag that means two things gets ignored.
+//
+// So the test is the LINE, not the leftover: a channel-fee or RM reimbursement, or a cleaning fee
+// / cleaning-fee adjustment standing on its own. Everything else with no rental income still gets
+// seen — zero_rev picks it up — it just is not called an orphaned reimbursement.
+const REIMBURSEMENT_RE = /reimburs|\bRM\b.*fee|channel\s*fee/i
+const CLEANING_LINE_RE = /clean/i
 // A turnover costs $125–150 across this portfolio. Up to this much, a bare owner charge reads as
 // the cleaning; past it we say "large owner charge" instead, because Rock Soffer's −$10,051.40 is
 // plainly something else and guessing "cleaning" at that size would be worse than saying nothing.
@@ -331,7 +345,7 @@ export const DEFAULT_AUDIT_RULES: AuditRules = {
   offBookingMin: 25,
   // Three. Under that, "the unit normally charges" is an opinion about two bookings.
   cleaningPeerMin: 3,
-  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true, cleaning_fee: true },
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true, owner_stay_cleaning: true, cleaning_fee: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
@@ -1081,18 +1095,22 @@ export async function buildAudit(month: string): Promise<AuditData> {
       // bookkeeper checked the first two Botanica flags and called both false; they were ($0.00
       // and $0.14 net). A fully reversed posting is nothing; money that actually nets is the flag.
       const miscNet = money(g.other)
-      if (on.orphan_reimb && Math.abs(g.rental) < 0.005 && Math.abs(miscNet) >= 1) {
-        const kinds = Array.from(new Set(g.lines
-          .filter(l => l.code !== 'AF' && l.code !== 'CMS' && Math.abs(l.amount) > 0.005)
-          .map(l => /park/i.test(l.label) ? 'parking'
-            : /reimburs/i.test(l.label) ? 'channel-fee reimbursements'
-              : /clean/i.test(l.label) ? 'cleaning' : 'other charges')))
+      // Only the reimbursement and cleaning lines, netted. A bare "Owner charge" on an owner stay
+      // is NOT one of these — it is the turnover, and it belongs to owner_stay_cleaning below.
+      const reimbLines = g.lines.filter(l => l.code !== 'AF' && l.code !== 'CMS'
+        && Math.abs(l.amount) > 0.005
+        && !OWNER_CHARGE_RE.test(l.label)
+        && (REIMBURSEMENT_RE.test(l.label) || CLEANING_LINE_RE.test(l.label) || l.code === 'CF'))
+      const reimbNet = money(reimbLines.reduce((a, l) => a + l.amount, 0))
+      const isOwnerStay = stayTag === 'owner' || stayTag === 'owner_guest'
+      if (on.orphan_reimb && !isOwnerStay && Math.abs(g.rental) < 0.005 && Math.abs(reimbNet) >= 1) {
+        const kinds = Array.from(new Set(reimbLines.map(l =>
+          REIMBURSEMENT_RE.test(l.label) ? 'channel-fee reimbursement' : 'cleaning fee')))
         flags.push({
-          type: 'orphan_reimb', severity: 'review', amount: miscNet,
-          detail: 'No rental income, but ' + (miscNet > 0
-            ? '$' + miscNet.toFixed(2) + ' of other revenue'
-            : '$' + Math.abs(miscNet).toFixed(2) + ' of other charges')
-            + ' on this booking' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '') + '.',
+          type: 'orphan_reimb', severity: 'review', amount: reimbNet,
+          detail: 'No rental income, but $' + Math.abs(reimbNet).toFixed(2) + ' of '
+            + kinds.join(' and ') + (reimbNet < 0 ? ' charged back' : '')
+            + ' on this booking — there is no stay revenue behind it.',
         })
       } else if (on.zero_rev && Math.abs(g.rental) < 0.005 && !flags.length) {
         // MONEY STILL MOVED. "Canceled, so $0 is expected" is only true when the row really is $0.
@@ -1245,17 +1263,39 @@ export async function buildAudit(month: string): Promise<AuditData> {
         const ownerCharge = money(g.lines.filter(l => OWNER_CHARGE_RE.test(l.label) && l.amount < 0)
           .reduce((a, l) => a + Math.abs(l.amount), 0))
         const likelyCleaning = !folioClean && !stmtClean && ownerCharge > 0.005 && ownerCharge <= CLEANING_LIKELY_MAX
+        // THE STAY ITSELF: authorised, discounted by design, costs noted. It says what the booking
+        // is; it no longer tries to also be the cleaning verdict.
         flags.push({
-          type: 'owner_stay', severity: (folioClean > 0.005 || stmtClean || likelyCleaning) ? 'review' : 'high', amount: net,
+          type: 'owner_stay', severity: 'info', amount: net,
           detail: STAY_LABEL[stayTag] + ' — ' + nightsTxt
             + (net > 0.5 ? ', paying the owner $' + net.toFixed(2)
               : net < -0.5 ? ', costing the owner $' + Math.abs(net).toFixed(2)
-                : ' at no revenue')
-            + (folioClean > 0.005 ? '. Cleaning fee of $' + folioClean.toFixed(2) + ' is on the folio.'
-              : stmtClean ? '. A cleaning fee is on the statement but NOT on the guest folio — check the booking.'
-                : likelyCleaning ? '. $' + ownerCharge.toFixed(2) + ' is charged to the owner as a bare "Owner charge" — almost certainly the cleaning fee. Confirm, and label it as cleaning so it reads properly on the statement.'
-                  : '. NO CLEANING FEE ON THE FOLIO — the owner has not been charged for the turnover.'),
+                : ' at no revenue') + '.',
         })
+        // THE TURNOVER IS ITS OWN QUESTION (Jon, 2026-09-23): "If it's an owner stay, we need to
+        // make sure that there's a cleaning charge associated with the owner stay reservation, and
+        // that should be its own category."
+        //
+        // It used to ride inside the owner_stay flag, which meant the board could not count
+        // "owner stays missing a cleaning charge" — the one number that says whether the rule is
+        // being followed — and the same $130 also showed up as an orphaned reimbursement, so one
+        // charge produced two flags that disagreed about what it was. Now: one category, one
+        // amount, three honest states.
+        if (on.owner_stay_cleaning) {
+          const charged = folioClean > 0.005 ? folioClean : likelyCleaning ? ownerCharge : 0
+          flags.push({
+            type: 'owner_stay_cleaning',
+            severity: folioClean > 0.005 ? 'info' : (stmtClean || likelyCleaning) ? 'review' : 'high',
+            amount: charged || undefined,
+            detail: folioClean > 0.005
+              ? 'Turnover charged — $' + folioClean.toFixed(2) + ' cleaning fee is on the guest folio.'
+              : stmtClean
+                ? 'A cleaning fee is on the statement but NOT on the guest folio — check the booking.'
+                : likelyCleaning
+                  ? '$' + ownerCharge.toFixed(2) + ' is charged to the owner as a bare "Owner charge" — this is the turnover. Label it as cleaning so it reads as a cleaning fee on the statement instead of an unexplained charge.'
+                  : 'NO CLEANING CHARGE on this ' + STAY_LABEL[stayTag].toLowerCase() + ' — the owner has not been charged for the turnover.',
+          })
+        }
       }
       if (on.no_reservation && !res) {
         flags.push({ type: 'no_reservation', severity: 'info', detail: 'Code not found in the reservations mirror — dates and the Guesty link are unavailable.' })
