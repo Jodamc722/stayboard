@@ -53,5 +53,24 @@ export async function POST(req: NextRequest) {
     })
     memoryId = saved.id || null
   }
-  return NextResponse.json({ ok: true, memoryId })
+  // A THUMB IS EVIDENCE ABOUT THE BELIEFS BEHIND THE ANSWER (lib/eve/beliefs.ts). The chat row says
+  // which memories the answer actually drew on (memory_hits.used, migration 103). Up nudges them up;
+  // down nudges them down, harder when there is a written correction. Weak evidence either way: one
+  // thumb is one person on one answer. A person's own rule is never lowered by it, only marked
+  // disputed for the nightly reflection to ask about.
+  let beliefsMoved = 0
+  if (rating) {
+    try {
+      const { data: hit } = await db.from('eve_chats').select('memory_hits').eq('id', id).maybeSingle()
+      const used: string[] = Array.isArray((hit as any)?.memory_hits?.used) ? (hit as any).memory_hits.used.map(String) : []
+      const ids = used.filter(u => u !== memoryId)
+      if (ids.length) {
+        const { moveBeliefs } = await import('@/lib/eve/beliefs')
+        const who = isSuperadmin(email) ? 'Jon' : email.split('@')[0] || 'someone'
+        const moved = await moveBeliefs(ids, rating > 0 ? 1 : -1, rating > 0 ? `${who} gave a thumbs-up to an answer that used it` : `${who} gave a thumbs-down to an answer that used it${correction ? ': ' + correction.slice(0, 80) : ''}`, rating > 0 ? 0.2 : correction ? 0.5 : 0.25)
+        beliefsMoved = moved.length
+      }
+    } catch { /* memory_hits not there yet, or a blip: the thumb itself is saved */ }
+  }
+  return NextResponse.json({ ok: true, memoryId, beliefsMoved })
 }
