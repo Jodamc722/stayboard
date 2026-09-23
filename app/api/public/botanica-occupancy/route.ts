@@ -121,7 +121,7 @@ export async function GET(req: NextRequest) {
     for (let i = 0; i < 20; i++) {
       const { data, error } = await db
         .from('guesty_reservations')
-        .select('id,listing_id,check_in,check_out,nights,status,source,confirmation_code,created_at,guests:raw->>guestsCount,integration:raw->integration->>platform,money:raw->money,gc:raw->guestsCount,nog:raw->numberOfGuests,canceledAt:raw->>canceledAt')
+        .select('id,listing_id,check_in,check_out,nights,status,source,confirmation_code,created_at,guests:raw->>guestsCount,integration:raw->integration->>platform,money:raw->money,gc:raw->guestsCount,nog:raw->numberOfGuests,canceledAt:raw->>canceledAt,guest_name,gfirst:raw->guest->>firstName,glast:raw->guest->>lastName')
         .in('listing_id', ids)
         .gt('check_out', from)
         .lte('check_in', horizon)
@@ -252,12 +252,23 @@ export async function GET(req: NextRequest) {
         const dup = !!seenRaw[dk]; seenRaw[dk] = true
         const nog: any = r.nog && typeof r.nog === 'object' ? r.nog : null
         const guests = r.gc != null && r.gc !== '' ? num(r.gc) : (nog ? num(nog.numberOfAdults) + num(nog.numberOfChildren) : '')
-        return { base: [str(r.id), str(r.confirmation_code), rm ? rm.room : '', rm ? rm.name : '', channelOf(str(r.source) || str(r.integration)), str(r.source), str(r.integration), str(r.status), ci, co, num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), str(r.created_at).slice(0, 10), str(r.canceledAt).slice(0, 10), guests === 0 ? '' : guests, dup ? 'Yes' : ''], money: flat }
+        // Guest name ONLY for a signed-in Lighthouse user (Jon, 2026-09-23). Someone who opened the
+        // hotel's share link gets the report without names, exactly as before.
+        let first = '', last = ''
+        if (gate.signedIn) {
+          first = str(r.gfirst).trim(); last = str(r.glast).trim()
+          if (!first && !last) { const parts = str(r.guest_name).trim().split(/\s+/); first = parts.shift() || ''; last = parts.join(' ') }
+        }
+        const bal = num(m.balanceDue), stt = str(r.status)
+        const balNote = Math.abs(bal) < 0.01 ? '' : /inquir/i.test(stt) ? 'Inquiry quote, never booked (nothing owed)'
+          : /cancel|declin/i.test(stt) ? 'Cancelled, leftover quote (nothing owed)'
+          : bal < 0 ? 'Overpaid / refund pending' : (m.isNightlyRateInExternalCollection ? 'Channel collects; payment not recorded in Guesty' : 'Open balance on a confirmed stay')
+        return { base: [str(r.id), str(r.confirmation_code), first, last, rm ? rm.room : '', rm ? rm.name : '', channelOf(str(r.source) || str(r.integration)), str(r.source), str(r.integration), str(r.status), ci, co, num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), str(r.created_at).slice(0, 10), str(r.canceledAt).slice(0, 10), guests === 0 ? '' : guests, dup ? 'Yes' : '', balNote], money: flat }
       })
       const PREFERRED = ['currency', 'fareAccommodation', 'fareAccommodationAdjusted', 'fareAccommodationDiscount', 'fareCleaning', 'totalFees', 'subTotalPrice', 'totalTaxes', 'hostServiceFee', 'hostServiceFeeTax', 'hostServiceFeeIncTax', 'hostPayout', 'netIncome', 'commission', 'totalPrice', 'totalPaid', 'balanceDue']
       const keys = PREFERRED.filter(k => moneyKeys[k]).concat(Object.keys(moneyKeys).filter(k => PREFERRED.indexOf(k) < 0).sort())
-      const header = ['Reservation id', 'Confirmation', 'Room', 'Guesty listing', 'Channel', 'Source (Guesty)', 'Platform (Guesty)', 'Status', 'Check-in', 'Check-out', 'Nights', 'Booked on', 'Cancelled on', 'Guests', 'Duplicate mirror row'].concat(keys.map(k => 'money.' + k))
-      rawRows.sort((a, b) => String(a.base[8]).localeCompare(String(b.base[8])) || String(a.base[2]).localeCompare(String(b.base[2]), 'en', { numeric: true }))
+      const header = ['Reservation id', 'Confirmation', 'Guest first name', 'Guest last name', 'Room', 'Guesty listing', 'Channel', 'Source (Guesty)', 'Platform (Guesty)', 'Status', 'Check-in', 'Check-out', 'Nights', 'Booked on', 'Cancelled on', 'Guests', 'Duplicate mirror row', 'Balance due note'].concat(keys.map(k => 'money.' + k))
+      rawRows.sort((a, b) => String(a.base[10]).localeCompare(String(b.base[10])) || String(a.base[4]).localeCompare(String(b.base[4]), 'en', { numeric: true }))
       const rows = rawRows.map(x => x.base.concat(keys.map(k => x.money[k] == null ? '' : x.money[k])))
       if (format === 'csv') {
         const fname = 'botanica-raw-reservations-' + from + '-to-' + to + '.csv'
