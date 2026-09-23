@@ -23,7 +23,7 @@
 //   nights  one row per occupied room-night (the literal night-by-night record)
 //   daily   one row per date: rooms live, occupied, arrivals, departures, stayovers, occ %
 //   grid    rooms down, dates across, channel code in each occupied cell (the wall-chart view)
-//   raw     one row per Guesty reservation, every status, every money field (the raw report)
+//   raw     one row per Guesty reservation (confirmed, plus cancellations that collected money), every money field
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
@@ -238,7 +238,16 @@ export async function GET(req: NextRequest) {
     if (view === 'raw') {
       const moneyKeys: Record<string, boolean> = {}
       const seenRaw: Record<string, boolean> = {}
-      const rawRows = resv.filter((r: any) => str(r.check_in).slice(0, 10) <= to).map((r: any) => {
+      // Jon, 2026-09-23: inquiries out, and cancelled/declined/closed stays out unless money was
+      // actually collected (a cancellation fee is still revenue, so that row stays).
+      const keepRaw = (r: any): boolean => {
+        const st = str(r.status)
+        if (CONFIRMED.indexOf(st) >= 0) return true
+        if (/inquir/i.test(st)) return false
+        const mm: any = r.money || {}
+        return num(mm.totalPaid) > 0.009
+      }
+      const rawRows = resv.filter((r: any) => str(r.check_in).slice(0, 10) <= to && keepRaw(r)).map((r: any) => {
         const m: any = r.money && typeof r.money === 'object' ? r.money : {}
         const flat: Record<string, any> = {}
         for (const k of Object.keys(m)) {
