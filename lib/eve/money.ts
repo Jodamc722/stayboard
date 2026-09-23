@@ -169,7 +169,9 @@ export const MONEY_TOOLS: EveTool[] = [
         else byMonth[mk].other++
       }
       const timeline = Object.keys(byMonth).sort().map(m => ({ month: m, ...byMonth[m] }))
-      const familyRows = Object.keys(byFamily).map(k => ({ family: k, ...byFamily[k], value: Math.round(byFamily[k].value) }))
+      // `accommodation_value`, not `value`: a bare `value` is how trend points carry occupancy, so the
+      // money filter cannot key on it (Jon, 2026-09-23 review).
+      const familyRows = Object.keys(byFamily).map(k => ({ family: k, bookings: byFamily[k].bookings, won: byFamily[k].won, accommodation_value: Math.round(byFamily[k].value) }))
       return {
         window: { from, to, basis: 'booking created_at, America/New_York' },
         bookings_scanned: rows.length, truncated,
