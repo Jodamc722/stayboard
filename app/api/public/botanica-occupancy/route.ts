@@ -63,12 +63,14 @@ function channelOf(src: string): string {
   if (s.includes('vrbo') || s.includes('homeaway')) return 'Vrbo'
   if (s.includes('booking')) return 'Booking.com'
   if (s.includes('expedia')) return 'Expedia'
+  if (s.includes('hotels.com')) return 'Hotels.com'
+  if (s.includes('travelocity')) return 'Travelocity'
   if (s.includes('marriott')) return 'Marriott'
   if (s.includes('blueground')) return 'Blueground'
   if (s.includes('direct') || s.includes('website') || s.includes('manual') || s.includes('owner') || s.includes('homerunner')) return 'Direct'
   return src
 }
-const CHANNEL_CODE: Record<string, string> = { Airbnb: 'A', Vrbo: 'V', 'Booking.com': 'B', Expedia: 'E', Marriott: 'M', Blueground: 'G', Direct: 'D', Unknown: '?' }
+const CHANNEL_CODE: Record<string, string> = { 'Hotels.com': 'H', Travelocity: 'T', Airbnb: 'A', Vrbo: 'V', 'Booking.com': 'B', Expedia: 'E', Marriott: 'M', Blueground: 'G', Direct: 'D', Unknown: '?' }
 
 function csvCell(v: any): string {
   const s = v == null ? '' : String(v)
@@ -132,6 +134,11 @@ export async function GET(req: NextRequest) {
     const statusCounts: Record<string, number> = {}
     type Stay = { confirmation: string; reservationId: string; listingId: string; room: string; roomName: string; combo: boolean; channel: string; status: string; checkIn: string; checkOut: string; nights: number; nightsInRange: number; guests: number | null; bookedOn: string }
     const stays: Stay[] = []
+    // The mirror can hold the SAME booking twice under two reservation ids (seen 2026-09-23:
+    // 1104 · HMJDFM5BHP · Jul 9-11 twice). One booking, one room, one set of nights — key on
+    // listing + confirmation + dates so a duplicate row never becomes a phantom occupied night.
+    const seen: Record<string, boolean> = {}
+    let duplicatesDropped = 0
     for (const r of resv) {
       const st = str(r.status)
       statusCounts[st || '(blank)'] = (statusCounts[st || '(blank)'] || 0) + 1
@@ -140,6 +147,9 @@ export async function GET(req: NextRequest) {
       if (!ci || !co || co <= ci) continue
       const rm = byId[String(r.listing_id)]
       if (!rm) continue
+      const dk = rm.listingId + '|' + (str(r.confirmation_code) || String(r.id)) + '|' + ci + '|' + co
+      if (seen[dk]) { duplicatesDropped++; continue }
+      seen[dk] = true
       const a = ci > from ? ci : from
       const b = co <= addDays(to, 1) ? co : addDays(to, 1)
       const inRange = b > a ? daysBetween(a, b) : 0
@@ -202,7 +212,7 @@ export async function GET(req: NextRequest) {
       roomsInGuesty: rooms.filter(r => r.listed && !r.combo).length,
       occupiedRoomNights: totalNights, availableRoomNights: daily.reduce((t, d) => t + d.roomsLive, 0),
       staysTouchingRange: staysInRange.length, nightsByChannel: chanNights,
-      statusesSeen: statusCounts, countedStatuses: CONFIRMED,
+      statusesSeen: statusCounts, countedStatuses: CONFIRMED, duplicatesDropped,
       inventoryPhases: PHASES,
       method: 'A room is occupied on a night when a confirmed, checked-in or checked-out Guesty reservation includes that night (check-in night counts, check-out morning does not). Cancelled, declined, expired and inquiry reservations are excluded. Source: Guesty, the system of record for every channel (Airbnb, Booking.com, Vrbo, Expedia, direct).',
     }
@@ -211,8 +221,8 @@ export async function GET(req: NextRequest) {
       let csv = ''
       if (view === 'rooms') csv = toCsv(['Room', 'Guesty listing', 'Room type', 'Listed in Guesty', 'Combo listing', 'Stays in range', 'Nights occupied', 'Nights in range', 'Occ %', 'First arrival on record', 'In house today', 'In-house check-out', 'Next arrival'],
         roomRows.map(r => [r.room, r.roomName, r.roomType, r.listedInGuesty ? 'Yes' : 'No', r.comboListing ? 'Yes' : 'No', r.stays, r.nightsOccupied, r.nightsInRange, r.occPct, r.firstArrivalOnRecord, r.inHouseToday, r.inHouseCheckOut, r.nextArrival]))
-      else if (view === 'stays') csv = toCsv(['Room', 'Guesty listing', 'Channel', 'Confirmation', 'Status', 'Check-in', 'Check-out', 'Total nights', 'Nights in range', 'Guests', 'Booked on'],
-        staysInRange.map(s => [s.room, s.roomName, s.channel, s.confirmation, s.status, s.checkIn, s.checkOut, s.nights, s.nightsInRange, s.guests == null ? '' : s.guests, s.bookedOn]))
+      else if (view === 'stays') csv = toCsv(['Room', 'Guesty listing', 'Channel', 'Confirmation', 'Status', 'Check-in', 'Check-out', 'Total nights', 'Nights in range', 'Booked on'],
+        staysInRange.map(s => [s.room, s.roomName, s.channel, s.confirmation, s.status, s.checkIn, s.checkOut, s.nights, s.nightsInRange, s.bookedOn]))
       else if (view === 'nights') csv = toCsv(['Night of', 'Day', 'Room', 'Guesty listing', 'Channel', 'Confirmation', 'Check-in', 'Check-out', 'Night #', 'Of'],
         nights.map(n => [n.date, n.dow, n.room, n.roomName, n.channel, n.confirmation, n.checkIn, n.checkOut, n.night, n.of]))
       else if (view === 'daily') csv = toCsv(['Date', 'Day', 'Rooms live', 'Occupied', 'Vacant', 'Arrivals', 'Departures', 'Stayovers', 'Occ %'],
