@@ -32,7 +32,7 @@
 import 'server-only'
 import type { Access } from '@/lib/access'
 import { isSuperadmin } from '@/lib/access'
-import { getSlackRules, type RoutingGroup } from '@/lib/slack-rules'
+import { getSlackRules, EVE_CHANNELS, type RoutingGroup } from '@/lib/slack-rules'
 
 export type SlackTier = 'admin' | 'staff' | 'vendor'
 
@@ -48,6 +48,8 @@ export type TierGrant = {
   memoryWeightCap: number
   /** The routing group whose channel this is, when it is one of ours. */
   group: RoutingGroup | null
+  /** True in Eve's own room (#vr-eve), where the team works WITH her (Jon, 2026-09-23). */
+  eveRoom?: boolean
 }
 
 // Jon, 2026-09-10, second pass: "anyone can ask if they need something, only approvals are PTE and
@@ -86,6 +88,17 @@ function enforceDirect(g: TierGrant): TierGrant {
   return g.tier === 'vendor' ? { ...g, denyTools: deny, memoryWeightCap: 0 } : { ...g, denyTools: deny }
 }
 
+/** Eve's own room: the approvals channel as configured, else #vr-eve by id. */
+export async function isEveRoom(channelId: string): Promise<boolean> {
+  if (!channelId) return false
+  if (channelId === EVE_CHANNELS.approvals) return true
+  try {
+    const { getApprovalsChannel } = await import('./approvals')
+    const ch = await getApprovalsChannel()
+    return !!ch && ch.id === channelId
+  } catch { return false }
+}
+
 export async function tierFor(access: Access | null, channelId: string): Promise<TierGrant> {
   return enforceDirect(await baseTierFor(access, channelId))
 }
@@ -108,8 +121,17 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     return { tier: 'admin', buildings: [], canMoney: false, canDirect: true, denyTools: ENTRY_TOOLS, memoryWeightCap: 10, group }
   }
   if (access && !vendorRoom) {
-    // Staff are answered and may teach, but directing her is for admins (Jon, header).
-    return { tier: 'staff', buildings: [], canMoney: false, canDirect: false, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY), memoryWeightCap: 5, group }
+    // Staff are answered and may teach, but directing her is for admins (Jon, header)...
+    //
+    // ...EXCEPT IN HER OWN ROOM (Jon, 2026-09-23: "the team that's in the Eve channel can respond to
+    // Eve"). #vr-eve is where she posts what is slipping and asks for a hand; the people in it are the
+    // ones who pick those up. When one of them answers "yes, make the task" or "assign it to George",
+    // that is the job, and refusing it made her a bot that shouts and cannot be answered. So in that
+    // room a recognised colleague may direct her. Nothing else loosens: every action still goes
+    // through the Agent-mode rungs, and a guest message, a Guesty write or a calendar block still
+    // waits for an approver's yes; door codes and money stay out as everywhere in Slack.
+    const eveRoom = await isEveRoom(channelId)
+    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY), memoryWeightCap: 5, group, eveRoom }
   }
   // Unrecognised, or a vendor room. Still answered — about their own buildings, minus what is ours.
   return {
@@ -134,6 +156,9 @@ export function tierNote(g: TierGrant): string {
   }
   if (g.tier === 'admin') {
     return `${where} You are talking to an admin, but this room is run by an OUTSIDE VENDOR and they can read everything posted here. Answer the operational question fully. Do not read out dollar amounts or door codes in this room — offer to send those directly instead.`.trim()
+  }
+  if (g.tier === 'staff' && g.eveRoom) {
+    return `This is #vr-eve, YOUR room: where you post what is slipping and the team picks it up. You are talking to a colleague who works here. They can answer you and direct you here: if they say "yes, create it", "assign it to George", "that's handled", do it (propose_action — the Agent-mode rungs still decide what needs an approver) or close the item, and say in one line what you did. Answer their questions properly and completely, the way you would for anyone. If they ask about one of YOUR posts, you know where it came from (it is stated below when it is on record) — say so plainly. Not in this room: dollar amounts and door codes (those go through the approvals flow).`
   }
   if (g.tier === 'staff') {
     return `${where} You are talking to a colleague in a shared channel — someone who works here, mid-shift, who asked you because it was faster than looking. BE USEFUL FIRST. Answer the operational question properly and completely: what is late, who is where, what a unit needs, what the guest said, what happened yesterday. Go and pull the records the way you would for anyone.
