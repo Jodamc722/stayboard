@@ -10,15 +10,23 @@
 // (or use the small menu on the card on a phone), add or drop people, re-suggest. NOTHING is written
 // until Approve, and Approve pushes only the cleans whose person changed, through the same
 // /api/schedule/assign the board uses, so the Breezeway description and cleaner notes come along.
+//
+// ROUND TWO, same day, after Jon tested tomorrow: clean times come from each unit's own Breezeway
+// history where it has one (/api/schedule/clean-times); fewer people with fuller days (up to four
+// cleans, up to an hour over); supervisors clean only as a last resort, per the Ops presets roster;
+// and the board can be looked at one market at a time.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Wand2, X, Loader2, RotateCcw, Check, UserPlus, AlertTriangle } from 'lucide-react'
 import { useModal } from '@/components/Modal'
-import { matchRoster } from '@/lib/roster-match'
+import { matchRoster, personKey } from '@/lib/roster-match'
+import { useOpsPresets } from '@/lib/useOpsPresets'
 import { suggestSchedule, standardMinutes, loadFor, hubCentres, DEFAULT_CAPACITY_MIN, type SugClean, type SugPerson } from '@/lib/schedule-suggest'
 
 type Person = { id: number; name: string; region: string | null }
-type Row = SugClean & { raw: any }
+type Row = SugClean & { raw: any; minSource: 'unit' | 'standard'; minN: number }
+const MARKETS = ['All', 'Miami', 'Broward', 'North'] as const
+type MarketTab = typeof MARKETS[number]
 
 function etDate(offset = 0): string {
   const d = new Date(Date.now() + offset * 86400_000)
@@ -69,17 +77,28 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
   const [dragKey, setDragKey] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ pushed: number; failed: number; errors: string[] } | null>(null)
+  const [target, setTarget] = useState(4)
+  const [overtime, setOvertime] = useState(60)
+  const [tab, setTab] = useState<MarketTab>('All')
+  const presets = useOpsPresets()
+  // Roles by first name, the way the Ops presets roster keeps them ("Yoslenis": "supervisor").
+  const roleOf = useCallback((name: string): 'cleaner' | 'supervisor' | 'other' => {
+    const nc = presets?.roster?.nonCleaners || {}
+    const f = personKey(first(name))
+    for (const [k, v] of Object.entries(nc)) if (personKey(k) === f) return /supervis/i.test(String(v)) ? 'supervisor' : 'other'
+    return 'cleaner'
+  }, [presets])
   const { panelProps } = useModal(onClose, { closeOnEscape: !busy })
 
   const people: SugPerson[] = useMemo(() => working.map(id => {
     const p = roster.find(r => r.id === id)
-    return { id, name: p?.name || String(id), market: marketFromRegion(p?.region || null), capacityMin: capBy[id] || DEFAULT_CAPACITY_MIN }
-  }), [working, roster, capBy])
+    return { id, name: p?.name || String(id), market: marketFromRegion(p?.region || null), capacityMin: capBy[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') }
+  }), [working, roster, capBy, roleOf])
 
-  const runSuggest = useCallback((rs: Row[], ps: SugPerson[], keep: boolean) => {
-    const s = suggestSchedule(rs, ps, { keepCurrent: keep })
+  const runSuggest = useCallback((rs: Row[], ps: SugPerson[], keep: boolean, t = target, ot = overtime) => {
+    const s = suggestSchedule(rs, ps, { keepCurrent: keep, targetCleans: t, overtimeMin: ot })
     setAssign(s.assign); setWhy(s.why)
-  }, [])
+  }, [target, overtime])
 
   // Load the day: cleans + roster from the schedule, who is on from capacity.
   useEffect(() => {
@@ -98,11 +117,20 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
         // Only cleans our team does, that exist in Breezeway, on this day for real.
         const usable = all.filter(c => !c.movedTo && !c.ghost && !c.vendor && !c.guestyOnly && !c.blocked)
         setSkipped(all.filter(c => !c.movedTo && !c.ghost).length - usable.length)
-        const rs: Row[] = usable.map(c => ({
-          key: `${c.listingId}__${c.date}`, listingId: c.listingId, unit: c.unit, market: c.market, hub: c.hub || 'Other',
-          lat: c.lat ?? null, lng: c.lng ?? null, bedrooms: c.bedrooms ?? null, sameDayTurn: !!c.sameDayTurn,
-          minutes: standardMinutes(c.bedrooms, c.market), currentIds: Array.isArray(c.assignedIds) ? c.assignedIds : [], raw: c,
-        }))
+        // Each unit's own median clean time where it has one; the bedroom standard where it does not.
+        const ids = Array.from(new Set(usable.map(c => String(c.listingId))))
+        const ct = ids.length ? await fetch(`/api/schedule/clean-times?ids=${encodeURIComponent(ids.join(','))}`, { cache: 'no-store' }).then(r => r.json()).catch(() => null) : null
+        if (dead) return
+        const times: Record<string, { minutes: number; n: number }> = ct?.times || {}
+        const rs: Row[] = usable.map(c => {
+          const t = times[String(c.listingId)]
+          return {
+            key: `${c.listingId}__${c.date}`, listingId: c.listingId, unit: c.unit, market: c.market, hub: c.hub || 'Other',
+            lat: c.lat ?? null, lng: c.lng ?? null, bedrooms: c.bedrooms ?? null, sameDayTurn: !!c.sameDayTurn,
+            minutes: t ? t.minutes : standardMinutes(c.bedrooms, c.market), minSource: t ? 'unit' : 'standard', minN: t ? t.n : 0,
+            currentIds: Array.isArray(c.assignedIds) ? c.assignedIds : [], raw: c,
+          }
+        })
         const hk: Person[] = Array.isArray(sch.housekeepers) ? sch.housekeepers : []
         // Who is on: Homebase shifts and anyone already holding a task that day (capacity), matched
         // to Breezeway people by the one strict matcher. Plus anyone already assigned a clean here.
@@ -117,7 +145,7 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
         for (const r of rs) for (const id of r.currentIds) if (hk.some(h => h.id === id)) on.add(id)
         const ws = Array.from(on)
         setRows(rs); setRoster(hk); setCapBy(caps); setWorking(ws)
-        const ps = ws.map(id => { const p = hk.find(h => h.id === id); return { id, name: p?.name || '', market: marketFromRegion(p?.region || null), capacityMin: caps[id] || DEFAULT_CAPACITY_MIN } })
+        const ps = ws.map(id => { const p = hk.find(h => h.id === id); return { id, name: p?.name || '', market: marketFromRegion(p?.region || null), capacityMin: caps[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
         runSuggest(rs, ps, keepCurrent)
         setLoading(false)
       } catch (e: any) { if (!dead) { setErr(String(e?.message || e)); setLoading(false) } }
@@ -126,15 +154,15 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date])
 
-  const resuggest = (ps = people, keep = keepCurrent) => runSuggest(rows, ps, keep)
+  const resuggest = (ps = people, keep = keepCurrent, t = target, ot = overtime) => runSuggest(rows, ps, keep, t, ot)
   const toggleWorking = (id: number) => {
     const next = working.includes(id) ? working.filter(x => x !== id) : working.concat(id)
     setWorking(next)
-    const ps = next.map(pid => { const p = roster.find(r => r.id === pid); return { id: pid, name: p?.name || '', market: marketFromRegion(p?.region || null), capacityMin: capBy[pid] || DEFAULT_CAPACITY_MIN } })
+    const ps = next.map(pid => { const p = roster.find(r => r.id === pid); return { id: pid, name: p?.name || '', market: marketFromRegion(p?.region || null), capacityMin: capBy[pid] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
     // Keep what is on the board now (including hand moves) for everyone still working; only the
     // cleans that lost their person get placed again. "Re-suggest" is the full reshuffle.
     const sandbox = rows.map(r => { const to = assign[r.key]; return { ...r, currentIds: to != null && next.includes(to) ? [to] : [] } })
-    const s = suggestSchedule(sandbox, ps, { keepCurrent: true })
+    const s = suggestSchedule(sandbox, ps, { keepCurrent: true, targetCleans: target, overtimeMin: overtime })
     setAssign(s.assign); setWhy(w => { const o = { ...s.why }; for (const k of Object.keys(o)) if (o[k] === 'already assigned' && w[k]) o[k] = w[k]; return o })
   }
   const move = (key: string, to: number | null) => { setAssign(a => ({ ...a, [key]: to })); setWhy(w => ({ ...w, [key]: 'moved by hand' })) }
@@ -171,7 +199,22 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
     }
   }
 
-  const unassigned = cols.none || []
+  // THE MARKET VIEW (Jon: "divvy it up by market"). A person belongs to their Breezeway region, else
+  // to the market most of their cleans are in. A person with nothing yet shows under every market
+  // they could serve, so they can be dragged work in any of them.
+  const personMarket = (p: SugPerson): string | null => {
+    if (p.market) return p.market
+    const theirs = (cols[p.id] || []).map(r => r.market)
+    if (!theirs.length) return null
+    const n: Record<string, number> = {}
+    for (const m of theirs) n[m] = (n[m] || 0) + 1
+    return Object.keys(n).sort((a, b) => n[b] - n[a])[0]
+  }
+  const inTab = (m: string | null) => tab === 'All' || m == null || m === tab
+  const shownPeople = people.filter(p => inTab(personMarket(p)))
+  const shownRows = (list: Row[]) => tab === 'All' ? list : list.filter(r => r.market === tab)
+  const countBy = (m: MarketTab) => m === 'All' ? rows.length : rows.filter(r => r.market === m).length
+  const unassigned = shownRows(cols.none || [])
   const others = roster.filter(r => !working.includes(r.id))
 
   // Plain render functions, not components: a component defined in here would remount on every
@@ -187,7 +230,9 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
           {r.sameDayTurn ? <span className="text-[9.5px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1">SAME-DAY</span> : null}
         </div>
         <div className="text-[11px] text-muted flex items-center gap-1 mt-0.5">
-          <span>{r.bedrooms == null ? '?' : r.bedrooms === 0 ? 'Studio' : r.bedrooms + 'BR'} · ~{hm(r.minutes)}</span>
+          <span title={r.minSource === 'unit' ? `This unit's median over its last ${r.minN} timed cleans` : 'No timing history yet: the bedroom standard'}>
+            {r.bedrooms == null ? '?' : r.bedrooms === 0 ? 'Studio' : r.bedrooms + 'BR'} · ~{hm(r.minutes)}{r.minSource === 'unit' ? '' : '*'}
+          </span>
           <select value={to == null ? '' : String(to)} disabled={busy} onChange={e => move(r.key, e.target.value ? Number(e.target.value) : null)}
             className="ml-auto text-[10.5px] border border-line rounded px-0.5 py-0 bg-white max-w-[92px]" title="Move to…">
             <option value="">Unassigned</option>
@@ -209,6 +254,8 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
         <div>
           <div className="flex items-center gap-1">
             <p className="text-[12.5px] font-bold text-ink truncate flex-1">{title}</p>
+            {id != null && roleOf(title) !== 'cleaner' ? <span className="text-[9.5px] font-bold text-violet-800 bg-violet-50 border border-violet-200 rounded px-1">{roleOf(title) === 'supervisor' ? 'SUPERVISOR' : 'NOT A CLEANER'}</span> : null}
+            {id != null && !list.length ? <span className="text-[9.5px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-1">NOT NEEDED</span> : null}
             {id != null ? <button onClick={() => toggleWorking(id)} disabled={busy} title="Not working" className="text-faint hover:text-rose-700"><X size={12} /></button> : null}
           </div>
           {id != null ? (
@@ -267,18 +314,37 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
               <button onClick={() => resuggest()} disabled={busy} className="inline-flex items-center gap-1 px-2 h-7 rounded-lg border border-line bg-white font-semibold"><RotateCcw size={12} /> Re-suggest</button>
             </div>
 
+            <div className="px-4 py-2 border-b border-line flex items-center gap-2 flex-wrap text-[12px]">
+              <div className="inline-flex rounded-lg border border-line overflow-hidden">
+                {MARKETS.map(m => (
+                  <button key={m} onClick={() => setTab(m)} className={'px-2.5 h-7 font-semibold ' + (tab === m ? 'bg-ink text-white' : 'bg-white text-muted')}>
+                    {m} <span className="opacity-70">{countBy(m)}</span>
+                  </button>
+                ))}
+              </div>
+              <span className="flex-1" />
+              <label className="inline-flex items-center gap-1 text-muted">Up to
+                <input type="number" min={1} max={10} value={target} disabled={busy} onChange={e => { const n = Math.max(1, Math.min(10, Math.round(Number(e.target.value) || 1))); setTarget(n); resuggest(people, keepCurrent, n, overtime) }}
+                  className="w-[44px] border border-line rounded px-1 py-0.5 text-ink font-semibold" /> cleans each, up to
+                <input type="number" min={0} max={180} step={15} value={overtime} disabled={busy} onChange={e => { const n = Math.max(0, Math.min(180, Math.round(Number(e.target.value) || 0))); setOvertime(n); resuggest(people, keepCurrent, target, n) }}
+                  className="w-[52px] border border-line rounded px-1 py-0.5 text-ink font-semibold" /> min over the shift
+              </label>
+            </div>
+
             <div className="px-4 py-1.5 text-[11.5px] text-muted border-b border-line">
               {rows.length} departure clean{rows.length === 1 ? '' : 's'} on {date}
               {rows.filter(r => r.sameDayTurn).length ? ` · ${rows.filter(r => r.sameDayTurn).length} same-day` : ''}
               {skipped ? ` · ${skipped} left out (vendor-cleaned, blocked, or not in Breezeway)` : ''}
               {unassigned.length ? <span className="text-amber-800 font-semibold"> · {unassigned.length} unassigned</span> : null}
+              {people.filter(p => !(cols[p.id] || []).length).length ? ` · ${people.filter(p => !(cols[p.id] || []).length).length} not needed` : ''}
+              {' · '}* no timing history yet, bedroom standard used
             </div>
 
             <div className="flex-1 overflow-auto p-3">
               {rows.length === 0 ? <p className="text-[13px] text-muted p-4">No departure cleans for our team on this day.</p> : (
                 <div className="flex gap-2 items-start min-w-fit">
                   {unassigned.length ? column(null, `Unassigned (${unassigned.length})`, unassigned) : null}
-                  {people.map(p => column(p.id, p.name, cols[p.id] || [], p.capacityMin))}
+                  {shownPeople.map(p => column(p.id, p.name, shownRows(cols[p.id] || []), p.capacityMin))}
                 </div>
               )}
             </div>
