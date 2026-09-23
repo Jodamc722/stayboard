@@ -211,7 +211,7 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
               {v === 'stock' ? 'Stock' : 'Catalog'}
             </button>
           ))}
-          <span className="text-[11.5px] text-muted ml-1">{view === 'stock' ? 'what is on each shelf' : 'every item — price, photo, where it is sold'}</span>
+          <span className="text-[11.5px] text-muted ml-1">{view === 'stock' ? 'count one storeroom, worst first' : 'every item — cost, price, what we keep, what is in stock and where'}</span>
         </div>
       )}
 
@@ -220,6 +220,8 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
       {view === 'catalog' ? (
         <>
           <CatalogTable items={data.items} val={val} setItem={setItem} canEdit={canEdit} buildings={data.buildings} markets={data.markets || []} hubs={data.scopes.filter(s => s.id !== 'global').map(s => ({ id: s.id.replace(/^hub:/, ''), label: s.label }))}
+            stockVal={(itemId, sc, current) => stockEdits[sc + '|' + itemId]?.onHand ?? current}
+            setStock={(itemId, sc, onHand) => setStockEdits(x => ({ ...x, [sc + '|' + itemId]: { ...x[sc + '|' + itemId], onHand } }))}
             busy={busy} onUpload={uploadPhoto} onEditPhoto={setEditPhoto} onRemove={removeItem} adds={catAdds} setAdds={setCatAdds} openId={openCat} onOpen={setOpenCat} />
           {canEdit ? <div className="flex justify-end"><button onClick={save} disabled={!dirty || busy === 'save'} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40">{busy === 'save' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save changes</button></div> : null}
         </>

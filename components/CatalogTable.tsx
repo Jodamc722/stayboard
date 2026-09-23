@@ -24,7 +24,7 @@ const head = 'text-[10.5px] uppercase tracking-wide text-muted font-semibold'
 
 export type NewCatalogItem = { key: string; name: string; category: string; price: string; cost: string; pieces: string; pieceName: string; description: string }
 
-export function CatalogTable({ items, val, setItem, canEdit, buildings, markets, hubs, busy, onUpload, onEditPhoto, onRemove, adds, setAdds, openId, onOpen }: {
+export function CatalogTable({ items, val, setItem, canEdit, buildings, markets, hubs, busy, onUpload, onEditPhoto, onRemove, adds, setAdds, openId, onOpen, stockVal, setStock }: {
   items: Item[]
   val: (i: Item, k: keyof Item) => any
   setItem: (id: string, patch: Partial<Item>) => void
@@ -36,6 +36,10 @@ export function CatalogTable({ items, val, setItem, canEdit, buildings, markets,
   onRemove: (i: Item) => void
   adds: NewCatalogItem[]; setAdds: (f: (a: NewCatalogItem[]) => NewCatalogItem[]) => void
   openId: string | null; onOpen: (id: string | null) => void
+  /** On-hand for one item at one location, with any unsaved edit applied. */
+  stockVal?: (itemId: string, scope: string, current: number) => number
+  /** Type a count straight onto the catalog row; saves with everything else. */
+  setStock?: (itemId: string, scope: string, onHand: number) => void
 }) {
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('')
@@ -96,7 +100,7 @@ export function CatalogTable({ items, val, setItem, canEdit, buildings, markets,
       {/* ── the table ────────────────────────────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-line bg-white overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] border-collapse">
+          <table className="w-full min-w-[1010px] border-collapse">
             <thead>
               <tr className="border-b border-line bg-app/60">
                 <th className={head + ' px-3 py-2 text-left'}>Item</th>
@@ -104,6 +108,7 @@ export function CatalogTable({ items, val, setItem, canEdit, buildings, markets,
                 <th className={head + ' px-2 py-2 text-left w-[96px]'} title="Per item — the guest pays this for one item, whatever it holds">Guest pays <span className="normal-case tracking-normal font-normal">/ item</span></th>
                 <th className={head + ' px-2 py-2 text-left w-[104px]'}>We keep <span className="normal-case tracking-normal font-normal">/ item</span></th>
                 <th className={head + ' px-2 py-2 text-left'}>Buy more, pay less</th>
+                <th className={head + ' px-2 py-2 text-left w-[150px]'} title="Everything we hold, across every storeroom. The chips are the storerooms that actually stock it — type straight into one to set its count.">On hand</th>
                 <th className={head + ' px-2 py-2 text-left w-[150px]'}>Sold at</th>
                 <th className="w-[44px]"></th>
               </tr>
@@ -172,6 +177,51 @@ export function CatalogTable({ items, val, setItem, canEdit, buildings, markets,
                             : <span className="text-[11.5px] text-muted hover:text-brand-700">one price</span>}
                         </button>
                       </td>
+                      {/* ── ON HAND, ACROSS EVERY STOREROOM ────────────────────────────────
+                          Jon, 2026-09-23: "pricing, location, inventory, our Cost per item, What
+                          we sell it for… easy and simple to use." Those five facts lived on two
+                          tabs, so answering "what do we make on a Fiji water and how many are at
+                          Salato" meant switching views and holding one number in your head.
+
+                          ONLY THE STOREROOMS THAT ACTUALLY STOCK IT. The first multi-shelf view
+                          was pulled because it drew a column for every shelf, so Global read OUT
+                          on nine rows nobody stocks there and buried the two real shortages. A
+                          location with no row for this item is not a shortage, it is not that
+                          location's item — so it is not drawn at all, and the total counts only
+                          what is really held somewhere. */}
+                      <td className="px-2 py-2">
+                        {(() => {
+                          const live = (i.per || []).filter(p => p.state !== 'unset' && p.state !== 'untracked')
+                          if (!live.length) {
+                            return <span className="text-[11.5px] text-muted" title="No storeroom counts this item yet">not counted</span>
+                          }
+                          const total = live.reduce((a, p) => a + (stockVal ? stockVal(i.id, p.scope, p.onHand) : p.onHand), 0)
+                          const worst = live.some(p => p.state === 'out') ? 'out' : live.some(p => p.state === 'low') ? 'low' : 'ok'
+                          return (
+                            <div className="leading-tight">
+                              <span className={'text-[13px] font-bold tabular-nums ' + (worst === 'out' ? 'text-rose-700' : worst === 'low' ? 'text-amber-700' : 'text-ink')}>{total}</span>
+                              <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                                {live.map(p => {
+                                  const v = stockVal ? stockVal(i.id, p.scope, p.onHand) : p.onHand
+                                  const tone = p.state === 'out' ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                    : p.state === 'low' ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                      : 'border-line bg-app text-muted'
+                                  return (
+                                    <span key={p.scope} className={'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10.5px] ' + tone}
+                                      title={p.label + (p.reserved ? ' · ' + p.reserved + ' held for paid orders' : '') + ' · warns at ' + p.lowAt + (p.updatedAt ? ' · counted ' + new Date(p.updatedAt).toLocaleDateString() : ' · never counted')}>
+                                      {p.label}
+                                      {canEdit && setStock
+                                        ? <input type="number" min={0} value={v} onChange={e => setStock(i.id, p.scope, Math.max(0, Number(e.target.value)))}
+                                            className="w-9 bg-transparent text-[10.5px] font-bold tabular-nums text-right focus:outline-none" />
+                                        : <b className="tabular-nums">{v}</b>}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </td>
                       <td className="px-2 py-2">
                         <button type="button" onClick={() => onOpen(isOpen ? null : i.id)} className="text-left text-[11.5px] leading-snug">
                           {where.length ? <span className="text-ink">{where.slice(0, 3).join(', ')}{where.length > 3 ? ' +' + (where.length - 3) : ''}</span> : <span className="text-muted">everywhere</span>}
@@ -185,7 +235,7 @@ export function CatalogTable({ items, val, setItem, canEdit, buildings, markets,
                     </tr>
                     {isOpen ? (
                       <tr className="border-b border-line bg-brand-50/20">
-                        <td colSpan={7} className="px-3 pb-4 pt-2">
+                        <td colSpan={8} className="px-3 pb-4 pt-2">
                           <ItemDetail i={i} val={val} setItem={setItem} canEdit={canEdit} price={price} cost={cost} tiers={tiers} buildings={buildings} markets={markets} hubs={hubs} busy={busy}
                             onUpload={onUpload} onEditPhoto={onEditPhoto} toggleIn={toggleIn}
                             removing={removing === i.id} onRemoveAsk={() => setRemoving(i.id)} onRemoveNo={() => setRemoving(null)} onRemove={() => { onRemove(i); setRemoving(null) }} />
@@ -195,7 +245,7 @@ export function CatalogTable({ items, val, setItem, canEdit, buildings, markets,
                   </FragmentRow>
                 )
               })}
-              {!rows.length ? <tr><td colSpan={7} className="px-4 py-10 text-center text-[13px] text-muted">{items.length ? 'Nothing matches.' : 'No items yet — press New item.'}</td></tr> : null}
+              {!rows.length ? <tr><td colSpan={8} className="px-4 py-10 text-center text-[13px] text-muted">{items.length ? 'Nothing matches.' : 'No items yet — press New item.'}</td></tr> : null}
             </tbody>
           </table>
         </div>
