@@ -28,7 +28,11 @@ export const DEFAULT_VENDOR_BUILDINGS: VendorBuilding[] = [
   // Tracking them against the 4pm deadline produced 11 false 'at risk' alerts out of 17.
   // Botanica was removed from Breezeway entirely (2026-07), so there are no tasks to read: its
   // checkouts come straight from Guesty and no Breezeway action is offered on them.
-  { id: 'botanica',    label: 'Botanica',    terms: ['botanica'],            enabled: true, untracked: true, noBreezeway: true },
+  // The vendor is GARDEN (Jon, 2026-09-23: "since we do not clean botanica, remove it from auto
+  // have it assigned to Garden"). The id stays `botanica` — it is the matching key and the building
+  // is still Botanica; only the crew that cleans it has a name now, and every board that used to
+  // read "Botanica staff" reads "Garden staff".
+  { id: 'botanica',    label: 'Garden',      terms: ['botanica'],            enabled: true, untracked: true, noBreezeway: true },
   { id: 'park-towers', label: 'Park Towers', terms: ['park tower'],          wordTerms: ['pt'], enabled: true },
   { id: 'amrit',       label: 'Amrit',       terms: ['amrit'],               enabled: true },
   { id: 'capri',       label: 'Capri',       terms: ['capri'],               enabled: true },
@@ -139,7 +143,7 @@ export const DEFAULT_GROUPS: Groups = {
   parents: ['Botanica', 'Oasis', 'Arya', '3316', 'Salato'],
   oasisUnits: ['mahogany', 'royal palm', 'bougainvillea', 'bamboo', 'sapodilla', 'jasmine'],
   aliases: { '101': 'Lucerne' },
-  lux: ['elser', 'amrit', 'nomad', 'arya', '17 west', '17west', 'district 225', 'district225', 'dist 225'],
+  lux: ['elser', 'amrit', 'nomad', 'arya', '17 west', '17west', 'district 225', 'district225', 'dist 225', 'salato'],
   north: ['capri', 'lucerne', 'lucenre', 'amrit'],
   skip: ['waves'],
 }
@@ -190,7 +194,11 @@ export function mergePresets(stored: any): OpsPresets {
       .filter((v: any) => v && typeof v.id === 'string')
       .map((v: any) => ({
         id: String(v.id),
-        label: String(v.label || v.id),
+        // A settings row saved before the vendor had a name still carries the building's own label.
+        // Nobody renamed it to that on purpose, so the code default (Garden) wins; any label a
+        // person actually typed is kept.
+        label: (String(v.id) === 'botanica' && /^botanica$/i.test(String(v.label || '').trim()))
+          ? 'Garden' : String(v.label || v.id),
         terms: arr(v.terms, []).map((x: any) => String(x)).filter(Boolean),
         wordTerms: arr(v.wordTerms, []).map((x: any) => String(x)).filter(Boolean),
         enabled: v.enabled !== false,

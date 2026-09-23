@@ -51,7 +51,10 @@ const BUILDINGS: BuildingDef[] = [
   { label: 'Oasis', market: 'Broward', re: /\boasis\b|\bmahogany\b|\broyal\s*palm\b|\bbougainvillea\b|\bbamboo\b|\bsapodilla\b|\bjasmine\b/ },
   { label: 'Waves', market: 'Broward', re: /\bwaves\b/ },
   { label: 'Pelican', market: 'Broward', re: /\bpelican\b/ },
-  { label: 'Salato', market: 'Broward', re: /\bsalato\b/ },
+  // Salato is a luxury building (Jon, 2026-09-23: "Salato is luxury and always top of call list if
+  // booked"). The flag is what puts its arrivals at the head of the calls desk — CALL_LUX in
+  // lib/call-desk.ts reads it, and `lux` outranks every other tier.
+  { label: 'Salato', market: 'Broward', lux: true, re: /\bsalato\b/ },
   { label: '336 Arthur', market: 'Broward', re: /\barthur\b/ },
   { label: '7071 SW', market: 'Broward', re: /\b7071\b/ },
   { label: '906', market: 'Broward', re: /\b906\b/ },

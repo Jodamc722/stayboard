@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, type Market } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorNameOf, noBreezewayRegex } from '@/lib/ops-presets'
+import { sameGuest } from '@/lib/same-guest'
 import { breezewayConfigured, listBreezewayPeople, listPropertyHousekeeping, pickDepartureClean, isDepartureCleanName} from '@/lib/breezeway'
 
 
@@ -65,8 +66,8 @@ const end = view === 'day' ? anchor : addDays(start, 6)
 const compute = unstable_cache(async (view: string, start: string, end: string, today: string, _vendorKey: string) => {
 const db = supabaseAdmin()
 const [{ data: outs }, { data: ins }, { data: listings }] = await Promise.all([
-db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,check_out,check_in,status,nights,source,fee:raw->money->>fareCleaning').gte('check_out', start).lte('check_out', end).limit(4000),
-db.from('guesty_reservations').select('listing_id,check_in,status,nights,guest_name').gte('check_in', start).lte('check_in', addDays(end, 30)).limit(8000),
+db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,guest_id,guest_phone,check_out,check_in,status,nights,source,fee:raw->money->>fareCleaning').gte('check_out', start).lte('check_out', end).limit(4000),
+db.from('guesty_reservations').select('listing_id,check_in,status,nights,guest_name,guest_id,guest_phone').gte('check_in', start).lte('check_in', addDays(end, 30)).limit(8000),
 // PERF: pull ONLY the raw sub-fields this route uses (customFields for door/cleaning codes +
 // check-in/out times) instead of the full multi-MB raw blob for every listing.
 db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,cfRaw:raw->customFields,ciRaw:raw->>defaultCheckInTime,coRaw:raw->>defaultCheckOutTime,lat:raw->address->>lat,lng:raw->address->>lng'),
@@ -107,17 +108,17 @@ units.sort((a, b) => a.name.localeCompare(b.name))
 const arrivalsByListing: Record<string, string[]> = {}
 // How long the INCOMING stay is, keyed listing+date: a 14-night booking needs the unit properly
 // ready, not just turned over.
-const arrivalInfo: Record<string, { nights: number | null; guest: string | null }> = {}
+const arrivalInfo: Record<string, { nights: number | null; guest: string | null; guestId: string | null; phone: string | null }> = {}
 for (const r of (ins || [])) {
 if (!LIVE.test(str((r as any).status))) continue
 const id = String((r as any).listing_id); const ci = str((r as any).check_in).slice(0, 10)
 if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 const n = Number((r as any).nights)
-arrivalInfo[id + '__' + ci] = { nights: Number.isFinite(n) ? n : null, guest: str((r as any).guest_name) || null }
+arrivalInfo[id + '__' + ci] = { nights: Number.isFinite(n) ? n : null, guest: str((r as any).guest_name) || null, guestId: str((r as any).guest_id) || null, phone: str((r as any).guest_phone) || null }
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; nextNights?: number | null; nextGuest?: string | null; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; guestyOnly?: boolean; calNote?: 'blocked' | 'booked' | 'open' | null; cleanMinutes?: number | null; cleaningFee?: number | null; city?: string | null; lat?: number | null; lng?: number | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; nextNights?: number | null; nextGuest?: string | null; rebook?: boolean; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; guestyOnly?: boolean; calNote?: 'blocked' | 'booked' | 'open' | null; cleanMinutes?: number | null; cleaningFee?: number | null; city?: string | null; lat?: number | null; lng?: number | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -149,6 +150,12 @@ sameDayTurn,
 nextArrival,
 nextNights: nextArrival ? ((arrivalInfo[id + '__' + nextArrival] || {}).nights ?? null) : null,
 nextGuest: nextArrival ? ((arrivalInfo[id + '__' + nextArrival] || {}).guest ?? null) : null,
+// RE-BOOK, NOT A TURNOVER. Same person, same unit, checking out and back in on the same day: they
+// re-booked instead of extending, so nobody actually leaves and there is nothing to strip.
+rebook: sameDayTurn && sameGuest(
+  { guestId: str((r as any).guest_id) || null, phone: str((r as any).guest_phone) || null, name: str((r as any).guest_name) || null },
+  { guestId: (arrivalInfo[id + '__' + date] || {}).guestId ?? null, phone: (arrivalInfo[id + '__' + date] || {}).phone ?? null, name: (arrivalInfo[id + '__' + date] || {}).guest ?? null },
+),
 doorCode: m?.doorCode || null,
 cleaningTime: m?.cleaningTime || null,
 vendor: m?.vendor || null,

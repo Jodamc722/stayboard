@@ -41,7 +41,7 @@ type Clean = {
   bedrooms: number | null; checkOutTime: string | null; doorCode: string | null
   sameDayTurn: boolean; vendor: string | null; assignedNames: string[]
   guestOut?: string | null; nights?: number | null
-  extended?: boolean; movedFrom?: string | null; blocked?: boolean; walkInRisk?: boolean
+  extended?: boolean; movedFrom?: string | null; blocked?: boolean; walkInRisk?: boolean; rebook?: boolean
   nextArrival?: string | null; guestyOnly?: boolean
 }
 
@@ -142,6 +142,9 @@ function clip(s: string, max: number): string {
 // thing, and a flag competing with four others for one line is how it gets missed.
 function notesFor(c: Clean): string {
   const bits: string[] = []
+  // First, above everything: the guest is still in there. A cleaner who reads nothing else on the
+  // row has to read this one.
+  if (c.rebook) bits.push('SAME GUEST BACK IN — do not strip, knock first')
   if (c.extended) bits.push('EXTENDED — do not clean')
   if (c.blocked) bits.push('unit blocked')
   if (c.movedFrom) bits.push('moved from ' + shortDate(c.movedFrom))
@@ -177,7 +180,12 @@ export async function buildScheduleSheet(opts: SheetOpts): Promise<{
   for (const mk of Object.keys(day.markets || {})) {
     for (const c of (day.markets[mk] || [])) all.push(c as Clean)
   }
-  const cleans = all.filter(c => market === 'all' || String(c.market || '').toLowerCase() === market)
+  // VENDOR BUILDINGS ARE NOT ON THIS SHEET (Jon, 2026-09-23: "can we also remove Botanica from the
+  // day sheet download"). This picture is the housekeeping run — who on OUR crew is cleaning what.
+  // A Botanica row can never be assigned to anyone on it, so it only ever read as a clean nobody
+  // picked up. The vendor's own work is still on the board under the Vendor tab.
+  const ours = all.filter(c => !c.vendor)
+  const cleans = ours.filter(c => market === 'all' || String(c.market || '').toLowerCase() === market)
 
   // ── ONE ROW PER CLEAN, PER PERSON ON IT ──────────────────────────────────────────────────────
   // A clean with two names gets a row under each of them. They are both going, and a sheet that

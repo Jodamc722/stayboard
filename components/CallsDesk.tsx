@@ -18,7 +18,8 @@
 // The script panel is the one built earlier today: facts as chips, the must-dos in the only box,
 // six steps, the building guide behind a toggle, notes last.
 import { useEffect, useState, type ReactNode } from 'react'
-import { PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck, FileText, X } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { RefreshCw, PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck, FileText, X } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
 import { IconBtn, Tip } from '@/components/lean'
 import { StayPanel } from '@/components/StayPanel'
@@ -364,6 +365,30 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // it sits at the top of the list, names the guest, and writes to Guesty on Save.
   const [noteAfter, setNoteAfter] = useState<{ id: string; guest: string; label: string } | null>(null)
 
+  // ── REFRESH (Jon, 2026-09-23: "also need a refresh button on call desk, new reservation came in").
+  // The desk is a server-rendered page off the Guesty mirror, so a booking made ten minutes ago is
+  // not on it until the cron next runs. This pulls Guesty first and only then reloads — a reload
+  // alone would re-render the same stale mirror and look broken.
+  const router = useRouter()
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
+  async function refreshDesk() {
+    if (syncing) return
+    setSyncing(true); setSyncMsg(null); setError(null)
+    try {
+      const r = await fetch('/api/calls/refresh', { method: 'POST' })
+      const j = await r.json().catch(() => null)
+      if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || 'Could not reach Guesty.')
+      setSyncMsg(j.reservations ? j.reservations + ' booking' + (j.reservations === 1 ? '' : 's') + ' pulled' : 'Up to date')
+      router.refresh()
+    } catch (e: any) {
+      setError(e?.message || String(e))
+    } finally {
+      setSyncing(false)
+      setTimeout(() => setSyncMsg(null), 6000)
+    }
+  }
+
   // ── WELCOME CALL ACTIONS ──
   async function welcome(id: string, outcome: 'reached' | 'voicemail' | 'no_answer' | 'claim' | 'undo') {
     const row = rows.find(x => x.id === id); if (!row) return
@@ -507,6 +532,12 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
           <span className="rounded-lg px-2 py-1 font-semibold tabular-nums bg-slate-100 text-ink">Other {oDone}/{oTot}</span>
           {kpis.lastChance > 0 && <span className="rounded-lg px-2 py-1 font-semibold bg-rose-600 text-white">{kpis.lastChance} close tonight</span>}
           {kpis.closedOut > 0 && <span className="rounded-lg px-2 py-1 font-semibold bg-slate-100 text-muted">{kpis.closedOut} missed</span>}
+          {syncMsg && <span className="text-[12px] font-semibold text-emerald-700">{syncMsg}</span>}
+          <button onClick={refreshDesk} disabled={syncing}
+            title="Pull new bookings from Guesty and reload the desk — use it when a reservation came in just now"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1 font-semibold text-ink hover:border-ink/30 disabled:opacity-50">
+            <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Checking Guesty…' : 'Refresh'}
+          </button>
         </div>
       </header>
 
