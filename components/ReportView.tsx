@@ -1130,16 +1130,19 @@ function StackMark({ logo, mono, name, accent, card, border }: {
   const src = String(logo || '').trim()
   if (src && !failed) {
     return (
-      <span style={{ flex: '0 0 46px', height: 46, borderRadius: 11, background: card, border: '1px solid ' + border, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      // A WORDMARK IS NOT A SQUARE. Breezeway and Pacer publish horizontal logos; Guesty publishes
+      // a square icon. Forcing both into a 46px box squashes the wordmarks to an unreadable smear,
+      // so the tile keeps the 46px height and grows sideways up to 132px for whatever it is given.
+      <span style={{ flex: '0 0 auto', minWidth: 46, maxWidth: 132, height: 46, padding: '0 8px', borderRadius: 11, background: card, border: '1px solid ' + border, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={src} alt={String(name || '')} onError={() => setFailed(true)}
-          style={{ maxWidth: 30, maxHeight: 30, objectFit: 'contain' }} />
+          style={{ maxWidth: 116, maxHeight: 30, objectFit: 'contain' }} />
       </span>
     )
   }
   return (
     <span style={{
-      flex: '0 0 46px', height: 46, borderRadius: 11, background: accent, color: card,
+      flex: '0 0 auto', minWidth: 46, height: 46, borderRadius: 11, background: accent, color: card,
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       fontSize: mono && String(mono).length > 1 ? 15 : 19, fontWeight: 700, letterSpacing: '-0.02em',
     }}>{mono || '\u00b7'}</span>
@@ -3720,7 +3723,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       <div key={i} className="flex" style={{ gap: 16, alignItems: 'flex-start' }}>
                         {/* In edit mode the tile is also the uploader: click it to drop in the
                             official SVG over the fetched favicon. */}
-                        <span style={{ position: 'relative', flex: '0 0 46px' }}>
+                        <span style={{ position: 'relative', flex: '0 0 auto', display: 'inline-flex' }}>
                           <StackMark logo={f.logo} mono={f.mono} name={f.name} accent={t.accent} card={t.card} border={t.cardBorder} />
                           {edit ? (
                             <button onClick={() => { setPhotoUrl(''); setPhotoPick({ title: String(f.name || 'Logo') + ' logo', cur: String(f.logo || ''), set: (u: string) => patch('stack.tools.' + i + '.logo', u) }) }}

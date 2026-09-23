@@ -671,35 +671,46 @@ export const STACK_BODY =
 // clean letter. Paste a URL, or upload the file, and the layout takes it without changing.
 export type StackTool = { mono: string; name: string; role: string; v: string; logo?: string }
 
-// THE MARKS ARE REFERENCED BY DOMAIN, NOT COPIED (Jon, 2026-09-23: "add logos for the tech stack",
-// "make sure the logos of the companies are there").
+// THE MARKS ARE THE COMPANIES' OWN PUBLISHED FILES (Jon, 2026-09-23: "you still didn't do the
+// actual logos like you did with the other OTAs … go on the websites and download them").
 //
-// Each vendor's own icon is loaded from Google's favicon service by domain. That fetches the mark
-// the company itself publishes, at 128px, with no API key and nothing for us to keep in sync — and
-// it means we are pointing at their artwork rather than holding a copy of it.
+// He is right that the OTA wall and this row were not doing the same thing, and here is why. The
+// OTA marks come from Simple Icons, a CC0 icon set whose path data is compiled into the bundle.
+// Checked against all 3,461 icons in that set: Guesty, PriceLabs, Breezeway and Pacer are in none
+// of them. B2B software does not get into consumer icon sets, so there was nothing to compile.
 //
-// It is also allowed to fail. If the service is blocked, slow, or returns nothing, the tile falls
-// back to the monogram, so the row still reads as a row instead of showing four broken images on an
-// owner's screen. For a crisp wordmark rather than a favicon, upload the official SVG over it in
-// the editor — the layout takes either without changing.
+// So these point at the logo each company publishes on its own site, found by reading their pages:
+//   Breezeway  their wordmark SVG, straight off breezeway.io
+//   Pacer      their wordmark SVG, straight off pacerrev.com
+//   Guesty     their official icon on their own CDN — Guesty publishes no inline SVG wordmark;
+//              the rest of their brand assets are behind a media-kit download
+//   PriceLabs  NOT AVAILABLE. Their logo is an inline SVG in the page, not a file with a URL, so
+//              there is nothing to point at. It falls back to the favicon service and then to the
+//              monogram. Upload the real file over it and this line can go.
 //
-// Lighthouse keeps its letter on purpose: it is ours, it has no public domain to fetch from, and a
-// letter we drew is more honest than a logo we do not have.
+// Every one of them is still allowed to fail: StackMark swaps to the monogram on `onError`, so a
+// moved file or a blocked host leaves a clean letter rather than a broken image in front of an
+// owner. Uploading the official file in the editor pins it permanently and ends the dependency.
 const FAVICON = (domain: string) => 'https://www.google.com/s2/favicons?domain=' + domain + '&sz=128'
 
 export const STACK_TOOLS: StackTool[] = [
-  { mono: 'G', name: 'Guesty', role: 'Bookings', logo: FAVICON('guesty.com'),
+  { mono: 'G', name: 'Guesty', role: 'Bookings',
+    logo: 'https://iamg2.guesty.com/cdn/cd/9b3576f652cfa3c77e900883e5ea38a3/8bd1e0d7a6f8c629c3f7b895021ef5da/icon.jpg',
     v: 'Every channel, reservation and calendar in one place, and the source of your owner portal and monthly statement.' },
   { mono: 'PL', name: 'PriceLabs', role: 'Pricing', logo: FAVICON('pricelabs.co'),
     v: 'Live market data, comp-set rates and demand signals setting a price for every date on your calendar.' },
-  { mono: 'B', name: 'Breezeway', role: 'Operations', logo: FAVICON('breezeway.io'),
+  { mono: 'B', name: 'Breezeway', role: 'Operations',
+    logo: 'https://www.breezeway.io/hubfs/breezeway_logo.svg.svg',
     v: 'The platform hotels use for housekeeping and maintenance. Every job carries a checklist, an assignee and photographs.' },
-  { mono: 'L', name: 'Lighthouse', role: 'Built in-house', logo: '',
-    v: 'Our own software, built on top of the rest. It watches the day for what a person would miss: an unassigned clean, an unanswered message, a rate that drifted, a statement that does not reconcile.' },
+  // LIGHTHOUSE IS OURS, so it carries our own mark and the longest line in the row — it is the one
+  // thing on this slide a competitor cannot buy (Jon, 2026-09-23: "mention an AI tool built from
+  // the ground up specifically for our business").
+  { mono: 'L', name: 'Lighthouse', role: 'Our own AI', logo: '',
+    v: 'Built from the ground up for this business. It optimizes listings, drafts responses to guest reviews, reads guest messages for sentiment, schedules preventative maintenance and deep cleans, and watches every day for the thing that would otherwise be missed.' },
 ]
 
-/** Pacer's mark, for the revenue slide. Same service, same fallback. */
-export const PACER_LOGO = FAVICON('pacerrev.com')
+/** Pacer's own wordmark, off their site, for the revenue slide. Same fallback rules. */
+export const PACER_LOGO = 'https://www.pacerrev.com/logos/pacer-main-light.svg'
 
 export const STACK_CHANNELS: { k: string; v: string }[] = [
   { k: 'Slack', v: 'Housekeeping, maintenance, guest care and management in one room, in real time, in two languages. A problem at your unit reaches whoever can fix it in seconds.' },
@@ -750,7 +761,9 @@ export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
   craft: ['they are presented wrong, and then priced down to compensate', 'the next slide is exactly how'],
   guestcare: ['not luck and it is not charm', 'not a claim we make'],
   revenue: ['Almost every manager you speak to', 'there is a person to ask'],
-  stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it'],
+  stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it',
+    // the pre-logo tools list, retired the same afternoon for the real marks and the AI line
+    'Our own software, built on top of the rest'],
   rampsteps: ['would otherwise have gone empty', 'burning it on a half-built page'],
 }
 
