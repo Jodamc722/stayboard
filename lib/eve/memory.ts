@@ -16,6 +16,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { lc } from './ctx'
 import { otaChannelOf, channelsInText } from '@/lib/ota-playbook'
 import { isSuperadmin } from '@/lib/access'
+import { beliefStrength, beliefTag, currentConfidence, isHuman, RETIRE_BELOW, beliefOf, storedConfidence, withBelief } from './beliefs'
 
 export const MEMORY_KINDS = ['rule', 'preference', 'insight', 'decision', 'person', 'issue', 'correction'] as const
 export type MemoryKind = typeof MEMORY_KINDS[number]
@@ -163,37 +164,76 @@ export async function neverUsedMemories(limit = 10, minInjected = 5): Promise<Ar
  *      equally-weighted note about parking, instead of losing on a tie-break of updated_at.
  * The question is optional; without it the ranking degrades exactly to the old weight/recency order.
  */
-export async function loadMemories(scopes: string[], email: string, limit = 60, question = ''): Promise<EveMemory[]> {
+//
+// RECALL BY MEANING AND BY NEIGHBOURHOOD, NOT ONLY BY LABEL (Jon, 2026-09-23: "operate like a neural
+// network … not just a list of memories"). Scope matching alone meant a question had to NAME the
+// building for her to remember anything about it, and a unit-level lesson ("4506's AC ices up") never
+// surfaced in a question about the building it sits in. Two more ways in, both cheap:
+//   - nearScopes: the units of a building that is in play (run.ts passes them). They load, ranked a
+//     little below what was named directly, so the building's own rules still lead.
+//   - associative recall: the question's most distinctive words, searched across EVERY live memory in
+//     Postgres full-text (websearch syntax, OR'd). A memory about "linen par" is found by a question
+//     about linen at a building it never mentioned. Only kept when it shares at least two words with
+//     the question; the scope tag stays on it in the prompt so she knows where it came from.
+// Ranking now includes BELIEF STRENGTH (lib/eve/beliefs.ts): who said it × how sure she is today.
+// A self-made belief that has faded below the floor does not load at all.
+export async function loadMemories(scopes: string[], email: string, limit = 60, question = '', opts: { nearScopes?: string[] } = {}): Promise<EveMemory[]> {
   const db = supabaseAdmin()
   const wanted = scopes.slice()
   if (email) wanted.push('person:' + lc(email))
+  const near = new Set((opts.nearScopes || []).filter(s => wanted.indexOf(s) < 0).slice(0, 80))
+  const COLS = 'id,kind,text,why,scope,weight,source,confidence,evidence,created_by,use_count,last_used_at,expires_on,superseded_by,created_at,updated_at'
+  // last_hit_at arrived with migration 103; ask for it, and fall back to the older shape if it is not there.
+  const read = async (build: (cols: string) => any): Promise<any[]> => {
+    let r: any = await build(COLS + ',last_hit_at')
+    if (r?.error) r = await build(COLS)
+    return r?.error ? [] : ((r?.data || []) as any[])
+  }
   try {
-    const { data, error } = await db.from('eve_memory')
-      .select('id,kind,text,why,scope,weight,source,confidence,evidence,created_by,use_count,last_used_at,expires_on,superseded_by,created_at,updated_at')
+    const direct = await read(cols => db.from('eve_memory').select(cols)
       .is('superseded_by', null)
-      .in('scope', wanted)
+      .in('scope', wanted.concat(Array.from(near)))
       .order('weight', { ascending: false })
       .order('updated_at', { ascending: false })
-      .limit(Math.max(limit * 2, 120))
-    if (error) return []
-    const today = new Date().toISOString().slice(0, 10)
-    const live = ((data || []) as any[]).filter(r => !r.expires_on || String(r.expires_on) >= today)
+      .limit(Math.max(limit * 2, 160)))
     const qWords = new Set(words(question))
+    // The words that carry the question, longest first: short common words recall everything.
+    const terms = Array.from(qWords).filter(w => w.length >= 4 && !/^\d+$/.test(w)).sort((a, b) => b.length - a.length).slice(0, 6)
+    let recalled: any[] = []
+    if (terms.length) {
+      recalled = await read(cols => db.from('eve_memory').select(cols)
+        .is('superseded_by', null)
+        .textSearch('text', terms.join(' or '), { type: 'websearch', config: 'english' })
+        .order('weight', { ascending: false })
+        .limit(40)).catch(() => [])
+    }
+    const byId = new Map<string, any>()
+    for (const r of direct) byId.set(String(r.id), r)
+    for (const r of recalled) if (!byId.has(String(r.id))) byId.set(String(r.id), { ...r, _recalled: true })
+
+    const today = new Date().toISOString().slice(0, 10)
     const now = Date.now()
-    const scored = live.map(r => {
+    const scored: { r: any; score: number }[] = []
+    byId.forEach(r => {
+      if (r.expires_on && String(r.expires_on) < today) return
+      if (!isHuman(r.source) && currentConfidence(r, now) < RETIRE_BELOW) return
       let rel = 0
       if (qWords.size) {
         for (const w of words(String(r.text || '') + ' ' + String(r.why || ''))) if (qWords.has(w)) rel++
       }
+      if (r._recalled && rel < 2) return
       const ageDays = Math.max(0, (now - new Date(r.updated_at || r.created_at).getTime()) / 864e5)
       const recency = ageDays < 7 ? 3 : ageDays < 30 ? 2 : ageDays < 90 ? 1 : 0
       // Rules and corrections must never be crowded out by chatty insights — they get a floor bump.
       const kindBump = r.kind === 'rule' || r.kind === 'correction' ? 4 : r.kind === 'preference' ? 2 : 0
+      // Neighbourhood and recall rank below what the question named outright.
+      const reach = r._recalled ? -6 : near.has(String(r.scope)) ? -4 : 0
       const score = Number(r.weight || 0) * 3 + Math.min(Number(r.use_count || 0), 12) + recency + Math.min(rel, 6) * 4 + kindBump
-      return { r, score }
+        + beliefStrength(r, now) * 12 + reach
+      scored.push({ r, score })
     })
     scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, limit).map(x => x.r) as EveMemory[]
+    return scored.slice(0, limit).map(x => { const { _recalled, ...rest } = x.r; return rest }) as EveMemory[]
   } catch { return [] }
 }
 
@@ -223,7 +263,9 @@ export function renderMemories(rows: EveMemory[]): string {
         : r.source === 'staff' ? ` — taught by ${r.created_by ? String(r.created_by).split('@')[0] : 'a colleague'}, not Jon`
         : r.source === 'doc' ? ' — from a company document' : r.source === 'telegram' ? ' — said on Telegram'
         : r.source === 'system' ? ' — found by the nightly sweep' : ' — learned by Eve, not from Jon'
-      return `- ${r.text}${why}${sc}${src}`
+      // How sure she is, said out loud when it matters (lib/eve/beliefs.ts): a faded hunch or a
+      // disputed rule carries a tag so it is never stated as settled fact.
+      return `- ${r.text}${why}${sc}${src}${beliefTag(r)}`
     })
     out.push(label + ':\n' + lines.join('\n'))
   }
@@ -289,7 +331,7 @@ function sameList(a: string[], b: string[]): boolean { return a.length === b.len
 
 // Near-duplicate test for the dedupe below: same words is the same memory, however punctuated —
 // unless a number or a negation differs, which makes it a different (often opposite) claim.
-function sameThought(a: string, b: string): boolean {
+export function sameThought(a: string, b: string, threshold = 0.85): boolean {
   if (!sameList(numberTokens(a), numberTokens(b))) return false
   if (!sameList(negationTokens(a), negationTokens(b))) return false
   const A = new Set(words(a)), B = new Set(words(b))
@@ -298,7 +340,7 @@ function sameThought(a: string, b: string): boolean {
   A.forEach(w => { if (B.has(w)) inter++ })
   const jaccard = inter / (A.size + B.size - inter)
   const containment = inter / Math.min(A.size, B.size)
-  return jaccard >= 0.85 || (containment >= 0.95 && Math.min(A.size, B.size) >= 4)
+  return jaccard >= threshold || (containment >= 0.95 && Math.min(A.size, B.size) >= 4)
 }
 
 export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean; id?: string; error?: string; deduped?: boolean }> {
@@ -333,7 +375,7 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
   if (!input.supersedes) try {
     const scope = normScope(input.scope)
     const { data: peers } = await db.from('eve_memory')
-      .select('id,text,weight,why,source,evidence')
+      .select('id,text,weight,why,source,evidence,confidence')
       .is('superseded_by', null).eq('scope', scope)
       .order('updated_at', { ascending: false }).limit(120)
     // A sweep memory is also the twin of the live system row for the SAME finding, whatever its
@@ -352,6 +394,15 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
         patch.text = text
         patch.evidence = { ...prev, ...next, sweptOn: next.sweptOn || new Date().toISOString().slice(0, 10) }
       }
+      // LEARNING IT AGAIN IS EVIDENCE (lib/eve/beliefs.ts). Re-finding a belief from a new source or
+      // on a new night is the belief holding up: it counts as support and closes a tenth of the gap
+      // to certainty. It also resets the fade, because it has just been true in front of her.
+      const bel = beliefOf(twin)
+      bel.for += 1; bel.lastConfirmed = patch.updated_at
+      bel.history = bel.history.concat([{ at: patch.updated_at, d: 0, why: `re-learned (${normSource(input.source)})` }]).slice(-12)
+      patch.evidence = withBelief(patch.evidence !== undefined ? patch.evidence : twin.evidence, bel)
+      const c0 = storedConfidence(twin)
+      patch.confidence = Math.round(Math.min(0.99, c0 + (1 - c0) * 0.1) * 1000) / 1000
       await db.from('eve_memory').update(patch).eq('id', twin.id)
       return { ok: true, id: twin.id, deduped: true }
     }
