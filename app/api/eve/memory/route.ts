@@ -5,7 +5,8 @@
 // weeks later inside a message to an owner. Every row she stores is visible and removable here.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { saveMemory, normKind, normScope, normWeight, MEMORY_KINDS } from '@/lib/eve/memory'
+import { saveMemory, normKind, normScope, normWeight, MEMORY_KINDS, personSource, STAFF_MAX_WEIGHT } from '@/lib/eve/memory'
+import { isSuperadmin } from '@/lib/access'
 import { eveGate } from '../../agent/route'
 
 export const dynamic = 'force-dynamic'
@@ -34,10 +35,23 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const db = supabaseAdmin()
   const actor = String(gate.access.email || '')
+  const owner = isSuperadmin(actor)
+
+  // JON'S WORDS ARE JON'S TO CHANGE (Jon, 2026-09-23 review). Any Eve user could delete or rewrite
+  // a memory Jon wrote, or supersede it with their own. A row with source 'jon' can now only be
+  // deleted, edited or superseded by the superadmin; everyone else gets a 403 and can raise it
+  // with him instead.
+  const jonOwned = async (id: string): Promise<boolean> => {
+    if (owner || !id) return false
+    const { data } = await db.from('eve_memory').select('source').eq('id', id).maybeSingle()
+    return String((data as any)?.source || '') === 'jon'
+  }
+  const forbidden = () => NextResponse.json({ error: 'Only Jon can change or remove something Jon taught her.' }, { status: 403 })
 
   if (body?.op === 'delete') {
     const id = String(body?.id || '')
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+    if (await jonOwned(id)) return forbidden()
     const { error } = await db.from('eve_memory').delete().eq('id', id)
     if (error) return NextResponse.json({ error: error.message.slice(0, 200) }, { status: 500 })
     return NextResponse.json({ ok: true, deleted: id })
@@ -46,23 +60,29 @@ export async function POST(req: NextRequest) {
   if (body?.op === 'update') {
     const id = String(body?.id || '')
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+    if (await jonOwned(id)) return forbidden()
     const patch: any = { updated_at: new Date().toISOString() }
     if (body.text != null) patch.text = String(body.text).slice(0, 1000)
     if (body.why != null) patch.why = String(body.why).slice(0, 500) || null
     if (body.kind != null) patch.kind = normKind(body.kind)
     if (body.scope != null) patch.scope = normScope(body.scope)
-    if (body.weight != null) patch.weight = normWeight(body.weight)
+    // A colleague's edit cannot lift a memory above the staff ceiling (Jon, 2026-09-23 review).
+    if (body.weight != null) patch.weight = owner ? normWeight(body.weight) : Math.min(normWeight(body.weight), STAFF_MAX_WEIGHT)
     const { error } = await db.from('eve_memory').update(patch).eq('id', id)
     if (error) return NextResponse.json({ error: error.message.slice(0, 200) }, { status: 500 })
     return NextResponse.json({ ok: true, updated: id })
   }
 
-  // Default: Jon teaching her something directly. Source 'jon' and a high default weight, because
-  // a thing the owner typed on purpose outranks anything she inferred on her own.
+  // Default: a person teaching her something directly. Source 'jon' and a high default weight when
+  // it is Jon, because a thing the owner typed on purpose outranks anything she inferred on her own.
+  // Anyone else is filed as 'staff', capped at weight 6 (Jon, 2026-09-23 review).
+  const supersedes = body?.supersedes ? String(body.supersedes) : null
+  if (supersedes && await jonOwned(supersedes)) return forbidden()
+  const who = personSource(actor, body?.weight != null ? body.weight : 8)
   const res = await saveMemory({
     text: body?.text, kind: body?.kind, why: body?.why, scope: body?.scope,
-    weight: body?.weight != null ? body.weight : 8,
-    source: 'jon', created_by: actor, supersedes: body?.supersedes || null,
+    weight: who.weight, maxWeight: who.source === 'staff' ? STAFF_MAX_WEIGHT : undefined,
+    source: who.source, created_by: actor, supersedes,
   })
   if (!res.ok) return NextResponse.json({ error: res.error || 'could not save' }, { status: 500 })
   return NextResponse.json({ ok: true, id: res.id })
