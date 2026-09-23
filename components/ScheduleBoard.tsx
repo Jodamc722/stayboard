@@ -292,7 +292,9 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
     stageSave(c.listingId, c.date, p)
   }
   function toggleSelect(c: Clean, on?: boolean) { const k = keyOf(c); setSelected(prev => { const n = { ...prev }; const v = on === undefined ? !n[k] : on; if (v) n[k] = true; else delete n[k]; return n }) }
-  function setSelectMany(cleans: Clean[], on: boolean) { setSelected(prev => { const n = { ...prev }; for (const c of cleans) { const k = keyOf(c); if (on) n[k] = true; else delete n[k] } return n }) }
+  // Vendor rows never join a bulk selection: there is nobody of ours to assign and no Breezeway
+  // task behind them, so including them only ever meant a push that silently did nothing.
+  function setSelectMany(cleans: Clean[], on: boolean) { setSelected(prev => { const n = { ...prev }; for (const c of cleans) { if (c.vendor) continue; const k = keyOf(c); if (on) n[k] = true; else delete n[k] } return n }) }
   function bulkAssign(p: Person | null) {
     const keys = Object.keys(selected).filter(k => selected[k] && cleanByKey[k])
     setOverrides(prev => { const n = { ...prev }; for (const k of keys) { if (p) n[k] = p; else delete n[k] } return n })
@@ -585,7 +587,7 @@ async function pushBlocks() {
   }
 
   const rangeLabel = data ? (view === 'day' ? new Date(data.weekStart + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) : `${fmtDate(data.weekStart)} – ${fmtDate(data.weekEnd)}`) : ''
-  const allSelected = rows.length > 0 && rows.every(c => selected[keyOf(c)])
+  const allSelected = rows.filter(c => !c.vendor).length > 0 && rows.every(c => c.vendor || selected[keyOf(c)])
   const guestyOnlyCount = rows.filter(r => r.syncStatus === 'guesty-only').length
 
   // Board/planner switcher. Takes its own display classes so the phone can carry it inside the
@@ -742,7 +744,7 @@ async function pushBlocks() {
           <div className="space-y-2 min-w-0 order-1 lg:order-2">
           {rows.length > 0 && (
             <label className="inline-flex items-center gap-2 text-[12px] text-muted cursor-pointer">
-              <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({rows.length})
+              <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({rows.filter(c => !c.vendor).length})
             </label>
           )}
 {/* The ring legend that sat here is gone (lean pass): every ring says what it means on hover. */}
@@ -774,7 +776,17 @@ async function pushBlocks() {
                       <Fragment key={keyOf(c)}>
                       <tr className={`group flex flex-wrap items-center sm:table-row hover:brightness-95 transition border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : c.taskStatus === 'completed' ? 'bg-emerald-50/40' : (!e.label && !overrides[keyOf(c)] && !c.vendor) ? 'bg-amber-50/40' : ''}`}>
                         <td className="order-1 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle"><input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" />{c.syncStatus === 'guesty-only' && !c.guestyOnly && <span title="In Guesty but not synced to Breezeway yet"><AlertTriangle size={12} className="inline text-amber-500 ml-0.5" /></span>}</td>
-                        <td className="order-4 grow basis-44 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle"><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} />{(() => { const hasC = e.ids.length > 0 || !!overrides[keyOf(c)]; if (!hasC) return null; const staged = !!overrides[keyOf(c)] || (c as any).staged === true; if (!staged && c.syncStatus !== 'synced') return null; return <div className="mt-1">{staged ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5" title="Cleaner staged — not pushed to Breezeway yet"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />Staged</span> : <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5" title="Pushed — live in Breezeway"><Check size={10} />Pushed</span>}</div> })()}{(() => { const _asg = (overrides[keyOf(c)]?.name) || (cleared[keyOf(c)] ? '' : (e.source === 'existing' ? e.label : '')); const nrm = (x: any) => { let s = String(x || '').toLowerCase(); let out = ''; for (let i = 0; i < s.length; i++) { const ch = s[i]; if ((ch >= 'a' && ch <= 'z') || ch === ' ') out += ch; } return out.split(' ').filter(Boolean); }; const at = nrm(_asg); const onSched = at.length > 0 && Array.from(workingSet).some(m => { const mt = nrm(m); if (mt.length === 0 || mt[0] !== at[0]) return false; const al = at[1] || ''; const ml = mt[1] || ''; return !al || !ml || al[0] === ml[0]; }); return _asg && workingSet.size > 0 && !onSched ? <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600" title="This cleaner is not on the weekly working roster for this day">off roster</div> : null; })()}</td>
+                        <td className="order-4 grow basis-44 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle">{c.vendor ? (
+                          /* ALWAYS ASSIGNED (Jon, 2026-09-23: "we don't touch Botanica in any way. Our
+                             staff doesn't. They're not in our systems. We just need to mark it as always
+                             assigned. And it's the Garden staff that cleans Botanica"). There is nobody
+                             of ours to pick and no Breezeway task to push, so the picker was an empty
+                             box that made a covered clean read as an open one. */
+                          <span title={c.vendor + ' clean their own building. Nobody on our team is assigned, and there is nothing to push.'}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                            <Check size={11} /> {c.vendor} staff
+                          </span>
+                        ) : <><CleanerPicker people={people} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} />{(() => { const hasC = e.ids.length > 0 || !!overrides[keyOf(c)]; if (!hasC) return null; const staged = !!overrides[keyOf(c)] || (c as any).staged === true; if (!staged && c.syncStatus !== 'synced') return null; return <div className="mt-1">{staged ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5" title="Cleaner staged — not pushed to Breezeway yet"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />Staged</span> : <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5" title="Pushed — live in Breezeway"><Check size={10} />Pushed</span>}</div> })()}{(() => { const _asg = (overrides[keyOf(c)]?.name) || (cleared[keyOf(c)] ? '' : (e.source === 'existing' ? e.label : '')); const nrm = (x: any) => { let s = String(x || '').toLowerCase(); let out = ''; for (let i = 0; i < s.length; i++) { const ch = s[i]; if ((ch >= 'a' && ch <= 'z') || ch === ' ') out += ch; } return out.split(' ').filter(Boolean); }; const at = nrm(_asg); const onSched = at.length > 0 && Array.from(workingSet).some(m => { const mt = nrm(m); if (mt.length === 0 || mt[0] !== at[0]) return false; const al = at[1] || ''; const ml = mt[1] || ''; return !al || !ml || al[0] === ml[0]; }); return _asg && workingSet.size > 0 && !onSched ? <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600" title="This cleaner is not on the weekly working roster for this day">off roster</div> : null; })()}</>}</td>
                         
                         <td className="order-2 grow basis-0 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle font-medium text-ink">{c.vendor && <span className="mr-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-50 text-amber-700 align-middle">vendor</span>}{statusRing(c)}{c.listingId ? <button type="button" onClick={() => setOpsFor({ listingId: String(c.listingId), unit: String(c.unit), date })} className="text-left font-semibold whitespace-nowrap hover:underline decoration-dotted underline-offset-2">{c.unit}</button> : c.unit}{c.rebook
   ? <span title={'Re-book, not a turnover: ' + (c.guestOut || 'the same guest') + ' checks out and books straight back into this unit today instead of extending. Nobody leaves — do not strip the unit, and check whether it should have been an extension.'} className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded px-1 py-0.5"><Repeat size={9} /> Re-book · same guest</span>

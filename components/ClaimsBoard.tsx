@@ -15,7 +15,7 @@ import {
 import { DeleteButton, UndoBar, TrashDrawer } from '@/components/DeleteControl'
 import { Tag, Pill, LeanHead, LeanTabs, IconBtn, Tip, LeanList, LeanEmpty, type Tone } from '@/components/lean'
 import {
-  STAGES, STAGE_LABEL, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
+  STAGES, STAGE_LABEL, OUTCOMES, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
   type Claim, type Stage,
 } from '@/lib/claims'
 import { ClaimPolicyPanel } from '@/components/ClaimPolicy'
@@ -79,9 +79,17 @@ export function ClaimsBoard() {
   const [channel, setChannel] = useState('all')
   const [newOpen, setNewOpen] = useState(false)
   const [showTrash, setShowTrash] = useState(false)
-  // Stages used to be kanban lanes; now they are tabs. 'open' is every stage but Closed, most
-  // urgent first — the claims about to age out sit at the top of it.
-  const [lane, setLane] = useState<string>('open')
+  // ONE PAGE, FOUR SECTIONS (Jon, 2026-09-23: "I would like it just to be: New / Pending /
+  // Submitted / Closed … I want to see it all on one page, not a bunch of different tabs. The only
+  // one that we can see in tabs is maybe the closed section").
+  //
+  // The seven DB stages stay exactly as they are — the desk's gates, the notes it writes and every
+  // API check are built on them, and collapsing them in the database would be a migration to win an
+  // argument about layout. What changes is that the board stops making you hunt: the four sections
+  // stack down one page, each row still says which stage it is in, and the only thing behind a tab
+  // is Closed, where the question is no longer "what do I do" but "how did it end".
+  const [closedTab, setClosedTab] = useState<string>('all')
+  const [showAllClosed, setShowAllClosed] = useState(false)
   // THE CLAIM OPENS IN A POP-UP, NOT A PAGE (Jon, 2026-09-16), the way the glitch board works. The
   // id also lives in the URL as ?claim=<id> so the drawer survives a refresh and can be pasted to
   // someone — the same trick the projects board uses for ?task=. /claims/<id> still renders the
@@ -144,27 +152,8 @@ export function ClaimsBoard() {
     })
   }, [all, q, channel])
 
-  // Sort inside a lane by how close the claim is to dying, then by newest.
+  // Inside a section: closest to dying first, then newest.
   const RANK: Record<string, number> = { expired: 0, critical: 1, soon: 2, ok: 3, none: 4 }
-  const byStage = useMemo(() => {
-    const m: Record<string, Claim[]> = {}
-    for (let i = 0; i < STAGES.length; i++) m[STAGES[i].key] = []
-    for (let i = 0; i < rows.length; i++) {
-      const k = String(rows[i].stage || 'draft')
-      if (!m[k]) m[k] = []
-      m[k].push(rows[i])
-    }
-    const keys = Object.keys(m)
-    for (let i = 0; i < keys.length; i++) {
-      m[keys[i]].sort((a, b) => {
-        const ra = RANK[urgencyOf(a)] - RANK[urgencyOf(b)]
-        if (ra !== 0) return ra
-        return String(b.created_at || '').localeCompare(String(a.created_at || ''))
-      })
-    }
-    return m
-  }, [rows])
-
   const atRisk = useMemo(() => rows.filter(c => {
     const u = urgencyOf(c)
     return u === 'expired' || u === 'critical'
@@ -175,20 +164,47 @@ export function ClaimsBoard() {
   const won = decided.filter(c => c.outcome === 'won' || c.outcome === 'partial')
   const winRate = decided.length ? Math.round((won.length / decided.length) * 100) : null
 
-  const openRows = useMemo(() => rows.filter(c => String(c.stage || 'draft') !== 'closed').sort((a, b) => {
+  const urgentFirst = useCallback((list: Claim[]) => list.slice().sort((a, b) => {
     const ra = RANK[urgencyOf(a)] - RANK[urgencyOf(b)]
     if (ra !== 0) return ra
     return String(b.created_at || '').localeCompare(String(a.created_at || ''))
-  }), [rows])
-  const laneRows = lane === 'open' ? openRows : (byStage[lane] || [])
-  const laneMoney = laneRows.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
-  const laneMeta = STAGES.find(s => s.key === lane)
+  }), [])
+  // Closed sorts by when it ended, not by a deadline that no longer exists.
+  const newestFirst = useCallback((list: Claim[]) => list.slice().sort((a, b) =>
+    String(b.paid_on || b.decided_on || b.created_at || '')
+      .localeCompare(String(a.paid_on || a.decided_on || a.created_at || ''))), [])
+
+  const sec = useMemo(() => {
+    const pick = (...st: string[]) => urgentFirst(rows.filter(c => st.indexOf(String(c.stage || 'draft')) >= 0))
+    return {
+      // Nobody has worked it yet.
+      new: pick('draft'),
+      // Ours to move: finished and waiting on Jon, or approved and waiting to be filed. Both are a
+      // claim sitting on OUR desk with a clock running, which is why they read as one section.
+      pending: pick('review', 'ready'),
+      // Out of our hands and into the channel's — filed, answered, or waiting on the money.
+      submitted: pick('submitted', 'decided', 'settle'),
+      closed: newestFirst(rows.filter(c => String(c.stage || 'draft') === 'closed')),
+    }
+  }, [rows, urgentFirst, newestFirst])
+
+  // Closed is the one section that earns tabs, and the tabs are OUTCOMES: paid, partly paid,
+  // denied, dropped. "Closed" on its own tells you nothing; how it ended is the whole point.
+  const closedBy = useMemo(() => {
+    const m: Record<string, Claim[]> = { all: sec.closed }
+    for (const o of OUTCOMES) m[o.key] = sec.closed.filter(c => String(c.outcome || '') === o.key)
+    m.none = sec.closed.filter(c => !c.outcome)
+    return m
+  }, [sec.closed])
+  const closedRows = closedBy[closedTab] || sec.closed
+  const closedRecovered = closedRows.reduce((t, c) => t + (num(c.amount_paid) || 0), 0)
+
   const ctl = 'text-[12px] border border-line rounded-lg bg-white py-1'
 
   return (
     <>
       <LeanHead title="Claims" icon={<ShieldAlert size={20} className="text-muted" />}>
-        {atRisk.length > 0 && <Pill tone="roseSolid" title={'About to age out unfiled: ' + atRisk.map(c => claimTitle(c)).join(' · ')} onClick={() => setLane('open')}>{atRisk.length} aging out</Pill>}
+        {atRisk.length > 0 && <Pill tone="roseSolid" title={'About to age out unfiled: ' + atRisk.map(c => claimTitle(c)).join(' · ')}>{atRisk.length} aging out</Pill>}
         <Pill title="Claims not yet closed">{totals.open} open</Pill>
         <Pill tone="amber" title="Total sought across claims">{money(totals.sought)} sought</Pill>
         <Pill tone="emerald" title="Total recovered">{money(totals.recovered)} recovered</Pill>
@@ -198,11 +214,8 @@ export function ClaimsBoard() {
         </button>
       </LeanHead>
 
-      <LeanTabs
-        tabs={[{ key: 'open', label: 'Open', n: openRows.length }].concat(STAGES.map(s => ({ key: s.key as string, label: s.label, n: (byStage[s.key] || []).length })))}
-        value={lane}
-        onChange={k => setLane(k)}
-        right={<>
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
           <span className="relative">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, guest, code…" className={ctl + ' pl-6 pr-2 w-44 focus:outline-none focus:ring-2 focus:ring-brand-200'} />
@@ -214,8 +227,8 @@ export function ClaimsBoard() {
           <IconBtn title="Filing policy — due dates per channel" onClick={() => setShowPolicy(!showPolicy)}><CalendarClock size={14} /></IconBtn>
           <IconBtn title="Recently deleted claims" onClick={() => setShowTrash(!showTrash)}><Trash2 size={14} /></IconBtn>
           <IconBtn title="Refresh" onClick={() => { setLoading(true); load() }}>{loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}</IconBtn>
-        </>}
-      />
+        </div>
+      </div>
 
       {err && <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
       {showPolicy && <ClaimPolicyPanel onClose={() => setShowPolicy(false)} onSaved={load} />}
@@ -226,24 +239,83 @@ export function ClaimsBoard() {
       {data && all.length === 0 && <LeanEmpty>No claims yet — start one from the reservation with <b>New claim</b>.</LeanEmpty>}
 
       {data && all.length > 0 && (
-        laneRows.length === 0 ? <LeanEmpty>Nothing in {lane === 'open' ? 'open claims' : (laneMeta ? laneMeta.label : lane)}.</LeanEmpty> : (
-          <>
-            {laneMoney > 0 && (
-              <div className="flex justify-end px-1 mb-1.5">
-                <Pill title={(laneMeta ? laneMeta.blurb + ' · ' : '') + 'total sought in this tab'}>{money(laneMoney)}</Pill>
-              </div>
+        <div className="space-y-5">
+          <Section title="New" blurb="Started, nobody has worked it yet" rows={sec.new}
+            empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} />
+          <Section title="Pending" blurb="On our desk — waiting on approval, or approved and waiting to be filed" rows={sec.pending}
+            empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} />
+          <Section title="Submitted" blurb="With the channel — filed, answered, or waiting on the money" rows={sec.submitted}
+            empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} />
+
+          {/* CLOSED — the one section behind tabs, and the tabs are how it ended. */}
+          <section>
+            <div className="flex items-baseline gap-2 flex-wrap px-1 mb-1.5">
+              <h2 className="text-[13px] font-bold text-ink">Closed</h2>
+              <span className="text-[12px] text-muted">{sec.closed.length} claim{sec.closed.length === 1 ? '' : 's'}</span>
+              {closedRecovered > 0 && <Pill tone="emerald" title="Recovered in the tab you are looking at">{money(closedRecovered)} recovered</Pill>}
+            </div>
+            {sec.closed.length === 0 ? <LeanEmpty>Nothing closed yet.</LeanEmpty> : (
+              <>
+                <LeanTabs
+                  tabs={([{ key: 'all', label: 'All', n: sec.closed.length }] as { key: string; label: string; n?: number | null }[])
+                    .concat(OUTCOMES.map(o => ({ key: o.key as string, label: o.label, n: (closedBy[o.key] || []).length })))
+                    .concat((closedBy.none || []).length ? [{ key: 'none', label: 'No outcome recorded', n: (closedBy.none || []).length }] : [])
+                    .filter(t => t.key === 'all' || (t.n || 0) > 0)}
+                  value={closedTab}
+                  onChange={k => { setClosedTab(k); setShowAllClosed(false) }}
+                />
+                {closedRows.length === 0 ? <LeanEmpty>Nothing closed that way.</LeanEmpty> : (
+                  <>
+                    <LeanList>
+                      {(showAllClosed ? closedRows : closedRows.slice(0, 12)).map(c =>
+                        <ClaimRow key={c.id} claim={c} showStage={false} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} />)}
+                    </LeanList>
+                    {!showAllClosed && closedRows.length > 12 && (
+                      <button onClick={() => setShowAllClosed(true)} className="mt-1.5 text-[12px] font-semibold text-muted hover:text-ink px-1">
+                        Show all {closedRows.length}
+                      </button>
+                    )}
+                  </>
+                )}
+              </>
             )}
-            <LeanList>
-              {laneRows.map(c => <ClaimRow key={c.id} claim={c} showStage={lane === 'open'} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} />)}
-            </LeanList>
-          </>
-        )
+          </section>
+        </div>
       )}
 
       {newOpen && <NewClaimModal onClose={() => setNewOpen(false)} onCreated={(id: string) => { setNewOpen(false); load(); setOpenId(id) }} />}
       {openId && <ClaimDrawer id={openId} onClose={() => { setOpenId(null); load() }} onChanged={load} />}
       {undo && <UndoBar item={undo} onUndone={() => { setUndo(null); load() }} onDismiss={() => setUndo(null)} />}
     </>
+  )
+}
+
+/**
+ * ONE SECTION OF THE BOARD — a heading, what the section means, and its rows.
+ *
+ * Every row keeps its stage tag even though the section already groups it: "Pending" holds two
+ * stages and the difference between them (waiting on Jon vs. approved and waiting to be filed) is
+ * the difference between whose move it is. An empty section still prints, because a board that
+ * hides its empty lanes makes you wonder whether you filtered them away.
+ */
+function Section({ title, blurb, rows, empty, onDelete, onOpen }: {
+  title: string; blurb: string; rows: Claim[]; empty: string
+  onDelete: (id: string) => Promise<string | null>; onOpen: (id: string) => void
+}) {
+  const sought = rows.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
+  return (
+    <section>
+      <div className="flex items-baseline gap-2 flex-wrap px-1 mb-1.5">
+        <h2 className="text-[13px] font-bold text-ink">{title}</h2>
+        <span className="text-[12px] text-muted">{rows.length ? rows.length + ' claim' + (rows.length === 1 ? '' : 's') + ' · ' + blurb : blurb}</span>
+        {sought > 0 && <Pill tone="amber" title="Total sought in this section">{money(sought)}</Pill>}
+      </div>
+      {rows.length === 0 ? <LeanEmpty>{empty}</LeanEmpty> : (
+        <LeanList>
+          {rows.map(c => <ClaimRow key={c.id} claim={c} showStage onDelete={() => onDelete(c.id)} onOpen={() => onOpen(c.id)} />)}
+        </LeanList>
+      )}
+    </section>
   )
 }
 
