@@ -97,6 +97,15 @@ export const AI_TASKS: AiTask[] = [
   { key: 'probe-judge', title: 'Eve — learning probe judge', group: 'Background', def: 'haiku', background: true,
     what: 'Reads her tool-less answer to a probe next to the expected answer and says pass or fail, with one line why.',
     matters: 'Decides the retention number on the Learning tab. Up to fifteen calls a night, each a few hundred tokens.' },
+  // THE LIVING MIND (2026-09-23, lib/eve/brain.ts). Jon: "operate like a neural network … constantly
+  // updating, learning, improving." Two or three calls a night: the reflection on yesterday, today's
+  // checkable predictions, and one read of every building for the dossiers.
+  { key: 'eve-brain', title: 'Eve — nightly reflection & predictions', group: 'Background', def: 'sonnet', background: true,
+    what: 'Each night reads a digest of yesterday next to the beliefs it touches and writes her journal, the patterns worth keeping, which beliefs the day bore out or contradicted; makes today\'s checkable calls (late cleans, guest issues) against the base rate; and writes a two-line read of each building for the dossiers.',
+    matters: 'This is how her confidence in what she believes moves. Three calls a night; a weak model here learns the wrong lessons slowly.' },
+  { key: 'eve-correction', title: 'Eve — catching corrections in chat', group: 'Background', def: 'haiku', background: true,
+    what: 'When someone replies "no, that\'s wrong…" to one of her answers, works out what was wrong and what is right, so the right thing is kept and the beliefs behind the wrong answer are weakened.',
+    matters: 'A few hundred tokens, only when a reply pushes back. A miss loses one lesson; nothing reaches anyone.' },
   // ── Guests ──
   // Translating a Spanish Slack post into English when Eve is tagged on it (2026-09-22). It is a
   // translation and nothing else -- no reasoning, no tools, no judgement -- so it is the cheapest
