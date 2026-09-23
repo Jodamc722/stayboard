@@ -16,6 +16,17 @@
 //   5. Fill the person with the most room left, and never past their capacity. A clean that does not
 //      fit anywhere stays in "Unassigned" rather than quietly overloading somebody.
 //
+// FEWER PEOPLE, FULLER DAYS (Jon, 2026-09-23, after testing tomorrow: "I'd rather give somebody 4
+// cleans, even if they work 1 extra hour, than bring in another person to clean. If Yoslenis is a
+// supervisor, I'm okay with that, but it would make more sense for her not to have to clean and just
+// give a girl a full schedule."). So on top of the above:
+//   6. Fill somebody who is already cleaning before starting anybody new. A person can run up to an
+//      hour past their shift (overtimeMin) to reach four cleans (targetCleans), never beyond.
+//   7. Supervisors clean only when no cleaner can take it; ops and handymen are never given a clean
+//      by the suggester (they can still be dragged one by hand). Roles come from Ops presets
+//      (roster.nonCleaners), the same list the forecast uses.
+//   8. Anyone left with nothing is shown as "not needed", which is the point: one less person out.
+//
 // MINUTES. Clean times are the measured standards from lib/capacity (by bedrooms, by market);
 // drive time is the same openly-assumed model (6 min inside a building, 12 min plus 2.5 min per km
 // between buildings, capped at an hour). Capacity is the person's shift from /api/capacity when
@@ -34,7 +45,9 @@ export type SugClean = {
   minutes: number
   currentIds: number[]
 }
-export type SugPerson = { id: number; name: string; market: string | null; capacityMin: number }
+/** role: 'cleaner' (default), 'supervisor' (last resort), 'other' (ops, handyman: never auto-assigned). */
+export type SugPerson = { id: number; name: string; market: string | null; capacityMin: number; role?: 'cleaner' | 'supervisor' | 'other' }
+export type SuggestOptions = { keepCurrent?: boolean; targetCleans?: number; overtimeMin?: number }
 export type Suggestion = {
   /** clean key → person id, or null for unassigned */
   assign: Record<string, number | null>
@@ -59,6 +72,8 @@ export function standardMinutes(bedrooms: number | null | undefined, market: str
   if (bedrooms === 2) return t.two
   return t.threePlus
 }
+
+const first = (n: string) => String(n || '').split(/\s+/)[0]
 
 type Pt = { lat: number | null; lng: number | null }
 function km(a: Pt, b: Pt): number | null {
@@ -111,8 +126,10 @@ export function loadFor(list: SugClean[], centres: Record<string, Pt>): Load {
   return { minutes: Math.round(work + travel), work, travel: Math.round(travel), cleans: list.length, hubs, sameDay: list.filter(c => c.sameDayTurn).length }
 }
 
-export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: { keepCurrent?: boolean } = {}): Suggestion {
+export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: SuggestOptions = {}): Suggestion {
   const keep = opts.keepCurrent !== false
+  const target = Math.max(1, Math.round(Number(opts.targetCleans) || 4))
+  const overtime = Math.max(0, Math.round(Number(opts.overtimeMin ?? 60)))
   const centres = hubCentres(cleans)
   const assign: Record<string, number | null> = {}
   const why: Record<string, string> = {}
@@ -149,17 +166,25 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: {
   for (const group of order) {
     group.sort((a, b) => Number(b.sameDayTurn) - Number(a.sameDayTurn) || String(a.unit).localeCompare(String(b.unit)))
     for (const c of group) {
-      const inMarket = people.filter(p => !marketOf[p.id] || marketOf[p.id] === c.market)
-      const pool = inMarket.length ? inMarket : people
+      const auto = people.filter(p => (p.role || 'cleaner') !== 'other')
+      const inMarket = auto.filter(p => !marketOf[p.id] || marketOf[p.id] === c.market)
+      const pool = inMarket.length ? inMarket : auto
       let best: SugPerson | null = null, bestScore = -Infinity, bestWhy = ''
       for (const p of pool) {
         const add = addedIf(p.id, c)
         const left = room(p.id) - add
-        if (left < 0) continue
+        const n = mine[p.id].length
+        // Fits inside the shift, or up to `overtime` past it while they are still short of `target`.
+        if (left < 0 && !(n < target && left >= -overtime)) continue
         const inHub = mine[p.id].some(x => x.hub === c.hub)
-        // 3 + 5: staying in the building dominates; then the least extra driving; then the most room.
-        const score = (inHub ? 1000 : 0) - add + left / 10
-        if (score > bestScore) { best = p; bestScore = score; bestWhy = inHub ? `already in ${c.hub}` : mine[p.id].length ? 'closest with room' : 'has the most room' }
+        const sup = p.role === 'supervisor'
+        // 3: same building dominates. 6: someone already out beats starting someone new.
+        // 7: a supervisor only when nobody else can. Then the least extra driving, then room.
+        const score = (inHub ? 1000 : 0) + (n > 0 ? 600 : 0) - (sup ? 3000 : 0) - add + Math.max(left, 0) / 10
+        if (score > bestScore) {
+          best = p; bestScore = score
+          bestWhy = sup ? 'supervisor, nobody else had room' : inHub ? `already in ${c.hub}` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : n ? 'fills a day already started' : 'has the most room'
+        }
       }
       if (best) { assign[c.key] = best.id; why[c.key] = bestWhy; mine[best.id].push(c); if (!marketOf[best.id]) marketOf[best.id] = c.market }
       else { assign[c.key] = null; why[c.key] = people.length ? 'nobody working has room' : 'nobody selected as working' }
