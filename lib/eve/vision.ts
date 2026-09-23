@@ -44,7 +44,7 @@ import 'server-only'
 import { createHash } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
-import { lc, DEAD_LISTING } from './ctx'
+import { lc, DEAD_LISTING, pageRows } from './ctx'
 
 // The default now comes from the AI-models registry (task 'eve-vision'); the older per-key
 // VISION_MODEL_KEY setting still wins when it is set, so nothing already configured changes.
@@ -204,9 +204,14 @@ export async function nightlyVision(quotaOverride?: number): Promise<{
 
   const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,status,pictures,raw').order('id').limit(400)
   const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
-  const { data: have } = await db.from('listing_photo_vision').select('listing_id,url').limit(20000)
+  // PAGED, NOT .limit(20000) (Jon, 2026-09-23 review). PostgREST hands back 1,000 rows whatever
+  // .limit() says, so once more than 1,000 photos had been seen every unit past the first page
+  // looked NEVER seen — and the nightly pass would re-buy vision calls on photos it already had.
+  // Ordered by the primary key so the pages are stable; 20 pages keeps the old 20,000 intent.
+  const { rows: have } = await pageRows((a, b) =>
+    db.from('listing_photo_vision').select('id,listing_id,url').order('id').range(a, b), 20)
   const seenBy: Record<string, Set<string>> = {}
-  for (const r of (have || [])) {
+  for (const r of have) {
     const row: any = r
     ;(seenBy[String(row.listing_id)] ||= new Set()).add(String(row.url))
   }
@@ -239,13 +244,17 @@ export async function nightlyVision(quotaOverride?: number): Promise<{
 }
 
 /** Portfolio coverage — how much of the estate Eve has actually laid eyes on. */
-export async function visionCoverage(): Promise<{ units: number; photos: number; seen: number; unitsFullySeen: number; unitsNeverSeen: number }> {
+export async function visionCoverage(): Promise<{ units: number; photos: number; seen: number; unitsFullySeen: number; unitsNeverSeen: number; truncated?: boolean }> {
   const db = supabaseAdmin()
   const { data: ls } = await db.from('guesty_listings').select('id,status,pictures,raw').order('id').limit(400)
   const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
-  const { data: have } = await db.from('listing_photo_vision').select('listing_id,url').limit(20000)
+  // Paged for the same reason as nightlyVision above (Jon, 2026-09-23 review): an unpaged read
+  // capped coverage at 1,000 seen photos and under-reported it silently. `truncated` is set only
+  // when the 20-page ceiling is really hit (or a page failed), so a coverage figure can say so.
+  const { rows: have, truncated } = await pageRows((a, b) =>
+    db.from('listing_photo_vision').select('id,listing_id,url').order('id').range(a, b), 20)
   const seenBy: Record<string, Set<string>> = {}
-  for (const r of (have || [])) (seenBy[String((r as any).listing_id)] ||= new Set()).add(String((r as any).url))
+  for (const r of have) (seenBy[String((r as any).listing_id)] ||= new Set()).add(String((r as any).url))
 
   let photos = 0, seen = 0, full = 0, never = 0
   for (const l of live) {
@@ -257,5 +266,5 @@ export async function visionCoverage(): Promise<{ units: number; photos: number;
     if (urls.length && n >= urls.length) full++
     if (urls.length && n === 0) never++
   }
-  return { units: live.length, photos, seen, unitsFullySeen: full, unitsNeverSeen: never }
+  return { units: live.length, photos, seen, unitsFullySeen: full, unitsNeverSeen: never, ...(truncated ? { truncated: true } : {}) }
 }
