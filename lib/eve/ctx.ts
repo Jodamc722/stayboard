@@ -33,6 +33,8 @@ export type EveCtx = {
   idsForName: (name: string) => string[]
   /** The last user message, when the tool runs inside a chat turn — the conversation snippet on a thought. */
   question?: string
+  /** A room other people read (Slack, a Telegram group): people's files stay out (lib/eve/brain.ts). */
+  sharedRoom?: boolean
 }
 
 export type ListingMeta = { name: string; status: string; building: string; rollup: string }
