@@ -5,10 +5,16 @@
 import 'server-only'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, lc, has, safe, cap, chunk, normStar } from './ctx'
+import { clampLimit, clampDays, lc, has, safe, chunk, normStar } from './ctx'
 import { RELOCATED } from './core'
 
 const ENTITY_TYPES = ['task', 'glitch', 'claim', 'unit']
+
+/** Guesty activity logs and internal notes — filed in the thread, never sent to or by the guest. */
+const INTERNAL_MODULES = new Set(['log', 'note', 'notes', 'internal', 'internal_note', 'activity', 'system'])
+function isInternalEntry(m: any): boolean {
+  return lc(m?.sender) === 'system' || INTERNAL_MODULES.has(lc(m?.module))
+}
 
 export const GUEST_TOOLS: EveTool[] = [
   {
@@ -32,8 +38,20 @@ export const GUEST_TOOLS: EveTool[] = [
         const { data } = await ctx.db.from('guesty_conversations').select('id,guest_name,channel,reservation_id,listing_id,unread_count,last_message_at').eq('id', convId).limit(1)
         conv = (data || [])[0] || null
       }
-      const { data: msgs } = await ctx.db.from('guesty_messages').select('sender,sender_name,body,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(lim)
-      const list = (msgs || []).slice().reverse().map((m: any) => ({
+      // GUESTY'S OWN ENTRIES ARE NOT PART OF THE CONVERSATION (Jon, 2026-09-23 review). Guesty files
+      // activity logs ("New guest inquiry") and internal team notes into the same thread, and this
+      // tool printed them as lines from "us" — so a reply drafted from it answered, quoted or
+      // leaked a note the guest never saw. Rows whose module is a log / note / internal entry, and
+      // rows the sync already filed as sender 'system', are left out and counted instead. Older
+      // rows predate that sync fix and can carry a log module under 'host' or even 'guest', which
+      // is why the module is checked and not just the sender. Read a little deeper so filtering
+      // does not shorten the thread the caller asked for.
+      const fetchCap = Math.min(lim * 2, 160)
+      const { data: raw } = await ctx.db.from('guesty_messages').select('sender,sender_name,body,sent_at,module').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(fetchCap)
+      const real = (raw || []).filter((m: any) => !isInternalEntry(m))
+      const hiddenInternal = (raw || []).length - real.length
+      const msgs = real.slice(0, lim)
+      const list = msgs.slice().reverse().map((m: any) => ({
         from: /guest|inbound/i.test(lc(m.sender)) ? 'GUEST' : (m.sender_name || 'us'),
         at: m.sent_at, text: String(m.body || '').slice(0, 800),
       }))
@@ -44,7 +62,8 @@ export const GUEST_TOOLS: EveTool[] = [
         unit: conv ? ctx.nameOf(conv.listing_id) : null, building: conv ? ctx.buildingOf(conv.listing_id) : null,
         reservation_id: conv?.reservation_id, unread: conv?.unread_count,
         sentiment: sent?.data || null,
-        message_count: list.length, truncated: cap(msgs || [], lim).truncated,
+        message_count: list.length, truncated: real.length > lim || (raw || []).length >= fetchCap,
+        internal_entries_hidden: hiddenInternal || undefined,
         messages: list,
       }
     },
