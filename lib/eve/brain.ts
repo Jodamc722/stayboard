@@ -56,20 +56,32 @@ function parseJson(raw: string): any | null {
   return o && typeof o === 'object' ? o : null
 }
 
-/** One JSON-returning model call. null on any failure; callers treat that as "no opinion tonight". */
-export async function brainCall(system: string, user: string, maxTokens = 2500, task = 'eve-brain'): Promise<any | null> {
+/** Why the last brainCall came back empty, for the run receipt. */
+export let lastBrainFailure: string | null = null
+
+/**
+ * One JSON-returning model call. null on any failure; callers treat that as "no opinion tonight".
+ * The first live run (2026-09-23) came back empty twice with no API error: the answers ran past a
+ * 2,500-token ceiling and the JSON was cut off mid-object. The floor is now 6,000 tokens, the prompt
+ * asks for the object alone, and a failure says why (stop reason and the first characters) instead
+ * of vanishing.
+ */
+export async function brainCall(system: string, user: string, maxTokens = 6000, task = 'eve-brain'): Promise<any | null> {
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return null
+  if (!key) { lastBrainFailure = 'ANTHROPIC_API_KEY not set'; return null }
   try {
     const r = await aiFetch(task, {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: await modelFor(task), max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+      body: JSON.stringify({ model: await modelFor(task), max_tokens: Math.max(maxTokens, 800), system: system + '\n\nOutput the JSON object and nothing else: no preamble, no markdown fences, no notes after it.', messages: [{ role: 'user', content: user }] }),
     })
     const d: any = await r.json().catch(() => ({}))
-    if (!r.ok) return null
-    return parseJson(Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('') : '')
-  } catch { return null }
+    if (!r.ok) { lastBrainFailure = `anthropic ${r.status}: ${String(d?.error?.message || '').slice(0, 160)}`; return null }
+    const text = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('') : ''
+    const out = parseJson(text)
+    if (!out) lastBrainFailure = `unparseable (${d?.stop_reason || 'no stop reason'}): ${text.slice(0, 160)}`
+    return out
+  } catch (e: any) { lastBrainFailure = String(e?.message || e).slice(0, 160); return null }
 }
 
 async function putKnowledge(id: string, type: string, title: string, content: any): Promise<boolean> {
@@ -289,7 +301,7 @@ export async function makePredictions(today = todayET(), idx?: ListingIdx): Prom
   ].join('\n')
   const SYSTEM = `You are Eve, operations lead for a South Florida short-term-rental manager, making today's checkable calls so tomorrow's records can grade you. Pick at most 12 cleans and at most 6 arrivals where you have a real view — including ones you expect to go FINE. For each give p = your probability the claim comes true (clean finishes late / guest reports an issue). Move away from base ONLY when something you believe, or something in the line itself (same-day arrival, unassigned, a history), gives a reason, and cite the belief numbers. If you have no reason to differ, do not pick it. Never reason about a person's character; a cleaner's history is data, nothing more.
 Return STRICT minified JSON: {"cleans":[{"c":<C number>,"p":0.0,"because":[<belief numbers>],"why":"<= 90 chars"}],"arrivals":[{"a":<A number>,"p":0.0,"because":[],"why":"<= 90 chars"}]}`
-  const res = await brainCall(SYSTEM, USER.slice(0, 50_000), 2500)
+  const res = await brainCall(SYSTEM, USER.slice(0, 50_000), 6000)
   const items: Prediction[] = []
   const refIds = (nums: any) => (Array.isArray(nums) ? nums : []).map((n: any) => beliefs[Number(n) - 1]?.id).filter(Boolean).slice(0, 5)
   for (const x of (res?.cleans || []).slice(0, 12)) {
@@ -430,7 +442,7 @@ RULES:
 - ASK at most one question, only if the answer would change what you do and the data cannot settle it.
 - The journal is first person, plain, at most 110 words: what happened, what you learned, what you are watching. Specific units and numbers, no filler.
 Return STRICT minified JSON: {"journal":"","learned":[{"text":"","scope":"","kind":"insight|issue","because":""}],"reinforce":[{"n":1,"why":""}],"contradict":[{"n":2,"why":""}],"ask":[{"question":"","why":""}]}`
-  const res = await brainCall(SYSTEM, USER.slice(0, 60_000), 2500)
+  const res = await brainCall(SYSTEM, USER.slice(0, 60_000), 6000)
   if (!res) return out
   out.ok = true
   out.journal = str(res.journal).trim().slice(0, 1200)
@@ -490,6 +502,7 @@ export async function runBrain(opts: { force?: boolean } = {}): Promise<any> {
   try { result.calls = await makePredictions(today, idx) } catch (e: any) { result.calls = { error: String(e?.message || e).slice(0, 160) } }
   const cal = await calibration(30, today)
   result.calibration = cal
+  if (lastBrainFailure && (!sleep?.ok || !(result.calls?.made > 0))) result.modelNote = lastBrainFailure
   delete result._graded
   await putKnowledge(journalId(day), 'journal', `Journal ${day}`, {
     day, at: new Date().toISOString(), text: sleep?.journal || '', learned: sleep?.learned || [],
@@ -568,7 +581,7 @@ export async function captureCorrection(input: {
   const res = await brainCall(
     `You read one exchange: a question, Eve's answer, and the user's reply that pushes back. Decide what Eve got wrong and what is actually true. "durable" is true only when the correct fact would still matter in a future, different conversation (a rule, how something works, a fact about a building, unit, person or process); false for a misunderstanding of this one request ("no, I meant Tuesday"). Return STRICT JSON: {"is_correction":true,"durable":true,"wrong":"<what Eve said that was wrong, <= 30 words>","right":"<the correct fact, as a standalone sentence someone could follow, <= 40 words>","about":"<building or unit name if it is about one, else empty>"}`,
     `QUESTION: ${input.question.slice(0, 1500)}\n\nEVE'S ANSWER: ${input.answer.slice(0, 3000)}\n\nUSER'S REPLY: ${input.correction.slice(0, 1200)}`,
-    500, 'eve-correction')
+    1000, 'eve-correction')
   if (!res || !res.is_correction) return { saved: false, weakened: 0, skipped: 'not a correction' }
   // The beliefs the wrong answer drew on, and that share the wrong claim's words: those led her astray.
   const { memoryHitsFor, words, saveMemory, personSource } = await import('./memory')
