@@ -320,7 +320,7 @@ export async function buildDossiers(opts: { summarise?: boolean } = {}): Promise
       const pack = rows.filter(r => r.kind === 'building').map(r => `## ${r.name}\n${r.lines.join('\n')}${r.changes.length ? `\nChanged since last time: ${r.changes.join('; ')}` : ''}${r.beliefs.length ? `\nWhat I hold about it: ${r.beliefs.join(' | ')}` : ''}`).join('\n\n')
       const out = await brainCall(
         `You are Eve, operations lead for a South Florida short-term-rental manager. For each building below, write your read in at most two plain sentences: how it is running and the one thing worth watching, grounded ONLY in the facts given. Say plainly when cleaning or maintenance is the operator's, not ours. No praise words, no filler. Return STRICT JSON: {"reads":{"<building name exactly as given>":"<two sentences>"}}`,
-        pack.slice(0, 40_000), 3000)
+        pack.slice(0, 40_000), 6000)
       const reads = out?.reads && typeof out.reads === 'object' ? out.reads : {}
       for (const r of rows) {
         if (r.kind !== 'building') continue
