@@ -11,6 +11,7 @@ import { cleanDay, promisedDay, isMovedClean, pairMoves, describeMove, dayDiff }
 import { STAGES, effectiveDue, urgencyOf, gatesFor, daysUntil, itemsTotal } from '@/lib/claims'
 import { nextCheckInMap } from '@/lib/claim-turnover'
 import type { EveTool, EveDomain } from './types'
+import { winsFor } from './wins'
 import { obj, S } from './types'
 import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, pageRows } from './ctx'
 
@@ -158,6 +159,16 @@ export const OPS_TOOLS: EveTool[] = [
       const byLane: Record<string, number> = {}
       for (const r of rows) byLane[r.lane] = (byLane[r.lane] || 0) + 1
       return { count: rows.length, truncated: cap(data || [], lim).truncated, by_lane: byLane, overdue: rows.filter((r: any) => r.overdue).length, glitches: rows }
+    },
+  },
+
+  {
+    name: 'team_wins',
+    description: 'WHAT WENT WELL on one day (default yesterday, ET): departure cleans finished before check-in, glitches closed inside a day and who had them, five-star reviews and the sentences in them that praise the place or the team. Use it when someone asks how a day went, when you want to give specific credit, or before a roll-up. It returns wins only, never misses. Never turn it into a ranking or a comparison between people. Params: day (YYYY-MM-DD, optional).',
+    input_schema: obj({ day: S.str }),
+    run: async (input) => {
+      const w = await winsFor(input?.day ? String(input.day) : undefined)
+      return { day: w.day, wins: w.lines, facts: w.facts, note: w.lines.length ? 'Specific and true. Use one or two where they fit; do not read the list out.' : 'Nothing stood out as a win that day. Do not invent one.' }
     },
   },
 
@@ -446,6 +457,6 @@ export const OPS_TOOLS: EveTool[] = [
 export const OPS_DOMAIN: EveDomain = {
   key: 'ops',
   label: 'Operations',
-  blurb: 'Breezeway work, cleans running behind, per-unit work history, the glitch board, the claims desk, inspections and the turnover schedule.',
+  blurb: 'Breezeway work, cleans running behind, per-unit work history, the glitch board, the claims desk, inspections, the turnover schedule, and what went well (team_wins).',
   tools: OPS_TOOLS,
 }
