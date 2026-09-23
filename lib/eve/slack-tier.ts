@@ -70,7 +70,27 @@ const ADMIN_ONLY = ['ask_ralph', 'slack_queue']
 const GUEST_TOOLS = ['guest_profile', 'guest_thread', 'guest_history',
   'reservation_detail', 'awaiting_reply', 'unread_conversations', 'welcome_calls', 'search_reservations', 'guesty_live']
 
+// DIRECTING HER IS A TOOL, SO IT IS TAKEN AWAY AS A TOOL (Jon, 2026-09-23 review). `canDirect` was
+// declared on every grant and read by nothing, and propose_action — her hands: tasks, Slack posts,
+// guest replies — was in no tier's denyTools. So an unmapped asker, or an outside vendor in their
+// own channel, could type "post in #vr-eve that…" and she would try. Jon (header above): "Only admin
+// user, me and other admin users can direct eve." Any grant that cannot direct loses the acting
+// tools here, once, rather than each return below having to remember to.
+// Staff may still TEACH her (header: "they may TEACH her"), so `remember` goes only for vendors and
+// unknown askers; propose_action goes for everyone who is not an admin.
+function enforceDirect(g: TierGrant): TierGrant {
+  if (g.canDirect) return g
+  const deny = g.denyTools.slice()
+  const take = g.tier === 'vendor' ? ['propose_action', 'remember'] : ['propose_action']
+  for (const t of take) if (deny.indexOf(t) < 0) deny.push(t)
+  return g.tier === 'vendor' ? { ...g, denyTools: deny, memoryWeightCap: 0 } : { ...g, denyTools: deny }
+}
+
 export async function tierFor(access: Access | null, channelId: string): Promise<TierGrant> {
+  return enforceDirect(await baseTierFor(access, channelId))
+}
+
+async function baseTierFor(access: Access | null, channelId: string): Promise<TierGrant> {
   const rules = await getSlackRules().catch(() => null as any)
   const groups: RoutingGroup[] = (rules?.groups || []) as RoutingGroup[]
   const group = groups.find(g =>
@@ -88,7 +108,8 @@ export async function tierFor(access: Access | null, channelId: string): Promise
     return { tier: 'admin', buildings: [], canMoney: false, canDirect: true, denyTools: ENTRY_TOOLS, memoryWeightCap: 10, group }
   }
   if (access && !vendorRoom) {
-    return { tier: 'staff', buildings: [], canMoney: false, canDirect: true, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY), memoryWeightCap: 5, group }
+    // Staff are answered and may teach, but directing her is for admins (Jon, header).
+    return { tier: 'staff', buildings: [], canMoney: false, canDirect: false, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY), memoryWeightCap: 5, group }
   }
   // Unrecognised, or a vendor room. Still answered — about their own buildings, minus what is ours.
   return {
