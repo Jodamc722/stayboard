@@ -18,6 +18,14 @@ const PRESETS: { key: PresetKey; label: string }[] = [
   { key: 'custom', label: 'Custom' },
 ]
 
+const EXPORTS: { view: string; label: string; hint: string }[] = [
+  { view: 'nights', label: 'Night by night', hint: 'One row per occupied room-night: date, room, channel, check-in, check-out' },
+  { view: 'stays', label: 'Stays', hint: 'One row per reservation: room, channel, confirmation, check-in, check-out, nights' },
+  { view: 'grid', label: 'Room grid', hint: 'Rooms down, dates across, channel letter where occupied' },
+  { view: 'daily', label: 'Daily totals', hint: 'Per date: rooms live, occupied, arrivals, departures, stayovers' },
+  { view: 'rooms', label: 'Room list', hint: 'Every Botanica room: nights occupied, in house today, next arrival' },
+]
+
 const money = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const money0 = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const pct1 = (n: number) => (Math.round(n * 1000) / 10).toFixed(1) + '%'
@@ -277,6 +285,16 @@ export default function BotanicaReportPage() {
           )}
         </div>
         <div className="text-xs text-neutral-500 mt-2">{fmtDate(range.from)} – {fmtDate(range.to)} · {rows.length} nights{range.to > today ? <span className="ml-1.5 text-sky-600 font-medium">· includes upcoming (on the books)</span> : null}</div>
+
+        {/* ROOM-BY-ROOM EXPORTS (2026-09-23, hotel labor-vs-occupancy audit). Same range as the
+            report above; each is a CSV straight from /api/public/botanica-occupancy. No guest names. */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-2 text-xs print:hidden">
+          <span className="text-neutral-400 font-semibold uppercase tracking-wide text-[10px] mr-1">Room exports</span>
+          {EXPORTS.map(x => (
+            <a key={x.view} title={x.hint} href={'/api/public/botanica-occupancy?view=' + x.view + '&format=csv&from=' + range.from + '&to=' + range.to}
+              className="px-2.5 py-1 rounded-full border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 transition-colors">{x.label}</a>
+          ))}
+        </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-3">
           <Tile label="Active units" value={String(rows.length ? rows[rows.length - 1].inv : 0)} sub={rows.length ? 'avg ' + Math.round(total.inv / rows.length) + ' across range' : 'units live'} />
