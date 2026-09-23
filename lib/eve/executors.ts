@@ -322,15 +322,12 @@ const guesty_write: Executor = async (p) => {
   return { ok: true, ref: reservationId, summary: `wrote custom field ${fieldId} on reservation ${reservationId}`, undo: { kind: 'guesty_field_restore', reservationId, fieldId, value: prior ? prior.value : null } }
 }
 
-const calendar_block: Executor = async (p, ctx) => {
-  const { applyScheduleBlock } = await import('@/lib/schedule-block')
-  const listingId = str(p?.listingId || p?.listing_id).trim()
-  const date = str(p?.date).slice(0, 10)
-  const action = p?.action === 'unblock' ? 'unblock' : 'block'
-  if (!listingId || !date) return { ok: false, summary: 'need a listing and a date', error: 'listingId and date required' }
-  const r = await applyScheduleBlock({ listingId, date, action, by: ctx.actor || 'eve' })
-  if (!r.ok) return { ok: false, summary: 'could not block the day', error: str(r.error).slice(0, 200) }
-  return { ok: true, ref: `${listingId}:${date}`, summary: `${action === 'block' ? 'blocked' : 'unblocked'} ${date} on ${listingId}${r.breezeway.taskId ? ` (clean #${r.breezeway.taskId} moved)` : ''}`, undo: { kind: 'calendar_block', listingId, date, action: action === 'block' ? 'unblock' : 'block' } }
+// CALENDAR BLOCKS ARE NOT EVE'S (Jon, 2026-09-23: "make sure calendar blocks are not possible"). This
+// used to call applyScheduleBlock after a person's yes. It now refuses outright, so nothing reaches it:
+// not a proposal approved in Slack or Telegram, not one queued before this change, not a deferred one.
+// A person blocks a day on the Schedule page (app/api/schedule/block), which is unchanged.
+const calendar_block: Executor = async () => {
+  return { ok: false, summary: 'Eve does not block calendars', error: 'Calendar blocks are switched off for Eve. Block the day on the Schedule page.' }
 }
 
 const slack_post: Executor = async (p) => {
@@ -487,6 +484,8 @@ async function applyUndo(u: Undo, by: string): Promise<{ ok: boolean; summary: s
       return w.ok ? { ok: true, summary: `restored field ${u.fieldId}` } : { ok: false, summary: 'Guesty refused the write', error: str(w.note) }
     }
     case 'calendar_block': {
+      // Undoing an old Eve block may only UNBLOCK; re-blocking a day is the thing she no longer does.
+      if (u.action !== 'unblock') return { ok: false, summary: 'Eve does not block calendars', error: 'Re-blocking is switched off for Eve. Use the Schedule page.' }
       const { applyScheduleBlock } = await import('@/lib/schedule-block')
       const r = await applyScheduleBlock({ listingId: str(u.listingId), date: str(u.date), action: u.action === 'unblock' ? 'unblock' : 'block', by })
       return r.ok ? { ok: true, summary: `${u.action === 'unblock' ? 'unblocked' : 'blocked'} ${u.date} on ${u.listingId}` } : { ok: false, summary: 'could not reverse the block', error: str(r.error) }
