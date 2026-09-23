@@ -27,7 +27,7 @@ import { STATEMENT_ALSO } from './statement-sample'
 import {
   AGENDA_ROWS, HERO_HEADLINE, CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
   AI_HEADLINE, AI_SUBTITLE, AI_PILLARS, AI_NOTE,
-  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, OVERVIEW_BODY, COMPANY_STATS, PORTAL_URL, teamSubtitle, WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_NOTE,
+  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, PORTAL_URL, teamSubtitle, WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_NOTE,
   CHANNELS_HEADLINE, SEASON_SUBTITLE, GUESTY_SUBTITLE, STATEMENT_HEADLINE, STATEMENT_SUBTITLE, NOTES_SUBTITLE,
   OVERVIEW_BODY_2, COMPANY_STATS_2,
   EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF,
@@ -367,7 +367,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   seasonLowNote: 'September is the floor \u2014 the quietest month of the year, and the one we use for deep cleans, touch-ups and anything that needs the unit empty.',
 
   seasonNote:
-    'Shape from our own book across 400+ units, cross-checked against Miami market data — the year’s shape, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
+    'Shape from our own book across 450+ units, cross-checked against Miami market data — the year’s shape, not a forecast of your unit. We will not put a dollar projection on your unit until it has a season of its own history; a number we invented today would be the number you would hold us to in April.',
 
   // CONTACTS LIVE IN THE DEFAULTS TOO (Jon, 2026-09-18: "share email and phone number for about
   // team, numbers for Roberto and I"). The saved template in app_settings is what a generated

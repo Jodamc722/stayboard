@@ -358,9 +358,12 @@ export const OVERVIEW_BODY_RETIRED_MARK = ['in Miami and Broward end to end', 'o
   'One team, one system, one monthly statement.',
   // The first 2026-09-23 body, retired the same day for the unit count.
   'managing 140+ properties and two hotels']
-export const OVERVIEW_BODY =
-  'Stay Hospitality manages short-term rentals in Miami, Broward and West Palm Beach: listing, pricing, guest communication, turnovers and maintenance.\n\n' +
-  'One team, one system, one monthly statement.'
+// THE OLD ABOUT-US COPY IS GONE, NOT KEPT FOR REFERENCE (2026-09-23). OVERVIEW_BODY and
+// COMPANY_STATS lived on here after OVERVIEW_BODY_2 and COMPANY_STATS_2 replaced them — read by
+// nothing, still carrying '400+' units, a number the deck no longer makes and the website never
+// made. A dead constant holding a wrong figure is worse than no constant, because the next person
+// to edit the About Us slide finds this one first and edits it. The retired MARKS below are what
+// the repair pass actually needs; the old text itself is not.
 
 // '400+' retired 2026-09-23: stay-hospitality.com says 140+ properties and two hotels, and a deck
 // that disagrees with the website an owner is about to open costs more trust than the bigger
@@ -370,13 +373,6 @@ export const COMPANY_STATS_RETIRED_MARK = ['Miami & Broward', '400+',
   // same day for the unit count. Matched on the LABELS, which the corrected list does not reuse —
   // matching on '140+' would have retired the replacement on sight, since it carries 140+ too.
   'Properties managed', 'Hotels operated']
-export const COMPANY_STATS: { k: string; v: string }[] = [
-  { k: 'Markets', v: 'Miami, Broward & West Palm Beach' },
-  { k: 'Units managed', v: '400+' },
-  { k: 'Channels', v: 'Airbnb \u00b7 Vrbo \u00b7 Booking.com' },
-  { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
-]
-
 /** The stored paragraph, unless it is empty or still carries `mark`. */
 export function houseBody(stored: unknown, mark: string | string[], current: string): string {
   const s = String(stored || '')
