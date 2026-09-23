@@ -66,6 +66,8 @@ type Flag = {
   kind: 'A' | 'B' | 'C' | 'D' | 'E' | 'F'; room: Room; line: string; label: string
   channel: string | null; ts: string | null; at: string
   escalated?: boolean; resolved?: string | null; resolvedAt?: string | null
+  /** other flags said in the same line (a second report about the same unit) */
+  also?: string[]
 }
 type State = { flags: Record<string, Flag>; seen?: Record<string, string> }
 
@@ -144,7 +146,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const now = new Date().toISOString()
 
   // ── Read
-  const { data: itemRows } = await db.from('eve_slack_items').select('id,kind,summary,unit,channel_name,status,tracked_in,first_seen,closed_reason')
+  const { data: itemRows } = await db.from('eve_slack_items').select('id,kind,summary,unit,listing_id,channel_name,status,tracked_in,first_seen,closed_reason')
     .gte('first_seen', new Date(Date.now() - 3 * 86400_000).toISOString()).limit(400)
   const items = (itemRows as any[]) || []
   const { data: gRows } = await db.from('glitches').select('id,unit,listing_id,status,category,overview,assignee,guest_name,check_in,check_out,breezeway_task_id,created_at,closed_at')
@@ -233,12 +235,37 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const add = (key: string, f: Omit<Flag, 'channel' | 'ts' | 'at'>) => { if (!flags[key] && !fresh[key]) { fresh[key] = { ...f, channel: null, ts: null, at: now }; out.found[f.kind]++ } }
 
   // A — reported in the field, nothing picked it up.
-  for (const it of items) {
-    if (it.status !== 'open' || it.kind !== 'problem' || it.tracked_in) continue
-    const h = hoursSince(it.first_seen)
-    if (h * 60 < SLACK_ITEM_AFTER_MIN || h > 12) continue
-    const label = `${it.unit ? it.unit + ' · ' : ''}${String(it.summary).slice(0, 90)}`
+  // The first live post (1:21pm, 2026-09-23) said "no Breezeway task yet" about a Pelican leak whose
+  // own message said "task created in Breezeway", and listed Oasis Sapodilla twice. So before a
+  // Slack report counts as unowned: the message itself must not say a task or glitch exists, and
+  // there must be no non-turnover Breezeway task or glitch on that unit since the day it was raised.
+  // One line per unit; a second report about the same unit rides along silently.
+  const SAYS_TRACKED = /task (was |has been |is )?(created|made|opened|submitted|in breezeway)|created (a |the )?task|in breezeway|breezeway task|glitch (was |has been )?(created|submitted|filed)|work order/i
+  const aCands = items.filter(it => it.status === 'open' && it.kind === 'problem' && !it.tracked_in
+    && hoursSince(it.first_seen) * 60 >= SLACK_ITEM_AFTER_MIN && hoursSince(it.first_seen) <= 12 && !SAYS_TRACKED.test(String(it.summary || '')))
+  const aLids = Array.from(new Set(aCands.map(it => String(it.listing_id || '')).filter(Boolean)))
+  const handled = new Set<string>()
+  if (aLids.length) {
+    const since = new Date(Date.now() - 36 * 3600_000).toISOString().slice(0, 10)
+    const { data: bt } = await db.from('breezeway_tasks_sync').select('reference_property_id,name,status').in('reference_property_id', aLids).gte('scheduled_date', since).limit(1000)
+    for (const t of (bt as any[]) || []) {
+      if (/delete|cancel/i.test(String(t.status || '')) || /departure|turnover|limpieza de salida|check-?out clean/i.test(String(t.name || ''))) continue
+      handled.add(String(t.reference_property_id))
+    }
+    for (const g of glitches) if (g.listing_id && hoursSince(g.created_at) <= 36) handled.add(String(g.listing_id))
+  }
+  const unitSeen: Record<string, string> = {}
+  for (const it of aCands.sort((a, b) => String(a.first_seen).localeCompare(String(b.first_seen)))) {
+    if (it.listing_id && handled.has(String(it.listing_id))) continue
+    const u = String(it.unit || '').trim()
+    const uKey = String(it.listing_id || u.toLowerCase() || '')
+    if (uKey && unitSeen[uKey]) { const primary = fresh[unitSeen[uKey]]; if (primary) (primary.also = primary.also || []).push('A:' + it.id); continue }
+    // "Oasis Sapodilla · Oasis Sapodilla has an AC leak" → "Oasis Sapodilla · has an AC leak".
+    let summary = String(it.summary || '').replace(/\s+/g, ' ').trim()
+    if (u && summary.toLowerCase().startsWith(u.toLowerCase())) summary = summary.slice(u.length).replace(/^[\s:,\-–—]+/, '').replace(/^\([^)]*\)\s*/, '').trim()
+    const label = `${u ? shortUnit(u) + ' · ' : ''}${summary.slice(0, 90)}`
     add('A:' + it.id, { kind: 'A', room: 'ops', label, line: `${label} — raised in #${it.channel_name || 'a channel'} ${age(it.first_seen)} ago, no Breezeway task or glitch yet.` })
+    if (uKey) unitSeen[uKey] = 'A:' + it.id
   }
   for (const g of glitches) {
     if (!OPEN(g.status)) continue
@@ -326,8 +353,13 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     ['ops', `*On watch · ${t}*`, 'Tag @Eve here if you want me to create or assign any of these.'],
     ['guest', `*Fixed, guest not told yet · ${t}*`, ''],
   ] as [Room, string, string][]) {
-    const said = await say(room, head, freshRows.filter(([, f]) => f.room === room), tail)
-    if (said) for (const k of said.keys) { fresh[k].channel = said.channel; fresh[k].ts = said.ts; flags[k] = fresh[k] }
+    // Guest in the unit first (E, C), then a glitch with nothing behind it (B), then Slack reports (A).
+    const PRI: Record<string, number> = { E: 0, C: 1, B: 2, A: 3, D: 4, F: 5 }
+    const said = await say(room, head, freshRows.filter(([, f]) => f.room === room).sort((a, b) => PRI[a[1].kind] - PRI[b[1].kind]), tail)
+    if (said) for (const k of said.keys) {
+      fresh[k].channel = said.channel; fresh[k].ts = said.ts; flags[k] = fresh[k]
+      for (const k2 of fresh[k].also || []) flags[k2] = { ...fresh[k], also: undefined, label: fresh[k].label + ' (same unit)' }
+    }
   }
   // Escalations are a new line in leadership; the flag keeps its original thread for the ✅.
   const esc = await say('leadership', `*Still open after ${ESCALATE_AFTER_H}h, nobody on it*`, escalate, '')
