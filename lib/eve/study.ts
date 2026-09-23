@@ -39,7 +39,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'
-import { saveMemory, loadMemories } from './memory'
+import { saveMemory, loadMemories, words } from './memory'
 import { askQuestion } from './questions'
 import { chunkDoc } from './docs'
 import { aiFetch } from '@/lib/ai-usage'
@@ -236,12 +236,26 @@ export async function studyDoc(docId: string, opts: { force?: boolean; by?: stri
     const docSays = str(c?.doc_says).trim()
     const weBelieve = str(c?.we_believe).trim()
     if (!docSays || !weBelieve) continue
+    // Which of her memories is the "we believe" side? Carried as evidence.memory_ids so that, once
+    // a person answers, answerQuestion() supersedes the losing memory with the answer instead of
+    // leaving both live (Jon, 2026-09-23 review). Matched against the beliefs she was shown: the
+    // model quotes one, so a containment or strong word-overlap match is the one it meant.
+    const wb = new Set(words(weBelieve))
+    const memoryIds = beliefs.filter(m => {
+      const t = str(m.text).toLowerCase(), q = weBelieve.toLowerCase()
+      if (t.length >= 12 && (t.includes(q) || q.includes(t))) return true
+      const mw = new Set(words(str(m.text)))
+      if (!wb.size || !mw.size) return false
+      let inter = 0
+      mw.forEach(w => { if (wb.has(w)) inter++ })
+      return inter / (wb.size + mw.size - inter) >= 0.6
+    }).map(m => str(m.id)).slice(0, 3)
     const res = await askQuestion({
       question: `"${str(doc.title)}" says: ${docSays}. But I've been working on: ${weBelieve}. Which one is right?`.slice(0, 500),
       why: str(c?.why_it_matters).trim() || 'These cannot both be true, and I am currently acting on the older one.',
       scope: 'portfolio',
       kind: 'conflict',
-      evidence: { doc_id: docId, doc_title: str(doc.title) },
+      evidence: { doc_id: docId, doc_title: str(doc.title), memory_ids: memoryIds },
       source: 'eve',
     }).catch(() => ({ ok: false } as any))
     if (res?.ok) raised.push(`conflict: ${docSays.slice(0, 90)}`)
