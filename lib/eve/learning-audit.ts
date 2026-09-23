@@ -30,7 +30,7 @@
 // model call goes through aiFetch under 'probe-writer' / 'probe-judge' (Haiku) or 'eve'.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { accessForEmail } from '@/lib/access'
+import { accessForEmail, isSuperadmin } from '@/lib/access'
 import { modelPairFor, modelFor } from '@/lib/ai-models'
 import { anthropicMessages, textOf } from '@/lib/anthropic-call'
 import { costUsd } from '@/lib/ai-usage'
@@ -463,13 +463,23 @@ export async function setProbeActive(id: string, active: boolean, by: string): P
  * the audit trail survives (the Memory tab's include-superseded view still shows the chain) and
  * the row is gone from every future prompt. Same shape as every other correction: nothing deleted.
  */
-export async function pruneMemory(memoryId: string, by: string): Promise<{ ok: boolean; error?: string }> {
+//
+// NEVER A SELF-SUPERSEDE (Jon, 2026-09-23 review). The tombstone's text quotes the memory it
+// retires, so saveMemory's near-duplicate check used to match the ORIGINAL, return its id, and the
+// "supersede by hand" below then pointed the original at itself — the row vanished from prompts
+// with no tombstone and no chain. saveMemory now skips the dedupe whenever `supersedes` is set, so
+// the tombstone is always a new row; and as a second guard, if the id that comes back is ever the
+// original's, the original is retired directly (expired today) instead of superseded by itself.
+//
+// Jon's own memories are his to retire: anyone else asking to prune one is refused (forbidden).
+export async function pruneMemory(memoryId: string, by: string): Promise<{ ok: boolean; error?: string; forbidden?: boolean }> {
   if (!memoryId) return { ok: false, error: 'no memory id' }
   try {
     const db = supabaseAdmin()
-    const { data } = await db.from('eve_memory').select('id,text,scope,use_count').eq('id', memoryId).maybeSingle()
+    const { data } = await db.from('eve_memory').select('id,text,scope,use_count,source').eq('id', memoryId).maybeSingle()
     if (!data) return { ok: false, error: 'memory not found' }
     const m: any = data
+    if (str(m.source) === 'jon' && !isSuperadmin(by)) return { ok: false, forbidden: true, error: 'Only Jon can retire something Jon taught her.' }
     const today = new Date().toISOString().slice(0, 10)
     const r = await saveMemory({
       kind: 'decision', text: `Retired by ${by} from the learning audit (loaded ${m.use_count || 0} times, never shaped an answer): ${clip(m.text, 300)}`,
@@ -477,9 +487,10 @@ export async function pruneMemory(memoryId: string, by: string): Promise<{ ok: b
       supersedes: str(m.id), expires_on: today, evidence: { pruned: str(m.id) },
     })
     if (!r.ok) return { ok: false, error: r.error }
-    // saveMemory dedupes against live peers; the tombstone must always be its own row so the chain
-    // is explicit — if it deduped, supersede by hand.
-    if (r.deduped && r.id) await db.from('eve_memory').update({ superseded_by: r.id, updated_at: nowISO() }).eq('id', memoryId)
+    if (!r.id || str(r.id) === str(memoryId)) {
+      // No separate tombstone came back — retire the original directly rather than self-supersede.
+      await db.from('eve_memory').update({ expires_on: today, updated_at: nowISO() }).eq('id', memoryId)
+    }
     return { ok: true }
   } catch (e: any) { return { ok: false, error: str(e?.message || e).slice(0, 160) } }
 }
