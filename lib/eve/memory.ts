@@ -15,6 +15,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { lc } from './ctx'
 import { otaChannelOf, channelsInText } from '@/lib/ota-playbook'
+import { isSuperadmin } from '@/lib/access'
 
 export const MEMORY_KINDS = ['rule', 'preference', 'insight', 'decision', 'person', 'issue', 'correction'] as const
 export type MemoryKind = typeof MEMORY_KINDS[number]
@@ -217,7 +218,9 @@ export function renderMemories(rows: EveMemory[]): string {
       const sc = r.scope === 'portfolio' ? '' : ` [${r.scope}]`
       const why = r.why ? ` (why: ${r.why})` : ''
       // Provenance, said plainly. A Slack or document memory is not Jon's word and must not read as it.
+      // A colleague's lesson is a person's word, but not Jon's — it says whose (Jon, 2026-09-23 review).
       const src = r.source === 'jon' ? '' : r.source === 'slack' ? ' — overheard in Slack, not from Jon'
+        : r.source === 'staff' ? ` — taught by ${r.created_by ? String(r.created_by).split('@')[0] : 'a colleague'}, not Jon`
         : r.source === 'doc' ? ' — from a company document' : r.source === 'telegram' ? ' — said on Telegram'
         : r.source === 'system' ? ' — found by the nightly sweep' : ' — learned by Eve, not from Jon'
       return `- ${r.text}${why}${sc}${src}`
@@ -239,7 +242,14 @@ export type SaveMemoryInput = {
 // that was not jon/eve/system to 'eve', so a rule overheard in a Slack channel — possibly from a
 // vendor — rendered in the prompt under "they came from Jon". The source now survives the write,
 // and renderMemories() says it.
-const SOURCES = ['jon', 'eve', 'system', 'slack', 'doc', 'telegram']
+//
+// 'staff' (Jon, 2026-09-23 review): a colleague teaching her something on purpose. Before this,
+// every Eve user's "teach her", correction and question answer was filed as source 'jon' at weight
+// 8-9 — so anybody with Eve could put words in Jon's mouth at the top of her prompt. Only the
+// superadmin writes 'jon' now; everyone else writes 'staff', capped at STAFF_MAX_WEIGHT, and the
+// prompt names who taught it.
+const SOURCES = ['jon', 'staff', 'eve', 'system', 'slack', 'doc', 'telegram']
+export const STAFF_MAX_WEIGHT = 6
 function normSource(v: any): string { const s = String(v || '').toLowerCase(); return SOURCES.includes(s) ? s : 'eve' }
 function cappedWeight(input: SaveMemoryInput): number {
   const w = normWeight(input.weight)
@@ -247,8 +257,41 @@ function cappedWeight(input: SaveMemoryInput): number {
   return Number.isFinite(cap) ? Math.max(1, Math.min(w, cap)) : w
 }
 
-// Near-duplicate test for the dedupe below: same words is the same memory, however punctuated.
+/**
+ * WHO IS ALLOWED TO SPEAK AS JON (Jon, 2026-09-23 review). Every route that files a person's words
+ * calls this with the signed-in email: the superadmin gets source 'jon' at the weight asked for;
+ * anyone else gets 'staff' with the weight capped at STAFF_MAX_WEIGHT.
+ */
+export function personSource(email: string | null | undefined, weight: number): { source: 'jon' | 'staff'; weight: number } {
+  if (isSuperadmin(email)) return { source: 'jon', weight: normWeight(weight) }
+  return { source: 'staff', weight: Math.min(normWeight(weight), STAFF_MAX_WEIGHT) }
+}
+
+// THE WORDS THAT FLIP A MEANING (Jon, 2026-09-23 review). words() drops short tokens and glue
+// words — including "not" — which is right for relevance scoring and wrong for "is this the same
+// memory?". "Pets are allowed at Eden" and "Pets are not allowed at Eden" came out identical, as did
+// "$25 deposit" and "$50 deposit", so a correction was swallowed as a reinforcement of the thing it
+// corrected. Two texts that differ in any number or in any negation are never the same thought.
+const NEGATIONS = new Set(['not', 'no', 'never', "don't", 'dont', "isn't", 'isnt', "aren't", 'arent', "won't", 'wont', "can't", 'cant', 'cannot', 'without', 'nobody', 'none'])
+function numberTokens(s: string): string[] {
+  const m = lc(s).match(/[$€£]?\d[\d,]*(?:\.\d+)?%?/g) || []
+  return Array.from(new Set(m.map(t => t.replace(/,/g, '')))).sort()
+}
+function negationTokens(s: string): string[] {
+  const toks = lc(s).replace(/[\u2018\u2019]/g, "'").split(/[^a-z']+/).map(t => t.replace(/^'+|'+$/g, ''))
+  // "don't", "can't", "cannot", "isn't"… all say "not", so "Don't do X" and "Do not do X" still
+  // match; "never", "no", "without", "nobody" and "none" stay themselves.
+  const neg = toks.filter(t => NEGATIONS.has(t) || /n't$/.test(t))
+    .map(t => (/n'?t$/.test(t) || t === 'cannot') ? 'not' : t)
+  return Array.from(new Set(neg)).sort()
+}
+function sameList(a: string[], b: string[]): boolean { return a.length === b.length && a.every((x, i) => x === b[i]) }
+
+// Near-duplicate test for the dedupe below: same words is the same memory, however punctuated —
+// unless a number or a negation differs, which makes it a different (often opposite) claim.
 function sameThought(a: string, b: string): boolean {
+  if (!sameList(numberTokens(a), numberTokens(b))) return false
+  if (!sameList(negationTokens(a), negationTokens(b))) return false
   const A = new Set(words(a)), B = new Set(words(b))
   if (!A.size || !B.size) return lc(a).trim() === lc(b).trim()
   let inter = 0
@@ -263,24 +306,53 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
   const text = String(input.text || '').trim().slice(0, 1000)
   if (!text) return { ok: false, error: 'empty memory' }
 
+  // BACKSTOP ON 'jon' (Jon, 2026-09-23 review). The routes decide with personSource(), but a few
+  // library paths (Thinking → dismiss, Telegram replies) still pass source 'jon' with the person's
+  // email in created_by. If that email is not the superadmin, it is filed as 'staff' at the staff
+  // cap here, so no path can label a colleague's words as Jon's. Writes with no email on them
+  // (cron, system) are left as they are.
+  if (normSource(input.source) === 'jon' && input.created_by && String(input.created_by).includes('@') && !isSuperadmin(input.created_by)) {
+    const cap = Number.isFinite(Number(input.maxWeight)) ? Math.min(Number(input.maxWeight), STAFF_MAX_WEIGHT) : STAFF_MAX_WEIGHT
+    input = { ...input, source: 'staff', maxWeight: cap }
+  }
+
   // DEDUPE, DON'T PILE UP (Jon, 2026-08-19: "make the memory feature faster and better"). The
   // nightly sweep and the remember tool both re-learn the same facts; before this, each re-learning
   // was a fresh row, so the table grew noise and the prompt budget filled with repeats. Now a new
   // memory that says what an existing same-scope one already says REINFORCES it — weight keeps the
   // higher value, the timestamp refreshes (so it ranks as current), and the row count stays flat.
-  try {
+  //
+  // A SAVE THAT SUPERSEDES IS A CORRECTION, NOT A REPEAT (Jon, 2026-09-23 review). When the caller
+  // names the row it replaces, the dedupe is skipped: otherwise a correction that reads like its
+  // target matched the target itself, returned its id, and the "supersede" pointed a row at itself.
+  //
+  // THE SWEEP'S NUMBERS MOVE (Jon, 2026-09-23 review). When the nightly sweep (source 'system')
+  // re-finds one of its own memories, the new text carries this week's figures, so the row takes the
+  // new text and evidence (with evidence.sweptOn refreshed) instead of only a fresh timestamp.
+  // A human-written twin is never rewritten by the sweep.
+  if (!input.supersedes) try {
     const scope = normScope(input.scope)
     const { data: peers } = await db.from('eve_memory')
-      .select('id,text,weight,why')
+      .select('id,text,weight,why,source,evidence')
       .is('superseded_by', null).eq('scope', scope)
       .order('updated_at', { ascending: false }).limit(120)
-    const twin = ((peers || []) as any[]).find(p => sameThought(String(p.text || ''), text))
+    // A sweep memory is also the twin of the live system row for the SAME finding, whatever its
+    // numbers now say — the number check above would otherwise make every re-sweep a new row.
+    const finding = normSource(input.source) === 'system' && input.evidence && typeof input.evidence === 'object' ? input.evidence.finding : null
+    const twin = ((peers || []) as any[]).find(p => (finding && String(p.source) === 'system' && p?.evidence?.finding === finding) || sameThought(String(p.text || ''), text))
     if (twin) {
-      await db.from('eve_memory').update({
+      const patch: any = {
         weight: Math.max(Number(twin.weight || 0), cappedWeight(input)),
         why: twin.why || (input.why ? String(input.why).slice(0, 500) : null),
         updated_at: new Date().toISOString(),
-      }).eq('id', twin.id)
+      }
+      if (normSource(input.source) === 'system' && String(twin.source) === 'system') {
+        const prev = twin.evidence && typeof twin.evidence === 'object' && !Array.isArray(twin.evidence) ? twin.evidence : {}
+        const next = input.evidence && typeof input.evidence === 'object' && !Array.isArray(input.evidence) ? input.evidence : {}
+        patch.text = text
+        patch.evidence = { ...prev, ...next, sweptOn: next.sweptOn || new Date().toISOString().slice(0, 10) }
+      }
+      await db.from('eve_memory').update(patch).eq('id', twin.id)
       return { ok: true, id: twin.id, deduped: true }
     }
   } catch { /* dedupe is an optimisation — a failed check must never block learning */ }
@@ -301,7 +373,9 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
     const { data, error } = await db.from('eve_memory').insert(row).select('id').maybeSingle()
     if (error) return { ok: false, error: error.message.slice(0, 200) }
     const id = (data as any)?.id
-    if (input.supersedes && id) {
+    // Never point a row at itself (Jon, 2026-09-23 review) — a self-superseded row vanishes from
+    // every prompt with nothing replacing it.
+    if (input.supersedes && id && String(input.supersedes) !== String(id)) {
       await db.from('eve_memory').update({ superseded_by: id, updated_at: new Date().toISOString() }).eq('id', input.supersedes)
     }
     return { ok: true, id }
