@@ -69,17 +69,33 @@ export let lastBrainFailure: string | null = null
 export async function brainCall(system: string, user: string, maxTokens = 6000, task = 'eve-brain'): Promise<any | null> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) { lastBrainFailure = 'ANTHROPIC_API_KEY not set'; return null }
+  // THINKING CAN EAT THE WHOLE BUDGET (second live run, 2026-09-23): the predictions call came back
+  // at max_tokens with no text at all, because the model spent every token thinking first (see
+  // lib/anthropic-text.ts). So: read only text blocks, and when a reply is all thinking, ask once more
+  // with thinking switched off. If the model refuses that switch, the first failure stands.
+  const call = async (noThinking: boolean) => aiFetch(task, {
+    method: 'POST',
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: await modelFor(task), max_tokens: Math.max(maxTokens, 800),
+      system: system + '\n\nOutput the JSON object and nothing else: no preamble, no markdown fences, no notes after it. Decide quickly; do not deliberate at length.',
+      messages: [{ role: 'user', content: user }],
+      ...(noThinking ? { thinking: { type: 'disabled' } } : {}),
+    }),
+  })
+  const textOf = (d: any) => (Array.isArray(d?.content) ? d.content.filter((x: any) => x?.type === 'text').map((x: any) => x.text || '').join('') : '')
   try {
-    const r = await aiFetch(task, {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: await modelFor(task), max_tokens: Math.max(maxTokens, 800), system: system + '\n\nOutput the JSON object and nothing else: no preamble, no markdown fences, no notes after it.', messages: [{ role: 'user', content: user }] }),
-    })
-    const d: any = await r.json().catch(() => ({}))
+    let r = await call(false)
+    let d: any = await r.json().catch(() => ({}))
     if (!r.ok) { lastBrainFailure = `anthropic ${r.status}: ${String(d?.error?.message || '').slice(0, 160)}`; return null }
-    const text = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('') : ''
+    let text = textOf(d)
+    if (!text.trim() && d?.stop_reason === 'max_tokens') {
+      const r2 = await call(true)
+      const d2: any = await r2.json().catch(() => ({}))
+      if (r2.ok) { d = d2; text = textOf(d2) }
+    }
     const out = parseJson(text)
-    if (!out) lastBrainFailure = `unparseable (${d?.stop_reason || 'no stop reason'}): ${text.slice(0, 160)}`
+    if (!out) lastBrainFailure = `unparseable (${d?.stop_reason || 'no stop reason'}): ${text.slice(0, 160) || '(no text; the model spent the budget thinking)'}`
     return out
   } catch (e: any) { lastBrainFailure = String(e?.message || e).slice(0, 160); return null }
 }
@@ -291,10 +307,10 @@ export async function makePredictions(today = todayET(), idx?: ListingIdx): Prom
     `TODAY: ${today}. Standard check-in is 4pm.`,
     ``,
     `DEPARTURE CLEANS TODAY (buildings where cleaning is ours). "late" = not done before 4pm. base = the plain historical rate for this unit and cleaner:`,
-    cleanCands.slice(0, 80).map(c => `C${c.i}. ${c.l.name} (${c.l.rollup}) · ${c.who.join(' + ') || 'unassigned'}${c.sameDay ? ' · SAME-DAY ARRIVAL' : ''} · unit late ${c.u.late}/${c.u.n} in 60d · base ${c.base}`).join('\n') || '(none)',
+    cleanCands.slice(0, 50).map(c => `C${c.i}. ${c.l.name} (${c.l.rollup}) · ${c.who.join(' + ') || 'unassigned'}${c.sameDay ? ' · SAME-DAY ARRIVAL' : ''} · unit late ${c.u.late}/${c.u.n} in 60d · base ${c.base}`).join('\n') || '(none)',
     ``,
     `ARRIVALS TODAY. "issue" = a guest issue (glitch) logged for the unit today or tomorrow. base = issues per stay for this unit over 120 days:`,
-    arrCands.slice(0, 80).map(c => `A${c.i}. ${c.l.name} (${c.l.rollup}) · ${c.g} issues over ${c.s} stays · base ${c.base}`).join('\n') || '(none)',
+    arrCands.slice(0, 40).map(c => `A${c.i}. ${c.l.name} (${c.l.rollup}) · ${c.g} issues over ${c.s} stays · base ${c.base}`).join('\n') || '(none)',
     ``,
     `WHAT YOU BELIEVE (numbered; cite the numbers your call rests on):`,
     beliefList(beliefs) || '(nothing relevant)',
