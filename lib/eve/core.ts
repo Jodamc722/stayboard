@@ -629,7 +629,8 @@ export const CORE_TOOLS: EveTool[] = [
     input_schema: obj({ type: S.str, query: S.str, building: S.str, limit: S.num }),
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 40, 80)
-      let q = ctx.db.from('eve_knowledge').select('type, scope, title, content, evidence_count, updated_at').order('evidence_count', { ascending: false }).limit(lim)
+      // Dossiers, journals and predictions live in this table too (lib/eve/brain.ts); they have their own tools.
+      let q = ctx.db.from('eve_knowledge').select('type, scope, title, content, evidence_count, updated_at').not('type', 'in', '(dossier,journal,prediction)').order('evidence_count', { ascending: false }).limit(lim)
       if (input?.type) q = q.eq('type', String(input.type))
       const { data, error } = await q
       if (error) return { error: 'Knowledge base not set up yet - run migration 008 and POST /api/eve/learn.' }
