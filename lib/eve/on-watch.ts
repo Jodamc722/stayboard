@@ -11,7 +11,7 @@
 // finds goes to the people whose job is to make sure it gets done:
 //
 //   ops         things slipping between Slack, the glitch board and Breezeway      → #vr-eve
-//   guest       a fix is done and the guest has not heard                           → #vr-ccs-messageboard
+//   guest       a fix is done and the guest has not heard                           → #vr-ccs-and-jon
 //   leadership  a glitch or guest-reported gap (B, C, E) nobody touched for 3 hours  → #leadership
 //
 // Every room is a setting (app_settings `eve_on_watch`), so moving one is not a deploy.
@@ -52,7 +52,7 @@ type Room = 'ops' | 'guest' | 'leadership'
 export type OnWatchConfig = { enabled: boolean; startHour: number; endHour: number; rooms: Record<Room, string> }
 const DEFAULTS: OnWatchConfig = {
   enabled: true, startHour: 11, endHour: 19,
-  rooms: { ops: EVE_CHANNELS.approvals, guest: EVE_CHANNELS.ccsBoard, leadership: EVE_CHANNELS.leadership },
+  rooms: { ops: EVE_CHANNELS.approvals, guest: EVE_CHANNELS.ccsJon, leadership: EVE_CHANNELS.leadership },
 }
 
 const MAX_LINES = 6
