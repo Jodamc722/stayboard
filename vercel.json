@@ -154,7 +154,7 @@
     },
     {
       "path": "/api/cron/slack-watch",
-      "schedule": "20 9,17 * * *"
+      "schedule": "20 9,15-23 * * *"
     },
     {
       "path": "/api/cron/trash-sweep",
