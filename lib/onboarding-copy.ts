@@ -304,6 +304,7 @@ export const CHANNEL_BODY_RETIRED_MARKS = [
   'Your calendar is one calendar',                       // the 2026-09-18 body, trimmed same day
   'which is why a unit can be priced for occupancy',     // trimmed again, same day
   'reconciled in one place: priced for occupancy',       // the 40+ body, retired 2026-09-23
+  'Expedia carries Hotels.com',                          // the networks version, retired same day
 ]
 
 export const STATEMENT_ALSO_RETIRED_MARKS = [

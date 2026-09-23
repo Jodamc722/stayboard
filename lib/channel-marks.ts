@@ -48,7 +48,15 @@ export const CHANNEL_COUNT = '40+'
 // channels to increase visibility, help with occupancy and put more guests and more profits in
 // your pocket." The old line was mechanically true and sold nothing — it described a calendar. The
 // owner's question is what the breadth BUYS them, so the paragraph now ends on their money.
+// TRIMMED AGAIN 2026-09-23 (Jon: "you don't have to get very detailed, just say we distribute your
+// properties across best sales channels, and their affiliate partners to drive bookings, increase
+// visibility, more money in your pocket").
+//
+// He is right, and the previous version proved it: naming Hotels.com, Orbitz, Travelocity, Hotwire,
+// Priceline, Agoda and Kayak turned the strongest slide in the deck into a paragraph an owner has
+// to read twice. The count is already set at 96px beside it — the words only have to say what the
+// count BUYS them, and then stop. Three sentences, ending on their money.
 export const CHANNEL_BODY =
-  'We distribute your listing across the best sales channels in the market — one calendar, published to 40+ of them and reconciled in one place, priced for occupancy and never double-booked. More visibility is more nights booked, and more nights booked is more profit in your pocket. The largest channels are networks in their own right: Expedia carries Hotels.com, Orbitz, Travelocity and Hotwire; Booking.com carries Priceline, Agoda and Kayak.'
+  'We distribute your property across the best sales channels in the market and their affiliate networks, from one calendar. More places your listing appears is more guests who see it, and more guests who see it is more nights booked. That is more money in your pocket.'
 /** Retired defaults. A deck still carrying one of these was never edited on this slide. */
 export const CHANNEL_COUNT_RETIRED = ['30+', '200+']
