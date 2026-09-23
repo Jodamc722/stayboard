@@ -514,14 +514,16 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     // teaches the room that Eve only speaks when something is wrong. Specific or silent — an
     // empty list adds nothing. See lib/eve/wins.
     const wins = await winsFor().catch(() => null)
-    if (wins && wins.lines.length) parts.push(`*Yesterday went well*\n${wins.lines.slice(0, 7).map(l => `• ${l}`).join('\n')}`)
-    const sec = (title: string, rows: Item[]) => { if (rows.length) parts.push(`*${title} (${rows.length})*\n${rows.slice(0, 8).map(line).join('\n')}${rows.length > 8 ? `\n…and ${rows.length - 8} more` : ''}`) }
+    if (wins && wins.lines.length) parts.push(`*Yesterday went well*\n${wins.lines.slice(0, 3).map(l => `• ${l}`).join('\n')}`)
+    // SHORT (Jon, 2026-09-23: "when you send a super long brief, that's not really helpful"). Top
+    // four per section; the rest is one ask away (open_items).
+    const sec = (title: string, rows: Item[]) => { if (rows.length) parts.push(`*${title} (${rows.length})*\n${rows.slice(0, 4).map(line).join('\n')}${rows.length > 4 ? `\n…and ${rows.length - 4} more` : ''}`) }
     sec('Promised, not yet done', grp('commitment'))
     sec('Problems still open', grp('problem'))
     sec('Nobody answered', grp('question'))
     sec('Decisions made in chat', grp('decision'))
-    if (closed.length) parts.push(`*Closed since yesterday (${closed.length})*\n${closed.slice(0, 6).map((c: any) => `• ${String(c.summary).slice(0, 90)} — ${String(c.closed_reason || '').slice(0, 60)}`).join('\n')}`)
-    if (learnedTexts.length) parts.push(`*What I learned yesterday* — tell me if any of this is wrong\n${learnedTexts.slice(0, 5).map(t => `• ${t.slice(0, 140)}`).join('\n')}`)
+    if (closed.length) parts.push(`*Closed since yesterday:* ${closed.length}`)
+    if (learnedTexts.length) parts.push(`*What I learned yesterday* — tell me if any of this is wrong\n${learnedTexts.slice(0, 3).map(t => `• ${t.slice(0, 140)}`).join('\n')}`)
     if (parts.length === 1) parts.push('Nothing open. Quiet day.')
     const gate = await agentAllowed('slack_post')
     const text = parts.join('\n\n')
