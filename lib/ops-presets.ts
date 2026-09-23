@@ -21,6 +21,9 @@ export type VendorBuilding = {
   enabled: boolean      // true = vendor-cleaned. false = we clean it (in house).
   untracked?: boolean   // vendor does NOT close Breezeway tasks -> no 4pm deadline / no at-risk alarm
   noBreezeway?: boolean // building is NOT in Breezeway at all -> boards build its day from GUESTY
+  /** The Breezeway account every UNASSIGNED task in this building goes to (lib/vendor-assign). The
+   *  vendor then picks its own person; a task that already has anybody on it is never touched. */
+  assignTo?: string
 }
 
 export const DEFAULT_VENDOR_BUILDINGS: VendorBuilding[] = [
@@ -34,9 +37,15 @@ export const DEFAULT_VENDOR_BUILDINGS: VendorBuilding[] = [
   // read "Botanica staff" reads "Garden staff".
   { id: 'botanica',    label: 'Garden',      terms: ['botanica'],            enabled: true, untracked: true, noBreezeway: true },
   { id: 'park-towers', label: 'Park Towers', terms: ['park tower'],          wordTerms: ['pt'], enabled: true },
-  { id: 'amrit',       label: 'Amrit',       terms: ['amrit'],               enabled: true },
-  { id: 'capri',       label: 'Capri',       terms: ['capri'],               enabled: true },
-  { id: 'lucerne',     label: 'Lucerne',     terms: ['lucerne', 'lucenre'],  enabled: true },  // 'lucenre' = common misspelling
+  // OPAL'S THREE (Jon, 2026-09-23): "Lucerne and Capri are managed by Opal staff, and Opal is in
+  // Breezeway. Can we make sure that they're always assigned to Opal? They have different cleaners
+  // that they use, but that's up to them to assign." Then: "Same for Amrit, that's Opal's team as
+  // well." So every unassigned Breezeway task in these buildings goes to the Opal Works account and
+  // Opal hands it to its own cleaner. Labels stay the building names: the vendor-invoice check in
+  // lib/labor-econ reconciles per building and would merge the three if they all read "Opal".
+  { id: 'amrit',       label: 'Amrit',       terms: ['amrit'],               enabled: true, assignTo: 'Opal Works' },
+  { id: 'capri',       label: 'Capri',       terms: ['capri'],               enabled: true, assignTo: 'Opal Works' },
+  { id: 'lucerne',     label: 'Lucerne',     terms: ['lucerne', 'lucenre'],  enabled: true, assignTo: 'Opal Works' },  // 'lucenre' = common misspelling
 ]
 
 function esc(s: string): string { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
@@ -204,6 +213,9 @@ export function mergePresets(stored: any): OpsPresets {
         enabled: v.enabled !== false,
         untracked: flag(v, 'untracked'),
         noBreezeway: flag(v, 'noBreezeway'),
+        // A settings row saved before assignTo existed keeps the code default for its building.
+        assignTo: typeof v.assignTo === 'string' ? (v.assignTo.trim() || undefined)
+          : DEFAULT_VENDOR_BUILDINGS.find(d => d.id === String(v.id))?.assignTo,
       })),
     roster: {
       teams: obj(r.teams, DEFAULT_ROSTER.teams),
