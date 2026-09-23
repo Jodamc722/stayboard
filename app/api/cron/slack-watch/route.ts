@@ -9,6 +9,7 @@
 // costs a fixed amount and a quiet day costs a Slack read and nothing else.
 import { NextRequest, NextResponse } from 'next/server'
 import { runSlackWatch, openItems } from '@/lib/eve/slack-watch'
+import { runOnWatch } from '@/lib/eve/on-watch'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { eveGate } from '../../agent/route'
@@ -31,6 +32,8 @@ export async function GET(req: NextRequest) {
   // answered anonymous GETs until 2026-09-18.
   const gate = await eveGate()
   if (!gate.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // ?watch=preview — what the next on-watch pass would say, posting nothing and saving nothing.
+  if (new URL(req.url).searchParams.get('watch') === 'preview') return NextResponse.json(await runOnWatch({ preview: true }))
   const items = await openItems(100).catch(() => [])
   return NextResponse.json({ ok: true, open: items.length, items })
 }
@@ -56,5 +59,14 @@ export async function POST(req: NextRequest) {
   const started = Date.now()
   const res = await runSlackWatch({ digest, nudge })
   recordRun({ name: 'slack-watch', ok: res.ok, itemCount: res.opened + res.closed + res.nudged, detail: res, error: res.error || null, ms: Date.now() - started })
-  return NextResponse.json(res, { status: res.ok ? 200 : 500 })
+  // ON WATCH (Jon, 2026-09-23). The same cron now fires hourly 15–23 UTC as well as the 5am pass;
+  // once the rooms are read, Eve checks what is slipping between Slack, the glitch board and
+  // Breezeway and says it in the command rooms. It gates itself to 11am–7pm ET. ?watch=0 skips it.
+  let watch: any = null
+  if (url.searchParams.get('watch') !== '0') {
+    const w0 = Date.now()
+    watch = await runOnWatch({ force: url.searchParams.get('watch') === 'force' }).catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))
+    if (watch && !watch.skipped) recordRun({ name: 'on-watch', ok: watch.ok !== false, itemCount: Object.values(watch.posted || {}).reduce((a: number, b: any) => a + Number(b || 0), 0) + (watch.resolved || 0), detail: watch, error: watch.error || null, ms: Date.now() - w0 })
+  }
+  return NextResponse.json({ ...res, watch }, { status: res.ok ? 200 : 500 })
 }
