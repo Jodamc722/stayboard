@@ -42,6 +42,8 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { postToChannel, postThreadReply } from '@/lib/slack'
 import { EVE_CHANNELS } from '@/lib/slack-rules'
 import { agentAllowed, stepDown } from './agent-mode'
+import { getOperatingModel, weDo } from './operating-model'
+import { buildingOf } from '@/lib/segments'
 
 export const ON_WATCH_KEY = 'eve_on_watch'
 const STATE_KEY = 'eve_on_watch_state'
@@ -88,10 +90,18 @@ const clock = (ts: any) => {
   const d = new Date(String(ts)); if (isNaN(d.getTime())) return ''
   return new Intl.DateTimeFormat('en-US', { timeZone: ET, hour: 'numeric', minute: '2-digit' }).format(d).replace(' ', '').toLowerCase()
 }
+/** "Fri" inside the week, "Wed 9/30" beyond it, so a day name is never mistaken for today. */
 const weekday = (ymd: string) => {
   const d = new Date(ymd + 'T12:00:00Z'); if (isNaN(d.getTime())) return ymd
-  return d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
+  const day = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
+  const ahead = Math.abs(Date.parse(ymd + 'T12:00:00Z') - Date.parse(etToday() + 'T12:00:00Z')) / 86400_000
+  return ahead < 6 ? day : `${day} ${d.getUTCMonth() + 1}/${d.getUTCDate()}`
 }
+/** "Botanica 2208 - King Studio - B" → "Botanica 2208". */
+const shortUnit = (u: any) => String(u || '').split(' - ')[0].trim() || 'a unit'
+/** "[Moved to Sep 21] Guest Reported / Glitch - Blinds / Washer" → "Blinds / Washer". */
+const taskTitle = (n: any) => String(n || '').replace(/\s+/g, ' ').replace(/^\[[^\]]*\]\s*/, '')
+  .replace(/^guest\s*reported\s*(\/\s*glitch)?\s*[-\/:]?\s*/i, '').replace(/^glitch\s*[-\/:]\s*/i, '').trim().slice(0, 60) || 'guest-reported issue'
 function age(fromIso: any): string {
   const ms = Date.now() - Date.parse(String(fromIso))
   if (!Number.isFinite(ms) || ms < 0) return ''
@@ -148,7 +158,11 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   }
   const taskDone = (t: any) => !!t && (!!t.finished_at || /complete|finish|close|approv/i.test(String(t.status || '')))
   const who = (t: any) => first(t?.finished_by_name) || first(Array.isArray(t?.assignees) ? t.assignees[0]?.name : '')
-  const unitOf = (g: any) => String(g.unit || 'a unit')
+  const unitOf = (g: any) => shortUnit(g.unit)
+  // Field work only where the field work is ours. Botanica's hotel fixes its own rooms; a Botanica
+  // glitch with no Breezeway task is how it is meant to look (lib/eve/operating-model).
+  const om = await getOperatingModel().catch(() => null)
+  const ourFix = (unit: any) => !om || weDo(om, buildingOf(null, String(unit || '')), 'maintenance')
   // Breezeway tasks the guest reported, open or finished in the last day, not tied to a glitch.
   const GUEST_TASK = /guest\s*report|glitch/i
   const glitchTaskIds = new Set(taskIds)
@@ -233,11 +247,11 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     const h = hoursSince(g.created_at)
     // B — a glitch with nothing behind it in Breezeway. Refund and manager-review lanes are money
     // decisions, not field work, so an empty Breezeway link there is normal.
-    if (!g.breezeway_task_id && h >= NO_TASK_AFTER_H && h <= 7 * 24 && !/refund|manager_review/.test(String(g.status))) {
+    if (!g.breezeway_task_id && ourFix(g.unit) && h >= NO_TASK_AFTER_H && h <= 7 * 24 && !/refund|manager_review/.test(String(g.status))) {
       add('B:' + g.id, { kind: 'B', room: 'ops', label, line: `${label} — glitch open ${age(g.created_at)}, no Breezeway task${g.assignee ? `, with ${first(g.assignee)}` : ''}.` })
     }
     // C — the task exists but is dragging, and the guest is living with it.
-    if (t && !taskDone(t) && h >= SLOW_TASK_AFTER_H && h <= 7 * 24 && inHouse(g)) {
+    if (t && !taskDone(t) && ourFix(g.unit) && h >= SLOW_TASK_AFTER_H && h <= 7 * 24 && inHouse(g)) {
       add('C:' + g.id, { kind: 'C', room: 'ops', label, line: `${label} — Breezeway task still open after ${age(g.created_at)}, guest in the unit until ${weekday(String(g.check_out).slice(0, 10))}.` })
     }
     // D — fixed, and the guest has not been told. Only while they are still there or leaving today.
@@ -252,11 +266,11 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   for (const t of guestTasks) {
     const lid = String(t.reference_property_id || '')
     const stay = stayNow[lid]
-    const label = `${unitName[lid] || 'a unit'} · ${String(t.name || '').replace(/\s+/g, ' ').trim().slice(0, 60)}`
+    const label = `${shortUnit(unitName[lid])} · ${taskTitle(t.name)}`
     const sd = String(t.scheduled_date || '').slice(0, 10)
     const nobody = !(Array.isArray(t.assignees) && t.assignees.length)
     if (!taskDone(t)) {
-      if (!stay || stay.out <= today) continue
+      if (!stay || stay.out <= today || !ourFix(unitName[lid])) continue
       if (sd && sd < today) {
         add('E:' + t.id, { kind: 'E', room: 'ops', label, line: `${label} — open since ${weekday(sd)}${nobody ? ', nobody assigned' : ''}; guest in the unit until ${weekday(stay.out)}.` })
       } else if (nobody) {
