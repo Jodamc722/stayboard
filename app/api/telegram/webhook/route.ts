@@ -254,9 +254,15 @@ export async function POST(req: NextRequest) {
     }
     // Same three-way decision as everywhere else, from the same function. `access` here is the
     // approved Telegram contact resolved to a real app user, so the setting that applies is theirs.
+    // NEVER A CODE INTO A GROUP (Jon, 2026-09-23 review). "Direct" means the code comes straight
+    // back in this chat — and in a group, "this chat" is everybody in it. So in a group a Direct
+    // person is treated as Ask: the request is parked and the reveal link needs a Lighthouse login
+    // and an approver. A private chat is unchanged.
+    const policy0 = doorCodePolicy(access)
+    const policy = isGroup && policy0 === 'direct' ? 'ask' : policy0
     const outcome = await requestDoorCode(check, {
       email: contact.email || undefined, reason: `Telegram by ${displayName(from)}`,
-      policy: doorCodePolicy(access),
+      policy,
     })
     if (outcome.kind === 'denied') { await sendMessage(chat.id, `🔒 ${outcome.message}`, { replyTo: msg.message_id }); return ok() }
     if (outcome.kind === 'error') {
@@ -312,8 +318,15 @@ export async function POST(req: NextRequest) {
       access,
       messages: [...history, { role: 'user', content: asked }],
       source: 'telegram',
+      // A GROUP IS A SHARED ROOM (Jon, 2026-09-23 review). The note below used to ASK her not to
+      // repeat dollar amounts in front of people who may not be cleared; an instruction is a
+      // suggestion. Money is now redacted for every group run, exactly as a Slack channel is, and
+      // the door-code tool is taken away so a Direct person's code can never be released into the
+      // room — /doorcode still runs the checks and parks the request for approval. Private chats
+      // are unchanged.
+      ...(isGroup ? { forceNoMoney: true, denyTools: ['door_code_check'] } : {}),
       surfaceNote: isGroup
-        ? `You are in a Telegram GROUP called "${verdict.room?.title || 'a group'}". Several people are in it and each message is prefixed with who said it. Answer the person who asked. Never repeat something one person is allowed to see to a room where others may not be — if an answer needs dollar amounts and the asker is not cleared for them, say so instead.`
+        ? `You are in a Telegram GROUP called "${verdict.room?.title || 'a group'}". Several people are in it and each message is prefixed with who said it. Answer the person who asked. Never repeat something one person is allowed to see to a room where others may not be — if an answer needs dollar amounts and the asker is not cleared for them, say so instead. Dollar amounts are hidden in every group, and you cannot check or release door codes here: point them at /doorcode <unit>, which parks the request for an approver.`
         : undefined,
     })
 
