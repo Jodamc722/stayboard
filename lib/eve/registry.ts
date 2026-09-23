@@ -22,7 +22,7 @@ import { LABOR_DOMAIN } from './labor'
 import { GUESTS_DOMAIN } from './guests'
 import { SLACK_DOMAIN } from './slack'
 import { PROPERTY_DOMAIN } from './property'
-import { SYSTEM_DOMAIN } from './system'
+import { SYSTEM_DOMAIN, SYSTEM_TOOLS } from './system'
 import { CS_TOOLS } from './cs'
 import { DOC_TOOLS } from './docs'
 
@@ -57,7 +57,9 @@ export function coreTools(): EveTool[] {
   // The written documents sit in CORE rather than behind open_domain. A policy question arrives
   // constantly ("what is our rule on…", "how do we handle…") and spending a turn opening a domain
   // to answer one is the wrong trade — two small schemas beat a wasted round trip.
-  return CORE_TOOLS.concat(DOC_TOOLS).concat([OPEN_DOMAIN])
+  // What she did today is core too (2026-09-23 review): she was answering "what did you do?" with
+  // "nothing" after ten posts, and a question about herself must never cost a domain-opening turn.
+  return CORE_TOOLS.concat(DOC_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat([OPEN_DOMAIN])
 }
 
 export function domainByKey(key: string): EveDomain | null {
@@ -124,7 +126,7 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     const raw = await tool.run(input || {}, ctx)
     const out = tool.name === 'door_code_check' ? raw : redactSensitive(raw)
     if (tool.money && !ctx.canMoney) {
-      return { output: { ...redactMoney(out), _money_redacted: 'Dollar amounts are hidden for this user. Ratios (occupancy, ADR, RevPAR, percentages) are still accurate. Do not guess at the hidden numbers.' } }
+      return { output: { ...redactMoney(out), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' } }
     }
     return { output: out }
   } catch (e: any) {
