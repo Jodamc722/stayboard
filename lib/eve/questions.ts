@@ -26,7 +26,8 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { lc } from './ctx'
-import { saveMemory } from './memory'
+import { saveMemory, personSource, STAFF_MAX_WEIGHT } from './memory'
+import { isSuperadmin } from '@/lib/access'
 
 export type EveQuestion = {
   id: string
@@ -123,6 +124,15 @@ export async function countOpenQuestions(): Promise<number> {
 /**
  * An answer becomes a memory. Weight 8 because a person said it, and source 'jon' so nothing Eve
  * infers later can quietly overwrite it.
+ *
+ * ONLY JON'S ANSWER IS JON'S (Jon, 2026-09-23 review). Anyone with Eve can answer a question; a
+ * colleague's answer is filed as source 'staff' at weight 6 with their name on it, not as Jon's.
+ *
+ * AN ANSWERED CONFLICT RETIRES WHAT IT SETTLED (Jon, 2026-09-23 review). A question raised because
+ * a document disagreed with a memory carries that memory's id in evidence.memory_ids (study.ts);
+ * the same goes for an auto-captured chat rule awaiting confirmation (run.ts). Once answered, those
+ * rows are superseded by the answer, so she stops acting on the side that lost. A colleague's
+ * answer never retires something Jon wrote.
  */
 export async function answerQuestion(id: string, answer: string, by: string): Promise<{ ok: boolean; memoryId?: string; error?: string }> {
   const db = supabaseAdmin()
@@ -133,13 +143,28 @@ export async function answerQuestion(id: string, answer: string, by: string): Pr
     const q: any = data
     if (!q) return { ok: false, error: 'question not found' }
 
+    const who = personSource(by, 8)
+    const ev: any = q.evidence && typeof q.evidence === 'object' ? q.evidence : {}
+    // Calibration questions raised before 2026-09-23 carry a bare building name as scope, which
+    // normScope() reads as portfolio; give the answer its building back.
+    const scope = ev.calibration && ev.building && !String(q.scope || '').includes(':') ? 'building:' + String(ev.building) : q.scope
     const saved = await saveMemory({
       kind: q.kind === 'conflict' ? 'correction' : 'rule',
       text: `${q.question} — ${text}`.slice(0, 900),
       why: `Answered by ${by} on ${new Date().toISOString().slice(0, 10)}, in response to a question Eve raised.`,
-      scope: q.scope, weight: 8, source: 'jon', confidence: 1,
+      scope, weight: who.weight, maxWeight: who.source === 'staff' ? STAFF_MAX_WEIGHT : undefined,
+      source: who.source, confidence: 1,
       created_by: by, evidence: { question_id: String(q.id), asked_count: q.asked_count },
     })
+    const settled: string[] = Array.isArray(ev.memory_ids) ? ev.memory_ids.map((x: any) => String(x)).filter(Boolean) : []
+    if (saved.ok && saved.id && settled.length) {
+      try {
+        let upd = db.from('eve_memory').update({ superseded_by: saved.id, updated_at: new Date().toISOString() })
+          .in('id', settled.filter(x => x !== String(saved.id))).is('superseded_by', null)
+        if (!isSuperadmin(by)) upd = upd.neq('source', 'jon')
+        await upd
+      } catch { /* the answer is filed either way; the old row can be retired from the Memory tab */ }
+    }
     await db.from('eve_questions').update({
       status: 'answered', answer: text.slice(0, 2000), answered_by: by,
       answered_at: new Date().toISOString(), memory_id: saved.id || null,
