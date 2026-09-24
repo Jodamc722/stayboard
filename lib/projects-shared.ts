@@ -437,7 +437,48 @@ export type ViewPrefs = {
    * their choice holds everywhere.
    */
   railOpen: boolean | null
+  /**
+   * VISIBILITY (Jon, 2026-09-24: "need visibility options"). Which tasks I am looking at right now.
+   * All mine — the board itself does not change, only what I see of it. Empty means everything.
+   */
+  filters: TaskFilters
+  /** Sections I have folded shut. Mine. */
+  collapsed: string[]
+  /** Named filter sets I keep as tabs. Mine. */
+  savedViews: SavedView[]
+  /** Which saved view is active, or null for the plain board. */
+  activeView: string | null
 }
+
+export type TaskFilters = {
+  /** Person keys or emails; a task shows if any of its owners match. 'me' is the viewer. */
+  people: string[]
+  status: ('todo' | 'doing' | 'blocked' | 'done')[]
+  priority: ('urgent' | 'high' | 'normal' | 'low')[]
+  /** Due window. 'none' = no due date. */
+  due: ('late' | 'today' | 'week' | 'later' | 'none')[]
+}
+export const EMPTY_FILTERS: TaskFilters = { people: [], status: [], priority: [], due: [] }
+export const filtersActive = (f: TaskFilters | null | undefined) =>
+  !!f && (f.people.length + f.status.length + f.priority.length + f.due.length) > 0
+
+export type SavedView = { name: string; filters: TaskFilters; hideDone: boolean }
+
+/** The three views every board starts with. They are not stored — a person can add their own beside them. */
+export const BUILTIN_VIEWS: SavedView[] = [
+  { name: 'My week', filters: { people: ['me'], status: [], priority: [], due: ['late', 'today', 'week'] }, hideDone: true },
+  { name: 'Late', filters: { people: [], status: [], priority: [], due: ['late'] }, hideDone: true },
+  { name: 'Urgent', filters: { people: [], status: [], priority: ['urgent', 'high'], due: [] }, hideDone: true },
+]
+
+const pickStr = <T extends string>(v: any, allowed: readonly T[]): T[] =>
+  Array.isArray(v) ? (v as any[]).map(String).filter((x): x is T => (allowed as readonly string[]).includes(x)) : []
+export const filtersOf = (raw: any): TaskFilters => ({
+  people: Array.isArray(raw?.people) ? (raw.people as any[]).map(String).filter(Boolean).slice(0, 40) : [],
+  status: pickStr(raw?.status, ['todo', 'doing', 'blocked', 'done'] as const),
+  priority: pickStr(raw?.priority, ['urgent', 'high', 'normal', 'low'] as const),
+  due: pickStr(raw?.due, ['late', 'today', 'week', 'later', 'none'] as const),
+})
 
 /** The cards down the right-hand side. Named so a preference can point at one. */
 export const RAIL_PANELS = ['people', 'money', 'about', 'files'] as const
@@ -472,7 +513,7 @@ export const DEFAULT_COLUMNS: ListColumn[] = ['assignee', 'due', 'priority']
 export const columnTemplate = (cols: ListColumn[]) =>
   ['minmax(0,1fr)', ...cols.map(c => COLUMN_WIDTH[c] + 'px')].join(' ')
 
-export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'board', hideDone: false, hidePanels: [], hideActivity: false, columns: DEFAULT_COLUMNS.slice(), railOpen: null }
+export const DEFAULT_VIEW_PREFS: ViewPrefs = { view: 'board', hideDone: false, hidePanels: [], hideActivity: false, columns: DEFAULT_COLUMNS.slice(), railOpen: null, filters: EMPTY_FILTERS, collapsed: [], savedViews: [], activeView: null }
 
 export const viewPrefsOf = (raw: any): ViewPrefs => ({
   view: raw?.view === 'list' ? 'list' : raw?.view === 'calendar' ? 'calendar' : 'board',
@@ -485,6 +526,13 @@ export const viewPrefsOf = (raw: any): ViewPrefs => ({
     ? (raw.columns as any[]).map(String).filter((c): c is ListColumn => (LIST_COLUMNS as readonly string[]).includes(c))
     : DEFAULT_COLUMNS.slice(),
   railOpen: raw?.railOpen === true ? true : raw?.railOpen === false ? false : null,
+  filters: filtersOf(raw?.filters),
+  collapsed: Array.isArray(raw?.collapsed) ? (raw.collapsed as any[]).map(String).filter(Boolean).slice(0, 100) : [],
+  savedViews: Array.isArray(raw?.savedViews)
+    ? (raw.savedViews as any[]).filter(v => v && typeof v.name === 'string' && v.name.trim()).slice(0, 20)
+      .map(v => ({ name: String(v.name).trim().slice(0, 40), filters: filtersOf(v.filters), hideDone: v.hideDone === true }))
+    : [],
+  activeView: typeof raw?.activeView === 'string' && raw.activeView.trim() ? String(raw.activeView).trim().slice(0, 40) : null,
 })
 
 /**

@@ -43,12 +43,36 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
   const [showWeek, setShowWeek] = useState(false)
   const [newMenu, setNewMenu] = useState(false)
   const [doneIds, setDoneIds] = useState<Record<string, boolean>>({})
+  // THE DONE GUARD, here too (Jon, 2026-09-24: "too easy to mark complete"). First tap arms the
+  // row, second confirms, and an Undo sits at the bottom for eight seconds. Same rule as the
+  // board, so a person learns it once.
+  const [armed, setArmed] = useState<string | null>(null)
+  const [undo, setUndo] = useState<MineItem | null>(null)
+  const undoTimer = useRef<any>(null)
+  useEffect(() => {
+    if (!armed) return
+    const off = () => setArmed(null)
+    const t = setTimeout(() => document.addEventListener('click', off, { capture: true, once: true }), 0)
+    return () => { clearTimeout(t); document.removeEventListener('click', off, { capture: true } as any) }
+  }, [armed])
+  const setStatus = async (it: MineItem, status: 'done' | 'todo') => {
+    const r = await fetch('/api/projects/' + it.projectId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'taskSet', taskId: it.id, status }) })
+    if (!r.ok) throw new Error('save failed')
+  }
   const completeMine = async (it: MineItem) => {
+    if (armed !== it.id) { setArmed(it.id); return }
+    setArmed(null)
     setDoneIds(d => ({ ...d, [it.id]: true }))
     try {
-      const r = await fetch('/api/projects/' + it.projectId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'taskSet', taskId: it.id, status: 'done' }) })
-      if (!r.ok) throw new Error('save failed')
+      await setStatus(it, 'done')
+      setUndo(it); clearTimeout(undoTimer.current); undoTimer.current = setTimeout(() => setUndo(null), 8000)
     } catch { setDoneIds(d => ({ ...d, [it.id]: false })); setNote('That task did not save.') }
+  }
+  const undoMine = async () => {
+    const it = undo; if (!it) return
+    clearTimeout(undoTimer.current); setUndo(null)
+    setDoneIds(d => ({ ...d, [it.id]: false }))
+    try { await setStatus(it, 'todo') } catch { setNote('Could not undo that.') }
   }
   const [err, setErr] = useState<string | null>(null)
   // Which of the foldable groups this person has opened. Vendor jobs start folded.
@@ -139,6 +163,12 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
 
   return (
     <div className="pb-16">
+      {undo && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-full bg-ink text-white pl-4 pr-1.5 py-1.5 text-[12.5px] shadow-lg">
+          <Check size={13} className="text-emerald-300" /> <span>Done · <b>{undo.title}</b></span>
+          <button onClick={undoMine} className="rounded-full bg-white/15 hover:bg-white/25 px-3 py-1 font-semibold">Undo</button>
+        </div>
+      )}
       <LeanHead title="Projects" icon={<KanbanSquare size={20} className="text-muted" />}>
         {mine && mine.groups.overdue.length > 0 && <Pill tone="rose" title="Your tasks past their due date">{mine.groups.overdue.length} overdue</Pill>}
         {mine && mine.groups.today.length > 0 && <Pill tone="amber" title="Your tasks due today">{mine.groups.today.length} today</Pill>}
@@ -185,10 +215,17 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
                 const isDone = doneIds[it.id] || it.status === 'done'
                 return (
                   <div key={it.id} className={'flex items-center gap-2 px-3 border-t border-line first:border-t-0 ' + (isDone ? 'opacity-50' : '')} style={{ minHeight: 32 }}>
-                    <Tip label={isDone ? 'Done' : 'Mark done'}><button onClick={() => !isDone && completeMine(it)} disabled={isDone} aria-label="Mark done"
-                      className={'w-[18px] h-[18px] rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + (isDone ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-line text-muted hover:border-ink')}>
-                      {isDone ? <Check size={10} strokeWidth={3} /> : <Circle size={0} />}
-                    </button></Tip>
+                    {armed === it.id && !isDone ? (
+                      <button onClick={e => { e.stopPropagation(); completeMine(it) }} aria-label="Confirm done"
+                        className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-bold text-white shrink-0">
+                        <Check size={11} strokeWidth={3} /> Done?
+                      </button>
+                    ) : (
+                      <Tip label={isDone ? 'Done' : 'Mark done (tap, then confirm)'}><button onClick={e => { e.stopPropagation(); if (!isDone) completeMine(it) }} disabled={isDone} aria-label="Mark done"
+                        className={'w-[18px] h-[18px] rounded-full border-2 inline-flex items-center justify-center shrink-0 ' + (isDone ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-line text-muted hover:border-ink')}>
+                        {isDone ? <Check size={10} strokeWidth={3} /> : <Circle size={0} />}
+                      </button></Tip>
+                    )}
                     <Link href={'/projects/' + it.projectId + '?task=' + it.id} className={'min-w-0 flex-1 text-[13px] truncate hover:underline ' + (isDone ? 'line-through text-muted' : 'text-ink')}>{it.title}</Link>
                     <span className="text-[11px] text-muted truncate max-w-[160px] hidden sm:inline">{it.project}</span>
                     {it.due && <span className={'shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] tabular-nums ' + (tone === 'late' ? 'bg-rose-100 text-rose-700 border-rose-200 font-bold' : tone === 'today' ? 'bg-amber-100 text-amber-800 border-amber-200 font-bold' : 'bg-white text-muted border-line')}>{tone === 'today' ? 'Today' : niceDay(it.due)}</span>}
