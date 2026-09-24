@@ -128,6 +128,28 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
     return i < 0 ? 0 : i
   }, [view, drawer, mine])
 
+  // THE NEXT CLICK, SHOWN (Jon, 2026-09-24: "have a directional click-through process so that they
+  // know that it's interactive"). Exactly one control pulses at a time, with a label saying what it
+  // does, and it moves as the owner goes: sign in, My properties, the unit, + New reservation, the
+  // dates, Create reservation, then Analytics. Nobody has to be told the picture can be clicked.
+  const hot: string | null =
+    view === 'login' ? 'signin'
+    : view === 'dashboard' ? 'props'
+    : view === 'properties' ? 'unit'
+    : view === 'calendar' && mine ? 'analytics'
+    : view === 'calendar' && drawer && from != null && to != null ? 'create'
+    : view === 'calendar' && drawer ? 'dates'
+    : view === 'calendar' && !open ? 'new'
+    : null
+  const TIPS: Record<string, string> = {
+    signin: 'Start here: click Sign in', props: 'Next: click here', unit: 'Open your unit',
+    new: 'Book your own stay', create: 'Click to create', analytics: 'Next: Analytics',
+  }
+  const hotOn = (key: string, pos?: 'up' | 'right') => hot === key
+    ? { className: 'opd-hot' + (pos ? ' opd-' + pos : ''), 'data-tip': TIPS[key] || '' }
+    : {}
+  const NEXT: Partial<Record<View, View>> = { login: 'dashboard', dashboard: 'properties', properties: 'calendar' }
+
   const isMine = (d: number) => mine != null && d >= mine.from && d <= mine.to
   const isPicking = (d: number) => from != null && to != null && d >= from && d <= to
 
@@ -181,6 +203,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
               const on = x.label === activeTab
               return (
                 <button key={x.label} onClick={() => { if (x.to) { setView(x.to); setOpen(null); setDrawer(false) } }}
+                  {...(x.to === 'analytics' ? hotOn('analytics') : {})}
                   style={{
                     fontSize: 9.5, fontWeight: 600, letterSpacing: 'normal', color: on ? P.blue : P.body,
                     background: 'none', border: 0, padding: '8px 0 7px', cursor: x.to ? 'pointer' : 'default',
@@ -212,7 +235,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
                     ••••••••
                   </div>
                 </div>
-                <button onClick={() => setView('dashboard')} style={{
+                <button onClick={() => setView('dashboard')} {...hotOn('signin')} style={{
                   width: '100%', marginTop: 12, background: P.blue, color: '#fff', border: 0,
                   borderRadius: 6, fontSize: 10.5, fontWeight: 600, padding: '8px 0', cursor: 'pointer',
                 }}>Sign in</button>
@@ -247,7 +270,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
                   ))}
                 </div>
               </div>
-              <button onClick={() => setView('properties')} style={{
+              <button onClick={() => setView('properties')} {...hotOn('props')} style={{
                 marginTop: 9, fontSize: 9.5, fontWeight: 600, color: P.blue, background: 'none',
                 border: '1px solid ' + P.blue, borderRadius: 6, padding: '6px 12px', cursor: 'pointer',
               }}>Go to My properties &#8594;</button>
@@ -258,7 +281,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
               <p style={{ fontSize: 12.5, fontWeight: 700, color: P.ink }}>My properties</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 9, marginTop: 9 }}>
                 {[0, 1, 2].map(i => (
-                  <button key={i} onClick={() => setView('calendar')} style={{
+                  <button key={i} onClick={() => setView('calendar')} {...(i === 0 ? hotOn('unit') : {})} style={{
                     border: '1px solid ' + (i === 0 ? P.blue : P.line), borderRadius: 8, background: P.card,
                     padding: 0, overflow: 'hidden', cursor: 'pointer', textAlign: 'left',
                   }}>
@@ -431,7 +454,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center' }}>
                   <p style={{ fontSize: 12, fontWeight: 700, color: P.ink }}>Calendar and reservations</p>
-                  <button onClick={() => { setDrawer(true); setOpen(null); setPicker(true) }} style={{
+                  <button onClick={() => { setDrawer(true); setOpen(null); setPicker(true) }} {...hotOn('new', 'right')} style={{
                     marginLeft: 'auto', background: P.green, color: '#fff', border: 0, borderRadius: 6,
                     fontSize: 10, fontWeight: 600, padding: '6px 11px', cursor: 'pointer',
                   }}>+ New reservation</button>
@@ -568,6 +591,11 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
 
               <p style={{ fontSize: 8, fontWeight: 700, color: P.ink, marginTop: 9 }}>Reservation details</p>
               <p style={{ fontSize: 7.5, color: P.muted, marginTop: 5 }}>Check-in and check-out dates</p>
+              {hot === 'dates' ? (
+                <p style={{ fontSize: 8, fontWeight: 700, color: P.blue, marginTop: 4 }}>
+                  &#8595; {from == null ? 'Pick your check-in date' : 'Now pick your check-out date'}
+                </p>
+              ) : null}
               {/* THE DATES ARE PICKED IN HERE, THE WAY THE REAL DRAWER DOES IT. The first version
                   told the owner to tap the month behind this panel, and the panel covers the right
                   54% of it — so Saturdays and Sundays were literally unclickable and the
@@ -650,7 +678,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
               </button>
 
               <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'flex-end' }}>
-                <button onClick={create} disabled={from == null || to == null}
+                <button onClick={create} disabled={from == null || to == null} {...hotOn('create', 'up')}
                   style={{
                     background: from != null && to != null ? P.blue : '#b9cdf5', color: '#fff', border: 0,
                     borderRadius: 6, fontSize: 9.5, fontWeight: 600, padding: '7px 13px',
@@ -664,18 +692,42 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
 
       {/* ── the steps ──────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: P.muted }}>Try it</p>
+        <style>{`
+          @keyframes opd-pulse { 0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.55); } 70% { box-shadow: 0 0 0 10px rgba(37,99,235,0); } 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); } }
+          .opd-hot { position: relative; animation: opd-pulse 1.5s ease-out infinite; outline: 2px solid #2563eb; outline-offset: 2px; z-index: 3; }
+          .opd-hot::after { content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%);
+            background: #111827; color: #fff; font-size: 9px; font-weight: 700; letter-spacing: 0.01em; padding: 4px 8px; border-radius: 6px;
+            white-space: nowrap; pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.25); z-index: 6; }
+          .opd-hot.opd-up::after { top: auto; bottom: calc(100% + 8px); left: auto; right: 0; transform: none; }
+          .opd-hot.opd-right::after { left: auto; right: 0; transform: none; }
+          @media print { .opd-hot { animation: none; outline: none; } .opd-hot::after { display: none; } }
+        `}</style>
+        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: P.blue }}>Interactive &middot; try it</p>
+        <p style={{ fontSize: 9.5, lineHeight: 1.45, color: P.body, marginTop: 4 }}>
+          Click the highlighted button on the screen to go to the next step.
+        </p>
         <div style={{ marginTop: 9, flex: 1, minHeight: 0, overflowY: 'auto' }}>
           {STEPS.map((s, i) => {
             const on = i === step
+            const done = i < step
             return (
-              <div key={s.k} style={{ padding: '6px 0 6px 9px', borderLeft: '2px solid ' + (on ? P.blue : '#e6e9f0') }}>
-                <p style={{ fontSize: 11, fontWeight: on ? 700 : 500, color: on ? P.ink : P.muted }}>{i + 1}. {s.k}</p>
+              <button key={s.k} onClick={() => { const v = s.at[0]; setView(v); setOpen(null); setDrawer(i === 4); if (i === 4) setPicker(true) }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, cursor: 'pointer',
+                  padding: '6px 0 6px 9px', borderLeft: '2px solid ' + (on ? P.blue : done ? '#93b4f3' : '#e6e9f0') }}>
+                <p style={{ fontSize: 11, fontWeight: on ? 700 : 500, color: on ? P.ink : P.muted }}>
+                  {done ? '\u2713 ' : (i + 1) + '. '}{s.k}
+                </p>
                 {on ? <p style={{ fontSize: 9.5, lineHeight: 1.45, color: P.body, marginTop: 2 }}>{s.d}</p> : null}
-              </div>
+              </button>
             )
           })}
         </div>
+        {NEXT[view] ? (
+          <button onClick={() => { const v = NEXT[view]; if (v) { setView(v); setOpen(null); setDrawer(false) } }} style={{
+            alignSelf: 'stretch', marginTop: 7, fontSize: 10, fontWeight: 700, color: '#fff', background: P.blue,
+            border: 0, borderRadius: 6, padding: '7px 9px', cursor: 'pointer',
+          }}>Next step &#8594;</button>
+        ) : null}
         <button onClick={reset} style={{
           alignSelf: 'flex-start', marginTop: 7, fontSize: 9, color: P.body, background: 'none',
           border: '1px solid ' + P.line, borderRadius: 6, padding: '5px 9px', cursor: 'pointer',
