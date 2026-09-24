@@ -3081,7 +3081,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             { k: 'stack', label: 'The tech stack' },
             { k: 'listings', label: 'Your listing' },
             { k: 'season', label: 'The season' },
-            { k: 'ramp', label: 'The first 90 days' },
+            { k: 'ramp', label: 'Ramp' },
             { k: 'rampsteps', label: 'How we shorten it' },
             { k: 'guesty', label: 'Owner portal' },
             { k: 'statement', label: 'Owner statements' },
@@ -3089,7 +3089,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           ]
           const EXTRA: { k: string; label: string }[] = [
             { k: 'unit', label: 'Your unit' }, { k: 'strategy', label: 'Goals & strategy' },
-            { k: 'ai', label: 'How we run it' }, { k: 'tech', label: 'Your tech' }, { k: 'money', label: 'Billables' },
+            { k: 'ai', label: 'Lighthouse' }, { k: 'tech', label: 'Your tech' }, { k: 'money', label: 'Billables' },
             { k: 'comms', label: 'Communication' }, { k: 'checklist', label: 'Still to do' },
             { k: 'nextup', label: 'What happens next' },
           ]
@@ -3539,8 +3539,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       return <p style={{ marginTop: 14, fontSize: 14.5, lineHeight: 1.5, color: D.body, maxWidth: '56ch', whiteSpace: 'pre-line' }}>{full.replace(/\n\n+/g, '\n\n')}</p>
                     })()}
                     <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + D.rule, display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '14px 34px' }}>
-                      {houseRows<Any>(sec('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS_2 as Any[]).slice(0, 4).map((f: Any, i: number) => (
-                        <div key={i}>
+                      {houseRows<Any>(sec('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS_2 as Any[]).slice(0, 4).map((f: Any, i: number, arr: Any[]) => (
+                        <div key={i} style={arr.length % 2 === 1 && i === arr.length - 1 ? { gridColumn: '1 / -1' } : undefined}>
                           <p style={{ fontSize: 19, fontWeight: 600, color: D.ink, letterSpacing: '-0.015em', lineHeight: 1.22 }}>
                             <Ed v={f.v || ''} set={v => patch('overview.stats.' + i + '.v', v)} edit={edit} multiline />
                           </p>
@@ -4425,7 +4425,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
           // ── THE RAMP — why month one is bought, not earned ─────────────────
           if (!hid('ramp')) slides.push({ key: 'ramp', ai: true, node: (
-            <Slide nav="The first 90 days" warn={edit} ground={GROUND.light}>
+            <Slide nav="Ramp" warn={edit} ground={GROUND.light}>
               <div className="flex flex-col h-full">
                 <div style={{ width: 30, height: 2, background: t.accent, marginBottom: 16 }} />
                 <p className="onb-h" style={{ fontSize: 34, color: t.ink, lineHeight: 1.15, maxWidth: '22ch' }}>
@@ -4469,7 +4469,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <Ed v={houseLine(sec('ramp').note, RAMP_NOTE)} set={v => patch('ramp.note', v)} edit={edit} multiline />
                   </p>
                 </div>
-                <Foot label="The first 90 days" />
+                <Foot label="Ramp" />
               </div>
             </Slide>
           ) })
@@ -4534,7 +4534,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // Auto margins rather than justify-center, so a column that ever runs long is cut at the
           // bottom where the overflow warning sees it, never pushed up over the headline.
           if (!hid('ai')) slides.push({ key: 'ai', ai: true, node: (
-            <Slide nav="How we run it" warn={edit} ground={GROUND.dark}>
+            <Slide nav="Lighthouse" warn={edit} ground={GROUND.dark}>
               <div className="flex flex-col h-full">
                 <div className="flex-1 min-h-0 flex" style={{ gap: 48, paddingBottom: 20 }}>
                   <div className="flex flex-col min-h-0" style={{ width: 372, flexShrink: 0 }}>
@@ -4582,7 +4582,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </div>
                   </div>
                 </div>
-                <Foot label="How we run it" dark />
+                <Foot label="Lighthouse" dark />
               </div>
             </Slide>
           ) })
@@ -4622,6 +4622,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <div>
                           <p style={{ fontSize: 12, color: t.muted }}><Lab id="password" d="Password" /></p>
                           <p style={{ fontSize: 14.5, color: t.body, marginTop: 3 }}><Lab id="passwordNote" d="Set from your invite email." /></p>
+                        </div>
+                      </div>
+                      {/* WHAT IS IN THERE (2026-09-24 audit): the slide ended at the password line and
+                          the lower half sat empty. The four things an owner opens the portal for. */}
+                      <div style={{ marginTop: 22, paddingTop: 16, borderTop: '1px solid ' + t.rule }}>
+                        <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.muted }}>What you will find there</p>
+                        <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 26px' }}>
+                          {houseRows<Any>(sec('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]).slice(0, 4).map((f: Any, i: number) => (
+                            <div key={i}>
+                              <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                                <Ed v={f.k || ''} set={v => patch('guesty.items.' + i + '.k', v)} edit={edit} multiline />
+                              </p>
+                              <p style={{ fontSize: 12, lineHeight: 1.5, color: t.body, marginTop: 3 }}>
+                                <Ed v={f.v || ''} set={v => patch('guesty.items.' + i + '.v', v)} edit={edit} multiline />
+                              </p>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </div>
