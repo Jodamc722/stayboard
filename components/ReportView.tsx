@@ -3147,15 +3147,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </div>
           )
 
-          const Asks = ({ k }: { k: string }) => {
+          // `dark`: on a dark-ground slide the question was drawn in the light theme's ink — navy on
+          // navy, so the question itself vanished and only the hint showed (Jon, 2026-09-24, the
+          // "How we run it" slide: "this looks terrible"). The dark palette goes to the block too.
+          const Asks = ({ k, dark, top }: { k: string; dark?: boolean; top?: number }) => {
             const as: Any[] = Array.isArray(sec(k).asks) ? sec(k).asks : []
             if (!as.length && !edit) return null
+            const tt = dark ? { ...t, ink: D.ink, body: D.body, muted: D.muted, rule: D.rule } : t
             return (
-              <div style={{ marginTop: 26 }}>
-                <p style={{ fontSize: 12, color: t.muted, marginBottom: 14 }}><Lab id="onTheCall" d="On the call" /></p>
+              <div style={{ marginTop: top == null ? 26 : top }}>
+                <p style={{ fontSize: 12, color: tt.muted, marginBottom: 14 }}><Lab id="onTheCall" d="On the call" /></p>
                 <div className="flex flex-col" style={{ gap: 14 }}>
                   {as.map((a: Any, i: number) => (
-                    <AskBlock key={a.id || i} ask={a} live={canEdit} t={t} edit={edit}
+                    <AskBlock key={a.id || i} ask={a} live={canEdit} t={tt} edit={edit}
                       set={v => setAnswer(k, i, v)}
                       setQ={v => patch(k + '.asks.' + i + '.q', v)}
                       setHint={v => patch(k + '.asks.' + i + '.hint', v)}
@@ -4422,46 +4426,58 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // a task on a named unit, this report being generated rather than typed. The dark ground
           // is deliberate: it is the second and last punctuation slide in the deck, and this is
           // the one place we are allowed to make a claim about ourselves.
+          // THE LAYOUT (Jon, 2026-09-24: "this looks terrible"). It was one column: a two-line
+          // headline, the subtitle, a 2x2 grid of pillars, the note and the on-the-call question,
+          // stacked and then centred in the space left. That stack is taller than the slide, and a
+          // centred column that is too tall spills out of BOTH ends: the pillars rode up over the
+          // subtitle and the question sat on top of the footer. Now it is two columns that each
+          // fit on their own: the argument on the left (headline, subtitle, what it buys you, the
+          // question for the call) and the four things that run on the right, one under another.
+          // Auto margins rather than justify-center, so a column that ever runs long is cut at the
+          // bottom where the overflow warning sees it, never pushed up over the headline.
           if (!hid('ai')) slides.push({ key: 'ai', ai: true, node: (
             <Slide nav="How we run it" warn={edit} ground={GROUND.dark}>
               <div className="flex flex-col h-full">
-                <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 16 }} />
-                <p className="onb-h" style={{ fontSize: 34, color: D.ink, lineHeight: 1.15, maxWidth: '24ch' }}>
-                  <Ed v={houseLine(sec('ai').headline, AI_HEADLINE)} set={v => patch('ai.headline', v)} edit={edit} multiline />
-                </p>
-                <p style={{ fontSize: 15, color: D.muted, marginTop: 10, maxWidth: '68ch' }}>
-                  <Ed v={houseLine(sec('ai').subtitle, AI_SUBTITLE)} set={v => patch('ai.subtitle', v)} edit={edit} multiline />
-                </p>
-
-                <div className="flex-1 min-h-0 flex flex-col justify-center">
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '22px 40px' }}>
-                    {houseRows<Any>(sec('ai').pillars, [], AI_PILLARS as Any[]).slice(0, 4).map((b: Any, i: number) => (
-                      <div key={i} style={{ paddingTop: 13, borderTop: '1px solid ' + D.rule }}>
-                        <div className="flex items-baseline" style={{ gap: 10 }}>
-                          <span style={{ fontSize: 12, color: t.accent, fontWeight: 700 }}>{'0' + (i + 1)}</span>
-                          <p style={{ fontSize: 14.5, fontWeight: 600, color: D.ink }}>
-                            <Ed v={b.k || ''} set={v => patch('ai.pillars.' + i + '.k', v)} edit={edit} />
+                <div className="flex-1 min-h-0 flex" style={{ gap: 48, paddingBottom: 20 }}>
+                  <div className="flex flex-col min-h-0" style={{ width: 372, flexShrink: 0 }}>
+                    <div style={{ width: 30, height: 2, background: D.ink, marginBottom: 16 }} />
+                    <p className="onb-h" style={{ fontSize: 30, color: D.ink, lineHeight: 1.15 }}>
+                      <Ed v={houseLine(sec('ai').headline, AI_HEADLINE)} set={v => patch('ai.headline', v)} edit={edit} multiline />
+                    </p>
+                    <p style={{ fontSize: 14, lineHeight: 1.5, color: D.muted, marginTop: 12 }}>
+                      <Ed v={houseLine(sec('ai').subtitle, AI_SUBTITLE)} set={v => patch('ai.subtitle', v)} edit={edit} multiline />
+                    </p>
+                    <p style={{ fontSize: 13.5, lineHeight: 1.6, color: D.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + D.rule }}>
+                      <Ed v={houseLine(sec('ai').note, AI_NOTE)} set={v => patch('ai.note', v)} edit={edit} multiline />
+                    </p>
+                    {/* WHAT IS COMING sits after what already runs, never before it, and stays empty
+                        unless someone types into it: a roadmap line on an empty deck is a promise
+                        nobody made. */}
+                    {(String(sec('ai').next || '').trim() || edit) ? (
+                      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.body, marginTop: 14, paddingLeft: 12, borderLeft: '2px solid ' + t.accent }}>
+                        <span style={{ fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', fontSize: 10.5, color: t.accent, marginRight: 8 }}>Next</span>
+                        <Ed v={String(sec('ai').next || '')} set={v => patch('ai.next', v)} edit={edit} multiline placeholder="What we are building now, if it is worth mentioning on this call\u2026" />
+                      </p>
+                    ) : null}
+                    <Asks k="ai" dark top={18} />
+                  </div>
+                  <div className="flex-1 min-w-0 flex flex-col">
+                    <div style={{ marginTop: 'auto', marginBottom: 'auto' }}>
+                      {houseRows<Any>(sec('ai').pillars, [], AI_PILLARS as Any[]).slice(0, 4).map((b: Any, i: number) => (
+                        <div key={i} style={{ padding: '13px 0 14px', borderTop: '1px solid ' + D.rule }}>
+                          <div className="flex items-baseline" style={{ gap: 10 }}>
+                            <span style={{ fontSize: 12, color: t.accent, fontWeight: 700 }}>{'0' + (i + 1)}</span>
+                            <p style={{ fontSize: 15, fontWeight: 600, color: D.ink }}>
+                              <Ed v={b.k || ''} set={v => patch('ai.pillars.' + i + '.k', v)} edit={edit} />
+                            </p>
+                          </div>
+                          <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.muted, marginTop: 5, paddingLeft: 26 }}>
+                            <Ed v={b.v || ''} set={v => patch('ai.pillars.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
-                        <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.muted, marginTop: 6 }}>
-                          <Ed v={b.v || ''} set={v => patch('ai.pillars.' + i + '.v', v)} edit={edit} multiline />
-                        </p>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                  {/* WHAT IS COMING sits BELOW what already runs, never above it, and stays empty
-                      unless someone types into it — a roadmap line on an empty deck is a promise
-                      nobody made. */}
-                  {(String(sec('ai').next || '').trim() || edit) ? (
-                    <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.body, marginTop: 20, paddingLeft: 14, borderLeft: '2px solid ' + t.accent, maxWidth: '84ch' }}>
-                      <span style={{ fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', fontSize: 10.5, color: t.accent, marginRight: 8 }}>Next</span>
-                      <Ed v={String(sec('ai').next || '')} set={v => patch('ai.next', v)} edit={edit} multiline placeholder="What we are building now, if it is worth mentioning on this call\u2026" />
-                    </p>
-                  ) : null}
-                  <p style={{ fontSize: 14, lineHeight: 1.6, color: D.body, marginTop: 20, maxWidth: '84ch' }}>
-                    <Ed v={houseLine(sec('ai').note, AI_NOTE)} set={v => patch('ai.note', v)} edit={edit} multiline />
-                  </p>
-                  <Asks k="ai" />
                 </div>
                 <Foot label="How we run it" dark />
               </div>
