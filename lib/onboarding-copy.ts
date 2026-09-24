@@ -503,7 +503,9 @@ export const AI_PILLARS_RETIRED_MARKS = ['Problems found before a review is', 'A
   // Jon, 2026-09-24: "Lighthouse does a lot more, mention it" — eight capabilities, not five
   'Every stay adds to a guest profile, so we can invite past guests back', 'Review replies are drafted and tracked on every channel',
   // Jon, 2026-09-24: verification, supplies and owner reporting came off this slide
-  'Linen and supply counts, orders and deliveries', 'guest ID verification where the building requires it']
+  'Linen and supply counts, orders and deliveries', 'guest ID verification where the building requires it',
+  // 2026-09-24 audit: "so decisions rest on real data" said the same thing as the note beside it
+  'in one view, so decisions rest on real data']
 export const AI_PILLARS: { k: string; v: string }[] = [
   // Jon, 2026-09-24: highlight listing optimization, guidebook creation, guest profiles (how often they
   // booked, for marketing and a better experience), review management into tasks, PM work, deep cleans,
@@ -515,12 +517,13 @@ export const AI_PILLARS: { k: string; v: string }[] = [
   { k: 'Preventative maintenance', v: 'PM work tracked unit by unit, with photos, so every unit stays on a routine.' },
   { k: 'Deep cleans', v: 'Deep cleans planned and tracked, so no unit goes too long between them.' },
   { k: 'Actionable steps', v: 'Calls, messages and inspections turned into clear next steps the whole team can see.' },
-  { k: 'The whole picture', v: 'Guest feedback and completed work for every unit in one view, so decisions rest on real data.' },
+  { k: 'The whole picture', v: 'Guest feedback and completed work for every unit in one view, so the team always knows what needs attention next.' },
 ]
 export const AI_NOTE: CopyPair = {
   retired: ['What it buys you is speed and consistency: faster answers, problems caught earlier, and a report you can check. Judgement calls — pricing your unit, spending your money, what to tell you — stay with the people you met on slide three.',
-    'The result: listings that improve month over month, and guests who feel looked after from booking to checkout. Decisions about your unit — pricing, spending, what to tell you — stay with your team.'],
-  current: 'The whole picture in one place: guest feedback, completed work and performance for every unit, so decisions rest on real data and preventative maintenance happens on a routine. Decisions about your unit stay with your team.',
+    'The result: listings that improve month over month, and guests who feel looked after from booking to checkout. Decisions about your unit — pricing, spending, what to tell you — stay with your team.',
+    'The whole picture in one place: guest feedback, completed work and performance for every unit, so decisions rest on real data and preventative maintenance happens on a routine. Decisions about your unit stay with your team.'],
+  current: 'One place for what guests say, what has been done in the unit and how the listing performs, so our team acts on real information rather than memory. Decisions about your unit stay with your team.',
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -706,9 +709,10 @@ export const RAMP_ACTIONS_NOTE =
 export const STACK_HEADLINE = 'The system behind your unit'
 export const STACK_SUBTITLE = 'Four platforms, one operation.'
 export const STACK_BODY =
-  'Bookings, pricing, operations and our own AI, connected, so every booking, clean, rate and guest conversation runs through one operation.'
+  'Reservations, pricing, operations and our own AI, connected, so nothing about your unit lives in a gap between systems.'
 export const STACK_BODY_PAIR: CopyPair = {
-  retired: ['Most problems in this business happen in the gaps between systems: booking to housekeeping, housekeeping to owner, guest report to resolution. One connected stack closes them.'],
+  retired: ['Bookings, pricing, operations and our own AI, connected, so every booking, clean, rate and guest conversation runs through one operation.',
+    'Most problems in this business happen in the gaps between systems: booking to housekeeping, housekeeping to owner, guest report to resolution. One connected stack closes them.'],
   current: STACK_BODY,
 }
 
