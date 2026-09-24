@@ -1255,11 +1255,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // The properties slide's galleries, by building (Jon, 2026-09-24: "let me select").
   const [buildingListings, setBuildingListings] = useState<Record<string, { id: string; name: string; pics: string[] }[]>>({})
   const [buildingChosen, setBuildingChosen] = useState<Record<string, string>>({})
+  const [buildingAuto, setBuildingAuto] = useState<Record<string, string>>({})
   const [pickGroup, setPickGroup] = useState<string>('')
   // The properties-slide picker (Jon, 2026-09-24: "see only the property listing photos; once
   // select, save for all properties"). Its own modal, not the general photo picker.
   const [propPick, setPropPick] = useState<{ i: number; b: string; name: string; cur: string } | null>(null)
   const [propMsg, setPropMsg] = useState('')
+  const [stdArm, setStdArm] = useState<'' | 'armed' | 'busy' | 'done' | 'fail'>('')
   const [photoUrl, setPhotoUrl] = useState('')
   // Upload state for the picker. One picker serves every photo slot in the deck, so wiring
   // upload here covers the cover, the team cards, the portal shots and any slide added by hand.
@@ -1603,21 +1605,26 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   useEffect(() => {
     if (!edit) return
     const items: Any[] = Array.isArray((c as Any).experience?.items) ? (c as Any).experience.items : []
-    if (!items.some(it => it && it.b)) return
+    if (!items.length) return
     let dead = false
     fetch('/api/reports/building-photos?all=1').then(r => r.json()).then(j => {
       if (dead) return
       if (j && j.listings) setBuildingListings(j.listings)
       if (j && j.chosen) setBuildingChosen(j.chosen)
+      if (j && j.auto) setBuildingAuto(j.auto)
       const photos: Record<string, string> = (j && j.photos) || {}
       const auto: Record<string, string> = (j && j.auto) || {}
       // Fill a blank tile, and replace an AUTO picture (first Guesty shot) with the one chosen for
       // all decks. A picture somebody uploaded by hand on this deck is never touched.
-      const stale = (it: Any) => it && it.b && photos[it.b] && (!it.pic || (it.pic === auto[it.b] && it.pic !== photos[it.b]))
-      if (!items.some(stale)) return
+      // A deck seeded before every property had a key: borrow the key from the house list by name,
+      // so Monroe's picture is saved under the same key on every deck.
+      const houseB = (it: Any) => it.b || (EXPERIENCE_ITEMS.find(x => x.k === it.k) || {}).b || ''
+      const keyOf = (it: Any) => String(houseB(it) || it.k || '')
+      const stale = (it: Any) => it && keyOf(it) && photos[keyOf(it)] && (!it.pic || (it.pic === auto[keyOf(it)] && it.pic !== photos[keyOf(it)]))
+      if (!items.some(stale) && !items.some(it => !it.b && houseB(it))) return
       mutate(d => {
         const ex = d.experience || (d.experience = {})
-        if (Array.isArray(ex.items)) ex.items = ex.items.map((it: Any) => stale(it) ? { ...it, pic: photos[it.b] } : it)
+        if (Array.isArray(ex.items)) ex.items = ex.items.map((it: Any) => ({ ...it, b: houseB(it) || undefined, ...(stale(it) ? { pic: photos[keyOf(it)] } : {}) }))
       })
     }).catch(() => { /* blank tiles; Change still works */ })
     return () => { dead = true }
@@ -2289,6 +2296,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           <button onClick={copyLink} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {copied ? <Check size={12} /> : <LinkIcon size={12} />} {copied ? 'Copied' : 'Copy share link'}
           </button>
+          {/* LOCK IN AS THE STANDARD (Jon, 2026-09-24). Two clicks, because it rewrites the template
+              every future deck is generated from. Saves this deck first so what is locked in is
+              what is on screen. */}
+          {edit && isOnboarding && (
+            <button onClick={async () => {
+                if (stdArm !== 'armed') { setStdArm('armed'); setTimeout(() => setStdArm(a => a === 'armed' ? '' : a), 6000); return }
+                setStdArm('busy')
+                try {
+                  await save()
+                  const r = await fetch('/api/reports/standard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: initial.id }) })
+                  const d = await r.json().catch(() => ({}))
+                  setStdArm(r.ok && d?.ok ? 'done' : 'fail'); setTimeout(() => setStdArm(''), 3000)
+                } catch { setStdArm('fail'); setTimeout(() => setStdArm(''), 3000) }
+              }}
+              disabled={stdArm === 'busy'} title="Every new onboarding deck will start with this deck's wording, sections and pictures"
+              className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-60"
+              style={stdArm === 'armed' ? { background: t.gold, color: t.ink } : { background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              {stdArm === 'busy' ? <Loader2 size={12} className="animate-spin" /> : <Star size={12} />}
+              {stdArm === 'armed' ? 'Click again to make this the standard' : stdArm === 'busy' ? 'Locking in…' : stdArm === 'done' ? 'This is the standard ✓' : stdArm === 'fail' ? 'Could not lock in' : 'Make this the standard'}
+            </button>
+          )}
           {edit && (
             <button onClick={save} disabled={saving} className="inline-flex items-center justify-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60" style={{ background: t.accent, color: t.card, minWidth: 132 }}>
               {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save changes'}
@@ -2877,7 +2905,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         const groups = buildingListings[propPick.b] || []
         const pics = pickGroup ? (groups.find(g => g.id === pickGroup)?.pics || []) : Array.from(new Set(groups.flatMap(g => g.pics)))
         const choose = async (u: string) => {
-          patch('experience.items.' + propPick.i + '.pic', u); answerChanged()
+          // Clearing the saved choice puts the building's own first photo back, never a blank tile.
+          patch('experience.items.' + propPick.i + '.pic', u || buildingAuto[propPick.b] || ''); answerChanged()
           setPropMsg('Saving for all decks…')
           try {
             const r = await fetch('/api/reports/building-photos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ building: propPick.b, url: u }) })
@@ -3686,7 +3715,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             <img src={String(f.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : null}
                           {edit && (
-                            <button onClick={() => { setPickGroup(''); setPropMsg(''); setPropPick({ i, b: String(f.b || ''), name: String(f.k || 'property'), cur: String(f.pic || '') }) }}
+                            <button onClick={() => { setPickGroup(''); setPropMsg(''); setPropPick({ i, b: String(f.b || f.k || ''), name: String(f.k || 'property'), cur: String(f.pic || '') }) }}
                               className="sb-noprint sb-pick" title="Choose this property's photo"
                               style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
                               <span style={{ position: 'absolute', bottom: 8, right: 8, fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111' }}>Change</span>

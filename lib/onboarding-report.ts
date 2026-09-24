@@ -30,7 +30,9 @@ import {
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, PORTAL_URL, teamSubtitle, WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_NOTE,
   CHANNELS_HEADLINE, SEASON_SUBTITLE, GUESTY_SUBTITLE, STATEMENT_HEADLINE, STATEMENT_SUBTITLE, NOTES_SUBTITLE,
   OVERVIEW_BODY_2, COMPANY_STATS_2,
-  EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, type PropertyItem,
+  EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, type PropertyItem, EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE, EXPERIENCE_INTRO,
+  CRAFT_HEADLINE, CRAFT_SUBTITLE, GUEST_HEADLINE, GUEST_SUBTITLE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER_INTRO,
+  RAMP_ACTIONS_HEADLINE, RAMP_ACTIONS_SUBTITLE, STACK_HEADLINE, STACK_SUBTITLE,
   CRAFT_BODY, CRAFT_ROWS,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY,
   REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, PACER_LOGO,
@@ -107,13 +109,13 @@ export type OnboardingContent = {
   overview: Sec<{ headline: string; subtitle: string; body: string; stats: KV[] }>
   // ── THE PITCH (2026-09-23) ────────────────────────────────────────────────
   /** What we have already run — the wall of buildings, and what running them buys this owner. */
-  experience: Sec<{ headline: string; subtitle: string; body: string; items: PropertyItem[]; proof: KV[]; photo: string | null }>
+  experience: Sec<{ headline: string; subtitle: string; body: string; intro?: string; items: PropertyItem[]; proof: KV[]; photo: string | null }>
   /** What we do to the listing itself: listing, amenities, descriptions, distribution, marketing, ramp. */
   craft: Sec<{ headline: string; subtitle: string; body: string; rows: KV[] }>
   /** The guest journey, booking to review, and the Breezeway record behind it. */
   guestcare: Sec<{ headline: string; subtitle: string; body: string; stages: KV[]; note: string }>
   /** Revenue management and the Pacer partnership — the levers, not just the nightly rate. */
-  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string; partnerHead: string; partner: KV[]; partnerLogo: string }>
+  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string; partnerHead: string; partnerIntro?: string; partner: KV[]; partnerLogo: string }>
   /** The active half of the ramp story: what we DO to shorten it. Sits right after the curve. */
   rampsteps: Sec<{ headline: string; subtitle: string; rows: KV[]; note: string }>
   /** The software stack — Guesty, PriceLabs, Breezeway, Lighthouse, plus Slack and email. */
@@ -287,6 +289,16 @@ export type OnboardingTemplate = {
   statementAlso: KV[]
   checklist: { item: string; who: string; by: string }[]
   asks: Record<string, Ask[]>
+  // ── THE STANDARD (Jon, 2026-09-24: "lock in this format and wording as the new standard, the
+  // 602/902/302 one"). A deck can be made the template: its headlines and subtitles per section,
+  // the two intro lines, and which sections it shows. Blank means "the house default".
+  heads: Record<string, { headline?: string; subtitle?: string }>
+  experienceIntro: string | null
+  revenuePartnerIntro: string | null
+  /** Sections hidden by default on a new deck; null = the house list (ONBOARDING_EXTRA). */
+  omit: string[] | null
+  /** The deck this standard was taken from, for the settings page. */
+  standardFrom: { id: string; title: string; by: string | null; at: string } | null
 }
 
 export const DEFAULT_TEMPLATE: OnboardingTemplate = {
@@ -422,6 +434,11 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   experienceBody: EXPERIENCE_BODY,
   experienceItems: EXPERIENCE_ITEMS,
   propertyPics: {},
+  heads: {},
+  experienceIntro: null,
+  revenuePartnerIntro: null,
+  omit: null,
+  standardFrom: null,
   experienceProof: EXPERIENCE_PROOF,
   craftBody: CRAFT_BODY,
   craftRows: CRAFT_ROWS,
@@ -526,6 +543,11 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     experienceBody: str(stored.experienceBody, D.experienceBody),
     experienceItems: arr(stored.experienceItems, D.experienceItems),
     propertyPics: (stored.propertyPics && typeof stored.propertyPics === 'object') ? stored.propertyPics as Record<string, string> : {},
+    heads: (stored.heads && typeof stored.heads === 'object') ? stored.heads as any : {},
+    experienceIntro: typeof stored.experienceIntro === 'string' ? stored.experienceIntro : null,
+    revenuePartnerIntro: typeof stored.revenuePartnerIntro === 'string' ? stored.revenuePartnerIntro : null,
+    omit: Array.isArray(stored.omit) ? stored.omit.map(String) : null,
+    standardFrom: (stored.standardFrom && typeof stored.standardFrom === 'object') ? stored.standardFrom as any : null,
     experienceProof: arr(stored.experienceProof, D.experienceProof),
     craftBody: str(stored.craftBody, D.craftBody),
     craftRows: arr(stored.craftRows, D.craftRows),
@@ -666,6 +688,11 @@ export type BuildInput = {
  * report's own content JSON and is editable in place afterwards.
  */
 export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): OnboardingContent {
+  // A headline or subtitle locked in as the standard wins over the house default.
+  const H = (k: string, headline: string, subtitle: string) => ({
+    headline: typeof t.heads?.[k]?.headline === 'string' ? String(t.heads[k].headline) : headline,
+    subtitle: typeof t.heads?.[k]?.subtitle === 'string' ? String(t.heads[k].subtitle) : subtitle,
+  })
   // Questions carry the live numbers for the same reason the rules do: 'keep $300, or change
   // it?' has to ask about the limit this owner is actually on.
   const asks = (k: string): Ask[] => (t.asks[k] || []).map(a => ({ ...a, a: '', q: subMoney(a.q) }))
@@ -749,21 +776,19 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     },
     // 1 ── THE GREETING. A picture of their unit, their name, two sentences.
     welcome: {
-      headline: 'Welcome to Stay Hospitality',
+      headline: H('welcome', 'Welcome to Stay Hospitality', '').headline,
       subtitle: i.ownerName ? i.ownerName : i.scopeLabel,
       body: t.welcomeBody,
       photo: pic(0),
     },
     // 2 ── WHAT WE ARE GOING TO COVER.
     agenda: {
-      headline: 'What we will cover',
-      subtitle: 'In this order.',
+      ...H('agenda', 'What we will cover', 'In this order.'),
       items: t.agenda,
     },
     // 4 ── WHO STAY HOSPITALITY IS. The company slide, with the numbers on it.
     overview: {
-      headline: 'Overview of Stay Hospitality',
-      subtitle: 'What we do, and what we do ourselves.',
+      ...H('overview', 'Overview of Stay Hospitality', 'What we do, and what we do ourselves.'),
       body: t.overviewBody,
       stats: t.companyStats,
       photo: pic(4),
@@ -772,32 +797,30 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // the meeting naturally goes: who we are, what we have already run, what we do to the listing,
     // how a stay is run, how the rate is set, and what the whole thing runs on.
     experience: {
-      headline: 'What we already run',
-      subtitle: 'Not a portfolio of units. A portfolio of buildings.',
+      ...H('experience', EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE),
       body: t.experienceBody,
+      intro: t.experienceIntro == null ? EXPERIENCE_INTRO : t.experienceIntro,
       // The picture chosen once in the editor wins for every deck; the rest are filled from Guesty
       // by the generate route.
-      items: t.experienceItems.map(it => (it.b && t.propertyPics[it.b]) ? { ...it, pic: t.propertyPics[it.b] } : it),
+      items: t.experienceItems.map(it => { const key = it.b || it.k; return t.propertyPics[key] ? { ...it, pic: t.propertyPics[key] } : it }),
       proof: t.experienceProof,
       photo: pic(5),
     },
     craft: {
-      headline: 'What we do to the listing itself',
-      subtitle: 'Before we talk about rate, we fix what the rate is being charged for.',
+      ...H('craft', CRAFT_HEADLINE, CRAFT_SUBTITLE),
       body: t.craftBody,
       rows: t.craftRows,
     },
     guestcare: {
-      headline: 'How a stay is run',
-      subtitle: 'Six touch points between the booking and the review.',
+      ...H('guestcare', GUEST_HEADLINE, GUEST_SUBTITLE),
       body: t.guestBody,
       stages: t.guestStages,
       note: t.guestBreezeway,
     },
     revenue: {
-      headline: 'How your rate gets set',
-      subtitle: 'A dedicated revenue manager, not a switch somebody flipped once.',
+      ...H('revenue', REVENUE_HEADLINE, REVENUE_SUBTITLE),
       body: t.revenueBody,
+      partnerIntro: t.revenuePartnerIntro == null ? REVENUE_PARTNER_INTRO : t.revenuePartnerIntro,
       rows: t.revenueLevers,
       note: t.revenueNote,
       partnerHead: t.revenuePartnerHead,
@@ -805,14 +828,12 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       partnerLogo: t.revenuePartnerLogo,
     },
     rampsteps: {
-      headline: 'How we shorten it',
-      subtitle: 'The curve is normal. Sitting still through it is not.',
+      ...H('rampsteps', RAMP_ACTIONS_HEADLINE, RAMP_ACTIONS_SUBTITLE),
       rows: t.rampActions,
       note: t.rampActionsNote,
     },
     stack: {
-      headline: 'The system behind your unit',
-      subtitle: 'Four platforms, one operation.',
+      ...H('stack', STACK_HEADLINE, STACK_SUBTITLE),
       body: t.stackBody,
       tools: t.stackTools,
       rows: t.stackChannels,
@@ -842,8 +863,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // 6 ── REVIEW THE LISTING. The photos a guest meets, the live links, and the words —
     // which are the part an owner can actually improve in the room.
     listings: {
-      headline: 'Your listing, the way a guest meets it',
-      subtitle: 'Open on every channel it sells on. The words are editable here, as we read them.',
+      ...H('listings', 'Your listing, the way a guest meets it', 'Open on every channel it sells on. The words are editable here, as we read them.'),
       items: i.cards,
       catalog: i.amenityCatalog || [],
       asks: asks('listings'),
@@ -865,8 +885,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       asks: asks('ramp'),
     },
     season: {
-      headline: 'South Florida pays in winter',
-      subtitle: SEASON_SUBTITLE.current,
+      ...H('season', 'South Florida pays in winter', SEASON_SUBTITLE.current),
       body: t.seasonBody,
       months: SEASON_SHAPE,
       note: [benchmarkLine(i.market, i.bedrooms), t.seasonNote].filter(Boolean).join(' '),
@@ -886,16 +905,14 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       }
     })(),
     comms: {
-      headline: 'How guests reach us, and how you reach us',
-      subtitle: 'Guest messaging runs through Guesty and does not touch you.',
+      ...H('comms', 'How guests reach us, and how you reach us', 'Guest messaging runs through Guesty and does not touch you.'),
       body: t.commsBody,
       rows: t.commsRows,
       asks: asks('comms'),
     },
     // 6 ── THE OWNER PORTAL. One address for the house, this owner's own login.
     guesty: {
-      headline: 'Your Guesty owner portal',
-      subtitle: GUESTY_SUBTITLE.current,
+      ...H('guesty', 'Your Guesty owner portal', GUESTY_SUBTITLE.current),
       body: t.guestyBody,
       items: t.portalItems,
       portalUrl: t.portalUrl,
@@ -912,16 +929,14 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       photo: pic(7),
     },
     tech: {
-      headline: 'The technology in your unit',
-      subtitle: 'Installed once, so the unit can be run without anyone standing in it.',
+      ...H('tech', 'The technology in your property', 'Installed once, so it can be run without anyone standing in it.'),
       body: 'Every unit we manage runs on the same small stack. It is what lets us give a guest a working door code at 11pm, cool the unit before they land, and know about a problem before they message us about it.',
       rows: t.techRows,
       asks: asks('tech'),
       photo: pic(5),
     },
     money: {
-      headline: 'How maintenance and billables actually work',
-      subtitle: 'Including the rules that cost us money.',
+      ...H('money', 'How maintenance and billables actually work', 'Including the rules that cost us money.'),
       body: t.moneyBody,
       rules,
       examples: [
@@ -991,8 +1006,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // 8 ── OTHER NOTES. Whatever came up that has no home above, typed live; plus anything
     // still unanswered, so an onboarding is never "done" while questions are open.
     notes: {
-      headline: 'Other notes',
-      subtitle: NOTES_SUBTITLE.current,
+      ...H('notes', 'Other notes', NOTES_SUBTITLE.current),
       body: '',
     },
     photoPool: pool,
@@ -1003,7 +1017,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     // photos 7. Guesty owner statements 8. Other notes"). Everything else we had built is kept
     // in the document but starts hidden, so a deck is exactly those eight out of the box and
     // nothing is lost for the owner who does want the ramp or the season talked through.
-    omit: ONBOARDING_EXTRA.slice(),
+    omit: (t.omit || ONBOARDING_EXTRA).slice(),
   }
 }
 

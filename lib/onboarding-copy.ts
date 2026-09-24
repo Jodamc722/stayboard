@@ -598,7 +598,7 @@ export const EXPERIENCE_ITEMS: PropertyItem[] = [
   { k: 'The Elser Hotel & Residences', v: 'Downtown Miami · hotel & residences', b: 'Elser' },
   { k: 'Arya Hotel & Suites', v: 'Miami · hotel', b: 'Arya' },
   { k: 'The Garden Hotel & Resort', v: 'Fort Lauderdale · resort', b: 'Botanica' },
-  { k: 'The Monroe Hotel Miami', v: 'Miami · coming soon' },
+  { k: 'The Monroe Hotel Miami', v: 'Miami · coming soon', b: 'Monroe' },   // no listing yet; the key is what the uploaded picture is saved under
   { k: '17West', v: 'Fort Lauderdale · residences', b: '17WEST' },
   { k: 'District 225', v: 'Downtown Miami · residences', b: 'District 225' },
   { k: 'Nomad Residences', v: 'Miami · residences', b: 'Nomad' },
