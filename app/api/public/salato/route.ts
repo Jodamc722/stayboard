@@ -16,6 +16,38 @@ function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Ame
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
+async function verifiedMap(db: any, ids: string[]): Promise<Record<string, string>> {
+  const vmap: Record<string, string> = {}
+  for (let i = 0; i < ids.length; i += 150) {
+    const keys = ids.slice(i, i + 150).map(id => 'sv:' + id)
+    const { data: sv } = await db.from('app_settings').select('key,value').in('key', keys)
+    for (const rowv of (sv || []) as any[]) { const id = String(rowv.key).slice(3); if (rowv.value) { try { const j = JSON.parse(rowv.value); if (j && j.status === 'verified') vmap[id] = str(j.signedAt) } catch {} } }
+  }
+  return vmap
+}
+
+async function pastStays(db: any, ids: string[], match: Record<string, string>, today: string) {
+  const all: any[] = []
+  for (let from = 0; from < 20000; from += 1000) {
+    const { data, error } = await db.from('guesty_reservations')
+      .select('id,listing_id,check_in,check_out,nights,status,source,g1:raw->>guestsCount,g2:raw->>numberOfGuests,rawSource:raw->>source')
+      .in('listing_id', ids).lte('check_out', today).order('check_out', { ascending: false }).order('id').range(from, from + 999)
+    if (error) throw new Error(error.message)
+    all.push(...(data || []))
+    if (!data || data.length < 1000) break
+  }
+  const rows = all.filter(r => LIVE.test(str(r.status))).map(r => {
+    const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
+    const nights = r.nights ?? (ci && co ? Math.round((Date.parse(co + 'T12:00:00Z') - Date.parse(ci + 'T12:00:00Z')) / 864e5) : null)
+    const gRaw = r.g1 ?? r.g2
+    return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: ci, checkOut: co, nights, oneNight: underMinimum(nights), checkInTime: null, checkOutTime: null, guests: gRaw == null || gRaw === '' ? null : Number(gRaw), source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
+  })
+  const vmap = await verifiedMap(db, rows.map(r => r.id))
+  for (const r of rows) if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null }
+  const verified = rows.filter(r => r.verified).length
+  return { ok: true, today, past: rows, pastCount: rows.length, pastVerified: verified }
+}
+
 export async function GET(req: NextRequest) {
   // GATED (2026-09-03). This feed is fifteen days of unit-level occupancy — which units are empty
   // tonight — and it answered anyone who had the URL. Same team share password + cookie as the
@@ -31,7 +63,10 @@ export async function GET(req: NextRequest) {
     // WHICH units are Salato is an editable set (lib/salato-units) — the team adds new buildings
     // at /salato → Units without a code change; unset = the old name rule.
     const { match, ids } = await salatoListings(db)
-    if (!ids.length) return NextResponse.json({ ok: true, today, arrivals: [], departures: [], active: [] })
+    if (!ids.length) return NextResponse.json({ ok: true, today, arrivals: [], departures: [], active: [], past: [] })
+    // PAST GUESTS (Jon, 2026-09-24): ?past=1 returns every stay that has checked out (or checks out
+    // today), newest first, with its verification status — so the desk can see who was never verified.
+    if (new URL(req.url).searchParams.get('past')) return NextResponse.json(await pastStays(db, ids, match, today))
     // Only the raw fields this board reads — the full `raw` for 600 bookings was megabytes on a phone.
     const { data: res } = await db.from('guesty_reservations')
       .select('id,listing_id,check_in,check_out,nights,status,source,ciLocal:raw->>checkInDateLocalized,coLocal:raw->>checkOutDateLocalized,planned:raw->>plannedArrival,g1:raw->>guestsCount,g2:raw->>numberOfGuests,rawSource:raw->>source')
