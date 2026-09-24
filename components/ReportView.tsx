@@ -4394,20 +4394,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <Slide nav="How we shorten it" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <Title k="rampsteps" />
-                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 22 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '16px 30px' }}>
+                {/* Three columns, not two (2026-09-24): six steps in two columns ran past the foot
+                    and the last line of each bottom card was cut off on the slide. */}
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 20 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '14px 26px' }}>
                     {(sec('rampsteps').rows || []).map((f: Any, i: number) => (
-                      <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 11 }}>
-                        <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                      <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 10 }}>
+                        <p style={{ fontSize: 14, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
                           <Ed v={f.k || ''} set={v => patch('rampsteps.rows.' + i + '.k', v)} edit={edit} multiline />
                         </p>
-                        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: t.body, marginTop: 4 }}>
+                        <p style={{ fontSize: 13, lineHeight: 1.45, color: t.body, marginTop: 4 }}>
                           <Ed v={f.v || ''} set={v => patch('rampsteps.rows.' + i + '.v', v)} edit={edit} multiline />
                         </p>
                       </div>
                     ))}
                   </div>
-                  <p style={{ marginTop: 24, paddingLeft: 16, borderLeft: '2px solid ' + t.accent, fontSize: 14, lineHeight: 1.6, color: t.body, maxWidth: '76ch' }}>
+                  <p style={{ marginTop: 18, paddingLeft: 16, borderLeft: '2px solid ' + t.accent, fontSize: 13.5, lineHeight: 1.55, color: t.body, maxWidth: '96ch' }}>
                     <Ed v={sec('rampsteps').note || ''} set={v => patch('rampsteps.note', v)} edit={edit} multiline />
                   </p>
                 </div>
