@@ -499,20 +499,23 @@ export const AI_SUBTITLE: CopyPair = {
 export const AI_PILLARS_RETIRED_MARKS = ['Problems found before a review is', 'A teammate on every message', 'This report, generated',
   'Welcome calls, mid-stay check-ins, review requests', 'Guest calls are matched to the booking, summarized',
   // Jon, 2026-09-24: "also mention helping with review management, turning guest feedback into tasks"
-  'Every message and review is read for how the guest feels. Review replies are drafted']
+  'Every message and review is read for how the guest feels. Review replies are drafted',
+  // Jon, 2026-09-24: "Lighthouse does a lot more, mention it" — eight capabilities, not five
+  'Every stay adds to a guest profile, so we can invite past guests back', 'Review replies are drafted and tracked on every channel']
 export const AI_PILLARS: { k: string; v: string }[] = [
-  { k: 'Listing optimization', v: 'Titles, descriptions, photos and amenities are measured against what guests search for and what they praise in reviews, so every listing keeps getting sharper.' },
-  { k: 'Reviews & guest feedback', v: 'Review replies are drafted and tracked on every channel. Guest feedback is read for sentiment and organized into tasks on the right unit, so what guests tell us turns into action.' },
-  { k: 'Calls into action', v: 'Calls are recorded and turned into clear next steps the whole team can see, so every conversation moves something forward.' },
-  { k: 'Guest profiles', v: 'Every stay adds to a guest profile, so we can invite past guests back through direct-booking campaigns.' },
-  // Jon, 2026-09-24: "Nothing is scheduled on its own, but it allows us to get visibility and make
-  // operational decisions based on real guest sentiment feedback and what's been completed in the
-  // unit … routinely doing preventative maintenance inspections … manage and oversee the entire picture."
-  { k: 'The whole picture', v: 'Guest feedback and every job completed in the unit, in one view. Operational decisions rest on real sentiment, and preventative maintenance inspections happen on a routine.' },
+  { k: 'Listing optimization', v: 'Titles, photos and amenities measured against what guests search for and praise, so every listing keeps getting sharper.' },
+  { k: 'Reviews & guest feedback', v: 'Review replies drafted and tracked. Feedback read for sentiment and organized into tasks on the right unit.' },
+  { k: 'Calls into action', v: 'Calls recorded and turned into next steps the whole team can see.' },
+  { k: 'Guest profiles', v: 'Every stay builds a profile for direct-booking campaigns that bring past guests back.' },
+  { k: 'Maintenance & inspections', v: 'Work orders, preventative maintenance and inspections tracked unit by unit, with photos.' },
+  { k: 'Supplies & inventory', v: 'Linen and supply counts, orders and deliveries, so every unit is stocked before guests arrive.' },
+  { k: 'Guidebooks & verification', v: 'A digital guidebook for every unit, and guest ID verification where the building requires it.' },
+  { k: 'Owner reporting', v: 'Your monthly report built from real bookings, reviews and work orders, with statements checked line by line.' },
 ]
 export const AI_NOTE: CopyPair = {
-  retired: ['What it buys you is speed and consistency: faster answers, problems caught earlier, and a report you can check. Judgement calls — pricing your unit, spending your money, what to tell you — stay with the people you met on slide three.'],
-  current: 'The result: listings that improve month over month, and guests who feel looked after from booking to checkout. Decisions about your unit — pricing, spending, what to tell you — stay with your team.',
+  retired: ['What it buys you is speed and consistency: faster answers, problems caught earlier, and a report you can check. Judgement calls — pricing your unit, spending your money, what to tell you — stay with the people you met on slide three.',
+    'The result: listings that improve month over month, and guests who feel looked after from booking to checkout. Decisions about your unit — pricing, spending, what to tell you — stay with your team.'],
+  current: 'The whole picture in one place: guest feedback, completed work and performance for every unit, so decisions rest on real data and preventative maintenance happens on a routine. Decisions about your unit stay with your team.',
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -709,9 +712,10 @@ export const STACK_BODY_PAIR: CopyPair = {
 // cannot fetch vendor artwork and a hotlinked logo that 404s on an owner's screen is worse than a
 // clean letter. Paste a URL, or upload the file, and the layout takes it without changing.
 // Jon, 2026-09-24: Lighthouse is about improving, not about catching what was missed.
-const LIGHTHOUSE_LINE_CURRENT = 'Built in-house for this business. It optimizes listings, helps manage reviews, turns guest feedback and recorded calls into tasks the team can see, builds guest profiles for direct-booking campaigns, and shows the whole picture of every unit.'
+const LIGHTHOUSE_LINE_CURRENT = 'Built in-house for this business. It optimizes listings, helps manage reviews, turns guest feedback and calls into tasks, builds guest profiles, tracks maintenance, inspections and supplies, and shows the whole picture of every unit.'
 export const LIGHTHOUSE_LINE: CopyPair = {
-  retired: ['Built in-house for this business. It optimizes listings, reads guest sentiment, turns recorded calls into next steps the team can see, builds guest profiles for direct-booking campaigns, and shows the whole picture of every unit in one place.',
+  retired: ['Built in-house for this business. It optimizes listings, helps manage reviews, turns guest feedback and recorded calls into tasks the team can see, builds guest profiles for direct-booking campaigns, and shows the whole picture of every unit.',
+    'Built in-house for this business. It optimizes listings, reads guest sentiment, turns recorded calls into next steps the team can see, builds guest profiles for direct-booking campaigns, and shows the whole picture of every unit in one place.',
     'Built in-house for this business. It optimizes listings, manages guest sentiment, runs automated triggers from welcome calls to deep cleans, and turns every guest call into next steps.',
     'Built from the ground up for this business. It optimizes listings, drafts responses to guest reviews, reads guest messages for sentiment, schedules preventative maintenance and deep cleans, and watches every day for the thing that would otherwise be missed.'],
   current: LIGHTHOUSE_LINE_CURRENT,
