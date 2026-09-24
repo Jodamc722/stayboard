@@ -1124,11 +1124,32 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
  * service can be blocked, slow, or simply gone, and four broken-image glyphs on an owner's screen
  * is worse than four clean letters. `onError` swaps back silently, so the row always reads as a row.
  */
-function StackMark({ logo, mono, name, accent, card, border, wide }: {
+function StackMark({ logo, mono, name, accent, card, border, wide, bare, lockup, height }: {
   logo?: string; mono?: string; name?: string; accent: string; card: string; border: string; wide?: boolean
+  bare?: boolean; lockup?: boolean; height?: number
 }) {
   const [failed, setFailed] = useState(false)
   const src = String(logo || '').trim()
+  // JUST THE LOGO (Jon, 2026-09-24: "can we just use the logo, not the name of the app or tech").
+  // No tile, no border, one height for every mark, so the column reads as a row of logos. An app
+  // icon (Lighthouse) is set as a lockup: the icon beside its name in the brand's own colour,
+  // which is how the mark is drawn, not a caption beside a logo.
+  if (bare) {
+    const h = height || 30
+    if (src && !failed && lockup) return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, height: h + 4 }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt="" onError={() => setFailed(true)} style={{ width: h, height: h, borderRadius: Math.round(h * 0.24) }} />
+        <span style={{ fontSize: Math.round(h * 0.72), fontWeight: 700, letterSpacing: '-0.02em', color: '#4c4fd3', lineHeight: 1 }}>{name}</span>
+      </span>
+    )
+    if (src && !failed) return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={src} alt={String(name || '')} onError={() => setFailed(true)}
+        style={{ height: h, width: 'auto', maxWidth: 160, objectFit: 'contain', display: 'block' }} />
+    )
+    return <span style={{ fontSize: Math.round(h * 0.7), fontWeight: 700, color: accent, lineHeight: 1 }}>{name || mono}</span>
+  }
   // A WORDMARK STANDS IN FOR THE NAME (Jon, 2026-09-24: "just use the logo"), so it gets a tile wide
   // enough to be read at a glance rather than squeezed into the square an icon needs.
   if (src && !failed && wide) {
@@ -3082,7 +3103,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           const open: { label: string; q: string; k: string; i: number }[] = []
           // The communication slide no longer shows its questions (Jon, 2026-09-21), so they
           // neither count nor appear as open on the last slide.
-          const asksShown = (k: string) => !hid(k) && k !== 'comms'
+          const asksShown = (k: string) => !hid(k) && k !== 'comms' && k !== 'ai'  // ai: removed 2026-09-24
           for (const x of askSecs) {
             if (!asksShown(x.k)) continue
             const as: Any[] = Array.isArray(sec(x.k).asks) ? sec(x.k).asks : []
@@ -3159,7 +3180,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {left}
               </div>
               <div className="flex-1 min-w-0 min-h-0 flex flex-col onb-scroll">
-                <div style={{ marginTop: 'auto', marginBottom: 'auto', width: '100%' }}>{right}</div>
+                {/* Top-aligned (2026-09-24 audit): centred, the list floated at a different height on
+                    every slide and never lined up with the headline beside it. */}
+                <div style={{ width: '100%', paddingTop: 2 }}>{right}</div>
               </div>
             </div>
           )
@@ -3559,9 +3582,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         </div>
                       ))}
                     </div>
-                    <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px 18px' }}>
                       {(sec('experience').proof || []).map((f: Any, i: number) => (
-                        <div key={i} style={{ borderLeft: '2px solid ' + t.accent, paddingLeft: 14 }}>
+                        <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 9 }}>
                           <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
                             <Ed v={f.k || ''} set={v => patch('experience.proof.' + i + '.k', v)} edit={edit} multiline />
                           </p>
@@ -3595,7 +3618,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             <span style={{ fontSize: 11.5, fontWeight: 700, color: t.accent }}>{String(i + 1).padStart(2, '0')}</span>
                             <Ed v={f.k || ''} set={v => patch('craft.rows.' + i + '.k', v)} edit={edit} multiline />
                           </p>
-                          <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.body, marginTop: 4 }}>
+                          <p style={{ fontSize: 13, lineHeight: 1.55, color: t.body, marginTop: 5 }}>
                             <Ed v={f.v || ''} set={v => patch('craft.rows.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
@@ -3689,12 +3712,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   right={
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '16px 26px' }}>
                       {(sec('guestcare').stages || []).map((f: Any, i: number) => (
-                        <div key={i} style={{ borderLeft: '2px solid ' + t.accent, paddingLeft: 13 }}>
-                          <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: t.accent, textTransform: 'uppercase' }}>Step {i + 1}</p>
-                          <p style={{ fontSize: 14, fontWeight: 600, color: t.ink, marginTop: 3, lineHeight: 1.3 }}>
+                        <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 10 }}>
+                          <p className="flex items-baseline" style={{ gap: 8, fontSize: 14, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                            <span style={{ fontSize: 11.5, fontWeight: 700, color: t.accent }}>{String(i + 1).padStart(2, '0')}</span>
                             <Ed v={f.k || ''} set={v => patch('guestcare.stages.' + i + '.k', v)} edit={edit} multiline />
                           </p>
-                          <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.body, marginTop: 4 }}>
+                          <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, marginTop: 5 }}>
                             <Ed v={f.v || ''} set={v => patch('guestcare.stages.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
@@ -3729,7 +3752,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           <p style={{ fontSize: 14, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
                             <Ed v={f.k || ''} set={v => patch('revenue.rows.' + i + '.k', v)} edit={edit} multiline />
                           </p>
-                          <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.body, marginTop: 4 }}>
+                          <p style={{ fontSize: 13, lineHeight: 1.55, color: t.body, marginTop: 5 }}>
                             <Ed v={f.v || ''} set={v => patch('revenue.rows.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
@@ -3751,7 +3774,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <div className="flex-1 min-h-0 flex" style={{ gap: 44, paddingBottom: 18 }}>
                   <div className="flex flex-col min-h-0" style={{ width: 340, flexShrink: 0 }}>
                     <span style={{ position: 'relative', alignSelf: 'flex-start' }}>
-                      <StackMark logo={houseLogo(sec('revenue').partnerLogo, 'pacer')} mono="P" name="Pacer" accent={t.accent} card={t.card} border={t.cardBorder} wide />
+                      <StackMark logo={houseLogo(sec('revenue').partnerLogo, 'pacer')} mono="P" name="Pacer" accent={t.accent} card={t.card} border={t.cardBorder} bare height={34} />
                       {edit ? (
                         <button onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Pacer logo', cur: String(sec('revenue').partnerLogo || ''), set: (u: string) => patch('revenue.partnerLogo', u) }) }}
                           className="sb-noprint" title="Change the Pacer logo"
@@ -3803,16 +3826,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <Split k="stack"
                   left={leftBody(houseLine(sec('stack').body, STACK_BODY_PAIR), v => patch('stack.body', v))}
                   right={
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
                       {(sec('stack').tools || []).map((f: Any, i: number) => {
                         const logo = houseLogo(f.logo, f.name)
                         const wordmark = WORDMARK_LOGOS.indexOf(logo) >= 0
                         const nm = String(f.name || '').toLowerCase()
                         const line = nm === 'lighthouse' ? houseLine(f.v, LIGHTHOUSE_LINE) : nm === 'breezeway' ? houseLine(f.v, BREEZEWAY_LINE) : (f.v || '')
                         return (
-                          <div key={i} className="flex" style={{ gap: 18, alignItems: 'center' }}>
-                            <span style={{ position: 'relative', flex: '0 0 150px', display: 'inline-flex', justifyContent: 'flex-start' }}>
-                              <StackMark logo={logo} mono={f.mono} name={f.name} accent={t.accent} card={t.card} border={t.cardBorder} wide={wordmark} />
+                          <div key={i} className="flex" style={{ gap: 28, alignItems: 'center', padding: '14px 0', borderTop: '1px solid ' + t.cardBorder }}>
+                            <span style={{ position: 'relative', flex: '0 0 180px', display: 'flex', alignItems: 'center', height: 44 }}>
+                              <StackMark logo={logo} mono={f.mono} name={f.name} accent={t.accent} card={t.card} border={t.cardBorder} bare lockup={!wordmark} height={wordmark ? 34 : 32} />
                               {edit ? (
                                 <button onClick={() => { setPhotoUrl(''); setPhotoPick({ title: String(f.name || 'Logo') + ' logo', cur: String(f.logo || ''), set: (u: string) => patch('stack.tools.' + i + '.logo', u) }) }}
                                   className="sb-noprint" title={'Change the ' + String(f.name || '') + ' logo'}
@@ -3820,14 +3843,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                               ) : null}
                             </span>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: 14.5, fontWeight: 600, color: t.ink, lineHeight: 1.25 }}>
-                                {/* A wordmark already says the name; print it only beside an icon. */}
-                                {!wordmark || edit ? <span style={{ marginRight: 9 }}><Ed v={f.name || ''} set={v => patch('stack.tools.' + i + '.name', v)} edit={edit} /></span> : null}
-                                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.accent }}>
-                                  <Ed v={f.role || ''} set={v => patch('stack.tools.' + i + '.role', v)} edit={edit} />
-                                </span>
+                              {/* The logo is the name (Jon, 2026-09-24). Only the editor shows the name field. */}
+                              {edit ? <p style={{ fontSize: 12, color: t.muted }}><Ed v={f.name || ''} set={v => patch('stack.tools.' + i + '.name', v)} edit={edit} /></p> : null}
+                              <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.muted }}>
+                                <Ed v={f.role || ''} set={v => patch('stack.tools.' + i + '.role', v)} edit={edit} />
                               </p>
-                              <p style={{ fontSize: 13, lineHeight: 1.55, color: t.body, marginTop: 4 }}>
+                              <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, marginTop: 3 }}>
                                 <Ed v={line} set={v => patch('stack.tools.' + i + '.v', v)} edit={edit} multiline />
                               </p>
                             </div>
@@ -4479,10 +4500,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         </p>
                       </div>
                     ))}
+                    {/* The closing line fills the grid's last cell (2026-09-24 audit), rather than a
+                        strip under a row with a hole in it. */}
+                    <div style={{ borderTop: '2px solid ' + t.accent, paddingTop: 10 }}>
+                      <p style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: t.ink }}>
+                        <Ed v={sec('rampsteps').note || ''} set={v => patch('rampsteps.note', v)} edit={edit} multiline />
+                      </p>
+                    </div>
                   </div>
-                  <p style={{ marginTop: 18, paddingLeft: 16, borderLeft: '2px solid ' + t.accent, fontSize: 13.5, lineHeight: 1.55, color: t.body, maxWidth: '96ch' }}>
-                    <Ed v={sec('rampsteps').note || ''} set={v => patch('rampsteps.note', v)} edit={edit} multiline />
-                  </p>
                 </div>
                 <Foot label="How we shorten it" />
               </div>
