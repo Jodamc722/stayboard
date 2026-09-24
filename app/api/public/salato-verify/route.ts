@@ -45,7 +45,7 @@ function fmtDay(d?: string): string { if (!d) return '—'; const x = new Date(d
 function validEmails(s: string): string[] { const out: string[] = []; const seen: Record<string, boolean> = {}; const parts = String(s || '').split(/[,;\s]+/); for (let i = 0; i < parts.length; i++) { const e = parts[i].trim(); if (!e || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) continue; const k = e.toLowerCase(); if (seen[k]) continue; seen[k] = true; out.push(e) } return out }
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 30
+export const maxDuration = 60
 
 const BUCKET = 'salato-verify'
 const RES_NOTES_FIELD = '695f16830cb54c001400b3ff' // Guesty reservation "reservation_notes" custom field
@@ -185,6 +185,14 @@ export async function POST(req: NextRequest) {
       signedAt: new Date().toISOString(),
       pushedToGuesty: false,
     }
+    // SAVE FIRST (2026-09-24 audit). The record used to be written only after the Guesty note and
+    // the email with attachments; a slow Gmail or Guesty call timed the request out and the guest's
+    // verification was lost even though the photos were stored. Now the stay is verified the moment
+    // the photos land, and the note and email follow.
+    {
+      const { error: e0 } = await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(record), updated_at: new Date().toISOString() })
+      if (e0) return NextResponse.json({ ok: false, error: 'Could not save your verification — please tap Submit again.' }, { status: 500 })
+    }
 
     // Push to the Guesty reservation: mark in-person verification complete + a link the team can
     // open (share-password gated) to view the ID, selfie, and signature. Best-effort — never blocks
@@ -272,8 +280,8 @@ export async function POST(req: NextRequest) {
       }
     } catch (e: any) { record.emailError = String(e?.message || e) }
 
-    const { error } = await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(record), updated_at: new Date().toISOString() })
-    if (error) return NextResponse.json({ ok: false, error: String(error.message || error).slice(0, 160) }, { status: 500 })
+    // Second write only adds what happened to the note and the email; the stay is already verified.
+    try { await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(record), updated_at: new Date().toISOString() }) } catch {}
 
     return NextResponse.json({ ok: true, pushedToGuesty: record.pushedToGuesty, emailedTo: record.emailedTo || [] })
   } catch (e: any) {
