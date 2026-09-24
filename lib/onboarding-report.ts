@@ -902,7 +902,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       pillars: AI_PILLARS,
       note: AI_NOTE.current,
       next: '',
-      asks: asks('ai'),
+      asks: [], // the on-the-call question left this slide (Jon, 2026-09-24)
       photo: pic(7),
     },
     tech: {
