@@ -9,6 +9,7 @@
 //
 // Four tools, one idea: the app's own behaviour is a subject she can look up rather than deduce.
 import 'server-only'
+import { outcomeStats } from './outcomes'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
 import { lc, has, safe, clampLimit, clampDays } from './ctx'
@@ -103,8 +104,9 @@ export async function myActionsOn(day: string): Promise<any> {
   {
     const read = (cols: string) => pageRows((a, b) => db.from('eve_agent_log').select(cols)
       .gte('at', start).lt('at', end).order('at').order('id').range(a, b), 3)
-    let r = await read('id,at,action,rung,allowed,mode,reason,summary,ref,by,actor,undo,undone_at')
-    // Migration 102 not run: no undo columns. Read the log without them rather than read nothing.
+    let r = await read('id,at,action,rung,allowed,mode,reason,summary,ref,by,actor,undo,undone_at,outcome,outcome_note')
+    // Migration 108 not run: no outcome columns. Then 102: no undo columns. Read what exists.
+    if (r.truncated && !r.rows.length) r = await read('id,at,action,rung,allowed,mode,reason,summary,ref,by,actor,undo,undone_at')
     if (r.truncated && !r.rows.length) r = await read('id,at,action,rung,allowed,mode,reason,summary,ref,by,actor')
     logRows = r.rows
     logTruncated = r.truncated
@@ -116,6 +118,8 @@ export async function myActionsOn(day: string): Promise<any> {
     why: r.reason ? String(r.reason).slice(0, 160) : undefined, ref: r.ref || undefined,
     undo_available: !!r.undo && !r.undone_at && now - Date.parse(r.at) < 24 * 3600_000,
     undone_at: r.undone_at || undefined,
+    // What became of it, when we can know (lib/eve/outcomes.ts). Absent means not checkable.
+    outcome: r.outcome || undefined, outcome_note: r.outcome_note || undefined,
   }))
 
   // 2. What she filed for a person: asks, proposals, drafts — and where each one stands now.
@@ -218,6 +222,13 @@ export const SYSTEM_TOOLS: EveTool[] = [
       const d = String(input?.date || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.date) : ctx.today
       return myActionsOn(d)
     },
+  },
+
+  {
+    name: 'my_outcomes',
+    description: 'WHAT BECAME OF WHAT YOU DID — the answer to "did that get done?", "how many of the tasks you raised actually got finished?", "which of your loops are still open?". Every task you created, assigned, noted or cancelled and every guest reply you sent over the last N days, each checked against the system it touched: done / running / open / OVERDUE / gone / reopened, replied / SILENT. Returns the done-rate and the open loops — overdue tasks nobody finished, guests who never wrote back, cancellations somebody reversed. Call this before claiming anything you did worked, and use it in a recap: an action is not a result. Param: days (default 7).',
+    input_schema: obj({ days: S.num }),
+    run: async (input) => outcomeStats(Math.min(60, Math.max(1, Number(input?.days) || 7))),
   },
 
   {

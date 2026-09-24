@@ -393,7 +393,7 @@ async function dayDigest(day: string, idx: ListingIdx): Promise<{ text: string; 
   const bld = (lid: any) => idx[String(lid)]?.rollup || '?'
   const scopes = new Set<string>()
   const lines: string[] = []
-  const [tasks, glitches, reviews, items, closed, corrections, downs] = await Promise.all([
+  const [tasks, glitches, reviews, items, closed, corrections, downs, acted] = await Promise.all([
     db().from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,finished_at,assignees,assignee_name').eq('scheduled_date', day).limit(1000),
     db().from('glitches').select('listing_id,unit,category,overview,created_at').gte('created_at', lo).lt('created_at', hi).limit(200),
     db().from('guesty_reviews').select('listing_id,rating,content,created_at').gte('created_at', lo).lt('created_at', hi).eq('excluded_from_score', false).limit(200),
@@ -401,6 +401,10 @@ async function dayDigest(day: string, idx: ListingIdx): Promise<{ text: string; 
     db().from('eve_slack_items').select('id', { count: 'exact', head: true }).gte('closed_at', lo).lt('closed_at', hi),
     db().from('eve_memory').select('text,source,created_by,created_at').eq('kind', 'correction').gte('created_at', lo).lt('created_at', hi).limit(20),
     db().from('eve_chats').select('question,correction,created_at').eq('rating', -1).gte('created_at', lo).lt('created_at', hi).limit(20),
+    // Her own executed actions that day, with what became of them (lib/eve/outcomes.ts). Before
+    // migration 108 the outcome columns do not exist and this query fails → the catch below gives
+    // an empty list and the digest simply has no such section.
+    db().from('eve_agent_log').select('at,action,summary,ref,outcome,outcome_note,undone_at').eq('mode', 'act').eq('allowed', true).gte('at', lo).lt('at', hi).order('at', { ascending: true }).limit(60),
   ].map((q: any) => q.then((r: any) => r, () => ({ data: [] }))))
 
   const cl = ((tasks.data as any[]) || []).filter(t => isDepartureCleanName(t.name) && !/delete|cancel/i.test(str(t.status)) && weDo(model, bld(t.reference_property_id), 'cleaning'))
@@ -429,6 +433,19 @@ async function dayDigest(day: string, idx: ListingIdx): Promise<{ text: string; 
   for (const s of si.slice(0, 12)) {
     lines.push(`- [${s.kind}] ${s.unit || ''}${s.building ? ' (' + s.building + ')' : ''} in #${s.channel_name}: ${str(s.summary).slice(0, 110)}`)
     if (s.building) scopes.add('building:' + s.building)
+  }
+  // WHAT BECAME OF YOUR ACTIONS (2026-09-24). A task she made is a request, not a result; the
+  // nightly reflection should grade the result. Undone rows are reported as such so she learns
+  // when Jon reversed her, and unverified ones are named so she does not claim them as wins.
+  const ac = ((acted.data as any[]) || []).filter(a => etDay(a.at) === day)
+  if (ac.length) {
+    const tally: Record<string, number> = {}
+    for (const a of ac) { const k = a.undone_at ? 'undone' : (str(a.outcome) || 'unverified'); tally[k] = (tally[k] || 0) + 1 }
+    lines.push(`WHAT BECAME OF YOUR ACTIONS (${ac.length}): ${Object.entries(tally).map(([k, n]) => `${n} ${k}`).join(', ')}.`)
+    for (const a of ac.slice(0, 20)) {
+      const o = a.undone_at ? 'UNDONE by a person' : `${str(a.outcome) || 'unverified'}${a.outcome_note ? ' — ' + str(a.outcome_note) : ''}`
+      lines.push(`- ${a.action}: ${str(a.summary).replace(/\s+/g, ' ').slice(0, 100)} → ${o}`)
+    }
   }
   const co = (corrections.data as any[]) || [], dn = (downs.data as any[]) || []
   if (co.length || dn.length) {

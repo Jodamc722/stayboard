@@ -23,7 +23,16 @@ type Settings = {
 type Today = { date: string; actions: number; asks: number; aiUsd: number; byAction: Record<string, number>; proposed?: number; gradedGood?: number; gradedBad?: number; gradedPending?: number }
 type WatchRow = { key: string; title: string; what: string; action: string; enabled: boolean; cooldownHours: number; rungOverride: number | null; lastFiredAt: string | null; lastRunAt: string | null; firedCount: number; lastResult: any; migrated: boolean }
 type Undoable = { id: number; at: string; action: string; summary: string | null; by: string; actor: string | null; ref: string | null; undone_at: string | null }
-type LogRow = { id: number; at: string; action: string; rung: number; allowed: boolean; mode: string | null; reason: string | null; usd: number | null; summary: string | null; ref: string | null; by: string; actor: string | null }
+type LogRow = { id: number; at: string; action: string; rung: number; allowed: boolean; mode: string | null; reason: string | null; usd: number | null; summary: string | null; ref: string | null; by: string; actor: string | null; outcome?: string | null; outcome_note?: string | null }
+
+// What became of an executed action (lib/eve/outcomes.ts), as a chip: green when it landed, amber
+// while it is still someone's job, red when it slipped or was reversed, grey when we cannot know.
+const OUTCOME_STYLE: Record<string, string> = {
+  done: 'bg-[#E3F4EC] text-[#0F7B52] border-[#BFE5D2]', replied: 'bg-[#E3F4EC] text-[#0F7B52] border-[#BFE5D2]', gone: 'bg-[#E3F4EC] text-[#0F7B52] border-[#BFE5D2]',
+  open: 'bg-[#FDF3E0] text-[#9A6200] border-[#F0DAA8]', running: 'bg-[#FDF3E0] text-[#9A6200] border-[#F0DAA8]', pending: 'bg-[#FDF3E0] text-[#9A6200] border-[#F0DAA8]',
+  overdue: 'bg-[#FBE7E4] text-[#A32D1C] border-[#F2C4BD]', silent: 'bg-[#FBE7E4] text-[#A32D1C] border-[#F2C4BD]', reopened: 'bg-[#FBE7E4] text-[#A32D1C] border-[#F2C4BD]',
+  unverified: 'bg-app text-muted border-line',
+}
 type QueueStatus = { waiting: number; deferred: number; undeliverable: number; undeliverableWhy: string[] }
 type QueueRow = { id: string; kind: string; payload: any; why: string | null; status: string; created_by: string | null; created_at: string; decided_by: string | null; result: any }
 
@@ -454,6 +463,9 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                   <span className="text-muted">{when(r.at)}</span>
                   <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border ${r.allowed ? 'bg-[#E3F4EC] text-[#0F7B52] border-[#BFE5D2]' : 'bg-app text-muted border-line'}`}>{r.mode || (r.allowed ? 'act' : 'no')}</span>
                   <b className="text-ink">{r.action}</b>
+                  {r.outcome && r.mode === 'act' && r.allowed && (
+                    <span title={r.outcome_note || undefined} className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border ${OUTCOME_STYLE[r.outcome] || OUTCOME_STYLE.unverified}`}>→ {r.outcome}</span>
+                  )}
                   <span className="text-muted">rung {r.rung} · {r.by}{r.actor ? ` · ${r.actor}` : ''}{r.usd ? ` · $${Number(r.usd).toFixed(2)}` : ''}</span>
                 </div>
                 <div className="text-ink">{r.summary}</div>
