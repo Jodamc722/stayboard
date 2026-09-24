@@ -590,6 +590,8 @@ export const COMPANY_STATS_2: { k: string; v: string }[] = [
 export const EXPERIENCE_HEADLINE = 'Our Properties'
 export const EXPERIENCE_SUBTITLE = ''
 export const EXPERIENCE_BODY = ''
+// Jon, 2026-09-24: "like a little intro to our properties too" — one line under the title, no more.
+export const EXPERIENCE_INTRO = 'Hotels, residence buildings and private homes from downtown Miami to Palm Beach, run end to end by one team.'
 
 export type PropertyItem = { k: string; v: string; b?: string; pic?: string | null }
 export const EXPERIENCE_ITEMS: PropertyItem[] = [

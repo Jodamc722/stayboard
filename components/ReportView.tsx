@@ -22,7 +22,7 @@ import {
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
   houseBody, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS_RETIRED_MARK, pitchSectionStale,
   OVERVIEW_BODY_2, COMPANY_STATS_2,
-  EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE,
+  EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE, EXPERIENCE_INTRO,
   CRAFT_BODY, CRAFT_ROWS, CRAFT_HEADLINE, CRAFT_SUBTITLE,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY, GUEST_HEADLINE, GUEST_SUBTITLE,
   REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, REVENUE_PARTNER_INTRO, PACER_LOGO,
@@ -1183,7 +1183,7 @@ function StackMark({ logo, mono, name, accent, card, border, wide, bare, lockup,
 }
 
 const PITCH_DEFAULTS: Record<string, Any> = {
-  experience: { headline: EXPERIENCE_HEADLINE, subtitle: EXPERIENCE_SUBTITLE, body: EXPERIENCE_BODY, items: EXPERIENCE_ITEMS, proof: EXPERIENCE_PROOF, photo: null },
+  experience: { headline: EXPERIENCE_HEADLINE, subtitle: EXPERIENCE_SUBTITLE, body: EXPERIENCE_BODY, intro: EXPERIENCE_INTRO, items: EXPERIENCE_ITEMS, proof: EXPERIENCE_PROOF, photo: null },
   craft: { headline: CRAFT_HEADLINE, subtitle: CRAFT_SUBTITLE, body: CRAFT_BODY, rows: CRAFT_ROWS },
   guestcare: { headline: GUEST_HEADLINE, subtitle: GUEST_SUBTITLE, body: GUEST_BODY, stages: GUEST_STAGES, note: GUEST_BREEZEWAY },
   revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE, partnerHead: REVENUE_PARTNER_HEAD, partnerIntro: REVENUE_PARTNER_INTRO, partner: REVENUE_PARTNER, partnerLogo: PACER_LOGO },
@@ -1251,9 +1251,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const [busy, setBusy] = useState('')
   const [attachMsg, setAttachMsg] = useState('')
   const [picker, setPicker] = useState(false)
-  const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void; choices?: string[]; choicesLabel?: string } | null>(null)
+  const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void; choices?: string[]; choicesLabel?: string; groups?: { id: string; name: string; pics: string[] }[] } | null>(null)
   // The properties slide's galleries, by building (Jon, 2026-09-24: "let me select").
   const [buildingPools, setBuildingPools] = useState<Record<string, string[]>>({})
+  const [buildingListings, setBuildingListings] = useState<Record<string, { id: string; name: string; pics: string[] }[]>>({})
+  const [pickGroup, setPickGroup] = useState<string>('')
   const [photoUrl, setPhotoUrl] = useState('')
   // Upload state for the picker. One picker serves every photo slot in the deck, so wiring
   // upload here covers the cover, the team cards, the portal shots and any slide added by hand.
@@ -1602,6 +1604,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     fetch('/api/reports/building-photos?all=1').then(r => r.json()).then(j => {
       if (dead) return
       if (j && j.pools) setBuildingPools(j.pools)
+      if (j && j.listings) setBuildingListings(j.listings)
       const photos = (j && j.photos) || {}
       if (!Object.keys(photos).length || !items.some(it => it && it.b && !it.pic)) return
       mutate(d => {
@@ -2918,8 +2921,18 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </div>
             {photoPick.choices && photoPick.choices.length > 0 && (<>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>{photoPick.choicesLabel || 'Or pick one'}</p>
+              {/* SELECT FROM THE LISTING, FOR EACH (Jon, 2026-09-24): a chip per listing in the
+                  building narrows the grid to that unit's own photos. */}
+              {photoPick.groups && photoPick.groups.length > 1 && (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {[{ id: '', name: 'All units' }, ...photoPick.groups].map(g => (
+                    <button key={g.id} onClick={() => setPickGroup(g.id)} className="rounded-full px-2.5 py-1 text-[11.5px] font-semibold"
+                      style={{ background: pickGroup === g.id ? t.ink : t.chip, color: pickGroup === g.id ? t.bg : t.ink, border: '1px solid ' + (pickGroup === g.id ? t.ink : t.cardBorder) }}>{g.name}</button>
+                  ))}
+                </div>
+              )}
               <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))' }}>
-                {photoPick.choices.map((src: string, i: number) => (
+                {(pickGroup && photoPick.groups ? (photoPick.groups.find(g => g.id === pickGroup)?.pics || []) : photoPick.choices).map((src: string, i: number) => (
                   <button key={i} onClick={() => { photoPick.set(src); answerChanged(); setPhotoPick(null); setPhotoUrl('') }}
                     className="relative rounded-lg overflow-hidden" style={{ aspectRatio: '4 / 3', border: '2px solid ' + (src === photoPick.cur ? t.accent : 'transparent') }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3246,8 +3259,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // gallery slide a button per frame would be five buttons on five photographs.
           // `pos` is object-position. It matters most for faces: a cover crop defaults to the
           // middle of the source, and the middle of a portrait photograph is a torso.
-          const Pick = ({ title, cur, set, style, cover, pos, choices, choicesLabel }: {
-            title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean; pos?: string; choices?: string[]; choicesLabel?: string
+          const Pick = ({ title, cur, set, style, cover, pos, choices, choicesLabel, groups }: {
+            title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean; pos?: string; choices?: string[]; choicesLabel?: string; groups?: { id: string; name: string; pics: string[] }[]
           }) => (
             <div style={{ position: 'relative', overflow: 'hidden', ...(style || {}) }}>
               {cur ? (
@@ -3263,7 +3276,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   tool, so it appears when the tools are out. */}
               {edit && (
                 <button
-                  onClick={() => { setPhotoUrl(''); setPhotoPick({ title, cur, set, choices, choicesLabel }) }}
+                  onClick={() => { setPhotoUrl(''); setPickGroup(''); setPhotoPick({ title, cur, set, choices, choicesLabel, groups }) }}
                   className="sb-noprint sb-pick"
                   title="Change this photo"
                   style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
@@ -3607,12 +3620,18 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <Slide nav="Our properties" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <Title k="experience" sub={false} />
-                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 22, paddingBottom: 18 }}>
+                {/* The little intro (Jon, 2026-09-24). One line; a deck that never had one gets the house line. */}
+                {(sec('experience').intro !== '' || edit) && (
+                  <p style={{ marginTop: 12, fontSize: 15.5, lineHeight: 1.5, color: t.muted, maxWidth: '62ch' }}>
+                    <Ed v={sec('experience').intro == null ? EXPERIENCE_INTRO : sec('experience').intro} set={v => patch('experience.intro', v)} edit={edit} multiline />
+                  </p>
+                )}
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 18, paddingBottom: 18 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '18px 20px' }}>
                     {(sec('experience').items || []).map((f: Any, i: number) => (
                       <div key={i} style={{ minWidth: 0 }}>
                         <Pick title={'Photo · ' + (f.k || 'property')} cur={String(f.pic || '')} set={u => patch('experience.items.' + i + '.pic', u)}
-                          choices={f.b ? buildingPools[f.b] : undefined} choicesLabel={f.b ? 'Pick one from ' + f.b : undefined}
+                          choices={f.b ? buildingPools[f.b] : undefined} choicesLabel={f.b ? 'Pick one from ' + f.b : undefined} groups={f.b ? buildingListings[f.b] : undefined}
                           style={{ width: '100%', aspectRatio: '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }} />
                         <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3, marginTop: 9 }}>
                           <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />

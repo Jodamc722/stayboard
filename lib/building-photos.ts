@@ -24,6 +24,26 @@ export async function buildingPhotos(): Promise<Record<string, string>> {
  * editor chooses from (Jon, 2026-09-24: "add photo of the properties, let me select and be able
  * to save"). Spread across listings so the choice is not thirty shots of one studio.
  */
+export type ListingPics = { id: string; name: string; pics: string[] }
+/** Each building's listings with their own pictures — "select from the listing, for each" (Jon). */
+export async function buildingListingPhotos(perListing = 12): Promise<Record<string, ListingPics[]>> {
+  const out: Record<string, ListingPics[]> = {}
+  try {
+    const { data } = await supabaseAdmin().from('guesty_listings')
+      .select('id,nickname,title,building,pictures,status')
+      .not('pictures', 'is', null).limit(2000)
+    const rows = ((data as any[]) || [])
+      .filter(l => !/inactive|archived|deleted/i.test(String(l.status || '')))
+      .sort((a, b) => String(a.nickname || a.title || '').localeCompare(String(b.nickname || b.title || '')))
+    for (const l of rows) {
+      const b = buildingOf(l.building, l.nickname || l.title)
+      const pics = Array.isArray(l.pictures) ? l.pictures.filter((p: any) => typeof p === 'string' && /^https?:/.test(p)).slice(0, perListing) : []
+      if (b && pics.length) (out[b] = out[b] || []).push({ id: String(l.id), name: String(l.nickname || l.title || ''), pics })
+    }
+  } catch { /* nothing to choose from; upload still works */ }
+  return out
+}
+
 export async function buildingPhotoPools(perBuilding = 24): Promise<Record<string, string[]>> {
   const out: Record<string, string[]> = {}
   try {
