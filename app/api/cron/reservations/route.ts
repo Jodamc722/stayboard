@@ -35,7 +35,12 @@ async function run(req: NextRequest) {
   }
   try {
     const n = await syncReservations(since ? 20 : 80, since)
-    return NextResponse.json({ ranAt: new Date().toISOString(), mode: since ? 'incremental' : 'full-window', reservations: n, elapsed_ms: Date.now() - started })
+    // SALATO BOOKING WATCH (Jon, 2026-09-24): every new Salato booking into #ccs-and-jon with
+    // @channel, and a one-night booking flagged as not permitted and chased until it is canceled.
+    // Right after the sync, so the post is minutes behind Guesty. See lib/salato-watch.ts.
+    let salato: any = null
+    try { const { runSalatoWatch } = await import('@/lib/salato-watch'); const w = await runSalatoWatch({ fromCron: true }); salato = { announced: w.announced, oneNight: w.oneNight, nudged: w.nudged, resolved: w.resolved, error: w.error } } catch (e: any) { salato = { error: String(e?.message || e).slice(0, 120) } }
+    return NextResponse.json({ ranAt: new Date().toISOString(), mode: since ? 'incremental' : 'full-window', reservations: n, salato, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
