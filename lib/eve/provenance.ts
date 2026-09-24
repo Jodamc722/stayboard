@@ -34,6 +34,7 @@ const TRIGGER: Record<string, string> = {
   'cron:on-watch': 'your hourly On Watch sweep (it compares Slack reports, the glitch board and Breezeway)',
   'cron:slack-watch': 'your Slack Watch (the morning roll-up or a nudge on an unanswered message)',
   'watch:guest_unanswered_1h': 'the guest-unanswered watch',
+  'cron:salato-watch': 'your Salato booking watch (every new Salato booking, and any 1-night booking, which breaks the 2-night minimum)',
 }
 
 /** The decision-log history of one of Eve's Slack posts, found by its message ts. */
