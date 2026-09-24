@@ -120,6 +120,10 @@ export const AUTOMATIONS: AutomationDef[] = [
     configKey: 'eve_on_watch', receipt: 'automation_runs',
     notes: 'Rides the slack-watch cron line (vercel.json is at its cron cap). Rooms, hours and on/off live in app_settings eve_on_watch; state in eve_on_watch_state. Posts go through the slack_post Agent mode rung. No model call.' },
 
+  { key: 'salato-watch', label: 'Salato booking watch', area: 'guests', path: '/api/cron/reservations',
+    what: 'After every booking sync (every 5 minutes): each new Salato booking goes to #ccs-and-jon with @channel (unit, dates, nights, guest, channel, code). A 1-night booking is flagged NOT PERMITTED (Salato has a 2-night minimum) and must be canceled or extended; it gets a reminder in its thread every 3 hours in the daytime until it is, and a ✅ when it is. The Salato front desk board shows 1-night stays in red with who to call.',
+    receipt: 'none', notes: 'lib/salato-watch.ts. State in app_settings salato_watch_state; each message claimed once in telegram_updates. Manual check: GET /api/salato/watch (dry run). Front-desk contact line: app_settings salato_desk_contact.' },
+
   // ---- Guests ---------------------------------------------------------------------------------
   { key: 'sentiment', label: 'Guest sentiment scan', area: 'guests', path: '/api/sentiment/scan',
     what: 'Scores recently active guest threads for unhappiness and flags the reservation Sensitive in Guesty when it is bad.', receipt: 'none' },
