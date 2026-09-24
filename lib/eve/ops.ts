@@ -14,6 +14,8 @@ import type { EveTool, EveDomain } from './types'
 import { winsFor } from './wins'
 import { obj, S } from './types'
 import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, pageRows } from './ctx'
+import { nameMatches, personKey, bestSpelling } from '@/lib/person-name'
+import { assigneeNames as assigneeNamesOf } from './dossiers'
 
 // Status predicates. There is no enum on the mirror — every board in the app regex-matches, and
 // finished_at OVERRIDES the status label because the field app sets it even when the string is odd.
@@ -39,8 +41,8 @@ const TASK_COLS = 'id,reference_property_id,name,status,scheduled_date,assignees
 export const OPS_TOOLS: EveTool[] = [
   {
     name: 'search_tasks',
-    description: 'Search Breezeway work (cleans, inspections, maintenance, safety) over a date range. Filter by from/to (scheduled_date), unit name or listing id, dept (housekeeping|inspection|maintenance|safety), state (open|running|done|all), and a name query. Set departure_cleans_only to see ONLY real turnover cleans (a deep clean or oven clean is NOT a departure clean). This is the raw work log — for "what is happening today" use ops_today instead.',
-    input_schema: obj({ from: S.str, to: S.str, name: S.str, id: S.str, dept: S.str, state: S.str, query: S.str, departure_cleans_only: S.bool, limit: S.num }),
+    description: 'Search Breezeway work (cleans, inspections, maintenance, safety) over a date range. Filter by from/to (scheduled_date), unit name or listing id, dept (housekeeping|inspection|maintenance|safety), state (open|running|done|all), and a name query. Filter by assignee to get one person\'s work (fuzzy-matched, so a first name alone will find them). Set departure_cleans_only to see ONLY real turnover cleans (a deep clean or oven clean is NOT a departure clean). This is the raw work log — for "what is happening today" use ops_today instead.',
+    input_schema: obj({ from: S.str, to: S.str, name: S.str, id: S.str, dept: S.str, state: S.str, query: S.str, assignee: S.str, departure_cleans_only: S.bool, limit: S.num }),
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 40, 150)
       const from = String(input?.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.from) : shiftDay(ctx.today, -7)
@@ -69,6 +71,12 @@ export const OPS_TOOLS: EveTool[] = [
       const st = lc(input?.state)
       if (st && st !== 'all') rows = rows.filter((t: any) => t.state === st)
       if (input?.query) rows = rows.filter((t: any) => has(t.name, input.query))
+      // ASSIGNEE FILTER (2026-09-24). Fuzzy, because Breezeway and Homebase spell the same person
+      // differently and a manager asking for "Elena" will not type her surname.
+      if (String(input?.assignee || '').trim()) {
+        const who = String(input.assignee).trim()
+        rows = rows.filter((t: any) => (t.assignees || []).some((a: string) => nameMatches(a, who)))
+      }
       if (input?.departure_cleans_only) rows = rows.filter((t: any) => t.is_departure_clean)
       const movedRows = rows.filter((t: any) => t.moved)
       return {
@@ -77,6 +85,88 @@ export const OPS_TOOLS: EveTool[] = [
         moved_cleans: movedRows.length ? `${movedRows.length} clean(s) in this window were MOVED off the day they were scheduled — call moved_cleans for where each one went.` : undefined,
         day_rule: 'date = the day it is scheduled for; landed_on = the day the work actually happened. Counts that must line up with payroll use landed_on.',
         note: cap(data || [], lim).truncated ? 'HIT THE ROW CAP — this is a partial list, narrow the window or the unit before drawing conclusions.' : undefined,
+      }
+    },
+  },
+
+  {
+    // ONE PERSON'S ASSIGNED WORK (Jon, 2026-09-24: his boss asked Eve for the full task list
+    // assigned to a cleaner at Arya, and Eve could not answer — search_tasks filtered by unit,
+    // date and department, but there was no way to ask "what is assigned to HER").
+    //
+    // Deliberately NOT crew_person. That tool answers "how is she doing" from completed cleans; it
+    // is a performance record. This one answers "what is on her list", which includes work that is
+    // not done yet and is the only version of the question a manager ever actually asks.
+    //
+    // Fuzzy on the name because Breezeway and Homebase disagree about spellings and nobody types a
+    // surname. When the name is ambiguous the tool says so and lists the candidates rather than
+    // picking one — showing the wrong cleaner's task list to a boss is worse than asking again.
+    name: 'person_tasks',
+    description: 'THE FULL TASK LIST ASSIGNED TO ONE PERSON — every Breezeway job with their name on it over a window, open and done, across housekeeping, inspection and maintenance. This is the tool for "what is assigned to <name>", "show me <name>\'s tasks", or a manager asking for somebody\'s work list. Use crew_person instead only when the question is about PERFORMANCE (how well did she do), not about what she has been given. Params: person (required), from, to, days (default 14), building or unit to scope it, state (open|running|done|all), limit.',
+    input_schema: obj({ person: S.str, from: S.str, to: S.str, days: S.num, building: S.str, name: S.str, id: S.str, state: S.str, limit: S.num }),
+    run: async (input, ctx) => {
+      const who = String(input?.person || '').trim()
+      if (!who) return { error: 'Name the person.' }
+      const lim = clampLimit(input?.limit, 120, 400)
+      const days = clampDays(input?.days, 14, 120)
+      const from = String(input?.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.from) : shiftDay(ctx.today, -days)
+      const to = String(input?.to || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.to) : shiftDay(ctx.today, days)
+
+      let q = ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).gte('scheduled_date', from).lte('scheduled_date', to)
+      const unit = resolveListing(ctx, input)
+      if (unit) q = q.eq('reference_property_id', unit.id)
+      const { data } = await q.order('scheduled_date', { ascending: true }).order('id').limit(1000)
+
+      const all = (data || []).map((t: any) => ({
+        id: t.id, unit: ctx.nameOf(t.reference_property_id), building: ctx.buildingOf(t.reference_property_id),
+        task: t.name, dept: t.type_department, date: t.scheduled_date, landed_on: cleanDay(t),
+        state: taskState(t), assignees: assigneeNamesOf(t), minutes: t.total_minutes,
+        started_at: t.started_at, finished_at: t.finished_at,
+        is_departure_clean: isDepartureCleanName(t.name),
+      })).filter((t: any) => t.state !== 'gone')
+
+      // Who on the roster actually matches? Gather every distinct assignee spelling in the window
+      // so an ambiguous name can be reported rather than silently resolved to the first hit.
+      const spellings: Record<string, string> = {}
+      for (const t of all) for (const a of t.assignees) {
+        if (!nameMatches(a, who)) continue
+        const k = personKey(a)
+        spellings[k] = spellings[k] ? bestSpelling(spellings[k], a) : a
+      }
+      const matched = Object.values(spellings)
+      if (!matched.length) {
+        const everyone = Array.from(new Set(all.flatMap((t: any) => t.assignees))).sort()
+        return { person: who, found: false, window: { from, to },
+          note: `Nobody matching "${who}" has work assigned in that window` + (unit ? ` at ${unit.meta.name}` : '') + '.',
+          assignees_in_window: everyone.slice(0, 60) }
+      }
+      if (matched.length > 1) {
+        return { person: who, ambiguous: true, candidates: matched,
+          note: `"${who}" matches ${matched.length} people in this window. Ask which one before showing a task list — the wrong person's list is worse than no list.` }
+      }
+
+      let rows = all.filter((t: any) => t.assignees.some((a: string) => nameMatches(a, who)))
+      const bld = String(input?.building || '').trim()
+      if (bld) rows = rows.filter((t: any) => lc(t.building) === lc(bld))
+      const st = lc(input?.state)
+      if (st && st !== 'all') rows = rows.filter((t: any) => t.state === st)
+      const shown = rows.slice(0, lim)
+
+      const byState: Record<string, number> = {}
+      for (const t of rows) byState[t.state] = (byState[t.state] || 0) + 1
+      const byBuilding: Record<string, number> = {}
+      for (const t of rows) byBuilding[t.building || 'Other'] = (byBuilding[t.building || 'Other'] || 0) + 1
+
+      return {
+        person: matched[0], window: { from, to }, today: ctx.today,
+        scopedTo: unit ? unit.meta.name : (bld || null),
+        count: rows.length, shown: shown.length,
+        by_state: byState, by_building: byBuilding,
+        departure_cleans: rows.filter((t: any) => t.is_departure_clean).length,
+        upcoming: rows.filter((t: any) => t.date >= ctx.today && t.state !== 'done').length,
+        tasks: shown,
+        day_rule: 'date = the day it is scheduled for; landed_on = the day the work actually happened.',
+        note: rows.length > shown.length ? `Showing ${shown.length} of ${rows.length} — narrow the window or the building for the rest.` : undefined,
       }
     },
   },

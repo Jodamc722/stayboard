@@ -99,7 +99,7 @@ export default async function CleanersPage() {
                   : c.sameDayPct >= 85 ? { l: 'Inspect', t: 'amber' as const }
                     : { l: 'Retrain', t: 'rose' as const }
               return (
-                <LeanRow key={c.name} name={c.name}
+                <LeanRow key={c.name} name={<a href={'/cleaners/' + encodeURIComponent(c.name)} className="hover:underline decoration-dotted underline-offset-2" title={'Every task assigned to ' + c.name}>{c.name}</a>}
                   meta={c.cleans + ' cleans · ' + c.perDay + '/day · ' + (c.avgMin != null ? c.avgMin + 'm avg' : 'no time')}
                   tags={<>
                     {c.sameDayPct != null ? <Tag tone={tier ? tier.t : 'slate'} title="Same-day finish rate">{c.sameDayPct}% same-day</Tag> : null}

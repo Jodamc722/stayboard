@@ -493,7 +493,16 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
         <div className="order-1 flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:flex-none lg:w-[16rem] lg:gap-2">
           <ChevronRight size={14} className={'text-muted shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
           <div className="min-w-0">
-            <div className="text-[14px] font-bold text-ink truncate">{row.title}</div>
+            {/* IN THE PEOPLE AXIS THE NAME IS A LINK to that person's whole task list (Jon,
+                2026-09-24: his boss asked for a cleaner's full list and there was nowhere to send
+                him). Units keep plain text — their own panel opens from the row already. */}
+            {mode === 'people' && row.title ? (
+              <a href={'/cleaners/' + encodeURIComponent(String(row.title))} onClick={e => e.stopPropagation()}
+                title={'Every task assigned to ' + row.title}
+                className="text-[14px] font-bold text-ink truncate block hover:underline decoration-dotted underline-offset-2">{row.title}</a>
+            ) : (
+              <div className="text-[14px] font-bold text-ink truncate">{row.title}</div>
+            )}
             {/* On a phone this rides on the meta line below instead, next to the reservation. */}
             {metaSub && <div className="hidden lg:block text-[11.5px] text-muted truncate">{metaSub}</div>}
           </div>
