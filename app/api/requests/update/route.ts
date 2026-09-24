@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic'
 
 // Only fields the UI actually edits. approval_status is NOT here — approvals go through
 // 'decide' so the approver + timestamp are always stamped and never spoofed from the client.
-const PATCHABLE = ['status', 'priority', 'assignee_email', 'due_at', 'title', 'description', 'vendor', 'amount_usd'] as const
+const PATCHABLE = ['status', 'priority', 'assignee_email', 'due_at', 'title', 'description', 'vendor', 'vendor_key', 'amount_usd'] as const
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
         listing_id: d.listing_id ?? null, building: d.building ?? null, unit: d.unit ?? null,
         reservation_id: d.reservation_id ?? null, priority: d.priority || 'medium', status: 'open',
         created_by_email: email, assignee_email: d.assignee_email || null, due_at: d.due_at || null,
-        vendor: d.vendor || null, amount_usd: d.amount_usd != null ? Number(d.amount_usd) : null,
+        vendor: d.vendor || null, vendor_key: d.vendor_key || null, amount_usd: d.amount_usd != null ? Number(d.amount_usd) : null,
         approval_required: !!d.approval_required, approval_status: d.approval_required ? 'pending' : null,
       }).select('id').single()
       if (error) throw error

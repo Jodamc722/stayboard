@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil, GraduationCap, Check } from 'lucide-react'
 import { Pill, Tag, IconBtn } from './lean'
 import { StayPanel } from './StayPanel'
+import { VendorField, VendorName } from './VendorCard'
 import CommentThread from './CommentThread'
 import UnitCalendar from './UnitCalendar'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
@@ -26,6 +27,7 @@ type Glitch = {
   breezeway_task_id: string | null; photos: string[] | null; task_status: string | null; task_report_url?: string | null
   reservation_notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null
   due_date?: string | null; assignee?: string | null; assignee_person_id?: number | null; details?: string | null; progress?: number | null
+  vendor_key?: string | null; vendor_name?: string | null
   // How it reached us and how the guest sounded — both feed the refund model (migration 060).
   reported_via?: string | null; guest_tone?: string | null
   // Migration 086 — how this issue is treated, independent of any Breezeway task.
@@ -409,6 +411,25 @@ function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; n
     </span>
   )
 }
+function VendorGlitchField({ g, onDone }: { g: Glitch; onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const pick = async (v: { key: string | null; name: string | null }) => {
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: g.id, vendorKey: v.key, vendorName: v.name }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) setErr(j.error || 'Could not save'); else onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="max-w-[360px]">
+      <VendorField vendorKey={g.vendor_key ?? null} vendorName={g.vendor_name ?? null} canEdit busy={busy} onPick={pick} />
+      {err ? <span className="text-[12px] text-rose-700">{err}</span> : null}
+    </div>
+  )
+}
 function DueField({ g, onDone }: { g: Glitch; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const closed = laneOf(g.status).key === 'closed'
@@ -566,6 +587,9 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
           changes it; nothing is repeated below. */}
       <div className="mt-3 divide-y divide-line/60">
         <FieldRow label="Assignee"><AssignField g={g} people={people} onDone={onChanged} /></FieldRow>
+        {/* THE VENDOR (Jon, 2026-09-24): who outside is fixing it. Same directory as the project
+            board and requests, so the plumber's history follows them across every board. */}
+        <FieldRow label="Vendor"><VendorGlitchField g={g} onDone={onChanged} /></FieldRow>
         <FieldRow label="Due date"><DueField g={g} onDone={onChanged} /></FieldRow>
         <FieldRow label="Status">
           <span className="inline-flex items-center gap-2 flex-wrap">
@@ -1139,6 +1163,9 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
             <span className="shrink-0 text-[10.5px] font-semibold text-muted inline-flex items-center gap-0.5" title={'Assigned to ' + g.assignee}>
               <User2 size={10} />{g.assignee.split(' ')[0]}
             </span>
+          ) : null}
+          {g.vendor_name ? (
+            <VendorName vendorKey={g.vendor_key} name={g.vendor_name} size={10} className="shrink-0 text-[10.5px] font-semibold text-muted max-w-[110px]" />
           ) : null}
         </div>
         {/* WHO DO I SEND, HOW LOUD, CAN I ACT TODAY. Urgent first — it is the only tag that

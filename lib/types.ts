@@ -18,6 +18,7 @@ export type FieldRequest = {
   assignee_email: string | null
   due_at: string | null
   vendor: string | null
+  vendor_key?: string | null
   amount_usd: number | null
   approval_required: boolean
   approval_status: 'pending' | 'approved' | 'rejected' | null

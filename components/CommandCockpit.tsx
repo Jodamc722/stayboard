@@ -39,6 +39,7 @@ import type { CommandDay, NextItem, NextAction, Handled } from '@/lib/command-da
 import { OWNER_LABEL, type Owner } from '@/lib/command-types'
 import { matchRoster } from '@/lib/roster-match'
 import { openEve } from '@/components/EveFloat'
+import { VendorName, RegularVendorsDue } from '@/components/VendorCard'
 import { SlackQueueCard } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 
@@ -170,6 +171,7 @@ export function CommandCockpit() {
             everybody's problem for the morning, and it is the thing the person covering for
             somebody else has no other way of knowing. */}
         <VendorVisitsCard />
+        <RegularVendorsDue className={CARD} />
         <MyTasksCard />
         <EveQuestionsCard />
         <CompletedCard d={data} onChanged={reload} tick={tick} />
@@ -387,7 +389,7 @@ export const MINE_CLS: Record<string, string> = { todo: 'text-muted border-line 
 export const niceDay = (ymd: string | null) => { if (!ymd) return ''; try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd } }
 
 type VendorVisit = {
-  id: string; projectId: string; project: string; title: string; vendor: string | null
+  id: string; projectId: string; project: string; title: string; vendor: string | null; vendorKey?: string | null
   visit_on: string; window: string | null; est: string | null; where: string | null; owner: string | null
   when: string; tone: 'today' | 'soon' | 'later' | 'missed' | 'done'; announced: boolean
 }
@@ -432,7 +434,8 @@ function VendorVisitsCard() {
         {visits.slice(0, 8).map(v => (
           <Link key={v.id} href={`/projects/${v.projectId}?task=${v.id}`} className="block px-4 py-2 hover:bg-app/60">
             <div className="flex items-baseline gap-2 min-w-0">
-              <span className="text-[12.5px] font-semibold text-ink truncate flex-1">{v.vendor || 'A vendor'}</span>
+              {/* The name carries the vendor card (hover / tap) — phone, insurance, what else is open with them. */}
+              <span className="text-[12.5px] font-semibold text-ink truncate flex-1 min-w-0">{v.vendor ? <VendorName vendorKey={v.vendorKey} name={v.vendor} icon={false} /> : 'A vendor'}</span>
               <span className={'shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ' + (VISIT_TONE[v.tone] || VISIT_TONE.later)}>{v.when}</span>
             </div>
             <p className="text-[11.5px] text-muted truncate">

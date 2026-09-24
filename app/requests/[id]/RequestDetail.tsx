@@ -6,6 +6,7 @@ import {
   PRIORITY_STYLE, STATUS_LABEL, STATUS_STYLE, TYPE_LABEL
 } from '@/lib/types'
 import { Send } from 'lucide-react'
+import { VendorField } from '@/components/VendorCard'
 
 type Comment = { id: string; author_email: string | null; body: string; created_at: string }
 
@@ -183,9 +184,12 @@ export function RequestDetail({
               className={`w-full px-3 py-1.5 rounded-md border bg-white text-sm focus:border-brand-400 outline-none ${overdue ? 'border-rose-300 text-rose-700' : 'border-line'}`} />
           </Field>
 
-          {r.vendor && (
-            <Field label="Vendor"><span className="text-sm text-ink">{r.vendor}</span></Field>
-          )}
+          {/* One directory for every board (2026-09-24): the name carries the vendor card, and a
+              vendor typed here is saved for the project board and glitches too. */}
+          <Field label="Vendor">
+            <VendorField vendorKey={r.vendor_key ?? null} vendorName={r.vendor ?? null} canEdit
+              onPick={v => patch({ vendor: v.name, vendor_key: v.key } as any)} />
+          </Field>
           {r.amount_usd != null && (
             <Field label="Amount"><span className="text-sm text-ink font-medium">${Number(r.amount_usd).toLocaleString()}</span></Field>
           )}

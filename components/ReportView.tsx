@@ -1251,7 +1251,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const [busy, setBusy] = useState('')
   const [attachMsg, setAttachMsg] = useState('')
   const [picker, setPicker] = useState(false)
-  const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void } | null>(null)
+  const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void; choices?: string[]; choicesLabel?: string } | null>(null)
+  // The properties slide's galleries, by building (Jon, 2026-09-24: "let me select").
+  const [buildingPools, setBuildingPools] = useState<Record<string, string[]>>({})
   const [photoUrl, setPhotoUrl] = useState('')
   // Upload state for the picker. One picker serves every photo slot in the deck, so wiring
   // upload here covers the cover, the team cards, the portal shots and any slide added by hand.
@@ -1595,11 +1597,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   useEffect(() => {
     if (!edit) return
     const items: Any[] = Array.isArray((c as Any).experience?.items) ? (c as Any).experience.items : []
-    if (!items.some(it => it && it.b && !it.pic)) return
+    if (!items.some(it => it && it.b)) return
     let dead = false
-    fetch('/api/reports/building-photos').then(r => r.json()).then(j => {
+    fetch('/api/reports/building-photos?all=1').then(r => r.json()).then(j => {
+      if (dead) return
+      if (j && j.pools) setBuildingPools(j.pools)
       const photos = (j && j.photos) || {}
-      if (dead || !Object.keys(photos).length) return
+      if (!Object.keys(photos).length || !items.some(it => it && it.b && !it.pic)) return
       mutate(d => {
         const ex = d.experience || (d.experience = {})
         if (Array.isArray(ex.items)) ex.items = ex.items.map((it: Any) => (it && it.b && !it.pic && photos[it.b]) ? { ...it, pic: photos[it.b] } : it)
@@ -2912,6 +2916,18 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: t.ink, color: t.bg }}>Use</button>
             </div>
+            {photoPick.choices && photoPick.choices.length > 0 && (<>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>{photoPick.choicesLabel || 'Or pick one'}</p>
+              <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))' }}>
+                {photoPick.choices.map((src: string, i: number) => (
+                  <button key={i} onClick={() => { photoPick.set(src); answerChanged(); setPhotoPick(null); setPhotoUrl('') }}
+                    className="relative rounded-lg overflow-hidden" style={{ aspectRatio: '4 / 3', border: '2px solid ' + (src === photoPick.cur ? t.accent : 'transparent') }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={src} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </button>
+                ))}
+              </div>
+            </>)}
             {pickPool.length > 0 && (
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>Or pick one from the listing</p>
             )}
@@ -3230,8 +3246,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // gallery slide a button per frame would be five buttons on five photographs.
           // `pos` is object-position. It matters most for faces: a cover crop defaults to the
           // middle of the source, and the middle of a portrait photograph is a torso.
-          const Pick = ({ title, cur, set, style, cover, pos }: {
-            title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean; pos?: string
+          const Pick = ({ title, cur, set, style, cover, pos, choices, choicesLabel }: {
+            title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean; pos?: string; choices?: string[]; choicesLabel?: string
           }) => (
             <div style={{ position: 'relative', overflow: 'hidden', ...(style || {}) }}>
               {cur ? (
@@ -3247,7 +3263,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   tool, so it appears when the tools are out. */}
               {edit && (
                 <button
-                  onClick={() => { setPhotoUrl(''); setPhotoPick({ title, cur, set }) }}
+                  onClick={() => { setPhotoUrl(''); setPhotoPick({ title, cur, set, choices, choicesLabel }) }}
                   className="sb-noprint sb-pick"
                   title="Change this photo"
                   style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
@@ -3596,6 +3612,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     {(sec('experience').items || []).map((f: Any, i: number) => (
                       <div key={i} style={{ minWidth: 0 }}>
                         <Pick title={'Photo · ' + (f.k || 'property')} cur={String(f.pic || '')} set={u => patch('experience.items.' + i + '.pic', u)}
+                          choices={f.b ? buildingPools[f.b] : undefined} choicesLabel={f.b ? 'Pick one from ' + f.b : undefined}
                           style={{ width: '100%', aspectRatio: '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }} />
                         <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3, marginTop: 9 }}>
                           <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />

@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
         const state = visitState(r.visit_on, String(r.status), today)
         return {
           id: String(r.id), projectId: String(r.project_id), project: String(pmap[String(r.project_id)]?.title || 'Project'),
-          title: String(r.title || ''), vendor: r.vendor_name || null,
+          title: String(r.title || ''), vendor: r.vendor_name || null, vendorKey: r.vendor_key || null,
           visit_on: String(r.visit_on).slice(0, 10), window: r.visit_window || null,
           est: estLabel(r.est_minutes), where: where[String(r.id)] || null,
           owner: r.assignee || null,

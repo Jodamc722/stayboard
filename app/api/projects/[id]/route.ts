@@ -608,6 +608,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           const v = await saveVendor({
             key: vendorKey || vendorName, label: vendorName,
             contact_name: b.vendorContact, phone: b.vendorPhone, email: b.vendorEmail, trade: b.vendorTrade,
+            regular: !!b.vendorRegular, cadence: b.vendorCadence || null,
           }, me)
           if (v.ok) { vendorKey = v.vendor.key; vendorName = v.vendor.label }
         }

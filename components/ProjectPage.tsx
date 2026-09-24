@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
+import { VendorName, VendorField, VendorPicker, useVendorDirectory, blankVendorDraft, type VendorHit } from '@/components/VendorCard'
 import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, isDoneSection, viewPrefsFor, RAIL_PANELS, RAIL_LABEL, LIST_COLUMNS, COLUMN_LABEL, columnTemplate, type ViewPrefs, type RailPanel, type ListColumn, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord, type TaskFilters, type SavedView, EMPTY_FILTERS, BUILTIN_VIEWS, filtersActive } from '@/lib/projects-shared'
 import { taskTag, taskInView } from '@/lib/task-view'
 
@@ -2382,10 +2383,7 @@ function VisitLine({ t, compact }: { t: Task; compact?: boolean }) {
   return (
     <div className={'flex items-center gap-1.5 flex-wrap min-w-0 ' + (compact ? 'text-[10.5px]' : 'text-[11.5px]')}>
       {t.vendor_name && (
-        <span className="inline-flex items-center gap-1 font-semibold text-ink min-w-0">
-          <Truck size={compact ? 10 : 11} className="text-muted shrink-0" />
-          <span className="truncate max-w-[140px]">{t.vendor_name}</span>
-        </span>
+        <VendorName vendorKey={t.vendor_key} name={t.vendor_name} size={compact ? 10 : 11} className="font-semibold text-ink min-w-0 max-w-[160px]" />
       )}
       {v && <span className={'shrink-0 font-bold px-1.5 py-0.5 rounded ' + VISIT_CLS[v.tone]}>{v.label}</span>}
       {t.visit_window && <span className="text-muted shrink-0">{t.visit_window}</span>}
@@ -2479,41 +2477,9 @@ function VendorBox({ task, canEdit, busy, act, vendors }: {
         {v && <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded ' + VISIT_CLS[v.tone]}>{v.label}</span>}
       </div>
 
-      {/* WHO */}
-      {task.vendor_name ? (
-        <div className="flex items-start gap-2">
-          <div className="min-w-0 flex-1">
-            <p className="text-[12.5px] font-bold text-ink truncate">{task.vendor_name}</p>
-            {chosen && (
-              <p className="text-[11.5px] text-muted truncate">
-                {[chosen.trade, chosen.phone].filter(Boolean).join(' · ') || 'No contact details saved'}
-              </p>
-            )}
-            {chosen?.coi && chosen.coi.tone !== 'ok' && (
-              <p className={'text-[11px] font-bold ' + (chosen.coi.tone === 'bad' ? 'text-rose-700' : 'text-amber-700')}>{chosen.coi.label}</p>
-            )}
-          </div>
-          {canEdit && <button onClick={() => set({ vendorKey: null, vendorName: null })} disabled={busy} className="text-muted hover:text-rose-600 shrink-0"><X size={12} /></button>}
-        </div>
-      ) : canEdit ? (
-        <div className="relative">
-          <button onClick={() => setOpen(o => !o)} className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] text-left text-muted hover:text-ink">
-            Who is doing this?
-          </button>
-          {open && (
-            <div className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-line bg-white shadow-lg max-h-56 overflow-y-auto">
-              {vendors.length === 0 && <p className="px-2.5 py-2 text-[11.5px] text-muted">No vendors saved yet — log an invoice and you can save one as you go.</p>}
-              {vendors.map(x => (
-                <button key={x.key} onClick={() => { set({ vendorKey: x.key, vendorName: x.label }); setOpen(false) }}
-                  className="w-full text-left px-2.5 py-1.5 hover:bg-app">
-                  <span className="block text-[12.5px] font-semibold text-ink">{x.label}</span>
-                  <span className="block text-[11px] text-muted truncate">{[x.trade, x.phone].filter(Boolean).join(' · ') || 'no details saved'}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : <p className="text-[12px] text-muted">No vendor picked yet.</p>}
+      {/* WHO — the shared field: the card behind the name, regulars first, add inline. */}
+      <VendorField vendorKey={task.vendor_key} vendorName={task.vendor_name} canEdit={canEdit} busy={busy}
+        onPick={v => set({ vendorKey: v.key, vendorName: v.name })} />
 
       {/* WHEN. visit_on is the day they arrive; the task's own due date stays what it always was —
           when the work should be finished. On a two-day job those are different days. */}
@@ -2610,105 +2576,14 @@ const INV_CLS: Record<string, string> = {
   void:     'bg-app text-muted/60 ring-line',
 }
 
-type VendorHit = VendorRecord & { coi?: { tone: 'bad' | 'warn' | 'ok'; label: string } | null }
-
 function useVendors() {
-  const [vendors, setVendors] = useState<VendorHit[]>([])
-  const load = useCallback(() => {
-    fetch('/api/projects/vendors', { cache: 'no-store' }).then(r => r.json())
-      .then(j => setVendors((j?.vendors || []) as VendorHit[])).catch(() => {})
-  }, [])
-  useEffect(() => { load() }, [load])
-  return { vendors, reload: load, setVendors }
+  const { vendors, reload } = useVendorDirectory()
+  return { vendors, reload }
 }
 
-// Pick a saved vendor, or type a new one and keep it. The "save this vendor" tick is ON by
-// default: a vendor typed once and not kept is a vendor typed again next month.
-function VendorPicker({ value, onChange, vendors, disabled }: {
-  value: { key: string | null; name: string; contact: string; phone: string; email: string; trade: string; save: boolean }
-  onChange: (v: any) => void
-  vendors: VendorHit[]; disabled?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  const chosen = value.key ? vendors.find(v => v.key === value.key) || null : null
-  const q = value.name.trim().toLowerCase()
-  const hits = q && !chosen
-    ? vendors.filter(v => v.label.toLowerCase().includes(q) || String(v.trade || '').toLowerCase().includes(q) || String(v.contact_name || '').toLowerCase().includes(q)).slice(0, 6)
-    : vendors.slice(0, 8)
-
-  if (chosen) {
-    return (
-      <div className="rounded-lg border border-line bg-app/50 px-2.5 py-2">
-        <div className="flex items-start gap-2">
-          <div className="min-w-0 flex-1">
-            <p className="text-[12.5px] font-bold text-ink truncate">{chosen.label}</p>
-            <p className="text-[11.5px] text-muted truncate">
-              {[chosen.trade, chosen.contact_name, chosen.phone].filter(Boolean).join(' · ') || 'No contact details saved'}
-            </p>
-            {chosen.coi && chosen.coi.tone !== 'ok' && (
-              <p className={'text-[11px] font-bold mt-0.5 ' + (chosen.coi.tone === 'bad' ? 'text-rose-700' : 'text-amber-700')}>{chosen.coi.label}</p>
-            )}
-          </div>
-          {!disabled && (
-            <button type="button" onClick={() => onChange({ ...value, key: null, name: '', contact: '', phone: '', email: '', trade: '' })}
-              className="text-muted hover:text-rose-600 shrink-0"><X size={12} /></button>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      <div className="relative">
-        <input value={value.name} disabled={disabled}
-          onChange={e => { onChange({ ...value, name: e.target.value }); setOpen(true) }}
-          onFocus={() => setOpen(true)}
-          placeholder="Who billed us?"
-          className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] focus:outline-none focus:border-ink" />
-        {open && hits.length > 0 && (
-          <div className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-line bg-white shadow-lg overflow-hidden max-h-56 overflow-y-auto">
-            {hits.map(v => (
-              <button type="button" key={v.key} onClick={() => { onChange({ ...value, key: v.key, name: v.label, save: false }); setOpen(false) }}
-                className="w-full text-left px-2.5 py-1.5 hover:bg-app">
-                <span className="block text-[12.5px] text-ink font-semibold">{v.label}</span>
-                <span className="block text-[11px] text-muted truncate">{[v.trade, v.phone].filter(Boolean).join(' · ') || 'no details saved'}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* A NAME NOT IN THE LIST. Rather than making somebody leave and go to a settings page, the
-          details come with the invoice, and the vendor exists from then on. */}
-      {value.name.trim() && !chosen && !disabled && (
-        <div className="mt-1.5 rounded-lg border border-dashed border-line bg-app/40 p-2 space-y-1.5">
-          <label className="flex items-center gap-1.5 text-[11.5px] font-semibold text-ink">
-            <input type="checkbox" checked={value.save} onChange={e => onChange({ ...value, save: e.target.checked })} />
-            Save “{value.name.trim()}” so you can pick them next time
-          </label>
-          {value.save && (
-            <div className="grid grid-cols-2 gap-1.5">
-              <input value={value.contact} onChange={e => onChange({ ...value, contact: e.target.value })} placeholder="Contact name"
-                className="rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
-              <input value={value.phone} onChange={e => onChange({ ...value, phone: e.target.value })} placeholder="Phone" inputMode="tel"
-                className="rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
-              <input value={value.email} onChange={e => onChange({ ...value, email: e.target.value })} placeholder="Email" inputMode="email"
-                className="rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
-              <select value={value.trade} onChange={e => onChange({ ...value, trade: e.target.value })}
-                className="rounded-md border border-line bg-white px-2 py-1 text-[12px]">
-                <option value="">Trade…</option>
-                {VENDOR_TRADES.map(t => <option key={t} value={t}>{t[0].toUpperCase() + t.slice(1)}</option>)}
-              </select>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-const blankVendor = () => ({ key: null as string | null, name: '', contact: '', phone: '', email: '', trade: '', save: true })
+// The picker moved to components/VendorCard.tsx (2026-09-24) so glitches and requests use the
+// same one — regulars first, inline add, the card behind every name.
+const blankVendor = blankVendorDraft
 
 function AddInvoice({ taskId, act, busy, vendors, onSaved, onClose, files }: {
   taskId?: string | null; act: (b: any) => Promise<any>; busy: boolean
@@ -2732,6 +2607,7 @@ function AddInvoice({ taskId, act, busy, vendors, onSaved, onClose, files }: {
       vendorKey: vendor.key || undefined, vendorName: vendor.name.trim() || undefined,
       saveVendor: !vendor.key && vendor.save && !!vendor.name.trim(),
       vendorContact: vendor.contact, vendorPhone: vendor.phone, vendorEmail: vendor.email, vendorTrade: vendor.trade,
+      vendorRegular: vendor.regular, vendorCadence: vendor.cadence || null,
       amount, number, status, issued_on: issued, due_on: dueOn, note, photoId: photoId || undefined,
     })
     setSaving(false)

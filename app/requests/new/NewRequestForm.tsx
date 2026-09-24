@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useMemo, useState } from 'react'
 import { ArrowLeft, Loader2 } from 'lucide-react'
+import { VendorPicker, useVendorDirectory, saveVendorInline, vendorDraftBody, blankVendorDraft, type VendorDraft } from '@/components/VendorCard'
 
 type ListingOption = { id: string; nickname: string | null; title: string | null; building: string | null; unit: string | null }
 
@@ -17,7 +18,8 @@ export function NewRequestForm({
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium')
   const [assignee, setAssignee] = useState('')
   const [dueAt, setDueAt]     = useState('')
-  const [vendor, setVendor]   = useState('')
+  const [vendorDraft, setVendorDraft] = useState<VendorDraft>({ ...blankVendorDraft(), save: false })
+  const { vendors, reload: reloadVendors } = useVendorDirectory()
   const [amount, setAmount]   = useState('')
   const [reqApproval, setReqApproval] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -29,6 +31,12 @@ export function NewRequestForm({
     e.preventDefault()
     setSubmitting(true); setErr(null)
     try {
+      // A vendor typed with "save" ticked joins the directory first, so the request carries a key.
+      let vendorKey = vendorDraft.key, vendorName: string | null = vendorDraft.name.trim() || null
+      if (!vendorKey && vendorName && vendorDraft.save) {
+        const saved = await saveVendorInline(vendorDraftBody(vendorDraft))
+        if (saved) { vendorKey = saved.key; vendorName = saved.label; reloadVendors() }
+      }
       // Server-gated create (/api/requests/update) — creator is stamped from the session there.
       const res = await fetch('/api/requests/update', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -45,7 +53,7 @@ export function NewRequestForm({
             priority,
             assignee_email: assignee.trim() || null,
             due_at: dueAt || null,
-            vendor: vendor.trim() || null,
+            vendor: vendorName, vendor_key: vendorKey,
             amount_usd: amount ? Number(amount) : null,
             approval_required: reqApproval,
           },
@@ -134,8 +142,7 @@ export function NewRequestForm({
             <div className="text-[11px] uppercase tracking-wider font-semibold text-muted">{type === 'order' ? 'Order details' : 'Permission to expense'}</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Vendor">
-                <input type="text" value={vendor} onChange={e => setVendor(e.target.value)} placeholder="e.g. Home Depot"
-                  className="w-full px-3 py-2 rounded-lg border border-line bg-white text-sm focus:border-brand-400 outline-none" />
+                <VendorPicker value={vendorDraft} onChange={setVendorDraft} vendors={vendors} placeholder="e.g. Home Depot, or a vendor from the directory" />
               </Field>
               <Field label="Amount (USD)">
                 <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"

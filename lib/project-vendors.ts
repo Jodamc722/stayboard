@@ -9,7 +9,7 @@
 // selects fewer columns.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { type VendorRecord, VENDOR_TRADES, RATE_UNITS } from './projects-shared'
+import { type VendorRecord, VENDOR_TRADES, RATE_UNITS, CADENCES } from './projects-shared'
 
 const str = (v: any) => (typeof v === 'string' ? v.trim() : '')
 const num = (v: any): number | null => { const n = Number(v); return Number.isFinite(n) ? n : null }
@@ -43,6 +43,8 @@ const shape = (r: any): VendorRecord => ({
   w9_on_file: !!r.w9_on_file,
   coi_expires: r.coi_expires ?? null,
   active: r.active !== false, sort: Number(r.sort) || 100,
+  regular: !!r.regular,
+  cadence: (CADENCES as readonly string[]).includes(String(r.cadence || '')) ? r.cadence : null,
 })
 
 /** FAIL-OPEN: no vendors table, or no 087 yet, means an empty picker — never a broken page. */
@@ -90,6 +92,8 @@ export async function saveVendor(v: Record<string, any>, by?: string): Promise<{
   if (v.coi_expires !== undefined) row.coi_expires = /^\d{4}-\d{2}-\d{2}$/.test(str(v.coi_expires)) ? str(v.coi_expires) : null
   if (Array.isArray(v.buildings)) row.buildings = v.buildings.map((b: any) => str(b)).filter(Boolean)
   if (v.active !== undefined) row.active = !!v.active
+  if (v.regular !== undefined) row.regular = !!v.regular
+  if (v.cadence !== undefined) row.cadence = (CADENCES as readonly string[]).includes(str(v.cadence)) ? str(v.cadence) : null
 
   try {
     const sb = supabaseAdmin()
@@ -99,7 +103,12 @@ export async function saveVendor(v: Record<string, any>, by?: string): Promise<{
     // so a vendor saved here shows a human on the staffing page too, instead of an empty cell.
     const human = [row.contact_name, row.phone].filter(Boolean).join(' · ')
     if (human) row.contact = human
-    const { error } = await sb.from('vendors').upsert(row, { onConflict: 'key' })
+    let { error } = await sb.from('vendors').upsert(row, { onConflict: 'key' })
+    if (error && /regular|cadence/i.test(error.message)) {
+      // 109 not run yet: keep everything else rather than losing the save over two columns.
+      const { regular: _r, cadence: _c, ...rest } = row
+      ;({ error } = await sb.from('vendors').upsert(rest, { onConflict: 'key' }))
+    }
     if (error) {
       // Before 087 the contact columns do not exist. Save what the old shape can hold rather than
       // refusing the whole vendor — a name and a phone number in `contact` still beats nothing.
@@ -125,4 +134,80 @@ export function coiState(v: VendorRecord, todayISO: string): { tone: 'bad' | 'wa
   if (days < 0) return { tone: 'bad', label: 'Insurance expired' }
   if (days <= 30) return { tone: 'warn', label: `Insurance expires in ${days}d` }
   return { tone: 'ok', label: 'Insured' }
+}
+
+// ── THE VENDOR CARD ──────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-09-24: "if you select vendor maybe then opens up vendor info". One read, every board:
+// who they are and how to reach them, whether they are insured, when they were last here, what is
+// open with them right now across projects, glitches and requests, and — for a regular — whether
+// they are overdue by their own cadence. Each source is best-effort; a board whose column has not
+// been migrated yet contributes nothing rather than breaking the card.
+export type VendorJob = { kind: 'project' | 'glitch' | 'request'; id: string; title: string; where: string | null; when: string | null; href: string; done: boolean }
+export type VendorSummary = {
+  vendor: VendorRecord
+  coi: { tone: 'bad' | 'warn' | 'ok'; label: string } | null
+  lastVisit: string | null          // ISO date of the most recent finished project visit
+  overdueBy: number | null          // days past cadence since last visit (regular vendors only)
+  open: VendorJob[]                 // open work with them, newest first, capped
+  recent: VendorJob[]               // last few finished jobs
+  invoices: { count: number; cents: number }   // approved + paid, last 12 months
+}
+
+export async function vendorSummary(key: string, todayISO: string): Promise<VendorSummary | null> {
+  const v = await getVendor(key); if (!v) return null
+  const db = supabaseAdmin()
+  const open: VendorJob[] = [], recent: VendorJob[] = []
+  let lastVisit: string | null = null
+  let invoices = { count: 0, cents: 0 }
+  const titleOf: Record<string, string> = {}
+  try {
+    const { data: steps } = await db.from('project_steps').select('id,project_id,title,status,done,visit_on,done_at,updated_at')
+      .eq('vendor_key', v.key).order('updated_at', { ascending: false }).limit(60)
+    const rows = (steps as any[]) || []
+    const pids = Array.from(new Set(rows.map(r => String(r.project_id))))
+    if (pids.length) {
+      const { data: ps } = await db.from('projects').select('id,title,building').in('id', pids)
+      for (const p of (ps as any[]) || []) titleOf[String(p.id)] = [p.building, p.title].filter(Boolean).join(' · ')
+    }
+    for (const r of rows) {
+      const done = !!r.done || String(r.status) === 'done'
+      const job: VendorJob = { kind: 'project', id: String(r.id), title: String(r.title || ''), where: titleOf[String(r.project_id)] || null, when: r.visit_on || (done ? String(r.done_at || '').slice(0, 10) : null) || null, href: `/projects/${r.project_id}?task=${r.id}`, done }
+      if (done) { recent.push(job); const d = String(r.visit_on || r.done_at || '').slice(0, 10); if (d && d <= todayISO && (!lastVisit || d > lastVisit)) lastVisit = d }
+      else open.push(job)
+    }
+  } catch { /* 088 not run */ }
+  try {
+    const { data: gs } = await db.from('glitches').select('id,unit,category,overview,status,created_at,closed_at').eq('vendor_key', v.key).order('created_at', { ascending: false }).limit(30)
+    for (const g of (gs as any[]) || []) {
+      const done = /^(closed|done|resolved)$/i.test(String(g.status || ''))
+      const job: VendorJob = { kind: 'glitch', id: String(g.id), title: String(g.category || 'Guest issue') + (g.overview ? ' — ' + String(g.overview).replace(/\s+/g, ' ').slice(0, 60) : ''), where: g.unit || null, when: String(done ? g.closed_at || g.created_at : g.created_at).slice(0, 10), href: `/glitches?id=${g.id}`, done }
+      ;(done ? recent : open).push(job)
+    }
+  } catch { /* 109 not run */ }
+  try {
+    const { data: rs } = await db.from('field_requests').select('id,title,unit,status,created_at,updated_at').eq('vendor_key', v.key).order('created_at', { ascending: false }).limit(30)
+    for (const r of (rs as any[]) || []) {
+      const done = /^(done|cancelled)$/i.test(String(r.status || ''))
+      const job: VendorJob = { kind: 'request', id: String(r.id), title: String(r.title || ''), where: r.unit || null, when: String(done ? r.updated_at || r.created_at : r.created_at).slice(0, 10), href: `/requests/${r.id}`, done }
+      ;(done ? recent : open).push(job)
+    }
+  } catch { /* 109 not run */ }
+  try {
+    const since = new Date(Date.parse(todayISO + 'T00:00:00Z') - 365 * 86400_000).toISOString().slice(0, 10)
+    const { data: inv } = await db.from('project_invoices').select('amount_cents,status,issued_on,created_at').eq('vendor_key', v.key).in('status', ['approved', 'paid']).limit(500)
+    for (const i of (inv as any[]) || []) {
+      const d = String(i.issued_on || i.created_at || '').slice(0, 10)
+      if (d && d < since) continue
+      invoices = { count: invoices.count + 1, cents: invoices.cents + (Number(i.amount_cents) || 0) }
+    }
+  } catch { /* no invoices table yet */ }
+  const byWhen = (a: VendorJob, b: VendorJob) => String(b.when || '').localeCompare(String(a.when || ''))
+  open.sort(byWhen); recent.sort(byWhen)
+  let overdueBy: number | null = null
+  if (v.regular && v.cadence && lastVisit) {
+    const { CADENCE_DAYS } = await import('./projects-shared')
+    const days = Math.round((Date.parse(todayISO + 'T00:00:00Z') - Date.parse(lastVisit + 'T00:00:00Z')) / 86400_000)
+    overdueBy = Math.max(0, days - CADENCE_DAYS[v.cadence])
+  }
+  return { vendor: v, coi: coiState(v, todayISO), lastVisit, overdueBy, open: open.slice(0, 8), recent: recent.slice(0, 5), invoices }
 }

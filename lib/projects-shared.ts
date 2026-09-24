@@ -163,7 +163,14 @@ export type VendorRecord = {
   address: string | null; notes: string | null
   w9_on_file: boolean; coi_expires: string | null
   active: boolean; sort: number
+  /** Jon, 2026-09-24: "a recurring vendor we use regularly" — pinned first in every picker. */
+  regular: boolean; cadence: Cadence | null
 }
+
+export const CADENCES = ['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'] as const
+export type Cadence = typeof CADENCES[number]
+export const CADENCE_LABEL: Record<Cadence, string> = { weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly' }
+export const CADENCE_DAYS: Record<Cadence, number> = { weekly: 7, biweekly: 14, monthly: 31, quarterly: 92, yearly: 366 }
 
 export const VENDOR_TRADES = [
   'general', 'plumbing', 'electrical', 'hvac', 'appliance', 'cleaning', 'pest',

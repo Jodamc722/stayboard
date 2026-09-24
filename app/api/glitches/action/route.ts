@@ -161,6 +161,9 @@ export async function POST(req: NextRequest) {
       // dueDate may sit in the FUTURE - a glitch raised for an upcoming stay is planned work.
       if (b.dueDate !== undefined) patch.due_date = /^\d{4}-\d{2}-\d{2}$/.test(str(b.dueDate)) ? str(b.dueDate) : null
       if (b.assignee !== undefined) patch.assignee = str(b.assignee) || null
+      // The outside vendor on it (migration 109). Name kept as a snapshot next to the key.
+      if (b.vendorKey !== undefined) patch.vendor_key = str(b.vendorKey) || null
+      if (b.vendorName !== undefined) patch.vendor_name = str(b.vendorName).slice(0, 200) || null
       if (b.assigneePersonId !== undefined) { const pid = Number(b.assigneePersonId); patch.assignee_person_id = Number.isFinite(pid) && pid > 0 ? pid : null }
       // Assigned to an app user (2026-09-22): tell them. The card link opens the board.
       if (b.assigneeEmail && str(b.assignee) && str(b.assignee) !== str(g.assignee)) {
