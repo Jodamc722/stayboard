@@ -97,10 +97,18 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, fullName: fullName.trim(), ruleInitials, signature: sig, idPhoto, selfie }),
       })
-      const j = await res.json()
-      if (!res.ok || j.ok === false) { setErr(j.error || 'Something went wrong. Please try again.'); setBusy(false); return }
-      setDone(true)
-    } catch { setErr('Network error — please try again.'); setBusy(false) }
+      // A failure in front of the function (too large, timed out) is not JSON — say what happened
+      // instead of "network error", which sent guests round in circles.
+      let j: any = null
+      try { j = await res.json() } catch { j = null }
+      if (res.ok && j && j.ok !== false) { setDone(true); return }
+      const why = j && j.error ? j.error
+        : res.status === 413 ? 'Your photos are too large to send. Please retake them and try again.'
+        : res.status === 504 || res.status === 502 ? 'This is taking longer than usual. Please wait a moment and tap Submit again.'
+        : 'Something went wrong (' + res.status + '). Please try again, or ask the front desk for help.'
+      setErr(why); setBusy(false)
+      try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+    } catch { setErr('No connection — check your Wi-Fi or data and tap Submit again.'); setBusy(false); try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {} }
   }
 
   if (!data) return <Shell><div className="text-neutral-400 text-sm py-10 text-center">Loading…</div></Shell>
@@ -129,6 +137,11 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
   const initialedCount = rules.filter(r => !!(ruleInitials[r.id] || '').trim()).length
   const allInitialed = rules.length > 0 && initialedCount === rules.length
   const canSubmit = !!fullName.trim() && allInitialed && !!sig && !!idPhoto && !!selfie && !busy
+  const missing = [
+    !allInitialed ? 'initials (' + initialedCount + '/' + rules.length + ')' : '',
+    !idPhoto ? 'ID photo' : '', !selfie ? 'selfie' : '',
+    !fullName.trim() ? 'name' : '', !sig ? 'signature' : '',
+  ].filter(Boolean)
   const card = 'rounded-2xl border border-neutral-200 bg-white shadow-sm p-5 mb-4'
   const primaryBtn = 'w-full rounded-xl bg-neutral-900 text-white font-semibold py-3.5 hover:bg-neutral-800 transition-colors disabled:opacity-40'
 
@@ -229,7 +242,7 @@ export default function SalatoVerify({ params }: { params: { token: string } }) 
       </div>
 
       <button className={primaryBtn} disabled={!canSubmit} onClick={submit}>
-        {busy ? 'Submitting…' : (canSubmit ? 'Submit verification' : 'Complete initials, ID, selfie & signature to submit')}
+        {busy ? 'Submitting…' : (canSubmit ? 'Submit verification' : 'Still needed: ' + missing.join(', '))}
       </button>
       <div className="h-8" />
     </Shell>
@@ -242,6 +255,8 @@ function PhotoCapture({ facing, maxPx, placeholderClass, takeLabel, retakeLabel,
     value: string; onChange: (s: string) => void; onError: (s: string) => void; primaryBtn: string }) {
   const [streaming, setStreaming] = useState(false)
   const [starting, setStarting] = useState(false)
+  const [camFailed, setCamFailed] = useState(false)
+  const inputId = 'photo-' + facing
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -272,11 +287,13 @@ function PhotoCapture({ facing, maxPx, placeholderClass, takeLabel, retakeLabel,
     if (!md || !md.getUserMedia) { openNativePicker(); return }
     setStarting(true)
     try {
-      const stream = await md.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false })
+      const stream = await md.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
       streamRef.current = stream
       setStreaming(true)
     } catch {
-      // Permission denied or no camera — fall back to the OS camera/file picker so they can still finish.
+      // Permission denied or no camera. Try the OS picker (works when the tap is still fresh), and
+      // show the upload button below, which always works because it is its own tap.
+      setCamFailed(true)
       openNativePicker()
     }
     setStarting(false)
@@ -324,9 +341,14 @@ function PhotoCapture({ facing, maxPx, placeholderClass, takeLabel, retakeLabel,
       <button type="button" onClick={openCamera} disabled={starting} className={primaryBtn}>
         {starting ? 'Opening camera…' : (value ? retakeLabel : takeLabel)}
       </button>
-      {/* Fallback for devices where the live camera isn't available; also lets guests choose an existing photo. */}
-      <input ref={fileRef} type="file" accept="image/*" capture={facing === 'user' ? 'user' : 'environment'} className="hidden"
-        onChange={e => onFile(e.target.files && e.target.files[0])} />
+      {camFailed && !value && <p className="text-xs text-amber-700 mt-2">The camera did not open. Use the button below to take or choose a photo instead.</p>}
+      {/* Always-visible fallback: a <label> for the file input is a direct tap, so the phone's own
+          camera / photo picker (or a file chooser on a computer) opens every time. */}
+      <label htmlFor={inputId} className={'mt-2 block w-full text-center rounded-xl border font-semibold py-3 cursor-pointer transition-colors ' + (camFailed && !value ? 'border-neutral-900 text-neutral-900 bg-amber-50' : 'border-neutral-300 text-neutral-700 hover:bg-neutral-50')}>
+        {facing === 'user' ? 'Use phone camera or upload a photo' : 'Use phone camera or upload a photo of your ID'}
+      </label>
+      <input id={inputId} ref={fileRef} type="file" accept="image/*" capture={facing === 'user' ? 'user' : 'environment'} className="sr-only"
+        onChange={e => { onFile(e.target.files && e.target.files[0]); try { e.target.value = '' } catch {} }} />
     </div>
   )
 }
@@ -387,7 +409,13 @@ function SignaturePad({ value, onChange }: { value: string; onChange: (s: string
   const onMouseDown = (e: React.MouseEvent) => { e.preventDefault(); start(e.clientX, e.clientY) }
   const onMouseMove = (e: React.MouseEvent) => { if (drawing.current) { e.preventDefault(); draw(e.clientX, e.clientY) } }
   const onTouchStart = (e: React.TouchEvent) => { const t = e.touches[0]; if (t) start(t.clientX, t.clientY) }
-  const onTouchMove = (e: React.TouchEvent) => { const t = e.touches[0]; if (t && drawing.current) { if (e.cancelable) e.preventDefault(); draw(t.clientX, t.clientY) } }
+  const drawRef = useRef(draw); drawRef.current = draw
+  useEffect(() => {
+    const c = canvasRef.current; if (!c) return
+    const move = (e: TouchEvent) => { const t = e.touches[0]; if (t && drawing.current) { if (e.cancelable) e.preventDefault(); drawRef.current(t.clientX, t.clientY) } }
+    c.addEventListener('touchmove', move, { passive: false })
+    return () => c.removeEventListener('touchmove', move)
+  }, [])
 
   const clear = () => { const c = canvasRef.current; if (!c) return; const ctx = c.getContext('2d'); if (!ctx) return; ctx.clearRect(0, 0, c.width, c.height); dirty.current = false; onChange('') }
 
@@ -396,7 +424,7 @@ function SignaturePad({ value, onChange }: { value: string; onChange: (s: string
       <div className={'mt-1 rounded-xl border bg-white ' + (value ? 'border-emerald-300' : 'border-neutral-300')}>
         <canvas ref={canvasRef}
           onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={end} onMouseLeave={end}
-          onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={end}
+          onTouchStart={onTouchStart} onTouchEnd={end} onTouchCancel={end}
           className="w-full h-44 rounded-xl touch-none select-none" style={{ touchAction: 'none' }} />
       </div>
       <button type="button" onClick={clear} className="text-xs text-neutral-500 underline mt-1.5">Clear signature</button>
