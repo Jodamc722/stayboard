@@ -493,12 +493,20 @@ export const AI_SUBTITLE: CopyPair = {
   retired: ['Four things run on our own software every day. None of them replace the person who answers your call.'],
   current: 'Built in-house for this business. It works alongside our team on every listing, every guest and every call.',
 }
-export const AI_PILLARS_RETIRED_MARKS = ['Problems found before a review is', 'A teammate on every message', 'This report, generated']
+// Jon, 2026-09-24: "Lighthouse does not run welcome calls. It records the calls so that we can convert
+// conversations to actionable steps that everybody can see. It helps create guest profiles … for
+// marketing campaigns to get them to come back … through direct bookings. It helps us schedule."
+export const AI_PILLARS_RETIRED_MARKS = ['Problems found before a review is', 'A teammate on every message', 'This report, generated',
+  'Welcome calls, mid-stay check-ins, review requests', 'Guest calls are matched to the booking, summarized']
 export const AI_PILLARS: { k: string; v: string }[] = [
   { k: 'Listing optimization', v: 'Titles, descriptions, photos and amenities are measured against what guests search for and what they praise in reviews, so every listing keeps getting sharper.' },
-  { k: 'Guest sentiment', v: 'Every message and review is read for how the guest feels, not only what they asked. Review replies are drafted, and the team knows who to delight next while the guest is still with us.' },
-  { k: 'Automated triggers', v: 'Welcome calls, mid-stay check-ins, review requests, preventative maintenance and deep cleans are scheduled on their own, so every guest and every unit gets the same standard.' },
-  { k: 'Calls, handled', v: 'Guest calls are matched to the booking, summarized and turned into next steps, in English or Spanish, so every conversation moves something forward.' },
+  { k: 'Guest sentiment', v: 'Every message and review is read for how the guest feels. Review replies are drafted, and the team knows who to delight while the guest is still with us.' },
+  { k: 'Calls into action', v: 'Calls are recorded and turned into clear next steps the whole team can see, so every conversation moves something forward.' },
+  { k: 'Guest profiles', v: 'Every stay adds to a guest profile, so we can invite past guests back through direct-booking campaigns.' },
+  // Jon, 2026-09-24: "Nothing is scheduled on its own, but it allows us to get visibility and make
+  // operational decisions based on real guest sentiment feedback and what's been completed in the
+  // unit … routinely doing preventative maintenance inspections … manage and oversee the entire picture."
+  { k: 'The whole picture', v: 'Guest feedback and every job completed in the unit, in one view. Operational decisions rest on real sentiment, and preventative maintenance inspections happen on a routine.' },
 ]
 export const AI_NOTE: CopyPair = {
   retired: ['What it buys you is speed and consistency: faster answers, problems caught earlier, and a report you can check. Judgement calls — pricing your unit, spending your money, what to tell you — stay with the people you met on slide three.'],
@@ -699,9 +707,10 @@ export const STACK_BODY_PAIR: CopyPair = {
 // cannot fetch vendor artwork and a hotlinked logo that 404s on an owner's screen is worse than a
 // clean letter. Paste a URL, or upload the file, and the layout takes it without changing.
 // Jon, 2026-09-24: Lighthouse is about improving, not about catching what was missed.
-const LIGHTHOUSE_LINE_CURRENT = 'Built in-house for this business. It optimizes listings, manages guest sentiment, runs automated triggers from welcome calls to deep cleans, and turns every guest call into next steps.'
+const LIGHTHOUSE_LINE_CURRENT = 'Built in-house for this business. It optimizes listings, reads guest sentiment, turns recorded calls into next steps the team can see, builds guest profiles for direct-booking campaigns, and shows the whole picture of every unit in one place.'
 export const LIGHTHOUSE_LINE: CopyPair = {
-  retired: ['Built from the ground up for this business. It optimizes listings, drafts responses to guest reviews, reads guest messages for sentiment, schedules preventative maintenance and deep cleans, and watches every day for the thing that would otherwise be missed.'],
+  retired: ['Built in-house for this business. It optimizes listings, manages guest sentiment, runs automated triggers from welcome calls to deep cleans, and turns every guest call into next steps.',
+    'Built from the ground up for this business. It optimizes listings, drafts responses to guest reviews, reads guest messages for sentiment, schedules preventative maintenance and deep cleans, and watches every day for the thing that would otherwise be missed.'],
   current: LIGHTHOUSE_LINE_CURRENT,
 }
 // Jon, 2026-09-24: Breezeway is "the leading or premium operations tool in our industry", not a hotel tool.
