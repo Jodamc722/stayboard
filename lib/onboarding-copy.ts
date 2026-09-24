@@ -497,10 +497,12 @@ export const AI_SUBTITLE: CopyPair = {
 // conversations to actionable steps that everybody can see. It helps create guest profiles … for
 // marketing campaigns to get them to come back … through direct bookings. It helps us schedule."
 export const AI_PILLARS_RETIRED_MARKS = ['Problems found before a review is', 'A teammate on every message', 'This report, generated',
-  'Welcome calls, mid-stay check-ins, review requests', 'Guest calls are matched to the booking, summarized']
+  'Welcome calls, mid-stay check-ins, review requests', 'Guest calls are matched to the booking, summarized',
+  // Jon, 2026-09-24: "also mention helping with review management, turning guest feedback into tasks"
+  'Every message and review is read for how the guest feels. Review replies are drafted']
 export const AI_PILLARS: { k: string; v: string }[] = [
   { k: 'Listing optimization', v: 'Titles, descriptions, photos and amenities are measured against what guests search for and what they praise in reviews, so every listing keeps getting sharper.' },
-  { k: 'Guest sentiment', v: 'Every message and review is read for how the guest feels. Review replies are drafted, and the team knows who to delight while the guest is still with us.' },
+  { k: 'Reviews & guest feedback', v: 'Review replies are drafted and tracked on every channel. Guest feedback is read for sentiment and organized into tasks on the right unit, so what guests tell us turns into action.' },
   { k: 'Calls into action', v: 'Calls are recorded and turned into clear next steps the whole team can see, so every conversation moves something forward.' },
   { k: 'Guest profiles', v: 'Every stay adds to a guest profile, so we can invite past guests back through direct-booking campaigns.' },
   // Jon, 2026-09-24: "Nothing is scheduled on its own, but it allows us to get visibility and make
@@ -707,9 +709,10 @@ export const STACK_BODY_PAIR: CopyPair = {
 // cannot fetch vendor artwork and a hotlinked logo that 404s on an owner's screen is worse than a
 // clean letter. Paste a URL, or upload the file, and the layout takes it without changing.
 // Jon, 2026-09-24: Lighthouse is about improving, not about catching what was missed.
-const LIGHTHOUSE_LINE_CURRENT = 'Built in-house for this business. It optimizes listings, reads guest sentiment, turns recorded calls into next steps the team can see, builds guest profiles for direct-booking campaigns, and shows the whole picture of every unit in one place.'
+const LIGHTHOUSE_LINE_CURRENT = 'Built in-house for this business. It optimizes listings, helps manage reviews, turns guest feedback and recorded calls into tasks the team can see, builds guest profiles for direct-booking campaigns, and shows the whole picture of every unit.'
 export const LIGHTHOUSE_LINE: CopyPair = {
-  retired: ['Built in-house for this business. It optimizes listings, manages guest sentiment, runs automated triggers from welcome calls to deep cleans, and turns every guest call into next steps.',
+  retired: ['Built in-house for this business. It optimizes listings, reads guest sentiment, turns recorded calls into next steps the team can see, builds guest profiles for direct-booking campaigns, and shows the whole picture of every unit in one place.',
+    'Built in-house for this business. It optimizes listings, manages guest sentiment, runs automated triggers from welcome calls to deep cleans, and turns every guest call into next steps.',
     'Built from the ground up for this business. It optimizes listings, drafts responses to guest reviews, reads guest messages for sentiment, schedules preventative maintenance and deep cleans, and watches every day for the thing that would otherwise be missed.'],
   current: LIGHTHOUSE_LINE_CURRENT,
 }
