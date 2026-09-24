@@ -30,7 +30,7 @@ import {
   MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, PORTAL_URL, teamSubtitle, WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_NOTE,
   CHANNELS_HEADLINE, SEASON_SUBTITLE, GUESTY_SUBTITLE, STATEMENT_HEADLINE, STATEMENT_SUBTITLE, NOTES_SUBTITLE,
   OVERVIEW_BODY_2, COMPANY_STATS_2,
-  EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF,
+  EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, type PropertyItem,
   CRAFT_BODY, CRAFT_ROWS,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY,
   REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, PACER_LOGO,
@@ -107,7 +107,7 @@ export type OnboardingContent = {
   overview: Sec<{ headline: string; subtitle: string; body: string; stats: KV[] }>
   // ── THE PITCH (2026-09-23) ────────────────────────────────────────────────
   /** What we have already run — the wall of buildings, and what running them buys this owner. */
-  experience: Sec<{ headline: string; subtitle: string; body: string; items: KV[]; proof: KV[]; photo: string | null }>
+  experience: Sec<{ headline: string; subtitle: string; body: string; items: PropertyItem[]; proof: KV[]; photo: string | null }>
   /** What we do to the listing itself: listing, amenities, descriptions, distribution, marketing, ramp. */
   craft: Sec<{ headline: string; subtitle: string; body: string; rows: KV[] }>
   /** The guest journey, booking to review, and the Breezeway record behind it. */
@@ -261,7 +261,7 @@ export type OnboardingTemplate = {
   techRows: KV[]
   // ── THE PITCH (2026-09-23). Six slides that argue for the company rather than explain it.
   experienceBody: string
-  experienceItems: KV[]
+  experienceItems: PropertyItem[]
   experienceProof: KV[]
   craftBody: string
   craftRows: KV[]

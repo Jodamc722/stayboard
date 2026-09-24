@@ -22,8 +22,8 @@ export const HERO_HEADLINE: CopyPair = {
 }
 
 export const CHECKLIST_HEADLINE: CopyPair = {
-  retired: ['What is left before we can take a booking'],
-  current: 'What is still open on your unit',
+  retired: ['What is left before we can take a booking', 'What is still open on your unit'],
+  current: 'What is still open on your property',
 }
 
 export const CHECKLIST_SUBTITLE: CopyPair = {
@@ -181,6 +181,8 @@ export function houseLine(stored: unknown, pair: CopyPair): string {
 // Two marks: the original agenda promised to "score" the listing; the next one counted the team
 // as four, which stopped being true the day the editor grew an "Add someone" button.
 export const AGENDA_RETIRED_MARKS = ['score it, and fix the weak parts', 'The four people who run your unit, what each', 'what each of them owns, and the direct lines', 'Who runs your unit, and their direct lines',
+  // Boss, 2026-09-24: 'your property', not 'your unit' — flips a stored agenda that still says unit
+  'runs your unit.', 'platforms your unit runs on', 'Your unit specifically',
   // Retired 2026-09-23: the six-row agenda described a shorter meeting than the deck now runs.
   // An agenda that does not match the deck behind it is the first thing an owner notices.
   'Photos, description and amenities, reviewed together.']
@@ -197,12 +199,12 @@ export function agendaStale(rows: unknown): boolean {
 // their unit, their year, and the admin. Nine rows for eighteen slides — the agenda groups, it
 // does not index.
 export const AGENDA_ROWS: { k: string; v: string }[] = [
-    { k: 'Who we are', v: 'Stay Hospitality, what we run today, and who on our team runs your unit.' },
+    { k: 'Who we are', v: 'Stay Hospitality, what we run today, and who on our team runs your property.' },
     { k: 'What we do to the listing', v: 'The listing, amenities, descriptions, distribution and marketing.' },
     { k: 'The guest experience', v: 'How a stay is run, booking to review, and the record behind it.' },
     { k: 'Revenue management', v: 'How your rate gets set, and every lever besides the nightly price.' },
-    { k: 'The technology', v: 'The four platforms your unit runs on, and what each one is for.' },
-    { k: 'Your listing', v: 'Your unit specifically — what is strong, and what we are changing.' },
+    { k: 'The technology', v: 'The four platforms your property runs on, and what each one is for.' },
+    { k: 'Your listing', v: 'Your property specifically — what is strong, and what we are changing.' },
     { k: 'Your year', v: 'South Florida seasonality, and the first 90 days of a new listing.' },
     { k: 'Money & the portal', v: 'Your owner portal, your monthly statement, owner stays and billing.' },
     { k: 'What happens next', v: 'Open items, owners and dates.' },
@@ -522,8 +524,10 @@ export const AI_PILLARS: { k: string; v: string }[] = [
 export const AI_NOTE: CopyPair = {
   retired: ['What it buys you is speed and consistency: faster answers, problems caught earlier, and a report you can check. Judgement calls — pricing your unit, spending your money, what to tell you — stay with the people you met on slide three.',
     'The result: listings that improve month over month, and guests who feel looked after from booking to checkout. Decisions about your unit — pricing, spending, what to tell you — stay with your team.',
-    'The whole picture in one place: guest feedback, completed work and performance for every unit, so decisions rest on real data and preventative maintenance happens on a routine. Decisions about your unit stay with your team.'],
-  current: 'One place for what guests say, what has been done in the unit and how the listing performs, so our team acts on real information rather than memory. Decisions about your unit stay with your team.',
+    'The whole picture in one place: guest feedback, completed work and performance for every unit, so decisions rest on real data and preventative maintenance happens on a routine. Decisions about your unit stay with your team.',
+    // 2026-09-24: 'your unit' → 'your property' (boss)
+    'One place for what guests say, what has been done in the unit and how the listing performs, so our team acts on real information rather than memory. Decisions about your unit stay with your team.'],
+  current: 'One place for what guests say, what has been done in your property and how the listing performs, so our team acts on real information rather than memory. Decisions about your property stay with your team.',
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -573,28 +577,44 @@ export const COMPANY_STATS_2: { k: string; v: string }[] = [
 // recognises two or three of these buildings from driving past them, and recognition does more
 // than a paragraph. Scrollable, because the list is the argument and trimming it to fit would be
 // trimming the argument.
-export const EXPERIENCE_HEADLINE = 'What we already run'
-export const EXPERIENCE_SUBTITLE = 'A portfolio of buildings, not just units.'
-export const EXPERIENCE_BODY =
-  'We operate hotels and full residence buildings alongside individual homes. Your unit inherits what that scale has already built: established vendor relationships, linen contracts at volume, 24-hour coverage, and standing relationships with the cities and boards we work in.'
+// BOSS NOTES (2026-09-24, via Jon), slide 4: "needs new title instead of 'What we already run'
+// — 'Our Properties'. Get rid of 'Not a portfolio of units. A portfolio of buildings.' I'd also
+// get rid of the description underneath and just make the whole slide our properties with a pic
+// next to each one. Add 'apartments' to Capri. Add D225 and Nomad."
+//
+// So the slide is now the wall of properties and nothing else: no subtitle, no paragraph, no
+// proof rows. Each row carries a `b` (the canonical building label from lib/segments) so the
+// picture can be filled from the building's own Guesty photos, and a `pic` the editor can
+// replace with Change. A hotel we do not list on Guesty (Garden, Monroe) starts blank and is
+// uploaded by hand.
+export const EXPERIENCE_HEADLINE = 'Our Properties'
+export const EXPERIENCE_SUBTITLE = ''
+export const EXPERIENCE_BODY = ''
 
-export const EXPERIENCE_ITEMS: { k: string; v: string }[] = [
-  { k: 'The Elser Hotel & Residences', v: 'Downtown Miami · hotel & residences' },
-  { k: 'Arya Hotel & Suites', v: 'Miami · hotel' },
-  { k: 'The Garden Hotel & Resort', v: 'Fort Lauderdale · resort' },
+export type PropertyItem = { k: string; v: string; b?: string; pic?: string | null }
+export const EXPERIENCE_ITEMS: PropertyItem[] = [
+  { k: 'The Elser Hotel & Residences', v: 'Downtown Miami · hotel & residences', b: 'Elser' },
+  { k: 'Arya Hotel & Suites', v: 'Miami · hotel', b: 'Arya' },
+  { k: 'The Garden Hotel & Resort', v: 'Fort Lauderdale · resort', b: 'Botanica' },
   { k: 'The Monroe Hotel Miami', v: 'Miami · coming soon' },
-  { k: '17West', v: 'Fort Lauderdale · residences' },
-  { k: 'Salato Residences', v: 'Pompano Beach · residences' },
-  { k: 'Capri', v: 'Palm Beach County · residences' },
-  { k: 'Amrit Luxury Condo Rentals', v: 'Palm Beach · luxury' },
-  { k: 'Eden Escapes', v: 'Broward · homes & villas' },
+  { k: '17West', v: 'Fort Lauderdale · residences', b: '17WEST' },
+  { k: 'District 225', v: 'Downtown Miami · residences', b: 'District 225' },
+  { k: 'Nomad Residences', v: 'Miami · residences', b: 'Nomad' },
+  { k: 'Salato Residences', v: 'Pompano Beach · residences', b: 'Salato' },
+  { k: 'Capri Apartments', v: 'Palm Beach County · apartments', b: 'Capri' },
+  { k: 'Amrit Luxury Condo Rentals', v: 'Palm Beach · luxury', b: 'Amrit' },
+  { k: 'Eden Escapes', v: 'Broward · homes & villas', b: 'Eden' },
 ]
 
-export const EXPERIENCE_PROOF: { k: string; v: string }[] = [
+// Retired with the slide (boss, 2026-09-24): the slide is the properties, nothing to prove under them.
+export const EXPERIENCE_PROOF_RETIRED: { k: string; v: string }[] = [
+
   { k: 'One operator, end to end', v: 'Listing, pricing, guest communication, turnovers and maintenance run as one team on one system.' },
-  { k: 'Hotel standards on a single unit', v: 'The checklist that cleans a hotel floor cleans your unit: same standard, same inspection, same photographic record.' },
+  { k: 'Hotel standards on a single unit', v: 'The checklist that cleans a hotel floor cleans your property: same standard, same inspection, same photographic record.' },
   { k: 'Coverage around the clock', v: 'A guest locked out at 2am reaches a person. That call is answered in minutes, and it decides the review.' },
 ]
+
+export const EXPERIENCE_PROOF: { k: string; v: string }[] = []
 
 // ── THE GUEST EXPERIENCE ────────────────────────────────────────────────────
 // Jon, 2026-09-23: "a slide about the guest experience and what we do to make sure that every
@@ -604,7 +624,8 @@ export const EXPERIENCE_PROOF: { k: string; v: string }[] = [
 // Written as a sequence rather than a list of services, because the owner's real question is
 // "what happens to my unit between one guest leaving and the next one arriving", and a sequence
 // answers it. Every stage is something we actually do and can show them the record of.
-export const GUEST_HEADLINE = 'How a stay is run'
+// Boss, 2026-09-24: title 'Guest experience'.
+export const GUEST_HEADLINE = 'Guest experience'
 export const GUEST_SUBTITLE = 'Six touch points between the booking and the review.'
 export const GUEST_BODY =
   'Five-star reviews come from a sequence that runs the same way every time and is recorded as it runs. We find problems before a guest has to raise them twice.'
@@ -633,10 +654,11 @@ export const GUEST_BREEZEWAY =
 // on). Those are their numbers across their whole book, not ours on this owner's unit, and a
 // borrowed statistic on an owner slide is a promise we did not make and cannot keep. The slide
 // argues the method instead. Put our OWN figures in the editor when we have them.
-export const REVENUE_HEADLINE = 'How your rate gets set'
+// Boss, 2026-09-24: title 'Revenue Management'; "I don't like using the word 'unit'. 'Your property'."
+export const REVENUE_HEADLINE = 'Revenue Management'
 export const REVENUE_SUBTITLE = 'A dedicated revenue manager, reviewing your calendar every week.'
 export const REVENUE_BODY =
-  'Pricing software sets a rate. An operator sets a strategy. We partner with Pacer, a revenue-management firm dedicated to vacation rentals and boutique hotels, and your unit is assigned a named revenue manager who reviews the full picture every week.'
+  'Pricing software sets a rate. An operator sets a strategy. We partner with Pacer, a revenue-management firm dedicated to vacation rentals and boutique hotels, and your property is assigned a named revenue manager who reviews the full picture every week.'
 
 export const REVENUE_LEVERS: { k: string; v: string }[] = [
   { k: 'Nightly rate', v: 'Moved against live demand, comp-set pricing and what is actually booking in your building — not a fixed percentage off a guess.' },
@@ -657,13 +679,14 @@ export const REVENUE_NOTE =
 // This is the slide that separates us from a manager who takes the owner's existing listing,
 // changes the payout account and calls it onboarding. Each row names a thing we DO to the
 // listing, in the order we do it, so the owner can picture the work rather than trust a promise.
-export const CRAFT_HEADLINE = 'What we do to the listing itself'
+// Boss, 2026-09-24: title 'Our Process'; "I don't understand what you mean by 'rebuilt'" — gone.
+export const CRAFT_HEADLINE = 'Our Process'
 export const CRAFT_SUBTITLE = 'We fix what the rate is charged for before we set the rate.'
 export const CRAFT_BODY =
-  'A listing is a product, and presentation sets the ceiling on the rate it can hold. We rebuild the product first, then price it.'
+  'A listing is a product, and presentation sets the ceiling on the rate it can hold. We get the product right first, then price it.'
 
 export const CRAFT_ROWS: { k: string; v: string }[] = [
-  { k: 'The listing', v: 'Rebuilt, not inherited. Title, photo order and the first three images a guest sees before deciding. Ranking rewards the listings guests stop scrolling on.' },
+  { k: 'The listing', v: 'Title, photo order and the first three images a guest sees before deciding, all set by us. Ranking rewards the listings guests stop scrolling on.' },
   { k: 'The amenities', v: 'Audited against the filters each channel offers. An amenity you have but never listed is a search you lose silently, and the cheapest to add are the ones guests filter by.' },
   { k: 'The descriptions', v: 'Written for the guest choosing between you and three others in the same building: specific about the space, honest about the trade-offs.' },
   { k: 'The distribution', v: 'Published across 40+ channels from one calendar, so your visibility is not limited to a single site.' },
@@ -706,10 +729,10 @@ export const RAMP_ACTIONS_NOTE =
 // sticker sheet, not a stack — so each tool carries a monogram tile drawn in one ink at one size,
 // which is the same design answer the channels wall reached. Swap in real artwork any time we hold
 // the files; the layout takes them without changing.
-export const STACK_HEADLINE = 'The system behind your unit'
+export const STACK_HEADLINE = 'The system behind your property'
 export const STACK_SUBTITLE = 'Four platforms, one operation.'
 export const STACK_BODY =
-  'Reservations, pricing, operations and our own AI, connected, so nothing about your unit lives in a gap between systems.'
+  'Reservations, pricing, operations and our own AI, connected, so nothing about your property lives in a gap between systems.'
 export const STACK_BODY_PAIR: CopyPair = {
   retired: ['Bookings, pricing, operations and our own AI, connected, so every booking, clean, rate and guest conversation runs through one operation.',
     'Most problems in this business happen in the gaps between systems: booking to housekeeping, housekeeping to owner, guest report to resolution. One connected stack closes them.'],
@@ -800,7 +823,7 @@ export function houseLogo(stored: unknown, name: unknown): string {
 export const PACER_LOGO = '/api/public/vendor-logo/pacer'
 
 export const STACK_CHANNELS: { k: string; v: string }[] = [
-  { k: 'Slack', v: 'Housekeeping, maintenance, guest care and management in one room, in real time, in two languages. A problem at your unit reaches whoever can fix it in seconds.' },
+  { k: 'Slack', v: 'Housekeeping, maintenance, guest care and management in one room, in real time, in two languages. A problem at your property reaches whoever can fix it in seconds.' },
   { k: 'Email & messaging', v: 'Guest messages from every channel land in one inbox, answered around the clock. Your statement, owner report and anything needing approval arrive the same way: written and timestamped.' },
 ]
 
@@ -817,7 +840,9 @@ export const STACK_NOTE =
 // on this owner's unit, and an owner who later reads it as a promise is an owner we have lost. The
 // attribution is what makes it usable at all — it is evidence that the firm setting your rate has
 // done this at scale, which is exactly the question an owner is asking.
-export const REVENUE_PARTNER_HEAD = 'Who Pacer are'
+// Boss, 2026-09-24: "'who pacer are' doesn't make sense. Description also isn't good."
+export const REVENUE_PARTNER_HEAD = 'Our revenue partner: Pacer'
+export const REVENUE_PARTNER_INTRO = 'Pacer is the revenue-management firm that sets and manages the rate on your property, working with our team every week. Their track record, in their own numbers:'
 export const REVENUE_PARTNER: { k: string; v: string }[] = [
   { k: 'Built at enterprise scale', v: 'Founded by Jon Latorre, who joined Vacasa at 600 properties and helped scale it to 44,000 across 16 countries, leading a 55-person team of analysts and data scientists over $2B+ in revenue.' },
   { k: 'Revenue management only', v: 'Not a side service attached to a management company. It is the whole business, across 50+ markets in seven countries.' },
@@ -844,13 +869,23 @@ export const REVENUE_PARTNER: { k: string; v: string }[] = [
 //     reads defensive; a company with 450 units does not need to punch sideways
 //   · 70-100 word paragraphs on slides that already carry six rows of their own
 export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
-  experience: ['Most managers in this market started with one condo', 'decided in about four minutes'],
-  craft: ['they are presented wrong, and then priced down to compensate', 'the next slide is exactly how'],
+  experience: ['Most managers in this market started with one condo', 'decided in about four minutes',
+    // Boss, 2026-09-24: the slide is now "Our Properties" — pictures, no subtitle, no paragraph
+    'A portfolio of buildings, not just units.', 'inherits what that scale has already built', 'What we already run'],
+  craft: ['they are presented wrong, and then priced down to compensate', 'the next slide is exactly how',
+    // Boss, 2026-09-24: "Our Process"; "rebuilt" made no sense to him
+    'What we do to the listing itself', 'Rebuilt, not inherited', 'We rebuild the product first'],
   guestcare: ['not luck and it is not charm', 'not a claim we make',
     // Jon, 2026-09-24: Breezeway is the premium operations platform in our industry, not a hotel tool
-    'the operations platform used by hotels'],
-  revenue: ['Almost every manager you speak to', 'there is a person to ask'],
+    'the operations platform used by hotels',
+    // Boss, 2026-09-24: title "Guest experience"
+    'How a stay is run'],
+  revenue: ['Almost every manager you speak to', 'there is a person to ask',
+    // Boss, 2026-09-24: "Revenue Management", "your property" not "your unit", and "Who Pacer are" made no sense
+    'How your rate gets set', 'Who Pacer are', 'your unit is assigned'],
   stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it',
+    // Boss, 2026-09-24: "your property"
+    'The system behind your unit', 'A problem at your unit',
     // the pre-logo tools list, retired the same afternoon for the real marks and the AI line
     'Our own software, built on top of the rest'],
   rampsteps: ['would otherwise have gone empty', 'burning it on a half-built page',

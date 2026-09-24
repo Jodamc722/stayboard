@@ -23,6 +23,7 @@ import { reconcilePacing, type OurTruth } from '@/lib/pacing-check'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
+import { buildingPhotos, fillPropertyPics } from '@/lib/building-photos'
 import { withoutCollages } from '@/lib/photo-filter'
 import { computeScore } from '@/lib/optimize-score'
 import { getStaff } from '@/lib/staffing'
@@ -393,6 +394,13 @@ export async function POST(req: NextRequest) {
       heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
       amenityCatalog,
     })
+
+    // OUR PROPERTIES (boss, 2026-09-24): a picture next to each building, from its own Guesty
+    // photos. Fills blank pics only, so a template with uploaded pictures keeps them.
+    try {
+      const ex: any = (content as any).experience
+      if (ex && Array.isArray(ex.items)) ex.items = fillPropertyPics(ex.items, await buildingPhotos())
+    } catch { /* blank tiles; the editor's Change chip still works */ }
 
     const code0 = makeCode()
     const title0 = scopeLabel + ' \u2014 Owner Onboarding \u2014 ' + prettyDate(asOf)

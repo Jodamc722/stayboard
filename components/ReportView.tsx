@@ -25,7 +25,7 @@ import {
   EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE,
   CRAFT_BODY, CRAFT_ROWS, CRAFT_HEADLINE, CRAFT_SUBTITLE,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY, GUEST_HEADLINE, GUEST_SUBTITLE,
-  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, PACER_LOGO,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, REVENUE_PARTNER_INTRO, PACER_LOGO,
   RAMP_ACTIONS, RAMP_ACTIONS_NOTE, RAMP_ACTIONS_HEADLINE, RAMP_ACTIONS_SUBTITLE,
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
@@ -1186,7 +1186,7 @@ const PITCH_DEFAULTS: Record<string, Any> = {
   experience: { headline: EXPERIENCE_HEADLINE, subtitle: EXPERIENCE_SUBTITLE, body: EXPERIENCE_BODY, items: EXPERIENCE_ITEMS, proof: EXPERIENCE_PROOF, photo: null },
   craft: { headline: CRAFT_HEADLINE, subtitle: CRAFT_SUBTITLE, body: CRAFT_BODY, rows: CRAFT_ROWS },
   guestcare: { headline: GUEST_HEADLINE, subtitle: GUEST_SUBTITLE, body: GUEST_BODY, stages: GUEST_STAGES, note: GUEST_BREEZEWAY },
-  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE, partnerHead: REVENUE_PARTNER_HEAD, partner: REVENUE_PARTNER, partnerLogo: PACER_LOGO },
+  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE, partnerHead: REVENUE_PARTNER_HEAD, partnerIntro: REVENUE_PARTNER_INTRO, partner: REVENUE_PARTNER, partnerLogo: PACER_LOGO },
   rampsteps: { headline: RAMP_ACTIONS_HEADLINE, subtitle: RAMP_ACTIONS_SUBTITLE, rows: RAMP_ACTIONS, note: RAMP_ACTIONS_NOTE },
   stack: { headline: STACK_HEADLINE, subtitle: STACK_SUBTITLE, body: STACK_BODY, tools: STACK_TOOLS, rows: STACK_CHANNELS, note: STACK_NOTE },
 }
@@ -1587,6 +1587,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit])
+
+  // OUR PROPERTIES PICTURES (boss, 2026-09-24). A deck reseeded above, or generated before the
+  // pictures existed, has blank `pic` fields on the properties slide. Fill them once from the
+  // buildings' own Guesty photos, only in edit mode (a viewer never mutates), only the blanks —
+  // an uploaded picture is never replaced. Runs after the repair above so it sees the new list.
+  useEffect(() => {
+    if (!edit) return
+    const items: Any[] = Array.isArray((c as Any).experience?.items) ? (c as Any).experience.items : []
+    if (!items.some(it => it && it.b && !it.pic)) return
+    let dead = false
+    fetch('/api/reports/building-photos').then(r => r.json()).then(j => {
+      const photos = (j && j.photos) || {}
+      if (dead || !Object.keys(photos).length) return
+      mutate(d => {
+        const ex = d.experience || (d.experience = {})
+        if (Array.isArray(ex.items)) ex.items = ex.items.map((it: Any) => (it && it.b && !it.pic && photos[it.b]) ? { ...it, pic: photos[it.b] } : it)
+      })
+    }).catch(() => { /* blank tiles; Change still works */ })
+    return () => { dead = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edit, (c as Any).experience?.items?.length])
   const omit: string[] = Array.isArray(c.omit) ? c.omit : []
   const isHidden = (k: string) => omit.indexOf(k) >= 0
   function toggleSection(k: string) {
@@ -3073,7 +3094,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             { k: 'agenda', label: 'Agenda' },
             { k: 'team', label: 'Your team' },
             { k: 'overview', label: 'About Stay Hospitality' },
-            { k: 'experience', label: 'What we already run' },
+            { k: 'experience', label: 'Our properties' },
             { k: 'craft', label: 'The listing' },
             { k: 'channels', label: 'Where it sells' },
             { k: 'guestcare', label: 'The guest experience' },
@@ -3557,45 +3578,36 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </Slide>
           ) })
 
-          // ── 4b · WHAT WE ALREADY RUN — the proof slide ─────────────────────
-          // Jon, 2026-09-23: "Talk about our experience and make it sound amazing. If it needs to
-          // be scrollable, that's fine."
+          // ── 4b · OUR PROPERTIES ────────────────────────────────────────────
+          // Boss (2026-09-24, via Jon): new title "Our Properties"; drop the subtitle and the
+          // paragraph; "just make the whole slide our properties with a pic next to each one";
+          // add "apartments" to Capri; add D225 and Nomad.
           //
-          // A wall of buildings, because recognition argues better than a paragraph: an owner in
-          // this market has driven past three of these. The list is the evidence, so it scrolls
-          // rather than getting trimmed to fit — trimming it would be trimming the argument.
+          // So: the headline, then a grid of buildings, each a photograph with the name and the
+          // one-line place under it. Pictures come from the building's own Guesty photos
+          // (lib/building-photos.ts) — a hotel we do not list starts blank, and Change uploads it.
+          // Scrolls if the list outgrows the canvas, since the list is the argument.
           if (!hid('experience')) slides.push({ key: 'experience', ai: true, node: (
-            <Slide nav="What we run" warn={edit}>
+            <Slide nav="Our properties" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
-                <Split k="experience"
-                  left={leftBody(sec('experience').body || '', v => patch('experience.body', v))}
-                  right={<>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px 18px' }}>
-                      {(sec('experience').items || []).map((f: Any, i: number) => (
-                        <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 9 }}>
-                          <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3 }}>
-                            <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />
-                          </p>
-                          <p style={{ fontSize: 11.5, color: t.muted, marginTop: 3 }}>
-                            <Ed v={f.v || ''} set={v => patch('experience.items.' + i + '.v', v)} edit={edit} multiline />
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px 18px' }}>
-                      {(sec('experience').proof || []).map((f: Any, i: number) => (
-                        <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 9 }}>
-                          <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
-                            <Ed v={f.k || ''} set={v => patch('experience.proof.' + i + '.k', v)} edit={edit} multiline />
-                          </p>
-                          <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.body, marginTop: 3 }}>
-                            <Ed v={f.v || ''} set={v => patch('experience.proof.' + i + '.v', v)} edit={edit} multiline />
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </>} />
-                <Foot label="What we already run" />
+                <Title k="experience" sub={false} />
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 22, paddingBottom: 18 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '18px 20px' }}>
+                    {(sec('experience').items || []).map((f: Any, i: number) => (
+                      <div key={i} style={{ minWidth: 0 }}>
+                        <Pick title={'Photo · ' + (f.k || 'property')} cur={String(f.pic || '')} set={u => patch('experience.items.' + i + '.pic', u)}
+                          style={{ width: '100%', aspectRatio: '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }} />
+                        <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3, marginTop: 9 }}>
+                          <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ fontSize: 11.5, color: t.muted, marginTop: 2 }}>
+                          <Ed v={f.v || ''} set={v => patch('experience.items.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <Foot label="Our properties" />
               </div>
             </Slide>
           ) })
@@ -3782,10 +3794,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       ) : null}
                     </span>
                     <h2 style={{ marginTop: 22, fontSize: 34, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track, fontWeight: 600, color: t.ink }}>
-                      <Ed v={sec('revenue').partnerHead || 'Who Pacer are'} set={v => patch('revenue.partnerHead', v)} edit={edit} />
+                      <Ed v={sec('revenue').partnerHead || REVENUE_PARTNER_HEAD} set={v => patch('revenue.partnerHead', v)} edit={edit} />
                     </h2>
+                    {/* Boss, 2026-09-24: the old line ("Our revenue-management partner. Every figure
+                        here is Pacer's own…") read as a disclaimer, not a description. Editable now. */}
                     <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: t.muted }}>
-                      Our revenue-management partner. Every figure here is Pacer&rsquo;s own, about their own portfolio.
+                      <Ed v={sec('revenue').partnerIntro || REVENUE_PARTNER_INTRO} set={v => patch('revenue.partnerIntro', v)} edit={edit} multiline />
                     </p>
                   </div>
                   <div className="flex-1 min-w-0 min-h-0 flex flex-col onb-scroll">
