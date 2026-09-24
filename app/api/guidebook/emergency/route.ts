@@ -35,14 +35,14 @@ async function run(write: boolean) {
   const byId: Record<string, any> = {}
   for (const l of ((listings || []) as any[])) byId[String(l.id)] = l
 
-  const results: { id: string; book: string; hospital: string | null; miles: string | null; police: string | null; ok: boolean; note?: string }[] = []
+  const results: { id: string; book: string; hospital: string | null; hospitals: number; police: string | null; ok: boolean; note?: string }[] = []
   for (const b of ((books || []) as any[])) {
     const l = byId[String(b.listing_id || '')] || {}
     const em = buildEmergency({ lat: l.lat, lng: l.lng, city: l.address_city, address: l.address_full })
     // A book whose listing we cannot place gets NOTHING rather than a hospital picked out of the
     // air — a wrong ER is worse than an absent one, and it shows up in this report as a book to fix.
-    if (!em.hospital) {
-      results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: null, miles: null, police: em.police, ok: false, note: 'no coordinates or known city on the listing' })
+    if (!em.hospitals.length) {
+      results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: null, hospitals: 0, police: em.police, ok: false, note: 'no coordinates or known city on the listing' })
       continue
     }
     if (write) {
@@ -50,9 +50,9 @@ async function run(write: boolean) {
       sections.emergency = em
       sections.omit = (Array.isArray(sections.omit) ? sections.omit : []).filter((k: string) => k !== 'emergency')
       const { error: uErr } = await db.from('guidebooks').update({ sections, updated_at: new Date().toISOString() }).eq('id', b.id)
-      if (uErr) { results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: em.hospital.name, miles: em.hospital.distance, police: em.police, ok: false, note: uErr.message }); continue }
+      if (uErr) { results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: em.hospitals[0].name, hospitals: em.hospitals.length, police: em.police, ok: false, note: uErr.message }); continue }
     }
-    results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: em.hospital.name, miles: em.hospital.distance, police: em.police, ok: true })
+    results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: em.hospitals[0].name, hospitals: em.hospitals.length, police: em.police, ok: true })
   }
   const missed = results.filter(r => !r.ok)
   return NextResponse.json({

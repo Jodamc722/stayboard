@@ -216,39 +216,55 @@ export function nearestHospitalForCity(city: unknown, address?: unknown): Neares
 
 // ── THE SECTION THE BOOK RENDERS ────────────────────────────────────────────────────────────────
 
+// ── THE PAGE, KEPT SIMPLE ───────────────────────────────────────────────────
+// Jon, 2026-09-24: "just have local hospitals in the area, the local non-emergency phone number,
+// and our phone number on a page somewhere … I hate the way that you formatted it currently."
+//
+// Two earlier versions of this were more elaborate than the job: a single "nearest ER" with a
+// distance, a trauma designation, a caveat about straight-line distance, and a note under every
+// line. None of that is what someone wants when they need a hospital. So: three hospitals nearby,
+// the city's non-emergency number, ours. Name, address, phone. Nothing else.
+//
+// HOSPITALS, PLURAL. The closest one may be the wrong one — a guest may already have a network, or
+// a taxi driver may know a better route — so the page lists three and lets the person choose,
+// rather than deciding for them and explaining the decision.
+export type EmergencyHospital = { name: string; address: string; phone: string }
+
 export type EmergencySection = {
   heading: string
-  emergency: string        // always 911, and always first on the page
-  emergencyNote: string
+  /** Always 911. */
+  emergency: string
+  /** "Broward Sheriff's Office" etc. — who the non-emergency number reaches. */
   policeLabel: string | null
   police: string | null
-  hospital: { name: string; address: string; phone: string; distance: string; trauma?: string | null } | null
-  note: string
+  /** Three nearby hospitals with 24-hour emergency rooms, closest first. */
+  hospitals: EmergencyHospital[]
 }
 
-/** "About 2.4 miles away" / "About a mile away" / "Less than half a mile away". */
-function milesLabel(m: number): string {
-  if (m < 0.5) return 'Less than half a mile away'
-  if (m < 1.15) return 'About a mile away'
-  return 'About ' + (Math.round(m * 10) / 10) + ' miles away'
+/** The N closest hospitals to a point, closest first. */
+export function nearestHospitals(lat: unknown, lng: unknown, n = 3): NearestHospital[] {
+  const a = Number(lat), b = Number(lng)
+  if (!Number.isFinite(a) || !Number.isFinite(b) || (a === 0 && b === 0)) return []
+  if (a < 24.5 || a > 27.5 || b < -81.5 || b > -79.5) return []
+  return HOSPITALS
+    .map(h => ({ ...h, miles: milesBetween(a, b, h.lat, h.lng) }))
+    .sort((x, y) => x.miles - y.miles)
+    .slice(0, n)
 }
 
 export function buildEmergency(l: { lat?: unknown; lng?: unknown; city?: unknown; address?: unknown }): EmergencySection {
-  const h = nearestHospital(l.lat, l.lng) || nearestHospitalForCity(l.city, l.address)
+  let list = nearestHospitals(l.lat, l.lng, 3)
+  if (!list.length) {
+    // No usable coordinates: fall back to the city we do know, and take its three closest too.
+    const one = nearestHospitalForCity(l.city, l.address)
+    if (one) list = nearestHospitals(one.lat, one.lng, 3)
+  }
   const p = policeFor(l.city, l.address)
   return {
-    heading: 'in an emergency',
+    heading: 'In an emergency',
     emergency: '911',
-    emergencyNote: 'For fire, police or an ambulance, call 911 first — then call us.',
-    policeLabel: p ? p.agency + ' · non-emergency' : null,
+    policeLabel: p ? p.agency : null,
     police: p ? p.phone : null,
-    hospital: h ? {
-      name: h.name,
-      address: h.address,
-      phone: h.phone,
-      distance: milesLabel(h.miles),
-      trauma: h.trauma || null,
-    } : null,
-    note: 'The hospital above has a 24-hour emergency room. Distance is as the crow flies — allow longer by car.',
+    hospitals: list.map(h => ({ name: h.name, address: h.address, phone: h.phone })),
   }
 }

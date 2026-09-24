@@ -67,7 +67,11 @@ export async function GET(req: NextRequest) {
     // Best-effort by construction: any failure here leaves the book exactly as it was and the read
     // still succeeds. A guidebook that will not load because the hospital lookup had a bad day is a
     // far worse outcome than a guidebook missing one page.
-    if (gb && gb.listing_id && !(gb.sections && gb.sections.emergency)) {
+    // Rebuilt when the section is MISSING or still the old single-hospital shape — a book healed
+    // earlier today carries `hospital`, not `hospitals`, and would print no hospitals at all.
+    const emOld = gb && gb.sections && gb.sections.emergency
+    const emNeedsBuild = !emOld || !Array.isArray(emOld.hospitals) || !emOld.hospitals.length
+    if (gb && gb.listing_id && emNeedsBuild) {
       try {
         const { data: lrows } = await db.from('guesty_listings')
           .select('id, address_full, address_city, lat:raw->address->>lat, lng:raw->address->>lng')
@@ -75,7 +79,7 @@ export async function GET(req: NextRequest) {
         const l: any = (lrows || [])[0]
         if (l) {
           const em = buildEmergency({ lat: l.lat, lng: l.lng, city: l.address_city, address: l.address_full })
-          if (em.hospital) {
+          if (em.hospitals.length) {
             const sections = (gb.sections && typeof gb.sections === 'object') ? { ...gb.sections } : {}
             sections.emergency = em
             sections.omit = (Array.isArray(sections.omit) ? sections.omit : []).filter((k: string) => k !== 'emergency')

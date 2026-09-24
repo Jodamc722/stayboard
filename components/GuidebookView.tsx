@@ -923,100 +923,68 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
 
         </Page>
 
-        {/* ── IN AN EMERGENCY — ITS OWN PAGE ──────────────────────────────────────────────────
-            Jon, 2026-09-23: hospitals in every guidebook, "mandatory", with the city's
-            non-emergency number and 911 — "I'm OK with this being its own page and then you can
-            have our support number at the top."
+        {/* ── IN AN EMERGENCY ─────────────────────────────────────────────────────────────────
+            Jon, 2026-09-24: "just have local hospitals in the area, the local non-emergency phone
+            number, and our phone number on a page somewhere … I hate the way that you formatted it
+            currently."
 
-            It began as a block at the foot of the contact page, on the reasoning that a guest
-            already turns there for a phone number. A page is the better call and Jon is right: a
-            guest looking for this is not browsing, they are scanning for a number under stress, and
-            a block sharing a page with house rules is a block they have to find. A page with four
-            things on it cannot be missed.
+            Two earlier versions of this page were more designed than the job needed — a bordered
+            panel, 911 at 44px, a note under every line explaining what the line was for. A guest
+            reaching for this page is not reading, they are looking for a number, and decoration is
+            in the way. So it is the same quiet label-and-value rows the house-rules page uses, in
+            the order someone actually needs them, and nothing else.
 
-            THE ORDER IS THE TRIAGE. Our line first, because for most of what goes wrong we are the
-            right call and we can reach the building faster than anyone. Then 911, set largest,
-            because it is the right answer to a real emergency and nothing should compete with it.
-            Then the city's non-emergency line, then the nearest ER for the guest who has decided to
-            drive themselves.
-
-            Every value is computed in lib/emergency.ts from this listing's own coordinates against
-            a table verified against each operator's own site. None of it is model-written, and the
-            page renders 911 and our number even for a book that has no `emergency` section yet. */}
+            The values are computed in lib/emergency.ts from the listing's own coordinates against a
+            table checked against each hospital operator's own site. Nothing here is model-written. */}
         {(() => {
           const em = s.emergency || {}
-          const hosp = em.hospital
+          const hosps: any[] = Array.isArray(em.hospitals) ? em.hospitals : []
+          const Row = ({ label, children }: { label: any; children: any }) => (
+            <div className="flex flex-col gap-1 border-b pb-3.5 sm:flex-row sm:gap-4" style={{ borderColor: accentColor + '22' }}>
+              <p className="w-full shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5 sm:w-44" style={{ color: accentColor }}>{label}</p>
+              <div className="text-[13px] font-light leading-[1.7]">{children}</div>
+            </div>
+          )
           return (
-            <Page num={++pageNo} id="emergency" ghost="911">
-              <Kicker><L k="em.tag" def="Safety" /></Kicker>
-              <H><L k="em.heading" def="In an emergency" /></H>
-
-              {/* OUR NUMBER AT THE TOP (Jon). Answered around the clock, and for a lockout, a
-                  leak or a broken AC it is the call that actually fixes the night. */}
-              <div className="mt-7 rounded-xl border px-5 py-4" style={{ borderColor: accentColor + '44', background: accentColor + '0A' }}>
-                <p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="em.usLabel" def="STAY HOSPITALITY · 24/7" /></p>
-                <p className="mt-1.5 text-[26px] leading-none" style={{ fontFamily: SERIF }}>
+            <Page num={++pageNo} id="emergency">
+              <Kicker><L k="em.tag" def="Emergency" /></Kicker>
+              <H><L k="em.heading" def="If you need help" /></H>
+              <div className="mt-8 flex flex-col gap-4">
+                <Row label={<L k="em.usLabel" def="US, ANY TIME" />}>
                   <Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel>
-                </p>
-                <p className="mt-2 text-[11px] font-light leading-snug opacity-75">
-                  <L k="em.usNote" def="Locked out, no power, water where it should not be, anything at all — call us first. We answer day and night." rows={2} />
-                </p>
+                </Row>
+                <Row label={<L k="em.911Label" def="EMERGENCY" />}>
+                  <Tel v="911">911</Tel>
+                </Row>
+                {em.police ? (
+                  <Row label={<L k="em.policeLabel" def="POLICE, NON-EMERGENCY" />}>
+                    <Tel v={em.police}><T path={['emergency', 'police']} value={em.police} rows={1} /></Tel>
+                    {em.policeLabel ? <span className="opacity-60"> · {em.policeLabel}</span> : null}
+                  </Row>
+                ) : null}
               </div>
-
-              <div className="mt-6 flex items-start gap-6 border-b pb-5" style={{ borderColor: accentColor + '22' }}>
-                <div className="shrink-0">
-                  <p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="em.911Label" def="LIFE-THREATENING" /></p>
-                  <p className="mt-1 text-[44px] leading-none" style={{ fontFamily: SERIF }}><Tel v="911">911</Tel></p>
-                </div>
-                <p className="pt-6 text-[12px] font-light leading-[1.7]">
-                  <L k="em.note" def="Fire, a medical emergency, or anyone in danger: call 911 first, then call us. In this area you can text 911 as well if you cannot speak." rows={3} />
-                </p>
-              </div>
-
-              {em.police ? (
-                <div className="mt-5 flex flex-col gap-1 border-b pb-4 sm:flex-row sm:gap-4" style={{ borderColor: accentColor + '22' }}>
-                  <p className="w-full shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5 sm:w-44" style={{ color: accentColor }}>
-                    {em.policeLabel || 'Police · non-emergency'}
+              {hosps.length ? (
+                <div className="mt-7">
+                  <p className="text-[10px] font-semibold tracking-[0.24em] uppercase" style={{ color: accentColor }}>
+                    <L k="em.hospitalLabel" def="HOSPITALS NEARBY" />
                   </p>
-                  <div>
-                    <p className="text-[15px]" style={{ fontFamily: SERIF }}>
-                      <Tel v={em.police}><T path={['emergency', 'police']} value={em.police} rows={1} /></Tel>
-                    </p>
-                    <p className="mt-0.5 text-[11px] font-light leading-snug opacity-75">
-                      <L k="em.policeNote" def="Noise, parking, a lost item, anything that needs an officer but is not an emergency." rows={2} />
-                    </p>
+                  <div className="mt-3 flex flex-col gap-3.5">
+                    {hosps.map((h: any, i: number) => (
+                      <div key={i} className="border-b pb-3" style={{ borderColor: accentColor + '22' }}>
+                        <p className="text-[13.5px]" style={{ fontFamily: SERIF }}>
+                          <T path={['emergency', 'hospitals', String(i), 'name'] as any} value={h.name} rows={1} />
+                        </p>
+                        <p className="mt-0.5 text-[12px] font-light leading-snug">
+                          <MapLink v={h.address}><T path={['emergency', 'hospitals', String(i), 'address'] as any} value={h.address} rows={2} /></MapLink>
+                        </p>
+                        <p className="mt-0.5 text-[12px] font-light">
+                          <Tel v={h.phone}><T path={['emergency', 'hospitals', String(i), 'phone'] as any} value={h.phone} rows={1} /></Tel>
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : null}
-
-              {hosp ? (
-                <div className="mt-5 flex flex-col gap-1 sm:flex-row sm:gap-4">
-                  <p className="w-full shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5 sm:w-44" style={{ color: accentColor }}>
-                    <L k="em.hospitalLabel" def="NEAREST EMERGENCY ROOM" />
-                  </p>
-                  <div>
-                    <p className="text-[15px] leading-snug" style={{ fontFamily: SERIF }}>
-                      <T path={['emergency', 'hospital', 'name'] as any} value={hosp.name} rows={1} />
-                    </p>
-                    <p className="mt-1 text-[12px] font-light leading-snug">
-                      <MapLink v={hosp.address}><T path={['emergency', 'hospital', 'address'] as any} value={hosp.address} rows={2} /></MapLink>
-                    </p>
-                    <p className="mt-1 text-[12px] font-light">
-                      <Tel v={hosp.phone}><T path={['emergency', 'hospital', 'phone'] as any} value={hosp.phone} rows={1} /></Tel>
-                    </p>
-                    <p className="mt-1.5 text-[10.5px] font-light leading-snug opacity-70">
-                      {hosp.distance}{hosp.trauma ? ' · ' + hosp.trauma : ''} · open 24 hours
-                    </p>
-                    <p className="mt-1 text-[10.5px] font-light leading-snug opacity-70">
-                      <L k="em.hospitalNote" def="Distance is a straight line, so allow longer by car. Tap the address to open directions." rows={2} />
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="mt-auto pt-5 text-[10.5px] font-light leading-snug opacity-65">
-                <L k="em.foot" def="Keep this page handy. If you are unsure who to call, call us — we will make the call for you." rows={2} />
-              </div>
             </Page>
           )
         })()}
