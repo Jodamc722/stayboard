@@ -6,13 +6,17 @@ type Data = { ok: boolean; today: string; unitCount?: number; arrivals: Row[]; d
 type ViewData = { ok: boolean; fullName?: string | null; unit?: string | null; signedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
 
 const SEEN_KEY = 'salato_share_seen_v1'
-type TabKey = 'verify' | 'arrivals' | 'departures' | 'active'
+type TabKey = 'verify' | 'arrivals' | 'departures' | 'active' | 'past'
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'verify', label: 'Verify' },
   { key: 'arrivals', label: 'Arrivals' },
   { key: 'departures', label: 'Departure cleans' },
   { key: 'active', label: 'In-house' },
+  { key: 'past', label: 'Past' },
 ]
+type PastData = { ok: boolean; past: Row[]; pastCount: number; pastVerified: number; error?: string }
+// One row per stay: today's arrivals are in both lists, and showed twice on the Verify tab.
+function uniqById(rows: Row[]): Row[] { const seen: Record<string, boolean> = {}; return rows.filter(r => !r.id || (seen[r.id] ? false : (seen[r.id] = true))) }
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
 // 12-hour clock: "16:00" -> "4:00 PM" (times come from the API as 24h HH:MM)
 function fmtTime(t: string | null | undefined) { if (!t) return ''; const m = /^(\d{1,2}):(\d{2})/.exec(String(t)); if (!m) return String(t); let h = parseInt(m[1], 10); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + m[2] + ' ' + ap }
@@ -67,6 +71,37 @@ export default function SalatoShare() {
   useEffect(() => { try { const raw = localStorage.getItem(SEEN_KEY); if (raw) { setSeen(new Set(JSON.parse(raw))); seenInit.current = true } } catch {} ; load() }, [load])
   useEffect(() => { const tm = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30 * 60 * 1000); return () => clearInterval(tm) }, [load])
 
+  // PAST GUESTS (Jon, 2026-09-24) — every stay that has checked out, loaded when the tab opens.
+  const [past, setPast] = useState<PastData | null>(null)
+  const [pastLoading, setPastLoading] = useState(false)
+  const [pastOnlyUnverified, setPastOnlyUnverified] = useState(false)
+  const loadPast = useCallback(async () => {
+    setPastLoading(true)
+    try {
+      const r = await fetch('/api/public/salato?past=1', { cache: 'no-store' })
+      const j: any = await r.json()
+      if (r.status === 401 || j.needsPassword) { setBoardLocked(true); return }
+      if (!r.ok || j.ok === false) { setErr(j.error || 'Could not load past guests'); return }
+      setPast(j)
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setPastLoading(false) }
+  }, [])
+  useEffect(() => { if (tab === 'past' && !past && !pastLoading) loadPast() }, [tab, past, pastLoading, loadPast])
+
+  // Send the guest their own link (text, email, AirDrop) — so a desk on a computer does not need a webcam.
+  const [sentId, setSentId] = useState<string | null>(null)
+  const sendLink = async (r: Row) => {
+    if (!r.verifyToken) return
+    const url = window.location.origin + '/salato/verify/' + r.verifyToken
+    const nav: any = navigator
+    try {
+      if (nav.share) { await nav.share({ title: 'Salato check-in', text: 'Please complete your Salato check-in verification:', url }); return }
+    } catch (e: any) { if (e && e.name === 'AbortError') return }
+    try { await navigator.clipboard.writeText(url) } catch {
+      const ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy') } catch {} ; document.body.removeChild(ta)
+    }
+    setSentId(r.id || null); setTimeout(() => setSentId(null), 2500)
+  }
+
   const resync = useCallback(async () => {
     setSyncing(true)
     try { await fetch('/api/sync/guesty?only=reservations', { method: 'POST' }) } catch {}
@@ -76,11 +111,15 @@ export default function SalatoShare() {
 
   // "Verify" lists everyone a front desk checks in: upcoming arrivals + in-house guests.
   // Verify tab = everyone the desk checks in (upcoming arrivals + in-house), unverified first.
-  const rows = data ? (tab === 'verify' ? data.arrivals.concat(data.active).slice().sort((a, b) => (a.verified === b.verified ? 0 : a.verified ? 1 : -1)) : data[tab]) : []
-  const dateOf = (r: Row) => tab === 'departures' ? r.checkOut : r.checkIn
-  const groups = groupByDay(rows, dateOf)
+  const verifyRows = data ? uniqById(data.arrivals.concat(data.active)) : []
+  const pastRows = past ? (pastOnlyUnverified ? past.past.filter(r => !r.verified) : past.past) : []
+  const rows = data ? (tab === 'verify' ? verifyRows.slice().sort((a, b) => (a.verified === b.verified ? 0 : a.verified ? 1 : -1)) : tab === 'past' ? pastRows : data[tab]) : []
+  const dateOf = (r: Row) => (tab === 'departures' || tab === 'past') ? r.checkOut : r.checkIn
+  const groups = tab === 'past' ? groupByDay(rows, dateOf).reverse() : groupByDay(rows, dateOf)
+  // Everyone must be verified: an in-house guest who is not is already overdue.
+  const inHouseUnverified = data ? uniqById(data.active).filter(r => !r.verified && !r.oneNight) : []
   const idPrefix = tab === 'arrivals' ? 'a' : tab === 'departures' ? 'd' : 'v'
-  const isNew = (r: Row) => seenInit.current && !seen.has(idPrefix + keyOf(r, tab))
+  const isNew = (r: Row) => tab !== 'past' && seenInit.current && !seen.has(idPrefix + keyOf(r, tab))
   const allIds = data ? [...data.arrivals.map(r => 'a' + keyOf(r, 'arrivals')), ...data.departures.map(r => 'd' + keyOf(r, 'departures')), ...data.active.map(r => 'v' + keyOf(r, 'active'))] : []
   const newCount = seenInit.current ? allIds.filter(id => !seen.has(id)).length : 0
   const markSeen = () => { const s = new Set(allIds); setSeen(s); try { localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(s))) } catch {} }
@@ -167,7 +206,7 @@ export default function SalatoShare() {
               <div className='flex items-center gap-2 flex-wrap gap-y-2'>
                 {newCount > 0 && <button onClick={markSeen} className='text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-400 text-neutral-900 hover:bg-amber-300 transition-colors'>{newCount} new</button>}
                 <button onClick={resync} disabled={syncing} className='text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 disabled:opacity-40 transition-colors'>{syncing ? 'Syncing…' : 'Resync'}</button>
-                <button onClick={() => { setLoading(true); load() }} className='text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors'>Refresh</button>
+                <button onClick={() => { setLoading(true); load(); if (tab === 'past') loadPast() }} className='text-xs font-medium px-3 py-1.5 rounded-lg border border-white/15 bg-white/10 text-neutral-100 hover:bg-white/20 transition-colors'>Refresh</button>
               </div>
             </div>
           </div>
@@ -176,8 +215,8 @@ export default function SalatoShare() {
         {/* "Departure cleans" will not shrink below its text, so four tabs pushed the whole page
             sideways on a 375px screen. The strip scrolls itself instead. */}
         <div className='flex gap-1 mb-4 bg-white border border-neutral-200 rounded-xl p-1 shadow-sm overflow-x-auto'>
-          {TABS.map(t => { const n = data ? (t.key === 'verify' ? (data.arrivals.length + data.active.length) : data[t.key].length) : 0; return (
-            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}<span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span></button>
+          {TABS.map(t => { const n: number | string = data ? (t.key === 'verify' ? verifyRows.length : t.key === 'past' ? (past ? past.pastCount : '') : data[t.key].length) : 0; return (
+            <button key={t.key} onClick={() => setTab(t.key)} className={'flex-1 whitespace-nowrap text-sm font-medium px-3 py-2 rounded-lg transition-colors ' + (tab === t.key ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100')}>{t.label}<span className={'ml-1.5 text-xs ' + (tab === t.key ? 'text-neutral-300' : 'text-neutral-400')}>{n}</span></button>
           )})}
         </div>
 
@@ -199,9 +238,23 @@ export default function SalatoShare() {
           )
         })()}
 
+        {data && tab === 'verify' && inHouseUnverified.length > 0 && (
+          <div className='rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 mb-4'>
+            <div className='text-sm font-bold text-amber-900'>{inHouseUnverified.length} in-house guest{inHouseUnverified.length === 1 ? '' : 's'} not verified</div>
+            <p className='text-xs text-amber-800 mt-1'>Every guest must complete verification. Tap Verify, or Send link to text it to the guest.</p>
+          </div>
+        )}
+        {tab === 'past' && past && (
+          <div className='flex items-center gap-3 flex-wrap rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm'>
+            <div className='text-sm'><span className='font-bold'>{past.pastCount}</span> past stays · <span className='font-semibold text-emerald-700'>{past.pastVerified} verified</span> · <span className={'font-semibold ' + (past.pastCount - past.pastVerified ? 'text-rose-700' : 'text-neutral-500')}>{past.pastCount - past.pastVerified} not verified</span></div>
+            <span className='flex-1' />
+            <label className='text-xs text-neutral-600 flex items-center gap-1.5 cursor-pointer'><input type='checkbox' checked={pastOnlyUnverified} onChange={e => setPastOnlyUnverified(e.target.checked)} /> Not verified only</label>
+          </div>
+        )}
+        {tab === 'past' && pastLoading && !past && <div className='text-neutral-400 text-sm py-10 text-center'>Loading past guests…</div>}
         {loading && !data && <div className='text-neutral-400 text-sm py-10 text-center'>Loading…</div>}
         {err && <div className='text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3'>{err}</div>}
-        {data && rows.length === 0 && !loading && <div className='text-neutral-400 text-sm py-10 text-center'>Nothing here right now.</div>}
+        {data && rows.length === 0 && !loading && !(tab === 'past' && !past) && <div className='text-neutral-400 text-sm py-10 text-center'>Nothing here right now.</div>}
 
         {/* Grouped under one heading per day, so the desk reads "who is arriving today" at a
             glance instead of re-reading the date on every card. */}
@@ -225,20 +278,26 @@ export default function SalatoShare() {
                           <span className='text-[15px] font-bold text-neutral-900 truncate'>{r.unit}</span>
                           {isNew(r) && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white'>New</span>}
                           {tab === 'departures' && r.sameDayTurn && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700'>Same-day turn</span>}
-                          {tab !== 'departures' && r.oneNight && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white'>1 night · not permitted</span>}
+                          {tab !== 'departures' && tab !== 'past' && r.oneNight && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white'>1 night · not permitted</span>}
                         </div>
                         <div className='text-xs text-neutral-500 mt-0.5'>
-                          {[time ? (tab === 'departures' ? 'Out ' : 'ETA ') + fmtTime(time) : null,
+                          {(tab === 'past' ? [fmtDate(r.checkIn) + ' → ' + fmtDate(r.checkOut), r.nights ? r.nights + (r.nights === 1 ? ' night' : ' nights') : null, r.guests ? r.guests + ' guests' : null, r.source] : [time ? (tab === 'departures' ? 'Out ' : 'ETA ') + fmtTime(time) : null,
                             r.guests ? r.guests + ' guests' : null,
                             (tab === 'active' || tab === 'verify') ? 'out ' + fmtDate(r.checkOut) : null,
-                            r.source].filter(Boolean).join(' · ')}
+                            r.source]).filter(Boolean).join(' · ')}
                         </div>
                       </div>
                       {showVerify && r.oneNight && !r.verified
                         ? <span className='shrink-0 text-[11px] font-semibold px-3 py-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 max-w-[9rem] text-right'>Call customer service or Jon before check-in</span>
                         : showVerify && (r.verified
                         ? <button onClick={() => r.id && openViewer(r.id)} className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800'>✓ Verified</button>
-                        : <a href={'/salato/verify/' + (r.verifyToken || '')} target='_blank' rel='noopener noreferrer' className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl bg-neutral-900 text-white'>Verify</a>)}
+                        : <div className='shrink-0 flex flex-col items-end gap-1.5'>
+                            <a href={'/salato/verify/' + (r.verifyToken || '')} target='_blank' rel='noopener noreferrer' className='text-xs font-semibold px-3 py-2 rounded-xl bg-neutral-900 text-white'>Verify</a>
+                            <button onClick={() => sendLink(r)} className='text-[11px] font-semibold text-neutral-600 underline'>{sentId === r.id ? 'Link copied' : 'Send link'}</button>
+                          </div>)}
+                      {tab === 'past' && (r.verified
+                        ? <button onClick={() => r.id && openViewer(r.id)} className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800'>✓ Verified</button>
+                        : <span className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700'>Not verified</span>)}
                     </div>
                   </div>
                 )
