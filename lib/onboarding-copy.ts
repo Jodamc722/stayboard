@@ -735,6 +735,7 @@ export const STACK_BODY =
   'Reservations, pricing, operations and our own AI, connected, so nothing about your property lives in a gap between systems.'
 export const STACK_BODY_PAIR: CopyPair = {
   retired: ['Bookings, pricing, operations and our own AI, connected, so every booking, clean, rate and guest conversation runs through one operation.',
+    'Reservations, pricing, operations and our own AI, connected, so nothing about your unit lives in a gap between systems.',
     'Most problems in this business happen in the gaps between systems: booking to housekeeping, housekeeping to owner, guest report to resolution. One connected stack closes them.'],
   current: STACK_BODY,
 }

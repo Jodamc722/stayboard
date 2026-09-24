@@ -26,6 +26,8 @@
 //   F  a "Guest Reported" Breezeway task finished while the guest is still there — tell them
 // E and F exist because most guest issues never reach the glitch board: the team files them
 // straight into Breezeway. A task already tied to a glitch is left to C and D.
+// D and F are checked against the guest's own Guesty thread first (hostWroteSince): if anyone
+// wrote to the guest after the fix, she says nothing, and an earlier nudge closes with a ✅.
 // Cleans running behind are NOT here on purpose: the late-clean reminders already cover them and
 // Jon wants those left exactly as they are.
 //
@@ -66,6 +68,8 @@ type Flag = {
   kind: 'A' | 'B' | 'C' | 'D' | 'E' | 'F'; room: Room; line: string; label: string
   channel: string | null; ts: string | null; at: string
   escalated?: boolean; resolved?: string | null; resolvedAt?: string | null
+  /** D/F: when the fix finished, and how to find the guest's thread — so "did we tell them" can be checked */
+  since?: string; guest?: { reservationId?: string; listingId?: string; checkIn?: string }
   /** other flags said in the same line (a second report about the same unit) */
   also?: string[]
 }
@@ -127,6 +131,36 @@ function trade(category: any, overview: any): string {
 }
 const first = (s: any) => { const t = String(s || '').trim(); return t ? t.split(/\s+/)[0] : '' }
 
+// DID WE ALREADY TELL THE GUEST? (Jon, 2026-09-24: "when you are telling team to follow up with a
+// task or reach out to guest, you scan messages to guest to see if we did.")
+//
+// Before 'fixed, guest not told yet' goes to #vr-ccs-and-jon, look at the guest's own Guesty thread:
+// a host message sent after the fix finished means somebody already told them, and the line is
+// noise. The same check closes an earlier nudge with ✅ "guest told 2:10pm by Maria" instead of
+// letting it age out. The thread is found by reservation id when Breezeway carries one, otherwise
+// by the stay on that listing that covers the day the issue was raised.
+type GuestRef = { reservationId?: string; listingId?: string; checkIn?: string }
+async function hostWroteSince(db: any, ref: GuestRef, sinceIso: string): Promise<{ at: string; by: string } | null> {
+  try {
+    let resId = String(ref.reservationId || '')
+    if (!resId && ref.listingId) {
+      const day = String(ref.checkIn || etToday()).slice(0, 10)
+      const { data: rs } = await db.from('guesty_reservations').select('id,status,check_in,check_out').eq('listing_id', ref.listingId)
+        .lte('check_in', day).gte('check_out', day).order('check_in', { ascending: false }).limit(5)
+      const r = ((rs as any[]) || []).find(x => !/cancel|declin|inquir|expire/i.test(String(x.status || '')))
+      resId = r ? String(r.id) : ''
+    }
+    if (!resId) return null
+    const { data: convs } = await db.from('guesty_conversations').select('id').eq('reservation_id', resId).limit(5)
+    const ids = ((convs as any[]) || []).map(c => String(c.id))
+    if (!ids.length) return null
+    const { data: msgs } = await db.from('guesty_messages').select('sent_at,sender_name').in('conversation_id', ids).eq('sender', 'host')
+      .gt('sent_at', sinceIso).order('sent_at', { ascending: true }).limit(1)
+    const m = ((msgs as any[]) || [])[0]
+    return m ? { at: String(m.sent_at), by: String(m.sender_name || '') } : null
+  } catch { return null }
+}
+
 export type OnWatchRun = { ok: boolean; skipped?: string; found: Record<string, number>; posted: Record<string, number>; resolved: number; escalated: number; notes: string[]; preview?: Record<string, string[]> }
 
 /** preview: find and word everything, post nothing, save nothing — what the next pass would say. */
@@ -149,7 +183,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const { data: itemRows } = await db.from('eve_slack_items').select('id,kind,summary,unit,listing_id,channel_name,status,tracked_in,first_seen,closed_reason')
     .gte('first_seen', new Date(Date.now() - 3 * 86400_000).toISOString()).limit(400)
   const items = (itemRows as any[]) || []
-  const { data: gRows } = await db.from('glitches').select('id,unit,listing_id,status,category,overview,assignee,guest_name,check_in,check_out,breezeway_task_id,created_at,closed_at')
+  const { data: gRows } = await db.from('glitches').select('id,unit,listing_id,status,category,overview,assignee,guest_name,check_in,check_out,breezeway_task_id,reservation_id,created_at,closed_at')
     .gte('created_at', new Date(Date.now() - 5 * 86400_000).toISOString()).limit(500)
   const glitches = (gRows as any[]) || []
   const taskIds = Array.from(new Set(glitches.map(g => String(g.breezeway_task_id || '')).filter(Boolean)))
@@ -202,7 +236,14 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
         else if (taskDone(t)) done = `done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}`
         else if (/nobody assigned/.test(f.line) && Array.isArray(t.assignees) && t.assignees.length) done = 'assigned to ' + first(t.assignees[0]?.name)
       }
-      // F is a nudge to write to the guest; nothing records that it was done, so it simply ages out.
+      if (f.kind === 'F' && f.guest && f.since) {
+        const w = await hostWroteSince(db, f.guest, f.since)
+        if (w) done = `guest told ${clock(w.at)}${w.by ? ' by ' + first(w.by) : ''}`
+      }
+    } else if (f.kind === 'D' && f.guest && f.since) {
+      const w = await hostWroteSince(db, f.guest, f.since)
+      if (w) done = `guest told ${clock(w.at)}${w.by ? ' by ' + first(w.by) : ''}`
+      else { const g = byId(id); if (g && !OPEN(g.status)) done = 'glitch closed' }
     } else if (f.kind === 'A') {
       const it = items.find(i => String(i.id) === id)
       if (it && it.status !== 'open') done = 'closed' + (it.closed_reason ? ` (${String(it.closed_reason).slice(0, 60)})` : '')
@@ -285,7 +326,9 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     const co = String(g.check_out || '').slice(0, 10)
     if (t && taskDone(t) && hoursSince(t.finished_at) <= 24 && Date.parse(t.finished_at) > Date.parse(g.created_at) && (inHouse(g) || co === today)) {
       const guest = first(g.guest_name)
-      add('D:' + g.id, { kind: 'D', room: 'guest', label, line: `${label} — fixed ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${co === today ? 'checking out today' : 'in until ' + weekday(co)}; worth a quick note that it's sorted. I can draft it.` })
+      const gref: GuestRef = { reservationId: String(g.reservation_id || '') || undefined, listingId: String(g.listing_id || '') || undefined, checkIn: String(g.check_in || '').slice(0, 10) || undefined }
+      if (!flags['D:' + g.id] && await hostWroteSince(db, gref, t.finished_at)) continue
+      add('D:' + g.id, { kind: 'D', room: 'guest', label, since: t.finished_at, guest: gref, line: `${label} — fixed ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${co === today ? 'checking out today' : 'in until ' + weekday(co)}; worth a quick note that it's sorted. I can draft it.` })
     }
   }
 
@@ -308,7 +351,9 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
       }
     } else if (t.finished_at && hoursSince(t.finished_at) <= 24 && stay && stay.out >= today) {
       const guest = first(stay.guest)
-      add('F:' + t.id, { kind: 'F', room: 'guest', label, line: `${label} — done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${stay.out === today ? 'checking out today' : 'in until ' + weekday(stay.out)}; worth a quick note that it's sorted. I can draft it.` })
+      const gref: GuestRef = { reservationId: String(t.linked_reservation_id || '') || undefined, listingId: lid, checkIn: today }
+      if (!flags['F:' + t.id] && await hostWroteSince(db, gref, t.finished_at)) continue
+      add('F:' + t.id, { kind: 'F', room: 'guest', label, since: t.finished_at, guest: gref, line: `${label} — done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${stay.out === today ? 'checking out today' : 'in until ' + weekday(stay.out)}; worth a quick note that it's sorted. I can draft it.` })
     }
   }
 
