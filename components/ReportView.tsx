@@ -4563,19 +4563,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                   <div className="flex-1 min-w-0 flex flex-col">
                     <div style={{ marginTop: 'auto', marginBottom: 'auto' }}>
-                      {houseRows<Any>(sec('ai').pillars, AI_PILLARS_RETIRED_MARKS, AI_PILLARS as Any[]).slice(0, 5).map((b: Any, i: number) => (
+                      {/* EIGHT CAPABILITIES IN TWO COLUMNS (Jon, 2026-09-24: "Lighthouse does a lot more, mention it"). */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', columnGap: 28 }}>
+                      {houseRows<Any>(sec('ai').pillars, AI_PILLARS_RETIRED_MARKS, AI_PILLARS as Any[]).slice(0, 8).map((b: Any, i: number) => (
                         <div key={i} style={{ padding: '11px 0 12px', borderTop: '1px solid ' + D.rule }}>
-                          <div className="flex items-baseline" style={{ gap: 10 }}>
-                            <span style={{ fontSize: 12, color: t.accent, fontWeight: 700 }}>{'0' + (i + 1)}</span>
-                            <p style={{ fontSize: 15, fontWeight: 600, color: D.ink }}>
+                          <div className="flex items-baseline" style={{ gap: 8 }}>
+                            <span style={{ fontSize: 11.5, color: t.accent, fontWeight: 700 }}>{'0' + (i + 1)}</span>
+                            <p style={{ fontSize: 14, fontWeight: 600, color: D.ink }}>
                               <Ed v={b.k || ''} set={v => patch('ai.pillars.' + i + '.k', v)} edit={edit} />
                             </p>
                           </div>
-                          <p style={{ fontSize: 12.5, lineHeight: 1.55, color: D.muted, marginTop: 5, paddingLeft: 26 }}>
+                          <p style={{ fontSize: 12.5, lineHeight: 1.5, color: D.muted, marginTop: 4, paddingLeft: 24 }}>
                             <Ed v={b.v || ''} set={v => patch('ai.pillars.' + i + '.v', v)} edit={edit} multiline />
                           </p>
                         </div>
                       ))}
+                      </div>
                     </div>
                   </div>
                 </div>
