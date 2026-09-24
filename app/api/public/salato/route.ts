@@ -5,6 +5,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { salatoListings } from '@/lib/salato-units'
 import { linkGate } from '@/lib/passcode-gate'
 import { salatoVerifyToken } from '@/lib/salato-verify-token'
+import { underMinimum, SALATO_MIN_NIGHTS } from '@/lib/salato-watch'
+import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -39,7 +41,9 @@ export async function GET(req: NextRequest) {
       const checkOutTime = r.coLocal ? String(r.coLocal).slice(11, 16) : null
       const gRaw = r.g1 ?? r.g2
       const guests = gRaw == null || gRaw === '' ? null : Number(gRaw)
-      return { id: String(r.id), verifyToken: salatoVerifyToken(String(r.id)), unit: match[String(r.listing_id)] || 'Unit', checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), nights: r.nights ?? null, checkInTime, checkOutTime, guests, source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
+      const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
+      const nights = r.nights ?? (ci && co ? Math.round((Date.parse(co + 'T12:00:00Z') - Date.parse(ci + 'T12:00:00Z')) / 864e5) : null)
+      return { id: String(r.id), verifyToken: salatoVerifyToken(String(r.id)), unit: match[String(r.listing_id)] || 'Unit', checkIn: ci, checkOut: co, nights, oneNight: underMinimum(nights), checkInTime, checkOutTime, guests, source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
     }
     const rows = ((res || []) as any[]).filter(r => LIVE.test(str(r.status))).map(toRow)
     const arrivals = rows.filter(r => r.checkIn >= today && r.checkIn <= end).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))
@@ -60,7 +64,10 @@ export async function GET(req: NextRequest) {
       for (const r of arrivals) { if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null } }
       for (const r of active) { if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null } }
     }
-    return NextResponse.json({ ok: true, today, start, end, unitCount: ids.length, arrivals, departures, active })
+    // TWO-NIGHT MINIMUM (Jon, 2026-09-24): a one-night stay is not permitted at Salato. The board
+    // marks it, and tells the desk who to call before checking the guest in.
+    const contact = await getSetting<string>('salato_desk_contact', 'Stay Hospitality Customer Service or Jon McGill (General Manager)')
+    return NextResponse.json({ ok: true, today, start, end, unitCount: ids.length, arrivals, departures, active, minNights: SALATO_MIN_NIGHTS, contact })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
