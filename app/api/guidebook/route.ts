@@ -53,7 +53,39 @@ export async function GET(req: NextRequest) {
   if (id) {
     const { data, error } = await db.from('guidebooks').select('*').eq('id', id).limit(1)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ ok: true, guidebook: (data || [])[0] || null })
+    const gb: any = (data || [])[0] || null
+    // ── THE EMERGENCY PAGE HEALS ITSELF ON OPEN ──────────────────────────────────────────────
+    // Jon, 2026-09-23: "Could we add local hospitals to the current created guide books? … This is
+    // mandatory for all guide books."
+    //
+    // Mandatory has to mean mandatory. There is a backfill route and a button for it, but a button
+    // is a thing somebody has to remember to press, and a book opened by a guest at 2am does not
+    // care whose job that was. So a book without an emergency section grows one the first time it
+    // is read, from its own listing's coordinates, and the result is written back so it is computed
+    // once rather than on every open.
+    //
+    // Best-effort by construction: any failure here leaves the book exactly as it was and the read
+    // still succeeds. A guidebook that will not load because the hospital lookup had a bad day is a
+    // far worse outcome than a guidebook missing one page.
+    if (gb && gb.listing_id && !(gb.sections && gb.sections.emergency)) {
+      try {
+        const { data: lrows } = await db.from('guesty_listings')
+          .select('id, address_full, address_city, lat:raw->address->>lat, lng:raw->address->>lng')
+          .eq('id', gb.listing_id).limit(1)
+        const l: any = (lrows || [])[0]
+        if (l) {
+          const em = buildEmergency({ lat: l.lat, lng: l.lng, city: l.address_city, address: l.address_full })
+          if (em.hospital) {
+            const sections = (gb.sections && typeof gb.sections === 'object') ? { ...gb.sections } : {}
+            sections.emergency = em
+            sections.omit = (Array.isArray(sections.omit) ? sections.omit : []).filter((k: string) => k !== 'emergency')
+            gb.sections = sections
+            await db.from('guidebooks').update({ sections }).eq('id', gb.id)
+          }
+        }
+      } catch (e) { console.error('guidebook: emergency backfill on read failed', e) }
+    }
+    return NextResponse.json({ ok: true, guidebook: gb })
   }
   const { data, error } = await db.from('guidebooks').select('id, listing_id, listing_name, title, theme, status, created_at, updated_at').order('updated_at', { ascending: false }).limit(200)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
