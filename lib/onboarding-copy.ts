@@ -658,9 +658,10 @@ export const GUEST_BREEZEWAY =
 // argues the method instead. Put our OWN figures in the editor when we have them.
 // Boss, 2026-09-24: title 'Revenue Management'; "I don't like using the word 'unit'. 'Your property'."
 export const REVENUE_HEADLINE = 'Revenue Management'
-export const REVENUE_SUBTITLE = 'A dedicated revenue manager, reviewing your calendar every week.'
+// Jon, 2026-09-24: "Daily pricing."
+export const REVENUE_SUBTITLE = 'A dedicated revenue manager, pricing your calendar every day.'
 export const REVENUE_BODY =
-  'Pricing software sets a rate. An operator sets a strategy. We partner with Pacer, a revenue-management firm dedicated to vacation rentals and boutique hotels, and your property is assigned a named revenue manager who reviews the full picture every week.'
+  'Pricing software sets a rate. An operator sets a strategy. We partner with Pacer, a revenue-management firm dedicated to vacation rentals and boutique hotels, and your property is assigned a named revenue manager who prices it every day against the full picture.'
 
 export const REVENUE_LEVERS: { k: string; v: string }[] = [
   { k: 'Nightly rate', v: 'Moved against live demand, comp-set pricing and what is actually booking in your building — not a fixed percentage off a guess.' },
@@ -710,7 +711,7 @@ export const RAMP_ACTIONS: { k: string; v: string }[] = [
   { k: 'Every channel from day one', v: 'A listing on one site ramps at the speed of one audience. On 40+, the first bookings arrive from wherever they arrive.' },
   { k: 'Chase the first reviews', v: 'The first five reviews move placement more than the next fifty. Welcome call, mid-stay check and a review request on every stay.' },
   { k: 'Protect the score while it is fragile', v: 'One poor review out of four is a quarter of your reputation. Early stays receive our closest operational attention.' },
-  { k: 'Raise rate as standing is earned', v: 'As reviews and ranking build, the price moves with them. Reviewed weekly, never left where it launched.' },
+  { k: 'Raise rate as standing is earned', v: 'As reviews and ranking build, the price moves with them. Priced daily, never left where it launched.' },
 ]
 export const RAMP_ACTIONS_NOTE =
   'We never trade revenue for reviews. Every night is priced to the best rate the market will pay; the reviews come from filling nights that would otherwise sit empty.'
@@ -847,12 +848,12 @@ export const STACK_NOTE =
 // Jon, 2026-09-24: "fix the Pacer slide and share what they do for us, also about them and why we
 // chose to work with them." Three groups, in that order, because that is the order an owner asks.
 export const REVENUE_PARTNER_HEAD = 'Our revenue partner: Pacer'
-export const REVENUE_PARTNER_INTRO = 'We do not leave pricing to software. Pacer, a firm that does nothing but revenue management for vacation rentals and boutique hotels, works with our team every week on the rate, the minimum stay and the calendar for your property.'
+export const REVENUE_PARTNER_INTRO = 'We do not leave pricing to software. Pacer, a firm that does nothing but revenue management for vacation rentals and boutique hotels, prices your property every day and works with our team on the rate, the minimum stay and the calendar.'
 
 export type PartnerGroup = { label: string; rows: { k: string; v: string }[] }
 export const REVENUE_PARTNER_GROUPS: PartnerGroup[] = [
   { label: 'What they do for your property', rows: [
-    { k: 'A named revenue manager', v: 'One person owns your pricing, reviews the calendar every week and answers to our team, with director-level oversight behind them.' },
+    { k: 'A named revenue manager', v: 'One person owns your pricing, adjusts it daily and answers to our team, with director-level oversight behind them.' },
     { k: 'Rate, minimum stay and gaps', v: 'Nightly rate moved against live demand and the comp set; minimum stays opened or closed by date; gap nights priced to fill.' },
     { k: 'The season ahead', v: 'Events, holidays and pickup pace watched months out, so a soft month is found while there is still time to fix it.' },
     { k: 'Reporting we can show you', v: 'Monthly performance against the market, and a reason behind any rate you ask about.' },
@@ -905,13 +906,15 @@ export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
     // Boss, 2026-09-24: "Revenue Management", "your property" not "your unit", and "Who Pacer are" made no sense
     'How your rate gets set', 'Who Pacer are', 'your unit is assigned',
     // Jon, 2026-09-24: the Pacer slide became three groups (what they do / about / why)
-    'Their track record, in their own numbers', 'leading a 55-person team of analysts and data scientists', 'It is the whole business, across 50+ markets'],
+    'Their track record, in their own numbers', 'leading a 55-person team of analysts and data scientists', 'It is the whole business, across 50+ markets',
+    // Jon, 2026-09-24: daily pricing, not weekly
+    'reviewing your calendar every week', 'reviews the full picture every week', 'reviews the calendar every week', 'works with our team every week'],
   stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it',
     // Boss, 2026-09-24: "your property"
     'The system behind your unit', 'A problem at your unit',
     // the pre-logo tools list, retired the same afternoon for the real marks and the AI line
     'Our own software, built on top of the rest'],
-  rampsteps: ['would otherwise have gone empty', 'burning it on a half-built page',
+  rampsteps: ['would otherwise have gone empty', 'burning it on a half-built page', 'Reviewed weekly, never left',
     // 2026-09-24: the subtitle now ties each step to what ranking runs on
     'Sitting still through it is not',
     // Jon, 2026-09-24: "remove this" — the row about opening minimum stays at launch
