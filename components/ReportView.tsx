@@ -1253,9 +1253,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const [picker, setPicker] = useState(false)
   const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void; choices?: string[]; choicesLabel?: string; groups?: { id: string; name: string; pics: string[] }[] } | null>(null)
   // The properties slide's galleries, by building (Jon, 2026-09-24: "let me select").
-  const [buildingPools, setBuildingPools] = useState<Record<string, string[]>>({})
   const [buildingListings, setBuildingListings] = useState<Record<string, { id: string; name: string; pics: string[] }[]>>({})
+  const [buildingChosen, setBuildingChosen] = useState<Record<string, string>>({})
   const [pickGroup, setPickGroup] = useState<string>('')
+  // The properties-slide picker (Jon, 2026-09-24: "see only the property listing photos; once
+  // select, save for all properties"). Its own modal, not the general photo picker.
+  const [propPick, setPropPick] = useState<{ i: number; b: string; name: string; cur: string } | null>(null)
+  const [propMsg, setPropMsg] = useState('')
   const [photoUrl, setPhotoUrl] = useState('')
   // Upload state for the picker. One picker serves every photo slot in the deck, so wiring
   // upload here covers the cover, the team cards, the portal shots and any slide added by hand.
@@ -1603,13 +1607,17 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     let dead = false
     fetch('/api/reports/building-photos?all=1').then(r => r.json()).then(j => {
       if (dead) return
-      if (j && j.pools) setBuildingPools(j.pools)
       if (j && j.listings) setBuildingListings(j.listings)
-      const photos = (j && j.photos) || {}
-      if (!Object.keys(photos).length || !items.some(it => it && it.b && !it.pic)) return
+      if (j && j.chosen) setBuildingChosen(j.chosen)
+      const photos: Record<string, string> = (j && j.photos) || {}
+      const auto: Record<string, string> = (j && j.auto) || {}
+      // Fill a blank tile, and replace an AUTO picture (first Guesty shot) with the one chosen for
+      // all decks. A picture somebody uploaded by hand on this deck is never touched.
+      const stale = (it: Any) => it && it.b && photos[it.b] && (!it.pic || (it.pic === auto[it.b] && it.pic !== photos[it.b]))
+      if (!items.some(stale)) return
       mutate(d => {
         const ex = d.experience || (d.experience = {})
-        if (Array.isArray(ex.items)) ex.items = ex.items.map((it: Any) => (it && it.b && !it.pic && photos[it.b]) ? { ...it, pic: photos[it.b] } : it)
+        if (Array.isArray(ex.items)) ex.items = ex.items.map((it: Any) => stale(it) ? { ...it, pic: photos[it.b] } : it)
       })
     }).catch(() => { /* blank tiles; Change still works */ })
     return () => { dead = true }
@@ -2865,6 +2873,70 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         </div>
       )}
 
+      {propPick && (() => {
+        const groups = buildingListings[propPick.b] || []
+        const pics = pickGroup ? (groups.find(g => g.id === pickGroup)?.pics || []) : Array.from(new Set(groups.flatMap(g => g.pics)))
+        const choose = async (u: string) => {
+          patch('experience.items.' + propPick.i + '.pic', u); answerChanged()
+          setPropMsg('Saving for all decks…')
+          try {
+            const r = await fetch('/api/reports/building-photos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ building: propPick.b, url: u }) })
+            if (!r.ok) throw new Error()
+            setBuildingChosen(c => ({ ...c, [propPick.b]: u }))
+            setPropPick(null); setPropMsg('')
+          } catch { setPropMsg('Set on this deck, but could not save it for the others.') }
+        }
+        return (
+          <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5" style={{ background: 'rgba(10,14,20,0.66)' }}
+            onClick={() => { if (!upBusy) setPropPick(null) }}>
+            <div onClick={e => e.stopPropagation()} className="rounded-2xl w-full max-w-3xl max-h-[86vh] overflow-auto p-5" style={{ background: t.card, border: '1px solid ' + t.cardBorder }}>
+              <div className="flex items-center justify-between gap-4 mb-1">
+                <p className="text-[15px] font-semibold" style={{ color: t.ink }}>{propPick.name}</p>
+                <button onClick={() => setPropPick(null)} className="rounded-full p-1.5" style={{ color: t.sub }}><X size={16} /></button>
+              </div>
+              <p className="text-[12.5px] mb-4" style={{ color: propMsg ? t.gold : t.muted }}>{propMsg || 'Pick a photo. It is saved for every onboarding deck, not just this one.'}</p>
+              {groups.length > 1 && (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {[{ id: '', name: 'All units' }, ...groups].map(g => (
+                    <button key={g.id} onClick={() => setPickGroup(g.id)} className="rounded-full px-2.5 py-1 text-[11.5px] font-semibold"
+                      style={{ background: pickGroup === g.id ? t.ink : t.chip, color: pickGroup === g.id ? t.bg : t.ink, border: '1px solid ' + (pickGroup === g.id ? t.ink : t.cardBorder) }}>{g.name}</button>
+                  ))}
+                </div>
+              )}
+              {pics.length > 0 ? (
+                <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))' }}>
+                  {pics.map((src: string, i: number) => (
+                    <button key={i} onClick={() => choose(src)} className="relative rounded-lg overflow-hidden"
+                      style={{ aspectRatio: '4 / 3', border: '2px solid ' + (src === propPick.cur ? t.accent : 'transparent') }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={src} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                // No listing on Guesty for this one (the Garden, the Monroe): upload is the only way.
+                <label className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-semibold cursor-pointer" style={{ background: t.ink, color: t.bg, opacity: upBusy ? 0.6 : 1 }}>
+                  <UploadCloud size={14} /> {upBusy ? 'Uploading…' : 'No listing photos for this property — upload one'}
+                  <input type="file" accept="image/*" disabled={upBusy} className="hidden" onChange={async e => {
+                    const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return
+                    setUpBusy(true)
+                    try {
+                      const fd = new FormData(); fd.append('file', f)
+                      const r = await fetch('/api/deck-photo', { method: 'POST', body: fd }); const d = await r.json().catch(() => ({}))
+                      if (r.ok && d?.url) await choose(String(d.url)); else setPropMsg(d?.error || 'Upload failed.')
+                    } catch { setPropMsg('Could not reach the server.') }
+                    setUpBusy(false)
+                  }} />
+                </label>
+              )}
+              {buildingChosen[propPick.b] && (
+                <button onClick={() => choose('')} className="mt-4 text-[12.5px] font-semibold" style={{ color: t.accent }}>Clear the saved choice</button>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
       {photoPick && (
         <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5"
           style={{ background: 'rgba(10,14,20,0.66)' }}
@@ -2919,28 +2991,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: t.ink, color: t.bg }}>Use</button>
             </div>
-            {photoPick.choices && photoPick.choices.length > 0 && (<>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>{photoPick.choicesLabel || 'Or pick one'}</p>
-              {/* SELECT FROM THE LISTING, FOR EACH (Jon, 2026-09-24): a chip per listing in the
-                  building narrows the grid to that unit's own photos. */}
-              {photoPick.groups && photoPick.groups.length > 1 && (
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {[{ id: '', name: 'All units' }, ...photoPick.groups].map(g => (
-                    <button key={g.id} onClick={() => setPickGroup(g.id)} className="rounded-full px-2.5 py-1 text-[11.5px] font-semibold"
-                      style={{ background: pickGroup === g.id ? t.ink : t.chip, color: pickGroup === g.id ? t.bg : t.ink, border: '1px solid ' + (pickGroup === g.id ? t.ink : t.cardBorder) }}>{g.name}</button>
-                  ))}
-                </div>
-              )}
-              <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))' }}>
-                {(pickGroup && photoPick.groups ? (photoPick.groups.find(g => g.id === pickGroup)?.pics || []) : photoPick.choices).map((src: string, i: number) => (
-                  <button key={i} onClick={() => { photoPick.set(src); answerChanged(); setPhotoPick(null); setPhotoUrl('') }}
-                    className="relative rounded-lg overflow-hidden" style={{ aspectRatio: '4 / 3', border: '2px solid ' + (src === photoPick.cur ? t.accent : 'transparent') }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  </button>
-                ))}
-              </div>
-            </>)}
             {pickPool.length > 0 && (
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>Or pick one from the listing</p>
             )}
@@ -3630,14 +3680,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '18px 20px' }}>
                     {(sec('experience').items || []).map((f: Any, i: number) => (
                       <div key={i} style={{ minWidth: 0 }}>
-                        <Pick title={'Photo · ' + (f.k || 'property')} cur={String(f.pic || '')} set={u => patch('experience.items.' + i + '.pic', u)}
-                          choices={f.b ? buildingPools[f.b] : undefined} choicesLabel={f.b ? 'Pick one from ' + f.b : undefined} groups={f.b ? buildingListings[f.b] : undefined}
-                          style={{ width: '100%', aspectRatio: '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }} />
+                        <div style={{ position: 'relative', overflow: 'hidden', width: '100%', aspectRatio: '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }}>
+                          {f.pic ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={String(f.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : null}
+                          {edit && (
+                            <button onClick={() => { setPickGroup(''); setPropMsg(''); setPropPick({ i, b: String(f.b || ''), name: String(f.k || 'property'), cur: String(f.pic || '') }) }}
+                              className="sb-noprint sb-pick" title="Choose this property's photo"
+                              style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
+                              <span style={{ position: 'absolute', bottom: 8, right: 8, fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111' }}>Change</span>
+                            </button>
+                          )}
+                        </div>
+                        {/* Name only under the picture (Jon, 2026-09-24: "No descriptions actually"). */}
                         <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3, marginTop: 9 }}>
                           <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />
-                        </p>
-                        <p style={{ fontSize: 11.5, color: t.muted, marginTop: 2 }}>
-                          <Ed v={f.v || ''} set={v => patch('experience.items.' + i + '.v', v)} edit={edit} multiline />
                         </p>
                       </div>
                     ))}

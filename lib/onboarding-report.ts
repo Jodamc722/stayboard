@@ -262,6 +262,8 @@ export type OnboardingTemplate = {
   // ── THE PITCH (2026-09-23). Six slides that argue for the company rather than explain it.
   experienceBody: string
   experienceItems: PropertyItem[]
+  /** Jon, 2026-09-24: "once select, save for all properties" — the chosen picture per building, by canonical label. */
+  propertyPics: Record<string, string>
   experienceProof: KV[]
   craftBody: string
   craftRows: KV[]
@@ -419,6 +421,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
 
   experienceBody: EXPERIENCE_BODY,
   experienceItems: EXPERIENCE_ITEMS,
+  propertyPics: {},
   experienceProof: EXPERIENCE_PROOF,
   craftBody: CRAFT_BODY,
   craftRows: CRAFT_ROWS,
@@ -522,6 +525,7 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     techRows: arr(stored.techRows, D.techRows),
     experienceBody: str(stored.experienceBody, D.experienceBody),
     experienceItems: arr(stored.experienceItems, D.experienceItems),
+    propertyPics: (stored.propertyPics && typeof stored.propertyPics === 'object') ? stored.propertyPics as Record<string, string> : {},
     experienceProof: arr(stored.experienceProof, D.experienceProof),
     craftBody: str(stored.craftBody, D.craftBody),
     craftRows: arr(stored.craftRows, D.craftRows),
@@ -771,7 +775,9 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       headline: 'What we already run',
       subtitle: 'Not a portfolio of units. A portfolio of buildings.',
       body: t.experienceBody,
-      items: t.experienceItems,
+      // The picture chosen once in the editor wins for every deck; the rest are filled from Guesty
+      // by the generate route.
+      items: t.experienceItems.map(it => (it.b && t.propertyPics[it.b]) ? { ...it, pic: t.propertyPics[it.b] } : it),
       proof: t.experienceProof,
       photo: pic(5),
     },
