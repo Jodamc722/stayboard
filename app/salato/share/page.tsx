@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; verified?: boolean; verifyToken?: string; verifiedAt?: string | null }
-type Data = { ok: boolean; today: string; unitCount?: number; arrivals: Row[]; departures: Row[]; active: Row[]; error?: string }
+type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; oneNight?: boolean; verified?: boolean; verifyToken?: string; verifiedAt?: string | null }
+type Data = { ok: boolean; today: string; unitCount?: number; arrivals: Row[]; departures: Row[]; active: Row[]; minNights?: number; contact?: string; error?: string }
 type ViewData = { ok: boolean; fullName?: string | null; unit?: string | null; signedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
 
 const SEEN_KEY = 'salato_share_seen_v1'
@@ -181,6 +181,24 @@ export default function SalatoShare() {
           )})}
         </div>
 
+        {/* TWO-NIGHT MINIMUM (Jon, 2026-09-24). A one-night stay is not permitted at Salato. The desk
+            sees it before anything else, with who to call, and does not check the guest in until
+            that call is made. Customer service is told separately in Slack. */}
+        {data && (() => {
+          const seenIds: Record<string, boolean> = {}
+          const ones = data.arrivals.concat(data.active).filter(r => r.oneNight && (r.id ? (seenIds[r.id] ? false : (seenIds[r.id] = true)) : true))
+          if (!ones.length) return null
+          return (
+            <div className='rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 mb-4'>
+              <div className='text-sm font-bold text-rose-800'>1-night stay{ones.length === 1 ? '' : 's'} — not permitted</div>
+              <p className='text-xs text-rose-700 mt-1'>Salato has a {data.minNights || 2}-night minimum. Do not check the guest in. Contact {data.contact || 'Stay Hospitality Customer Service or Jon McGill (General Manager)'} first.</p>
+              <ul className='mt-2 space-y-1'>
+                {ones.map((r, i) => <li key={i} className='text-sm text-rose-900'><span className='font-semibold'>{r.unit}</span> · {dayLabel(r.checkIn, data.today)} {fmtDate(r.checkIn) !== dayLabel(r.checkIn, data.today) ? '(' + fmtDate(r.checkIn) + ')' : ''} → {fmtDate(r.checkOut)}{r.source ? ' · ' + r.source : ''}</li>)}
+              </ul>
+            </div>
+          )
+        })()}
+
         {loading && !data && <div className='text-neutral-400 text-sm py-10 text-center'>Loading…</div>}
         {err && <div className='text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3'>{err}</div>}
         {data && rows.length === 0 && !loading && <div className='text-neutral-400 text-sm py-10 text-center'>Nothing here right now.</div>}
@@ -207,6 +225,7 @@ export default function SalatoShare() {
                           <span className='text-[15px] font-bold text-neutral-900 truncate'>{r.unit}</span>
                           {isNew(r) && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white'>New</span>}
                           {tab === 'departures' && r.sameDayTurn && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700'>Same-day turn</span>}
+                          {tab !== 'departures' && r.oneNight && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white'>1 night · not permitted</span>}
                         </div>
                         <div className='text-xs text-neutral-500 mt-0.5'>
                           {[time ? (tab === 'departures' ? 'Out ' : 'ETA ') + fmtTime(time) : null,
@@ -215,7 +234,9 @@ export default function SalatoShare() {
                             r.source].filter(Boolean).join(' · ')}
                         </div>
                       </div>
-                      {showVerify && (r.verified
+                      {showVerify && r.oneNight && !r.verified
+                        ? <span className='shrink-0 text-[11px] font-semibold px-3 py-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 max-w-[9rem] text-right'>Call customer service or Jon before check-in</span>
+                        : showVerify && (r.verified
                         ? <button onClick={() => r.id && openViewer(r.id)} className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800'>✓ Verified</button>
                         : <a href={'/salato/verify/' + (r.verifyToken || '')} target='_blank' rel='noopener noreferrer' className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl bg-neutral-900 text-white'>Verify</a>)}
                     </div>
