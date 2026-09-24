@@ -4563,8 +4563,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                   <div className="flex-1 min-w-0 flex flex-col">
                     <div style={{ marginTop: 'auto', marginBottom: 'auto' }}>
-                      {houseRows<Any>(sec('ai').pillars, AI_PILLARS_RETIRED_MARKS, AI_PILLARS as Any[]).slice(0, 4).map((b: Any, i: number) => (
-                        <div key={i} style={{ padding: '13px 0 14px', borderTop: '1px solid ' + D.rule }}>
+                      {houseRows<Any>(sec('ai').pillars, AI_PILLARS_RETIRED_MARKS, AI_PILLARS as Any[]).slice(0, 5).map((b: Any, i: number) => (
+                        <div key={i} style={{ padding: '11px 0 12px', borderTop: '1px solid ' + D.rule }}>
                           <div className="flex items-baseline" style={{ gap: 10 }}>
                             <span style={{ fontSize: 12, color: t.accent, fontWeight: 700 }}>{'0' + (i + 1)}</span>
                             <p style={{ fontSize: 15, fontWeight: 600, color: D.ink }}>
