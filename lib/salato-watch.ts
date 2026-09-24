@@ -109,8 +109,13 @@ function line(r: any, unit: string, n: number): string {
   if (r.confirmation_code) bits.push(`code ${str(r.confirmation_code)}`)
   return bits.join(' · ')
 }
-const oneNightText = (r: any, unit: string, n: number, why = 'New booking') =>
-  `<!channel> :no_entry: *${why}: 1-night stay at Salato. Not permitted.*\n${line(r, unit, n)}\nSalato has a ${SALATO_MIN_NIGHTS}-night minimum. This reservation must be canceled (or extended to ${SALATO_MIN_NIGHTS} nights). Reply in this thread when it's handled.`
+const oneNightText = (r: any, unit: string, n: number, why = 'New booking', today = '') => {
+  const ci = str(r.check_in).slice(0, 10)
+  const now = today && ci <= today
+  return `<!channel> :no_entry: *${why}: 1-night stay at Salato. Not permitted.*\n${line(r, unit, n)}\nSalato has a ${SALATO_MIN_NIGHTS}-night minimum. `
+    + (now ? `Check-in is today, so decide now: cancel, or extend to ${SALATO_MIN_NIGHTS} nights, and tell the front desk before the guest arrives.` : `This reservation must be canceled (or extended to ${SALATO_MIN_NIGHTS} nights).`)
+    + ` Reply in this thread when it's handled.`
+}
 
 export type WatchResult = { ok: boolean; seeded?: boolean; checked: number; announced: number; oneNight: number; nudged: number; resolved: number; canceled: number; dryRun?: boolean; items?: string[]; error?: string }
 
@@ -160,7 +165,7 @@ export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolea
       if (firstRun && !isOne) { e.announced = true; e.ts = e.ts || undefined }                    // already on the books
       else if (firstRun && isOne && ci < today) { e.announced = true }                               // already in the past
       else {
-        const text = isOne ? oneNightText(r, unit, n) : `<!channel> :bell: *New Salato booking*\n${line(r, unit, n)}`
+        const text = isOne ? oneNightText(r, unit, n, firstRun ? 'Already booked' : 'New booking', today) : `<!channel> :bell: *New Salato booking*\n${line(r, unit, n)}`
         const ts = await say(isOne ? 'one-night' : 'new', text, undefined, `Salato ${isOne ? '1-night (not permitted)' : 'new booking'}: ${unit} ${ci}→${co}`)
         if (ts || opts.dryRun) {
           e.announced = true; e.ts = real(ts) || e.ts
@@ -172,7 +177,7 @@ export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolea
 
     // 2. A booking shortened to one night.
     if (live && e.announced && !e.oneNight && !e.resolved && n > 0 && n < SALATO_MIN_NIGHTS && e.nights >= SALATO_MIN_NIGHTS) {
-      const ts = await say('shortened', oneNightText(r, unit, n, 'Changed to'), e.ts, `Salato booking shortened to 1 night: ${unit} ${ci}`)
+      const ts = await say('shortened', oneNightText(r, unit, n, 'Changed to', today), e.ts, `Salato booking shortened to 1 night: ${unit} ${ci}`)
       if (ts || opts.dryRun) { e.oneNight = true; e.lastNudge = now.toISOString(); e.nudges = 0; out.oneNight++; dirty = true }
     }
 
