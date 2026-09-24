@@ -844,15 +844,33 @@ export const STACK_NOTE =
 // attribution is what makes it usable at all — it is evidence that the firm setting your rate has
 // done this at scale, which is exactly the question an owner is asking.
 // Boss, 2026-09-24: "'who pacer are' doesn't make sense. Description also isn't good."
+// Jon, 2026-09-24: "fix the Pacer slide and share what they do for us, also about them and why we
+// chose to work with them." Three groups, in that order, because that is the order an owner asks.
 export const REVENUE_PARTNER_HEAD = 'Our revenue partner: Pacer'
-export const REVENUE_PARTNER_INTRO = 'Pacer is the revenue-management firm that sets and manages the rate on your property, working with our team every week. Their track record, in their own numbers:'
-export const REVENUE_PARTNER: { k: string; v: string }[] = [
-  { k: 'Built at enterprise scale', v: 'Founded by Jon Latorre, who joined Vacasa at 600 properties and helped scale it to 44,000 across 16 countries, leading a 55-person team of analysts and data scientists over $2B+ in revenue.' },
-  { k: 'Revenue management only', v: 'Not a side service attached to a management company. It is the whole business, across 50+ markets in seven countries.' },
-  { k: 'Their own results', v: 'Pacer reports a 95% client retention rate and a +23% median same-store RevPAR lift after twelve months across 43 of their portfolios. Their book, not a forecast for yours.' },
-  { k: 'Recognised in the industry', v: 'Exclusive revenue-management partner of Key Data, preferred partner of Casago and iTrip, and a VRMA member.' },
-  { k: 'How it runs', v: 'A named revenue manager on your portfolio with director-level oversight, biweekly strategy calls and monthly performance reporting against market context.' },
+export const REVENUE_PARTNER_INTRO = 'We do not leave pricing to software. Pacer, a firm that does nothing but revenue management for vacation rentals and boutique hotels, works with our team every week on the rate, the minimum stay and the calendar for your property.'
+
+export type PartnerGroup = { label: string; rows: { k: string; v: string }[] }
+export const REVENUE_PARTNER_GROUPS: PartnerGroup[] = [
+  { label: 'What they do for your property', rows: [
+    { k: 'A named revenue manager', v: 'One person owns your pricing, reviews the calendar every week and answers to our team, with director-level oversight behind them.' },
+    { k: 'Rate, minimum stay and gaps', v: 'Nightly rate moved against live demand and the comp set; minimum stays opened or closed by date; gap nights priced to fill.' },
+    { k: 'The season ahead', v: 'Events, holidays and pickup pace watched months out, so a soft month is found while there is still time to fix it.' },
+    { k: 'Reporting we can show you', v: 'Monthly performance against the market, and a reason behind any rate you ask about.' },
+  ] },
+  { label: 'About Pacer', rows: [
+    { k: 'Revenue management is the whole business', v: 'Not a feature of a software product or a side service of a manager: 50+ markets in seven countries, pricing only.' },
+    { k: 'Built at scale', v: 'Founded by Jon Latorre, who joined Vacasa at 600 properties and helped grow it to 44,000 across 16 countries, leading a 55-person revenue team over $2B+ in bookings.' },
+    { k: 'Their own results', v: 'Pacer reports 95% client retention and a +23% median same-store RevPAR lift after twelve months across 43 portfolios. Their book, not a forecast for yours.' },
+    { k: 'Recognised in the industry', v: 'Exclusive revenue-management partner of Key Data; preferred partner of Casago and iTrip; VRMA member.' },
+  ] },
+  { label: 'Why we chose them', rows: [
+    { k: 'They run the tool, they do not sell one', v: 'Pricing software sets a number. An operator sets a strategy. Pacer runs our pricing platform with hotel-grade discipline, which is what a building needs.' },
+    { k: 'They see the market before one operator can', v: 'Across 50+ markets they read demand shifts weeks before they show in a single calendar, and ours is priced accordingly.' },
+    { k: 'Accountable people, not a dashboard', v: 'Biweekly strategy calls, a named manager, a monthly report. When a rate decision needs explaining, there is a person to ask.' },
+  ] },
 ]
+/** Kept for decks stored before the three groups existed; the slide renders the groups. */
+export const REVENUE_PARTNER: { k: string; v: string }[] = REVENUE_PARTNER_GROUPS.flatMap(g => g.rows)
 
 // ── THE COPY AUDIT (2026-09-23) ─────────────────────────────────────────────
 // Jon: "Make sure that the wording is professional, not clunky, not noisy … It's a little bit wordy
@@ -883,9 +901,11 @@ export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
     'the operations platform used by hotels',
     // Boss, 2026-09-24: title "Guest experience"
     'How a stay is run'],
-  revenue: ['Almost every manager you speak to', 'there is a person to ask',
+  revenue: ['Almost every manager you speak to',
     // Boss, 2026-09-24: "Revenue Management", "your property" not "your unit", and "Who Pacer are" made no sense
-    'How your rate gets set', 'Who Pacer are', 'your unit is assigned'],
+    'How your rate gets set', 'Who Pacer are', 'your unit is assigned',
+    // Jon, 2026-09-24: the Pacer slide became three groups (what they do / about / why)
+    'Their track record, in their own numbers', 'leading a 55-person team of analysts and data scientists', 'It is the whole business, across 50+ markets'],
   stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it',
     // Boss, 2026-09-24: "your property"
     'The system behind your unit', 'A problem at your unit',

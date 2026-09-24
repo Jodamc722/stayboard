@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   put('craftBody', str(sec('craft').body)); put('craftRows', arr(sec('craft').rows))
   put('guestBody', str(sec('guestcare').body)); put('guestStages', arr(sec('guestcare').stages)); put('guestBreezeway', str(sec('guestcare').note))
   put('revenueBody', str(sec('revenue').body)); put('revenueLevers', arr(sec('revenue').rows)); put('revenueNote', str(sec('revenue').note))
-  put('revenuePartnerHead', str(sec('revenue').partnerHead)); put('revenuePartner', arr(sec('revenue').partner)); put('revenuePartnerLogo', str(sec('revenue').partnerLogo))
+  put('revenuePartnerHead', str(sec('revenue').partnerHead)); put('revenuePartner', arr(sec('revenue').partner)); put('revenuePartnerGroups', arr(sec('revenue').partnerGroups)); put('revenuePartnerLogo', str(sec('revenue').partnerLogo))
   if (typeof sec('revenue').partnerIntro === 'string') next.revenuePartnerIntro = sec('revenue').partnerIntro
   put('rampActions', arr(sec('rampsteps').rows)); put('rampActionsNote', str(sec('rampsteps').note))
   put('stackBody', str(sec('stack').body)); put('stackTools', arr(sec('stack').tools)); put('stackChannels', arr(sec('stack').rows)); put('stackNote', str(sec('stack').note))

@@ -35,7 +35,7 @@ import {
   RAMP_ACTIONS_HEADLINE, RAMP_ACTIONS_SUBTITLE, STACK_HEADLINE, STACK_SUBTITLE,
   CRAFT_BODY, CRAFT_ROWS,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY,
-  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, PACER_LOGO,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, PACER_LOGO, REVENUE_PARTNER_GROUPS, type PartnerGroup,
   RAMP_ACTIONS, RAMP_ACTIONS_NOTE,
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, type StackTool,
 } from './onboarding-copy'
@@ -115,7 +115,7 @@ export type OnboardingContent = {
   /** The guest journey, booking to review, and the Breezeway record behind it. */
   guestcare: Sec<{ headline: string; subtitle: string; body: string; stages: KV[]; note: string }>
   /** Revenue management and the Pacer partnership — the levers, not just the nightly rate. */
-  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string; partnerHead: string; partnerIntro?: string; partner: KV[]; partnerLogo: string }>
+  revenue: Sec<{ headline: string; subtitle: string; body: string; rows: KV[]; note: string; partnerHead: string; partnerIntro?: string; partner: KV[]; partnerGroups?: PartnerGroup[]; partnerLogo: string }>
   /** The active half of the ramp story: what we DO to shorten it. Sits right after the curve. */
   rampsteps: Sec<{ headline: string; subtitle: string; rows: KV[]; note: string }>
   /** The software stack — Guesty, PriceLabs, Breezeway, Lighthouse, plus Slack and email. */
@@ -277,6 +277,7 @@ export type OnboardingTemplate = {
   revenueNote: string
   revenuePartnerHead: string
   revenuePartner: KV[]
+  revenuePartnerGroups: PartnerGroup[]
   revenuePartnerLogo: string
   rampActions: KV[]
   rampActionsNote: string
@@ -450,6 +451,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   revenueNote: REVENUE_NOTE,
   revenuePartnerHead: REVENUE_PARTNER_HEAD,
   revenuePartner: REVENUE_PARTNER,
+  revenuePartnerGroups: REVENUE_PARTNER_GROUPS,
   revenuePartnerLogo: PACER_LOGO,
   rampActions: RAMP_ACTIONS,
   rampActionsNote: RAMP_ACTIONS_NOTE,
@@ -558,6 +560,7 @@ export async function getOnboardingTemplate(): Promise<OnboardingTemplate> {
     revenueLevers: arr(stored.revenueLevers, D.revenueLevers),
     revenueNote: str(stored.revenueNote, D.revenueNote),
     revenuePartnerHead: str(stored.revenuePartnerHead, D.revenuePartnerHead),
+    revenuePartnerGroups: arr(stored.revenuePartnerGroups, D.revenuePartnerGroups),
     revenuePartner: arr(stored.revenuePartner, D.revenuePartner),
     revenuePartnerLogo: str(stored.revenuePartnerLogo, D.revenuePartnerLogo),
     rampActions: arr(stored.rampActions, D.rampActions),
@@ -825,6 +828,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       note: t.revenueNote,
       partnerHead: t.revenuePartnerHead,
       partner: t.revenuePartner,
+      partnerGroups: t.revenuePartnerGroups,
       partnerLogo: t.revenuePartnerLogo,
     },
     rampsteps: {

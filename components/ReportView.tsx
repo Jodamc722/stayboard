@@ -25,7 +25,7 @@ import {
   EXPERIENCE_BODY, EXPERIENCE_ITEMS, EXPERIENCE_PROOF, EXPERIENCE_HEADLINE, EXPERIENCE_SUBTITLE, EXPERIENCE_INTRO,
   CRAFT_BODY, CRAFT_ROWS, CRAFT_HEADLINE, CRAFT_SUBTITLE,
   GUEST_BODY, GUEST_STAGES, GUEST_BREEZEWAY, GUEST_HEADLINE, GUEST_SUBTITLE,
-  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, REVENUE_PARTNER_INTRO, PACER_LOGO,
+  REVENUE_BODY, REVENUE_LEVERS, REVENUE_NOTE, REVENUE_HEADLINE, REVENUE_SUBTITLE, REVENUE_PARTNER, REVENUE_PARTNER_HEAD, REVENUE_PARTNER_INTRO, REVENUE_PARTNER_GROUPS, PACER_LOGO,
   RAMP_ACTIONS, RAMP_ACTIONS_NOTE, RAMP_ACTIONS_HEADLINE, RAMP_ACTIONS_SUBTITLE,
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
@@ -1186,7 +1186,7 @@ const PITCH_DEFAULTS: Record<string, Any> = {
   experience: { headline: EXPERIENCE_HEADLINE, subtitle: EXPERIENCE_SUBTITLE, body: EXPERIENCE_BODY, intro: EXPERIENCE_INTRO, items: EXPERIENCE_ITEMS, proof: EXPERIENCE_PROOF, photo: null },
   craft: { headline: CRAFT_HEADLINE, subtitle: CRAFT_SUBTITLE, body: CRAFT_BODY, rows: CRAFT_ROWS },
   guestcare: { headline: GUEST_HEADLINE, subtitle: GUEST_SUBTITLE, body: GUEST_BODY, stages: GUEST_STAGES, note: GUEST_BREEZEWAY },
-  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE, partnerHead: REVENUE_PARTNER_HEAD, partnerIntro: REVENUE_PARTNER_INTRO, partner: REVENUE_PARTNER, partnerLogo: PACER_LOGO },
+  revenue: { headline: REVENUE_HEADLINE, subtitle: REVENUE_SUBTITLE, body: REVENUE_BODY, rows: REVENUE_LEVERS, note: REVENUE_NOTE, partnerHead: REVENUE_PARTNER_HEAD, partnerIntro: REVENUE_PARTNER_INTRO, partner: REVENUE_PARTNER, partnerGroups: REVENUE_PARTNER_GROUPS, partnerLogo: PACER_LOGO },
   rampsteps: { headline: RAMP_ACTIONS_HEADLINE, subtitle: RAMP_ACTIONS_SUBTITLE, rows: RAMP_ACTIONS, note: RAMP_ACTIONS_NOTE },
   stack: { headline: STACK_HEADLINE, subtitle: STACK_SUBTITLE, body: STACK_BODY, tools: STACK_TOOLS, rows: STACK_CHANNELS, note: STACK_NOTE },
 }
@@ -3925,7 +3925,33 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       <Ed v={sec('revenue').partnerIntro || REVENUE_PARTNER_INTRO} set={v => patch('revenue.partnerIntro', v)} edit={edit} multiline />
                     </p>
                   </div>
+                  {/* Jon, 2026-09-24: what they do for us · about them · why we chose them. Three
+                      groups, each a labelled block of short rows; a deck without groups shows its
+                      flat rows as before. */}
                   <div className="flex-1 min-w-0 min-h-0 flex flex-col onb-scroll">
+                    {Array.isArray(sec('revenue').partnerGroups) && sec('revenue').partnerGroups.length ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 18, paddingTop: 2 }}>
+                        {sec('revenue').partnerGroups.map((g: Any, gi: number) => (
+                          <div key={gi}>
+                            <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.accent, marginBottom: 6 }}>
+                              <Ed v={g.label || ''} set={v => patch('revenue.partnerGroups.' + gi + '.label', v)} edit={edit} />
+                            </p>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '8px 22px' }}>
+                              {(g.rows || []).map((f: Any, i: number) => (
+                                <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 7 }}>
+                                  <p style={{ fontSize: 13, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                                    <Ed v={f.k || ''} set={v => patch('revenue.partnerGroups.' + gi + '.rows.' + i + '.k', v)} edit={edit} multiline />
+                                  </p>
+                                  <p style={{ fontSize: 12, lineHeight: 1.5, color: t.body, marginTop: 3 }}>
+                                    <Ed v={f.v || ''} set={v => patch('revenue.partnerGroups.' + gi + '.rows.' + i + '.v', v)} edit={edit} multiline />
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
                     <div style={{ marginTop: 'auto', marginBottom: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
                       {(sec('revenue').partner || []).map((f: Any, i: number) => (
                         <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 10 }}>
@@ -3938,6 +3964,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         </div>
                       ))}
                     </div>
+                    )}
                   </div>
                 </div>
                 <Foot label="Revenue management" />
