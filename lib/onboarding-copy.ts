@@ -854,23 +854,25 @@ export const STACK_NOTE =
 // Jon, 2026-09-24: "fix the Pacer slide and share what they do for us, also about them and why we
 // chose to work with them." Three groups, in that order, because that is the order an owner asks.
 export const REVENUE_PARTNER_HEAD = 'Our revenue partner: Pacer'
-export const REVENUE_PARTNER_INTRO = 'We do not leave pricing to software. Pacer, a firm that does nothing but revenue management, works your rate with our team every day.'
+// Jon, 2026-09-25: "I hate the Pacer slide, need to be more sales — how they help us improve
+// revenue, monitor competitive data, comp sets, pricing future dates, big dates." So the slide
+// sells what happens to the owner's money, in the owner's words; who Pacer are is one row at the
+// end, not a section.
+export const REVENUE_PARTNER_INTRO = 'Pricing is a job, not a setting. With Pacer, your property is repriced every day by people who watch your competition, your future dates and the big weekends, so every night sells for what the market will pay.'
 
 export type PartnerGroup = { label: string; rows: { k: string; v: string }[] }
-// Jon, 2026-09-25: "the Pacer slide is so long, condense it. Also Kyle and Justin are our account
-// managers that work our pricing daily." Six rows in three groups, nothing over two lines.
 export const REVENUE_PARTNER_GROUPS: PartnerGroup[] = [
-  { label: 'What they do for your property', rows: [
-    { k: 'Kyle and Justin, your account managers', v: 'Work your pricing every day: rate, minimum stay and gap nights, against live demand and the comp set.' },
-    { k: 'The season ahead', v: 'Events and pickup pace watched months out; a monthly report, and a reason behind any rate you ask about.' },
+  { label: 'How Pacer grows your revenue', rows: [
+    { k: 'Repriced every day', v: 'Kyle and Justin, our account managers, work your rates daily against live demand, never a set-and-forget rule.' },
+    { k: 'Your competition, watched', v: 'Comp-set rates, occupancy and pickup tracked for your building and the ones next door. When they move, your price answers the same day.' },
+    { k: 'Future dates priced now', v: 'The calendar is priced a year out and repriced as demand builds, so a peak night is never sold at a shoulder-season rate.' },
+    { k: 'Big dates captured', v: 'Art Basel, Ultra, the Grand Prix, the boat show, spring break, the holidays: rates and minimums set early, then pushed as the dates fill.' },
+    { k: 'Minimum stays and gap nights', v: 'Stays opened or closed by date, and the odd night between bookings priced to fill instead of sitting empty.' },
+    { k: 'Length of stay and last minute', v: 'Weekly and monthly rates set so a long booking is worth taking, and unsold nights still sell as the date nears.' },
   ] },
-  { label: 'About Pacer', rows: [
-    { k: 'Pricing only, 50+ markets', v: 'Built by a former Vacasa revenue lead who helped grow it from 600 to 44,000 properties.' },
-    { k: 'Their results', v: '95% client retention; +23% median RevPAR after a year, in their own portfolios.' },
-  ] },
-  { label: 'Why we chose them', rows: [
-    { k: 'They run the tool, they do not sell one', v: 'An operator\u2019s strategy on our pricing platform, with hotel-grade discipline.' },
-    { k: 'People, not a dashboard', v: 'Named managers, biweekly calls, a monthly report.' },
+  { label: 'Why Pacer', rows: [
+    { k: 'Revenue management is all they do', v: '50+ markets, built by a former Vacasa revenue lead; they report 95% client retention and a +23% median RevPAR lift after a year across their own portfolios.' },
+    { k: 'A monthly report, and a reason for every rate', v: 'You see performance against your market each month, and any pricing decision can be explained on request.' },
   ] },
 ]
 /** Kept for decks stored before the three groups existed; the slide renders the groups. */
@@ -913,6 +915,8 @@ export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
     // Jon, 2026-09-25: About Pacer condensed, then the whole slide condensed with Kyle and Justin named
     'Not a feature of a software product', 'leading a 55-person revenue team',
     'One person owns your pricing', 'Revenue management is the whole business, across seven countries', 'Biweekly strategy calls, a named manager', 'works with our team on the rate, the minimum stay',
+    // Jon, 2026-09-25: "more sales" — the six-row version retired
+    'works your rate with our team every day', 'Work your pricing every day: rate, minimum stay and gap nights', 'People, not a dashboard',
     // Jon, 2026-09-24: daily pricing, not weekly
     'reviewing your calendar every week', 'reviews the full picture every week', 'reviews the calendar every week', 'works with our team every week'],
   stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it',
