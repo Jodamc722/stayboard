@@ -769,7 +769,13 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
               <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-0 text-left">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.guest || 'Guest'}</span>
-                  <span className="text-[12px] text-muted truncate max-w-[14rem]">{r.listing}{r.status.nights ? ` · ${r.status.nights}n` : ''}</span>
+                  {/* Jon, 2026-09-25: "make sure we know if it's a welcome call, show the check-in and
+                      check-out day." The kind is a tag, the stay is in → out on every row. */}
+                  <Tag tone="brand">Welcome call</Tag>
+                  <span className="text-[12px] text-muted truncate max-w-[14rem]">{r.listing}</span>
+                  <span className="text-[12px] text-ink tabular-nums whitespace-nowrap" title="Check-in → check-out">
+                    In <b>{shortDay(r.check_in)}</b>{r.status.checkOut ? <> → out <b>{shortDay(r.status.checkOut)}</b></> : null}{r.status.nights ? <span className="text-muted"> · {r.status.nights}n</span> : null}
+                  </span>
                   {dayTag(r.check_in, today)}
                   {r.tier === 'lux' && <Tag tone="violet">Luxury</Tag>}
                   {r.tier === 'big' && <Tag tone="emerald">Big {money(r.value)}</Tag>}
@@ -847,7 +853,11 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
               <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-0 text-left">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.guest || 'Guest'}</span>
-                  <span className="text-[12px] text-muted truncate max-w-[14rem]">{r.listing} · out {shortDay(r.check_out)}</span>
+                  <Tag tone="violet">Follow-up call</Tag>
+                  <span className="text-[12px] text-muted truncate max-w-[14rem]">{r.listing}</span>
+                  <span className="text-[12px] text-ink tabular-nums whitespace-nowrap" title="Check-in → check-out">
+                    In <b>{shortDay(r.check_in)}</b> → out <b>{shortDay(r.check_out)}</b>{r.nights ? <span className="text-muted"> · {r.nights}n</span> : null}
+                  </span>
                   {r.reasons.map(k => { const m = REASON_TAG[k]; return m ? <Tag key={k} tone={m.tone}>{m.label}{k === 'value' && r.value ? ` ${money(r.value)}` : ''}</Tag> : null })}
                   {r.done && <Tag tone={r.outcome === 'issue' ? 'rose' : 'emerald'}>{r.outcome === 'issue' ? 'Issue raised' : 'All good'}{r.calledBy ? ` · ${who(r.calledBy)}` : ''}</Tag>}
                   {live && talked && <Tag tone="brand">Talked {talkMins(r.proof.talkSeconds)}</Tag>}
