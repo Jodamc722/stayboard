@@ -501,11 +501,12 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   const due = mode === 'day' ? rows.filter(r => r.check_in === date && !r.done) : duePending.filter(r => r.check_in >= today)
   const dayDone = mode === 'day' ? rows.filter(r => r.check_in === date && r.done) : []
   const LANES = [
-    { key: 'must', title: 'Must call', why: 'luxury units and big bookings — every one, today', must: true,
+    // Jon, 2026-09-25: every row here is a welcome call (the tag says so); the lane is the priority.
+    { key: 'must', title: 'Must call · luxury & big bookings', why: 'every one, today', must: true,
       rows: due.filter(r => laneOf(r) === 'must') },
-    { key: 'recovery', title: 'Unit recovery', why: 'the unit is carrying a bad review — the call is the repair', must: true,
+    { key: 'recovery', title: 'Must call · unit recovery', why: 'the unit is carrying a bad review — the call is the repair', must: true,
       rows: due.filter(r => laneOf(r) === 'recovery') },
-    { key: 'welcome', title: 'Welcome calls', why: 'everyone else arriving — complete what you can', must: false,
+    { key: 'welcome', title: 'Everyone else', why: 'complete what you can', must: false,
       rows: due.filter(r => laneOf(r) === 'welcome') },
   ].filter(l => l.rows.length)
   // Recovery units being handled in the Must-call lane, so that lane's header can own up to them.
@@ -514,11 +515,13 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // DONE CALLS (2026-09-21, Jon: "have a completed call section"). Both kinds, newest first —
   // proof of work for the day, and where a note gets re-read after the card has left the board.
   const doneCalls = rows.filter(r => r.done).map(r => ({
-    id: r.id, guest: r.guest, listing: r.listing, kind: 'welcome' as const, when: r.calledAt || r.check_in,
+    id: r.id, guest: r.guest, listing: r.listing, building: r.building, kind: 'welcome' as const, when: r.calledAt || r.check_in,
     outcome: r.outcome, by: r.calledBy, note: r.proof.note, attempts: r.attempts, proof: r.proof, ref: r.check_in,
+    checkIn: r.check_in, checkOut: r.status?.checkOut || '', nights: r.status?.nights || 0, phone: r.phone, source: r.source, value: r.value, tier: r.tier, notes: r.notes,
   })).concat(outRows.filter(r => r.done).map(r => ({
-    id: r.id, guest: r.guest, listing: r.listing, kind: 'post' as const, when: r.calledAt || r.check_out,
+    id: r.id, guest: r.guest, listing: r.listing, building: r.building, kind: 'post' as const, when: r.calledAt || r.check_out,
     outcome: r.outcome, by: r.calledBy, note: r.callNote || r.proof.note, attempts: r.attempts, proof: r.proof, ref: r.check_out,
+    checkIn: r.check_in, checkOut: r.check_out, nights: r.nights || 0, phone: r.phone, source: r.source, value: r.value, tier: '', notes: r.notes, reasons: r.reasons, glitches: r.glitches,
   })) as any[]).sort((a, b) => String(b.when).localeCompare(String(a.when)))
 
   const TABS = [
@@ -594,7 +597,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
         </div>
       )}
 
-      {tab === 'done' && <CompletedList rows={doneCalls} />}
+      {tab === 'done' && <CompletedList rows={doneCalls} today={today} copied={copied} copyPhone={copyPhone} />}
 
       {tab === 'board' && (
         <div className="space-y-4">
@@ -660,31 +663,68 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
  * line each, because this is a register to scan and audit rather than a worklist to act on. The
  * note from the recording sits underneath when there is one.
  */
-function CompletedList({ rows }: { rows: any[] }) {
+function CompletedList({ rows, today, copied, copyPhone }: { rows: any[]; today: string; copied: string | null; copyPhone: (id: string, p: string) => void }) {
+  // Jon, 2026-09-25: "in the done, be able to click in to see details." Each row opens to the same
+  // facts the live card carries — stay, phone, channel, outcome, who and when, the recording note,
+  // promises and issues, the reservation notes — plus the transcript link when there is one.
+  const [openId, setOpenId] = useState<string | null>(null)
   if (!rows.length) return <div className="rounded-2xl border border-line bg-white px-4 py-10 text-center text-sm text-muted">No calls completed yet.</div>
+  const OUTCOME: Record<string, { label: string; cls: string }> = {
+    reached: { label: 'Reached', cls: 'bg-emerald-100 text-emerald-800' }, done: { label: 'Reached', cls: 'bg-emerald-100 text-emerald-800' },
+    voicemail: { label: 'Voicemail', cls: 'bg-amber-100 text-amber-800' }, happy: { label: 'All good', cls: 'bg-emerald-100 text-emerald-800' },
+    issue: { label: 'Issue raised', cls: 'bg-rose-100 text-rose-700' },
+  }
   return (
     <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
       {rows.map(r => {
+        const key = r.kind + r.id
+        const open = openId === key
         const vm = r.outcome === 'voicemail'
+        const oc = OUTCOME[r.outcome] || { label: r.outcome || 'Done', cls: 'bg-slate-100 text-slate-600' }
         return (
-          <li key={r.kind + r.id} className="px-3 sm:px-4 py-2">
-            <div className="flex items-baseline justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                {vm ? <Voicemail size={13} className="text-amber-600 shrink-0" /> : <Check size={13} className="text-emerald-600 shrink-0" />}
-                <span className="text-[13px] font-semibold text-ink truncate">{r.guest || 'Guest'}</span>
-                <span className="text-[11px] text-muted truncate">{r.listing}</span>
-                <Badge cls={r.kind === 'welcome' ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600'}>{r.kind === 'welcome' ? 'Welcome' : 'Post-checkout'}</Badge>
-                {vm && <Badge cls="bg-amber-100 text-amber-800">Voicemail</Badge>}
-                {r.outcome === 'issue' && <Badge cls="bg-rose-100 text-rose-700">Issue</Badge>}
+          <li key={key} className="px-3 sm:px-4 py-2">
+            <button onClick={() => setOpenId(open ? null : key)} className="w-full text-left">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <DateBlock d={r.kind === 'welcome' ? r.checkIn : r.checkOut} today={today} label={r.kind === 'welcome' ? 'Arrives' : 'Checked out'} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {vm ? <Voicemail size={13} className="text-amber-600 shrink-0" /> : <Check size={13} className="text-emerald-600 shrink-0" />}
+                    <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.guest || 'Guest'}</span>
+                    <Tag tone={r.kind === 'welcome' ? 'brand' : 'violet'}>{r.kind === 'welcome' ? 'Welcome call' : 'Follow-up call'}</Tag>
+                    <span className="text-[12px] text-muted truncate max-w-[14rem]">{r.listing}</span>
+                    <span className="text-[12px] text-ink tabular-nums whitespace-nowrap">In <b>{shortDay(r.checkIn)}</b>{r.checkOut ? <> → out <b>{shortDay(r.checkOut)}</b></> : null}{r.nights ? <span className="text-muted"> · {r.nights}n</span> : null}</span>
+                    <Badge cls={oc.cls}>{oc.label}</Badge>
+                    {r.proof?.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'}>Call notes</Tag>}
+                  </div>
+                  <div className="text-[11.5px] text-muted mt-0.5">
+                    {r.by ? `${who(r.by)} · ` : ''}{r.when ? day(r.when) : ''}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}{r.proof?.talkSeconds ? ` · talked ${talkMins(r.proof.talkSeconds)}` : ''}
+                  </div>
+                </div>
+                <ChevronDown size={15} className={'shrink-0 text-muted ' + (open ? 'rotate-180 transition' : 'transition')} />
               </div>
-              <span className="text-[11px] text-muted shrink-0">
-                {r.by ? `${who(r.by)} · ` : ''}{r.when ? day(r.when) : ''}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}
-              </span>
-            </div>
-            {r.note && (
-              <div className="text-[12px] text-muted mt-0.5 pl-[21px] flex items-start gap-1.5">
-                <span className="flex-1">{r.note}</span>
-                {r.proof?.callId && <a href={`/welcome-calls/call/${r.proof.callId}`} className="text-brand-600 hover:underline shrink-0 font-semibold">transcript →</a>}
+            </button>
+            {open && (
+              <div className="pb-2 pt-2 pl-0 sm:pl-[58px] space-y-2 text-[12.5px]">
+                <RowTools id={r.id} phone={r.phone} copied={copied} copyPhone={copyPhone} />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Tag>{channelOf(r.source)}</Tag>
+                  {r.building && <Tag>{r.building}</Tag>}
+                  {r.value ? <Tag tone="emerald">{money(r.value)}</Tag> : null}
+                  {r.tier === 'lux' && <Tag tone="violet">Luxury</Tag>}
+                  {Array.isArray(r.reasons) && r.reasons.map((k: string) => { const m = REASON_TAG[k]; return m ? <Tag key={k} tone={m.tone}>{m.label}</Tag> : null })}
+                </div>
+                {r.proof && (r.proof.note || r.proof.promised?.length || r.proof.issues?.length) ? (
+                  <div className="rounded-lg border border-line bg-app/50 px-3 py-2 space-y-1">
+                    {r.proof.note && <p className="text-ink">{r.proof.note}{r.proof.noteBy ? <span className="text-muted"> — {who(r.proof.noteBy)}</span> : null}</p>}
+                    {r.proof.promised?.length ? <p><b className="text-ink">We promised:</b> {r.proof.promised.join(' · ')}</p> : null}
+                    {r.proof.issues?.length ? <p><b className="text-rose-700">Issues:</b> {r.proof.issues.join(' · ')}</p> : null}
+                    {r.proof.callId && <a href={`/welcome-calls/call/${r.proof.callId}`} className="text-brand-600 hover:underline font-semibold">Open the transcript →</a>}
+                  </div>
+                ) : <p className="text-muted">No note from this call.</p>}
+                {Array.isArray(r.glitches) && r.glitches.length > 0 && (
+                  <p className="text-muted"><b className="text-ink">Issues during the stay:</b> {r.glitches.map((g: any) => g.overview).filter(Boolean).join(' · ')}</p>
+                )}
+                {r.notes && <p className="text-muted whitespace-pre-line"><b className="text-ink">Reservation notes:</b> {r.notes}</p>}
               </div>
             )}
           </li>
