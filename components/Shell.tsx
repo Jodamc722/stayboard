@@ -12,7 +12,7 @@ import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
 import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
-  Sparkles, TrendingUp, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
+  Sparkles, TrendingUp, BarChart3, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
   ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
@@ -137,6 +137,8 @@ export const SECTIONS: NavSection[] = [
       // to the first tab the person can open. Deliberately not '/kpi', so an older "hide KPI board"
       // override cannot make the whole Money row vanish.
       { to: '/money',    label: 'Money',        Icon: TrendingUp, set: 'money' },
+      // The boss's Revenue App, framed (Jon, 2026-09-25). Its own row so it is one click from anywhere.
+      { to: '/revenue-app', label: 'Revenue App', Icon: BarChart3 },
       { to: '/billing',  label: 'Billable Hours', Icon: Receipt }, // 2026-08-06 - Breezeway task billing by owner
       // Projections left the sidebar on 2026-08-25 (Jon): the projection builder lives inside
       // Owner Reports now, so this is a plain row again and /projections is reached from there.
