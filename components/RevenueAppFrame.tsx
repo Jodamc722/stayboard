@@ -8,7 +8,8 @@ export function RevenueAppFrame({ url }: { url: string }) {
   const [n, setN] = useState(0)
   const [loaded, setLoaded] = useState(false)
   return (
-    <div className="flex flex-col h-full min-h-[70vh]">
+    // -mt/-mx pull the frame to the Shell's edges so the app gets the whole pane beside the sidebar.
+    <div className="flex flex-col -mx-3 -mt-4 sm:-m-6 lg:-m-8" style={{ height: 'calc(100dvh - 8px)' }}>
       <div className="flex items-center gap-2 px-3 sm:px-4 py-2 border-b border-line bg-white">
         <BarChart3 size={15} className="text-brand-600" />
         <span className="text-[13.5px] font-bold text-ink">Revenue App</span>
@@ -19,7 +20,7 @@ export function RevenueAppFrame({ url }: { url: string }) {
         </span>
       </div>
       <div className="relative flex-1 min-h-0 bg-app">
-        {!loaded && <div className="absolute inset-0 flex items-center justify-center text-[12.5px] text-muted">Loading the Revenue App… if this stays blank, the app is refusing to be framed — use Open in a new tab.</div>}
+        {!loaded && <div className="absolute inset-0 flex items-center justify-center text-[12.5px] text-muted px-6 text-center">Loading the Revenue App… if it asks you to sign in here, use Open in a new tab, sign in there, then Reload this frame.</div>}
         <iframe key={n} src={url} title="Revenue App" onLoad={() => setLoaded(true)}
           className="relative w-full h-full border-0" allow="clipboard-write" referrerPolicy="no-referrer-when-downgrade" />
       </div>
