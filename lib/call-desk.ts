@@ -524,7 +524,7 @@ export type DeskData = {
  * `today` is an Eastern calendar date. The page passes the real one; the nightly close-out passes
  * the same, and simply acts on the rows this reports as `closed && !done`.
  */
-export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
+export async function loadCallsDesk(sb: any, today: string, viewDate?: string): Promise<DeskData> {
   const toDate = addDays(today, 14)
   const graceFrom = addDays(today, -WELCOME_GRACE_DAYS)     // the first day a call is still workable (= today)
   // Two days further back, so the nightly close-out — which runs after midnight with the NEW day as
@@ -533,10 +533,17 @@ export async function loadCallsDesk(sb: any, today: string): Promise<DeskData> {
   const closedFrom = addDays(graceFrom, -2)
   const backDate = addDays(today, -POST_GRACE_DAYS)        // checkouts still inside theirs (48h)
   const postClosedFrom = addDays(backDate, -2)
+  // BY DATE (team ask via Jon, 2026-09-25): the desk can be pointed at any day — that day's
+  // arrivals for welcome calls, that day's checkouts for follow-ups. The window simply stretches
+  // to include it; every row keeps the same due / closed rules, so a past day reads as history and
+  // a far day as not-yet-due, never as a different kind of row.
+  const vd = viewDate && /^\d{4}-\d{2}-\d{2}$/.test(viewDate) ? viewDate : today
+  const arrFrom = vd < closedFrom ? vd : closedFrom, arrTo = vd > toDate ? vd : toDate
+  const depFrom = vd < postClosedFrom ? vd : postClosedFrom, depTo = vd > today ? vd : today
 
   const [{ data: arrivals }, { data: departures }, rec] = await Promise.all([
-    sb.from('guesty_reservations').select(RES_SELECT).gte('check_in', closedFrom).lte('check_in', toDate).order('check_in').limit(500),
-    sb.from('guesty_reservations').select(RES_SELECT).gte('check_out', postClosedFrom).lte('check_out', today).order('check_out', { ascending: false }).limit(500),
+    sb.from('guesty_reservations').select(RES_SELECT).gte('check_in', arrFrom).lte('check_in', arrTo).order('check_in').limit(600),
+    sb.from('guesty_reservations').select(RES_SELECT).gte('check_out', depFrom).lte('check_out', depTo).order('check_out', { ascending: false }).limit(600),
     cachedRecovery().then(e => ({ map: new Map<string, RecoveryUnit>(e), failed: false }))
       // recoveryUnits throws rather than flag units on a partial review scan. Falling back to an
       // empty map is right; PRETENDING that means "no unit is in recovery" is not, so the failure

@@ -342,10 +342,18 @@ function WelcomeScript({ r, draft, setDraft, onSaveNote, saving, saved }: {
 }
 
 
-export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, me, meName = '', talkroute = false }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; me: string; meName?: string; talkroute?: boolean; callers?: string[] }) {
+export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, date: date0, me, meName = '', talkroute = false }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; date?: string; me: string; meName?: string; talkroute?: boolean; callers?: string[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
   const [outRows, setOutRows] = useState<OutRow[]>(initialOut)
   const [tab, setTab] = useState<'welcome' | 'post' | 'done' | 'board' | 'all'>('welcome')
+  // BY DATE (team ask, 2026-09-25): "by default show today's check-ins for welcome calls and
+  // today's checkouts for follow-up calls, with the option to change the date." `date` is the day
+  // the desk is pointed at; DAY shows only that day, 72H is the old rolling sheet.
+  const date = date0 || today
+  const [mode, setMode] = useState<'day' | 'window'>('day')
+  const goDate = (d: string) => { if (d && d !== date) router.push(d === today ? '/welcome-calls' : '/welcome-calls?date=' + d) }
+  const shiftDate = (n: number) => { const d = new Date(date + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); goDate(d.toISOString().slice(0, 10)) }
+  const dateLabel = date === today ? 'Today' : new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   // WHICH row failed. The banner lives at the top of a list that runs to seventy rows, so a caller
@@ -468,7 +476,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   const duePending = open.filter(r => r.due)
   // Today forward only (Jon: "today focused and future focused"). Yesterday's misses are on the scoreboard.
   const allSorted = rows.filter(r => r.check_in >= today).sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (b.value - a.value))
-  const shownOut = [...outRows].sort((a, b) => (Number(a.done) - Number(b.done)) || b.check_out.localeCompare(a.check_out))
+  const shownOut = [...outRows].filter(r => mode === 'window' || r.check_out === date).sort((a, b) => (Number(a.done) - Number(b.done)) || b.check_out.localeCompare(a.check_out))
 
   // By arrival day, then lux > recovery > big > standard, then value (Jon: "organized by the day of arrival").
   const byArrival = (xs: Row[]) => [...xs].sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (Number(!!b.recovery) - Number(!!a.recovery)) || (b.value - a.value))
@@ -487,7 +495,10 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // "lux calls get priority") and keeps its recovery badge, and the recovery lane says how many of
   // its units are being handled up there, so the recovery total is never quietly understated.
   const laneOf = (r: Row) => r.tier === 'recovery' ? 'recovery' : (r.mandatory ? 'must' : 'welcome')
-  const due = duePending.filter(r => r.check_in >= today)
+  // DAY mode: everyone arriving on the chosen day who has not been called (a past day shows what
+  // closed incomplete; a far day shows who is coming). WINDOW mode: the rolling 72-hour sheet.
+  const due = mode === 'day' ? rows.filter(r => r.check_in === date && !r.done) : duePending.filter(r => r.check_in >= today)
+  const dayDone = mode === 'day' ? rows.filter(r => r.check_in === date && r.done) : []
   const LANES = [
     { key: 'must', title: 'Must call', why: 'luxury units and big bookings — every one, today', must: true,
       rows: due.filter(r => laneOf(r) === 'must') },
@@ -510,8 +521,8 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   })) as any[]).sort((a, b) => String(b.when).localeCompare(String(a.when)))
 
   const TABS = [
-    { key: 'welcome' as const, label: 'To call', n: duePending.length },
-    { key: 'post' as const, label: 'Post-checkout', n: kpis.postDue },
+    { key: 'welcome' as const, label: 'To call', n: mode === 'day' ? due.length : duePending.length },
+    { key: 'post' as const, label: 'Post-checkout', n: mode === 'day' ? shownOut.filter(r => !r.done && !r.closed).length : kpis.postDue },
     { key: 'done' as const, label: 'Done', n: doneCalls.length },
     { key: 'board' as const, label: 'Scoreboard', n: null as number | null },
     { key: 'all' as const, label: 'Next 14 days', n: null as number | null },
@@ -550,6 +561,18 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
             </button>
           ))}
         </div>
+        {(tab === 'welcome' || tab === 'post') && (
+          <div className="inline-flex items-center gap-1 text-[12.5px]">
+            <button onClick={() => shiftDate(-1)} title="Previous day" className="rounded-lg border border-line bg-white px-2 py-1 font-semibold text-muted hover:text-ink">‹</button>
+            <input type="date" value={date} onChange={e => goDate(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 font-semibold text-ink" />
+            <button onClick={() => shiftDate(1)} title="Next day" className="rounded-lg border border-line bg-white px-2 py-1 font-semibold text-muted hover:text-ink">›</button>
+            {date !== today && <button onClick={() => goDate(today)} className="rounded-lg bg-ink text-white px-2.5 py-1 font-semibold">Today</button>}
+            <span className="ml-1 inline-flex rounded-lg border border-line overflow-hidden">
+              <button onClick={() => setMode('day')} className={`px-2 py-1 font-semibold ${mode === 'day' ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>{dateLabel}</button>
+              <button onClick={() => setMode('window')} className={`px-2 py-1 font-semibold border-l border-line ${mode === 'window' ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`} title="The rolling sheet: arrivals in the next 72 hours, checkouts in the last 48">Next 72h</button>
+            </span>
+          </div>
+        )}
         <span className="ml-auto text-[12px] text-muted">Signed in as <b className="text-ink">{myName}</b></span>
       </div>
 
@@ -585,12 +608,17 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 
       {tab === 'post' && (
         <PostCheckoutList rows={shownOut} openId={openId} setOpenId={setOpenId} draft={draft} setDraft={setDraft}
-          busy={busy} onAct={post} copied={copied} copyPhone={copyPhone} />
+          busy={busy} onAct={post} copied={copied} copyPhone={copyPhone}
+          empty={mode === 'day' ? `No follow-up calls for ${dateLabel === 'Today' ? 'today' : dateLabel} — nobody checked out of a recovery unit that day.` : undefined} />
       )}
 
       {tab === 'welcome' && (
-        duePending.length === 0 ? (
-          <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">Nothing due — everyone arriving in the next 72 hours has had their call.</div>
+        due.length === 0 ? (
+          <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">
+            {mode === 'day'
+              ? (dayDone.length ? `All ${dayDone.length} arrival${dayDone.length === 1 ? '' : 's'} on ${dateLabel === 'Today' ? 'today' : dateLabel} have had their call.` : `No arrivals on ${dateLabel === 'Today' ? 'today' : dateLabel}.`)
+              : 'Nothing due — everyone arriving in the next 72 hours has had their call.'}
+          </div>
         ) : (
           <div className="space-y-4">
             {LANES.map(lane => (
@@ -604,6 +632,9 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
             ))}
           </div>
         )
+      )}
+      {tab === 'welcome' && mode === 'day' && dayDone.length > 0 && due.length > 0 && (
+        <p className="text-[12px] text-muted px-1">{dayDone.length} arrival{dayDone.length === 1 ? '' : 's'} on {dateLabel === 'Today' ? 'today' : dateLabel} already called — see Done.</p>
       )}
 
       {tab === 'all' && (
@@ -794,13 +825,14 @@ const REASON_TAG: Record<string, { label: string; tone: string }> = {
   direct: { label: 'Direct', tone: 'brand' },
   value: { label: 'High value', tone: 'emerald' },
 }
-function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAct, copied, copyPhone }: {
+function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAct, copied, copyPhone, empty }: {
+  empty?: string
   rows: OutRow[]; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; onAct: (id: string, o: 'happy' | 'issue' | 'no_answer' | 'claim' | 'undo') => void
   copied: string | null; copyPhone: (id: string, p: string) => void
 }) {
-  if (rows.length === 0) return <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">Nobody checked out of a recovery unit in the last 48 hours.</div>
+  if (rows.length === 0) return <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">{empty || 'Nobody checked out of a recovery unit in the last 48 hours.'}</div>
   return (
     <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
       {rows.map(r => {

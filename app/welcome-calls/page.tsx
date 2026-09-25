@@ -55,12 +55,15 @@ const guestPhones = unstable_cache(async (ids: string[]) => {
   return map
 }, ['welcome-guest-phones'], { revalidate: 1800 })
 
-export default async function CallsPage() {
+export default async function CallsPage({ searchParams }: { searchParams?: { date?: string } }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const d = await loadCallsDesk(supabaseAdmin(), ymdET(new Date()))
+  // ?date=YYYY-MM-DD points the desk at another day (2026-09-25). Default: today.
+  const today = ymdET(new Date())
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(searchParams?.date || '')) ? String(searchParams!.date) : today
+  const d = await loadCallsDesk(supabaseAdmin(), today, date)
 
   // Backfill phones for displayed reservations whose embedded guest is just a stub.
   const missing = d.rows.filter(r => !r.phone && r.guestId)
@@ -73,7 +76,7 @@ export default async function CallsPage() {
 
   return (
     <Shell>
-      <CallsDesk meName={meName} rows={d.rows} outRows={d.outRows} kpis={d.kpis as any} today={d.today} me={String(user.email || '')} talkroute={d.talkroute} callers={d.callers} />
+      <CallsDesk meName={meName} rows={d.rows} outRows={d.outRows} kpis={d.kpis as any} today={d.today} date={date} me={String(user.email || '')} talkroute={d.talkroute} callers={d.callers} />
     </Shell>
   )
 }
