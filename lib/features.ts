@@ -102,6 +102,9 @@ export const FEATURES: Feature[] = [
   // buildings, and the whole point of moving it off Slack and out of email was to stop app-health
   // noise landing where operational information lives.
   { key: 'system-health', label: 'System health',      path: '/system-health', group: 'Settings' },
+  // Personal read-only API keys (Jon, 2026-09-25). Every role can make their own; a key reads
+  // exactly what its owner can see, through /api/v1 only.
+  { key: 'api-keys',      label: 'API keys',           path: '/api-keys', group: 'Settings' },
   // Building Patterns (2026-08-06, Jon): recurring complaint themes per building — prevention layer.
   { key: 'patterns',      label: 'Building Patterns', path: '/patterns', group: 'Portfolio' },
   { key: 'revenue',       label: 'Revenue',           path: '/revenue', group: 'Money' },
@@ -349,11 +352,11 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq', 'guest-orders'] },
+    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq', 'guest-orders', 'api-keys'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
-    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders'] },
+    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'revenue-app', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels'] },
+    pages: ['home', 'revenue', 'revenue-app', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels', 'api-keys'] },
 ]
 
 export function normWorkspace(v: any): Workspace {

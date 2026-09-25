@@ -12,7 +12,7 @@ import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
 import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
-  Sparkles, TrendingUp, BarChart3, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
+  Sparkles, TrendingUp, BarChart3, KeyRound, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
   ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
@@ -169,6 +169,7 @@ export const SECTIONS: NavSection[] = [
       // the URL is a page nobody checks, and the whole trade was "stop pushing this at me, I will
       // come and look" — which only holds if there is somewhere obvious to look.
       { to: '/system-health', label: 'System health', Icon: Activity },
+      { to: '/api-keys', label: 'API keys', Icon: KeyRound },
     ],
   },
 ]
