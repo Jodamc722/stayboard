@@ -24,7 +24,9 @@ export async function v1Gate(req: Request, feature: string): Promise<V1Gate> {
     if (!a.allowed) return { ok: false, res: NextResponse.json({ error: 'no-access' }, { status: 403 }) }
     access = a
   }
-  if (feature !== 'me' && !atLeast(access.levels[feature], 'view')) {
+  // An approved key reads everything (Jon, 2026-09-25: "they can read whatever they want"); a
+  // browser session still answers by its own role.
+  if (!viaKey && feature !== 'me' && !atLeast(access.levels[feature], 'view')) {
     return { ok: false, res: NextResponse.json({ error: 'forbidden', message: `This key's owner has no access to ${feature}.` }, { status: 403 }) }
   }
   return { ok: true, access, viaKey }
