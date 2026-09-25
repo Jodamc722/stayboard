@@ -20,7 +20,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { RefreshCw, PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck, FileText, X } from 'lucide-react'
-import { channelOf, channelPolicy, buildingGuideFor, QUESTIONS_UNIVERSAL } from '@/lib/welcome-call-guide'
+import { channelOf, channelPolicy, buildingGuideFor } from '@/lib/welcome-call-guide'
 import { IconBtn, Tip } from '@/components/lean'
 import { StayPanel } from '@/components/StayPanel'
 
@@ -253,91 +253,128 @@ function NoteBox({ id, prior, draft, setDraft, onSave, saving, saved, placeholde
   )
 }
 
-// ── THE SCRIPT PANEL (unchanged from this morning's rewrite) ─────────────────────────────────────
-function WelcomeScript({ r, draft, setDraft, onSaveNote, saving, saved }: {
+// ── THE SCRIPT PANEL ──────────────────────────────────────────────────────────────────────────────
+// Rewritten 2026-09-25 (Jon: "let's improve the script"). A welcome call has five jobs, in this
+// order: open warmly, confirm the facts of the arrival, do the channel's must-dos, set the three
+// expectations that prevent most bad reviews (check-in time, how access arrives, the one rule that
+// matters), and close with the promise that they can reach a person. Everything the script says
+// is specific to THIS guest — tier, channel, building, what is and is not booked — so the caller
+// reads it, they do not adapt it. Voicemail and the follow-up text are one copy each.
+function WelcomeScript({ r, draft, setDraft, onSaveNote, saving, saved, myName }: {
   r: Row; draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
-  onSaveNote: () => void; saving: boolean; saved: boolean
+  onSaveNote: () => void; saving: boolean; saved: boolean; myName?: string
 }) {
   const [showGuide, setShowGuide] = useState(false)
+  const [copiedTpl, setCopiedTpl] = useState<string | null>(null)
   const ch = channelOf(r.source)
   const pol = channelPolicy(ch)
   const bg = buildingGuideFor(r.listing)
   const musts = pol.checks.filter(c => c.tone === 'warn')
+  const me = myName || '[your name]'
+  const first = (r.guest || '').split(' ')[0] || 'there'
+  const lux = r.tier === 'lux'
+  const owes = !pol.merchantOfRecord && !r.status.paidFull && r.status.balance > 0
+  const copy = async (k: string, text: string) => { try { await navigator.clipboard.writeText(text); setCopiedTpl(k); setTimeout(() => setCopiedTpl(c => c === k ? null : c), 1500) } catch { /* ignore */ } }
+  const vmText = `Hi ${first}, this is ${me} with Stay Hospitality. I'm calling ahead of your stay at ${r.listing} on ${longDay(r.check_in)} to make sure your arrival goes smoothly${owes ? ' and to sort out the balance on the booking' : ''}. Your check-in details will reach you the day before. If you have any questions, call or text this number any time — we're here around the clock. Looking forward to hosting you.`
+  const smsText = `Hi ${first}, ${me} from Stay Hospitality here — I tried you about your stay at ${r.listing} starting ${longDay(r.check_in)}. Quick things: what time do you expect to arrive, and how many guests in total?${r.status.parking == null ? ' Let me know if you\u2019ll need parking.' : ''}${owes ? ` There is a balance of ${money(r.status.balance)} to settle before arrival.` : ''} Text me back here any time.`
+  const Step = ({ n, title, children, tone }: { n: number; title: string; children: any; tone?: 'warn' | 'rose' }) => (
+    <li className="flex gap-2.5">
+      <span className={'shrink-0 w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ' + (tone === 'warn' ? 'bg-amber-500 text-white' : tone === 'rose' ? 'bg-rose-600 text-white' : 'bg-ink text-white')}>{n}</span>
+      <div className="min-w-0 flex-1"><div className="font-bold text-ink">{title}</div><div className="text-muted">{children}</div></div>
+    </li>
+  )
+  let n = 0
   return (
-                <div className="rounded-xl border border-line bg-slate-50 p-3.5 text-[12.5px] space-y-3 leading-relaxed">
-                  {/* 1. The facts, as one line of chips. */}
-                  <div className="flex flex-wrap gap-1.5">
-                    <Chip Icon={CalendarDays}>{r.status.nights} {r.status.nights === 1 ? 'night' : 'nights'}{r.status.checkOut ? ` · out ${shortDay(r.status.checkOut)}` : ''}</Chip>
-                    <Chip Icon={CreditCard} tone={pol.merchantOfRecord || r.status.paidFull ? 'ok' : 'warn'}>
-                      {pol.merchantOfRecord ? `Paid via ${ch}` : r.status.paidFull ? 'Paid in full' : `Balance ${money(r.status.balance)}`}
-                    </Chip>
-                    <Chip Icon={Car} tone={r.status.parking != null ? 'ok' : undefined}>
-                      {r.status.parking != null ? `Parking booked ${money(r.status.parking)}` : 'No parking booked — ask'}
-                    </Chip>
-                    {r.status.addOns.map((a, i) => <Chip key={i} Icon={Star}>{a.t} {money(a.amt)}</Chip>)}
-                  </div>
+    <div className="rounded-xl border border-line bg-slate-50 p-3.5 text-[12.5px] space-y-3 leading-relaxed">
+      {/* 1. The facts, as one line of chips. */}
+      <div className="flex flex-wrap gap-1.5">
+        <Chip Icon={CalendarDays}>{r.status.nights} {r.status.nights === 1 ? 'night' : 'nights'} · in {shortDay(r.check_in)}{r.status.checkOut ? ` → out ${shortDay(r.status.checkOut)}` : ''}</Chip>
+        <Chip Icon={CreditCard} tone={pol.merchantOfRecord || r.status.paidFull ? 'ok' : 'warn'}>
+          {pol.merchantOfRecord ? `Paid via ${ch}` : r.status.paidFull ? 'Paid in full' : `Balance ${money(r.status.balance)}`}
+        </Chip>
+        <Chip Icon={Car} tone={r.status.parking != null ? 'ok' : undefined}>
+          {r.status.parking != null ? `Parking booked ${money(r.status.parking)}` : 'No parking booked — ask'}
+        </Chip>
+        {r.status.addOns.map((a, i) => <Chip key={i} Icon={Star}>{a.t} {money(a.amt)}</Chip>)}
+        {lux && <Chip Icon={Crown} tone="ok">Luxury — VIP tone</Chip>}
+        {r.tier === 'big' && <Chip Icon={Gem} tone="ok">Big booking {money(r.value)}</Chip>}
+      </div>
 
-                  {/* 2. The only box: what this call MUST accomplish. Absent when there is nothing. */}
-                  {musts.length > 0 ? (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
-                      <div className="font-bold text-amber-900 flex items-center gap-1.5"><ShieldCheck size={13} /> Must do on this call — {ch} booking</div>
-                      <ul className="mt-1 space-y-0.5 text-amber-900">
-                        {musts.map((c, i) => <li key={i} className="flex items-start gap-1.5"><span className="mt-px">•</span><span>{c.label}</span></li>)}
-                      </ul>
-                    </div>
-                  ) : (
-                    <div className="text-[12px] text-emerald-800 inline-flex items-start gap-1.5"><ShieldCheck size={13} className="mt-0.5 shrink-0" /> {ch} collects the payment and verifies the guest — nothing to chase on this one.</div>
-                  )}
+      {/* 2. The call. */}
+      <ol className="space-y-2.5">
+        <Step n={++n} title="Open">
+          &ldquo;Hi {first}, this is {me} with Stay Hospitality. I&rsquo;m calling ahead of your stay at {r.listing} on {longDay(r.check_in)} — do you have two minutes?&rdquo;
+          {lux ? <> Then: &ldquo;We look after every guest personally at {bg ? bg.name : 'this building'}, so I wanted to introduce myself before you arrive.&rdquo;</> : <> Then: &ldquo;I just want to make sure your arrival is smooth and answer anything before you travel.&rdquo;</>}
+        </Step>
+        {r.recovery && (
+          <Step n={++n} title="Set the tone" tone="rose">
+            &ldquo;I wanted to reach you personally — we&rsquo;ve made changes at this place recently and I want your stay to be right from the first minute.&rdquo; Confirm the unit was checked for the issue in the recovery note before you say it.
+          </Step>
+        )}
+        <Step n={++n} title="Confirm the arrival">
+          Arrival time (&ldquo;roughly what time will you get in?&rdquo;) · guests in total, against the booking · a car? {r.status.parking != null ? <>Parking is booked — confirm the vehicle.</> : <>No parking on the booking — {bg ? bg.parking : 'explain the parking options'} and add it if they want it.</>} · anything to know: an occasion, an early flight, mobility needs, a crib.
+        </Step>
+        {musts.length > 0 && (
+          <Step n={++n} title={`Must do — ${ch} booking`} tone="warn">
+            <ul className="mt-0.5 space-y-0.5 text-amber-900">
+              {musts.map((c, i) => <li key={i} className="flex items-start gap-1.5"><span className="mt-px">•</span><span>{c.label}</span></li>)}
+            </ul>
+            {owes && <div className="mt-1 text-amber-900">Say it plainly: &ldquo;There is a balance of <b>{money(r.status.balance)}</b> on the booking — I can take that now, or send you a link.&rdquo;</div>}
+          </Step>
+        )}
+        <Step n={++n} title="Set expectations">
+          &ldquo;Check-in is from 4 PM; your access details come by message the day before — {bg ? bg.access : 'the door code and directions'}. {lux ? 'If you would like an earlier arrival, tell me now and I will see what I can do.' : 'If you need an earlier arrival, ask now and we will try.'}&rdquo; Mention the one rule that matters at this building (quiet hours, no parties, building check-in desk) and that the Wi-Fi and house guide are in the guidebook link.
+        </Step>
+        <Step n={++n} title="Offer">
+          One or two local tips{bg ? ` — ${bg.recs.tip}` : ''}. {lux ? 'Offer to arrange anything before arrival: groceries, a crib, a late checkout request, a restaurant booking.' : 'Mention they can order groceries and extras to be in the unit when they arrive.'}
+        </Step>
+        <Step n={++n} title="Close">
+          &ldquo;Save this number — call or text any time, day or night, and a person answers. We&rsquo;ll check in with you during the stay too. Looking forward to hosting you, {first}.&rdquo;
+        </Step>
+      </ol>
 
-                  {/* 3. The call itself. */}
-                  <div>
-                    <div className="font-bold text-ink flex items-center gap-1.5"><PhoneCall size={13} /> The call</div>
-                    <ol className="mt-1 list-decimal pl-5 space-y-1 text-muted marker:text-muted/60">
-                      <li>&ldquo;Hi {r.guest || 'there'}, this is [you] with Stay Hospitality — calling ahead of your check-in {longDay(r.check_in)}. Is now a good time?&rdquo;</li>
-                      {r.recovery
-                        ? <li className="text-rose-800"><b>Set the tone:</b> &ldquo;I wanted to reach you personally before you arrive — we&rsquo;ve made some changes at this place recently and I want your stay to be right from the first minute.&rdquo; Then confirm the unit was checked for the issue above.</li>
-                        : <li>Welcome them; say you want arrival to be smooth and you&rsquo;re there for questions.</li>}
-                      {musts.length > 0 && <li className="text-amber-900"><b>Run the must-dos above.</b></li>}
-                      <li>Confirm <b>arrival time</b> and <b>number of guests</b> against the booking.</li>
-                      <li>Walk through access and parking{bg ? ` — ${bg.access} ${bg.parking}` : '.'}</li>
-                      <li>Offer one or two local tips, then close: &ldquo;You&rsquo;ll get full check-in details before arrival — save this number and text anytime.&rdquo;</li>
-                    </ol>
-                  </div>
+      {/* 3. Voicemail and the follow-up text, one copy each. */}
+      <div className="grid sm:grid-cols-2 gap-2">
+        <div className="rounded-lg border border-line bg-white p-2.5">
+          <div className="flex items-center justify-between gap-2"><span className="font-bold text-ink inline-flex items-center gap-1.5"><Voicemail size={12} /> If voicemail</span>
+            <button onClick={() => copy('vm', vmText)} className="text-[11px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">{copiedTpl === 'vm' ? <Check size={11} /> : <Copy size={11} />} {copiedTpl === 'vm' ? 'Copied' : 'Copy'}</button></div>
+          <p className="mt-1 text-muted">{vmText}</p>
+        </div>
+        <div className="rounded-lg border border-line bg-white p-2.5">
+          <div className="flex items-center justify-between gap-2"><span className="font-bold text-ink inline-flex items-center gap-1.5"><MessageSquareWarning size={12} /> If no answer — text</span>
+            <button onClick={() => copy('sms', smsText)} className="text-[11px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">{copiedTpl === 'sms' ? <Check size={11} /> : <Copy size={11} />} {copiedTpl === 'sms' ? 'Copied' : 'Copy'}</button></div>
+          <p className="mt-1 text-muted">{smsText}</p>
+        </div>
+      </div>
 
-                  {/* 4. Questions, compact. */}
-                  <div>
-                    <div className="font-bold text-ink flex items-center gap-1.5"><MessageSquareWarning size={13} /> Ask</div>
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-muted">
-                      {[...QUESTIONS_UNIVERSAL, ...(bg ? bg.questions : [])].map((q, i) => <span key={i} className="before:content-['·'] before:mr-1.5 before:text-brand-600">{q}</span>)}
-                    </div>
-                  </div>
+      {/* 4. The building guide, for the caller who wants it. */}
+      {bg ? (
+        <div>
+          <button onClick={() => setShowGuide(!showGuide)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-muted hover:text-ink">
+            <MapPin size={12} /> {bg.name} — parking, access &amp; local tips <ChevronDown size={12} className={showGuide ? 'rotate-180 transition' : 'transition'} />
+          </button>
+          {showGuide && (
+            <div className="mt-1.5 grid sm:grid-cols-2 gap-x-4 gap-y-1 text-muted">
+              <div><b className="text-ink">Area:</b> {bg.area}</div>
+              <div className="flex items-start gap-1.5"><KeyRound size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Access:</b> {bg.access}</span></div>
+              <div className="flex items-start gap-1.5"><Car size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Parking:</b> {bg.parking}</span></div>
+              <div><b className="text-ink">Eat:</b> {bg.recs.food.join(', ')}</div>
+              <div><b className="text-ink">Coffee:</b> {bg.recs.coffee}</div>
+              <div><b className="text-ink">Grocery:</b> {bg.recs.grocery}</div>
+              <div><b className="text-ink">Beach:</b> {bg.recs.beach}</div>
+              {bg.questions.length > 0 && <div className="sm:col-span-2"><b className="text-ink">Ask here:</b> {bg.questions.join(' · ')}</div>}
+              <div className="text-brand-700 sm:col-span-2">{bg.recs.tip}</div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-muted flex items-start gap-1.5"><MapPin size={13} className="mt-0.5 shrink-0" /><span>Building not matched — confirm the exact address, parking and access with the guest.</span></div>
+      )}
 
-                  {/* 5. The building guide, for the caller who wants it — not for everyone, every call. */}
-                  {bg ? (
-                    <div>
-                      <button onClick={() => setShowGuide(!showGuide)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-muted hover:text-ink">
-                        <MapPin size={12} /> {bg.name} — parking, access &amp; local tips <ChevronDown size={12} className={showGuide ? 'rotate-180 transition' : 'transition'} />
-                      </button>
-                      {showGuide && (
-                        <div className="mt-1.5 grid sm:grid-cols-2 gap-x-4 gap-y-1 text-muted">
-                          <div><b className="text-ink">Area:</b> {bg.area}</div>
-                          <div className="flex items-start gap-1.5"><KeyRound size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Access:</b> {bg.access}</span></div>
-                          <div className="flex items-start gap-1.5"><Car size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Parking:</b> {bg.parking}</span></div>
-                          <div><b className="text-ink">Eat:</b> {bg.recs.food.join(', ')}</div>
-                          <div><b className="text-ink">Coffee:</b> {bg.recs.coffee}</div>
-                          <div><b className="text-ink">Grocery:</b> {bg.recs.grocery}</div>
-                          <div><b className="text-ink">Beach:</b> {bg.recs.beach}</div>
-                          <div className="text-brand-700 sm:col-span-2">{bg.recs.tip}</div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-muted flex items-start gap-1.5"><MapPin size={13} className="mt-0.5 shrink-0" /><span>Building not matched — confirm the exact address, parking and access with the guest.</span></div>
-                  )}
-
-                  {/* 6. Notes last: this is what you fill in as you hang up. */}
-                  <NoteBox id={r.id} prior={r.notes} draft={draft} setDraft={setDraft} onSave={onSaveNote} saving={saving} saved={saved} />
-                </div>
+      {/* 5. Notes last: this is what you fill in as you hang up. */}
+      <NoteBox id={r.id} prior={r.notes} draft={draft} setDraft={setDraft} onSave={onSaveNote} saving={saving} saved={saved}
+        placeholder="Arrival time · guests · car/parking · occasion · anything promised" />
+    </div>
   )
 }
 
@@ -860,7 +897,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                 <CallNote p={r.proof} />
                 <StayPanel reservationId={r.id} compact />
                 {r.recovery && !r.done && <RecoveryNote rec={r.recovery} unit={r.listing} />}
-                <WelcomeScript r={r} draft={draft} setDraft={setDraft} onSaveNote={() => saveNote(r.id)} saving={saving === r.id} saved={saved === r.id} />
+                <WelcomeScript r={r} draft={draft} setDraft={setDraft} onSaveNote={() => saveNote(r.id)} saving={saving === r.id} saved={saved === r.id} myName={myName} />
                 {failedId === r.id && error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-700 flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> <span>{error}</span></p>}
               </div>
             )}
