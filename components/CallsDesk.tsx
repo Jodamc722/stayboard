@@ -475,7 +475,8 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   }
   const duePending = open.filter(r => r.due)
   // Today forward only (Jon: "today focused and future focused"). Yesterday's misses are on the scoreboard.
-  const allSorted = rows.filter(r => r.check_in >= today).sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (b.value - a.value))
+  // Jon, 2026-09-25: the 14-day view is a worklist, not a guest list — only calls still to make.
+  const allSorted = rows.filter(r => r.check_in >= today && !r.done && !r.closed).sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (b.value - a.value))
   const shownOut = [...outRows].filter(r => mode === 'window' || r.check_out === date).sort((a, b) => (Number(a.done) - Number(b.done)) || b.check_out.localeCompare(a.check_out))
 
   // By arrival day, then lux > recovery > big > standard, then value (Jon: "organized by the day of arrival").
@@ -525,7 +526,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
     { key: 'post' as const, label: 'Post-checkout', n: mode === 'day' ? shownOut.filter(r => !r.done && !r.closed).length : kpis.postDue },
     { key: 'done' as const, label: 'Done', n: doneCalls.length },
     { key: 'board' as const, label: 'Scoreboard', n: null as number | null },
-    { key: 'all' as const, label: 'Next 14 days', n: null as number | null },
+    { key: 'all' as const, label: 'Not called · 14 days', n: allSorted.length },
   ]
 
   // The two numbers the desk is judged on, in one line (the 7-day strip lives on the Scoreboard tab).
@@ -639,7 +640,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 
       {tab === 'all' && (
         allSorted.length === 0
-          ? <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">No upcoming reservations.</div>
+          ? <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">Every arrival in the next 14 days has had its call.</div>
           : <WelcomeList rows={allSorted} {...listProps} />
       )}
 
