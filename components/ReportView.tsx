@@ -3714,6 +3714,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={String(f.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           ) : null}
+                          {(f.tag || (EXPERIENCE_ITEMS.find(x => x.k === f.k) || {}).tag) ? (
+                            <span style={{ position: 'absolute', top: 8, left: 8, fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '4px 8px', borderRadius: 999, background: t.ink, color: t.bg }}>
+                              {f.tag || (EXPERIENCE_ITEMS.find(x => x.k === f.k) || {}).tag}
+                            </span>
+                          ) : null}
                           {edit && (
                             <button onClick={() => { setPickGroup(''); setPropMsg(''); setPropPick({ i, b: String(f.b || f.k || ''), name: String(f.k || 'property'), cur: String(f.pic || '') }) }}
                               className="sb-noprint sb-pick" title="Choose this property's photo"

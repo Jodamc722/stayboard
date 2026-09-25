@@ -229,7 +229,9 @@ export const MONEY_RULES_RETIRED_MARK = ['Never billed to you. The guest', 'that
 // forever and no edit on this slide ever survives. 'the blocks you asked us to hold' was the old
 // calendar row and is gone from the new one; 'Every billed line traces to a job' -- my first
 // choice -- appears in both, which would have made this permanent.
-export const PORTAL_ITEMS_RETIRED_MARK = ['the blocks you asked us to hold', 'not a copy of it', 'the same calendar we work from']
+export const PORTAL_ITEMS_RETIRED_MARK = ['the blocks you asked us to hold', 'not a copy of it', 'the same calendar we work from',
+  // Jon, 2026-09-25: "Get rid of this" — the order-sheet row
+  'Approve, supply it yourself, defer or decline']
 export const CHECKLIST_RETIRED_MARK = ['W-9 and banking details for payouts', 'this is how you get paid']
 
 /** The stored rows, unless they are empty or carry `mark` -- in which case the house list. */
@@ -265,7 +267,6 @@ export const MONEY_RULES: { k: string; v: string }[] = [
 export const PORTAL_ITEMS: { k: string; v: string }[] = [
     { k: 'Your calendar, and your own stays', v: 'Every reservation as it lands. Block your own dates to create an owner stay; cleaning after it is billed at cost.' },
     { k: 'Your monthly report', v: 'Occupancy, rate, revenue, work completed and bookings ahead. One link, sent by us.' },
-    { k: 'Your order sheet', v: 'Purchase requests with photos, reason and price options. Approve, supply it yourself, defer or decline.' },
     { k: 'Your statement', v: 'Rental income, less commission and monthly charges. Every charge traces to a job.' },
 ]
 
@@ -593,12 +594,14 @@ export const EXPERIENCE_BODY = ''
 // Jon, 2026-09-24: "like a little intro to our properties too" — one line under the title, no more.
 export const EXPERIENCE_INTRO = 'Hotels, residence buildings and private homes from downtown Miami to Palm Beach, run end to end by one team.'
 
-export type PropertyItem = { k: string; v: string; b?: string; pic?: string | null }
+export type PropertyItem = { k: string; v: string; b?: string; pic?: string | null; tag?: string }
 export const EXPERIENCE_ITEMS: PropertyItem[] = [
   { k: 'The Elser Hotel & Residences', v: 'Downtown Miami · hotel & residences', b: 'Elser' },
   { k: 'Arya Hotel & Suites', v: 'Miami · hotel', b: 'Arya' },
   { k: 'The Garden Hotel & Resort', v: 'Fort Lauderdale · resort', b: 'Botanica' },
-  { k: 'The Monroe Hotel Miami', v: 'Miami · coming soon', b: 'Monroe' },   // no listing yet; the key is what the uploaded picture is saved under
+  // Jon, 2026-09-25: "the Monroe is coming soon, please mention that" — a tag on the tile, since the
+  // slide carries no descriptions. No listing yet; the key is what the uploaded picture is saved under.
+  { k: 'The Monroe Hotel Miami', v: 'Miami · coming soon', b: 'Monroe', tag: 'Coming soon' },
   { k: '17West', v: 'Fort Lauderdale · residences', b: '17WEST' },
   { k: 'District 225', v: 'Downtown Miami · residences', b: 'District 225' },
   { k: 'Nomad Residences', v: 'Miami · residences', b: 'Nomad' },
@@ -713,8 +716,11 @@ export const RAMP_ACTIONS: { k: string; v: string }[] = [
   { k: 'Protect the score while it is fragile', v: 'One poor review out of four is a quarter of your reputation. Early stays receive our closest operational attention.' },
   { k: 'Raise rate as standing is earned', v: 'As reviews and ranking build, the price moves with them. Priced daily, never left where it launched.' },
 ]
+// Jon, 2026-09-25: "Goal is to have high conversion; this leads to better optimisation on the OTA,
+// which leads to more bookings and more revenue." The old line argued against something nobody
+// proposed ("trade reviews for revenue is stupid").
 export const RAMP_ACTIONS_NOTE =
-  'We never trade revenue for reviews. Every night is priced to the best rate the market will pay; the reviews come from filling nights that would otherwise sit empty.'
+  'The goal is conversion. A listing that converts ranks higher on every channel, and a higher ranking brings more bookings and more revenue.'
 
 // ── THE TECHNOLOGY STACK ────────────────────────────────────────────────────
 // Jon, 2026-09-23: "create and mention the different tech stacks we use from Guesty to PriceLabs
@@ -858,11 +864,12 @@ export const REVENUE_PARTNER_GROUPS: PartnerGroup[] = [
     { k: 'The season ahead', v: 'Events, holidays and pickup pace watched months out, so a soft month is found while there is still time to fix it.' },
     { k: 'Reporting we can show you', v: 'Monthly performance against the market, and a reason behind any rate you ask about.' },
   ] },
+  // Jon, 2026-09-25: "About Pacer is too long, condense it."
   { label: 'About Pacer', rows: [
-    { k: 'Revenue management is the whole business', v: 'Not a feature of a software product or a side service of a manager: 50+ markets in seven countries, pricing only.' },
-    { k: 'Built at scale', v: 'Founded by Jon Latorre, who joined Vacasa at 600 properties and helped grow it to 44,000 across 16 countries, leading a 55-person revenue team over $2B+ in bookings.' },
-    { k: 'Their own results', v: 'Pacer reports 95% client retention and a +23% median same-store RevPAR lift after twelve months across 43 portfolios. Their book, not a forecast for yours.' },
-    { k: 'Recognised in the industry', v: 'Exclusive revenue-management partner of Key Data; preferred partner of Casago and iTrip; VRMA member.' },
+    { k: 'Pricing only, 50+ markets', v: 'Revenue management is the whole business, across seven countries.' },
+    { k: 'Built at scale', v: 'Founded by a former Vacasa revenue lead who helped grow it from 600 to 44,000 properties.' },
+    { k: 'Their results', v: '95% client retention; +23% median RevPAR after a year, across their own portfolios.' },
+    { k: 'Industry standing', v: 'Key Data\u2019s exclusive revenue partner; Casago and iTrip preferred; VRMA member.' },
   ] },
   { label: 'Why we chose them', rows: [
     { k: 'They run the tool, they do not sell one', v: 'Pricing software sets a number. An operator sets a strategy. Pacer runs our pricing platform with hotel-grade discipline, which is what a building needs.' },
@@ -907,6 +914,8 @@ export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
     'How your rate gets set', 'Who Pacer are', 'your unit is assigned',
     // Jon, 2026-09-24: the Pacer slide became three groups (what they do / about / why)
     'Their track record, in their own numbers', 'leading a 55-person team of analysts and data scientists', 'It is the whole business, across 50+ markets',
+    // Jon, 2026-09-25: About Pacer condensed
+    'Not a feature of a software product', 'leading a 55-person revenue team',
     // Jon, 2026-09-24: daily pricing, not weekly
     'reviewing your calendar every week', 'reviews the full picture every week', 'reviews the calendar every week', 'works with our team every week'],
   stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it',
@@ -914,7 +923,7 @@ export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
     'The system behind your unit', 'A problem at your unit',
     // the pre-logo tools list, retired the same afternoon for the real marks and the AI line
     'Our own software, built on top of the rest'],
-  rampsteps: ['would otherwise have gone empty', 'burning it on a half-built page', 'Reviewed weekly, never left',
+  rampsteps: ['would otherwise have gone empty', 'burning it on a half-built page', 'Reviewed weekly, never left', 'We never trade revenue for reviews',
     // 2026-09-24: the subtitle now ties each step to what ranking runs on
     'Sitting still through it is not',
     // Jon, 2026-09-24: "remove this" — the row about opening minimum stays at launch

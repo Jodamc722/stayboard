@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   if (typeof sec('experience').intro === 'string') next.experienceIntro = sec('experience').intro
   const items = arr(sec('experience').items)
   if (items) {
-    put('experienceItems', items.map((it: any) => ({ k: str(it.k), v: str(it.v), b: it.b || undefined })))
+    put('experienceItems', items.map((it: any) => ({ k: str(it.k), v: str(it.v), b: it.b || undefined, tag: it.tag || undefined })))
     // Pictures chosen on this deck become the pictures for every deck.
     const pics: Record<string, string> = { ...(tpl.propertyPics || {}) }
     for (const it of items) if (it && (it.b || it.k) && has(it.pic)) pics[String(it.b || it.k)] = String(it.pic)
