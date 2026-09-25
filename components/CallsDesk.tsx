@@ -58,6 +58,19 @@ type Proof = {
   source: string; lastAttemptAt: string; lastResult: string; talkSeconds: number
   note: string; promised: string[]; issues: string[]; sentiment: string; callId: string; noteBy: string
 }
+/** How the call was proven and whether it was written up (Jon, 2026-09-25: "see if called with
+ *  Talkroute, who completed and if transcribed"). Three small tags, only when they apply. */
+function ProofTags({ p, done, by }: { p: Proof; done: boolean; by?: string }) {
+  const tr = p.source === 'talkroute' || p.lastResult === 'answered' || p.talkSeconds > 0
+  return (<>
+    {tr && <Tag tone="brand" title={`Talkroute saw this call${p.lastAttemptAt ? ' · ' + day(p.lastAttemptAt) : ''}${p.talkSeconds ? ' · talked ' + talkMins(p.talkSeconds) : ''}`}>Talkroute{p.talkSeconds ? ` ${talkMins(p.talkSeconds)}` : ''}</Tag>}
+    {done && !tr && <Tag title="Marked complete by hand, not seen by the phone system">By hand</Tag>}
+    {p.callId
+      ? <Tag tone="emerald" title={'Transcribed and written up' + (p.noteBy ? ' · ' + who(p.noteBy) : '')}>Transcribed</Tag>
+      : (tr && p.talkSeconds > 0 ? <Tag tone="amber" title="The phone system saw a conversation but no transcript has been written up yet">Not transcribed</Tag> : null)}
+    {done && by && <Tag tone="emerald">Completed · {who(by)}</Tag>}
+  </>)
+}
 function talkMins(sec: number) { return sec >= 60 ? `${Math.round(sec / 60)} min` : `${sec}s` }
 /**
  * WHAT WAS SAID (2026-09-21, Jon: "in the call on call desk i should be able to see record notes").
@@ -731,10 +744,11 @@ function CompletedList({ rows, today, copied, copyPhone }: { rows: any[]; today:
                     <span className="text-[12px] text-muted truncate max-w-[14rem]">{r.listing}</span>
                     <span className="text-[12px] text-ink tabular-nums whitespace-nowrap">In <b>{shortDay(r.checkIn)}</b>{r.checkOut ? <> → out <b>{shortDay(r.checkOut)}</b></> : null}{r.nights ? <span className="text-muted"> · {r.nights}n</span> : null}</span>
                     <Badge cls={oc.cls}>{oc.label}</Badge>
+                    {r.proof && <ProofTags p={r.proof} done by={r.by} />}
                     {r.proof?.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'}>Call notes</Tag>}
                   </div>
                   <div className="text-[11.5px] text-muted mt-0.5">
-                    {r.by ? `${who(r.by)} · ` : ''}{r.when ? day(r.when) : ''}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}{r.proof?.talkSeconds ? ` · talked ${talkMins(r.proof.talkSeconds)}` : ''}
+                    {r.when ? day(r.when) : ''}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}
                   </div>
                 </div>
                 <ChevronDown size={15} className={'shrink-0 text-muted ' + (open ? 'rotate-180 transition' : 'transition')} />
@@ -846,7 +860,6 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
         const mine = !!r.claimedBy && !!myName && r.claimedBy.toLowerCase() === myName.toLowerCase()
         const isBusy = busy === r.id
         const owes = !pol.merchantOfRecord && !r.status.paidFull && r.status.balance > 0
-        const talked = r.proof.lastResult === 'answered' && r.proof.lastAttemptAt
         return (
           <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
             <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
@@ -869,9 +882,9 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                   <Tag>{ch}</Tag>
                   {owes && <Tag tone="amber">Owes {money(r.status.balance)}</Tag>}
                   {r.sensitive && <Tag tone="rose">Sensitive</Tag>}
-                  {r.done && <Tag tone="emerald">{r.outcome === 'voicemail' ? 'Voicemail' : 'Reached'}{r.calledBy ? ` · ${who(r.calledBy)}` : ''}</Tag>}
-                  {live && talked && <Tag tone="brand" title="Talkroute saw an answered call">Talked {talkMins(r.proof.talkSeconds)}</Tag>}
-                  {live && !talked && r.attempts > 0 && <Tag>No answer ×{r.attempts}</Tag>}
+                  {r.done && <Tag tone="emerald">{r.outcome === 'voicemail' ? 'Voicemail' : 'Reached'}</Tag>}
+                  <ProofTags p={r.proof} done={r.done} by={r.calledBy} />
+                  {live && r.proof.lastResult !== 'answered' && r.attempts > 0 && <Tag>No answer ×{r.attempts}</Tag>}
                   {live && r.claimedBy && <Tag tone="amber">{mine ? 'You have it' : `Taken · ${r.claimedBy}`}</Tag>}
                   {r.closed && !r.done && <Tag>Closed · missed</Tag>}
                   {r.proof.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'} title={r.proof.note}>Call notes</Tag>}
@@ -931,7 +944,6 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
         const open = openId === r.id
         const live = !r.done && !r.closed
         const isBusy = busy === r.id
-        const talked = r.proof.lastResult === 'answered' && r.proof.lastAttemptAt
         return (
           <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
             <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
@@ -946,9 +958,9 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                     In <b>{shortDay(r.check_in)}</b> → out <b>{shortDay(r.check_out)}</b>{r.nights ? <span className="text-muted"> · {r.nights}n</span> : null}
                   </span>
                   {r.reasons.map(k => { const m = REASON_TAG[k]; return m ? <Tag key={k} tone={m.tone}>{m.label}{k === 'value' && r.value ? ` ${money(r.value)}` : ''}</Tag> : null })}
-                  {r.done && <Tag tone={r.outcome === 'issue' ? 'rose' : 'emerald'}>{r.outcome === 'issue' ? 'Issue raised' : 'All good'}{r.calledBy ? ` · ${who(r.calledBy)}` : ''}</Tag>}
-                  {live && talked && <Tag tone="brand">Talked {talkMins(r.proof.talkSeconds)}</Tag>}
-                  {live && !talked && r.attempts > 0 && <Tag>No answer ×{r.attempts}</Tag>}
+                  {r.done && <Tag tone={r.outcome === 'issue' ? 'rose' : 'emerald'}>{r.outcome === 'issue' ? 'Issue raised' : 'All good'}</Tag>}
+                  <ProofTags p={r.proof} done={r.done} by={r.calledBy} />
+                  {live && r.proof.lastResult !== 'answered' && r.attempts > 0 && <Tag>No answer ×{r.attempts}</Tag>}
                   {live && r.claimedBy && <Tag tone="amber">Taken · {r.claimedBy}</Tag>}
                   {r.closed && !r.done && <Tag>Closed · missed</Tag>}
                   {r.proof.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'} title={r.proof.note}>Call notes</Tag>}
